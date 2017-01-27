@@ -21,8 +21,8 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 
 class environment:
 
-    def __init__(self, Lx=100, Ly=100, x_bndry = None, y_bndry = None,
-        init_swarms = None):
+    def __init__(self, Lx=100, Ly=100, x_bndry=None, y_bndry=None,
+                 init_swarms=None):
         ''' Initialize environmental variables.
 
         Arguments:
@@ -32,15 +32,14 @@ class environment:
             y_bndry: [low bndry condition, high bndry condition]
             init_swarms: initial swarms in this environment
 
-        Right now, the only supported boundary condition is 'zero', which
-        is also the default.
+        Right now, supported boundary conditions are 'zero' (default) and 'noflux'.
         '''
 
         # Save domain size
         self.L = [Lx, Ly]
 
         # Parse boundary conditions
-        supprted_conds = ['zero']
+        supprted_conds = ['zero','noflux']
         self.bndry = []
 
         if x_bndry is None:
@@ -66,10 +65,23 @@ class environment:
         if init_swarms is None:
             self.swarms = []
         else:
-            if isinstance(init_swarms,list):
+            if isinstance(init_swarms, list):
                 self.swarms = init_swarms
             else:
                 self.swarms = [init_swarms]
+
+
+
+    def add_swarm(self, swarm_size=100, init='random', **kwargs):
+        ''' Adds a swarm into this environment.
+
+        Arguments:
+            swarm_size: size of the swarm (int)
+            init: Method for initalizing positions
+            kwargs: keyword arguments to be passed to the method for
+                initalizing positions
+        '''
+        self.swarms.append(swarm(swarm_size, self, init, **kwargs))
 
 
 
@@ -127,14 +139,24 @@ class swarm:
 
         # Apply boundary conditions.
         for dim, bndry in enumerate(self.envir.bndry):
+
+            ### Left boundary ###
             if bndry[0] == 'zero':
                 # mask everything exiting on the left
-                self.positions[self.positions[:,dim]<= 0, :] = ma.masked
+                self.positions[self.positions[:,dim]< 0, :] = ma.masked
+            elif bndry[0] == 'noflux':
+                # pull everything exiting on the left to 0
+                self.positions[self.positions[:,dim]< 0, dim] = 0
             else:
                 raise NameError
+
+            ### Right boundary ###
             if bndry[1] == 'zero':
                 # mask everything exiting on the right
-                self.positions[self.positions[:,dim]>= self.envir.L[dim], :] = ma.masked
+                self.positions[self.positions[:,dim]> self.envir.L[dim], :] = ma.masked
+            elif bndry[1] == 'noflux':
+                # pull everything exiting on the left to 0
+                self.positions[self.positions[:,dim]> self.envir.L[dim], dim] = self.envir.L[dim]
             else:
                 raise NameError
         
