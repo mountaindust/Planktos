@@ -77,7 +77,7 @@ class environment:
 
         Arguments:
             swarm_size: size of the swarm (int)
-            init: Method for initalizing positions
+            init: Method for initalizing positions.
             kwargs: keyword arguments to be passed to the method for
                 initalizing positions
         '''
@@ -93,10 +93,16 @@ class swarm:
         Arguments:
             envir: environment for the swarm, defaults to the standard environment
             swarm_size: Size of the swarm (int)
-            init: Method for initalizing positions. Currently, only 'random'
-                is supported.
+            init: Method for initalizing positions.
             kwargs: keyword arguments to be passed to the method for
                 initalizing positions
+        
+        Methods for initializing the swarm:
+            - 'random': Uniform random distribution throughout the domain
+            - 'point': All positions set to a single point.
+                Required keyword arguments:
+                - x = (float) x-coordinate
+                - y = (float) y-coordinate
         '''
 
         # use a new default environment if one was not given
@@ -115,6 +121,8 @@ class swarm:
         self.positions = ma.zeros((swarm_size, 2))
         if init == 'random':
             init_pos.random(self.positions, self.envir.L)
+        elif init == 'point':
+            init_pos.point(self.positions, kwargs['x'], kwargs['y'])
         else:
             print("Initialization method {} not implemented.".format(init))
             print("Exiting...")
