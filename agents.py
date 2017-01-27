@@ -176,9 +176,22 @@ class swarm:
     @staticmethod
     def __gaussian_walk(pos_array, mean, cov):
         ''' Move all rows of pos_array a random distance specified by
-        a gaussian distribution with given mean and covarience matrix '''
+        a gaussian distribution with given mean and covarience matrix.
+        
+        Arguments:
+            pos_array: array to be altered by the gaussian walk
+            mean: either a 1-D mean to be applied to all positions, or
+                a 2-D array of means with a number of rows equal to num of positions
+            cov: a single covariance matrix'''
 
-        pos_array += np.random.multivariate_normal(mean, cov, pos_array.shape[0])
+        mean = np.array(mean)
+
+        if len(mean.shape) == 1:
+            pos_array += np.random.multivariate_normal(mean, 
+                            cov, pos_array.shape[0])
+        else:
+            pos_array += np.random.multivariate_normal(np.zeros(np.shape[1]), 
+                            cov, pos_array.shape[0]) + mean
 
 
 
