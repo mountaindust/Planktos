@@ -9,10 +9,11 @@ Author: Christopher Strickland
 Email: wcstrick@live.unc.edu
 '''
 
+import warnings
+from math import exp, log
 import numpy as np
 import numpy.ma as ma
 import matplotlib.pyplot as plt
-import warnings
 import init_pos
 
 __author__ = "Christopher Strickland"
@@ -21,8 +22,8 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 
 class environment:
 
-    def __init__(self, Lx=100, Ly=100, x_bndry=None, y_bndry=None,
-                 init_swarms=None):
+    def __init__(self, Lx=100, Ly=100, x_bndry=None, y_bndry=None, flow=None,
+                 init_swarms=None, Re=None, rho=None):
         ''' Initialize environmental variables.
 
         Arguments:
@@ -30,7 +31,10 @@ class environment:
             Ly: Length of domain in y direction
             x_bndry: [left bndry condition, right bndry condition]
             y_bndry: [low bndry condition, high bndry condition]
+            flow: TBD
             init_swarms: initial swarms in this environment
+            Re: Reynolds number of environment (optional)
+            rho: fluid density of environment, kh/m**3 (optional)
 
         Right now, supported boundary conditions are 'zero' (default) and 'noflux'.
         '''
@@ -61,6 +65,9 @@ class environment:
         else:
             self.bndry.append(y_bndry)
 
+        # save flow
+        self.flow = flow
+
         # swarm list
         if init_swarms is None:
             self.swarms = []
@@ -69,6 +76,105 @@ class environment:
                 self.swarms = init_swarms
             else:
                 self.swarms = [init_swarms]
+
+        ##### Fluid Variables #####
+
+        # Re
+        self.re = Re
+        # Fluid density kg/m**3
+        self.rho = rho
+        # Characteristic length
+        self.char_L = self.L[1]
+        # porous region height
+        self.a = None
+
+
+
+    def set_brinkman_flow(self, alpha, a, res, U, dpdx):
+        '''Specify fully developed 2D flow with a porous region.
+        Velocity gradient is zero in the x-direction; porous region is the lower
+        part of the y-domain (width=a) with an empty region above.
+
+        Arguments:
+            alpha: porosity constant
+            a: height of porous region
+            res: number of points at which to resolve the flow (int)
+            U: velocity at top of domain (v in input3d). scalar or list-like.
+            dpdx: dp/dx change in momentum constant. scalar or list-like.
+
+        Sets:
+            self.flow: [U.size by] res by res ndarray of flow velocity
+            self.a = a
+        '''
+
+        # Parse parameters
+        if hasattr(U, '__iter__'):
+            try:
+                assert hasattr(dpdx, '__iter__')
+                assert len(dpdx) == len(U)
+            except AssertionError:
+                print('dpdx must be the same length as U.')
+                raise
+        else:
+            try:
+                assert not hasattr(dpdx, '__iter__')
+            except AssertionError:
+                print('dpdx must be the same length as U.')
+                raise
+            U = [U]
+            dpdx = [dpdx]
+
+        if self.re is None or self.rho is None:
+            print('Fluid properties of environment are unspecified.')
+            print('Re = {}'.format(self.re))
+            print('Rho = {}'.format(self.rho))
+            raise AttributeError
+
+        b = self.L[1] - a
+        self.a = a
+
+        # Get y-mesh
+        y_mesh = np.linspace(0, self.L[1], res)
+
+        # Calculate flow velocity
+        flow = np.zeros((len(U), res, res))
+        t = 0
+        for v, px in zip(U, dpdx):
+            mu = self.rho*v*self.char_L/self.re
+
+            # Calculate C and D constants and then get A and B based on these
+
+            C = (px*(-0.5*alpha**2*b**2+exp(log(alpha*b)-alpha*a)-exp(-alpha*a)+1) +
+                v*alpha**2*mu)/(alpha**2*mu*(exp(log(alpha*b)-2*alpha*a)+alpha*b-
+                exp(-2*alpha*a)+1))
+
+            D = (px*(exp(log(0.5*alpha**2*b**2)-2*alpha*a)+exp(log(alpha*b)-alpha*a)+
+                exp(-alpha*a)-exp(-2*alpha*a)) - 
+                exp(log(v*alpha**2*mu)-2*alpha*a))/(alpha**2*mu*
+                (exp(log(alpha*b)-2*alpha*a)+alpha*b-exp(-2*alpha*a)+1))
+
+            A = alpha*C - alpha*D
+            B = C + D - px/(alpha**2*mu)
+
+            for n, z in enumerate(y_mesh-a):
+                if z > 0:
+                    #Region I
+                    flow[t,n,:] = z**2*px/(2*mu) + A*z + B
+                else:
+                    #Region 2
+                    if C > 0 and D > 0:
+                        flow[t,n,:] = exp(log(C)+alpha*z) + exp(log(D)-alpha*z) - px/(alpha**2*mu)
+                    elif C <= 0 and D > 0:
+                        flow[t,n,:] = exp(log(D)-alpha*z) - px/(alpha**2*mu)
+                    elif C > 0 and D <= 0:
+                        flow[t,n,:] = exp(log(C)+alpha*z) - px/(alpha**2*mu)
+                    else:
+                        flow[t,n,:] = -px/(alpha**2*mu)
+            t += 1
+
+        flow = flow.squeeze()
+        self.flow = [flow, np.zeros_like(flow)] #x-direction, y-direction
+
 
 
 
