@@ -355,17 +355,19 @@ class swarm:
         ''' Plot the current position of the swarm '''
 
         plt.figure()
+        if self.envir.a is not None:
+            # add a grassy porous layer background
+            grass = np.random.rand(80)*self.envir.L[0]
+            for g in grass:
+                plt.axvline(x=g, ymax=self.envir.a/self.envir.L[1], color='.5')
         plt.scatter(self.positions[:,0], self.positions[:,1], label='organism')
         plt.xlim((0, self.envir.L[0]))
         plt.ylim((0, self.envir.L[1]))
         plt.title('Organism positions')
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            if blocking:
-                plt.show()
-            else:
-                plt.draw()
-                plt.pause(0.001)
+        if blocking:
+            plt.show()
+        else:
+            plt.show(False)
 
 
 
