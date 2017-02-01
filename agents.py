@@ -10,12 +10,13 @@ Email: wcstrick@live.unc.edu
 '''
 
 import sys
-import warnings
 from math import exp, log
 import numpy as np
 import numpy.ma as ma
 from scipy import interpolate
+import matplotlib.cm as cm
 import matplotlib.pyplot as plt
+from matplotlib import animation
 import init_pos
 
 __author__ = "Christopher Strickland"
@@ -350,6 +351,18 @@ class swarm:
 
 
 
+    def __get_grass_background(self):
+        ''' Create a grassy looking background to show porous layer'''
+
+        pass
+        # grass = np.zeros(self.envir.L+1)
+        # loc_choices = np.arange(0,self.envir.L[0]+1,2,dtype=int)
+        # rand_loc = np.random.choice(loc_choices,int(self.envir.L[0]/3),replace=False)
+        # for loc in loc_choices:
+        #     grass[loc,:int(np.ceil(self.envir.a))] = 0.5
+
+
+
     def plot(self, blocking=True):
         ''' Plot the current position of the swarm '''
 
@@ -371,21 +384,36 @@ class swarm:
     def plot_all(self):
         ''' Plot the entire history of the swarm's movement, incl. current '''
 
-        plt.figure()
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            for pos, t in zip(self.pos_history, self.time_history):
-                plt.scatter(pos[:,0], pos[:,1], label='organism')
-                plt.xlim((0, self.envir.L[0]))
-                plt.ylim((0, self.envir.L[1]))
-                plt.title('Organism positions, time = {:.2f}'.format(t))
-                plt.draw()
-                plt.pause(0.001)
-                plt.clf()
-            plt.scatter(self.positions[:,0], self.positions[:,1], label='organism')
-            plt.xlim((0, self.envir.L[0]))
-            plt.ylim((0, self.envir.L[1]))
-            plt.title('Organism positions, time = {:.2f}'.format(self.time))
-            plt.draw()
-            plt.pause(0.001)
-            plt.show()
+        if len(self.time_history) == 0:
+            self.plot()
+            return
+
+        fig = plt.figure()
+        ax = plt.axes(xlim=(0, self.envir.L[0]), ylim=(0, self.envir.L[1]))
+        ax.set_title('Organism positions')
+        time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes)
+        scat = ax.scatter([], [], label='organism')
+
+        # initialization function: plot the background of each frame
+        def init():
+            scat.set_offsets(self.pos_history[0])
+            time_text.set_text('time = {:.2f}'.format(self.time_history[0]))
+            return scat, time_text
+
+        # animation function. Called sequentially
+        def animate(n):
+            if n < len(self.pos_history):
+                scat.set_offsets(self.pos_history[n])
+                time_text.set_text('time = {:.2f}'.format(self.time_history[n]))
+            else:
+                scat.set_offsets(self.positions)
+                time_text.set_text('time = {:.2f}'.format(self.time))
+            return scat, time_text
+
+        # infer animation rate from dt between current and last position
+        dt = self.time - self.time_history[-1]
+
+        anim = animation.FuncAnimation(fig, animate, init_func=init,
+                                       frames=len(self.pos_history)+1,
+                                       interval=dt*100, repeat=False, blit=True)
+        plt.show()
