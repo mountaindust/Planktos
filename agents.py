@@ -9,10 +9,12 @@ Author: Christopher Strickland
 Email: wcstrick@live.unc.edu
 '''
 
+import sys
 import warnings
 from math import exp, log
 import numpy as np
 import numpy.ma as ma
+from scipy import interpolate
 import matplotlib.pyplot as plt
 import init_pos
 
@@ -31,7 +33,8 @@ class environment:
             Ly: Length of domain in y direction
             x_bndry: [left bndry condition, right bndry condition]
             y_bndry: [low bndry condition, high bndry condition]
-            flow: TBD
+            flow: [x-vel field ndarray ([t],m,n), y-vel field ndarray ([t],m,n)]
+                Note! y=0 is at row zero, increasing downward.
             init_swarms: initial swarms in this environment
             Re: Reynolds number of environment (optional)
             rho: fluid density of environment, kh/m**3 (optional)
@@ -50,23 +53,31 @@ class environment:
             # default boundary conditions
             self.bndry.append(['zero', 'zero'])
         elif x_bndry[0] not in supprted_conds or x_bndry[1] not in supprted_conds:
-            print("X boundary condition {} not implemented.".format(x_bndry))
-            print("Exiting...")
-            raise NameError
+            raise NameError("X boundary condition {} not implemented.".format(x_bndry))
         else:
             self.bndry.append(x_bndry)
         if y_bndry is None:
             # default boundary conditions
             self.bndry.append(['zero', 'zero'])
         elif y_bndry[0] not in supprted_conds or y_bndry[1] not in supprted_conds:
-            print("Y boundary condition {} not implemented.".format(y_bndry))
-            print("Exiting...")
-            raise NameError
+            raise NameError("Y boundary condition {} not implemented.".format(y_bndry))
         else:
             self.bndry.append(y_bndry)
 
         # save flow
+        if flow is not None:
+            try:
+                assert isinstance(flow, list)
+                assert len(flow) > 1
+                for ii in range(len(flow)):
+                    assert isinstance(flow[ii], np.ndarray)
+            except AssertionError:
+                tb = sys.exc_info()[2]
+                raise AttributeError(
+                    'flow must be specified as a list of ndarrays.').with_traceback(tb)
+            
         self.flow = flow
+        self.flow_time_mesh = None
 
         # swarm list
         if init_swarms is None:
@@ -177,7 +188,6 @@ class environment:
 
 
 
-
     def add_swarm(self, swarm_size=100, init='random', **kwargs):
         ''' Adds a swarm into this environment.
 
@@ -248,8 +258,23 @@ class swarm:
         self.time_history.append(self.time)
         self.pos_history.append(self.positions.copy())
 
+        # Interpolate fluid flow
+        if self.envir.flow is None:
+            mu = np.array([0,0])
+        else:
+            try:
+                assert len(self.envir.flow[0].shape) == 2, "Flow dim != 2"
+                assert len(self.envir.flow[1].shape) == 2, "Flow dim != 2"
+            except AssertionError:
+                tb = sys.exc_info()[2]
+                raise NotImplementedError(
+                    'Movement in time-dependent flow is not yet implemented.').with_traceback(tb)
+            
+            mu = self.__interpolate_flow(method='cubic')
+            
+
         # For now, just have everybody move according to a random walk.
-        self.__gaussian_walk(self.positions, [0,0], dt*np.eye(2))
+        self.__move_gaussian_walk(self.positions, mu, dt*np.eye(2))
 
         # Apply boundary conditions.
         for dim, bndry in enumerate(self.envir.bndry):
@@ -279,24 +304,38 @@ class swarm:
 
 
 
+    def __interpolate_flow(self,method):
+
+        flow = self.envir.flow
+        x_f_mesh = np.linspace(0,self.envir.L[0],flow[0].shape[1])
+        y_f_mesh = np.linspace(0,self.envir.L[1],flow[0].shape[0])
+        x_f_grid, y_f_grid = np.meshgrid(x_f_mesh,y_f_mesh)
+        points = np.array([x_f_grid.flatten(), y_f_grid.flatten()]).T
+        values_x = flow[0].flatten()
+        values_y = flow[1].flatten()
+
+        x_vel = interpolate.griddata(points, values_x, self.positions, method=method)
+        y_vel = interpolate.griddata(points, values_y, self.positions, method=method)
+        return np.array([x_vel, y_vel]).T
+
+
+
     @staticmethod
-    def __gaussian_walk(pos_array, mean, cov):
+    def __move_gaussian_walk(pos_array, mean, cov):
         ''' Move all rows of pos_array a random distance specified by
         a gaussian distribution with given mean and covarience matrix.
         
         Arguments:
             pos_array: array to be altered by the gaussian walk
-            mean: either a 1-D mean to be applied to all positions, or
+            mean: either a 1-D array mean to be applied to all positions, or
                 a 2-D array of means with a number of rows equal to num of positions
             cov: a single covariance matrix'''
-
-        mean = np.array(mean)
 
         if len(mean.shape) == 1:
             pos_array += np.random.multivariate_normal(mean, 
                             cov, pos_array.shape[0])
         else:
-            pos_array += np.random.multivariate_normal(np.zeros(np.shape[1]), 
+            pos_array += np.random.multivariate_normal(np.zeros(mean.shape[1]), 
                             cov, pos_array.shape[0]) + mean
 
 
