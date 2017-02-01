@@ -37,7 +37,8 @@ class environment:
             flow: [x-vel field ndarray ([t],m,n), y-vel field ndarray ([t],m,n)]
                 Note! y=0 is at row zero, increasing downward, and it is assumed
                 that flow mesh is equally spaced incl values on the domain bndry
-            flow_times: array of times or scalar dt; required if flow is time-dependent.
+            flow_times: [tstart, tend] or iterable of times at which flow is specified
+                     or scalar dt; required if flow is time-dependent.
             Re: Reynolds number of environment (optional)
             rho: fluid density of environment, kh/m**3 (optional)
             init_swarms: initial swarms in this environment
@@ -49,7 +50,7 @@ class environment:
         self.L = [Lx, Ly]
 
         # Parse boundary conditions
-        supprted_conds = ['zero','noflux']
+        supprted_conds = ['zero', 'noflux']
         self.bndry = []
 
         if x_bndry is None:
@@ -84,11 +85,7 @@ class environment:
                 # time-dependent flow
                 assert flow[0].shape[0] == flow[1].shape[0]
                 assert flow_times is not None
-                if hasattr(flow_times, '__iter__'):
-                    self.flow_times = np.array(flow_times)
-                    self.__set_flow_variables()
-                else:
-                    self.__set_flow_variables(flow_times)
+                self.__set_flow_variables(flow_times)
             else:
                 self.__set_flow_variables()
         self.flow = flow
@@ -118,7 +115,7 @@ class environment:
 
 
 
-    def set_brinkman_flow(self, alpha, a, res, U, dpdx):
+    def set_brinkman_flow(self, alpha, a, res, U, dpdx, tspan=None):
         '''Specify fully developed 2D flow with a porous region.
         Velocity gradient is zero in the x-direction; porous region is the lower
         part of the y-domain (width=a) with an empty region above.
@@ -129,6 +126,8 @@ class environment:
             res: number of points at which to resolve the flow (int)
             U: velocity at top of domain (v in input3d). scalar or list-like.
             dpdx: dp/dx change in momentum constant. scalar or list-like.
+            tspan: [tstart, tend] or iterable of times at which flow is specified
+                if None and U/dpdx are iterable, dt=1 will be used.
 
         Sets:
             self.flow: [U.size by] res by res ndarray of flow velocity
@@ -205,7 +204,15 @@ class environment:
 
         flow = flow.squeeze()
         self.flow = [flow, np.zeros_like(flow)] #x-direction, y-direction
-        self.__set_flow_variables()
+
+        if len(U) == 1:
+            self.__set_flow_variables()
+        else:
+            if tspan is None:
+                self.__set_flow_variables(tspan=1)
+            else:
+                self.__set_flow_variables(tspan=tspan)
+                
 
 
 
@@ -226,9 +233,15 @@ class environment:
 
 
 
-    def __set_flow_variables(self, dt=None):
-        '''Store points at which flow is specified, and time information. '''
-        if len(self.flow[0].shape) == 2:
+    def __set_flow_variables(self, tspan=None):
+        '''Store points at which flow is specified, and time information. 
+        
+        Arguments:
+            tspan: [tstart, tend] or iterable of times at which flow is specified
+                    or scalar dt. Required if flow is time-dependent; None will 
+                    be interpreted as non time-dependent flow.
+        '''
+        if tspan is None:
             # no time-dependent flow
             x_f_mesh = np.linspace(0,self.L[0],self.flow[0].shape[1])
             y_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[0])
@@ -242,9 +255,16 @@ class environment:
             x_f_grid, y_f_grid = np.meshgrid(x_f_mesh,y_f_mesh)
             points = np.array([x_f_grid.flatten(), y_f_grid.flatten()]).T
             self.flow_points = points
-            if dt is not None:
-                # set flow_times
+
+            # set time
+            if not hasattr(tspan, '__iter__'):
+                # set flow_times based off zero
                 self.flow_times = np.arange(0, dt*flow[0].shape[0], dt)
+            elif len(tspan) == 2:
+                self.flow_times = np.linspace(tspan[0], tspan[1], flow[0].shape[0])
+            else:
+                assert len(tspan) == flow[0].shape[0]
+                self.flow_times = np.array(tspan)
 
 
 
@@ -259,7 +279,7 @@ class swarm:
             init: Method for initalizing positions.
             kwargs: keyword arguments to be passed to the method for
                 initalizing positions
-        
+
         Methods for initializing the swarm:
             - 'random': Uniform random distribution throughout the domain
             - 'point': All positions set to a single point.
