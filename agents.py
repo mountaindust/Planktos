@@ -351,18 +351,6 @@ class swarm:
 
 
 
-    def __get_grass_background(self):
-        ''' Create a grassy looking background to show porous layer'''
-
-        pass
-        # grass = np.zeros(self.envir.L+1)
-        # loc_choices = np.arange(0,self.envir.L[0]+1,2,dtype=int)
-        # rand_loc = np.random.choice(loc_choices,int(self.envir.L[0]/3),replace=False)
-        # for loc in loc_choices:
-        #     grass[loc,:int(np.ceil(self.envir.a))] = 0.5
-
-
-
     def plot(self, blocking=True):
         ''' Plot the current position of the swarm '''
 
@@ -396,6 +384,11 @@ class swarm:
 
         # initialization function: plot the background of each frame
         def init():
+            if self.envir.a is not None:
+                # add a grassy porous layer background
+                grass = np.random.rand(80)*self.envir.L[0]
+                for g in grass:
+                    ax.axvline(x=g, ymax=self.envir.a/self.envir.L[1], color='.5')
             scat.set_offsets(self.pos_history[0])
             time_text.set_text('time = {:.2f}'.format(self.time_history[0]))
             return scat, time_text
