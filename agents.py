@@ -78,6 +78,7 @@ class environment:
             
         self.flow = flow
         self.flow_time_mesh = None
+        self.flow_points = None
 
         # swarm list
         if init_swarms is None:
@@ -116,6 +117,9 @@ class environment:
         Sets:
             self.flow: [U.size by] res by res ndarray of flow velocity
             self.a = a
+
+        Calls:
+            __set_flow_variables
         '''
 
         # Parse parameters
@@ -185,6 +189,7 @@ class environment:
 
         flow = flow.squeeze()
         self.flow = [flow, np.zeros_like(flow)] #x-direction, y-direction
+        self.__set_flow_variables()
 
 
 
@@ -198,6 +203,16 @@ class environment:
                 initalizing positions
         '''
         self.swarms.append(swarm(swarm_size, self, init, **kwargs))
+
+
+
+    def __set_flow_variables(self):
+        '''Store points at which flow is specified, and time information. '''
+        x_f_mesh = np.linspace(0,self.L[0],self.flow[0].shape[1])
+        y_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[0])
+        x_f_grid, y_f_grid = np.meshgrid(x_f_mesh,y_f_mesh)
+        points = np.array([x_f_grid.flatten(), y_f_grid.flatten()]).T
+        self.flow_points = points
 
 
 
@@ -270,7 +285,7 @@ class swarm:
                 raise NotImplementedError(
                     'Movement in time-dependent flow is not yet implemented.').with_traceback(tb)
             
-            mu = self.__interpolate_flow(method='cubic')
+            mu = self.__interpolate_flow(self.envir.flow,method='cubic')
             
 
         # For now, just have everybody move according to a random walk.
@@ -304,18 +319,13 @@ class swarm:
 
 
 
-    def __interpolate_flow(self,method):
+    def __interpolate_flow(self,flow,method):
+        '''Interpolate the fluid velocity field at swarm positions'''
 
-        flow = self.envir.flow
-        x_f_mesh = np.linspace(0,self.envir.L[0],flow[0].shape[1])
-        y_f_mesh = np.linspace(0,self.envir.L[1],flow[0].shape[0])
-        x_f_grid, y_f_grid = np.meshgrid(x_f_mesh,y_f_mesh)
-        points = np.array([x_f_grid.flatten(), y_f_grid.flatten()]).T
-        values_x = flow[0].flatten()
-        values_y = flow[1].flatten()
-
-        x_vel = interpolate.griddata(points, values_x, self.positions, method=method)
-        y_vel = interpolate.griddata(points, values_y, self.positions, method=method)
+        x_vel = interpolate.griddata(self.envir.flow_points, np.ravel(flow[0]), 
+                                     self.positions, method=method)
+        y_vel = interpolate.griddata(self.envir.flow_points, np.ravel(flow[1]), 
+                                     self.positions, method=method)
         return np.array([x_vel, y_vel]).T
 
 
