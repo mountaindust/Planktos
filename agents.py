@@ -26,7 +26,7 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 class environment:
 
     def __init__(self, Lx=100, Ly=100, x_bndry=None, y_bndry=None, flow=None,
-                 init_swarms=None, Re=None, rho=None):
+                 flow_times=None, Re=None, rho=None, init_swarms=None):
         ''' Initialize environmental variables.
 
         Arguments:
@@ -35,10 +35,12 @@ class environment:
             x_bndry: [left bndry condition, right bndry condition]
             y_bndry: [low bndry condition, high bndry condition]
             flow: [x-vel field ndarray ([t],m,n), y-vel field ndarray ([t],m,n)]
-                Note! y=0 is at row zero, increasing downward.
-            init_swarms: initial swarms in this environment
+                Note! y=0 is at row zero, increasing downward, and it is assumed
+                that flow mesh is equally spaced incl values on the domain bndry
+            flow_times: array of times or scalar dt; required if flow is time-dependent.
             Re: Reynolds number of environment (optional)
             rho: fluid density of environment, kh/m**3 (optional)
+            init_swarms: initial swarms in this environment
 
         Right now, supported boundary conditions are 'zero' (default) and 'noflux'.
         '''
@@ -66,6 +68,8 @@ class environment:
             self.bndry.append(y_bndry)
 
         # save flow
+        self.flow_times = None
+        self.flow_points = None
         if flow is not None:
             try:
                 assert isinstance(flow, list)
@@ -76,10 +80,18 @@ class environment:
                 tb = sys.exc_info()[2]
                 raise AttributeError(
                     'flow must be specified as a list of ndarrays.').with_traceback(tb)
-            
+            if max([len(f.shape) for f in flow]) > 2:
+                # time-dependent flow
+                assert flow[0].shape[0] == flow[1].shape[0]
+                assert flow_times is not None
+                if hasattr(flow_times, '__iter__'):
+                    self.flow_times = np.array(flow_times)
+                    self.__set_flow_variables()
+                else:
+                    self.__set_flow_variables(flow_times)
+            else:
+                self.__set_flow_variables()
         self.flow = flow
-        self.flow_time_mesh = None
-        self.flow_points = None
 
         # swarm list
         if init_swarms is None:
@@ -89,6 +101,9 @@ class environment:
                 self.swarms = init_swarms
             else:
                 self.swarms = [init_swarms]
+            # reset each swarm's environment
+            for swarm in self.swarms:
+                swarm.envir = self
 
         ##### Fluid Variables #####
 
@@ -120,7 +135,7 @@ class environment:
             self.a = a
 
         Calls:
-            __set_flow_variables
+            self.__set_flow_variables
         '''
 
         # Parse parameters
@@ -194,26 +209,42 @@ class environment:
 
 
 
-    def add_swarm(self, swarm_size=100, init='random', **kwargs):
+    def add_swarm(self, swarm_s=100, init='random', **kwargs):
         ''' Adds a swarm into this environment.
 
         Arguments:
-            swarm_size: size of the swarm (int)
+            swarm_s: swarm object or size of the swarm (int)
             init: Method for initalizing positions.
             kwargs: keyword arguments to be passed to the method for
                 initalizing positions
         '''
-        self.swarms.append(swarm(swarm_size, self, init, **kwargs))
+        if isinstance(swarm_s, swarm):
+            swarm_s.envir = self
+            self.swarms.append(swarm_s)
+        else:
+            self.swarms.append(swarm(swarm_s, self, init, **kwargs))
 
 
 
-    def __set_flow_variables(self):
+    def __set_flow_variables(self, dt=None):
         '''Store points at which flow is specified, and time information. '''
-        x_f_mesh = np.linspace(0,self.L[0],self.flow[0].shape[1])
-        y_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[0])
-        x_f_grid, y_f_grid = np.meshgrid(x_f_mesh,y_f_mesh)
-        points = np.array([x_f_grid.flatten(), y_f_grid.flatten()]).T
-        self.flow_points = points
+        if len(self.flow[0].shape) == 2:
+            # no time-dependent flow
+            x_f_mesh = np.linspace(0,self.L[0],self.flow[0].shape[1])
+            y_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[0])
+            x_f_grid, y_f_grid = np.meshgrid(x_f_mesh,y_f_mesh)
+            points = np.array([x_f_grid.flatten(), y_f_grid.flatten()]).T
+            self.flow_points = points
+        else:
+            # time-dependent flow
+            x_f_mesh = np.linspace(0,self.L[0],self.flow[0].shape[2])
+            y_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[1])
+            x_f_grid, y_f_grid = np.meshgrid(x_f_mesh,y_f_mesh)
+            points = np.array([x_f_grid.flatten(), y_f_grid.flatten()]).T
+            self.flow_points = points
+            if dt is not None:
+                # set flow_times
+                self.flow_times = np.arange(0, dt*flow[0].shape[0], dt)
 
 
 
