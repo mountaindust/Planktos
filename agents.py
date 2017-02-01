@@ -364,14 +364,11 @@ class swarm:
         plt.xlim((0, self.envir.L[0]))
         plt.ylim((0, self.envir.L[1]))
         plt.title('Organism positions')
-        if blocking:
-            plt.show()
-        else:
-            plt.show(False)
+        plt.show(blocking)
 
 
 
-    def plot_all(self):
+    def plot_all(self, save_filename=None):
         ''' Plot the entire history of the swarm's movement, incl. current '''
 
         if len(self.time_history) == 0:
@@ -411,4 +408,11 @@ class swarm:
         anim = animation.FuncAnimation(fig, animate, init_func=init,
                                        frames=len(self.pos_history)+1,
                                        interval=dt*100, repeat=False, blit=True)
+        if save_filename is not None:
+            try:
+                anim.save(save_filename, dpi=150)
+            except:
+                print('Failed to save animation.')
+                print('Check that you have ffmpeg or mencoder installed!')
+                return
         plt.show()
