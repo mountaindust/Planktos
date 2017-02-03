@@ -160,6 +160,9 @@ class environment:
             U = [U]
             dpdx = [dpdx]
 
+        for v in U:
+            assert v != 0, "U cannot be equal to zero."
+
         if self.re is None or self.rho is None:
             print('Fluid properties of environment are unspecified.')
             print('Re = {}'.format(self.re))
@@ -278,11 +281,11 @@ class environment:
             # set time
             if not hasattr(tspan, '__iter__'):
                 # set flow_times based off zero
-                self.flow_times = np.arange(0, dt*flow[0].shape[0], dt)
+                self.flow_times = np.arange(0, tspan*self.flow[0].shape[0], tspan)
             elif len(tspan) == 2:
-                self.flow_times = np.linspace(tspan[0], tspan[1], flow[0].shape[0])
+                self.flow_times = np.linspace(tspan[0], tspan[1], self.flow[0].shape[0])
             else:
-                assert len(tspan) == flow[0].shape[0]
+                assert len(tspan) == self.flow[0].shape[0]
                 self.flow_times = np.array(tspan)
 
 
