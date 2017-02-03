@@ -113,6 +113,12 @@ class environment:
         # porous region height
         self.a = None
 
+        ##### Initalize Time #####
+        # By default, time is updated whenever an individual swarm moves (swarm.move()),
+        #   or when all swarms in the environment are collectively moved.
+        self.time = 0.0
+        self.time_history = []
+
 
 
     def set_brinkman_flow(self, alpha, a, res, U, dpdx, tspan=None):
@@ -225,11 +231,24 @@ class environment:
             kwargs: keyword arguments to be passed to the method for
                 initalizing positions
         '''
+
         if isinstance(swarm_s, swarm):
             swarm_s.envir = self
             self.swarms.append(swarm_s)
         else:
-            self.swarms.append(swarm(swarm_s, self, init, **kwargs))
+            swarm(swarm_s, self, init, **kwargs)
+
+
+
+    def move_swarms(self, dt=1.0, params=None):
+        '''Move all swarms in the environment'''
+
+        for s in self.swarms:
+            s.move(dt, params, update_time=False)
+
+        # update time
+        self.time_history.append(self.time)
+        self.time += dt
 
 
 
@@ -311,18 +330,15 @@ class swarm:
             print("Exiting...")
             raise NameError
 
-        # Initialize time and history
-        self.time = 0.0
-        self.time_history = []
+        # Initialize position history
         self.pos_history = []
 
 
 
-    def move(self, dt=1.0, params=None):
+    def move(self, dt=1.0, params=None, update_time=True):
         ''' Move all organsims in the swarm over an amount of time dt '''
 
-        # Put current time/position in the history
-        self.time_history.append(self.time)
+        # Put current position in the history
         self.pos_history.append(self.positions.copy())
 
         # Interpolate fluid flow
@@ -344,6 +360,18 @@ class swarm:
         self.__move_gaussian_walk(self.positions, mu, dt*np.eye(2))
 
         # Apply boundary conditions.
+        self.__apply_boundary_conditions()
+        
+        # Record new time
+        if update_time:
+            self.envir.time_history.append(self.envir.time)
+            self.envir.time += dt
+
+
+
+    def __apply_boundary_conditions(self):
+        '''Apply boundary conditions to self.positions'''
+
         for dim, bndry in enumerate(self.envir.bndry):
 
             ### Left boundary ###
@@ -365,9 +393,6 @@ class swarm:
                 self.positions[self.positions[:,dim]> self.envir.L[dim], dim] = self.envir.L[dim]
             else:
                 raise NameError
-        
-        # Record new time
-        self.time += dt
 
 
 
@@ -422,7 +447,7 @@ class swarm:
     def plot_all(self, save_filename=None):
         ''' Plot the entire history of the swarm's movement, incl. current '''
 
-        if len(self.time_history) == 0:
+        if len(self.envir.time_history) == 0:
             self.plot()
             return
 
@@ -440,21 +465,21 @@ class swarm:
                 for g in grass:
                     ax.axvline(x=g, ymax=self.envir.a/self.envir.L[1], color='.5')
             scat.set_offsets(self.pos_history[0])
-            time_text.set_text('time = {:.2f}'.format(self.time_history[0]))
+            time_text.set_text('time = {:.2f}'.format(self.envir.time_history[0]))
             return scat, time_text
 
         # animation function. Called sequentially
         def animate(n):
             if n < len(self.pos_history):
                 scat.set_offsets(self.pos_history[n])
-                time_text.set_text('time = {:.2f}'.format(self.time_history[n]))
+                time_text.set_text('time = {:.2f}'.format(self.envir.time_history[n]))
             else:
                 scat.set_offsets(self.positions)
-                time_text.set_text('time = {:.2f}'.format(self.time))
+                time_text.set_text('time = {:.2f}'.format(self.envir.time))
             return scat, time_text
 
         # infer animation rate from dt between current and last position
-        dt = self.time - self.time_history[-1]
+        dt = self.envir.time - self.envir.time_history[-1]
 
         anim = animation.FuncAnimation(fig, animate, init_func=init,
                                        frames=len(self.pos_history)+1,
