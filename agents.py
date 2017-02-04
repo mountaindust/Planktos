@@ -25,7 +25,8 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 
 class environment:
 
-    def __init__(self, Lx=100, Ly=100, x_bndry=None, y_bndry=None, flow=None,
+    def __init__(self, Lx=100, Ly=100, Lz=None, 
+                 x_bndry=None, y_bndry=None, z_bndry=None, flow=None,
                  flow_times=None, Re=None, rho=None, init_swarms=None):
         ''' Initialize environmental variables.
 
@@ -47,30 +48,19 @@ class environment:
         '''
 
         # Save domain size
-        self.L = [Lx, Ly]
+        if Lz is None:
+            self.L = [Lx, Ly]
+        else:
+            self.L = [Lx, Ly, Lz]
 
         # Parse boundary conditions
-        supprted_conds = ['zero', 'noflux']
         self.bndry = []
+        self.set_boundary_conditions(x_bndry, y_bndry, z_bndry, Lz)
 
-        if x_bndry is None:
-            # default boundary conditions
-            self.bndry.append(['zero', 'zero'])
-        elif x_bndry[0] not in supprted_conds or x_bndry[1] not in supprted_conds:
-            raise NameError("X boundary condition {} not implemented.".format(x_bndry))
-        else:
-            self.bndry.append(x_bndry)
-        if y_bndry is None:
-            # default boundary conditions
-            self.bndry.append(['zero', 'zero'])
-        elif y_bndry[0] not in supprted_conds or y_bndry[1] not in supprted_conds:
-            raise NameError("Y boundary condition {} not implemented.".format(y_bndry))
-        else:
-            self.bndry.append(y_bndry)
-
-        # save flow
+        ##### save flow #####
         self.flow_times = None
         self.flow_points = None
+
         if flow is not None:
             try:
                 assert isinstance(flow, list)
@@ -81,16 +71,28 @@ class environment:
                 tb = sys.exc_info()[2]
                 raise AttributeError(
                     'flow must be specified as a list of ndarrays.').with_traceback(tb)
-            if max([len(f.shape) for f in flow]) > 2:
-                # time-dependent flow
-                assert flow[0].shape[0] == flow[1].shape[0]
-                assert flow_times is not None
-                self.__set_flow_variables(flow_times)
+            if Lz is not None:
+                # 3D flow
+                assert len(flow) == 3, 'Must specify flow in x, y and z direction'
+                if max([len(f.shape) for f in flow]) > 3:
+                    # time-dependent flow
+                    assert flow[0].shape[0] == flow[1].shape[0] == flow[2].shape[0]
+                    assert flow_times is not None
+                    self.__set_flow_variables(flow_times)
+                else:
+                    self.__set_flow_variables()
             else:
-                self.__set_flow_variables()
+                # 2D flow
+                if max([len(f.shape) for f in flow]) > 2:
+                    # time-dependent flow
+                    assert flow[0].shape[0] == flow[1].shape[0]
+                    assert flow_times is not None
+                    self.__set_flow_variables(flow_times)
+                else:
+                    self.__set_flow_variables()
         self.flow = flow
 
-        # swarm list
+        ##### swarm list #####
         if init_swarms is None:
             self.swarms = []
         else:
@@ -255,6 +257,39 @@ class environment:
 
 
 
+    def set_boundary_conditions(self, x_bndry, y_bndry, z_bndry, zdim):
+        '''Check and set boundary conditions. Set Z-dimension only if
+        zdim is not None.
+        '''
+
+        supprted_conds = ['zero', 'noflux']
+        default_conds = ['zero', 'zero']
+
+        if x_bndry is None:
+            # default boundary conditions
+            self.bndry.append(default_conds)
+        elif x_bndry[0] not in supprted_conds or x_bndry[1] not in supprted_conds:
+            raise NameError("X boundary condition {} not implemented.".format(x_bndry))
+        else:
+            self.bndry.append(x_bndry)
+        if y_bndry is None:
+            # default boundary conditions
+            self.bndry.append(default_conds)
+        elif y_bndry[0] not in supprted_conds or y_bndry[1] not in supprted_conds:
+            raise NameError("Y boundary condition {} not implemented.".format(y_bndry))
+        else:
+            self.bndry.append(y_bndry)
+        if zdim is not None:
+            if z_bndry is None:
+                # default boundary conditions
+                self.bndry.append(default_conds)
+            elif z_bndry[0] not in supprted_conds or z_bndry[1] not in supprted_conds:
+                raise NameError("Z boundary condition {} not implemented.".format(z_bndry))
+            else:
+                self.bndry.append(z_bndry)
+
+
+
     def __set_flow_variables(self, tspan=None):
         '''Store points at which flow is specified, and time information. 
         
@@ -348,7 +383,7 @@ class swarm:
         if self.envir.flow is None:
             mu = np.array([0, 0])
         else:
-            if len(self.envir.flow[0]) == 2:
+            if len(self.envir.flow[0].shape) == 2:
                 # temporally constant flow
                 mu = self.__interpolate_flow(self.envir.flow, method='cubic')
             else:
