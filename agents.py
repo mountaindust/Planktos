@@ -346,25 +346,22 @@ class swarm:
 
         # Interpolate fluid flow
         if self.envir.flow is None:
-            mu = np.array([0,0])
+            mu = np.array([0, 0])
         else:
-            try:
-                assert len(self.envir.flow[0].shape) == 2, "Flow dim != 2"
-                assert len(self.envir.flow[1].shape) == 2, "Flow dim != 2"
-            except AssertionError:
-                tb = sys.exc_info()[2]
-                raise NotImplementedError(
-                    'Movement in time-dependent flow is not yet implemented.').with_traceback(tb)
-            
-            mu = self.__interpolate_flow(self.envir.flow,method='cubic')
-            
+            if len(self.envir.flow[0]) == 2:
+                # temporally constant flow
+                mu = self.__interpolate_flow(self.envir.flow, method='cubic')
+            else:
+                # temporal flow. interpolate in time, and then in space.
+                mu = self.__interpolate_flow(self.__interpolate_temporal_flow(),
+                                             method='cubic')
 
         # For now, just have everybody move according to a random walk.
         self.__move_gaussian_walk(self.positions, mu, dt*np.eye(2))
 
         # Apply boundary conditions.
         self.__apply_boundary_conditions()
-        
+
         # Record new time
         if update_time:
             self.envir.time_history.append(self.envir.time)
@@ -407,6 +404,24 @@ class swarm:
         y_vel = interpolate.griddata(self.envir.flow_points, np.ravel(flow[1]), 
                                      self.positions, method=method)
         return np.array([x_vel, y_vel]).T
+
+
+
+    def __interpolate_temporal_flow(self):
+        '''Linearly interpolate flow in time'''
+
+        # boundary cases
+        if self.envir.time <= self.envir.flow_times[0]:
+            return [f[0,:,:] for f in self.envir.flow]
+        elif self.envir.time >= self.envir.flow_times[-1]:
+            return [f[-1,:,:] for f in self.envir.flow]
+        else:
+            # linearly interpolate
+            indx = np.searchsorted(self.envir.flow_times,self.envir.time)
+            diff = self.envir.flow_times[indx] - self.envir.time
+            dt = self.envir.flow_times[indx] - self.envir.flow_times[indx-1]
+            return [f[indx,:,:]*(dt-diff)/dt + f[indx-1,:,:]*diff/dt
+                    for f in self.envir.flow]
 
 
 
