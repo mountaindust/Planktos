@@ -348,7 +348,7 @@ class swarm:
         if self.envir.flow is None:
             mu = np.array([0, 0])
         else:
-            if len(self.envir.flow[0]) == 2:
+            if len(self.envir.flow[0].shape) == 2:
                 # temporally constant flow
                 mu = self.__interpolate_flow(self.envir.flow, method='cubic')
             else:
