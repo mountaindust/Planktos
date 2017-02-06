@@ -384,20 +384,33 @@ class swarm:
         # Put current position in the history
         self.pos_history.append(self.positions.copy())
 
-        # Interpolate fluid flow
-        if self.envir.flow is None:
-            mu = np.array([0, 0])
-        else:
-            if len(self.envir.flow[0].shape) == 2:
-                # temporally constant flow
-                mu = self.__interpolate_flow(self.envir.flow, method='cubic')
-            else:
-                # temporal flow. interpolate in time, and then in space.
-                mu = self.__interpolate_flow(self.__interpolate_temporal_flow(),
-                                             method='cubic')
+        # 3D?
+        dim3 = (len(self.envir.L) == 3)
 
-        # For now, just have everybody move according to a random walk.
-        self.__move_gaussian_walk(self.positions, mu, dt*np.eye(2))
+        # Interpolate fluid flow
+        if not dim3:
+            if self.envir.flow is None:
+                mu = np.array([0, 0])
+            else:
+                if len(self.envir.flow[0].shape) == 2:
+                    # temporally constant flow
+                    mu = self.__interpolate_flow(self.envir.flow, method='cubic')
+                else:
+                    # temporal flow. interpolate in time, and then in space.
+                    mu = self.__interpolate_flow(self.__interpolate_temporal_flow(),
+                                                 method='cubic')
+            # For now, just have everybody move according to a random walk.
+            self.__move_gaussian_walk(self.positions, mu, dt*np.eye(2))
+        else:
+            # 3D simulation
+            if self.envir.flow is None:
+                mu = np.array([0, 0, 0])
+            else:
+                if len(self.envir.flow[0].shape) == 3:
+                    # temporally constant flow
+                    mu = self.__interpolate_flow(self.envir.flow, method='linear')
+            # For now, just have everybody move according to a random walk.
+            self.__move_gaussian_walk(self.positions, mu, dt*np.eye(3))
 
         # Apply boundary conditions.
         self.__apply_boundary_conditions()
@@ -443,7 +456,12 @@ class swarm:
                                      self.positions, method=method)
         y_vel = interpolate.griddata(self.envir.flow_points, np.ravel(flow[1]), 
                                      self.positions, method=method)
-        return np.array([x_vel, y_vel]).T
+        if len(flow) == 3:
+            z_vel = interpolate.griddata(self.envir.flow_points, np.ravel(flow[2]),
+                                         self.positions, method=method)
+            return np.array([x_vel, y_vel, z_vel]).T
+        else:
+            return np.array([x_vel, y_vel]).T
 
 
 
