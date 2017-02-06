@@ -343,6 +343,7 @@ class swarm:
                 Required keyword arguments:
                 - x = (float) x-coordinate
                 - y = (float) y-coordinate
+                - z = (optional, float) z-coordinate, if 3D
         '''
 
         # use a new default environment if one was not given
@@ -358,11 +359,15 @@ class swarm:
                 raise
 
         # initialize bug locations
-        self.positions = ma.zeros((swarm_size, 2))
+        self.positions = ma.zeros((swarm_size, len(self.envir.L)))
         if init == 'random':
             init_pos.random(self.positions, self.envir.L)
         elif init == 'point':
-            init_pos.point(self.positions, kwargs['x'], kwargs['y'])
+            if 'z' in kwargs:
+                zarg = kwargs['z']
+            else:
+                zarg = None
+            init_pos.point(self.positions, kwargs['x'], kwargs['y'], zarg)
         else:
             print("Initialization method {} not implemented.".format(init))
             print("Exiting...")
