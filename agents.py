@@ -14,8 +14,10 @@ from math import exp, log
 import numpy as np
 import numpy.ma as ma
 from scipy import interpolate
-import matplotlib.cm as cm
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from mpl_toolkits.mplot3d.art3d import juggle_axes
+import matplotlib.cm as cm
 from matplotlib import animation
 import init_pos
 
@@ -385,10 +387,10 @@ class swarm:
         self.pos_history.append(self.positions.copy())
 
         # 3D?
-        dim3 = (len(self.envir.L) == 3)
+        DIM3 = (len(self.envir.L) == 3)
 
         # Interpolate fluid flow
-        if not dim3:
+        if not DIM3:
             if self.envir.flow is None:
                 mu = np.array([0, 0])
             else:
@@ -506,15 +508,31 @@ class swarm:
     def plot(self, blocking=True):
         ''' Plot the current position of the swarm '''
 
-        plt.figure()
-        if self.envir.a is not None:
-            # add a grassy porous layer background
-            grass = np.random.rand(80)*self.envir.L[0]
-            for g in grass:
-                plt.axvline(x=g, ymax=self.envir.a/self.envir.L[1], color='.5')
-        plt.scatter(self.positions[:,0], self.positions[:,1], label='organism')
-        plt.xlim((0, self.envir.L[0]))
-        plt.ylim((0, self.envir.L[1]))
+        fig = plt.figure()
+        if len(self.envir.L) == 2:
+            if self.envir.a is not None:
+                # add a grassy porous layer background
+                grass = np.random.rand(80)*self.envir.L[0]
+                for g in grass:
+                    plt.axvline(x=g, ymax=self.envir.a/self.envir.L[1], color='.5')
+            ax = plt.axes(xlim=(0, self.envir.L[0]), ylim=(0, self.envir.L[1]))
+            plt.scatter(self.positions[:,0], self.positions[:,1], label='organism')
+            plt.text(0.02, 0.95, 'time = {:.2f}'.format(self.envir.time),
+                     transform=ax.transAxes)
+        else:
+            # 3D plot
+            ax = fig.add_subplot(111, projection='3d')
+            ax.scatter(self.positions[:,0], self.positions[:,1], 
+                       self.positions[:,2], label='organism')
+            # text doesn't work in 3D. No idea why...
+            ax.text2D(0.02, 1, 'time = {:.2f}'.format(self.envir.time),
+                      transform=ax.transAxes)
+            ax.set_xlim((0, self.envir.L[0]))
+            ax.set_ylim((0, self.envir.L[1]))
+            ax.set_zlim((0, self.envir.L[2]))
+            ax.set_xlabel('X')
+            ax.set_ylabel('Y')
+            ax.set_zlabel('Z')
         plt.title('Organism positions')
         plt.show(blocking)
 
@@ -524,34 +542,69 @@ class swarm:
         ''' Plot the entire history of the swarm's movement, incl. current '''
 
         if len(self.envir.time_history) == 0:
+            print('No position history! Plotting current position...')
             self.plot()
             return
 
+        DIM3 = (len(self.envir.L) == 3)
+
         fig = plt.figure()
-        ax = plt.axes(xlim=(0, self.envir.L[0]), ylim=(0, self.envir.L[1]))
+        if not DIM3:
+            ax = plt.axes(xlim=(0, self.envir.L[0]), ylim=(0, self.envir.L[1]))
+            time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes)
+            scat = ax.scatter([], [], label='organism')
+        else:
+            ax = fig.add_subplot(111, projection='3d')
+            # text is not updating. No idea why...
+            time_text = ax.text2D(0.02, 1, 'time = {:.2f}'.format(
+                                  self.envir.time_history[0]),
+                                  transform=ax.transAxes)
+            ax.set_xlim((0, self.envir.L[0]))
+            ax.set_ylim((0, self.envir.L[1]))
+            ax.set_zlim((0, self.envir.L[2]))
+            ax.set_xlabel('X')
+            ax.set_ylabel('Y')
+            ax.set_zlabel('Z')
+            scat = ax.scatter(self.pos_history[0][:,0], self.pos_history[0][:,1],
+                              self.pos_history[0][:,2], label='organism',
+                              animated=True)
         ax.set_title('Organism positions')
-        time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes)
-        scat = ax.scatter([], [], label='organism')
 
         # initialization function: plot the background of each frame
         def init():
-            if self.envir.a is not None:
+            if self.envir.a is not None and not DIM3:
                 # add a grassy porous layer background
                 grass = np.random.rand(80)*self.envir.L[0]
                 for g in grass:
                     ax.axvline(x=g, ymax=self.envir.a/self.envir.L[1], color='.5')
-            scat.set_offsets(self.pos_history[0])
+            if DIM3:
+                scat._offsets3d = juggle_axes(self.pos_history[0][:,0],
+                                              self.pos_history[0][:,1],
+                                              self.pos_history[0][:,2], 'z')
+            else:
+                scat.set_offsets(self.pos_history[0])
             time_text.set_text('time = {:.2f}'.format(self.envir.time_history[0]))
             return scat, time_text
 
         # animation function. Called sequentially
         def animate(n):
             if n < len(self.pos_history):
-                scat.set_offsets(self.pos_history[n])
                 time_text.set_text('time = {:.2f}'.format(self.envir.time_history[n]))
+                if DIM3:
+                    scat._offsets3d = juggle_axes(self.pos_history[n][:,0],
+                                                  self.pos_history[n][:,1],
+                                                  self.pos_history[n][:,2], 'z')
+                    plt.draw()
+                else:
+                    scat.set_offsets(self.pos_history[n])
             else:
-                scat.set_offsets(self.positions)
                 time_text.set_text('time = {:.2f}'.format(self.envir.time))
+                if DIM3:
+                    scat._offsets3d = juggle_axes(self.positions[:,0],
+                                                  self.positions[:,1],
+                                                  self.positions[:,2], 'z')
+                else:
+                    scat.set_offsets(self.positions)
             return scat, time_text
 
         # infer animation rate from dt between current and last position
@@ -563,6 +616,7 @@ class swarm:
         if save_filename is not None:
             try:
                 anim.save(save_filename, dpi=150)
+                print('Video saved to {}.'.format(save_filename))
             except:
                 print('Failed to save animation.')
                 print('Check that you have ffmpeg or mencoder installed!')
