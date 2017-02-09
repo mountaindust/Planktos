@@ -113,7 +113,10 @@ class environment:
         # Fluid density kg/m**3
         self.rho = rho
         # Characteristic length
-        self.char_L = self.L[1]
+        if len(self.L) == 2:
+            self.char_L = self.L[1]
+        else:
+            self.char_L = self.L[2]
         # porous region height
         self.a = None
 
@@ -126,9 +129,12 @@ class environment:
 
 
     def set_brinkman_flow(self, alpha, a, res, U, dpdx, tspan=None):
-        '''Specify fully developed 2D flow with a porous region.
-        Velocity gradient is zero in the x-direction; porous region is the lower
-        part of the y-domain (width=a) with an empty region above.
+        '''Specify fully developed 2D or 3D flow with a porous region.
+        Velocity gradient is zero in the x-direction; all flow moves parallel to
+        the x-axis. Porous region is the lower part of the y-domain (2D) or 
+        z-domain (3D) with width=a and an empty region above. For 3D flow, the
+        velocity profile is the same on all slices y=c. The decision to set
+        2D vs. 3D flow is based on the dimension of the domain.
 
         Arguments:
             alpha: porosity constant
@@ -147,7 +153,7 @@ class environment:
             self.__set_flow_variables
         '''
 
-        # Parse parameters
+        ##### Parse parameters #####
         if hasattr(U, '__iter__'):
             try:
                 assert hasattr(dpdx, '__iter__')
@@ -173,14 +179,18 @@ class environment:
             print('Rho = {}'.format(self.rho))
             raise AttributeError
 
+        ##### Calculate constant parameters #####
         b = self.L[1] - a
         self.a = a
 
         # Get y-mesh
-        y_mesh = np.linspace(0, self.L[1], res)
+        if len(self.L) == 2:
+            y_mesh = np.linspace(0, self.L[1], res)
+        else:
+            y_mesh = np.linspace(0, self.L[2], res)
 
-        # Calculate flow velocity
-        flow = np.zeros((len(U), res, res))
+        ##### Calculate flow velocity #####
+        flow = np.zeros((len(U), res, res)) # t, y, x
         t = 0
         for v, px in zip(U, dpdx):
             mu = self.rho*v*self.char_L/self.re
@@ -215,17 +225,43 @@ class environment:
                         flow[t,n,:] = -px/(alpha**2*mu)
             t += 1
 
-        flow = flow.squeeze()
-        self.flow = [flow, np.zeros_like(flow)] #x-direction, y-direction
+        flow = flow.squeeze() # This is 2D Brinkman flow, either t,y,x or y,x.
 
-        if len(U) == 1:
-            self.__set_flow_variables()
-        else:
-            if tspan is None:
-                self.__set_flow_variables(tspan=1)
+        ##### Set flow in either 2D or 3D domain #####
+
+        if len(self.L) == 2:
+            # 2D
+            self.flow = [flow, np.zeros_like(flow)] #x-direction, y-direction
+
+            if len(flow.shape) == 2:
+                #no time; (y,x) coordinates
+                self.__set_flow_variables()
             else:
-                self.__set_flow_variables(tspan=tspan)
-                
+                #time-dependent; (t,y,x) coordinates
+                if tspan is None:
+                    self.__set_flow_variables(tspan=1)
+                else:
+                    self.__set_flow_variables(tspan=tspan)
+        else:
+            # 3D
+            if len(flow.shape) == 2:
+                # (z,x) -> (z,y,x) coordinates
+                flow = np.broadcast_to(flow, (res, res, res)) #(y,z,x)
+                flow = np.transpose(flow, axes=(1, 0, 2)) #(z,y,x)
+                self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
+
+                self.__set_flow_variables()
+
+            else:
+                # (t,z,x) -> (t,z,y,x) coordinates
+                flow = np.broadcast_to(flow, (res,flow.shape[0],res,res)) #(y,t,z,x)
+                flow = np.transpose(flow, axes=(1, 2, 0, 3)) #(t,z,y,x)
+                self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
+
+                if tspan is None:
+                    self.__set_flow_variables(tspan=1)
+                else:
+                    self.__set_flow_variables(tspan=tspan)
 
 
 
@@ -300,22 +336,39 @@ class environment:
                     or scalar dt. Required if flow is time-dependent; None will 
                     be interpreted as non time-dependent flow.
         '''
-        if tspan is None:
-            # no time-dependent flow
-            x_f_mesh = np.linspace(0,self.L[0],self.flow[0].shape[1])
-            y_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[0])
-            x_f_grid, y_f_grid = np.meshgrid(x_f_mesh,y_f_mesh)
-            points = np.array([x_f_grid.flatten(), y_f_grid.flatten()]).T
-            self.flow_points = points
-        else:
-            # time-dependent flow
-            x_f_mesh = np.linspace(0,self.L[0],self.flow[0].shape[2])
-            y_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[1])
-            x_f_grid, y_f_grid = np.meshgrid(x_f_mesh,y_f_mesh)
-            points = np.array([x_f_grid.flatten(), y_f_grid.flatten()]).T
-            self.flow_points = points
+        if len(self.L) == 2:
+            # 2D
+            if tspan is None:
+                # no time-dependent flow
+                x_f_mesh = np.linspace(0,self.L[0],self.flow[0].shape[1])
+                y_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[0])
+            else:
+                # time-dependent flow
+                x_f_mesh = np.linspace(0,self.L[0],self.flow[0].shape[2])
+                y_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[1])
 
-            # set time
+            x_f_grid, y_f_grid = np.meshgrid(x_f_mesh,y_f_mesh)
+            self.flow_points = np.array([x_f_grid.flatten(), y_f_grid.flatten()]).T
+
+        else:
+            # 3D
+            if tspan is None:
+                # no time-dependent flow
+                x_f_mesh = np.linspace(0,self.L[0],self.flow[0].shape[2])
+                y_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[1])
+                z_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[0])
+            else:
+                # time-dependent flow
+                x_f_mesh = np.linspace(0,self.L[0],self.flow[0].shape[3])
+                y_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[2])
+                z_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[1])
+
+            x_f_grid, y_f_grid, z_f_grid = np.meshgrid(x_f_mesh,y_f_mesh,z_f_mesh)
+            self.flow_points = np.array([x_f_grid.flatten(), y_f_grid.flatten(),
+                                         z_f_grid.flatten()]).T
+
+        # set time
+        if tspan is not None:
             if not hasattr(tspan, '__iter__'):
                 # set flow_times based off zero
                 self.flow_times = np.arange(0, tspan*self.flow[0].shape[0], tspan)
@@ -324,6 +377,8 @@ class environment:
             else:
                 assert len(tspan) == self.flow[0].shape[0]
                 self.flow_times = np.array(tspan)
+        else:
+            self.flow_times = None
 
 
 
@@ -411,6 +466,9 @@ class swarm:
                 if len(self.envir.flow[0].shape) == 3:
                     # temporally constant flow
                     mu = self.__interpolate_flow(self.envir.flow, method='linear')
+                else:
+                    # temporal flow. interpolate in time, and then in space.
+                    pass
             # For now, just have everybody move according to a random walk.
             self.__move_gaussian_walk(self.positions, mu, dt*np.eye(3))
 
