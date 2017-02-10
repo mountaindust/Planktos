@@ -131,7 +131,7 @@ class environment:
     def set_brinkman_flow(self, alpha, a, res, U, dpdx, tspan=None):
         '''Specify fully developed 2D or 3D flow with a porous region.
         Velocity gradient is zero in the x-direction; all flow moves parallel to
-        the x-axis. Porous region is the lower part of the y-domain (2D) or 
+        the x-axis. Porous region is the lower part of the y-domain (2D) or
         z-domain (3D) with width=a and an empty region above. For 3D flow, the
         velocity profile is the same on all slices y=c. The decision to set
         2D vs. 3D flow is based on the dimension of the domain.
@@ -231,13 +231,15 @@ class environment:
 
         if len(self.L) == 2:
             # 2D
-            self.flow = [flow, np.zeros_like(flow)] #x-direction, y-direction
-
             if len(flow.shape) == 2:
-                #no time; (y,x) coordinates
+                # no time; (y,x) -> (x,y) coordinates
+                flow = flow.T
+                self.flow = [flow, np.zeros_like(flow)] #x-direction, y-direction
                 self.__set_flow_variables()
             else:
-                #time-dependent; (t,y,x) coordinates
+                #time-dependent; (t,y,x)-> (t,x,y) coordinates
+                flow = np.transpose(flow, axes=(0, 2, 1))
+                self.flow = [flow, np.zeros_like(flow)]
                 if tspan is None:
                     self.__set_flow_variables(tspan=1)
                 else:
@@ -245,9 +247,9 @@ class environment:
         else:
             # 3D
             if len(flow.shape) == 2:
-                # (z,x) -> (z,y,x) coordinates
+                # (z,x) -> (x,y,z) coordinates
                 flow = np.broadcast_to(flow, (res, res, res)) #(y,z,x)
-                flow = np.transpose(flow, axes=(1, 0, 2)) #(z,y,x)
+                flow = np.transpose(flow, axes=(2, 0, 1)) #(x,y,z)
                 self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
 
                 self.__set_flow_variables()
@@ -255,7 +257,7 @@ class environment:
             else:
                 # (t,z,x) -> (t,z,y,x) coordinates
                 flow = np.broadcast_to(flow, (res,flow.shape[0],res,res)) #(y,t,z,x)
-                flow = np.transpose(flow, axes=(1, 2, 0, 3)) #(t,z,y,x)
+                flow = np.transpose(flow, axes=(1, 3, 0, 2)) #(t,x,y,z)
                 self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
 
                 if tspan is None:
@@ -329,43 +331,25 @@ class environment:
 
 
     def __set_flow_variables(self, tspan=None):
-        '''Store points at which flow is specified, and time information. 
+        '''Store points at which flow is specified, and time information.
         
         Arguments:
             tspan: [tstart, tend] or iterable of times at which flow is specified
-                    or scalar dt. Required if flow is time-dependent; None will 
+                    or scalar dt. Required if flow is time-dependent; None will
                     be interpreted as non time-dependent flow.
         '''
-        if len(self.L) == 2:
-            # 2D
-            if tspan is None:
-                # no time-dependent flow
-                x_f_mesh = np.linspace(0,self.L[0],self.flow[0].shape[1])
-                y_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[0])
-            else:
-                # time-dependent flow
-                x_f_mesh = np.linspace(0,self.L[0],self.flow[0].shape[2])
-                y_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[1])
 
-            x_f_grid, y_f_grid = np.meshgrid(x_f_mesh,y_f_mesh)
-            self.flow_points = np.array([x_f_grid.flatten(), y_f_grid.flatten()]).T
-
+        # Get points defining the spatial grid for flow data
+        points = []
+        if tspan is None:
+            # no time-dependent flow
+            for dim, mesh_size in enumerate(self.flow[0].shape[::-1]):
+                points.append(np.linspace(0, self.L[dim], mesh_size))
         else:
-            # 3D
-            if tspan is None:
-                # no time-dependent flow
-                x_f_mesh = np.linspace(0,self.L[0],self.flow[0].shape[2])
-                y_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[1])
-                z_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[0])
-            else:
-                # time-dependent flow
-                x_f_mesh = np.linspace(0,self.L[0],self.flow[0].shape[3])
-                y_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[2])
-                z_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[1])
-
-            x_f_grid, y_f_grid, z_f_grid = np.meshgrid(x_f_mesh,y_f_mesh,z_f_mesh)
-            self.flow_points = np.array([x_f_grid.flatten(), y_f_grid.flatten(),
-                                         z_f_grid.flatten()]).T
+            # time-dependent flow
+            for dim, mesh_size in enumerate(self.flow[0].shape[:0:-1]):
+                points.append(np.linspace(0, self.L[dim], mesh_size))
+        self.flow_points = tuple(points)
 
         # set time
         if tspan is not None:
@@ -502,13 +486,13 @@ class swarm:
     def __interpolate_flow(self,flow,method):
         '''Interpolate the fluid velocity field at swarm positions'''
 
-        x_vel = interpolate.griddata(self.envir.flow_points, np.ravel(flow[0]), 
-                                     self.positions, method=method)
-        y_vel = interpolate.griddata(self.envir.flow_points, np.ravel(flow[1]), 
-                                     self.positions, method=method)
+        x_vel = interpolate.interpn(self.envir.flow_points, flow[0],
+                                    self.positions, method=method)
+        y_vel = interpolate.interpn(self.envir.flow_points, flow[1],
+                                    self.positions, method=method)
         if len(flow) == 3:
-            z_vel = interpolate.griddata(self.envir.flow_points, np.ravel(flow[2]),
-                                         self.positions, method=method)
+            z_vel = interpolate.interpn(self.envir.flow_points, flow[2],
+                                        self.positions, method=method)
             return np.array([x_vel, y_vel, z_vel]).T
         else:
             return np.array([x_vel, y_vel]).T
@@ -520,15 +504,15 @@ class swarm:
 
         # boundary cases
         if self.envir.time <= self.envir.flow_times[0]:
-            return [f[0,...] for f in self.envir.flow]
+            return [f[0, ...] for f in self.envir.flow]
         elif self.envir.time >= self.envir.flow_times[-1]:
-            return [f[-1,...] for f in self.envir.flow]
+            return [f[-1, ...] for f in self.envir.flow]
         else:
             # linearly interpolate
             indx = np.searchsorted(self.envir.flow_times,self.envir.time)
             diff = self.envir.flow_times[indx] - self.envir.time
             dt = self.envir.flow_times[indx] - self.envir.flow_times[indx-1]
-            return [f[indx,...]*(dt-diff)/dt + f[indx-1,...]*diff/dt
+            return [f[indx, ...]*(dt-diff)/dt + f[indx-1, ...]*diff/dt
                     for f in self.envir.flow]
 
 
