@@ -445,32 +445,22 @@ class swarm:
         DIM3 = (len(self.envir.L) == 3)
 
         # Interpolate fluid flow
-        if not DIM3:
-            if self.envir.flow is None:
+        if self.envir.flow is None:
+            if not DIM3:
                 mu = np.array([0, 0])
             else:
-                if len(self.envir.flow[0].shape) == 2:
-                    # temporally constant flow
-                    mu = self.__interpolate_flow(self.envir.flow, method='cubic')
-                else:
-                    # temporal flow. interpolate in time, and then in space.
-                    mu = self.__interpolate_flow(self.__interpolate_temporal_flow(),
-                                                 method='cubic')
-            # For now, just have everybody move according to a random walk.
-            self.__move_gaussian_walk(self.positions, mu, dt*np.eye(2))
-        else:
-            # 3D simulation
-            if self.envir.flow is None:
                 mu = np.array([0, 0, 0])
+        else:
+            if (not DIM3 and len(self.envir.flow[0].shape) == 2) or \
+               (DIM3 and len(self.envir.flow[0].shape) == 3):
+                # temporally constant flow
+                mu = self.__interpolate_flow(self.envir.flow, method='linear')
             else:
-                if len(self.envir.flow[0].shape) == 3:
-                    # temporally constant flow
-                    mu = self.__interpolate_flow(self.envir.flow, method='linear')
-                else:
-                    # temporal flow. interpolate in time, and then in space.
-                    pass
-            # For now, just have everybody move according to a random walk.
-            self.__move_gaussian_walk(self.positions, mu, dt*np.eye(3))
+                # temporal flow. interpolate in time, and then in space.
+                mu = self.__interpolate_flow(self.__interpolate_temporal_flow(),
+                                                method='linear')
+        # For now, just have everybody move according to a random walk.
+        self.__move_gaussian_walk(self.positions, mu, dt*np.eye(len(self.envir.L)))
 
         # Apply boundary conditions.
         self.__apply_boundary_conditions()
@@ -530,15 +520,15 @@ class swarm:
 
         # boundary cases
         if self.envir.time <= self.envir.flow_times[0]:
-            return [f[0,:,:] for f in self.envir.flow]
+            return [f[0,...] for f in self.envir.flow]
         elif self.envir.time >= self.envir.flow_times[-1]:
-            return [f[-1,:,:] for f in self.envir.flow]
+            return [f[-1,...] for f in self.envir.flow]
         else:
             # linearly interpolate
             indx = np.searchsorted(self.envir.flow_times,self.envir.time)
             diff = self.envir.flow_times[indx] - self.envir.time
             dt = self.envir.flow_times[indx] - self.envir.flow_times[indx-1]
-            return [f[indx,:,:]*(dt-diff)/dt + f[indx-1,:,:]*diff/dt
+            return [f[indx,...]*(dt-diff)/dt + f[indx-1,...]*diff/dt
                     for f in self.envir.flow]
 
 
