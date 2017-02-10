@@ -14,8 +14,10 @@ from math import exp, log
 import numpy as np
 import numpy.ma as ma
 from scipy import interpolate
-import matplotlib.cm as cm
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from mpl_toolkits.mplot3d.art3d import juggle_axes
+import matplotlib.cm as cm
 from matplotlib import animation
 import init_pos
 
@@ -25,7 +27,8 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 
 class environment:
 
-    def __init__(self, Lx=100, Ly=100, x_bndry=None, y_bndry=None, flow=None,
+    def __init__(self, Lx=100, Ly=100, Lz=None, 
+                 x_bndry=None, y_bndry=None, z_bndry=None, flow=None,
                  flow_times=None, Re=None, rho=None, init_swarms=None):
         ''' Initialize environmental variables.
 
@@ -47,30 +50,19 @@ class environment:
         '''
 
         # Save domain size
-        self.L = [Lx, Ly]
+        if Lz is None:
+            self.L = [Lx, Ly]
+        else:
+            self.L = [Lx, Ly, Lz]
 
         # Parse boundary conditions
-        supprted_conds = ['zero', 'noflux']
         self.bndry = []
+        self.set_boundary_conditions(x_bndry, y_bndry, z_bndry, Lz)
 
-        if x_bndry is None:
-            # default boundary conditions
-            self.bndry.append(['zero', 'zero'])
-        elif x_bndry[0] not in supprted_conds or x_bndry[1] not in supprted_conds:
-            raise NameError("X boundary condition {} not implemented.".format(x_bndry))
-        else:
-            self.bndry.append(x_bndry)
-        if y_bndry is None:
-            # default boundary conditions
-            self.bndry.append(['zero', 'zero'])
-        elif y_bndry[0] not in supprted_conds or y_bndry[1] not in supprted_conds:
-            raise NameError("Y boundary condition {} not implemented.".format(y_bndry))
-        else:
-            self.bndry.append(y_bndry)
-
-        # save flow
+        ##### save flow #####
         self.flow_times = None
         self.flow_points = None
+
         if flow is not None:
             try:
                 assert isinstance(flow, list)
@@ -81,16 +73,28 @@ class environment:
                 tb = sys.exc_info()[2]
                 raise AttributeError(
                     'flow must be specified as a list of ndarrays.').with_traceback(tb)
-            if max([len(f.shape) for f in flow]) > 2:
-                # time-dependent flow
-                assert flow[0].shape[0] == flow[1].shape[0]
-                assert flow_times is not None
-                self.__set_flow_variables(flow_times)
+            if Lz is not None:
+                # 3D flow
+                assert len(flow) == 3, 'Must specify flow in x, y and z direction'
+                if max([len(f.shape) for f in flow]) > 3:
+                    # time-dependent flow
+                    assert flow[0].shape[0] == flow[1].shape[0] == flow[2].shape[0]
+                    assert flow_times is not None
+                    self.__set_flow_variables(flow_times)
+                else:
+                    self.__set_flow_variables()
             else:
-                self.__set_flow_variables()
+                # 2D flow
+                if max([len(f.shape) for f in flow]) > 2:
+                    # time-dependent flow
+                    assert flow[0].shape[0] == flow[1].shape[0]
+                    assert flow_times is not None
+                    self.__set_flow_variables(flow_times)
+                else:
+                    self.__set_flow_variables()
         self.flow = flow
 
-        # swarm list
+        ##### swarm list #####
         if init_swarms is None:
             self.swarms = []
         else:
@@ -109,7 +113,10 @@ class environment:
         # Fluid density kg/m**3
         self.rho = rho
         # Characteristic length
-        self.char_L = self.L[1]
+        if len(self.L) == 2:
+            self.char_L = self.L[1]
+        else:
+            self.char_L = self.L[2]
         # porous region height
         self.a = None
 
@@ -122,9 +129,12 @@ class environment:
 
 
     def set_brinkman_flow(self, alpha, a, res, U, dpdx, tspan=None):
-        '''Specify fully developed 2D flow with a porous region.
-        Velocity gradient is zero in the x-direction; porous region is the lower
-        part of the y-domain (width=a) with an empty region above.
+        '''Specify fully developed 2D or 3D flow with a porous region.
+        Velocity gradient is zero in the x-direction; all flow moves parallel to
+        the x-axis. Porous region is the lower part of the y-domain (2D) or 
+        z-domain (3D) with width=a and an empty region above. For 3D flow, the
+        velocity profile is the same on all slices y=c. The decision to set
+        2D vs. 3D flow is based on the dimension of the domain.
 
         Arguments:
             alpha: porosity constant
@@ -143,7 +153,7 @@ class environment:
             self.__set_flow_variables
         '''
 
-        # Parse parameters
+        ##### Parse parameters #####
         if hasattr(U, '__iter__'):
             try:
                 assert hasattr(dpdx, '__iter__')
@@ -169,14 +179,18 @@ class environment:
             print('Rho = {}'.format(self.rho))
             raise AttributeError
 
+        ##### Calculate constant parameters #####
         b = self.L[1] - a
         self.a = a
 
         # Get y-mesh
-        y_mesh = np.linspace(0, self.L[1], res)
+        if len(self.L) == 2:
+            y_mesh = np.linspace(0, self.L[1], res)
+        else:
+            y_mesh = np.linspace(0, self.L[2], res)
 
-        # Calculate flow velocity
-        flow = np.zeros((len(U), res, res))
+        ##### Calculate flow velocity #####
+        flow = np.zeros((len(U), res, res)) # t, y, x
         t = 0
         for v, px in zip(U, dpdx):
             mu = self.rho*v*self.char_L/self.re
@@ -211,17 +225,43 @@ class environment:
                         flow[t,n,:] = -px/(alpha**2*mu)
             t += 1
 
-        flow = flow.squeeze()
-        self.flow = [flow, np.zeros_like(flow)] #x-direction, y-direction
+        flow = flow.squeeze() # This is 2D Brinkman flow, either t,y,x or y,x.
 
-        if len(U) == 1:
-            self.__set_flow_variables()
-        else:
-            if tspan is None:
-                self.__set_flow_variables(tspan=1)
+        ##### Set flow in either 2D or 3D domain #####
+
+        if len(self.L) == 2:
+            # 2D
+            self.flow = [flow, np.zeros_like(flow)] #x-direction, y-direction
+
+            if len(flow.shape) == 2:
+                #no time; (y,x) coordinates
+                self.__set_flow_variables()
             else:
-                self.__set_flow_variables(tspan=tspan)
-                
+                #time-dependent; (t,y,x) coordinates
+                if tspan is None:
+                    self.__set_flow_variables(tspan=1)
+                else:
+                    self.__set_flow_variables(tspan=tspan)
+        else:
+            # 3D
+            if len(flow.shape) == 2:
+                # (z,x) -> (z,y,x) coordinates
+                flow = np.broadcast_to(flow, (res, res, res)) #(y,z,x)
+                flow = np.transpose(flow, axes=(1, 0, 2)) #(z,y,x)
+                self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
+
+                self.__set_flow_variables()
+
+            else:
+                # (t,z,x) -> (t,z,y,x) coordinates
+                flow = np.broadcast_to(flow, (res,flow.shape[0],res,res)) #(y,t,z,x)
+                flow = np.transpose(flow, axes=(1, 2, 0, 3)) #(t,z,y,x)
+                self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
+
+                if tspan is None:
+                    self.__set_flow_variables(tspan=1)
+                else:
+                    self.__set_flow_variables(tspan=tspan)
 
 
 
@@ -255,6 +295,39 @@ class environment:
 
 
 
+    def set_boundary_conditions(self, x_bndry, y_bndry, z_bndry, zdim):
+        '''Check and set boundary conditions. Set Z-dimension only if
+        zdim is not None.
+        '''
+
+        supprted_conds = ['zero', 'noflux']
+        default_conds = ['zero', 'zero']
+
+        if x_bndry is None:
+            # default boundary conditions
+            self.bndry.append(default_conds)
+        elif x_bndry[0] not in supprted_conds or x_bndry[1] not in supprted_conds:
+            raise NameError("X boundary condition {} not implemented.".format(x_bndry))
+        else:
+            self.bndry.append(x_bndry)
+        if y_bndry is None:
+            # default boundary conditions
+            self.bndry.append(default_conds)
+        elif y_bndry[0] not in supprted_conds or y_bndry[1] not in supprted_conds:
+            raise NameError("Y boundary condition {} not implemented.".format(y_bndry))
+        else:
+            self.bndry.append(y_bndry)
+        if zdim is not None:
+            if z_bndry is None:
+                # default boundary conditions
+                self.bndry.append(default_conds)
+            elif z_bndry[0] not in supprted_conds or z_bndry[1] not in supprted_conds:
+                raise NameError("Z boundary condition {} not implemented.".format(z_bndry))
+            else:
+                self.bndry.append(z_bndry)
+
+
+
     def __set_flow_variables(self, tspan=None):
         '''Store points at which flow is specified, and time information. 
         
@@ -263,22 +336,39 @@ class environment:
                     or scalar dt. Required if flow is time-dependent; None will 
                     be interpreted as non time-dependent flow.
         '''
-        if tspan is None:
-            # no time-dependent flow
-            x_f_mesh = np.linspace(0,self.L[0],self.flow[0].shape[1])
-            y_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[0])
-            x_f_grid, y_f_grid = np.meshgrid(x_f_mesh,y_f_mesh)
-            points = np.array([x_f_grid.flatten(), y_f_grid.flatten()]).T
-            self.flow_points = points
-        else:
-            # time-dependent flow
-            x_f_mesh = np.linspace(0,self.L[0],self.flow[0].shape[2])
-            y_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[1])
-            x_f_grid, y_f_grid = np.meshgrid(x_f_mesh,y_f_mesh)
-            points = np.array([x_f_grid.flatten(), y_f_grid.flatten()]).T
-            self.flow_points = points
+        if len(self.L) == 2:
+            # 2D
+            if tspan is None:
+                # no time-dependent flow
+                x_f_mesh = np.linspace(0,self.L[0],self.flow[0].shape[1])
+                y_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[0])
+            else:
+                # time-dependent flow
+                x_f_mesh = np.linspace(0,self.L[0],self.flow[0].shape[2])
+                y_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[1])
 
-            # set time
+            x_f_grid, y_f_grid = np.meshgrid(x_f_mesh,y_f_mesh)
+            self.flow_points = np.array([x_f_grid.flatten(), y_f_grid.flatten()]).T
+
+        else:
+            # 3D
+            if tspan is None:
+                # no time-dependent flow
+                x_f_mesh = np.linspace(0,self.L[0],self.flow[0].shape[2])
+                y_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[1])
+                z_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[0])
+            else:
+                # time-dependent flow
+                x_f_mesh = np.linspace(0,self.L[0],self.flow[0].shape[3])
+                y_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[2])
+                z_f_mesh = np.linspace(0,self.L[1],self.flow[0].shape[1])
+
+            x_f_grid, y_f_grid, z_f_grid = np.meshgrid(x_f_mesh,y_f_mesh,z_f_mesh)
+            self.flow_points = np.array([x_f_grid.flatten(), y_f_grid.flatten(),
+                                         z_f_grid.flatten()]).T
+
+        # set time
+        if tspan is not None:
             if not hasattr(tspan, '__iter__'):
                 # set flow_times based off zero
                 self.flow_times = np.arange(0, tspan*self.flow[0].shape[0], tspan)
@@ -287,6 +377,8 @@ class environment:
             else:
                 assert len(tspan) == self.flow[0].shape[0]
                 self.flow_times = np.array(tspan)
+        else:
+            self.flow_times = None
 
 
 
@@ -308,6 +400,7 @@ class swarm:
                 Required keyword arguments:
                 - x = (float) x-coordinate
                 - y = (float) y-coordinate
+                - z = (optional, float) z-coordinate, if 3D
         '''
 
         # use a new default environment if one was not given
@@ -323,11 +416,15 @@ class swarm:
                 raise
 
         # initialize bug locations
-        self.positions = ma.zeros((swarm_size, 2))
+        self.positions = ma.zeros((swarm_size, len(self.envir.L)))
         if init == 'random':
             init_pos.random(self.positions, self.envir.L)
         elif init == 'point':
-            init_pos.point(self.positions, kwargs['x'], kwargs['y'])
+            if 'z' in kwargs:
+                zarg = kwargs['z']
+            else:
+                zarg = None
+            init_pos.point(self.positions, kwargs['x'], kwargs['y'], zarg)
         else:
             print("Initialization method {} not implemented.".format(init))
             print("Exiting...")
@@ -344,20 +441,26 @@ class swarm:
         # Put current position in the history
         self.pos_history.append(self.positions.copy())
 
+        # 3D?
+        DIM3 = (len(self.envir.L) == 3)
+
         # Interpolate fluid flow
         if self.envir.flow is None:
-            mu = np.array([0, 0])
+            if not DIM3:
+                mu = np.array([0, 0])
+            else:
+                mu = np.array([0, 0, 0])
         else:
-            if len(self.envir.flow[0].shape) == 2:
+            if (not DIM3 and len(self.envir.flow[0].shape) == 2) or \
+               (DIM3 and len(self.envir.flow[0].shape) == 3):
                 # temporally constant flow
-                mu = self.__interpolate_flow(self.envir.flow, method='cubic')
+                mu = self.__interpolate_flow(self.envir.flow, method='linear')
             else:
                 # temporal flow. interpolate in time, and then in space.
                 mu = self.__interpolate_flow(self.__interpolate_temporal_flow(),
-                                             method='cubic')
-
+                                                method='linear')
         # For now, just have everybody move according to a random walk.
-        self.__move_gaussian_walk(self.positions, mu, dt*np.eye(2))
+        self.__move_gaussian_walk(self.positions, mu, dt*np.eye(len(self.envir.L)))
 
         # Apply boundary conditions.
         self.__apply_boundary_conditions()
@@ -403,7 +506,12 @@ class swarm:
                                      self.positions, method=method)
         y_vel = interpolate.griddata(self.envir.flow_points, np.ravel(flow[1]), 
                                      self.positions, method=method)
-        return np.array([x_vel, y_vel]).T
+        if len(flow) == 3:
+            z_vel = interpolate.griddata(self.envir.flow_points, np.ravel(flow[2]),
+                                         self.positions, method=method)
+            return np.array([x_vel, y_vel, z_vel]).T
+        else:
+            return np.array([x_vel, y_vel]).T
 
 
 
@@ -412,15 +520,15 @@ class swarm:
 
         # boundary cases
         if self.envir.time <= self.envir.flow_times[0]:
-            return [f[0,:,:] for f in self.envir.flow]
+            return [f[0,...] for f in self.envir.flow]
         elif self.envir.time >= self.envir.flow_times[-1]:
-            return [f[-1,:,:] for f in self.envir.flow]
+            return [f[-1,...] for f in self.envir.flow]
         else:
             # linearly interpolate
             indx = np.searchsorted(self.envir.flow_times,self.envir.time)
             diff = self.envir.flow_times[indx] - self.envir.time
             dt = self.envir.flow_times[indx] - self.envir.flow_times[indx-1]
-            return [f[indx,:,:]*(dt-diff)/dt + f[indx-1,:,:]*diff/dt
+            return [f[indx,...]*(dt-diff)/dt + f[indx-1,...]*diff/dt
                     for f in self.envir.flow]
 
 
@@ -448,15 +556,31 @@ class swarm:
     def plot(self, blocking=True):
         ''' Plot the current position of the swarm '''
 
-        plt.figure()
-        if self.envir.a is not None:
-            # add a grassy porous layer background
-            grass = np.random.rand(80)*self.envir.L[0]
-            for g in grass:
-                plt.axvline(x=g, ymax=self.envir.a/self.envir.L[1], color='.5')
-        plt.scatter(self.positions[:,0], self.positions[:,1], label='organism')
-        plt.xlim((0, self.envir.L[0]))
-        plt.ylim((0, self.envir.L[1]))
+        fig = plt.figure()
+        if len(self.envir.L) == 2:
+            if self.envir.a is not None:
+                # add a grassy porous layer background
+                grass = np.random.rand(80)*self.envir.L[0]
+                for g in grass:
+                    plt.axvline(x=g, ymax=self.envir.a/self.envir.L[1], color='.5')
+            ax = plt.axes(xlim=(0, self.envir.L[0]), ylim=(0, self.envir.L[1]))
+            plt.scatter(self.positions[:,0], self.positions[:,1], label='organism')
+            plt.text(0.02, 0.95, 'time = {:.2f}'.format(self.envir.time),
+                     transform=ax.transAxes)
+        else:
+            # 3D plot
+            ax = fig.add_subplot(111, projection='3d')
+            ax.scatter(self.positions[:,0], self.positions[:,1], 
+                       self.positions[:,2], label='organism')
+            # text doesn't work in 3D. No idea why...
+            ax.text2D(0.02, 1, 'time = {:.2f}'.format(self.envir.time),
+                      transform=ax.transAxes)
+            ax.set_xlim((0, self.envir.L[0]))
+            ax.set_ylim((0, self.envir.L[1]))
+            ax.set_zlim((0, self.envir.L[2]))
+            ax.set_xlabel('X')
+            ax.set_ylabel('Y')
+            ax.set_zlabel('Z')
         plt.title('Organism positions')
         plt.show(blocking)
 
@@ -466,34 +590,69 @@ class swarm:
         ''' Plot the entire history of the swarm's movement, incl. current '''
 
         if len(self.envir.time_history) == 0:
+            print('No position history! Plotting current position...')
             self.plot()
             return
 
+        DIM3 = (len(self.envir.L) == 3)
+
         fig = plt.figure()
-        ax = plt.axes(xlim=(0, self.envir.L[0]), ylim=(0, self.envir.L[1]))
+        if not DIM3:
+            ax = plt.axes(xlim=(0, self.envir.L[0]), ylim=(0, self.envir.L[1]))
+            time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes)
+            scat = ax.scatter([], [], label='organism')
+        else:
+            ax = fig.add_subplot(111, projection='3d')
+            # text is not updating. No idea why...
+            time_text = ax.text2D(0.02, 1, 'time = {:.2f}'.format(
+                                  self.envir.time_history[0]),
+                                  transform=ax.transAxes)
+            ax.set_xlim((0, self.envir.L[0]))
+            ax.set_ylim((0, self.envir.L[1]))
+            ax.set_zlim((0, self.envir.L[2]))
+            ax.set_xlabel('X')
+            ax.set_ylabel('Y')
+            ax.set_zlabel('Z')
+            scat = ax.scatter(self.pos_history[0][:,0], self.pos_history[0][:,1],
+                              self.pos_history[0][:,2], label='organism',
+                              animated=True)
         ax.set_title('Organism positions')
-        time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes)
-        scat = ax.scatter([], [], label='organism')
 
         # initialization function: plot the background of each frame
         def init():
-            if self.envir.a is not None:
+            if self.envir.a is not None and not DIM3:
                 # add a grassy porous layer background
                 grass = np.random.rand(80)*self.envir.L[0]
                 for g in grass:
                     ax.axvline(x=g, ymax=self.envir.a/self.envir.L[1], color='.5')
-            scat.set_offsets(self.pos_history[0])
+            if DIM3:
+                scat._offsets3d = juggle_axes(self.pos_history[0][:,0],
+                                              self.pos_history[0][:,1],
+                                              self.pos_history[0][:,2], 'z')
+            else:
+                scat.set_offsets(self.pos_history[0])
             time_text.set_text('time = {:.2f}'.format(self.envir.time_history[0]))
             return scat, time_text
 
         # animation function. Called sequentially
         def animate(n):
             if n < len(self.pos_history):
-                scat.set_offsets(self.pos_history[n])
                 time_text.set_text('time = {:.2f}'.format(self.envir.time_history[n]))
+                if DIM3:
+                    scat._offsets3d = juggle_axes(self.pos_history[n][:,0],
+                                                  self.pos_history[n][:,1],
+                                                  self.pos_history[n][:,2], 'z')
+                    plt.draw()
+                else:
+                    scat.set_offsets(self.pos_history[n])
             else:
-                scat.set_offsets(self.positions)
                 time_text.set_text('time = {:.2f}'.format(self.envir.time))
+                if DIM3:
+                    scat._offsets3d = juggle_axes(self.positions[:,0],
+                                                  self.positions[:,1],
+                                                  self.positions[:,2], 'z')
+                else:
+                    scat.set_offsets(self.positions)
             return scat, time_text
 
         # infer animation rate from dt between current and last position
@@ -505,6 +664,7 @@ class swarm:
         if save_filename is not None:
             try:
                 anim.save(save_filename, dpi=150)
+                print('Video saved to {}.'.format(save_filename))
             except:
                 print('Failed to save animation.')
                 print('Check that you have ffmpeg or mencoder installed!')
