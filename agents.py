@@ -573,6 +573,9 @@ class swarm:
     def plot_all(self, save_filename=None):
         ''' Plot the entire history of the swarm's movement, incl. current '''
 
+        import warnings
+        warnings.filterwarnings('error')
+
         if len(self.envir.time_history) == 0:
             print('No position history! Plotting current position...')
             self.plot()
@@ -588,9 +591,9 @@ class swarm:
         else:
             ax = fig.add_subplot(111, projection='3d')
             # text is not updating. No idea why...
-            time_text = ax.text2D(0.02, 1, 'time = {:.2f}'.format(
+            time_text = ax.text2D(0.02, 0.95, 'time = {:.2f}'.format(
                                   self.envir.time_history[0]),
-                                  transform=ax.transAxes)
+                                  transform=ax.transAxes, animated=True)
             ax.set_xlim((0, self.envir.L[0]))
             ax.set_ylim((0, self.envir.L[1]))
             ax.set_zlim((0, self.envir.L[2]))
@@ -610,9 +613,9 @@ class swarm:
                 for g in grass:
                     ax.axvline(x=g, ymax=self.envir.a/self.envir.L[1], color='.5')
             if DIM3:
-                scat._offsets3d = juggle_axes(self.pos_history[0][:,0],
-                                              self.pos_history[0][:,1],
-                                              self.pos_history[0][:,2], 'z')
+                scat._offsets3d = (np.ma.ravel(self.pos_history[0][:,0].compressed()),
+                                   np.ma.ravel(self.pos_history[0][:,1].compressed()),
+                                   np.ma.ravel(self.pos_history[0][:,2].compressed()))
             else:
                 scat.set_offsets(self.pos_history[0])
             time_text.set_text('time = {:.2f}'.format(self.envir.time_history[0]))
@@ -623,18 +626,19 @@ class swarm:
             if n < len(self.pos_history):
                 time_text.set_text('time = {:.2f}'.format(self.envir.time_history[n]))
                 if DIM3:
-                    scat._offsets3d = juggle_axes(self.pos_history[n][:,0],
-                                                  self.pos_history[n][:,1],
-                                                  self.pos_history[n][:,2], 'z')
-                    plt.draw()
+                    scat._offsets3d = (np.ma.ravel(self.pos_history[n][:,0].compressed()),
+                                       np.ma.ravel(self.pos_history[n][:,1].compressed()),
+                                       np.ma.ravel(self.pos_history[n][:,2].compressed()))
+                    fig.canvas.draw()
                 else:
                     scat.set_offsets(self.pos_history[n])
             else:
                 time_text.set_text('time = {:.2f}'.format(self.envir.time))
                 if DIM3:
-                    scat._offsets3d = juggle_axes(self.positions[:,0],
-                                                  self.positions[:,1],
-                                                  self.positions[:,2], 'z')
+                    scat._offsets3d = (np.ma.ravel(self.positions[:,0].compressed()),
+                                       np.ma.ravel(self.positions[:,1].compressed()),
+                                       np.ma.ravel(self.positions[:,2].compressed()))
+                    fig.canvas.draw()
                 else:
                     scat.set_offsets(self.positions)
             return scat, time_text
@@ -643,8 +647,9 @@ class swarm:
         dt = self.envir.time - self.envir.time_history[-1]
 
         anim = animation.FuncAnimation(fig, animate, init_func=init,
-                                       frames=len(self.pos_history)+1,
-                                       interval=dt*100, repeat=False, blit=True)
+                                    frames=len(self.pos_history)+1,
+                                    interval=dt*100, repeat=False, blit=True)
+
         if save_filename is not None:
             try:
                 anim.save(save_filename, dpi=150)
