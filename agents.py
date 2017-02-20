@@ -10,6 +10,7 @@ Email: wcstrick@live.unc.edu
 '''
 
 import sys
+import warnings
 from math import exp, log
 import numpy as np
 import numpy.ma as ma
@@ -27,7 +28,7 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 
 class environment:
 
-    def __init__(self, Lx=100, Ly=100, Lz=None, 
+    def __init__(self, Lx=100, Ly=100, Lz=None,
                  x_bndry=None, y_bndry=None, z_bndry=None, flow=None,
                  flow_times=None, Re=None, rho=None, init_swarms=None):
         ''' Initialize environmental variables.
@@ -170,8 +171,8 @@ class environment:
             U = [U]
             dpdx = [dpdx]
 
-        for v in U:
-            assert v != 0, "U cannot be equal to zero."
+        # for v in U:
+        #     if v == 0, "U cannot be equal to zero."
 
         if self.re is None or self.rho is None:
             print('Fluid properties of environment are unspecified.')
@@ -193,36 +194,41 @@ class environment:
         flow = np.zeros((len(U), res, res)) # t, y, x
         t = 0
         for v, px in zip(U, dpdx):
-            mu = self.rho*v*self.char_L/self.re
+            # Check for v = 0
+            if v != 0:
+                mu = self.rho*v*self.char_L/self.re
 
-            # Calculate C and D constants and then get A and B based on these
+                # Calculate C and D constants and then get A and B based on these
 
-            C = (px*(-0.5*alpha**2*b**2+exp(log(alpha*b)-alpha*a)-exp(-alpha*a)+1) +
-                v*alpha**2*mu)/(alpha**2*mu*(exp(log(alpha*b)-2*alpha*a)+alpha*b-
-                exp(-2*alpha*a)+1))
+                C = (px*(-0.5*alpha**2*b**2+exp(log(alpha*b)-alpha*a)-exp(-alpha*a)+1) +
+                    v*alpha**2*mu)/(alpha**2*mu*(exp(log(alpha*b)-2*alpha*a)+alpha*b-
+                    exp(-2*alpha*a)+1))
 
-            D = (px*(exp(log(0.5*alpha**2*b**2)-2*alpha*a)+exp(log(alpha*b)-alpha*a)+
-                exp(-alpha*a)-exp(-2*alpha*a)) - 
-                exp(log(v*alpha**2*mu)-2*alpha*a))/(alpha**2*mu*
-                (exp(log(alpha*b)-2*alpha*a)+alpha*b-exp(-2*alpha*a)+1))
+                D = (px*(exp(log(0.5*alpha**2*b**2)-2*alpha*a)+exp(log(alpha*b)-alpha*a)+
+                    exp(-alpha*a)-exp(-2*alpha*a)) - 
+                    exp(log(v*alpha**2*mu)-2*alpha*a))/(alpha**2*mu*
+                    (exp(log(alpha*b)-2*alpha*a)+alpha*b-exp(-2*alpha*a)+1))
 
-            A = alpha*C - alpha*D
-            B = C + D - px/(alpha**2*mu)
+                A = alpha*C - alpha*D
+                B = C + D - px/(alpha**2*mu)
 
-            for n, z in enumerate(y_mesh-a):
-                if z > 0:
-                    #Region I
-                    flow[t,n,:] = z**2*px/(2*mu) + A*z + B
-                else:
-                    #Region 2
-                    if C > 0 and D > 0:
-                        flow[t,n,:] = exp(log(C)+alpha*z) + exp(log(D)-alpha*z) - px/(alpha**2*mu)
-                    elif C <= 0 and D > 0:
-                        flow[t,n,:] = exp(log(D)-alpha*z) - px/(alpha**2*mu)
-                    elif C > 0 and D <= 0:
-                        flow[t,n,:] = exp(log(C)+alpha*z) - px/(alpha**2*mu)
+                for n, z in enumerate(y_mesh-a):
+                    if z > 0:
+                        #Region I
+                        flow[t,n,:] = z**2*px/(2*mu) + A*z + B
                     else:
-                        flow[t,n,:] = -px/(alpha**2*mu)
+                        #Region 2
+                        if C > 0 and D > 0:
+                            flow[t,n,:] = exp(log(C)+alpha*z) + exp(log(D)-alpha*z) - px/(alpha**2*mu)
+                        elif C <= 0 and D > 0:
+                            flow[t,n,:] = exp(log(D)-alpha*z) - px/(alpha**2*mu)
+                        elif C > 0 and D <= 0:
+                            flow[t,n,:] = exp(log(C)+alpha*z) - px/(alpha**2*mu)
+                        else:
+                            flow[t,n,:] = -px/(alpha**2*mu)
+            else:
+                warnings.warn('U=0: returning zero flow for these time-steps.',
+                              UserWarning)
             t += 1
 
         flow = flow.squeeze() # This is 2D Brinkman flow, either t,y,x or y,x.
@@ -332,7 +338,7 @@ class environment:
 
     def __set_flow_variables(self, tspan=None):
         '''Store points at which flow is specified, and time information.
-        
+
         Arguments:
             tspan: [tstart, tend] or iterable of times at which flow is specified
                     or scalar dt. Required if flow is time-dependent; None will
@@ -389,10 +395,10 @@ class swarm:
 
         # use a new default environment if one was not given
         if envir is None:
-            self.envir = environment(init_swarms = self)
+            self.envir = environment(init_swarms=self)
         else:
             try:
-                assert isinstance(envir,environment)
+                assert isinstance(envir, environment)
                 envir.swarms.append(self)
                 self.envir = envir
             except AssertionError:
@@ -442,7 +448,7 @@ class swarm:
             else:
                 # temporal flow. interpolate in time, and then in space.
                 mu = self.__interpolate_flow(self.__interpolate_temporal_flow(),
-                                                method='linear')
+                                             method='linear')
         # For now, just have everybody move according to a random walk.
         self.__move_gaussian_walk(self.positions, mu, dt*np.eye(len(self.envir.L)))
 
@@ -464,26 +470,26 @@ class swarm:
             ### Left boundary ###
             if bndry[0] == 'zero':
                 # mask everything exiting on the left
-                self.positions[self.positions[:,dim]< 0, :] = ma.masked
+                self.positions[self.positions[:,dim] < 0, :] = ma.masked
             elif bndry[0] == 'noflux':
                 # pull everything exiting on the left to 0
-                self.positions[self.positions[:,dim]< 0, dim] = 0
+                self.positions[self.positions[:,dim] < 0, dim] = 0
             else:
                 raise NameError
 
             ### Right boundary ###
             if bndry[1] == 'zero':
                 # mask everything exiting on the right
-                self.positions[self.positions[:,dim]> self.envir.L[dim], :] = ma.masked
+                self.positions[self.positions[:,dim] > self.envir.L[dim], :] = ma.masked
             elif bndry[1] == 'noflux':
                 # pull everything exiting on the left to 0
-                self.positions[self.positions[:,dim]> self.envir.L[dim], dim] = self.envir.L[dim]
+                self.positions[self.positions[:,dim] > self.envir.L[dim], dim] = self.envir.L[dim]
             else:
                 raise NameError
 
 
 
-    def __interpolate_flow(self,flow,method):
+    def __interpolate_flow(self, flow, method):
         '''Interpolate the fluid velocity field at swarm positions'''
 
         x_vel = interpolate.interpn(self.envir.flow_points, flow[0],
@@ -509,7 +515,7 @@ class swarm:
             return [f[-1, ...] for f in self.envir.flow]
         else:
             # linearly interpolate
-            indx = np.searchsorted(self.envir.flow_times,self.envir.time)
+            indx = np.searchsorted(self.envir.flow_times, self.envir.time)
             diff = self.envir.flow_times[indx] - self.envir.time
             dt = self.envir.flow_times[indx] - self.envir.flow_times[indx-1]
             return [f[indx, ...]*(dt-diff)/dt + f[indx-1, ...]*diff/dt
@@ -521,7 +527,7 @@ class swarm:
     def __move_gaussian_walk(pos_array, mean, cov):
         ''' Move all rows of pos_array a random distance specified by
         a gaussian distribution with given mean and covarience matrix.
-        
+
         Arguments:
             pos_array: array to be altered by the gaussian walk
             mean: either a 1-D array mean to be applied to all positions, or
@@ -572,9 +578,6 @@ class swarm:
 
     def plot_all(self, save_filename=None):
         ''' Plot the entire history of the swarm's movement, incl. current '''
-
-        import warnings
-        warnings.filterwarnings('error')
 
         if len(self.envir.time_history) == 0:
             print('No position history! Plotting current position...')
