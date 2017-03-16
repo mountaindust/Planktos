@@ -16,6 +16,7 @@ import numpy as np
 import numpy.ma as ma
 from scipy import interpolate
 import matplotlib.pyplot as plt
+from matplotlib.ticker import NullFormatter, MaxNLocator
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import juggle_axes
 import matplotlib.cm as cm
@@ -546,21 +547,58 @@ class swarm:
     def plot(self, blocking=True):
         ''' Plot the current position of the swarm '''
 
-        fig = plt.figure()
         if len(self.envir.L) == 2:
+            # 2D plot
+            aspectratio = self.envir.L[0]/self.envir.L[1]
+            fig = plt.figure(figsize=(5*aspectratio+1,6))
+
+            # chop up the axes to include histograms
+            left, width = 0.1, 0.65
+            bottom, height = 0.1, 0.65
+            bottom_h = left_h = left + width + 0.02
+
+            rect_scatter = [left, bottom, width, height]
+            rect_histx = [left, bottom_h, width, 0.2]
+            rect_histy = [left_h, bottom, 0.2, height]
+
+            ax = plt.axes(rect_scatter, xlim=(0, self.envir.L[0]), 
+                          ylim=(0, self.envir.L[1]))
+            axHistx = plt.axes(rect_histx)
+            axHisty = plt.axes(rect_histy)
+
+            # no labels on histogram next to scatter plot
+            nullfmt = NullFormatter()
+            axHistx.xaxis.set_major_formatter(nullfmt)
+            axHisty.yaxis.set_major_formatter(nullfmt)
+
+            # add a grassy porous layer background (if porous layer present)
             if self.envir.a is not None:
-                # add a grassy porous layer background
                 grass = np.random.rand(80)*self.envir.L[0]
                 for g in grass:
-                    plt.axvline(x=g, ymax=self.envir.a/self.envir.L[1], color='.5')
-            ax = plt.axes(xlim=(0, self.envir.L[0]), ylim=(0, self.envir.L[1]))
-            plt.scatter(self.positions[:,0], self.positions[:,1], label='organism')
-            plt.text(0.02, 0.95, 'time = {:.2f}'.format(self.envir.time),
-                     transform=ax.transAxes)
+                    ax.axvline(x=g, ymax=self.envir.a/self.envir.L[1], color='.5')
+
+            # the scatter plot:
+            ax.scatter(self.positions[:,0], self.positions[:,1], label='organism')
+            ax.text(0.02, 0.95, 'time = {:.2f}'.format(self.envir.time),
+                    transform=ax.transAxes)
+            
+            # histograms
+            bins_x = np.linspace(0, self.envir.L[0], 26)
+            bins_y = np.linspace(0, self.envir.L[1], 26)
+            axHistx.hist(self.positions[:,0].compressed(), bins=bins_x)
+            axHisty.hist(self.positions[:,1].compressed(), bins=bins_y,
+                         orientation='horizontal')
+            axHistx.set_xlim(ax.get_xlim())
+            axHisty.set_ylim(ax.get_ylim())
+            pruned_ticks = MaxNLocator(prune='lower', nbins='auto',
+                                       integer=True, min_n_ticks=3)
+            axHisty.xaxis.set_major_locator(pruned_ticks)
+
         else:
             # 3D plot
+            fig = plt.figure()
             ax = fig.add_subplot(111, projection='3d')
-            ax.scatter(self.positions[:,0], self.positions[:,1], 
+            ax.scatter(self.positions[:,0], self.positions[:,1],
                        self.positions[:,2], label='organism')
             # text doesn't work in 3D. No idea why...
             ax.text2D(0.02, 1, 'time = {:.2f}'.format(self.envir.time),
@@ -571,7 +609,7 @@ class swarm:
             ax.set_xlabel('X')
             ax.set_ylabel('Y')
             ax.set_zlabel('Z')
-        plt.title('Organism positions')
+            plt.title('Organism positions')
         plt.show(blocking)
 
 
@@ -583,15 +621,55 @@ class swarm:
             print('No position history! Plotting current position...')
             self.plot()
             return
-
+        
         DIM3 = (len(self.envir.L) == 3)
 
-        fig = plt.figure()
         if not DIM3:
-            ax = plt.axes(xlim=(0, self.envir.L[0]), ylim=(0, self.envir.L[1]))
+            ### 2D setup ###
+            aspectratio = self.envir.L[0]/self.envir.L[1]
+            fig = plt.figure(figsize=(5*aspectratio+1,6))
+
+            # chop up the axes to include histograms
+            left, width = 0.1, 0.65
+            bottom, height = 0.1, 0.65
+            bottom_h = left_h = left + width + 0.02
+
+            rect_scatter = [left, bottom, width, height]
+            rect_histx = [left, bottom_h, width, 0.2]
+            rect_histy = [left_h, bottom, 0.2, height]
+
+            ax = plt.axes(rect_scatter, xlim=(0, self.envir.L[0]), 
+                          ylim=(0, self.envir.L[1]))
+            axHistx = plt.axes(rect_histx)
+            axHisty = plt.axes(rect_histy)
+
+            # no labels on histogram next to scatter plot
+            nullfmt = NullFormatter()
+            axHistx.xaxis.set_major_formatter(nullfmt)
+            axHisty.yaxis.set_major_formatter(nullfmt)
+
             time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes)
             scat = ax.scatter([], [], label='organism')
+
+            # histograms
+            data_x = self.pos_history[0][:,0].compressed()
+            data_y = self.pos_history[0][:,1].compressed()
+            bins_x = np.linspace(0, self.envir.L[0], 26)
+            bins_y = np.linspace(0, self.envir.L[1], 26)
+            n_x, bins_x, patches_x = axHistx.hist(data_x, bins=bins_x)
+            n_y, bins_y, patches_y = axHisty.hist(data_y, bins=bins_y, 
+                                                  orientation='horizontal')
+            axHistx.set_xlim(ax.get_xlim())
+            axHisty.set_ylim(ax.get_ylim())
+            int_ticks = MaxNLocator(nbins='auto', integer=True)
+            pruned_ticks = MaxNLocator(prune='lower', nbins='auto',
+                                       integer=True, min_n_ticks=3)
+            axHistx.yaxis.set_major_locator(int_ticks)
+            axHisty.xaxis.set_major_locator(pruned_ticks)
+
         else:
+            ### 3D setup ###
+            fig = plt.figure()
             ax = fig.add_subplot(111, projection='3d')
             # text is not updating. No idea why...
             time_text = ax.text2D(0.02, 0.95, 'time = {:.2f}'.format(
@@ -606,7 +684,7 @@ class swarm:
             scat = ax.scatter(self.pos_history[0][:,0], self.pos_history[0][:,1],
                               self.pos_history[0][:,2], label='organism',
                               animated=True)
-        ax.set_title('Organism positions')
+            ax.set_title('Organism positions')
 
         # initialization function: plot the background of each frame
         def init():
@@ -616,35 +694,64 @@ class swarm:
                 for g in grass:
                     ax.axvline(x=g, ymax=self.envir.a/self.envir.L[1], color='.5')
             if DIM3:
+                # 3D
                 scat._offsets3d = (np.ma.ravel(self.pos_history[0][:,0].compressed()),
                                    np.ma.ravel(self.pos_history[0][:,1].compressed()),
                                    np.ma.ravel(self.pos_history[0][:,2].compressed()))
+                time_text.set_text('time = {:.2f}'.format(self.envir.time_history[0]))
+                return scat, time_text
             else:
+                # 2D
                 scat.set_offsets(self.pos_history[0])
-            time_text.set_text('time = {:.2f}'.format(self.envir.time_history[0]))
-            return scat, time_text
+                n_x, _ = np.histogram(self.pos_history[0][:,0].compressed(), bins_x)
+                n_y, _ = np.histogram(self.pos_history[0][:,1].compressed(), bins_y)
+                for rect, h in zip(patches_x, n_x):
+                    rect.set_height(h)
+                for rect, h in zip(patches_y, n_y):
+                    rect.set_width(h)
+                time_text.set_text('time = {:.2f}'.format(self.envir.time_history[0]))
+                return [scat]+[time_text]+patches_x+patches_y
 
         # animation function. Called sequentially
         def animate(n):
             if n < len(self.pos_history):
                 time_text.set_text('time = {:.2f}'.format(self.envir.time_history[n]))
                 if DIM3:
+                    # 3D
                     scat._offsets3d = (np.ma.ravel(self.pos_history[n][:,0].compressed()),
                                        np.ma.ravel(self.pos_history[n][:,1].compressed()),
                                        np.ma.ravel(self.pos_history[n][:,2].compressed()))
                     fig.canvas.draw()
+                    return scat, time_text
                 else:
+                    # 2D
                     scat.set_offsets(self.pos_history[n])
+                    n_x, _ = np.histogram(self.pos_history[n][:,0].compressed(), bins_x)
+                    n_y, _ = np.histogram(self.pos_history[n][:,1].compressed(), bins_y)
+                    for rect, h in zip(patches_x, n_x):
+                        rect.set_height(h)
+                    for rect, h in zip(patches_y, n_y):
+                        rect.set_width(h)
+                    return [scat]+[time_text]+patches_x+patches_y
             else:
                 time_text.set_text('time = {:.2f}'.format(self.envir.time))
                 if DIM3:
+                    # 3D end
                     scat._offsets3d = (np.ma.ravel(self.positions[:,0].compressed()),
                                        np.ma.ravel(self.positions[:,1].compressed()),
                                        np.ma.ravel(self.positions[:,2].compressed()))
                     fig.canvas.draw()
+                    return scat, time_text
                 else:
+                    # 2D end
                     scat.set_offsets(self.positions)
-            return scat, time_text
+                    n_x, _ = np.histogram(self.positions[:,0].compressed(), bins_x)
+                    n_y, _ = np.histogram(self.positions[:,1].compressed(), bins_y)
+                    for rect, h in zip(patches_x, n_x):
+                        rect.set_height(h)
+                    for rect, h in zip(patches_y, n_y):
+                        rect.set_width(h)
+                    return [scat]+[time_text]+patches_x+patches_y
 
         # infer animation rate from dt between current and last position
         dt = self.envir.time - self.envir.time_history[-1]
