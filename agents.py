@@ -506,18 +506,25 @@ class swarm:
 
 
 
-    def __interpolate_temporal_flow(self):
-        '''Linearly interpolate flow in time'''
+    def __interpolate_temporal_flow(self, t_indx=None):
+        '''Linearly interpolate flow in time
+        t_indx is the time index for pos_history or None for current time
+        '''
+
+        if t_indx is None:
+            time = self.envir.time
+        else:
+            time = self.envir.time_history[t_indx]
 
         # boundary cases
-        if self.envir.time <= self.envir.flow_times[0]:
+        if time <= self.envir.flow_times[0]:
             return [f[0, ...] for f in self.envir.flow]
-        elif self.envir.time >= self.envir.flow_times[-1]:
+        elif time >= self.envir.flow_times[-1]:
             return [f[-1, ...] for f in self.envir.flow]
         else:
             # linearly interpolate
-            indx = np.searchsorted(self.envir.flow_times, self.envir.time)
-            diff = self.envir.flow_times[indx] - self.envir.time
+            indx = np.searchsorted(self.envir.flow_times, time)
+            diff = self.envir.flow_times[indx] - time
             dt = self.envir.flow_times[indx] - self.envir.flow_times[indx-1]
             return [f[indx, ...]*(dt-diff)/dt + f[indx-1, ...]*diff/dt
                     for f in self.envir.flow]
@@ -605,17 +612,58 @@ class swarm:
             ax.set_title('Organism positions')
 
             # histograms
+            int_ticks = MaxNLocator(nbins='auto', integer=True)
             axHistx = plt.axes(rect_histx)
             axHistx.set_xlim((0, self.envir.L[0]))
+            axHistx.yaxis.set_major_locator(int_ticks)
             axHistx.set_ylabel('X    ', rotation=0)
             axHisty = plt.axes(rect_histy)
             axHisty.set_xlim((0, self.envir.L[1]))
+            axHisty.yaxis.set_major_locator(int_ticks)
             axHisty.set_ylabel('Y    ', rotation=0)
             axHistz = plt.axes(rect_histz)
             axHistz.set_xlim((0, self.envir.L[2]))
+            axHistz.yaxis.set_major_locator(int_ticks)
             axHistz.set_ylabel('Z    ', rotation=0)
 
             return ax, axHistx, axHisty, axHistz
+
+
+
+    def __calc_basic_stats(self, DIM3, t_indx=None):
+        ''' Return basic stats about % remaining and flow for plot printing.
+        DIM3 indicates the dimension of the domain, bool
+        t_indx is the time index for pos_history or None for current time
+        '''
+
+        if not DIM3:
+            # 2D
+            # get % of agents left in domain
+            if t_indx is None:
+                num_left = self.positions[:,0].compressed().size
+            else:
+                num_left = self.pos_history[t_indx][:,0].compressed().size
+            if len(self.pos_history) > 0:
+                num_orig = self.pos_history[0][:,0].compressed().size
+            else:
+                num_orig = num_left
+            perc_left = 100*num_left/num_orig
+            # get current fluid flow info
+            if len(self.envir.flow[0].shape) == 2:
+                # temporally constant flow
+                flow_spd = np.sqrt(self.envir.flow[0]**2 + self.envir.flow[1]**2)
+                avg_spd_x = self.envir.flow[0].mean()
+                avg_spd_y = self.envir.flow[1].mean()
+            else:
+                # temporally changing flow
+                flow = self.__interpolate_temporal_flow(t_indx)
+                flow_spd = np.sqrt(flow[0]**2 + flow[1]**2)
+                avg_spd_x = flow[0].mean()
+                avg_spd_y = flow[1].mean()
+            avg_spd = flow_spd.mean()
+            max_spd = flow_spd.max()
+
+            return perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y
 
 
 
@@ -637,7 +685,19 @@ class swarm:
             # the scatter plot:
             ax.scatter(self.positions[:,0], self.positions[:,1], label='organism')
             ax.text(0.02, 0.95, 'time = {:.2f}'.format(self.envir.time),
-                    transform=ax.transAxes)
+                    transform=ax.transAxes, fontsize=12)
+
+            # textual info
+            perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y = \
+                self.__calc_basic_stats(DIM3=False)
+            plt.figtext(0.77,0.81,
+                        '{:.1f}% remain\n'.format(perc_left)+
+                        '\n------Flow info------\n'+
+                        'Avg vel: {:.1f} m/s\n'.format(avg_spd)+
+                        'Max vel: {:.1f} m/s\n'.format(max_spd)+
+                        'Avg x vel: {:.1f} m/s\n'.format(avg_spd_x)+
+                        'Avg y vel: {:.1f} m/s'.format(avg_spd_y),
+                        fontsize=10)
             
             # histograms
             bins_x = np.linspace(0, self.envir.L[0], 26)
@@ -655,7 +715,7 @@ class swarm:
             ax.scatter(self.positions[:,0], self.positions[:,1],
                        self.positions[:,2], label='organism')
             ax.text2D(0.02, 1, 'time = {:.2f}'.format(self.envir.time),
-                      transform=ax.transAxes)
+                      transform=ax.transAxes, fontsize=12)
 
             # histograms
             bins_x = np.linspace(0, self.envir.L[0], 26)
@@ -685,8 +745,24 @@ class swarm:
             fig = plt.figure(figsize=(5*aspectratio+1,6))
             ax, axHistx, axHisty = self.__plot_setup(fig)
 
-            time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes)
+            time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
+                                fontsize=12)
             scat = ax.scatter([], [], label='organism')
+
+            # textual info
+            perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y = \
+                self.__calc_basic_stats(DIM3=False, t_indx=0)
+            axStats = plt.axes([0.77, 0.77, 0.25, 0.2], frameon=False)
+            axStats.set_axis_off()
+            stats_text = axStats.text(0,1,
+                         '{:.1f}% remain\n'.format(perc_left)+
+                         '\n------Flow info------\n'+
+                         'Avg vel: {:.1f} m/s\n'.format(avg_spd)+
+                         'Max vel: {:.1f} m/s\n'.format(max_spd)+
+                         'Avg x vel: {:.1f} m/s\n'.format(avg_spd_x)+
+                         'Avg y vel: {:.1f} m/s'.format(avg_spd_y),
+                         fontsize=10, transform=axStats.transAxes,
+                         verticalalignment='top')
 
             # histograms
             data_x = self.pos_history[0][:,0].compressed()
@@ -709,7 +785,8 @@ class swarm:
             ax, axHistx, axHisty, axHistz = self.__plot_setup(fig)
             time_text = ax.text2D(0.02, 0.95, 'time = {:.2f}'.format(
                                   self.envir.time_history[0]),
-                                  transform=ax.transAxes, animated=True)
+                                  transform=ax.transAxes, animated=True,
+                                  fontsize=12)
             scat = ax.scatter(self.pos_history[0][:,0], self.pos_history[0][:,1],
                               self.pos_history[0][:,2], label='organism',
                               animated=True)
@@ -729,7 +806,26 @@ class swarm:
         def animate(n):
             if n < len(self.pos_history):
                 time_text.set_text('time = {:.2f}'.format(self.envir.time_history[n]))
-                if DIM3:
+                if not DIM3:
+                    # 2D
+                    perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y = \
+                        self.__calc_basic_stats(DIM3=False, t_indx=n)
+                    stats_text.set_text('{:.1f}% remain\n'.format(perc_left)+
+                                        '\n------Flow info------\n'+
+                                        'Avg vel: {:.1f} m/s\n'.format(avg_spd)+
+                                        'Max vel: {:.1f} m/s\n'.format(max_spd)+
+                                        'Avg x vel: {:.1f} m/s\n'.format(avg_spd_x)+
+                                        'Avg y vel: {:.1f} m/s'.format(avg_spd_y))
+                    scat.set_offsets(self.pos_history[n])
+                    n_x, _ = np.histogram(self.pos_history[n][:,0].compressed(), bins_x)
+                    n_y, _ = np.histogram(self.pos_history[n][:,1].compressed(), bins_y)
+                    for rect, h in zip(patches_x, n_x):
+                        rect.set_height(h)
+                    for rect, h in zip(patches_y, n_y):
+                        rect.set_width(h)
+                    return [scat, time_text, stats_text]+patches_x+patches_y
+                    
+                else:
                     # 3D
                     scat._offsets3d = (np.ma.ravel(self.pos_history[n][:,0].compressed()),
                                        np.ma.ravel(self.pos_history[n][:,1].compressed()),
@@ -745,19 +841,29 @@ class swarm:
                         rect.set_height(h)
                     fig.canvas.draw()
                     return [scat]+[time_text]+patches_x+patches_y+patches_z
-                else:
-                    # 2D
-                    scat.set_offsets(self.pos_history[n])
-                    n_x, _ = np.histogram(self.pos_history[n][:,0].compressed(), bins_x)
-                    n_y, _ = np.histogram(self.pos_history[n][:,1].compressed(), bins_y)
+                    
+            else:
+                time_text.set_text('time = {:.2f}'.format(self.envir.time))
+                if not DIM3:
+                    # 2D end
+                    perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y = \
+                        self.__calc_basic_stats(DIM3=False, t_indx=None)
+                    stats_text.set_text('{:.1f}% remain\n'.format(perc_left)+
+                                        '\n-----Flow info-----\n'+
+                                        'Avg vel: {:.1f} m/s\n'.format(avg_spd)+
+                                        'Max vel: {:.1f} m/s\n'.format(max_spd)+
+                                        'Avg x vel: {:.1f} m/s\n'.format(avg_spd_x)+
+                                        'Avg y vel: {:.1f} m/s'.format(avg_spd_y))
+                    scat.set_offsets(self.positions)
+                    n_x, _ = np.histogram(self.positions[:,0].compressed(), bins_x)
+                    n_y, _ = np.histogram(self.positions[:,1].compressed(), bins_y)
                     for rect, h in zip(patches_x, n_x):
                         rect.set_height(h)
                     for rect, h in zip(patches_y, n_y):
                         rect.set_width(h)
-                    return [scat]+[time_text]+patches_x+patches_y
-            else:
-                time_text.set_text('time = {:.2f}'.format(self.envir.time))
-                if DIM3:
+                    return [scat, time_text, stats_text]+patches_x+patches_y
+                    
+                else:
                     # 3D end
                     scat._offsets3d = (np.ma.ravel(self.positions[:,0].compressed()),
                                        np.ma.ravel(self.positions[:,1].compressed()),
@@ -773,16 +879,6 @@ class swarm:
                         rect.set_height(h)
                     fig.canvas.draw()
                     return [scat]+[time_text]+patches_x+patches_y+patches_z
-                else:
-                    # 2D end
-                    scat.set_offsets(self.positions)
-                    n_x, _ = np.histogram(self.positions[:,0].compressed(), bins_x)
-                    n_y, _ = np.histogram(self.positions[:,1].compressed(), bins_y)
-                    for rect, h in zip(patches_x, n_x):
-                        rect.set_height(h)
-                    for rect, h in zip(patches_y, n_y):
-                        rect.set_width(h)
-                    return [scat]+[time_text]+patches_x+patches_y
 
         # infer animation rate from dt between current and last position
         dt = self.envir.time - self.envir.time_history[-1]
