@@ -544,13 +544,11 @@ class swarm:
 
 
 
-    def plot(self, blocking=True):
-        ''' Plot the current position of the swarm '''
+    def __plot_setup(self, fig):
+        ''' Setup figures for plotting '''
 
         if len(self.envir.L) == 2:
             # 2D plot
-            aspectratio = self.envir.L[0]/self.envir.L[1]
-            fig = plt.figure(figsize=(5*aspectratio+1,6))
 
             # chop up the axes to include histograms
             left, width = 0.1, 0.65
@@ -570,6 +568,41 @@ class swarm:
             nullfmt = NullFormatter()
             axHistx.xaxis.set_major_formatter(nullfmt)
             axHisty.yaxis.set_major_formatter(nullfmt)
+
+            # set histogram limits/ticks
+            axHistx.set_xlim(ax.get_xlim())
+            axHisty.set_ylim(ax.get_ylim())
+            int_ticks = MaxNLocator(nbins='auto', integer=True)
+            pruned_ticks = MaxNLocator(prune='lower', nbins='auto',
+                                       integer=True, min_n_ticks=3)
+            axHistx.yaxis.set_major_locator(int_ticks)
+            axHisty.xaxis.set_major_locator(pruned_ticks)
+
+            return ax, axHistx, axHisty
+
+        else:
+            # 3D plot
+            ax = fig.add_subplot(111, projection='3d')
+            ax.set_xlim((0, self.envir.L[0]))
+            ax.set_ylim((0, self.envir.L[1]))
+            ax.set_zlim((0, self.envir.L[2]))
+            ax.set_xlabel('X')
+            ax.set_ylabel('Y')
+            ax.set_zlabel('Z')
+            ax.set_title('Organism positions')
+
+            return ax
+
+
+
+    def plot(self, blocking=True):
+        ''' Plot the current position of the swarm '''
+
+        if len(self.envir.L) == 2:
+            # 2D plot
+            aspectratio = self.envir.L[0]/self.envir.L[1]
+            fig = plt.figure(figsize=(5*aspectratio+1,6))
+            ax, axHistx, axHisty = self.__plot_setup(fig)
 
             # add a grassy porous layer background (if porous layer present)
             if self.envir.a is not None:
@@ -588,28 +621,17 @@ class swarm:
             axHistx.hist(self.positions[:,0].compressed(), bins=bins_x)
             axHisty.hist(self.positions[:,1].compressed(), bins=bins_y,
                          orientation='horizontal')
-            axHistx.set_xlim(ax.get_xlim())
-            axHisty.set_ylim(ax.get_ylim())
-            pruned_ticks = MaxNLocator(prune='lower', nbins='auto',
-                                       integer=True, min_n_ticks=3)
-            axHisty.xaxis.set_major_locator(pruned_ticks)
 
         else:
             # 3D plot
             fig = plt.figure()
-            ax = fig.add_subplot(111, projection='3d')
+            ax = self.__plot_setup(fig)
             ax.scatter(self.positions[:,0], self.positions[:,1],
                        self.positions[:,2], label='organism')
             # text doesn't work in 3D. No idea why...
             ax.text2D(0.02, 1, 'time = {:.2f}'.format(self.envir.time),
                       transform=ax.transAxes)
-            ax.set_xlim((0, self.envir.L[0]))
-            ax.set_ylim((0, self.envir.L[1]))
-            ax.set_zlim((0, self.envir.L[2]))
-            ax.set_xlabel('X')
-            ax.set_ylabel('Y')
-            ax.set_zlabel('Z')
-            plt.title('Organism positions')
+
         plt.show(blocking)
 
 
@@ -628,25 +650,7 @@ class swarm:
             ### 2D setup ###
             aspectratio = self.envir.L[0]/self.envir.L[1]
             fig = plt.figure(figsize=(5*aspectratio+1,6))
-
-            # chop up the axes to include histograms
-            left, width = 0.1, 0.65
-            bottom, height = 0.1, 0.65
-            bottom_h = left_h = left + width + 0.02
-
-            rect_scatter = [left, bottom, width, height]
-            rect_histx = [left, bottom_h, width, 0.2]
-            rect_histy = [left_h, bottom, 0.2, height]
-
-            ax = plt.axes(rect_scatter, xlim=(0, self.envir.L[0]), 
-                          ylim=(0, self.envir.L[1]))
-            axHistx = plt.axes(rect_histx)
-            axHisty = plt.axes(rect_histy)
-
-            # no labels on histogram next to scatter plot
-            nullfmt = NullFormatter()
-            axHistx.xaxis.set_major_formatter(nullfmt)
-            axHisty.yaxis.set_major_formatter(nullfmt)
+            ax, axHistx, axHisty = self.__plot_setup(fig)
 
             time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes)
             scat = ax.scatter([], [], label='organism')
@@ -659,58 +663,27 @@ class swarm:
             n_x, bins_x, patches_x = axHistx.hist(data_x, bins=bins_x)
             n_y, bins_y, patches_y = axHisty.hist(data_y, bins=bins_y, 
                                                   orientation='horizontal')
-            axHistx.set_xlim(ax.get_xlim())
-            axHisty.set_ylim(ax.get_ylim())
-            int_ticks = MaxNLocator(nbins='auto', integer=True)
-            pruned_ticks = MaxNLocator(prune='lower', nbins='auto',
-                                       integer=True, min_n_ticks=3)
-            axHistx.yaxis.set_major_locator(int_ticks)
-            axHisty.xaxis.set_major_locator(pruned_ticks)
 
-        else:
-            ### 3D setup ###
-            fig = plt.figure()
-            ax = fig.add_subplot(111, projection='3d')
-            # text is not updating. No idea why...
-            time_text = ax.text2D(0.02, 0.95, 'time = {:.2f}'.format(
-                                  self.envir.time_history[0]),
-                                  transform=ax.transAxes, animated=True)
-            ax.set_xlim((0, self.envir.L[0]))
-            ax.set_ylim((0, self.envir.L[1]))
-            ax.set_zlim((0, self.envir.L[2]))
-            ax.set_xlabel('X')
-            ax.set_ylabel('Y')
-            ax.set_zlabel('Z')
-            scat = ax.scatter(self.pos_history[0][:,0], self.pos_history[0][:,1],
-                              self.pos_history[0][:,2], label='organism',
-                              animated=True)
-            ax.set_title('Organism positions')
+            # save histogram axis info for later
+            histx_ylim = axHistx.get_ylim()
+            histy_xlim = axHisty.get_xlim()
 
-        # initialization function: plot the background of each frame
-        def init():
-            if self.envir.a is not None and not DIM3:
-                # add a grassy porous layer background
+            # add a grassy porous layer background
+            if self.envir.a is not None:
                 grass = np.random.rand(80)*self.envir.L[0]
                 for g in grass:
                     ax.axvline(x=g, ymax=self.envir.a/self.envir.L[1], color='.5')
-            if DIM3:
-                # 3D
-                scat._offsets3d = (np.ma.ravel(self.pos_history[0][:,0].compressed()),
-                                   np.ma.ravel(self.pos_history[0][:,1].compressed()),
-                                   np.ma.ravel(self.pos_history[0][:,2].compressed()))
-                time_text.set_text('time = {:.2f}'.format(self.envir.time_history[0]))
-                return scat, time_text
-            else:
-                # 2D
-                scat.set_offsets(self.pos_history[0])
-                n_x, _ = np.histogram(self.pos_history[0][:,0].compressed(), bins_x)
-                n_y, _ = np.histogram(self.pos_history[0][:,1].compressed(), bins_y)
-                for rect, h in zip(patches_x, n_x):
-                    rect.set_height(h)
-                for rect, h in zip(patches_y, n_y):
-                    rect.set_width(h)
-                time_text.set_text('time = {:.2f}'.format(self.envir.time_history[0]))
-                return [scat]+[time_text]+patches_x+patches_y
+            
+        else:
+            ### 3D setup ###
+            fig = plt.figure()
+            ax = self.__plot_setup(fig)
+            time_text = ax.text2D(0.02, 0.95, 'time = {:.2f}'.format(
+                                  self.envir.time_history[0]),
+                                  transform=ax.transAxes, animated=True)
+            scat = ax.scatter(self.pos_history[0][:,0], self.pos_history[0][:,1],
+                              self.pos_history[0][:,2], label='organism',
+                              animated=True)
 
         # animation function. Called sequentially
         def animate(n):
@@ -756,9 +729,9 @@ class swarm:
         # infer animation rate from dt between current and last position
         dt = self.envir.time - self.envir.time_history[-1]
 
-        anim = animation.FuncAnimation(fig, animate, init_func=init,
-                                    frames=len(self.pos_history)+1,
-                                    interval=dt*100, repeat=False, blit=True)
+        anim = animation.FuncAnimation(fig, animate, frames=len(self.pos_history)+1,
+                                    interval=dt*100, repeat=False, blit=True,
+                                    save_count=len(self.pos_history)+1)
 
         if save_filename is not None:
             try:
@@ -768,4 +741,5 @@ class swarm:
                 print('Failed to save animation.')
                 print('Check that you have ffmpeg or mencoder installed!')
                 return
+
         plt.show()
