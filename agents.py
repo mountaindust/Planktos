@@ -582,7 +582,20 @@ class swarm:
 
         else:
             # 3D plot
-            ax = fig.add_subplot(111, projection='3d')
+
+            # chop up axes for a tight layout with histograms
+            left_s, width_s = 0.025, 0.45
+            bottom_s, height_s = 0.05, 0.9
+            bottom_z, bottom_y, bottom_x = 0.05, 0.375, 0.7
+            height_h, left_h, width_h = 0.25, 0.575, 0.4
+
+            rect_scatter = [left_s, bottom_s, width_s, height_s]
+            rect_histx = [left_h, bottom_x, width_h, height_h]
+            rect_histy = [left_h, bottom_y, width_h, height_h]
+            rect_histz = [left_h, bottom_z, width_h, height_h]
+
+            # create scatter plot
+            ax = Axes3D(fig, rect=rect_scatter) #fig.add_subplot(121, projection='3d')
             ax.set_xlim((0, self.envir.L[0]))
             ax.set_ylim((0, self.envir.L[1]))
             ax.set_zlim((0, self.envir.L[2]))
@@ -591,7 +604,18 @@ class swarm:
             ax.set_zlabel('Z')
             ax.set_title('Organism positions')
 
-            return ax
+            # histograms
+            axHistx = plt.axes(rect_histx)
+            axHistx.set_xlim((0, self.envir.L[0]))
+            axHistx.set_ylabel('X    ', rotation=0)
+            axHisty = plt.axes(rect_histy)
+            axHisty.set_xlim((0, self.envir.L[1]))
+            axHisty.set_ylabel('Y    ', rotation=0)
+            axHistz = plt.axes(rect_histz)
+            axHistz.set_xlim((0, self.envir.L[2]))
+            axHistz.set_ylabel('Z    ', rotation=0)
+
+            return ax, axHistx, axHisty, axHistz
 
 
 
@@ -624,13 +648,22 @@ class swarm:
 
         else:
             # 3D plot
-            fig = plt.figure()
-            ax = self.__plot_setup(fig)
+            fig = plt.figure(figsize=(10,5))
+            ax, axHistx, axHisty, axHistz = self.__plot_setup(fig)
+
+            # scatter plot and time text
             ax.scatter(self.positions[:,0], self.positions[:,1],
                        self.positions[:,2], label='organism')
-            # text doesn't work in 3D. No idea why...
             ax.text2D(0.02, 1, 'time = {:.2f}'.format(self.envir.time),
                       transform=ax.transAxes)
+
+            # histograms
+            bins_x = np.linspace(0, self.envir.L[0], 26)
+            bins_y = np.linspace(0, self.envir.L[1], 26)
+            bins_z = np.linspace(0, self.envir.L[2], 26)
+            axHistx.hist(self.positions[:,0].compressed(), bins=bins_x)
+            axHisty.hist(self.positions[:,1].compressed(), bins=bins_y)
+            axHistz.hist(self.positions[:,2].compressed(), bins=bins_z)
 
         plt.show(blocking)
 
@@ -664,10 +697,6 @@ class swarm:
             n_y, bins_y, patches_y = axHisty.hist(data_y, bins=bins_y, 
                                                   orientation='horizontal')
 
-            # save histogram axis info for later
-            histx_ylim = axHistx.get_ylim()
-            histy_xlim = axHisty.get_xlim()
-
             # add a grassy porous layer background
             if self.envir.a is not None:
                 grass = np.random.rand(80)*self.envir.L[0]
@@ -676,14 +705,25 @@ class swarm:
             
         else:
             ### 3D setup ###
-            fig = plt.figure()
-            ax = self.__plot_setup(fig)
+            fig = plt.figure(figsize=(10,5))
+            ax, axHistx, axHisty, axHistz = self.__plot_setup(fig)
             time_text = ax.text2D(0.02, 0.95, 'time = {:.2f}'.format(
                                   self.envir.time_history[0]),
                                   transform=ax.transAxes, animated=True)
             scat = ax.scatter(self.pos_history[0][:,0], self.pos_history[0][:,1],
                               self.pos_history[0][:,2], label='organism',
                               animated=True)
+
+            # histograms
+            data_x = self.pos_history[0][:,0].compressed()
+            data_y = self.pos_history[0][:,1].compressed()
+            data_z = self.pos_history[0][:,2].compressed()
+            bins_x = np.linspace(0, self.envir.L[0], 26)
+            bins_y = np.linspace(0, self.envir.L[1], 26)
+            bins_z = np.linspace(0, self.envir.L[2], 26)
+            n_x, bins_x, patches_x = axHistx.hist(data_x, bins=bins_x)
+            n_y, bins_y, patches_y = axHisty.hist(data_y, bins=bins_y)
+            n_z, bins_z, patches_z = axHistz.hist(data_z, bins=bins_z)
 
         # animation function. Called sequentially
         def animate(n):
@@ -694,8 +734,17 @@ class swarm:
                     scat._offsets3d = (np.ma.ravel(self.pos_history[n][:,0].compressed()),
                                        np.ma.ravel(self.pos_history[n][:,1].compressed()),
                                        np.ma.ravel(self.pos_history[n][:,2].compressed()))
+                    n_x, _ = np.histogram(self.pos_history[n][:,0].compressed(), bins_x)
+                    n_y, _ = np.histogram(self.pos_history[n][:,1].compressed(), bins_y)
+                    n_z, _ = np.histogram(self.pos_history[n][:,2].compressed(), bins_z)
+                    for rect, h in zip(patches_x, n_x):
+                        rect.set_height(h)
+                    for rect, h in zip(patches_y, n_y):
+                        rect.set_height(h)
+                    for rect, h in zip(patches_z, n_z):
+                        rect.set_height(h)
                     fig.canvas.draw()
-                    return scat, time_text
+                    return [scat]+[time_text]+patches_x+patches_y+patches_z
                 else:
                     # 2D
                     scat.set_offsets(self.pos_history[n])
@@ -713,8 +762,17 @@ class swarm:
                     scat._offsets3d = (np.ma.ravel(self.positions[:,0].compressed()),
                                        np.ma.ravel(self.positions[:,1].compressed()),
                                        np.ma.ravel(self.positions[:,2].compressed()))
+                    n_x, _ = np.histogram(self.positions[:,0].compressed(), bins_x)
+                    n_y, _ = np.histogram(self.positions[:,1].compressed(), bins_y)
+                    n_z, _ = np.histogram(self.positions[:,2].compressed(), bins_z)
+                    for rect, h in zip(patches_x, n_x):
+                        rect.set_height(h)
+                    for rect, h in zip(patches_y, n_y):
+                        rect.set_height(h)
+                    for rect, h in zip(patches_z, n_z):
+                        rect.set_height(h)
                     fig.canvas.draw()
-                    return scat, time_text
+                    return [scat]+[time_text]+patches_x+patches_y+patches_z
                 else:
                     # 2D end
                     scat.set_offsets(self.positions)
