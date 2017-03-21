@@ -725,6 +725,15 @@ class swarm:
             fig = plt.figure(figsize=(10,5))
             ax, axHistx, axHisty, axHistz = self.__plot_setup(fig)
 
+            # add a grassy porous layer background (if porous layer present)
+            if self.envir.a is not None:
+                grass = np.random.rand(120,2)
+                grass[:,0] *= self.envir.L[0]
+                grass[:,1] *= self.envir.L[1]
+                for g in grass:
+                    ax.plot([g[0],g[0]], [g[1],g[1]], [0,self.envir.a],
+                            'k-', alpha=0.5)
+
             # scatter plot and time text
             ax.scatter(self.positions[:,0], self.positions[:,1],
                        self.positions[:,2], label='organism')
@@ -861,6 +870,15 @@ class swarm:
             n_x, bins_x, patches_x = axHistx.hist(data_x, bins=bins_x, alpha=0.8)
             n_y, bins_y, patches_y = axHisty.hist(data_y, bins=bins_y, alpha=0.8)
             n_z, bins_z, patches_z = axHistz.hist(data_z, bins=bins_z, alpha=0.8)
+
+            # add a grassy porous layer background (if porous layer present)
+            if self.envir.a is not None:
+                grass = np.random.rand(120,2)
+                grass[:,0] *= self.envir.L[0]
+                grass[:,1] *= self.envir.L[1]
+                for g in grass:
+                    ax.plot([g[0],g[0]], [g[1],g[1]], [0,self.envir.a],
+                            'k-', alpha=0.5)
 
         # animation function. Called sequentially
         def animate(n):
