@@ -477,6 +477,16 @@ class swarm:
             self.envir.time_history.append(self.envir.time)
             self.envir.time += dt
 
+        # Check for other swarms in environment and freeze them
+        warned = False
+        for s in self.envir.swarms:
+            if s is not self:
+                s.pos_history.append(s.positions)
+                if not warned:
+                    warnings.warn("Other swarms in environment were not moved.",
+                                UserWarning)
+                    warned = True
+
 
 
     def __apply_boundary_conditions(self):
