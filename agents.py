@@ -427,13 +427,28 @@ class swarm:
 
 
     def move(self, dt=1.0, params=None, update_time=True):
-        ''' Move all organsims in the swarm over an amount of time dt '''
+        '''Move all organisms in the swarm over an amount of time dt.
+        
+        As of now, only the Gaussian walk is implemented. Optional parameters:
+            params = (mean=0, covariance matrix=np.eye)'''
 
         # Put current position in the history
         self.pos_history.append(self.positions.copy())
 
         # 3D?
         DIM3 = (len(self.envir.L) == 3)
+
+        # Parse optional parameters
+        if params is not None:
+            assert isinstance(params[1], np.ndarray), "cov must be ndarray"
+            if not DIM3:
+                assert len(params[0]) == 2, "mu must be length 2"
+                assert params[1].shape == (2,2), "cov must be shape (2,2)"
+            else:
+                assert len(params[0]) == 3, "mu must be length 3"
+                assert params[1].shape == (3,3), "cov must be shape (3,3)"
+        else:
+            params = (0, np.eye(len(self.envir.L)))
 
         # Interpolate fluid flow
         if self.envir.flow is None:
@@ -450,8 +465,9 @@ class swarm:
                 # temporal flow. interpolate in time, and then in space.
                 mu = self.__interpolate_flow(self.__interpolate_temporal_flow(),
                                              method='linear')
+        mu += params[0]
         # For now, just have everybody move according to a random walk.
-        self.__move_gaussian_walk(self.positions, mu, dt*np.eye(len(self.envir.L)))
+        self.__move_gaussian_walk(self.positions, mu, dt*params[1])
 
         # Apply boundary conditions.
         self.__apply_boundary_conditions()
