@@ -90,7 +90,13 @@ def test_multiple_2D_swarms():
     assert envir.time == 10, "incorrect final time"
     assert len(envir.time_history) == 20, "incorrect time history"
 
-    #TODO: environment reset method(s)
+    #test reset
+    envir.reset()
+    for ii in range(20):
+        envir.move_swarms(0.5)
+    assert len(s2.pos_history) == 20, "incorrect movement history"
+    assert envir.time == 10, "incorrect final time"
+    assert len(envir.time_history) == 20, "incorrect time history"
 
 
 

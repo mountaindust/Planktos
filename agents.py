@@ -105,8 +105,8 @@ class environment:
             else:
                 self.swarms = [init_swarms]
             # reset each swarm's environment
-            for swarm in self.swarms:
-                swarm.envir = self
+            for sw in self.swarms:
+                sw.envir = self
 
         ##### Fluid Variables #####
 
@@ -332,6 +332,21 @@ class environment:
                 raise NameError("Z boundary condition {} not implemented.".format(z_bndry))
             else:
                 self.bndry.append(z_bndry)
+
+
+
+    def reset(self, rm_swarms=False):
+        '''Resets environment to time=0. Swarm history will be lost, and all
+        swarms will maintain their last position. If rm_swarms=True, remove
+        all swarms.'''
+
+        self.time = 0.0
+        self.time_history = []
+        if rm_swarms:
+            self.swarms = []
+        else:
+            for sw in self.swarms:
+                sw.pos_history = []
 
 
 
