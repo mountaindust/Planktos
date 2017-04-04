@@ -681,8 +681,32 @@ class swarm:
 
 
 
-    def plot(self, blocking=True):
-        ''' Plot the current position of the swarm '''
+    def plot(self, t=None, blocking=True):
+        '''Plot the position of the swarm at time t, or at the current time
+        if no time is supplied. The actual time plotted will depend on the
+        history of movement steps; the closest entry in
+        environment.time_history will be shown without interpolation.'''
+
+        if t is not None and len(self.envir.time_history) != 0:
+            loc = np.searchsorted(self.envir.time_history, t)
+            if loc == len(self.envir.time_history):
+                if (t-self.envir.time_history[-1]) > (self.envir.time-t):
+                    loc = None
+                else:
+                    loc = -1
+            elif t < self.envir.time_history[loc]:
+                if (self.envir.time_history[loc]-t) > (t-self.envir.time_history[loc-1]):
+                    loc -= 1
+        else:
+            loc = None
+
+        # get time and positions
+        if loc is None:
+            time = self.envir.time
+            positions = self.positions
+        else:
+            time = self.envir.time_history[loc]
+            positions = self.pos_history[loc]
 
         if len(self.envir.L) == 2:
             # 2D plot
@@ -697,14 +721,14 @@ class swarm:
                     ax.axvline(x=g, ymax=self.envir.a/self.envir.L[1], color='.5')
 
             # scatter plot and time text
-            ax.scatter(self.positions[:,0], self.positions[:,1], label='organism')
-            ax.text(0.02, 0.95, 'time = {:.2f}'.format(self.envir.time),
+            ax.scatter(positions[:,0], positions[:,1], label='organism')
+            ax.text(0.02, 0.95, 'time = {:.2f}'.format(time),
                     transform=ax.transAxes, fontsize=12)
 
             # textual info
             perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y = \
-                self.__calc_basic_stats(DIM3=False)
-            plt.figtext(0.77,0.81,
+                self.__calc_basic_stats(DIM3=False, t_indx=loc)
+            plt.figtext(0.77, 0.81,
                         '{:.1f}% remain\n'.format(perc_left)+
                         '\n------Flow info------\n'+
                         'Avg vel: {:.1f} m/s\n'.format(avg_spd)+
@@ -712,12 +736,12 @@ class swarm:
                         'Avg x vel: {:.1f} m/s\n'.format(avg_spd_x)+
                         'Avg y vel: {:.1f} m/s'.format(avg_spd_y),
                         fontsize=10)
-            
+
             # histograms
             bins_x = np.linspace(0, self.envir.L[0], 26)
             bins_y = np.linspace(0, self.envir.L[1], 26)
-            axHistx.hist(self.positions[:,0].compressed(), bins=bins_x)
-            axHisty.hist(self.positions[:,1].compressed(), bins=bins_y,
+            axHistx.hist(positions[:,0].compressed(), bins=bins_x)
+            axHisty.hist(positions[:,1].compressed(), bins=bins_y,
                          orientation='horizontal')
 
         else:
@@ -735,15 +759,15 @@ class swarm:
                             'k-', alpha=0.5)
 
             # scatter plot and time text
-            ax.scatter(self.positions[:,0], self.positions[:,1],
-                       self.positions[:,2], label='organism')
-            ax.text2D(0.02, 1, 'time = {:.2f}'.format(self.envir.time),
+            ax.scatter(positions[:,0], positions[:,1], positions[:,2],
+                       label='organism')
+            ax.text2D(0.02, 1, 'time = {:.2f}'.format(time),
                       transform=ax.transAxes, verticalalignment='top',
                       fontsize=12)
 
             # textual info
             perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_spd_z = \
-                self.__calc_basic_stats(DIM3=True, t_indx=None)
+                self.__calc_basic_stats(DIM3=True, t_indx=loc)
             ax.text2D(1, 0.945, 'Avg vel: {:.1f} m/s\n'.format(avg_spd)+
                       'Max vel: {:.1f} m/s'.format(max_spd),
                       transform=ax.transAxes, horizontalalignment='right',
@@ -764,9 +788,9 @@ class swarm:
             bins_x = np.linspace(0, self.envir.L[0], 26)
             bins_y = np.linspace(0, self.envir.L[1], 26)
             bins_z = np.linspace(0, self.envir.L[2], 26)
-            axHistx.hist(self.positions[:,0].compressed(), bins=bins_x, alpha=0.8)
-            axHisty.hist(self.positions[:,1].compressed(), bins=bins_y, alpha=0.8)
-            axHistz.hist(self.positions[:,2].compressed(), bins=bins_z, alpha=0.8)
+            axHistx.hist(positions[:,0].compressed(), bins=bins_x, alpha=0.8)
+            axHisty.hist(positions[:,1].compressed(), bins=bins_y, alpha=0.8)
+            axHistz.hist(positions[:,2].compressed(), bins=bins_z, alpha=0.8)
 
         plt.show(blocking)
 
