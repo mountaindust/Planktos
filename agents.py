@@ -64,11 +64,12 @@ class environment:
         ##### save flow #####
         self.flow_times = None
         self.flow_points = None
+        self.flow = flow
 
         if flow is not None:
             try:
                 assert isinstance(flow, list)
-                assert len(flow) > 1
+                assert len(flow) > 1, 'flow must be specified for each dimension'
                 for ii in range(len(flow)):
                     assert isinstance(flow[ii], np.ndarray)
             except AssertionError:
@@ -81,7 +82,7 @@ class environment:
                 if max([len(f.shape) for f in flow]) > 3:
                     # time-dependent flow
                     assert flow[0].shape[0] == flow[1].shape[0] == flow[2].shape[0]
-                    assert flow_times is not None
+                    assert flow_times is not None, "Must provide flow_times"
                     self.__set_flow_variables(flow_times)
                 else:
                     self.__set_flow_variables()
@@ -90,11 +91,10 @@ class environment:
                 if max([len(f.shape) for f in flow]) > 2:
                     # time-dependent flow
                     assert flow[0].shape[0] == flow[1].shape[0]
-                    assert flow_times is not None
+                    assert flow_times is not None, "Must provide flow_times"
                     self.__set_flow_variables(flow_times)
                 else:
                     self.__set_flow_variables()
-        self.flow = flow
 
         ##### swarm list #####
         if init_swarms is None:
