@@ -12,3 +12,5 @@ s = envir.swarms[0]
 print('Moving swarm...')
 for ii in range(50):
     s.move(0.5)
+
+#s.plot_all()

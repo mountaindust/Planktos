@@ -172,9 +172,6 @@ class environment:
             U = [U]
             dpdx = [dpdx]
 
-        # for v in U:
-        #     if v == 0, "U cannot be equal to zero."
-
         if self.re is None or self.rho is None:
             print('Fluid properties of environment are unspecified.')
             print('Re = {}'.format(self.re))
@@ -288,7 +285,8 @@ class environment:
             swarm_s.envir = self
             self.swarms.append(swarm_s)
         else:
-            swarm(swarm_s, self, init, **kwargs)
+            return swarm(swarm_s, self, init, **kwargs)
+            
 
 
 
@@ -477,15 +475,15 @@ class swarm:
             self.envir.time_history.append(self.envir.time)
             self.envir.time += dt
 
-        # Check for other swarms in environment and freeze them
-        warned = False
-        for s in self.envir.swarms:
-            if s is not self:
-                s.pos_history.append(s.positions)
-                if not warned:
-                    warnings.warn("Other swarms in environment were not moved.",
-                                UserWarning)
-                    warned = True
+            # Check for other swarms in environment and freeze them
+            warned = False
+            for s in self.envir.swarms:
+                if s is not self:
+                    s.pos_history.append(s.positions)
+                    if not warned:
+                        warnings.warn("Other swarms in environment were not moved.",
+                                    UserWarning)
+                        warned = True
 
 
 
