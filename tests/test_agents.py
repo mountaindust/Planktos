@@ -24,6 +24,26 @@ slow = pytest.mark.skipif(not pytest.config.getoption('--runslow'),
 #                                                                             #
 ###############################################################################
 
+def test_basic():
+    '''Test no-flow, basic stuff'''
+    envir = agents.environment()
+    sw = envir.add_swarm()
+    for ii in range(10):
+        sw.move(0.25)
+    assert envir.time == 2.5
+
+    sw = agents.swarm()
+    for ii in range(10):
+        sw.move(0.25)
+    assert sw.envir.time == 2.5
+
+    envir2 = agents.environment()
+    sw = agents.swarm()
+    envir2.add_swarm(sw)
+    assert envir2.swarms[0] is sw, "pre-existing swarm not added"
+    for ii in range(10):
+        sw.move(0.25)
+
 def test_brinkman_2D():
     '''Test 2D dynamics using brinkman flow'''
     ### Single swarm, time-independent flow ###
