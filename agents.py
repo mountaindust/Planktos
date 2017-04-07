@@ -19,7 +19,6 @@ from scipy import interpolate
 import matplotlib.pyplot as plt
 from matplotlib.ticker import NullFormatter, MaxNLocator
 from mpl_toolkits.mplot3d import Axes3D
-from mpl_toolkits.mplot3d.art3d import juggle_axes
 import matplotlib.cm as cm
 from matplotlib import animation
 import mv_swarm, data_IO
@@ -331,33 +330,36 @@ class environment:
             #
             # read in x-directed Velocity Magnitude #
             strChoice = 'uX'; first = 1
-            uX,x,y = read_Eulerian_Data_From_vtk(pathViz,numSim,strChoice,first)
+            uX,x,y = data_IO.read_Eulerian_Data_From_vtk(pathViz,numSim,
+                                                         strChoice,first)
             X_vel.append(uX)
-        
+
             # read in y-directed Velocity Magnitude #
             strChoice = 'uY'; first = 0
-            uY = read_Eulerian_Data_From_vtk(pathViz,numSim,strChoice,first)
+            uY = data_IO.read_Eulerian_Data_From_vtk(pathViz,numSim,
+                                                     strChoice,first)
             Y_vel.append(uY)
-            
+
             # read in Vorticity #
             # strChoice = 'Omega'; first = 0
-            # Omega = read_Eulerian_Data_From_vtk(pathViz,numSim,strChoice,first)
-
+            # Omega = data_IO.read_Eulerian_Data_From_vtk(pathViz,numSim,
+            #                                             strChoice,first)
             # read in Pressure #
             # strChoice = 'P'; first = 0
-            # P = read_Eulerian_Data_From_vtk(pathViz,numSim,strChoice,first)
-
+            # P = data_IO.read_Eulerian_Data_From_vtk(pathViz,numSim,
+            #                                         strChoice,first)
             # read in Velocity Magnitude #
             # strChoice = 'uMag'; first = 0
-            # uMag = read_Eulerian_Data_From_vtk(pathViz,numSim,strChoice,first)
-
+            # uMag = data_IO.read_Eulerian_Data_From_vtk(pathViz,numSim,
+            #                                            strChoice,first)
             # read in x-directed Forces #
             # strChoice = 'Fx'; first = 0
-            # Fx = read_Eulerian_Data_From_vtk(pathViz,numSim,strChoice,first)
-
+            # Fx = data_IO.read_Eulerian_Data_From_vtk(pathViz,numSim,
+            #                                          strChoice,first)
             # read in y-directed Forces #
             # strChoice = 'Fy'; first = 0
-            # Fy = read_Eulerian_Data_From_vtk(pathViz,numSim,strChoice,first)
+            # Fy = data_IO.read_Eulerian_Data_From_vtk(pathViz,numSim,
+            #                                          strChoice,first)
 
         self.flow_points(tuple(x,y))
         self.flow_times = np.arange(start,finish+1)*print_dump*dt
@@ -483,7 +485,7 @@ class environment:
 class swarm:
 
     def __init__(self, swarm_size=100, envir=None, init='random', **kwargs):
-        ''' Initalizes planktos swarm in a domain of specified size.
+        ''' Initalizes planktos swarm in an environment.
 
         Arguments:
             envir: environment for the swarm, defaults to the standard environment
@@ -546,27 +548,14 @@ class swarm:
         else:
             params = (0, np.eye(len(self.envir.L)))
 
-        # Interpolate fluid flow
-        if self.envir.flow is None:
-            if not DIM3:
-                mu = np.array([0, 0])
-            else:
-                mu = np.array([0, 0, 0])
-        else:
-            if (not DIM3 and len(self.envir.flow[0].shape) == 2) or \
-               (DIM3 and len(self.envir.flow[0].shape) == 3):
-                # temporally constant flow
-                mu = self.__interpolate_flow(self.envir.flow, method='linear')
-            else:
-                # temporal flow. interpolate in time, and then in space.
-                mu = self.__interpolate_flow(self.__interpolate_temporal_flow(),
-                                             method='linear')
-        mu += params[0]
+        # Get fluid-based drift and add Gaussian bias
+        mu = self.get_fluid_drift() + params[0]
+
         # For now, just have everybody move according to a random walk.
         mv_swarm.gaussian_walk(self.positions, mu, dt*params[1])
 
         # Apply boundary conditions.
-        self.__apply_boundary_conditions()
+        self.apply_boundary_conditions()
 
         # Record new time
         if update_time:
@@ -585,7 +574,35 @@ class swarm:
 
 
 
-    def __apply_boundary_conditions(self):
+    def get_fluid_drift(self):
+        '''Return fluid-based drift for all agents via interpolation.
+        
+        In the returned 2D ndarray, each row corresponds to an agent (in the
+        same order as listed in self.positions) and each column is a dimension.
+        '''
+        
+        # 3D?
+        DIM3 = (len(self.envir.L) == 3)
+
+        # Interpolate fluid flow
+        if self.envir.flow is None:
+            if not DIM3:
+                return np.array([0, 0])
+            else:
+                return np.array([0, 0, 0])
+        else:
+            if (not DIM3 and len(self.envir.flow[0].shape) == 2) or \
+               (DIM3 and len(self.envir.flow[0].shape) == 3):
+                # temporally constant flow
+                return self.__interpolate_flow(self.envir.flow, method='linear')
+            else:
+                # temporal flow. interpolate in time, and then in space.
+                return self.__interpolate_flow(self.__interpolate_temporal_flow(),
+                                             method='linear')
+
+
+
+    def apply_boundary_conditions(self):
         '''Apply boundary conditions to self.positions'''
 
         for dim, bndry in enumerate(self.envir.bndry):
