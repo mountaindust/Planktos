@@ -2,6 +2,9 @@
 __pycache__/
 *.py[cod]
 
+# Data files
+vtk3d/
+
 # Autobackup files
 ~*
 
