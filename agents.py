@@ -329,15 +329,15 @@ class environment:
             #  Note: U(j,i): j-corresponds to y-index, i to the x-index
             #
             # read in x-directed Velocity Magnitude #
-            strChoice = 'uX'; first = 1
+            strChoice = 'uX'; xy = True
             uX,x,y = data_IO.read_Eulerian_Data_From_vtk(pathViz,numSim,
-                                                         strChoice,first)
+                                                         strChoice,xy)
             X_vel.append(uX)
 
             # read in y-directed Velocity Magnitude #
-            strChoice = 'uY'; first = 0
+            strChoice = 'uY'
             uY = data_IO.read_Eulerian_Data_From_vtk(pathViz,numSim,
-                                                     strChoice,first)
+                                                     strChoice)
             Y_vel.append(uY)
 
             # read in Vorticity #
