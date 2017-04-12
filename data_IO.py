@@ -12,129 +12,112 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 
 import os
 import numpy as np
+import vtk
+from vtk.util import numpy_support # Converts vtkarray to/from numpy array
+from vtk.numpy_interface import dataset_adapter as dsa
 
-def read_SP_Data_From_vtk(path, simNums, strChoice, xy=False):
-    '''Read scalar or vector Structured_Points data from an ascii VTK file.
-    3D is not currently supported, and neither is ASPECT_RATIO.
-    
-    If xy is True, also return the xmesh and ymesh.'''
+
+def read_vtk_Structured_Points(filename):
+    '''This will read in either Scalar or Vector data!'''
+
+    # Load data
+    reader = vtk.vtkStructuredPointsReader()
+    reader.SetFileName(filename)
+    reader.Update()
+    vtk_data = reader.GetOutput()
+
+    # Get mesh data
+    mesh_shape = vtk_data.GetDimensions()
+    origin = vtk_data.GetOrigin()
+    spacing = vtk_data.GetSpacing()
+
+    # Read in data
+    scalar_data = vtk_data.GetPointData().GetScalars()
+    if scalar_data is not None:
+        np_data = numpy_support.vtk_to_numpy(scalar_data)
+        e_data = np.reshape(np_data, mesh_shape[::-1]).squeeze()
+        # Indexed [z,y,x] since x changes, then y, then z in the flattened array
+        return e_data, origin, spacing
+    else:
+        vector_data = vtk_data.GetPointData().GetVectors()
+        np_data = numpy_support.vtk_to_numpy(vector_data)
+        e_data_X = np.reshape(np_data[:,0], mesh_shape[::-1]).squeeze()
+        e_data_Y = np.reshape(np_data[:,1], mesh_shape[::-1]).squeeze()
+        e_data_Z = np.reshape(np_data[:,2], mesh_shape[::-1]).squeeze()
+        # Each of these are indexed via [z,y,x], since x changes, then y, then z
+        #   in the flattened array.
+        return e_data_X, e_data_Y, e_data_Z, origin, spacing
+
+
+
+def read_vtk_Rectilinear_Grid_Vector(filename):
+    '''Reads a vtk file with Rectilinear Grid Vector data and TIME info'''
+
+    reader = vtk.vtkRectilinearGridReader()
+    reader.SetFileName(filename)
+    # Note: if multiple variables are in the same file, you will need to
+    #   add the line(s) reader.ReadAllVectorsOn() and/or reader.ReadAllScalarsOn()
+    reader.Update()
+    vtk_data = reader.GetOutput()
+    mesh_shape = vtk_data.GetDimensions() # (xlen, ylen, zlen)
+    mesh_bounds = vtk_data.GetBounds() # (xmin, xmax, ymin, ymax, zmin, zmax)
+
+    # Get mesh data
+    x_mesh = numpy_support.vtk_to_numpy(vtk_data.GetXCoordinates())
+    y_mesh = numpy_support.vtk_to_numpy(vtk_data.GetYCoordinates())
+    z_mesh = numpy_support.vtk_to_numpy(vtk_data.GetZCoordinates())
+
+    # Read in vector data
+    np_data = numpy_support.vtk_to_numpy(vtk_data.GetPointData().GetVectors())
+    # np_data is an (n,3) array of n vectors
+
+    # Split and reshape vectors to a matrix
+    x_data = np.reshape(np_data[:,0], mesh_shape[::-1])
+    y_data = np.reshape(np_data[:,1], mesh_shape[::-1])
+    z_data = np.reshape(np_data[:,2], mesh_shape[::-1])
+    # Each of these are indexed via [z,y,x], since x changes, then y, then z
+    #   in the flattened array.
+
+    # In the case of VisIt IBAMR data, TIME is stored as fielddata. Retrieve it.
+    #   To do this, wrap the data object and then access FieldData like a dict
+    py_data = dsa.WrapDataObject(vtk_data)
+    if 'TIME' in py_data.FieldData.keys():
+        time = py_data.FieldData['TIME']
+    else:
+        time = None
+    # FYI, py_data.PointData is a dict containing the point data - useful if
+    #   there are many variables stored in the same file. Also, analysis on this
+    #   data (which is a vtk subclass of numpy arrays) can be done by importing
+    #   algorithms from vtk.numpy_interface. Since the data structure retains
+    #   knowledge of the mesh, gradients etc. can be obtained across irregular points
+
+    return [x_data, y_data, z_data], [x_mesh, y_mesh, z_mesh], time
+
+
+
+def read_2DEulerian_Data_From_vtk(path, simNums, strChoice, xy=False):
+    '''New version: also reads vector data'''
 
     filename = path + strChoice + '.' + str(simNums) + '.vtk'
-
-    TYPE = None
-
-    with open(filename, 'r') as fobj:
-        for n,line in enumerate(fobj):
-            keywords = line.split()
-            if len(keywords) > 0:
-                if keywords[0] == 'DATASET':
-                    assert keywords[1] == 'STRUCTURED_POINTS', "Not a structured points file!"
-                elif keywords[0] == 'DIMENSIONS':
-                    Nx = int(keywords[1])
-                    Ny = int(keywords[2])
-                    Nz = int(keywords[3])
-                elif keywords[0] == 'ORIGIN':
-                    Ox = keywords[1]
-                    Oy = keywords[2]
-                    # Oz = keywords[3]
-                elif keywords[0] == 'SPACING':
-                    dx = keywords[1]
-                    dy = keywords[2]
-                    # dz = keywords[3]
-                elif keywords[0] == 'VECTORS':
-                    TYPE = 'VECTORS'
-                elif keywords[0] == 'SCALARS':
-                    TYPE = 'SCALARS'
-                elif TYPE is not None:
-                    try:
-                        val = float(keywords[0])
-                        headlen = n
-                        break
-                    except ValueError:
-                        pass
-
-    assert Nz == 1, "3D is not currently supported!"
-
-    if TYPE == "SCALARS":
-        e_data = np.genfromtxt(filename, skip_header=headlen, usecols=range(Nx),
-                               max_rows=int(Ny))
-        if xy:
-            return e_data, np.arange(Nx)*dx+Ox, np.arange(Ny)*dy+Oy
-        else:
-            return e_data
-    elif TYPE == "VECTORS":
-        e_data_X = np.genfromtxt(filename, skip_header=headlen,
-                                 usecols=range(3*int(Nx),3), max_rows=int(Ny))
-        e_data_Y = np.genfromtxt(filename, skip_header=headlen,
-                                 usecols=range(1,3*int(Nx),3), max_rows=int(Ny))
-        # e_data_Z = np.genfromtxt(filename, skip_header=headlen,
-        #                          usecols=range(2,3*int(Nx),3), max_rows=int(Ny))
-        if xy:
-            return e_data_X, e_data_Y, np.arange(Nx)*dx+Ox, np.arange(Ny)*dy+Oy
-        else:
-            return e_data_X, e_data_Y
-
-
-
-def read_VisIt_Data_From_vtk(filename):
-    ''' Read data from a single rectilinear_grid vtk file generated by VisIt
-    with vector information.'''
-
-
-
-def read_Eulerian_Data_From_vtk(path,simNums,strChoice,xy=False):
-
-    analysis_path = os.getcwd()  # Stores current directory path        
-        
-    os.chdir(path)               # cd's into viz_IB2d folder
-    
-    filename = strChoice + '.' + str(simNums) + '.vtk'
-
-    # Stores grid resolution from .vtk file
-    Nx = np.genfromtxt(filename, skip_header=5, usecols=(1),max_rows=1)
-    
-    # Stores desired Eulerian data
-    e_data = np.genfromtxt(filename, skip_header=14, 
-                            usecols=range(0,int(Nx)), max_rows=int(Nx))
+    data = read_vtk_Structured_Points(filename)
 
     if xy:
-        
-        # Stores Eulerian grid spacing
-        dx =  np.genfromtxt(filename, skip_header=8, usecols=(1), 
-                            max_rows=1)
-    
-        # Stores grid values (NOTE: yGrid = xGrid_Transpose)
-        x = np.zeros(int(Nx))
-        for i in range(1, int(Nx)):        
-            x[i] = x[i-1]+dx
+        # reconstruct mesh
+        origin = data[-2]
+        spacing = data[-1]
+        x = np.arange(data[0].shape[0])*spacing[0]+origin[0]
+        y = np.arange(data[0].shape[1])*spacing[1]+origin[1]
 
-        os.chdir(analysis_path)     # Path to working directory
-
-        return e_data,x,x
-    
+    # infer if it was a vector or not and return accordingly
+    if len(data) == 3:
+        # scalar
+        if xy:
+            return data[0], x, y
+        else:
+            return data[0]
     else:
-
-        os.chdir(analysis_path)     # Path to working directory
-
-        return e_data
-
-def read_Eulerian_Velocity_Field_vtk(path, simNums):
-
-    analysis_path = os.getcwd()  # Stores current directory path        
-    
-    os.chdir(path)               # cd's into viz_IB2d folder
-    
-    filename = 'u.' + str(simNums) + '.vtk'
-
-    # Stores grid resolution from .vtk file
-    Nx = np.genfromtxt(filename, skip_header=5, usecols=(1),max_rows=1)
-    
-    # Stores desired Eulerian data
-    e_data_X = np.genfromtxt(filename, skip_header=13,
-                                usecols=range(0,3*int(Nx),3), max_rows=int(Nx))
-    e_data_Y = np.genfromtxt(filename, skip_header=13,
-                                usecols=range(1,3*int(Nx),3), max_rows=int(Nx))
-
-    os.chdir(analysis_path)     # Path to working directory
-
-    return e_data_X, e_data_Y
+        # vector
+        if xy:
+            return data[0], data[1], x, y
+        else:
+            return data[0], data[1]

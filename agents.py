@@ -330,36 +330,36 @@ class environment:
             #
             # read in x-directed Velocity Magnitude #
             strChoice = 'uX'; xy = True
-            uX,x,y = data_IO.read_Eulerian_Data_From_vtk(pathViz,numSim,
-                                                         strChoice,xy)
+            uX,x,y = data_IO.read_2DEulerian_Data_From_vtk(pathViz,numSim,
+                                                           strChoice,xy)
             X_vel.append(uX)
 
             # read in y-directed Velocity Magnitude #
             strChoice = 'uY'
-            uY = data_IO.read_Eulerian_Data_From_vtk(pathViz,numSim,
-                                                     strChoice)
+            uY = data_IO.read_2DEulerian_Data_From_vtk(pathViz,numSim,
+                                                       strChoice)
             Y_vel.append(uY)
 
             # read in Vorticity #
             # strChoice = 'Omega'; first = 0
-            # Omega = data_IO.read_Eulerian_Data_From_vtk(pathViz,numSim,
-            #                                             strChoice,first)
+            # Omega = data_IO.read_2DEulerian_Data_From_vtk(pathViz,numSim,
+            #                                               strChoice,first)
             # read in Pressure #
             # strChoice = 'P'; first = 0
-            # P = data_IO.read_Eulerian_Data_From_vtk(pathViz,numSim,
-            #                                         strChoice,first)
+            # P = data_IO.read_2DEulerian_Data_From_vtk(pathViz,numSim,
+            #                                           strChoice,first)
             # read in Velocity Magnitude #
             # strChoice = 'uMag'; first = 0
-            # uMag = data_IO.read_Eulerian_Data_From_vtk(pathViz,numSim,
-            #                                            strChoice,first)
+            # uMag = data_IO.read_2DEulerian_Data_From_vtk(pathViz,numSim,
+            #                                              strChoice,first)
             # read in x-directed Forces #
             # strChoice = 'Fx'; first = 0
-            # Fx = data_IO.read_Eulerian_Data_From_vtk(pathViz,numSim,
-            #                                          strChoice,first)
+            # Fx = data_IO.read_2DEulerian_Data_From_vtk(pathViz,numSim,
+            #                                            strChoice,first)
             # read in y-directed Forces #
             # strChoice = 'Fy'; first = 0
-            # Fy = data_IO.read_Eulerian_Data_From_vtk(pathViz,numSim,
-            #                                          strChoice,first)
+            # Fy = data_IO.read_2DEulerian_Data_From_vtk(pathViz,numSim,
+            #                                            strChoice,first)
 
         self.flow_points(tuple(x,y))
         self.flow_times = np.arange(start,finish+1)*print_dump*dt
