@@ -27,11 +27,11 @@ sys.path.append("C:/Program Files/LLNL/VisIt 2.11.0/lib/site-packages")
 from visit import *
 
 parser = argparse.ArgumentParser()
-parser.add_argument('path_to_dumps', help="Path to dumps.visit, forward slashes only.")
-parser.add_argument('-o', '--outname', help="Directory to write to within vtk3d.")
-parser.add_argument('-x', '--xsamples', help="Number of X samples.", type=int)
-parser.add_argument('-y', '--ysamples', help="Number of Y samples.", type=int)
-parser.add_argument('-z', '--zsamples', help="Number of Z samples.", type=int)
+parser.add_argument('path_to_dumps', help="Path to dumps.visit")
+parser.add_argument('-o', '--outname', help="Directory to write to within vtk3d directory")
+parser.add_argument('-x', '--xsamples', help="Number of X samples", type=int)
+parser.add_argument('-y', '--ysamples', help="Number of Y samples", type=int)
+parser.add_argument('-z', '--zsamples', help="Number of Z samples", type=int)
 parser.add_argument('-s', '--start', help="Starting time-state (as integer counter)",
                     type=int)
 parser.add_argument('-e', '--end', help="Ending time-state (as integer counter)",
@@ -60,19 +60,17 @@ def main(path_to_dumps, Xsamples=11, Ysamples=11, Zsamples=11,
     '''
 
     if path_to_dumps[-11:] != 'dumps.visit':
-        if path_to_dumps[-1] != '/':
-            path_to_dumps += '/dumps.visit'
-        else:
-            path_to_dumps += 'dumps.visit'
+        path_to_dumps = os.path.join(path_to_dumps,'dumps.visit')
     assert os.path.isfile(path_to_dumps), "Could not find {}".format(path_to_dumps)
 
     if out_name is None:
         #use the simulation name
-        out_name = path_to_dumps[:-12].split('/')[-1]
+        out_name = os.path.split(os.path.split(path_to_dumps)[0])[1]
 
     # Create write directory
-    if not os.path.isdir('vtk3d/'+out_name):
-        os.makedirs('vtk3d/'+out_name)
+    out_path = os.path.join('vtk3d',out_name)
+    if not os.path.isdir(out_path):
+        os.makedirs(out_path)
 
     ##### Spin up VisIt and parse states to gather #####
     LaunchNowin()
@@ -119,14 +117,14 @@ def main(path_to_dumps, Xsamples=11, Ysamples=11, Zsamples=11,
         ExportDBAtts = ExportDBAttributes()
         ExportDBAtts.db_type = "VTK"
         ExportDBAtts.filename = "IBAMR_db_"+nstr
-        ExportDBAtts.dirname = 'vtk3d/'+out_name
+        ExportDBAtts.dirname = out_path
         ExportDBAtts.variables = ("U")
         ExportDBAtts.opts.types = ()
         ExportDatabase(ExportDBAtts)
         if n < state_end:
             TimeSliderNextState()
         n+=1
-    print("Data saved to {}.".format(out_name))
+    print("Data saved to {}.".format(out_path))
     DeleteAllPlots()
     CloseDatabase("localhost:"+path_to_dumps)
 
