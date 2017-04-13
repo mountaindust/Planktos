@@ -83,7 +83,9 @@ def read_vtk_Rectilinear_Grid_Vector(filename):
     #   To do this, wrap the data object and then access FieldData like a dict
     py_data = dsa.WrapDataObject(vtk_data)
     if 'TIME' in py_data.FieldData.keys():
-        time = py_data.FieldData['TIME']
+        time = numpy_support.vtk_to_numpy(py_data.FieldData['TIME'])
+        assert len(time) == 1, "Currently can only support single time data."
+        time = time[0]
     else:
         time = None
     # FYI, py_data.PointData is a dict containing the point data - useful if

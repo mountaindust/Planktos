@@ -633,7 +633,7 @@ class swarm:
                     assert len(params[0]) == 3, "mu must be length 3"
                     assert params[1].shape == (3,3), "cov must be shape (3,3)"
             else:
-                params = (0, np.eye(len(self.envir.L)))
+                params = (np.zeros(len(self.envir.L)), np.eye(len(self.envir.L)))
 
             # Get fluid-based drift and add Gaussian bias
             mu = self.get_fluid_drift() + params[0]
