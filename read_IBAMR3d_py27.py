@@ -32,9 +32,9 @@ parser.add_argument('-o', '--outname', help="Directory to write to within vtk3d 
 parser.add_argument('-x', '--xsamples', help="Number of X samples", type=int)
 parser.add_argument('-y', '--ysamples', help="Number of Y samples", type=int)
 parser.add_argument('-z', '--zsamples', help="Number of Z samples", type=int)
-parser.add_argument('-s', '--start', help="Starting time-state (as integer counter)",
+parser.add_argument('-s', '--start', help="Starting time-state (as int base-0 counter)",
                     type=int)
-parser.add_argument('-e', '--end', help="Ending time-state (as integer counter)",
+parser.add_argument('-e', '--end', help="Ending time-state (as int base-0 counter)",
                     type=int)
 
 

@@ -92,7 +92,7 @@ def read_vtk_Rectilinear_Grid_Vector(filename):
     #   algorithms from vtk.numpy_interface. Since the data structure retains
     #   knowledge of the mesh, gradients etc. can be obtained across irregular points
 
-    return [x_data, y_data, z_data], [x_mesh, y_mesh, z_mesh], time
+    return (x_data, y_data, z_data), (x_mesh, y_mesh, z_mesh), time
 
 
 

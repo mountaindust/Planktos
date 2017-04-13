@@ -14,4 +14,4 @@ print('Moving swarm...')
 for ii in range(50):
     s.move(0.5)
 
-#s.plot_all()
+s.plot_all()
