@@ -290,21 +290,19 @@ class environment:
 
         ##### Parse parameters and read in data #####
 
-        pathViz = pathViz.strip()
-        if pathViz[-1] != '/':
-            pathViz += '/'
-        if pathViz[-9:] != 'viz_IB2d/':
-            pathViz += 'viz_IB2d/'
+        pathViz = Path(pathViz)
+        if pathViz.name != 'viz_IB2d':
+            pathViz /= 'viz_IB2d'
 
         if d_finish is None:
             #infer d_finish
-            p = Path(pathViz)
-            file_names = [x.name for x in p.iterdir() if x.is_file()]
+            file_names = [x.name for x in pathViz.iterdir() if x.is_file()]
             uX_nums = sorted([int(f[3:7]) for f in file_names if f[:3] == 'uX.'])
             d_finish = uX_nums[-1]
 
         X_vel = []
         Y_vel = []
+        pathViz = str(pathViz) # Get string for passing into functions
 
         for n in range(d_start, d_finish+1):
             # Points to desired data viz_IB2d data file

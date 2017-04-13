@@ -11,6 +11,7 @@ __email__ = "wcstrick@live.unc.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
 import os
+from pathlib import Path
 import numpy as np
 import vtk
 from vtk.util import numpy_support # Converts vtkarray to/from numpy array
@@ -98,8 +99,8 @@ def read_vtk_Rectilinear_Grid_Vector(filename):
 def read_2DEulerian_Data_From_vtk(path, simNums, strChoice, xy=False):
     '''New version: also reads vector data'''
 
-    filename = path + strChoice + '.' + str(simNums) + '.vtk'
-    data = read_vtk_Structured_Points(filename)
+    filename = Path(path) / (strChoice + '.' + str(simNums) + '.vtk')
+    data = read_vtk_Structured_Points(str(filename))
 
     if xy:
         # reconstruct mesh
