@@ -98,8 +98,27 @@ def read_vtk_Rectilinear_Grid_Vector(filename):
 
 
 
+def read_vtk_Unstructured_Grid_Points(filename):
+    '''This is meant to read mesh data exported from VisIt.'''
+
+    reader = vtk.vtkUnstructuredGridReader()
+    reader.SetFileName(filename)
+    reader.Update()
+    vtk_data = reader.GetOutput()
+    py_data = dsa.WrapDataObject(vtk_data)
+    
+    points = numpy_support.vtk_to_numpy(py_data.Points) # each row is a 3D point
+
+    # also get bounds of the mesh (xmin, xmax, ymin, ymax, zmin, zmax)
+    bounds = numpy_support.vtk_to_numpy(py_data.FieldData['avtOriginalBounds'])
+
+    return points, bounds
+    
+
+
+
 def read_2DEulerian_Data_From_vtk(path, simNums, strChoice, xy=False):
-    '''New version: also reads vector data'''
+    '''This is to read IB2d data, either scalar or vector.'''
 
     filename = Path(path) / (strChoice + '.' + str(simNums) + '.vtk')
     data = read_vtk_Structured_Points(str(filename))
