@@ -72,11 +72,12 @@ def test_brinkman_2D():
     for pos in sw.positions:
         if pos[0] is ma.masked:
             assert pos[1] is ma.masked, "All dimensions not masked"
-            assert pos.data[0] < 0 or pos.data[0] > 100 or pos.data[1] > 100,\
-                "unknown reason for mask"
+            assert pos.data[0] < 0 or pos.data[0] > envir.L[0] or \
+                   pos.data[1] > envir.L[1], "unknown reason for mask"
         else:
             assert pos[1] >= 0, "noflux not respected"
-            assert 0 <= pos[0] <= 100 and pos[1] <= 100, "zero bndry not respected"
+            assert 0 <= pos[0] <= envir.L[0] and pos[1] <= envir.L[1], \
+                   "zero bndry not respected"
 
 
     ### Single swarm, time-dependent flow ###
@@ -143,11 +144,12 @@ def test_brinkman_3D():
         if pos[0] is ma.masked:
             assert pos[1] is ma.masked and pos[2] is ma.masked,\
                    "All dimensions not masked"
-            assert pos.data[0] < 0 or pos.data[0] > 50 or pos.data[1] < 0 or\
-                   pos.data[1] > 50, "unknown reason for mask"
+            assert pos.data[0] < 0 or pos.data[0] > envir.L[0] or\
+                   pos.data[1] < 0 or pos.data[1] > envir.L[1], \
+                   "unknown reason for mask"
         else:
-            assert 0 <= pos[2] <= 50, "noflux not respected"
-            assert 0 <= pos[0] <= 50 and 0 <= pos[1] <= 50,\
+            assert 0 <= pos[2] <= envir.L[2], "noflux not respected"
+            assert 0 <= pos[0] <= envir.L[0] and 0 <= pos[1] <= envir.L[1],\
                    "zero bndry not respected"
 
     ### Single swarm, time-dependent flow ###

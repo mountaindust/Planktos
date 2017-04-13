@@ -331,13 +331,13 @@ class environment:
             strChoice = 'uX'; xy = True
             uX,x,y = data_IO.read_2DEulerian_Data_From_vtk(pathViz,numSim,
                                                            strChoice,xy)
-            X_vel.append(uX)
+            X_vel.append(uX.T) # (y,x) -> (x,y) coordinates
 
             # read in y-directed Velocity Magnitude #
             strChoice = 'uY'
             uY = data_IO.read_2DEulerian_Data_From_vtk(pathViz,numSim,
                                                        strChoice)
-            Y_vel.append(uY)
+            Y_vel.append(uY.T) # (y,x) -> (x,y) coordinates
 
             # read in Vorticity #
             # strChoice = 'Omega'; first = 0
@@ -361,7 +361,7 @@ class environment:
             #                                            strChoice,first)
 
         ### Save data ###
-        self.flow = [np.array(X_vel), np.array(Y_vel)]
+        self.flow = [np.array(X_vel).squeeze(), np.array(Y_vel).squeeze()] 
         if start != finish:
             self.flow_times = np.arange(start,finish+1)*print_dump*dt
         else:
@@ -393,8 +393,8 @@ class environment:
         '''
 
         path = Path(path)
-        assert path.exists(), "Path not found!"
-        file_names = [x.name for x in path.iterdir() if x.is_file() and 
+        assert path.exists(), "Path {} not found!".format(str(path))
+        file_names = [x.name for x in path.iterdir() if x.is_file() and
                       x.name[:9] == 'IBAMR_db_']
         file_nums = sorted([int(f[9:12]) for f in file_names])
         if start is None:
@@ -412,7 +412,7 @@ class environment:
         flow = [[], [], []]
         flow_times = []
 
-        for n in range(start,finish+1):
+        for n in range(start, finish+1):
             if n < 10:
                 num = '00'+str(n)
             elif n < 100:
@@ -420,13 +420,14 @@ class environment:
             else:
                 num = str(n)
             this_file = path / ('IBAMR_db_'+num+'.vtk')
-            data, mesh, time = data_IO.read_vtk_Rectilinear_Grid_Vector(this_file)
+            data, mesh, time = data_IO.read_vtk_Rectilinear_Grid_Vector(str(this_file))
             for dim in range(3):
-                flow[dim].append(data[dim])
+                flow[dim].append(data[dim].T) # (z,y,x) -> (x,y,z) coordinates
             flow_times.append(time)
 
         ### Save data ###
-        self.flow = [np.array(flow[0]), np.array(flow[1]), np.array(flow[2])]
+        self.flow = [np.array(flow[0]).squeeze(), np.array(flow[1]).squeeze(),
+                     np.array(flow[2]).squeeze()]
         # parse time information
         if None not in flow_times and len(flow_times) > 1:
             # shift time so that the first time is 0.
@@ -487,6 +488,8 @@ class environment:
 
         supprted_conds = ['zero', 'noflux']
         default_conds = ['zero', 'zero']
+
+        self.bndry = []
 
         if x_bndry is None:
             # default boundary conditions
@@ -598,6 +601,7 @@ class swarm:
 
         # initialize bug locations
         self.positions = ma.zeros((swarm_size, len(self.envir.L)))
+        self.positions.harden_mask() # prevent unintentional mask overwites
         mv_swarm.init_pos(self, init, kwargs)
 
         # Initialize position history
@@ -614,29 +618,31 @@ class swarm:
         # Put current position in the history
         self.pos_history.append(self.positions.copy())
 
-        # 3D?
-        DIM3 = (len(self.envir.L) == 3)
+        # Check that something is left in the domain to move!
+        if not np.all(self.positions.mask):
+            # 3D?
+            DIM3 = (len(self.envir.L) == 3)
 
-        # Parse optional parameters
-        if params is not None:
-            assert isinstance(params[1], np.ndarray), "cov must be ndarray"
-            if not DIM3:
-                assert len(params[0]) == 2, "mu must be length 2"
-                assert params[1].shape == (2,2), "cov must be shape (2,2)"
+            # Parse optional parameters
+            if params is not None:
+                assert isinstance(params[1], np.ndarray), "cov must be ndarray"
+                if not DIM3:
+                    assert len(params[0]) == 2, "mu must be length 2"
+                    assert params[1].shape == (2,2), "cov must be shape (2,2)"
+                else:
+                    assert len(params[0]) == 3, "mu must be length 3"
+                    assert params[1].shape == (3,3), "cov must be shape (3,3)"
             else:
-                assert len(params[0]) == 3, "mu must be length 3"
-                assert params[1].shape == (3,3), "cov must be shape (3,3)"
-        else:
-            params = (0, np.eye(len(self.envir.L)))
+                params = (0, np.eye(len(self.envir.L)))
 
-        # Get fluid-based drift and add Gaussian bias
-        mu = self.get_fluid_drift() + params[0]
+            # Get fluid-based drift and add Gaussian bias
+            mu = self.get_fluid_drift() + params[0]
 
-        # For now, just have everybody move according to a random walk.
-        mv_swarm.gaussian_walk(self.positions, mu, dt*params[1])
+            # For now, just have everybody move according to a random walk.
+            mv_swarm.gaussian_walk(self.positions, mu, dt*params[1])
 
-        # Apply boundary conditions.
-        self.apply_boundary_conditions()
+            # Apply boundary conditions.
+            self.apply_boundary_conditions()
 
         # Record new time
         if update_time:
@@ -650,7 +656,7 @@ class swarm:
                     s.pos_history.append(s.positions)
                     if not warned:
                         warnings.warn("Other swarms in environment were not moved.",
-                                    UserWarning)
+                                      UserWarning)
                         warned = True
 
 
