@@ -55,9 +55,9 @@ def test_IBAMR_load():
     envir.add_swarm(init='random')
     sw = envir.swarms[0]
     for ii in range(20):
-        sw.move(0.5, params=(np.zeros(3), np.eye(3)*0.1))
+        sw.move(0.1, params=(np.zeros(3), np.eye(3)*0.001))
     assert len(sw.pos_history) == 20, "all movements not recorded"
-    assert envir.time == 10, "incorrect final time"
+    assert np.isclose(envir.time,2), "incorrect final time"
     assert len(envir.time_history) == 20, "all times not recorded"
 
     # Check boundary conditions
@@ -105,9 +105,9 @@ def test_IBAMR_load():
     envir.add_swarm(init='random')
     sw = envir.swarms[0]
     for ii in range(10):
-        sw.move(0.5, params=(np.zeros(3), np.eye(3)*0.1))
+        sw.move(0.1, params=(np.zeros(3), np.eye(3)*0.001))
     assert len(sw.pos_history) == 10, "all movements not recorded"
-    assert envir.time == 5, "incorrect final time"
+    assert np.isclose(envir.time,1), "incorrect final time"
     assert len(envir.time_history) == 10, "all times not recorded"
 
     # Check boundary conditions
