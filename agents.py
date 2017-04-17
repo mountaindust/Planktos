@@ -450,6 +450,71 @@ class environment:
 
 
 
+    def tile_flow(self,x=2,y=1):
+        '''Tile fluid flow a number of times in the x and/or y directions.
+        While obviously this works best if the fluid is periodic in the
+        direction(s) being tiled, this will not be enforced. Instead, it will
+        just be assumed that the domain edges are equivalent, and only the
+        right/upper domain edge will be used in tiling.
+
+        Arguments:
+            x: number of tiles in the x direction (counting the one already there)
+            y: number of tiles in the y direction (counting the one already there)
+        '''
+
+        DIM3 = len(self.L) == 3
+
+        if x is None:
+            x = 1
+        if y is None:
+            y = 1
+        if DIM3:
+            tile_num = (x,y,1)
+        else:
+            tile_num = (x,y)
+
+        if len(self.flow[0].shape) == len(self.L):
+            # no time dependence
+            flow_shape = self.flow[0].shape
+            new_flow_shape = np.array(flow_shape)
+            # get new dimensions
+            for dim in range(len(flow_shape)):
+                new_flow_shape[dim] += (flow_shape[dim]-1)*(tile_num[dim]-1)
+
+            for n, flow in enumerate(self.flow):
+                new_flow = np.zeros(new_flow_shape)
+                new_flow[:flow_shape[0],0,...] = flow[:,0,...]
+                new_flow[0,:flow_shape[1],...] = flow[0,:,...]
+                new_flow[1:,1:,...] = np.tile(flow[1:,1:,...], tile_num)
+                self.flow[n] = new_flow
+        else:
+            # time dependent flow
+            flow_shape = self.flow[0].shape
+            new_flow_shape = np.array(flow_shape)
+            # get new dimensions
+            for dim in range(1,len(flow_shape)):
+                new_flow_shape[dim] += (flow_shape[dim]-1)*(tile_num[dim-1]-1)
+
+            for n, flow in enumerate(self.flow):
+                new_flow = np.zeros(new_flow_shape)
+                new_flow[:,:flow_shape[1],0,...] = flow[:,:,0,...]
+                new_flow[:,0,:flow_shape[2],...] = flow[:,0,:,...]
+                new_flow[:,1:,1:,...] = np.tile(flow[:,1:,1:,...], tile_num)
+                self.flow[n] = new_flow
+            
+        # update environment dimensions and meshes
+        new_points = []
+        for n in range(2):
+            self.L[n] *= tile_num[n]
+            new_points.append(np.concatenate([self.flow_points[n]]+
+                [x*self.flow_points[n][-1]+self.flow_points[n][1:] for
+                x in range(1,tile_num[n])]))
+        if DIM3:
+            new_points.append(self.flow_points[2])
+        self.flow_points = tuple(new_points)
+
+
+
     def add_swarm(self, swarm_s=100, init='random', **kwargs):
         ''' Adds a swarm into this environment.
 
