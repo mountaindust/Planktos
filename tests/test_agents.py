@@ -62,11 +62,26 @@ def test_brinkman_2D():
     assert envir.time == 10, "incorrect final time"
     assert len(envir.time_history) == 20, "all times not recorded"
 
+    # reset
+    envir.reset(rm_swarms=True)
+    assert envir.swarms == [], "swarms still present"
+    assert envir.time == 0, "time not reset"
+    assert len(envir.time_history) == 0, "time history not reset"
+
+    # tile flow
+    envir.tile_flow(3,3)
+    assert envir.L == [300, 300]
+    assert envir.flow_points[0][-1] == 300
+    assert len(envir.flow_points[0]) == len(envir.flow_points[1])
+    assert len(envir.flow_points[0]) == envir.flow[0].shape[0]
+
+    envir.add_swarm(swarm_s=110, init='random')
+    sw = envir.swarms[0]
     for ii in range(20):
         envir.move_swarms(0.5)
-    assert len(sw.pos_history) == 40, "all movements not recorded"
-    assert envir.time == 20, "incorrect final time"
-    assert len(envir.time_history) == 40, "all times not recorded"
+    assert len(sw.pos_history) == 20, "all movements not recorded"
+    assert envir.time == 10, "incorrect final time"
+    assert len(envir.time_history) == 20, "all times not recorded"
 
     # Check boundary conditions
     for pos in sw.positions:
@@ -79,13 +94,18 @@ def test_brinkman_2D():
             assert 0 <= pos[0] <= envir.L[0] and pos[1] <= envir.L[1], \
                    "zero bndry not respected"
 
-
     ### Single swarm, time-dependent flow ###
     envir = agents.environment(Re=1., rho=1000)
     envir.set_brinkman_flow(alpha=66, a=15, res=100, U=range(1,6),
                             dpdx=np.ones(5)*0.22306, tspan=[0, 10])
     assert envir.flow_times is not None, "flow_times unset"
     assert len(envir.flow_times) == 5, "flow_times don't match data"
+
+    # tile flow
+    envir.tile_flow(2,1)
+    assert len(envir.flow_times) == 5, "flow_times don't match data"
+    assert len(envir.flow_points[0]) > len(envir.flow_points[1])
+    assert len(envir.flow_points[0]) == envir.flow[0].shape[1]
     sw = agents.swarm(swarm_size=70, envir=envir, init='point', x=50, y=50)
     assert sw is envir.swarms[0], "swarm not in envir list"
     assert len(envir.swarms) == 1, "too many swarms in envir"
@@ -129,6 +149,13 @@ def test_brinkman_3D():
                                z_bndry=('noflux','noflux'), Re=1., rho=1000)
     envir.set_brinkman_flow(alpha=66, a=15, res=100, U=5, dpdx=0.22306)
     assert envir.flow_times is None, "flow_times should be None for stationary flow"
+
+    #tile flow
+    envir.tile_flow(2,2)
+    assert len(envir.flow_points[0]) == len(envir.flow_points[1])
+    assert len(envir.flow_points[0]) > len(envir.flow_points[2])
+    assert len(envir.flow_points[0]) == envir.flow[0].shape[0]
+
     envir.add_swarm()
     assert len(envir.swarms) == 1, "too many swarms in envir"
     sw = envir.swarms[0]
@@ -155,6 +182,15 @@ def test_brinkman_3D():
     ### Single swarm, time-dependent flow ###
     envir = agents.environment(Lz=100, Re=1., rho=1000)
     U=list(range(0,5))+list(range(5,-5,-1))+list(range(-3,6,2))
+    envir.set_brinkman_flow(alpha=66, a=15, res=100, U=U, 
+                            dpdx=np.ones(20)*0.22306, tspan=[0, 40])
+    # tile flow
+    envir.tile_flow(2,1)
+    assert len(envir.flow_points[0]) > len(envir.flow_points[1])
+    assert len(envir.flow_points[0]) == envir.flow[0].shape[1]
+
+    # replace original flow for speed
+    envir = agents.environment(Lz=100, Re=1., rho=1000)
     envir.set_brinkman_flow(alpha=66, a=15, res=100, U=U, 
                             dpdx=np.ones(20)*0.22306, tspan=[0, 40])
     envir.add_swarm()
