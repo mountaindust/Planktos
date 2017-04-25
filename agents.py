@@ -65,7 +65,9 @@ class environment:
         ##### save flow #####
         self.flow_times = None
         self.flow_points = None
-        self.flow_tiling = None # (x,y) tiling amount
+        self.fluid_domain_LLC = None
+        self.tiling = None # (x,y) tiling amount
+        self.orig_L = None # (Lx,Ly) before tiling
         self.flow = flow
 
         if flow is not None:
@@ -123,6 +125,13 @@ class environment:
             self.char_L = self.L[2]
         # porous region height
         self.a = None
+
+        ##### Environment Structure Plotting #####
+
+        # List of functions that plot additional environment structures
+        self.struct_plots = []
+        # List of arguments tuples to be passed to these functions, after ax
+        self.struct_plot_args = []
 
         ##### Initalize Time #####
         # By default, time is updated whenever an individual swarm moves (swarm.move()),
@@ -484,6 +493,9 @@ class environment:
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(3)]
         self.__reset_flow_variables(incl_re_rho=True)
+        # record the original lower left corner (can be useful for later imports)
+        self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
+        # reset time
         self.reset()
 
 
@@ -542,6 +554,7 @@ class environment:
             
         # update environment dimensions and meshes
         new_points = []
+        self.orig_L = tuple(self.L[:2])
         for n in range(2):
             self.L[n] *= tile_num[n]
             new_points.append(np.concatenate([self.flow_points[n]]+
@@ -631,7 +644,7 @@ class environment:
         else:
             for sw in self.swarms:
                 sw.pos_history = []
-                
+
 
 
     def __reset_flow_variables(self, incl_re_rho=False):
@@ -639,7 +652,11 @@ class environment:
         parameters.'''
 
         self.a = None
+        self.fluid_domain_LLC = None
         self.tiling = None
+        self.orig_L = None
+        self.plot_structs = []
+        self.plot_structs_args = []
         if incl_re_rho:
             self.re = None
             self.rho = None
@@ -875,6 +892,17 @@ class swarm:
             axHistx.yaxis.set_major_locator(int_ticks)
             axHisty.xaxis.set_major_locator(pruned_ticks)
 
+            # add a grassy porous layer background (if porous layer present)
+            if self.envir.a is not None:
+                grass = np.random.rand(80)*self.envir.L[0]
+                for g in grass:
+                    ax.axvline(x=g, ymax=self.envir.a/self.envir.L[1], color='.5')
+
+            # plot any structures
+            for plot_func, args in zip(self.envir.plot_structs, 
+                                       self.envir.plot_structs_args):
+                plot_func(ax, *args)
+
             return ax, axHistx, axHisty
 
         else:
@@ -915,6 +943,20 @@ class swarm:
             axHistz.set_xlim((0, self.envir.L[2]))
             axHistz.yaxis.set_major_locator(int_ticks)
             axHistz.set_ylabel('Z    ', rotation=0)
+
+            # add a grassy porous layer background (if porous layer present)
+            if self.envir.a is not None:
+                grass = np.random.rand(120,2)
+                grass[:,0] *= self.envir.L[0]
+                grass[:,1] *= self.envir.L[1]
+                for g in grass:
+                    ax.plot([g[0],g[0]], [g[1],g[1]], [0,self.envir.a],
+                            'k-', alpha=0.5)
+
+            # plot any structures
+            for plot_func, args in zip(self.envir.plot_structs, 
+                                       self.envir.plot_structs_args):
+                plot_func(ax, *args)
 
             return ax, axHistx, axHisty, axHistz
 
@@ -1004,12 +1046,6 @@ class swarm:
             fig = plt.figure(figsize=(5*aspectratio+1,6))
             ax, axHistx, axHisty = self.__plot_setup(fig)
 
-            # add a grassy porous layer background (if porous layer present)
-            if self.envir.a is not None:
-                grass = np.random.rand(80)*self.envir.L[0]
-                for g in grass:
-                    ax.axvline(x=g, ymax=self.envir.a/self.envir.L[1], color='.5')
-
             # scatter plot and time text
             ax.scatter(positions[:,0], positions[:,1], label='organism')
             ax.text(0.02, 0.95, 'time = {:.2f}'.format(time),
@@ -1038,15 +1074,6 @@ class swarm:
             # 3D plot
             fig = plt.figure(figsize=(10,5))
             ax, axHistx, axHisty, axHistz = self.__plot_setup(fig)
-
-            # add a grassy porous layer background (if porous layer present)
-            if self.envir.a is not None:
-                grass = np.random.rand(120,2)
-                grass[:,0] *= self.envir.L[0]
-                grass[:,1] *= self.envir.L[1]
-                for g in grass:
-                    ax.plot([g[0],g[0]], [g[1],g[1]], [0,self.envir.a],
-                            'k-', alpha=0.5)
 
             # scatter plot and time text
             ax.scatter(positions[:,0], positions[:,1], positions[:,2],
@@ -1082,6 +1109,7 @@ class swarm:
             axHisty.hist(positions[:,1].compressed(), bins=bins_y, alpha=0.8)
             axHistz.hist(positions[:,2].compressed(), bins=bins_z, alpha=0.8)
 
+        # show the plot
         plt.show(blocking)
 
 
@@ -1129,12 +1157,6 @@ class swarm:
             n_x, bins_x, patches_x = axHistx.hist(data_x, bins=bins_x)
             n_y, bins_y, patches_y = axHisty.hist(data_y, bins=bins_y, 
                                                   orientation='horizontal')
-
-            # add a grassy porous layer background
-            if self.envir.a is not None:
-                grass = np.random.rand(80)*self.envir.L[0]
-                for g in grass:
-                    ax.axvline(x=g, ymax=self.envir.a/self.envir.L[1], color='.5')
             
         else:
             ### 3D setup ###
@@ -1184,15 +1206,6 @@ class swarm:
             n_x, bins_x, patches_x = axHistx.hist(data_x, bins=bins_x, alpha=0.8)
             n_y, bins_y, patches_y = axHisty.hist(data_y, bins=bins_y, alpha=0.8)
             n_z, bins_z, patches_z = axHistz.hist(data_z, bins=bins_z, alpha=0.8)
-
-            # add a grassy porous layer background (if porous layer present)
-            if self.envir.a is not None:
-                grass = np.random.rand(120,2)
-                grass[:,0] *= self.envir.L[0]
-                grass[:,1] *= self.envir.L[1]
-                for g in grass:
-                    ax.plot([g[0],g[0]], [g[1],g[1]], [0,self.envir.a],
-                            'k-', alpha=0.5)
 
         # animation function. Called sequentially
         def animate(n):
