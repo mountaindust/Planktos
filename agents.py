@@ -85,18 +85,18 @@ class environment:
                     # time-dependent flow
                     assert flow[0].shape[0] == flow[1].shape[0] == flow[2].shape[0]
                     assert flow_times is not None, "Must provide flow_times"
-                    self.__set_flow_variables(flow_times)
+                    self.__set_brinkman_flow_variables(flow_times)
                 else:
-                    self.__set_flow_variables()
+                    self.__set_brinkman_flow_variables()
             else:
                 # 2D flow
                 if max([len(f.shape) for f in flow]) > 2:
                     # time-dependent flow
                     assert flow[0].shape[0] == flow[1].shape[0]
                     assert flow_times is not None, "Must provide flow_times"
-                    self.__set_flow_variables(flow_times)
+                    self.__set_brinkman_flow_variables(flow_times)
                 else:
-                    self.__set_flow_variables()
+                    self.__set_brinkman_flow_variables()
 
         ##### swarm list #####
         if init_swarms is None:
@@ -182,7 +182,6 @@ class environment:
 
         ##### Calculate constant parameters #####
         b = self.L[1] - a
-        self.a = a
 
         # Get y-mesh
         if len(self.L) == 2:
@@ -241,15 +240,15 @@ class environment:
                 # no time; (y,x) -> (x,y) coordinates
                 flow = flow.T
                 self.flow = [flow, np.zeros_like(flow)] #x-direction, y-direction
-                self.__set_flow_variables()
+                self.__set_brinkman_flow_variables()
             else:
                 #time-dependent; (t,y,x)-> (t,x,y) coordinates
                 flow = np.transpose(flow, axes=(0, 2, 1))
                 self.flow = [flow, np.zeros_like(flow)]
                 if tspan is None:
-                    self.__set_flow_variables(tspan=1)
+                    self.__set_brinkman_flow_variables(tspan=1)
                 else:
-                    self.__set_flow_variables(tspan=tspan)
+                    self.__set_brinkman_flow_variables(tspan=tspan)
         else:
             # 3D
             if len(flow.shape) == 2:
@@ -258,7 +257,7 @@ class environment:
                 flow = np.transpose(flow, axes=(2, 0, 1)) #(x,y,z)
                 self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
 
-                self.__set_flow_variables()
+                self.__set_brinkman_flow_variables()
 
             else:
                 # (t,z,x) -> (t,z,y,x) coordinates
@@ -267,9 +266,47 @@ class environment:
                 self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
 
                 if tspan is None:
-                    self.__set_flow_variables(tspan=1)
+                    self.__set_brinkman_flow_variables(tspan=1)
                 else:
-                    self.__set_flow_variables(tspan=tspan)
+                    self.__set_brinkman_flow_variables(tspan=tspan)
+        self.__reset_flow_variables()
+        self.a = a
+
+
+
+    def __set_brinkman_flow_variables(self, tspan=None):
+        '''Store points at which flow is specified, and time information.
+
+        Arguments:
+            tspan: [tstart, tend] or iterable of times at which flow is specified
+                    or scalar dt. Required if flow is time-dependent; None will
+                    be interpreted as non time-dependent flow.
+        '''
+
+        # Get points defining the spatial grid for flow data
+        points = []
+        if tspan is None:
+            # no time-dependent flow
+            for dim, mesh_size in enumerate(self.flow[0].shape[::-1]):
+                points.append(np.linspace(0, self.L[dim], mesh_size))
+        else:
+            # time-dependent flow
+            for dim, mesh_size in enumerate(self.flow[0].shape[:0:-1]):
+                points.append(np.linspace(0, self.L[dim], mesh_size))
+        self.flow_points = tuple(points)
+
+        # set time
+        if tspan is not None:
+            if not hasattr(tspan, '__iter__'):
+                # set flow_times based off zero
+                self.flow_times = np.arange(0, tspan*self.flow[0].shape[0], tspan)
+            elif len(tspan) == 2:
+                self.flow_times = np.linspace(tspan[0], tspan[1], self.flow[0].shape[0])
+            else:
+                assert len(tspan) == self.flow[0].shape[0]
+                self.flow_times = np.array(tspan)
+        else:
+            self.flow_times = None
 
 
 
@@ -372,8 +409,7 @@ class environment:
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(2)]
-        self.a = None
-        self.tiling = None
+        self.__reset_flow_variables(incl_re_rho=True)
         self.reset()
 
 
@@ -447,8 +483,7 @@ class environment:
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(3)]
-        self.a = None
-        self.tiling = None
+        self.__reset_flow_variables(incl_re_rho=True)
         self.reset()
 
 
@@ -596,42 +631,18 @@ class environment:
         else:
             for sw in self.swarms:
                 sw.pos_history = []
+                
 
 
+    def __reset_flow_variables(self, incl_re_rho=False):
+        '''To be used when the fluid flow changes. Resets all the helper
+        parameters.'''
 
-    def __set_flow_variables(self, tspan=None):
-        '''Store points at which flow is specified, and time information.
-
-        Arguments:
-            tspan: [tstart, tend] or iterable of times at which flow is specified
-                    or scalar dt. Required if flow is time-dependent; None will
-                    be interpreted as non time-dependent flow.
-        '''
-
-        # Get points defining the spatial grid for flow data
-        points = []
-        if tspan is None:
-            # no time-dependent flow
-            for dim, mesh_size in enumerate(self.flow[0].shape[::-1]):
-                points.append(np.linspace(0, self.L[dim], mesh_size))
-        else:
-            # time-dependent flow
-            for dim, mesh_size in enumerate(self.flow[0].shape[:0:-1]):
-                points.append(np.linspace(0, self.L[dim], mesh_size))
-        self.flow_points = tuple(points)
-
-        # set time
-        if tspan is not None:
-            if not hasattr(tspan, '__iter__'):
-                # set flow_times based off zero
-                self.flow_times = np.arange(0, tspan*self.flow[0].shape[0], tspan)
-            elif len(tspan) == 2:
-                self.flow_times = np.linspace(tspan[0], tspan[1], self.flow[0].shape[0])
-            else:
-                assert len(tspan) == self.flow[0].shape[0]
-                self.flow_times = np.array(tspan)
-        else:
-            self.flow_times = None
+        self.a = None
+        self.tiling = None
+        if incl_re_rho:
+            self.re = None
+            self.rho = None
 
 
 
