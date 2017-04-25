@@ -122,7 +122,14 @@ def read_vtk_Unstructured_Grid_Points(filename):
     #   we only need the location of the points.
 
     # also get bounds of the mesh (xmin, xmax, ymin, ymax, zmin, zmax)
-    bounds = numpy_support.vtk_to_numpy(py_data.FieldData['avtOriginalBounds'])
+    try:
+        bounds = numpy_support.vtk_to_numpy(py_data.FieldData['avtOriginalBounds'])
+    except AttributeError:
+        bounds_list = []
+        for ii in range(points.shape[1]):
+            bounds_list.append(points[:,ii].min())
+            bounds_list.append(points[:,ii].max())
+        bounds = np.array(bounds_list)
 
     return points, bounds
 

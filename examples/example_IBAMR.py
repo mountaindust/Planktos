@@ -2,10 +2,12 @@
 ''' Loads last file in IBAMR test data and moves a swarm in the flow'''
 
 import numpy as np
+import sys
+sys.path.append('..')
 import agents
 
 envir = agents.environment()
-envir.read_IBAMR3d_vtk_data('tests/IBAMR_test_data', start=5, finish=None)
+envir.read_IBAMR3d_vtk_data('../tests/IBAMR_test_data', start=5, finish=None)
 envir.add_swarm()
 s = envir.swarms[0]
 

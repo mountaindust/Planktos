@@ -65,6 +65,7 @@ class environment:
         ##### save flow #####
         self.flow_times = None
         self.flow_points = None
+        self.flow_tiling = None # (x,y) tiling amount
         self.flow = flow
 
         if flow is not None:
@@ -372,6 +373,7 @@ class environment:
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(2)]
         self.a = None
+        self.tiling = None
         self.reset()
 
 
@@ -446,11 +448,12 @@ class environment:
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(3)]
         self.a = None
+        self.tiling = None
         self.reset()
 
 
 
-    def tile_flow(self,x=2,y=1):
+    def tile_flow(self, x=2, y=1):
         '''Tile fluid flow a number of times in the x and/or y directions.
         While obviously this works best if the fluid is periodic in the
         direction(s) being tiled, this will not be enforced. Instead, it will
@@ -512,6 +515,7 @@ class environment:
         if DIM3:
             new_points.append(self.flow_points[2])
         self.flow_points = tuple(new_points)
+        self.tiling = (x,y)
 
 
 

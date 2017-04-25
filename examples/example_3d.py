@@ -1,6 +1,8 @@
 #! /usr/bin/env python3
 
 import numpy as np
+import sys
+sys.path.append('..')
 import agents
 
 envir = agents.environment(Lz=100, Re=1., rho=1000)
