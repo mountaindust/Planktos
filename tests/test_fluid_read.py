@@ -7,11 +7,12 @@ Created on April 13 2017
 Author: Christopher Strickland
 Email: wcstrick@live.unc.edu
 """
-
+import sys
 import pytest
 import numpy as np
 import numpy.ma as ma
 import agents
+import data_IO
 
 ############                    Decorators                ############
 
@@ -26,10 +27,11 @@ slow = pytest.mark.skipif(not pytest.config.getoption('--runslow'),
 
 def test_IBAMR_load():
     '''Test loading IBAMR fluid data into the environment'''
+    pathname = 'tests/IBAMR_test_data'
     envir = agents.environment() # default environment, 2D.
 
     ##### Load only the final recorded flow #####
-    envir.read_IBAMR3d_vtk_data('tests/IBAMR_test_data', start=5, finish=None)
+    envir.read_IBAMR3d_vtk_data(pathname, start=5, finish=None)
     envir.set_boundary_conditions(('zero','zero'), ('zero','zero'), ('noflux','noflux'))
 
     # test properties
@@ -74,7 +76,7 @@ def test_IBAMR_load():
                    "zero bndry not respected"
 
     ##### Load all three IBAMR test files #####
-    envir.read_IBAMR3d_vtk_data('tests/IBAMR_test_data', start=3, finish=None)
+    envir.read_IBAMR3d_vtk_data(pathname, start=3, finish=None)
     # Remove swarms
     envir.reset(rm_swarms=True)
 
@@ -122,3 +124,10 @@ def test_IBAMR_load():
             assert 0 <= pos[2] <= envir.L[2], "noflux not respected"
             assert 0 <= pos[0] <= envir.L[0] and 0 <= pos[1] <= envir.L[1],\
                    "zero bndry not respected"
+
+
+
+def test_point_load():
+    '''Test loading singleton mesh points from an Unstructured Grid VTK in data_IO'''
+    filename = 'tests/IBAMR_test_data/mesh_db.vtk'
+    points, bounds = data_IO.read_vtk_Unstructured_Grid_Points(filename)

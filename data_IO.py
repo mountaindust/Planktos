@@ -99,21 +99,32 @@ def read_vtk_Rectilinear_Grid_Vector(filename):
 
 
 def read_vtk_Unstructured_Grid_Points(filename):
-    '''This is meant to read mesh data exported from VisIt.'''
+    '''This is meant to read mesh data exported from VisIt, where the mesh
+    contains only singleton points.'''
 
     reader = vtk.vtkUnstructuredGridReader()
     reader.SetFileName(filename)
     reader.Update()
     vtk_data = reader.GetOutput()
-    py_data = dsa.WrapDataObject(vtk_data)
     
-    points = numpy_support.vtk_to_numpy(py_data.Points) # each row is a 3D point
+    py_data = dsa.WrapDataObject(vtk_data)
+    points = numpy_support.vtk_to_numpy(py_data.Points) # each row is a 3D point location
+    
+    # Cells are specified by a vtk cell type and a list of points that make up
+    #   that cell. py_data.CellTypes is a list of numerial cell types.
+    #   py_data.Cells is an array that, for each cell in order, lists the number
+    #   of points in that cell followed by the index of each cell point. Since
+    #   this makes random access to a given cell hard, a third data structure
+    #   py_data.CellLocations is specified, which gives the index in py_data.Cells
+    #   at which each cell starts.
+
+    # Since we are assuming that the mesh is only singleton points (CellType=1),
+    #   we only need the location of the points.
 
     # also get bounds of the mesh (xmin, xmax, ymin, ymax, zmin, zmax)
     bounds = numpy_support.vtk_to_numpy(py_data.FieldData['avtOriginalBounds'])
 
     return points, bounds
-    
 
 
 
