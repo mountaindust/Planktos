@@ -736,7 +736,7 @@ class swarm:
             mu = self.get_fluid_drift() + params[0]
 
             # For now, just have everybody move according to a random walk.
-            mv_swarm.gaussian_walk(self.positions, mu, dt*params[1])
+            mv_swarm.gaussian_walk(self.positions, dt*mu, dt*params[1])
 
             # Apply boundary conditions.
             self.apply_boundary_conditions()
