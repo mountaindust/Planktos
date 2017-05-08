@@ -708,6 +708,8 @@ class swarm:
 
     def move(self, dt=1.0, params=None, update_time=True):
         '''Move all organisms in the swarm over an amount of time dt.
+        Do not override this method when subclassing - override update_positions
+        instead!
         
         As of now, only the Gaussian walk is implemented. Optional parameters:
             params = (mean=0, covariance matrix=np.eye)'''
@@ -717,27 +719,8 @@ class swarm:
 
         # Check that something is left in the domain to move!
         if not np.all(self.positions.mask):
-            # 3D?
-            DIM3 = (len(self.envir.L) == 3)
-
-            # Parse optional parameters
-            if params is not None:
-                assert isinstance(params[1], np.ndarray), "cov must be ndarray"
-                if not DIM3:
-                    assert len(params[0]) == 2, "mu must be length 2"
-                    assert params[1].shape == (2,2), "cov must be shape (2,2)"
-                else:
-                    assert len(params[0]) == 3, "mu must be length 3"
-                    assert params[1].shape == (3,3), "cov must be shape (3,3)"
-            else:
-                params = (np.zeros(len(self.envir.L)), np.eye(len(self.envir.L)))
-
-            # Get fluid-based drift and add Gaussian bias
-            mu = self.get_fluid_drift() + params[0]
-
-            # For now, just have everybody move according to a random walk.
-            mv_swarm.gaussian_walk(self.positions, dt*mu, dt*params[1])
-
+            # Update positions
+            self.update_positions(dt, params)
             # Apply boundary conditions.
             self.apply_boundary_conditions()
 
@@ -755,6 +738,44 @@ class swarm:
                         warnings.warn("Other swarms in environment were not moved.",
                                       UserWarning)
                         warned = True
+
+
+
+    def update_positions(self, dt, params):
+        '''Update agent positions.
+        THIS IS THE METHOD TO OVERRIDE IF YOU WANT TO TRY DIFFERENT MOVEMENT!
+        Note: do not change the call signature.
+        The result of this method should be to overwrite self.positions with
+        the new agent positions after a time step of length dt.
+
+        What is included in this implementation is a basic jitter behavior with
+        drift according to the fluid flow.
+
+        Arguments:
+            dt: length of time step
+            params: iterable list of any other parameters necessary
+        '''
+
+        # 3D?
+        DIM3 = (len(self.envir.L) == 3)
+
+        # Parse optional parameters
+        if params is not None:
+            assert isinstance(params[1], np.ndarray), "cov must be ndarray"
+            if not DIM3:
+                assert len(params[0]) == 2, "mu must be length 2"
+                assert params[1].shape == (2,2), "cov must be shape (2,2)"
+            else:
+                assert len(params[0]) == 3, "mu must be length 3"
+                assert params[1].shape == (3,3), "cov must be shape (3,3)"
+        else:
+            params = (np.zeros(len(self.envir.L)), np.eye(len(self.envir.L)))
+
+        # Get fluid-based drift and add Gaussian bias
+        mu = self.get_fluid_drift() + params[0]
+
+        # Just have everyone move according to a Gaussian random walk.
+        mv_swarm.gaussian_walk(self.positions, dt*mu, dt*params[1])
 
 
 

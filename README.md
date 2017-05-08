@@ -57,7 +57,8 @@ Class: swarm
     - `pos_history` list of previous "positions" lists
     - `envir` environment object that this swarm belongs to
 - Methods
-    - `move` move each agent in the swarm
+    - `move` move each agent in the swarm. Do not override: see update_positions.
+    - `update_positions` defines the agent's movement behavior. OVERRIDE THIS WHEN SUBCLASSING!
     - `get_fluid_drift` get the fluid velocity at each agent's position via interpolation
     - `apply_boundary_condition` method used to enforce the boundary conditions during a move
     - `plot` plot the swarm's current position or a previous position at the time provided

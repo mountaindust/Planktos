@@ -38,7 +38,7 @@ class plankton(agents.swarm):
         
 
 
-    def move(self, dt=1.0, params=None, update_time=True):
+    def update_positions(self, dt, params):
         ''' This method adds plankton behavior.
 
         Arguments:
@@ -49,11 +49,8 @@ class plankton(agents.swarm):
         # We want to respond to flow somehow. Here is a brief example.
         if self.envir.flow is None:
             # Just do the default thing
-            agents.swarm.move(self, dt, params, update_time)
+            agents.swarm.update_positions(self, dt, params)
         else:
-            # Put current position in the history
-            self.pos_history.append(self.positions.copy())
-
             # 3D?
             DIM3 = (len(self.envir.L) == 3)
 
@@ -82,23 +79,4 @@ class plankton(agents.swarm):
             drift = fluid_drift + resist + params[0]
 
             # Move according to random walk with drift
-            mv_swarm.gaussian_walk(self.positions, drift, dt*params[1])
-
-            # Apply boundary conditions.
-            self.apply_boundary_conditions()
-
-            # Record new time
-            if update_time:
-                self.envir.time_history.append(self.envir.time)
-                self.envir.time += dt
-
-                # Check for other swarms in environment and freeze them
-                warned = False
-                for s in self.envir.swarms:
-                    if s is not self:
-                        s.pos_history.append(s.positions)
-                        if not warned:
-                            warnings.warn("Other swarms in environment were not moved.",
-                                        UserWarning)
-                            warned = True
-
+            mv_swarm.gaussian_walk(self.positions, dt*drift, dt*params[1])
