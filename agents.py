@@ -710,9 +710,12 @@ class swarm:
         '''Move all organisms in the swarm over an amount of time dt.
         Do not override this method when subclassing - override update_positions
         instead!
-        
-        As of now, only the Gaussian walk is implemented. Optional parameters:
-            params = (mean=0, covariance matrix=np.eye)'''
+
+        Arguments:
+            dt: time-step for move
+            params: iterable of parameters to pass along to update_positions
+            update_time: whether or not to update the environment's time by dt
+        '''
 
         # Put current position in the history
         self.pos_history.append(self.positions.copy())
@@ -735,7 +738,11 @@ class swarm:
                 if s is not self:
                     s.pos_history.append(s.positions)
                     if not warned:
-                        warnings.warn("Other swarms in environment were not moved.",
+                        warnings.warn("Other swarms in the environment were not"+
+                                      " moved during this environmental timestep.\n"+
+                                      "If this was not your intent, call"+
+                                      " envir.move_swarms instead of this method"+
+                                      " to move all the swarms at once.",
                                       UserWarning)
                         warned = True
 
@@ -750,10 +757,11 @@ class swarm:
 
         What is included in this implementation is a basic jitter behavior with
         drift according to the fluid flow.
+        params = (mean=0, covariance matrix=np.eye)
 
         Arguments:
             dt: length of time step
-            params: iterable list of any other parameters necessary
+            params: iterable of any other parameters necessary
         '''
 
         # 3D?
@@ -804,6 +812,16 @@ class swarm:
                 # temporal flow. interpolate in time, and then in space.
                 return self.__interpolate_flow(self.__interpolate_temporal_flow(),
                                              method='linear')
+
+
+
+    def get_projectile_motion_high_Re(self):
+        pass
+
+
+
+    def get_projectile_motion_low_Re(self):
+        pass
 
 
 

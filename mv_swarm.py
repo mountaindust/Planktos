@@ -1,8 +1,7 @@
 #! /usr/bin/env python3
 
 '''
-Library of functions for initializing and randomly moving a 
-provided swarm structure.
+Library of functions for initializing and moving a provided swarm group.
 
 Created on Tues Jan 24 2017
 
@@ -78,3 +77,4 @@ def gaussian_walk(swarm_pos, mean, cov):
     else:
         swarm_pos += np.random.multivariate_normal(np.zeros(mean.shape[1]),
                                                    cov, swarm_pos.shape[0]) + mean
+                                                   
