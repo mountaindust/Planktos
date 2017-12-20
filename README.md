@@ -7,7 +7,7 @@ insects. It is in no way ready or suitable for public consumption.
 - Python 3.5+
 - numpy/scipy
 - matplotlib
-- vtk (to get this under Anaconda, run `conda install -c menpo vtk`)
+- vtk (to get this under Anaconda, run `conda install -c menpo vtk=7.0.0 vtk` for Python 3.5 or `conda install -c clinicalgraphics vtk=7.1.0 vtk` for Python 3.6)
 - pytest (if running tests)
 
 You will also need a Python 2.7 environment with numpy and VisIt installed to convert IBAMR data into vtk data.

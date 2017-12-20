@@ -125,6 +125,8 @@ class environment:
             self.char_L = self.L[2]
         # porous region height
         self.a = None
+        # accel due to gravity
+        self.g = 9.80665
 
         ##### Environment Structure Plotting #####
 
@@ -665,12 +667,13 @@ class environment:
 
 class swarm:
 
-    def __init__(self, swarm_size=100, envir=None, init='random', **kwargs):
+    def __init__(self, swarm_size=100, envir=None, phys=None, init='random', **kwargs):
         ''' Initalizes planktos swarm in an environment.
 
         Arguments:
-            envir: environment for the swarm, defaults to the standard environment
             swarm_size: Size of the swarm (int)
+            envir: environment for the swarm, defaults to the standard environment
+            phys: dictionary of physical properties to be used by equations of motion
             init: Method for initalizing positions.
             kwargs: keyword arguments to be passed to the method for
                 initalizing positions
@@ -696,10 +699,21 @@ class swarm:
                 print("Error: invalid environment object.")
                 raise
 
+        # set physical properties
+        self.phys = phys
+
         # initialize bug locations
         self.positions = ma.zeros((swarm_size, len(self.envir.L)))
         self.positions.harden_mask() # prevent unintentional mask overwites
         mv_swarm.init_pos(self, init, kwargs)
+
+        # initialize bug velocities
+        self.velocity = ma.zeros((swarm_size, len(self.envir.L)))
+        self.velocity.harden_mask()
+
+        # initialize bug accelerations
+        self.acceleration = ma.zeros((swarm_size, len(self.envir.L)))
+        self.acceleration.harden_mask()
 
         # Initialize position history
         self.pos_history = []
@@ -815,12 +829,26 @@ class swarm:
 
 
 
-    def get_projectile_motion_high_Re(self):
-        pass
+    def get_projectile_motion(self):
+        '''Return acceleration using equations of projectile motion.
+        Includes gravity, drag and inertia.
+        
+        Requires that the following are specified in self.phys:
+            Cd: Drag coefficient
+            S: cross-sectional area of each agent
+            m: mass of each agent
 
+        Requires that the following are specified in envir:
+            Re: Reynolds number of fluid (either >10 or <0.1)
+            rho: fluid density
+        '''
+        
+        # Get fluid velocity
+        vel = self.get_fluid_drift()
 
+        # 3D?
+        DIM3 = vel.shape[1] == 3
 
-    def get_projectile_motion_low_Re(self):
         pass
 
 
@@ -832,25 +860,38 @@ class swarm:
 
             # Check for 3D
             if dim == 2 and len(self.envir.L) == 2:
+                # Ignore last bndry condition; 2D environment.
                 break
 
             ### Left boundary ###
             if bndry[0] == 'zero':
                 # mask everything exiting on the left
-                self.positions[self.positions[:,dim] < 0, :] = ma.masked
+                maskrow = self.positions[:,dim] < 0
+                self.positions[maskrow, :] = ma.masked
+                self.velocity[maskrow, :] = ma.masked
+                self.acceleration[maskrow, :] = ma.masked
             elif bndry[0] == 'noflux':
                 # pull everything exiting on the left to 0
-                self.positions[self.positions[:,dim] < 0, dim] = 0
+                zerorow = self.positions[:,dim] < 0
+                self.positions[zerorow, dim] = 0
+                self.velocity[zerorow, dim] = 0
+                self.acceleration[zerorow, dim] = 0
             else:
                 raise NameError
 
             ### Right boundary ###
             if bndry[1] == 'zero':
                 # mask everything exiting on the right
-                self.positions[self.positions[:,dim] > self.envir.L[dim], :] = ma.masked
+                maskrow = self.positions[:,dim] > self.envir.L[dim]
+                self.positions[maskrow, :] = ma.masked
+                self.velocity[maskrow, :] = ma.masked
+                self.acceleration[maskrow, :] = ma.masked
             elif bndry[1] == 'noflux':
                 # pull everything exiting on the left to 0
-                self.positions[self.positions[:,dim] > self.envir.L[dim], dim] = self.envir.L[dim]
+                zerorow = self.positions[:,dim] > self.envir.L[dim]
+                self.positions[zerorow, dim] = self.envir.L[dim]
+                self.velocity[zerorow, dim] = 0
+                self.acceleration[zerorow, dim] = 0
             else:
                 raise NameError
 
