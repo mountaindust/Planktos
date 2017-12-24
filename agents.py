@@ -31,7 +31,7 @@ class environment:
 
     def __init__(self, Lx=100, Ly=100, Lz=None,
                  x_bndry=None, y_bndry=None, z_bndry=None, flow=None,
-                 flow_times=None, Re=None, rho=None, init_swarms=None):
+                 flow_times=None, Re=None, rho=None, mu=None, init_swarms=None):
         ''' Initialize environmental variables.
 
         Arguments:
@@ -46,7 +46,8 @@ class environment:
             flow_times: [tstart, tend] or iterable of times at which flow is specified
                      or scalar dt; required if flow is time-dependent.
             Re: Reynolds number of environment (optional)
-            rho: fluid density of environment, kh/m**3 (optional)
+            rho: fluid density of environment, kg/m**3 (optional)
+            mu: dynamic viscosity, kg/m/s (optional)
             init_swarms: initial swarms in this environment
 
         Right now, supported boundary conditions are 'zero' (default) and 'noflux'.
@@ -118,6 +119,8 @@ class environment:
         self.re = Re
         # Fluid density kg/m**3
         self.rho = rho
+        # Dynamic viscosity kg/m/s
+        self.mu = mu
         # Characteristic length
         if len(self.L) == 2:
             self.char_L = self.L[1]
@@ -839,17 +842,32 @@ class swarm:
             m: mass of each agent
 
         Requires that the following are specified in envir:
-            Re: Reynolds number of fluid (either >10 or <0.1)
+            re: Reynolds number of fluid (either >10 or <0.1)
             rho: fluid density
+            mu: dynamic viscosity
         '''
         
         # Get fluid velocity
         vel = self.get_fluid_drift()
 
-        # 3D?
-        DIM3 = vel.shape[1] == 3
+        # Check for self.phys and other parameters
+        assert isinstance(self.phys, dict), "swarm.phys not specified"
+        for key in ['Cd', 'S', 'm']:
+            assert key in self.phys, "{} not found in swarm.phys".format(key)
+        assert self.envir.re is not None, "Re not specified"
+        assert self.envir.rho is not None, "rho not specified"
 
-        pass
+        if self.envir.re >= 10:
+            diff = np.linalg.norm(self.velocity-vel,axis=1)
+            return self.acceleration/self.phys['m'] -\
+            (self.envir.rho*self.phys['Cd']*self.phys['S']/2/self.phys['m'])*\
+            (self.velocity - vel)*np.stack((diff,diff,diff)).T
+        elif self.envir.re <= 0.1:
+            return self.acceleration/self.phys['m'] -\
+            (self.envir.mu*self.phys['Cd']*self.envir.char_L/2/self.phys['m'])*\
+            (self.velocity - vel)
+        else:
+            raise RuntimeError('Projectile motion undefined for 0.1<Re<10.')
 
 
 
