@@ -21,7 +21,11 @@ from matplotlib.ticker import NullFormatter, MaxNLocator
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.cm as cm
 from matplotlib import animation
-import mv_swarm, data_IO
+import mv_swarm
+try:
+    import data_IO
+except ModuleNotFoundError:
+    print("vtk libraries not loaded")
 
 __author__ = "Christopher Strickland"
 __email__ = "wcstrick@live.unc.edu"
@@ -31,12 +35,13 @@ class environment:
 
     def __init__(self, Lx=100, Ly=100, Lz=None,
                  x_bndry=None, y_bndry=None, z_bndry=None, flow=None,
-                 flow_times=None, Re=None, rho=None, mu=None, init_swarms=None):
+                 flow_times=None, rho=None, mu=None, char_L=None,
+                 init_swarms=None):
         ''' Initialize environmental variables.
 
         Arguments:
-            Lx: Length of domain in x direction
-            Ly: Length of domain in y direction
+            Lx: Length of domain in x direction, m
+            Ly: Length of domain in y direction, m
             Lz: Length of domain in z direction, or None
             x_bndry: [left bndry condition, right bndry condition]
             y_bndry: [low bndry condition, high bndry condition]
@@ -45,9 +50,9 @@ class environment:
                 that flow mesh is equally spaced incl values on the domain bndry
             flow_times: [tstart, tend] or iterable of times at which flow is specified
                      or scalar dt; required if flow is time-dependent.
-            Re: Reynolds number of environment (optional)
             rho: fluid density of environment, kg/m**3 (optional)
             mu: dynamic viscosity, kg/m/s (optional)
+            char_L: characteristic length, set to Lx (or Ly in 3D) if not specified
             init_swarms: initial swarms in this environment
 
         Right now, supported boundary conditions are 'zero' (default) and 'noflux'.
@@ -115,17 +120,21 @@ class environment:
 
         ##### Fluid Variables #####
 
-        # Re
-        self.re = Re
         # Fluid density kg/m**3
         self.rho = rho
         # Dynamic viscosity kg/m/s
-        self.mu = mu
-        # Characteristic length
-        if len(self.L) == 2:
-            self.char_L = self.L[1]
+        if mu == 0:
+            raise RuntimeError("Dynamic viscosity, mu, cannot be zero.")
         else:
-            self.char_L = self.L[2]
+            self.mu = mu
+        # Characteristic length
+        if char_L is None:
+            if len(self.L) == 2:
+                self.char_L = self.L[1]
+            else:
+                self.char_L = self.L[2]
+        else:
+            self.char_L = char_L
         # porous region height
         self.a = None
         # accel due to gravity
@@ -143,6 +152,17 @@ class environment:
         #   or when all swarms in the environment are collectively moved.
         self.time = 0.0
         self.time_history = []
+
+
+
+    def calc_re(self, u):
+        '''Calculate Reynolds number based on environment variables and given
+        flow velocity, u'''
+
+        if self.rho is not None and self.mu is not None:
+            return self.rho*u*self.char_L/self.mu
+        else:
+            raise RuntimeError("Parameters necessary for Re calculation are undefined.")
 
 
 
@@ -188,9 +208,9 @@ class environment:
             U = [U]
             dpdx = [dpdx]
 
-        if self.re is None or self.rho is None:
+        if self.mu is None or self.rho is None:
             print('Fluid properties of environment are unspecified.')
-            print('Re = {}'.format(self.re))
+            print('mu = {}'.format(self.mu))
             print('Rho = {}'.format(self.rho))
             raise AttributeError
 
@@ -209,36 +229,34 @@ class environment:
         for v, px in zip(U, dpdx):
             # Check for v = 0
             if v != 0:
-                mu = self.rho*v*self.char_L/self.re
-
                 # Calculate C and D constants and then get A and B based on these
 
                 C = (px*(-0.5*alpha**2*b**2+exp(log(alpha*b)-alpha*a)-exp(-alpha*a)+1) +
-                    v*alpha**2*mu)/(alpha**2*mu*(exp(log(alpha*b)-2*alpha*a)+alpha*b-
+                    np.abs(v)*alpha**2*self.mu)/(alpha**2*self.mu*(exp(log(alpha*b)-2*alpha*a)+alpha*b-
                     exp(-2*alpha*a)+1))
 
                 D = (px*(exp(log(0.5*alpha**2*b**2)-2*alpha*a)+exp(log(alpha*b)-alpha*a)+
                     exp(-alpha*a)-exp(-2*alpha*a)) - 
-                    exp(log(v*alpha**2*mu)-2*alpha*a))/(alpha**2*mu*
+                    exp(log(np.abs(v)*alpha**2*self.mu)-2*alpha*a))/(alpha**2*self.mu*
                     (exp(log(alpha*b)-2*alpha*a)+alpha*b-exp(-2*alpha*a)+1))
 
                 A = alpha*C - alpha*D
-                B = C + D - px/(alpha**2*mu)
+                B = C + D - px/(alpha**2*self.mu)
 
                 for n, z in enumerate(y_mesh-a):
                     if z > 0:
                         #Region I
-                        flow[t,n,:] = z**2*px/(2*mu) + A*z + B
+                        flow[t,n,:] = z**2*px/(2*self.mu) + A*z + B
                     else:
                         #Region 2
                         if C > 0 and D > 0:
-                            flow[t,n,:] = exp(log(C)+alpha*z) + exp(log(D)-alpha*z) - px/(alpha**2*mu)
+                            flow[t,n,:] = exp(log(C)+alpha*z) + exp(log(D)-alpha*z) - px/(alpha**2*self.mu)
                         elif C <= 0 and D > 0:
-                            flow[t,n,:] = exp(log(D)-alpha*z) - px/(alpha**2*mu)
+                            flow[t,n,:] = exp(log(D)-alpha*z) - px/(alpha**2*self.mu)
                         elif C > 0 and D <= 0:
-                            flow[t,n,:] = exp(log(C)+alpha*z) - px/(alpha**2*mu)
+                            flow[t,n,:] = exp(log(C)+alpha*z) - px/(alpha**2*self.mu)
                         else:
-                            flow[t,n,:] = -px/(alpha**2*mu)
+                            flow[t,n,:] = -px/(alpha**2*self.mu)
             else:
                 warnings.warn('U=0: returning zero flow for these time-steps.',
                               UserWarning)
@@ -423,7 +441,7 @@ class environment:
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(2)]
-        self.__reset_flow_variables(incl_re_rho=True)
+        self.__reset_flow_variables(incl_rho_mu=True)
         self.reset()
 
 
@@ -497,7 +515,7 @@ class environment:
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(3)]
-        self.__reset_flow_variables(incl_re_rho=True)
+        self.__reset_flow_variables(incl_rho_mu=True)
         # record the original lower left corner (can be useful for later imports)
         self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
         # reset time
@@ -590,7 +608,6 @@ class environment:
             
 
 
-
     def move_swarms(self, dt=1.0, params=None):
         '''Move all swarms in the environment'''
 
@@ -652,7 +669,7 @@ class environment:
 
 
 
-    def __reset_flow_variables(self, incl_re_rho=False):
+    def __reset_flow_variables(self, incl_rho_mu=False):
         '''To be used when the fluid flow changes. Resets all the helper
         parameters.'''
 
@@ -662,8 +679,8 @@ class environment:
         self.orig_L = None
         self.plot_structs = []
         self.plot_structs_args = []
-        if incl_re_rho:
-            self.re = None
+        if incl_rho_mu:
+            self.mu = None
             self.rho = None
 
 

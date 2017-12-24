@@ -12,12 +12,17 @@ import pytest
 import numpy as np
 import numpy.ma as ma
 import agents
-import data_IO
+try:
+    import data_IO
+    NO_VTK = False
+except ModuleNotFoundError:
+    NO_VTK = True
 
 ############                    Decorators                ############
 
 slow = pytest.mark.skipif(not pytest.config.getoption('--runslow'),
     reason = 'need --runslow option to run')
+no_vtk = pytest.mark.skipif(NO_VTK, reason = 'Could not load VTK')
 
 ###############################################################################
 #                                                                             #
@@ -25,6 +30,7 @@ slow = pytest.mark.skipif(not pytest.config.getoption('--runslow'),
 #                                                                             #
 ###############################################################################
 
+@no_vtk
 def test_IBAMR_load():
     '''Test loading IBAMR fluid data into the environment'''
     pathname = 'tests/IBAMR_test_data'
@@ -126,7 +132,7 @@ def test_IBAMR_load():
                    "zero bndry not respected"
 
 
-
+@no_vtk
 def test_point_load():
     '''Test loading singleton mesh points from an Unstructured Grid VTK in data_IO'''
     filename = 'tests/IBAMR_test_data/mesh_db.vtk'

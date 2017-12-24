@@ -48,7 +48,7 @@ def test_brinkman_2D():
     '''Test 2D dynamics using brinkman flow'''
     ### Single swarm, time-independent flow ###
     envir = agents.environment(Lx=100, Ly=100, x_bndry=('zero','zero'), 
-                               y_bndry=('noflux','zero'), Re=1., rho=1000)
+                               y_bndry=('noflux','zero'), rho=1000, mu=500000)
     assert len(envir.L) == 2, "default dim is not 2"
     envir.set_brinkman_flow(alpha=66, a=15, res=100, U=5, dpdx=0.22306)
     assert envir.flow_times is None, "flow_times should be None for stationary flow"
@@ -95,7 +95,7 @@ def test_brinkman_2D():
                    "zero bndry not respected"
 
     ### Single swarm, time-dependent flow ###
-    envir = agents.environment(Re=1., rho=1000)
+    envir = agents.environment(rho=1000, mu=200000)
     envir.set_brinkman_flow(alpha=66, a=15, res=100, U=range(1,6),
                             dpdx=np.ones(5)*0.22306, tspan=[0, 10])
     assert envir.flow_times is not None, "flow_times unset"
@@ -119,7 +119,7 @@ def test_brinkman_2D():
 
     
 def test_multiple_2D_swarms():
-    envir = agents.environment(Re=1., rho=1000)
+    envir = agents.environment(rho=1000, mu=500000)
     envir.set_brinkman_flow(alpha=66, a=15, res=100, U=5, dpdx=0.22306)
     envir.add_swarm()
     s2 = envir.add_swarm()
@@ -146,7 +146,7 @@ def test_brinkman_3D():
     ### Single swarm, time-independent flow ###
     envir = agents.environment(Lx=50, Ly=50, Lz=50, x_bndry=('zero','zero'), 
                                y_bndry=('zero','zero'),
-                               z_bndry=('noflux','noflux'), Re=1., rho=1000)
+                               z_bndry=('noflux','noflux'), rho=1000, mu=250000)
     envir.set_brinkman_flow(alpha=66, a=15, res=100, U=5, dpdx=0.22306)
     assert envir.flow_times is None, "flow_times should be None for stationary flow"
 
@@ -180,7 +180,7 @@ def test_brinkman_3D():
                    "zero bndry not respected"
 
     ### Single swarm, time-dependent flow ###
-    envir = agents.environment(Lz=100, Re=1., rho=1000)
+    envir = agents.environment(Lz=100, rho=1000, mu=100000)
     U=list(range(0,5))+list(range(5,-5,-1))+list(range(-3,6,2))
     envir.set_brinkman_flow(alpha=66, a=15, res=100, U=U, 
                             dpdx=np.ones(20)*0.22306, tspan=[0, 40])
@@ -190,7 +190,7 @@ def test_brinkman_3D():
     assert len(envir.flow_points[0]) == envir.flow[0].shape[1]
 
     # replace original flow for speed
-    envir = agents.environment(Lz=100, Re=1., rho=1000)
+    envir = agents.environment(Lz=100, rho=1000, mu=100000)
     envir.set_brinkman_flow(alpha=66, a=15, res=100, U=U, 
                             dpdx=np.ones(20)*0.22306, tspan=[0, 40])
     envir.add_swarm()
