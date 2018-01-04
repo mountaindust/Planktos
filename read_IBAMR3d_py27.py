@@ -15,7 +15,7 @@ around line 250.
 Created on Tues April 11 2017
 
 Author: Christopher Strickland
-Email: wcstrick@live.unc.edu
+Email: cstric12@utk.edu
 '''
 
 import sys, os

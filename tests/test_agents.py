@@ -5,7 +5,7 @@ For use with py.test package.
 Created on April 04 2017
 
 Author: Christopher Strickland
-Email: wcstrick@live.unc.edu
+Email: cstric12@utk.edu
 """
 
 import pytest
