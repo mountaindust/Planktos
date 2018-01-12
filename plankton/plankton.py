@@ -14,7 +14,7 @@ import agents, mv_swarm
 
 class plankton(agents.swarm):
 
-    def __init__(self, swarm_size=100, envir=None, init='random', **kwargs):
+    def __init__(self, swarm_size=100, envir=None, phys=None, init='random', **kwargs):
         ''' Initalizes plankton in an environment.
         See agents.swarm for further details.
 

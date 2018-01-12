@@ -11,12 +11,44 @@ Email: cstric12@utk.edu
 import pytest
 import numpy as np
 import numpy.ma as ma
-import agents
+import agents, mv_swarm
 
 ############                    Decorators                ############
 
 slow = pytest.mark.skipif(not pytest.config.getoption('--runslow'),
     reason = 'need --runslow option to run')
+
+############   Basic Overrides to test different physics  ############
+
+class massive_swarm(agents.swarm):
+
+    def update_positions(self, dt, params):
+        '''Uses projectile motion'''
+
+        # 3D?
+        DIM3 = (len(self.envir.L) == 3)
+
+        # Parse optional parameters
+        if params is not None:
+            assert isinstance(params[1], np.ndarray), "cov must be ndarray"
+            if not DIM3:
+                assert len(params[0]) == 2, "mu must be length 2"
+                assert params[1].shape == (2,2), "cov must be shape (2,2)"
+            else:
+                assert len(params[0]) == 3, "mu must be length 3"
+                assert params[1].shape == (3,3), "cov must be shape (3,3)"
+        else:
+            params = (np.zeros(len(self.envir.L)), np.eye(len(self.envir.L)))
+
+        # Get fluid-based drift and add to Gaussian bias
+        mu = mv_swarm.massive_drift(self, dt) + params[0]
+
+        # Add jitter and move according to a Gaussian random walk.
+        mv_swarm.gaussian_walk(self.positions, dt*mu, dt*params[1])
+
+        # Update velocity of swarm
+        self.velocity = (self.positions - self.pos_history[-1])/dt
+
 
 ###############################################################################
 #                                                                             #
@@ -198,6 +230,25 @@ def test_brinkman_3D():
     assert len(envir.flow_times) == 20, "flow_times don't match data"
     sw = envir.swarms[0]
 
+    for ii in range(10):
+        sw.move(0.5)
+    assert len(sw.pos_history) == 10, "all movements not recorded"
+    assert envir.time == 5, "incorrect final time"
+    assert len(envir.time_history) == 10, "all times not recorded"
+
+
+
+def test_massive_physics():
+    ### Get a 3D, time-dependent flow environment ###
+    envir = agents.environment(Lz=100, rho=1000, mu=100000)
+    U=list(range(0,5))+list(range(5,-5,-1))+list(range(-3,6,2))
+    envir.set_brinkman_flow(alpha=66, a=15, res=100, U=U, 
+                            dpdx=np.ones(20)*0.22306, tspan=[0, 40])
+    phys = {'Cd':0.47, 'S':0.01, 'm':0.1}
+    sw = massive_swarm(phys=phys)
+    envir.add_swarm(sw)
+    assert sw is envir.swarms[0], "swarm improperly assigned to environment"
+    assert sw.phys is not None, "Physical properties of swarm not assigned"
     for ii in range(10):
         sw.move(0.5)
     assert len(sw.pos_history) == 10, "all movements not recorded"

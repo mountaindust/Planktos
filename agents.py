@@ -258,8 +258,7 @@ class environment:
                         else:
                             flow[t,n,:] = -px/(alpha**2*self.mu)
             else:
-                warnings.warn('U=0: returning zero flow for these time-steps.',
-                              UserWarning)
+                print('U=0: returning zero flow for these time-steps.')
             t += 1
 
         flow = flow.squeeze() # This is 2D Brinkman flow, either t,y,x or y,x.
@@ -602,6 +601,14 @@ class environment:
 
         if isinstance(swarm_s, swarm):
             swarm_s.envir = self
+            # check if the dimesion matches, project if possible
+            if swarm_s.positions.shape[1] != len(self.L):
+                if swarm_s.positions.shape[1] > len(self.L):
+                    swarm_s.positions = swarm_s.positions[:,:2]
+                    swarm_s.velocity = swarm_s.velocity[:,:2]
+                    swarm_s.acceleration = swarm_s.acceleration[:,:2]
+                else:
+                    raise RuntimeError("Swarm dimension smaller than environment dimension!")
             self.swarms.append(swarm_s)
         else:
             return swarm(swarm_s, self, init, **kwargs)
@@ -707,9 +714,9 @@ class swarm:
                 - z = (optional, float) z-coordinate, if 3D
         '''
 
-        # use a new default environment if one was not given
+        # use a new, 3D default environment if one was not given
         if envir is None:
-            self.envir = environment(init_swarms=self)
+            self.envir = environment(init_swarms=self, Lz=100)
         else:
             try:
                 assert isinstance(envir, environment)
@@ -754,7 +761,7 @@ class swarm:
         # Put current position in the history
         self.pos_history.append(self.positions.copy())
 
-        # Check that something is left in the domain to move!
+        # Check that something is left in the domain to move, and move it.
         if not np.all(self.positions.mask):
             # Update positions
             self.update_positions(dt, params)
@@ -787,7 +794,8 @@ class swarm:
         THIS IS THE METHOD TO OVERRIDE IF YOU WANT TO TRY DIFFERENT MOVEMENT!
         Note: do not change the call signature.
         The result of this method should be to overwrite self.positions with
-        the new agent positions after a time step of length dt.
+        the new agent positions after a time step of length dt. It should also
+        update the agent velocities at the end of the timestep in self.velocity.
 
         What is included in this implementation is a basic jitter behavior with
         drift according to the fluid flow.
@@ -813,11 +821,15 @@ class swarm:
         else:
             params = (np.zeros(len(self.envir.L)), np.eye(len(self.envir.L)))
 
-        # Get fluid-based drift and add Gaussian bias
+        # Get fluid-based drift and add to Gaussian bias
         mu = self.get_fluid_drift() + params[0]
+        #mu = mv_swarm.massive_drift(self, dt) + params[0]
 
-        # Just have everyone move according to a Gaussian random walk.
+        # Add jitter and move according to a Gaussian random walk.
         mv_swarm.gaussian_walk(self.positions, dt*mu, dt*params[1])
+
+        # Update velocity of swarm
+        self.velocity = (self.positions - self.pos_history[-1])/dt
 
 
 
@@ -849,9 +861,14 @@ class swarm:
 
 
 
-    def get_projectile_motion(self):
+    def get_projectile_motion(self, high_re=False):
         '''Return acceleration using equations of projectile motion.
-        Includes gravity, drag and inertia.
+        Includes drag, inertia, and background flow velocity. Does not include
+        gravity.
+
+        Arguments:
+            high_re: If false (default), assume Re<0.1 for all agents. Otherwise,
+            assume Re > 10 for all agents.
         
         Requires that the following are specified in self.phys:
             Cd: Drag coefficient
@@ -859,10 +876,17 @@ class swarm:
             m: mass of each agent
 
         Requires that the following are specified in envir:
-            re: Reynolds number of fluid (either >10 or <0.1)
             rho: fluid density
-            mu: dynamic viscosity
+            mu: dynamic viscosity (if low Re)
+
+        Returns:
+            2D array of accelerations in each dimension for each agent.
+            Each row corresponds to an agent (in the same order as listed in 
+            self.positions) and each column is a dimension.
         '''
+
+        # TODO self.envir.re no longer exists!! We should base choice off of
+        #   highest and lowest u in the domain?
         
         # Get fluid velocity
         vel = self.get_fluid_drift()
@@ -871,20 +895,19 @@ class swarm:
         assert isinstance(self.phys, dict), "swarm.phys not specified"
         for key in ['Cd', 'S', 'm']:
             assert key in self.phys, "{} not found in swarm.phys".format(key)
-        assert self.envir.re is not None, "Re not specified"
         assert self.envir.rho is not None, "rho not specified"
+        if not high_re:
+            assert self.envir.mu is not None, "mu not specified"
 
-        if self.envir.re >= 10:
+        if high_re:
             diff = np.linalg.norm(self.velocity-vel,axis=1)
             return self.acceleration/self.phys['m'] -\
             (self.envir.rho*self.phys['Cd']*self.phys['S']/2/self.phys['m'])*\
             (self.velocity - vel)*np.stack((diff,diff,diff)).T
-        elif self.envir.re <= 0.1:
+        else:
             return self.acceleration/self.phys['m'] -\
             (self.envir.mu*self.phys['Cd']*self.envir.char_L/2/self.phys['m'])*\
             (self.velocity - vel)
-        else:
-            raise RuntimeError('Projectile motion undefined for 0.1<Re<10.')
 
 
 
