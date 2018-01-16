@@ -27,9 +27,9 @@ class plankton(agents.swarm):
         '''
         # Create a suitable environment with no flow for plankton
         if envir is None:
-            envir = agents.environment(Lx=100, Ly=100, x_bndry=['zero','zero'],
+            envir = agents.environment(Lx=10, Ly=10, x_bndry=['zero','zero'],
                                        y_bndry=['noflux','zero'],
-                                       Re=1., rho=1000)
+                                       mu=1000, rho=1000)
         super(plankton, self).__init__(swarm_size, envir, init, **kwargs)
 
         # Some plankton properties we might want?
@@ -64,7 +64,7 @@ class plankton(agents.swarm):
                     assert len(params[0]) == 3, "mu must be length 3"
                     assert params[1].shape == (3,3), "cov must be shape (3,3)"
             else:
-                params = (0, np.eye(len(self.envir.L)))
+                params = (0, 0.01*np.eye(len(self.envir.L)))
 
             ### Fight against the current to some degree? ###
             fluid_drift = self.get_fluid_drift()

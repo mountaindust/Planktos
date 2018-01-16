@@ -33,7 +33,7 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 
 class environment:
 
-    def __init__(self, Lx=100, Ly=100, Lz=None,
+    def __init__(self, Lx=10, Ly=10, Lz=None,
                  x_bndry=None, y_bndry=None, z_bndry=None, flow=None,
                  flow_times=None, rho=None, mu=None, char_L=None,
                  init_swarms=None):
@@ -176,7 +176,7 @@ class environment:
         2D vs. 3D flow is based on the dimension of the domain.
 
         Arguments:
-            alpha: porosity constant
+            alpha: equal to 1/(hydraulic permeability). alpha=0 implies free flow (infinitely permeable)
             a: height of porous region
             res: number of points at which to resolve the flow (int), including boundaries
             U: velocity at top of domain (v in input3d). scalar or list-like.
@@ -248,6 +248,7 @@ class environment:
                     if z > 0:
                         #Region I
                         flow[t,n,:] = z**2*px/(2*self.mu) + A*z + B
+                        flow[t,n,:] *= np.sign(v) # v only appears in abs
                     else:
                         #Region 2
                         if C > 0 and D > 0:
@@ -258,6 +259,7 @@ class environment:
                             flow[t,n,:] = exp(log(C)+alpha*z) - px/(alpha**2*self.mu)
                         else:
                             flow[t,n,:] = -px/(alpha**2*self.mu)
+                        flow[t,n,:] *= np.sign(v) # v only appears in abs
             else:
                 print('U=0: returning zero flow for these time-steps.')
             t += 1
@@ -738,7 +740,7 @@ class swarm:
 
         # use a new, 3D default environment if one was not given
         if envir is None:
-            self.envir = environment(init_swarms=self, Lz=100)
+            self.envir = environment(init_swarms=self, Lz=10)
         else:
             try:
                 assert isinstance(envir, environment)
@@ -766,6 +768,9 @@ class swarm:
 
         # Initialize position history
         self.pos_history = []
+
+        # Apply boundary conditions in case of domain mismatch
+        self.apply_boundary_conditions()
 
 
 
@@ -841,7 +846,7 @@ class swarm:
                 assert len(params[0]) == 3, "mu must be length 3"
                 assert params[1].shape == (3,3), "cov must be shape (3,3)"
         else:
-            params = (np.zeros(len(self.envir.L)), np.eye(len(self.envir.L)))
+            params = (np.zeros(len(self.envir.L)), 0.01*np.eye(len(self.envir.L)))
 
         # Get fluid-based drift and add to Gaussian bias
         mu = self.get_fluid_drift() + params[0]
