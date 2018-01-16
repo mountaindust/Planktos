@@ -46,8 +46,9 @@ class environment:
             x_bndry: [left bndry condition, right bndry condition]
             y_bndry: [low bndry condition, high bndry condition]
             flow: [x-vel field ndarray ([t],m,n), y-vel field ndarray ([t],m,n)]
-                Note! y=0 is at row zero, increasing downward, and it is assumed
-                that flow mesh is equally spaced incl values on the domain bndry
+                Note! m is x index, n is y index, with the value of x/y increasing
+                as the index increases. It is assumed that the flow mesh is equally 
+                spaced and includes values on the domain bndry
             flow_times: [tstart, tend] or iterable of times at which flow is specified
                      or scalar dt; required if flow is time-dependent.
             rho: fluid density of environment, kg/m**3 (optional)
@@ -177,7 +178,7 @@ class environment:
         Arguments:
             alpha: porosity constant
             a: height of porous region
-            res: number of points at which to resolve the flow (int)
+            res: number of points at which to resolve the flow (int), including boundaries
             U: velocity at top of domain (v in input3d). scalar or list-like.
             dpdx: dp/dx change in momentum constant. scalar or list-like.
             tspan: [tstart, tend] or iterable of times at which flow is specified
@@ -555,23 +556,44 @@ class environment:
 
             for n, flow in enumerate(self.flow):
                 new_flow = np.zeros(new_flow_shape)
-                new_flow[:flow_shape[0],0,...] = flow[:,0,...]
-                new_flow[0,:flow_shape[1],...] = flow[0,:,...]
+                # copy bottom-left corner
+                new_flow[0,0,...] = flow[0,0,...]
+                # tile first row/column
+                if DIM3:
+                    r_tile_num = (x,1)
+                    c_tile_num = (y,1)
+                else:
+                    r_tile_num = x
+                    c_tile_num = y
+                new_flow[1:,0,...] = np.tile(flow[1:,0,...], r_tile_num)
+                new_flow[0,1:,...] = np.tile(flow[0,1:,...], c_tile_num)
+                # tile interior
                 new_flow[1:,1:,...] = np.tile(flow[1:,1:,...], tile_num)
                 self.flow[n] = new_flow
         else:
             # time dependent flow
+            tile_num_time = [1]+list(tile_num) # prepend a 1; do not tile time
             flow_shape = self.flow[0].shape
             new_flow_shape = np.array(flow_shape)
             # get new dimensions
             for dim in range(1,len(flow_shape)):
-                new_flow_shape[dim] += (flow_shape[dim]-1)*(tile_num[dim-1]-1)
+                new_flow_shape[dim] += (flow_shape[dim]-1)*(tile_num_time[dim]-1)
 
             for n, flow in enumerate(self.flow):
                 new_flow = np.zeros(new_flow_shape)
-                new_flow[:,:flow_shape[1],0,...] = flow[:,:,0,...]
-                new_flow[:,0,:flow_shape[2],...] = flow[:,0,:,...]
-                new_flow[:,1:,1:,...] = np.tile(flow[:,1:,1:,...], tile_num)
+                # copy bottom-left corner
+                new_flow[:,0,0,...] = flow[:,0,0,...]
+                # tile first row/column
+                if DIM3:
+                    r_tile_num = (1,x,1)
+                    c_tile_num = (1,y,1)
+                else:
+                    r_tile_num = (1,x)
+                    c_tile_num = (1,y)
+                new_flow[:,1:,0,...] = np.tile(flow[:,1:,0,...], r_tile_num)
+                new_flow[:,0,1:,...] = np.tile(flow[:,0,1:,...], c_tile_num)
+                # tile interior
+                new_flow[:,1:,1:,...] = np.tile(flow[:,1:,1:,...], tile_num_time)
                 self.flow[n] = new_flow
             
         # update environment dimensions and meshes
