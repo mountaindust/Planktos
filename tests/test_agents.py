@@ -138,10 +138,12 @@ def test_brinkman_2D():
 
     ### Single swarm, time-dependent flow ###
     envir = agents.environment(rho=1000, mu=20000)
-    envir.set_brinkman_flow(alpha=66, a=1.5, res=101, U=0.1*np.arange(1,6),
-                            dpdx=np.ones(5)*0.22306, tspan=[0, 10])
+    envir.set_brinkman_flow(alpha=66, a=1.5, res=101, U=0.1*np.arange(-2,6),
+                            dpdx=np.ones(8)*0.22306, tspan=[0, 10])
     assert envir.flow_times is not None, "flow_times unset"
-    assert len(envir.flow_times) == 5, "flow_times don't match data"
+    assert len(envir.flow_times) == 8, "flow_times don't match data"
+    assert envir.flow[0][0,50,-1] < 0, "flow should start in negative direction"
+    assert np.isclose(envir.flow[0][-1,50,-1],.5), "flow should end at .5"
 
     # tile flow
     envir.tile_flow(2,1)
@@ -149,14 +151,15 @@ def test_brinkman_2D():
     assert envir.flow[0][1,100,50] == envir.flow[0][1,200,50]
     assert envir.flow[1][1,100,0] == envir.flow[1][1,200,0]
     assert envir.flow[1][1,100,50] == envir.flow[1][1,200,50]
-    assert envir.flow[0].shape == (5,201,101)
-    assert len(envir.flow_times) == 5, "flow_times don't match data"
+    assert envir.flow[0].shape == (8,201,101)
+    assert len(envir.flow_times) == 8, "flow_times don't match data"
     assert len(envir.flow_points[0]) > len(envir.flow_points[1])
     assert len(envir.flow_points[0]) == envir.flow[0].shape[1]
     sw = agents.swarm(swarm_size=70, envir=envir, init='point', x=5, y=5)
     assert sw is envir.swarms[0], "swarm not in envir list"
     assert len(envir.swarms) == 1, "too many swarms in envir"
 
+    # test movement beyond final flow time (should maintain last flow)
     for ii in range(20):
         sw.move(0.5)
     assert len(sw.pos_history) == 20, "all movements not recorded"
