@@ -35,8 +35,7 @@ class environment:
 
     def __init__(self, Lx=10, Ly=10, Lz=None,
                  x_bndry=None, y_bndry=None, z_bndry=None, flow=None,
-                 flow_times=None, rho=None, mu=None, char_L=None,
-                 init_swarms=None):
+                 flow_times=None, rho=None, mu=None, init_swarms=None):
         ''' Initialize environmental variables.
 
         Arguments:
@@ -53,7 +52,6 @@ class environment:
                      or scalar dt; required if flow is time-dependent.
             rho: fluid density of environment, kg/m**3 (optional)
             mu: dynamic viscosity, kg/m/s (optional)
-            char_L: characteristic length, set to Lx (or Ly in 3D) if not specified
             init_swarms: initial swarms in this environment
 
         Right now, supported boundary conditions are 'zero' (default) and 'noflux'.
@@ -128,14 +126,6 @@ class environment:
             raise RuntimeError("Dynamic viscosity, mu, cannot be zero.")
         else:
             self.mu = mu
-        # Characteristic length
-        if char_L is None:
-            if len(self.L) == 2:
-                self.char_L = self.L[1]
-            else:
-                self.char_L = self.L[2]
-        else:
-            self.char_L = char_L
         # porous region height
         self.a = None
         # accel due to gravity
@@ -153,17 +143,6 @@ class environment:
         #   or when all swarms in the environment are collectively moved.
         self.time = 0.0
         self.time_history = []
-
-
-
-    def calc_re(self, u):
-        '''Calculate Reynolds number based on environment variables and given
-        flow velocity, u'''
-
-        if self.rho is not None and self.mu is not None:
-            return self.rho*u*self.char_L/self.mu
-        else:
-            raise RuntimeError("Parameters necessary for Re calculation are undefined.")
 
 
 
@@ -718,12 +697,14 @@ class environment:
 
 class swarm:
 
-    def __init__(self, swarm_size=100, envir=None, phys=None, init='random', **kwargs):
+    def __init__(self, swarm_size=100, envir=None, char_L=None, phys=None,
+                 init='random', **kwargs):
         ''' Initalizes planktos swarm in an environment.
 
         Arguments:
             swarm_size: Size of the swarm (int)
             envir: environment for the swarm, defaults to the standard environment
+            char_L: characteristic length
             phys: dictionary of physical properties to be used by equations of motion
             init: Method for initalizing positions.
             kwargs: keyword arguments to be passed to the method for
@@ -751,6 +732,7 @@ class swarm:
                 raise
 
         # set physical properties
+        self.char_L = char_L
         self.phys = phys
 
         # initialize bug locations
@@ -771,6 +753,18 @@ class swarm:
 
         # Apply boundary conditions in case of domain mismatch
         self.apply_boundary_conditions()
+
+
+
+    def calc_re(self, u):
+        '''Calculate Reynolds number based on environment variables and given
+        flow velocity, u'''
+
+        if self.envir.rho is not None and self.envir.mu is not None and\
+            self.char_L is not None:
+            return self.envir.rho*u*self.char_L/self.envir.mu
+        else:
+            raise RuntimeError("Parameters necessary for Re calculation are undefined.")
 
 
 
@@ -921,12 +915,15 @@ class swarm:
 
         # Check for self.phys and other parameters
         assert isinstance(self.phys, dict), "swarm.phys not specified"
-        for key in ['Cd', 'S', 'm']:
+        for key in ['Cd', 'm']:
             assert key in self.phys, "{} not found in swarm.phys".format(key)
         assert self.envir.rho is not None, "rho not specified"
         if not high_re:
             assert self.envir.mu is not None, "mu not specified"
-            assert 'L' in self.phys, "L not specified in phys"
+            assert self.char_L is not None, "characteristic length not specified"
+        else:
+            assert 'S' in self.phys, "Cross-sectional area (S) not found in "+\
+            "swarm.phys"
 
         if high_re:
             diff = np.linalg.norm(self.velocity-vel,axis=1)
@@ -935,7 +932,7 @@ class swarm:
             (self.velocity - vel)*np.stack((diff,diff,diff)).T
         else:
             return self.acceleration/self.phys['m'] -\
-            (self.envir.mu*self.phys['Cd']*self.phys['L']/2/self.phys['m'])*\
+            (self.envir.mu*self.phys['Cd']*self.char_L/2/self.phys['m'])*\
             (self.velocity - vel)
 
 

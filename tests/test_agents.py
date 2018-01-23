@@ -40,8 +40,13 @@ class massive_swarm(agents.swarm):
         else:
             params = (np.zeros(len(self.envir.L)), np.eye(len(self.envir.L)))
 
+        if len(params) == 2:
+            high_re = False
+        else:
+            high_re = params[2]
+
         # Get fluid-based drift and add to Gaussian bias
-        mu = mv_swarm.massive_drift(self, dt) + params[0]
+        mu = mv_swarm.massive_drift(self, dt, high_re) + params[0]
 
         # Add jitter and move according to a Gaussian random walk.
         mv_swarm.gaussian_walk(self.positions, dt*mu, dt*params[1])
@@ -262,9 +267,9 @@ def test_massive_physics():
     U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-3,6,2)))
     envir.set_brinkman_flow(alpha=66, a=1.5, res=100, U=U, 
                             dpdx=np.ones(20)*0.22306, tspan=[0, 40])
-    ### specify physical properties of swarm and move swarm ###
-    phys = {'Cd':0.47, 'S':0.01, 'm':0.1, 'L':0.002}
-    sw = massive_swarm(phys=phys)
+    ### specify physical properties of swarm and move swarm with low Re ###
+    phys = {'Cd':0.47, 'm':0.1}
+    sw = massive_swarm(char_L=0.002, phys=phys)
     envir.add_swarm(sw)
     assert sw is envir.swarms[0], "swarm improperly assigned to environment"
     assert sw.phys is not None, "Physical properties of swarm not assigned"
