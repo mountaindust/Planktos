@@ -848,10 +848,13 @@ class swarm:
         else:
             params = (np.zeros(len(self.envir.L)), 0.01*np.eye(len(self.envir.L)))
 
+
+        ### Passive movement ###
         # Get fluid-based drift and add to Gaussian bias
         mu = self.get_fluid_drift() + params[0]
         #mu = mv_swarm.massive_drift(self, dt) + params[0]
 
+        ### Active movement ###
         # Add jitter and move according to a Gaussian random walk.
         mv_swarm.gaussian_walk(self.positions, dt*mu, dt*params[1])
 
@@ -901,6 +904,7 @@ class swarm:
             Cd: Drag coefficient
             S: cross-sectional area of each agent
             m: mass of each agent
+            L: diameter of the agent (low Re only)
 
         Requires that the following are specified in envir:
             rho: fluid density
@@ -911,9 +915,6 @@ class swarm:
             Each row corresponds to an agent (in the same order as listed in 
             self.positions) and each column is a dimension.
         '''
-
-        # TODO self.envir.re no longer exists!! We should base choice off of
-        #   highest and lowest u in the domain?
         
         # Get fluid velocity
         vel = self.get_fluid_drift()
@@ -925,6 +926,7 @@ class swarm:
         assert self.envir.rho is not None, "rho not specified"
         if not high_re:
             assert self.envir.mu is not None, "mu not specified"
+            assert 'L' in self.phys, "L not specified in phys"
 
         if high_re:
             diff = np.linalg.norm(self.velocity-vel,axis=1)
@@ -933,7 +935,7 @@ class swarm:
             (self.velocity - vel)*np.stack((diff,diff,diff)).T
         else:
             return self.acceleration/self.phys['m'] -\
-            (self.envir.mu*self.phys['Cd']*self.envir.char_L/2/self.phys['m'])*\
+            (self.envir.mu*self.phys['Cd']*self.phys['L']/2/self.phys['m'])*\
             (self.velocity - vel)
 
 

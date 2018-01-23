@@ -262,7 +262,8 @@ def test_massive_physics():
     U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-3,6,2)))
     envir.set_brinkman_flow(alpha=66, a=1.5, res=100, U=U, 
                             dpdx=np.ones(20)*0.22306, tspan=[0, 40])
-    phys = {'Cd':0.47, 'S':0.01, 'm':0.1}
+    ### specify physical properties of swarm and move swarm ###
+    phys = {'Cd':0.47, 'S':0.01, 'm':0.1, 'L':0.002}
     sw = massive_swarm(phys=phys)
     envir.add_swarm(sw)
     assert sw is envir.swarms[0], "swarm improperly assigned to environment"
