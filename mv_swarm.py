@@ -91,12 +91,12 @@ def gaussian_walk(swarm_pos, mean, cov):
                                                    
 
 
-def massive_drift(swarm, dt, net_g=0):
+def massive_drift(swarm, dt, net_g=0, high_re=False):
     '''Get drift of the swarm due to background flow assuming massive particles 
     with boyancy accleration net_g'''
 
     # Get acceleration of each agent in neutral boyancy
-    dvdt = swarm.get_projectile_motion()
+    dvdt = swarm.get_projectile_motion(high_re=high_re)
     # Add in accel due to gravity
     dvdt[:,-1] += net_g
     # Solve and return velocity of agents with an Euler step
