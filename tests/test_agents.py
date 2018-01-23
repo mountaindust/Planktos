@@ -268,7 +268,7 @@ def test_massive_physics():
     envir.set_brinkman_flow(alpha=66, a=1.5, res=100, U=U, 
                             dpdx=np.ones(20)*0.22306, tspan=[0, 40])
     ### specify physical properties of swarm and move swarm with low Re ###
-    phys = {'Cd':0.47, 'm':0.1}
+    phys = {'Cd':0.47, 'm':0.01}
     sw = massive_swarm(char_L=0.002, phys=phys)
     envir.add_swarm(sw)
     assert sw is envir.swarms[0], "swarm improperly assigned to environment"
@@ -278,4 +278,13 @@ def test_massive_physics():
     assert len(sw.pos_history) == 10, "all movements not recorded"
     assert envir.time == 5, "incorrect final time"
     assert len(envir.time_history) == 10, "all times not recorded"
-    
+    ### do it again but for high Re ###
+    envir.reset(rm_swarms=True)
+    phys = {'Cd':0.47, 'm':1, 'S':np.pi*0.1**2}
+    sw = massive_swarm(char_L=0.2, phys=phys)
+    envir.add_swarm(sw)
+    for ii in range(10):
+        sw.move(0.5, (np.zeros(3), 0.3*np.eye(3), True))
+    assert len(sw.pos_history) == 10, "all movements not recorded"
+    assert envir.time == 5, "incorrect final time"
+    assert len(envir.time_history) == 10, "all times not recorded"
