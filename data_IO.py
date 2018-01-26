@@ -3,15 +3,21 @@
 Created on Wed April 05 2017
 
 Author: Christopher Strickland
-Email: wcstrick@live.unc.edu
+Email: cstric12@utk.edu
 '''
 
 __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
-import os
-from pathlib import Path
+import os, sys
+if (sys.version_info[0] >= 3):
+    # Python 3 being used
+    PY3 = True
+    from pathlib import Path
+else:
+    # Python 2
+    PY3 = False
 import numpy as np
 import vtk
 from vtk.util import numpy_support # Converts vtkarray to/from numpy array
@@ -138,8 +144,12 @@ def read_vtk_Unstructured_Grid_Points(filename):
 def read_2DEulerian_Data_From_vtk(path, simNums, strChoice, xy=False):
     '''This is to read IB2d data, either scalar or vector.'''
 
-    filename = Path(path) / (strChoice + '.' + str(simNums) + '.vtk')
-    data = read_vtk_Structured_Points(str(filename))
+    if PY3:
+        filename = Path(path) / (strChoice + '.' + str(simNums) + '.vtk')
+        data = read_vtk_Structured_Points(str(filename))
+    else:
+        filename = os.path.normpath(path)+strChoice+'.'+str(simNums)+'.vtk'
+        data = read_vtk_Structured_Points(filename)
 
     if xy:
         # reconstruct mesh
