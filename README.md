@@ -18,7 +18,7 @@ All tests can be run by typing `py.test` into a terminal in the base directory.
 
 ## Quickstart
 
-There are three working examples in the examples folder, including a 2D simulation, a 3D simulation, and a simulation utilizing vtk data obtained from IBAMR which is located in the tests/IBAMR_test_data folder. More will be added. When experimenting with different agent behavior than what is prescribed in swarm.py (e.g., different movement rules), it is strongly suggested that you subclass swarm (found in agents.py) in an appropriate subfolder. That way, you can keep track of everything you have tried and its outcome. See the code in the plankton folder for an example.
+There are three working examples in the examples folder, including a 2D simulation, a 3D simulation, and a simulation utilizing vtk data obtained from IBAMR which is located in the tests/IBAMR_test_data folder. More will be added. When experimenting with different agent behavior than what is prescribed in swarm.py (e.g., different movement rules), it is strongly suggested that you subclass swarm (found in framework.py) in an appropriate subfolder. That way, you can keep track of everything you have tried and its outcome. See the code in the plankton folder for an example.
 
 ## API
 Class: environment

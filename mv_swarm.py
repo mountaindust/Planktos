@@ -6,7 +6,7 @@ Library of functions for initializing and moving a provided swarm group.
 Created on Tues Jan 24 2017
 
 Author: Christopher Strickland
-Email: wcstrick@live.unc.edu
+Email: cstric12@utk.edu
 '''
 
 __author__ = "Christopher Strickland"

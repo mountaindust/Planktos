@@ -4,19 +4,19 @@ File for defining plankton behavior in flow.
 Created on Fri April 07 2017
 
 Author: Christopher Strickland
-Email: wcstrick@live.unc.edu
+Email: cstric12@utk.edu
 '''
 
 import sys, warnings
 sys.path.append('../')
 import numpy as np
-import agents, mv_swarm
+import framework, mv_swarm
 
-class plankton(agents.swarm):
+class plankton(framework.swarm):
 
     def __init__(self, swarm_size=100, envir=None, phys=None, init='random', **kwargs):
         ''' Initalizes plankton in an environment.
-        See agents.swarm for further details.
+        See framework.swarm for further details.
 
         Arguments:
             envir: environment for plankton, defaults to a standard environment
@@ -27,7 +27,7 @@ class plankton(agents.swarm):
         '''
         # Create a suitable environment with no flow for plankton
         if envir is None:
-            envir = agents.environment(Lx=10, Ly=10, x_bndry=['zero','zero'],
+            envir = framework.environment(Lx=10, Ly=10, x_bndry=['zero','zero'],
                                        y_bndry=['noflux','zero'],
                                        mu=1000, rho=1000)
         super(plankton, self).__init__(swarm_size, envir, init, **kwargs)
@@ -49,7 +49,7 @@ class plankton(agents.swarm):
         # We want to respond to flow somehow. Here is a brief example.
         if self.envir.flow is None:
             # Just do the default thing
-            agents.swarm.update_positions(self, dt, params)
+            framework.swarm.update_positions(self, dt, params)
         else:
             # 3D?
             DIM3 = (len(self.envir.L) == 3)
