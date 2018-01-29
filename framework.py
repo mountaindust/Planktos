@@ -522,14 +522,14 @@ class environment:
         path = Path(path)
         assert path.exists(), "Path {} not found!".format(str(path))
         with open(path/(prefix+flow_file), 'rb') as f:
-            self.flow = pickle.load(f)
+            self.flow = pickle.load(f, encoding="latin1")
         with open(path/(prefix+flow_times_file), 'rb') as f:
-            self.flow_times = pickle.load(f)
+            self.flow_times = pickle.load(f, encoding="latin1")
         with open(path/(prefix+flow_points_file), 'rb') as f:
-            self.flow_points = pickle.load(f)
+            self.flow_points = pickle.load(f, encoding="latin1")
         if len(self.flow) == 3:
             with open(path/(prefix+flow_LLC_file), 'rb') as f:
-                self.fluid_domain_LLC = pickle.load(f)
+                self.fluid_domain_LLC = pickle.load(f, encoding="latin1")
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(len(self.flow))]
