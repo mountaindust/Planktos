@@ -503,7 +503,7 @@ class environment:
 
 
 
-    def read_pickled_vtk_data(self, flow_file='flow.pickle',
+    def read_pickled_vtk_data(self, path, prefix='', flow_file='flow.pickle',
                               flow_times_file='flow_times.pickle',
                               flow_points_file='flow_points.pickle',
                               flow_LLC_file='flow_LLC.pickle'):
@@ -511,20 +511,24 @@ class environment:
         variables accordingly.
 
         Arguments:
+            prefix: a prefix to add to each of the file names (instead of
+                specifying each one individually)
             flow_file: string location/name of flow pickle file
             flow_times_file: string location/name of flow_times pickle file
             flow_points_file: string location/name of flow_points pickle file
             flow_LLC_file: string location/name of LLC domain info, used in 3D only
         '''
 
-        with open(flow_file, 'rb') as f:
+        path = Path(path)
+        assert path.exists(), "Path {} not found!".format(str(path))
+        with open(path/(prefix+flow_file), 'rb') as f:
             self.flow = pickle.load(f)
-        with open(flow_times_file, 'rb') as f:
+        with open(path/(prefix+flow_times_file), 'rb') as f:
             self.flow_times = pickle.load(f)
-        with open(flow_points_file, 'rb') as f:
+        with open(path/(prefix+flow_points_file), 'rb') as f:
             self.flow_points = pickle.load(f)
         if len(self.flow) == 3:
-            with open(flow_LLC_file, 'rb') as f:
+            with open(path/(prefix+flow_LLC_file), 'rb') as f:
                 self.fluid_domain_LLC = pickle.load(f)
 
         ### Convert environment dimensions and reset simulation time ###

@@ -85,21 +85,37 @@ def read_vtk_Rectilinear_Grid_Vector(filename):
     # Each of these are indexed via [z,y,x], since x changes, then y, then z
     #   in the flattened array.
 
+    ##### This code is now hanging indefinitely due to some sort of   #####
+    #####   internal vtk dataset_adapter error. Using a workaround... #####
+
     # In the case of VisIt IBAMR data, TIME is stored as fielddata. Retrieve it.
     #   To do this, wrap the data object and then access FieldData like a dict
-    py_data = dsa.WrapDataObject(vtk_data)
-    if 'TIME' in py_data.FieldData.keys():
-        time = numpy_support.vtk_to_numpy(py_data.FieldData['TIME'])
-        assert len(time) == 1, "Currently can only support single time data."
-        time = time[0]
-    else:
-        time = None
+    # py_data = dsa.WrapDataObject(vtk_data)
+    # if 'TIME' in py_data.FieldData.keys():
+    #     time = numpy_support.vtk_to_numpy(py_data.FieldData['TIME'])
+    #     assert len(time) == 1, "Currently can only support single time data."
+    #     time = time[0]
+    # else:
+    #     time = None
+
     # FYI, py_data.PointData is a dict containing the point data - useful if
     #   there are many variables stored in the same file. Also, analysis on this
     #   data (which is a vtk subclass of numpy arrays) can be done by importing
     #   algorithms from vtk.numpy_interface. Since the data structure retains
     #   knowledge of the mesh, gradients etc. can be obtained across irregular points
 
+    ##### Here is the workaround #####
+
+    fielddata = vtk_data.GetFieldData()
+    time = None
+    for n in range(fielddata.GetNumberOfArrays()):
+        # search for 'TIME'
+        if fielddata.GetArrayName(n) == 'TIME':
+            time = numpy_support.vtk_to_numpy(fielddata.GetArray(n))
+            assert len(time) == 1, "Currently can only support single time data."
+            time = time[0]
+            break
+    
     return (x_data, y_data, z_data), (x_mesh, y_mesh, z_mesh), time
 
 
@@ -112,10 +128,7 @@ def read_vtk_Unstructured_Grid_Points(filename):
     reader.SetFileName(filename)
     reader.Update()
     vtk_data = reader.GetOutput()
-    
-    py_data = dsa.WrapDataObject(vtk_data)
-    points = numpy_support.vtk_to_numpy(py_data.Points) # each row is a 3D point location
-    
+
     # Cells are specified by a vtk cell type and a list of points that make up
     #   that cell. py_data.CellTypes is a list of numerial cell types.
     #   py_data.Cells is an array that, for each cell in order, lists the number
@@ -126,17 +139,41 @@ def read_vtk_Unstructured_Grid_Points(filename):
 
     # Since we are assuming that the mesh is only singleton points (CellType=1),
     #   we only need the location of the points.
+    
+    ##### This code is now hanging indefinitely due to some sort of   #####
+    #####   internal vtk dataset_adapter error. Using a workaround... #####
+    # py_data = dsa.WrapDataObject(vtk_data)
+    # points = numpy_support.vtk_to_numpy(py_data.Points) # each row is a 3D point location
 
     # also get bounds of the mesh (xmin, xmax, ymin, ymax, zmin, zmax)
-    try:
-        bounds = numpy_support.vtk_to_numpy(py_data.FieldData['avtOriginalBounds'])
-    except AttributeError:
+    # try:
+    #     bounds = numpy_support.vtk_to_numpy(py_data.FieldData['avtOriginalBounds'])
+    # except AttributeError:
+    #     bounds_list = []
+    #     for ii in range(points.shape[1]):
+    #         bounds_list.append(points[:,ii].min())
+    #         bounds_list.append(points[:,ii].max())
+    #     bounds = np.array(bounds_list)
+    
+    ##### Here is the workaround #####
+
+    vtkpoints = vtk_data.GetPoints()
+    points = numpy_support.vtk_to_numpy(vtkpoints.GetData())
+    # also get bounds of the mesh (xmin, xmax, ymin, ymax, zmin, zmax)
+    fielddata = vtk_data.GetFieldData()
+    bounds = None
+    for n in range(fielddata.GetNumberOfArrays()):
+        # search for 'avtOriginalBounds'
+        if fielddata.GetArrayName(n) == 'avtOriginalBounds':
+            bounds = numpy_support.vtk_to_numpy(fielddata.GetArray(n))
+            break
+    if bounds is None:
         bounds_list = []
         for ii in range(points.shape[1]):
             bounds_list.append(points[:,ii].min())
             bounds_list.append(points[:,ii].max())
         bounds = np.array(bounds_list)
-
+        
     return points, bounds
 
 

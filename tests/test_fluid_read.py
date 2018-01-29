@@ -137,3 +137,4 @@ def test_point_load():
     '''Test loading singleton mesh points from an Unstructured Grid VTK in data_IO'''
     filename = 'tests/IBAMR_test_data/mesh_db.vtk'
     points, bounds = data_IO.read_vtk_Unstructured_Grid_Points(filename)
+    
