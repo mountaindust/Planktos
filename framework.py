@@ -91,18 +91,18 @@ class environment:
                     # time-dependent flow
                     assert flow[0].shape[0] == flow[1].shape[0] == flow[2].shape[0]
                     assert flow_times is not None, "Must provide flow_times"
-                    self.__set_brinkman_flow_variables(flow_times)
+                    self.__set_flow_variables(flow_times)
                 else:
-                    self.__set_brinkman_flow_variables()
+                    self.__set_flow_variables()
             else:
                 # 2D flow
                 if max([len(f.shape) for f in flow]) > 2:
                     # time-dependent flow
                     assert flow[0].shape[0] == flow[1].shape[0]
                     assert flow_times is not None, "Must provide flow_times"
-                    self.__set_brinkman_flow_variables(flow_times)
+                    self.__set_flow_variables(flow_times)
                 else:
-                    self.__set_brinkman_flow_variables()
+                    self.__set_flow_variables()
 
         ##### swarm list #####
         if init_swarms is None:
@@ -151,7 +151,7 @@ class environment:
         the x-axis. Porous region is the lower part of the y-domain (2D) or
         z-domain (3D) with width=a and an empty region above. For 3D flow, the
         velocity profile is the same on all slices y=c. The decision to set
-        2D vs. 3D flow is based on the dimension of the domain.
+        2D vs. 3D flow is based on the dimension of the current domain.
 
         Arguments:
             alpha: equal to 1/(hydraulic permeability). alpha=0 implies free flow (infinitely permeable)
@@ -252,15 +252,15 @@ class environment:
                 # no time; (y,x) -> (x,y) coordinates
                 flow = flow.T
                 self.flow = [flow, np.zeros_like(flow)] #x-direction, y-direction
-                self.__set_brinkman_flow_variables()
+                self.__set_flow_variables()
             else:
                 #time-dependent; (t,y,x)-> (t,x,y) coordinates
                 flow = np.transpose(flow, axes=(0, 2, 1))
                 self.flow = [flow, np.zeros_like(flow)]
                 if tspan is None:
-                    self.__set_brinkman_flow_variables(tspan=1)
+                    self.__set_flow_variables(tspan=1)
                 else:
-                    self.__set_brinkman_flow_variables(tspan=tspan)
+                    self.__set_flow_variables(tspan=tspan)
         else:
             # 3D
             if len(flow.shape) == 2:
@@ -269,7 +269,7 @@ class environment:
                 flow = np.transpose(flow, axes=(2, 0, 1)) #(x,y,z)
                 self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
 
-                self.__set_brinkman_flow_variables()
+                self.__set_flow_variables()
 
             else:
                 # (t,z,x) -> (t,z,y,x) coordinates
@@ -278,15 +278,15 @@ class environment:
                 self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
 
                 if tspan is None:
-                    self.__set_brinkman_flow_variables(tspan=1)
+                    self.__set_flow_variables(tspan=1)
                 else:
-                    self.__set_brinkman_flow_variables(tspan=tspan)
+                    self.__set_flow_variables(tspan=tspan)
         self.__reset_flow_variables()
         self.a = a
 
 
 
-    def __set_brinkman_flow_variables(self, tspan=None):
+    def __set_flow_variables(self, tspan=None):
         '''Store points at which flow is specified, and time information.
 
         Arguments:
@@ -319,6 +319,90 @@ class environment:
                 self.flow_times = np.array(tspan)
         else:
             self.flow_times = None
+
+
+
+    def set_two_layer_channel_flow(self, res, a, h_p, Cd, S):
+        '''Apply wide-channel flow with vegetation layer according to the
+        two-layer model described in Defina and Bixio (2005), 
+        "Vegetated Open Channel Flow". The decision to set 2D vs. 3D flow is 
+        based on the dimension of the domain. The following parameters must be given:
+
+        Arguments:
+            res: number of points at which to resolve the flow (int), including boundaries
+            a: vegetation density, given by Az*m, where Az is the frontal area
+                of vegetation per unit depth and m the number of stems per unit area (1/m)
+                (assumed constant)
+            h_p: plant height (m)
+            Cd: drag coefficient (assumed uniform) (unitless)
+            S: bottom slope (unitless, 0-1 with 0 being no slope, resulting in no flow)
+
+        Sets:
+            self.flow: [U.size by] res by res ndarray of flow velocity
+            self.a = a
+
+        Calls:
+            self.__set_flow_variables
+        '''
+        # Get channel height
+        H = self.L[-1]
+        # Get empirical length scale, Meijer and Van Valezen (1999)
+        alpha = 0.0144*np.sqrt(H*h_p)
+        # dimensionless beta
+        beta = np.sqrt(Cd*a*h_p**2/alpha)
+        # Von Karman's constant
+        chi = 0.4
+
+        # Get y-mesh
+        if len(self.L) == 2:
+            y_mesh = np.linspace(0, self.L[1], res)
+        else:
+            y_mesh = np.linspace(0, self.L[2], res)
+
+        # Find layer division
+        h_p_index = np.searchsorted(y_mesh,h_p)
+
+        # get flow velocity profile for vegetation layer
+        u = np.zeros_like(y_mesh)
+        u[:h_p_index] = np.sqrt(2*self.g*S/(beta*alpha/h_p**2)*(
+            (H/h_p-1)*np.sinh(beta*y_mesh[:h_p_index]/h_p)/np.cosh(beta) + 1/beta))
+
+        # compute u_h_p
+        u_h_p = np.sqrt(2*self.g*S/(beta*alpha/h_p**2)*(
+                        (H/h_p-1)*np.sinh(beta)/np.cosh(beta) + 1/beta))
+        # estimate du_h_p/dz
+        delta_z = 0.000001
+        u_h_p_lower = np.sqrt(2*self.g*S/(beta*alpha/h_p**2)*(
+            (H/h_p-1)*np.sinh(beta*(h_p-delta_z)/h_p)/np.cosh(beta) + 1/beta))
+        du_h_pdz = (u_h_p-u_h_p_lower)/delta_z
+
+        # calculate h_s parameter
+        h_s = (self.g*S+np.sqrt((self.g*S)**2 + (4*(chi*du_h_pdz)**2)
+               *self.g*S*(H-h_p) ))/(2*chi**2*du_h_pdz**2)
+
+        # friction velocity, Klopstra et al. (1997), Nepf and Vivoni (2000)
+        d = h_p - h_s
+        u_star = np.sqrt(self.g*S*(H-d))
+
+        # calculate z_0 parameter
+        z_0 = h_s*np.exp(-chi*u_h_p/u_star)
+
+        # get flow velocity profile for surface layer
+        u[h_p_index:] = u_star/chi*np.log((y_mesh[h_p_index:]-d)/z_0)
+
+        # broadcast to flow
+        if len(self.L) == 2:
+            # 2D
+            self.flow = [np.broadcast_to(u,(res,res)), np.zeros((res,res))]
+        else:
+            # 3D
+            self.flow = [np.broadcast_to(u,(res,res)), np.zeros((res,res)),
+                         np.zeros((res,res))]
+
+        # housekeeping
+        self.__set_flow_variables()
+        self.__reset_flow_variables()
+        self.a = h_p
 
 
 
