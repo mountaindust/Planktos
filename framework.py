@@ -354,10 +354,7 @@ class environment:
         chi = 0.4
 
         # Get y-mesh
-        if len(self.L) == 2:
-            y_mesh = np.linspace(0, self.L[1], res)
-        else:
-            y_mesh = np.linspace(0, self.L[2], res)
+        y_mesh = np.linspace(0, H, res)
 
         # Find layer division
         h_p_index = np.searchsorted(y_mesh,h_p)
@@ -403,6 +400,65 @@ class environment:
         self.__set_flow_variables()
         self.__reset_flow_variables()
         self.a = h_p
+
+
+
+    def set_canopy_flow(self, res, h, beta, C, a, mu_star):
+        '''Apply flow within and above a uniform homogenous canopy according to the
+        model described in Finnigan and Belcher (2004), 
+        "Flow over a hill covered with a plant canopy". The decision to set 2D vs. 3D flow is 
+        based on the dimension of the domain. The following parameters must be given:
+
+        Arguments:
+            res: number of points at which to resolve the flow (int), including boundaries
+            h: height of canopy (m)
+            beta: mass flux through the canopy (u_star/U_h)
+            C: drag coefficient of indivudal canopy elements
+            a: leaf area per unit volume of space m^{-1}
+            u_star: canopy friction velocity. U_h = u_star/beta
+
+        Sets:
+            self.flow: [U.size by] res by res ndarray of flow velocity
+            self.a = h
+
+        Calls:
+            self.__set_flow_variables
+        '''
+
+        # Get domain height
+        d_height = self.L[-1]
+        # create zmesh
+        zmesh = np.linspace(-h,d_height-h,res)
+
+        # calculate adjustment length-scale of the canopy
+        L_c = 1/(C*a)
+        print("Adjustment length scale, L_c = {} m".format(L_c))
+        print("h/L_c = {}. Model assumes h/L_c >> 1; verify that this is the case!!".format(h/L_c))
+
+        # calculate canopy mixing length and print
+        l = 2*beta**3*L_c
+        print("Canopy mixing length, l = {} m".format(l))
+
+        # calculate mean wind speed at top of the canopy
+        U_h = u_star/beta
+        print("Mean wind spead at canopy top, U_h = {} m/s".format(U_h))
+
+        # calculate vertical wind profile at given resolution
+        U_B = U_h*np.exp(beta*zmesh/l)
+
+        # broadcast to flow
+        if len(self.L) == 2:
+            # 2D
+            self.flow = [np.broadcast_to(U_B,(res,res)), np.zeros((res,res))]
+        else:
+            # 3D
+            self.flow = [np.broadcast_to(U_B,(res,res)), np.zeros((res,res)),
+                         np.zeros((res,res))]
+
+        # housekeeping
+        self.__set_flow_variables()
+        self.__reset_flow_variables()
+        self.a = h
 
 
 
