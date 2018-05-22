@@ -8,6 +8,7 @@ insects. It is in no way ready or suitable for public consumption.
 - numpy/scipy
 - matplotlib
 - vtk (to get this under Anaconda, run `conda install -c menpo vtk=7.0.0 vtk` for Python 3.5 or `conda install -c clinicalgraphics vtk=7.1.0 vtk` for Python 3.6)
+*Currently, VTK for Python 3.5+ appears to be broken on Mac OSX. We are looking for a work-around.*
 - pytest (if running tests)
 
 You will also need a Python 2.7 environment with numpy and VisIt installed to convert IBAMR data into vtk data.
@@ -17,7 +18,7 @@ All tests can be run by typing `py.test` into a terminal in the base directory.
 
 ## Quickstart
 
-There are three working examples in the examples folder, including a 2D simulation, a 3D simulation, and a simulation utilizing vtk data obtained from IBAMR which is located in the tests/IBAMR_test_data folder. More will be added. When experimenting with different agent behavior than what is prescribed in swarm.py (e.g., different movement rules), it is strongly suggested that you subclass swarm (found in agents.py) in an appropriate subfolder. That way, you can keep track of everything you have tried and its outcome. See the code in the plankton folder for an example.
+There are three working examples in the examples folder, including a 2D simulation, a 3D simulation, and a simulation utilizing vtk data obtained from IBAMR which is located in the tests/IBAMR_test_data folder. More will be added. When experimenting with different agent behavior than what is prescribed in swarm.py (e.g., different movement rules), it is strongly suggested that you subclass swarm (found in framework.py) in an appropriate subfolder. That way, you can keep track of everything you have tried and its outcome. See the code in the plankton folder for an example.
 
 ## API
 Class: environment

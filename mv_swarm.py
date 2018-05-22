@@ -15,9 +15,6 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 
 import numpy as np
 
-# list of swarm position initialization functions defined below
-init_methods = ['random', 'point']
-
 def init_pos(swarm, func_name, kwargs):
     '''Initialize swarm positions with the correct function'''
 
@@ -35,6 +32,14 @@ def init_pos(swarm, func_name, kwargs):
         raise NameError
 
 
+
+#############################################################################
+#                                                                           #
+#   PREDEFINED LIST OF SWARM INITIALIZATION FUNCTIONS SPECIFIED BELOW!      #
+#                                                                           #
+#############################################################################
+
+init_methods = ['random', 'point']
 
 def random(swarm_pos, L):
     '''Uniform random initialization'''
@@ -62,6 +67,12 @@ def point(swarm_pos, x, y, z):
 
 
 
+#############################################################################
+#                                                                           #
+#           PREDEFINED SWARM MOVEMENT BEHAVIOR DEFINED BELOW!               #
+#                                                                           #
+#############################################################################
+
 def gaussian_walk(swarm_pos, mean, cov):
     ''' Move all rows of pos_array a random distance specified by
     a gaussian distribution with given mean and covarience matrix.
@@ -78,3 +89,15 @@ def gaussian_walk(swarm_pos, mean, cov):
         swarm_pos += np.random.multivariate_normal(np.zeros(mean.shape[1]),
                                                    cov, swarm_pos.shape[0]) + mean
                                                    
+
+
+def massive_drift(swarm, dt, net_g=0, high_re=False):
+    '''Get drift of the swarm due to background flow assuming massive particles 
+    with boyancy accleration net_g'''
+
+    # Get acceleration of each agent in neutral boyancy
+    dvdt = swarm.get_projectile_motion(high_re=high_re)
+    # Add in accel due to gravity
+    dvdt[:,-1] += net_g
+    # Solve and return velocity of agents with an Euler step
+    return dvdt*dt + swarm.velocity

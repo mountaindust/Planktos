@@ -1,5 +1,5 @@
 """
-Test suite for agents: environment and swarm classes.
+Test suite for framework: environment and swarm classes.
 For use with py.test package.
 
 Created on April 04 2017
@@ -11,12 +11,49 @@ Email: cstric12@utk.edu
 import pytest
 import numpy as np
 import numpy.ma as ma
-import agents
+import framework, mv_swarm
 
 ############                    Decorators                ############
 
 slow = pytest.mark.skipif(not pytest.config.getoption('--runslow'),
     reason = 'need --runslow option to run')
+
+############   Basic Overrides to test different physics  ############
+
+class massive_swarm(framework.swarm):
+
+    def update_positions(self, dt, params):
+        '''Uses projectile motion'''
+
+        # 3D?
+        DIM3 = (len(self.envir.L) == 3)
+
+        # Parse optional parameters
+        if params is not None:
+            assert isinstance(params[1], np.ndarray), "cov must be ndarray"
+            if not DIM3:
+                assert len(params[0]) == 2, "mu must be length 2"
+                assert params[1].shape == (2,2), "cov must be shape (2,2)"
+            else:
+                assert len(params[0]) == 3, "mu must be length 3"
+                assert params[1].shape == (3,3), "cov must be shape (3,3)"
+        else:
+            params = (np.zeros(len(self.envir.L)), np.eye(len(self.envir.L)))
+
+        if len(params) == 2:
+            high_re = False
+        else:
+            high_re = params[2]
+
+        # Get fluid-based drift and add to Gaussian bias
+        mu = mv_swarm.massive_drift(self, dt, high_re) + params[0]
+
+        # Add jitter and move according to a Gaussian random walk.
+        mv_swarm.gaussian_walk(self.positions, dt*mu, dt*params[1])
+
+        # Update velocity of swarm
+        self.velocity = (self.positions - self.pos_history[-1])/dt
+
 
 ###############################################################################
 #                                                                             #
@@ -26,19 +63,19 @@ slow = pytest.mark.skipif(not pytest.config.getoption('--runslow'),
 
 def test_basic():
     '''Test no-flow, basic stuff'''
-    envir = agents.environment()
+    envir = framework.environment()
     sw = envir.add_swarm()
     for ii in range(10):
         sw.move(0.25)
     assert envir.time == 2.5
 
-    sw = agents.swarm()
+    sw = framework.swarm()
     for ii in range(10):
         sw.move(0.25)
     assert sw.envir.time == 2.5
 
-    envir2 = agents.environment()
-    sw = agents.swarm()
+    envir2 = framework.environment()
+    sw = framework.swarm()
     envir2.add_swarm(sw)
     assert envir2.swarms[0] is sw, "pre-existing swarm not added"
     for ii in range(10):
@@ -47,11 +84,12 @@ def test_basic():
 def test_brinkman_2D():
     '''Test 2D dynamics using brinkman flow'''
     ### Single swarm, time-independent flow ###
-    envir = agents.environment(Lx=100, Ly=100, x_bndry=('zero','zero'), 
-                               y_bndry=('noflux','zero'), Re=1., rho=1000)
+    envir = framework.environment(Lx=10, Ly=10, x_bndry=('zero','zero'), 
+                               y_bndry=('noflux','zero'), rho=1000, mu=5000)
     assert len(envir.L) == 2, "default dim is not 2"
-    envir.set_brinkman_flow(alpha=66, a=15, res=100, U=5, dpdx=0.22306)
+    envir.set_brinkman_flow(alpha=66, a=1.5, res=101, U=.5, dpdx=0.22306)
     assert envir.flow_times is None, "flow_times should be None for stationary flow"
+    assert np.isclose(envir.flow[0][50,-1],.5), "top of the domain should match U"
     envir.add_swarm(swarm_s=110, init='random')
     assert len(envir.swarms) == 1, "too many swarms in envir"
     sw = envir.swarms[0]
@@ -70,8 +108,17 @@ def test_brinkman_2D():
 
     # tile flow
     envir.tile_flow(3,3)
-    assert envir.L == [300, 300]
-    assert envir.flow_points[0][-1] == 300
+    assert envir.flow[0][100,0] == envir.flow[0][200,0] == envir.flow[0][300,0]
+    assert envir.flow[0][0,100] == envir.flow[0][0,200] == envir.flow[0][0,300]
+    assert envir.flow[0][100,50] == envir.flow[0][200,50] == envir.flow[0][300,50]
+    assert envir.flow[0][50,100] == envir.flow[0][50,200] == envir.flow[0][50,300]
+    assert envir.flow[1][100,0] == envir.flow[1][200,0] == envir.flow[1][300,0]
+    assert envir.flow[1][0,100] == envir.flow[1][0,200] == envir.flow[1][0,300]
+    assert envir.flow[1][100,50] == envir.flow[1][200,50] == envir.flow[1][300,50]
+    assert envir.flow[1][50,100] == envir.flow[1][50,200] == envir.flow[1][50,300]
+    assert envir.L == [30, 30]
+    assert envir.flow_points[0][-1] == 30
+    assert len(envir.flow_points[0]) == 100*3+1 #fencepost
     assert len(envir.flow_points[0]) == len(envir.flow_points[1])
     assert len(envir.flow_points[0]) == envir.flow[0].shape[0]
 
@@ -95,21 +142,29 @@ def test_brinkman_2D():
                    "zero bndry not respected"
 
     ### Single swarm, time-dependent flow ###
-    envir = agents.environment(Re=1., rho=1000)
-    envir.set_brinkman_flow(alpha=66, a=15, res=100, U=range(1,6),
-                            dpdx=np.ones(5)*0.22306, tspan=[0, 10])
+    envir = framework.environment(rho=1000, mu=20000)
+    envir.set_brinkman_flow(alpha=66, a=1.5, res=101, U=0.1*np.arange(-2,6),
+                            dpdx=np.ones(8)*0.22306, tspan=[0, 10])
     assert envir.flow_times is not None, "flow_times unset"
-    assert len(envir.flow_times) == 5, "flow_times don't match data"
+    assert len(envir.flow_times) == 8, "flow_times don't match data"
+    assert envir.flow[0][0,50,-1] < 0, "flow should start in negative direction"
+    assert np.isclose(envir.flow[0][-1,50,-1],.5), "flow should end at .5"
 
     # tile flow
     envir.tile_flow(2,1)
-    assert len(envir.flow_times) == 5, "flow_times don't match data"
+    assert envir.flow[0][1,100,0] == envir.flow[0][1,200,0]
+    assert envir.flow[0][1,100,50] == envir.flow[0][1,200,50]
+    assert envir.flow[1][1,100,0] == envir.flow[1][1,200,0]
+    assert envir.flow[1][1,100,50] == envir.flow[1][1,200,50]
+    assert envir.flow[0].shape == (8,201,101)
+    assert len(envir.flow_times) == 8, "flow_times don't match data"
     assert len(envir.flow_points[0]) > len(envir.flow_points[1])
     assert len(envir.flow_points[0]) == envir.flow[0].shape[1]
-    sw = agents.swarm(swarm_size=70, envir=envir, init='point', x=50, y=50)
+    sw = framework.swarm(swarm_size=70, envir=envir, init='point', x=5, y=5)
     assert sw is envir.swarms[0], "swarm not in envir list"
     assert len(envir.swarms) == 1, "too many swarms in envir"
 
+    # test movement beyond final flow time (should maintain last flow)
     for ii in range(20):
         sw.move(0.5)
     assert len(sw.pos_history) == 20, "all movements not recorded"
@@ -119,8 +174,8 @@ def test_brinkman_2D():
 
     
 def test_multiple_2D_swarms():
-    envir = agents.environment(Re=1., rho=1000)
-    envir.set_brinkman_flow(alpha=66, a=15, res=100, U=5, dpdx=0.22306)
+    envir = framework.environment(rho=1000, mu=5000)
+    envir.set_brinkman_flow(alpha=66, a=1.5, res=100, U=.5, dpdx=0.22306)
     envir.add_swarm()
     s2 = envir.add_swarm()
     assert len(envir.swarms) == 2, "Two swarms are not present"
@@ -144,9 +199,9 @@ def test_multiple_2D_swarms():
 def test_brinkman_3D():
     '''Test 3D dynamics using Brinkman flow'''
     ### Single swarm, time-independent flow ###
-    envir = agents.environment(Lx=50, Ly=50, Lz=50, x_bndry=('zero','zero'), 
+    envir = framework.environment(Lx=50, Ly=50, Lz=50, x_bndry=('zero','zero'), 
                                y_bndry=('zero','zero'),
-                               z_bndry=('noflux','noflux'), Re=1., rho=1000)
+                               z_bndry=('noflux','noflux'), rho=1000, mu=250000)
     envir.set_brinkman_flow(alpha=66, a=15, res=100, U=5, dpdx=0.22306)
     assert envir.flow_times is None, "flow_times should be None for stationary flow"
 
@@ -180,9 +235,9 @@ def test_brinkman_3D():
                    "zero bndry not respected"
 
     ### Single swarm, time-dependent flow ###
-    envir = agents.environment(Lz=100, Re=1., rho=1000)
-    U=list(range(0,5))+list(range(5,-5,-1))+list(range(-3,6,2))
-    envir.set_brinkman_flow(alpha=66, a=15, res=100, U=U, 
+    envir = framework.environment(Lz=10, rho=1000, mu=1000)
+    U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-3,6,2)))
+    envir.set_brinkman_flow(alpha=66, a=1.5, res=100, U=U, 
                             dpdx=np.ones(20)*0.22306, tspan=[0, 40])
     # tile flow
     envir.tile_flow(2,1)
@@ -190,8 +245,8 @@ def test_brinkman_3D():
     assert len(envir.flow_points[0]) == envir.flow[0].shape[1]
 
     # replace original flow for speed
-    envir = agents.environment(Lz=100, Re=1., rho=1000)
-    envir.set_brinkman_flow(alpha=66, a=15, res=100, U=U, 
+    envir = framework.environment(Lz=10, rho=1000, mu=1000)
+    envir.set_brinkman_flow(alpha=66, a=1.5, res=100, U=U, 
                             dpdx=np.ones(20)*0.22306, tspan=[0, 40])
     envir.add_swarm()
     assert envir.flow_times is not None, "flow_times unset"
@@ -203,4 +258,33 @@ def test_brinkman_3D():
     assert len(sw.pos_history) == 10, "all movements not recorded"
     assert envir.time == 5, "incorrect final time"
     assert len(envir.time_history) == 10, "all times not recorded"
-    
+
+
+
+def test_massive_physics():
+    ### Get a 3D, time-dependent flow environment ###
+    envir = framework.environment(Lz=10, rho=1000, mu=1000)
+    U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-3,6,2)))
+    envir.set_brinkman_flow(alpha=66, a=1.5, res=100, U=U, 
+                            dpdx=np.ones(20)*0.22306, tspan=[0, 40])
+    ### specify physical properties of swarm and move swarm with low Re ###
+    phys = {'Cd':0.47, 'm':0.01}
+    sw = massive_swarm(char_L=0.002, phys=phys)
+    envir.add_swarm(sw)
+    assert sw is envir.swarms[0], "swarm improperly assigned to environment"
+    assert sw.phys is not None, "Physical properties of swarm not assigned"
+    for ii in range(10):
+        sw.move(0.5)
+    assert len(sw.pos_history) == 10, "all movements not recorded"
+    assert envir.time == 5, "incorrect final time"
+    assert len(envir.time_history) == 10, "all times not recorded"
+    ### do it again but for high Re ###
+    envir.reset(rm_swarms=True)
+    phys = {'Cd':0.47, 'm':1, 'S':np.pi*0.1**2}
+    sw = massive_swarm(char_L=0.2, phys=phys)
+    envir.add_swarm(sw)
+    for ii in range(10):
+        sw.move(0.5, (np.zeros(3), 0.3*np.eye(3), True))
+    assert len(sw.pos_history) == 10, "all movements not recorded"
+    assert envir.time == 5, "incorrect final time"
+    assert len(envir.time_history) == 10, "all times not recorded"

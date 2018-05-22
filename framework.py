@@ -6,11 +6,10 @@ Swarm class file, for simulating many individuals at once.
 Created on Tues Jan 24 2017
 
 Author: Christopher Strickland
-Email: wcstrick@live.unc.edu
+Email: cstric12@utk.edu
 '''
 
-import sys
-import warnings
+import sys, warnings, pickle
 from pathlib import Path
 from math import exp, log
 import numpy as np
@@ -21,7 +20,11 @@ from matplotlib.ticker import NullFormatter, MaxNLocator
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.cm as cm
 from matplotlib import animation
-import mv_swarm, data_IO
+import mv_swarm
+try:
+    import data_IO
+except ModuleNotFoundError:
+    print("vtk libraries not loaded")
 
 __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
@@ -29,24 +32,25 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 
 class environment:
 
-    def __init__(self, Lx=100, Ly=100, Lz=None,
+    def __init__(self, Lx=10, Ly=10, Lz=None,
                  x_bndry=None, y_bndry=None, z_bndry=None, flow=None,
-                 flow_times=None, Re=None, rho=None, init_swarms=None):
+                 flow_times=None, rho=None, mu=None, init_swarms=None):
         ''' Initialize environmental variables.
 
         Arguments:
-            Lx: Length of domain in x direction
-            Ly: Length of domain in y direction
+            Lx: Length of domain in x direction, m
+            Ly: Length of domain in y direction, m
             Lz: Length of domain in z direction, or None
             x_bndry: [left bndry condition, right bndry condition]
             y_bndry: [low bndry condition, high bndry condition]
             flow: [x-vel field ndarray ([t],m,n), y-vel field ndarray ([t],m,n)]
-                Note! y=0 is at row zero, increasing downward, and it is assumed
-                that flow mesh is equally spaced incl values on the domain bndry
+                Note! m is x index, n is y index, with the value of x/y increasing
+                as the index increases. It is assumed that the flow mesh is equally 
+                spaced and includes values on the domain bndry
             flow_times: [tstart, tend] or iterable of times at which flow is specified
                      or scalar dt; required if flow is time-dependent.
-            Re: Reynolds number of environment (optional)
-            rho: fluid density of environment, kh/m**3 (optional)
+            rho: fluid density of environment, kg/m**3 (optional)
+            mu: dynamic viscosity, kg/m/s (optional)
             init_swarms: initial swarms in this environment
 
         Right now, supported boundary conditions are 'zero' (default) and 'noflux'.
@@ -87,18 +91,18 @@ class environment:
                     # time-dependent flow
                     assert flow[0].shape[0] == flow[1].shape[0] == flow[2].shape[0]
                     assert flow_times is not None, "Must provide flow_times"
-                    self.__set_brinkman_flow_variables(flow_times)
+                    self.__set_flow_variables(flow_times)
                 else:
-                    self.__set_brinkman_flow_variables()
+                    self.__set_flow_variables()
             else:
                 # 2D flow
                 if max([len(f.shape) for f in flow]) > 2:
                     # time-dependent flow
                     assert flow[0].shape[0] == flow[1].shape[0]
                     assert flow_times is not None, "Must provide flow_times"
-                    self.__set_brinkman_flow_variables(flow_times)
+                    self.__set_flow_variables(flow_times)
                 else:
-                    self.__set_brinkman_flow_variables()
+                    self.__set_flow_variables()
 
         ##### swarm list #####
         if init_swarms is None:
@@ -114,15 +118,13 @@ class environment:
 
         ##### Fluid Variables #####
 
-        # Re
-        self.re = Re
         # Fluid density kg/m**3
         self.rho = rho
-        # Characteristic length
-        if len(self.L) == 2:
-            self.char_L = self.L[1]
+        # Dynamic viscosity kg/m/s
+        if mu == 0:
+            raise RuntimeError("Dynamic viscosity, mu, cannot be zero.")
         else:
-            self.char_L = self.L[2]
+            self.mu = mu
         # porous region height
         self.a = None
         # accel due to gravity
@@ -149,12 +151,12 @@ class environment:
         the x-axis. Porous region is the lower part of the y-domain (2D) or
         z-domain (3D) with width=a and an empty region above. For 3D flow, the
         velocity profile is the same on all slices y=c. The decision to set
-        2D vs. 3D flow is based on the dimension of the domain.
+        2D vs. 3D flow is based on the dimension of the current domain.
 
         Arguments:
-            alpha: porosity constant
+            alpha: equal to 1/(hydraulic permeability). alpha=0 implies free flow (infinitely permeable)
             a: height of porous region
-            res: number of points at which to resolve the flow (int)
+            res: number of points at which to resolve the flow (int), including boundaries
             U: velocity at top of domain (v in input3d). scalar or list-like.
             dpdx: dp/dx change in momentum constant. scalar or list-like.
             tspan: [tstart, tend] or iterable of times at which flow is specified
@@ -185,9 +187,9 @@ class environment:
             U = [U]
             dpdx = [dpdx]
 
-        if self.re is None or self.rho is None:
+        if self.mu is None or self.rho is None:
             print('Fluid properties of environment are unspecified.')
-            print('Re = {}'.format(self.re))
+            print('mu = {}'.format(self.mu))
             print('Rho = {}'.format(self.rho))
             raise AttributeError
 
@@ -206,39 +208,38 @@ class environment:
         for v, px in zip(U, dpdx):
             # Check for v = 0
             if v != 0:
-                mu = self.rho*v*self.char_L/self.re
-
                 # Calculate C and D constants and then get A and B based on these
 
                 C = (px*(-0.5*alpha**2*b**2+exp(log(alpha*b)-alpha*a)-exp(-alpha*a)+1) +
-                    v*alpha**2*mu)/(alpha**2*mu*(exp(log(alpha*b)-2*alpha*a)+alpha*b-
+                    np.abs(v)*alpha**2*self.mu)/(alpha**2*self.mu*(exp(log(alpha*b)-2*alpha*a)+alpha*b-
                     exp(-2*alpha*a)+1))
 
                 D = (px*(exp(log(0.5*alpha**2*b**2)-2*alpha*a)+exp(log(alpha*b)-alpha*a)+
                     exp(-alpha*a)-exp(-2*alpha*a)) - 
-                    exp(log(v*alpha**2*mu)-2*alpha*a))/(alpha**2*mu*
+                    exp(log(np.abs(v)*alpha**2*self.mu)-2*alpha*a))/(alpha**2*self.mu*
                     (exp(log(alpha*b)-2*alpha*a)+alpha*b-exp(-2*alpha*a)+1))
 
                 A = alpha*C - alpha*D
-                B = C + D - px/(alpha**2*mu)
+                B = C + D - px/(alpha**2*self.mu)
 
                 for n, z in enumerate(y_mesh-a):
                     if z > 0:
                         #Region I
-                        flow[t,n,:] = z**2*px/(2*mu) + A*z + B
+                        flow[t,n,:] = z**2*px/(2*self.mu) + A*z + B
+                        flow[t,n,:] *= np.sign(v) # v only appears in abs
                     else:
                         #Region 2
                         if C > 0 and D > 0:
-                            flow[t,n,:] = exp(log(C)+alpha*z) + exp(log(D)-alpha*z) - px/(alpha**2*mu)
+                            flow[t,n,:] = exp(log(C)+alpha*z) + exp(log(D)-alpha*z) - px/(alpha**2*self.mu)
                         elif C <= 0 and D > 0:
-                            flow[t,n,:] = exp(log(D)-alpha*z) - px/(alpha**2*mu)
+                            flow[t,n,:] = exp(log(D)-alpha*z) - px/(alpha**2*self.mu)
                         elif C > 0 and D <= 0:
-                            flow[t,n,:] = exp(log(C)+alpha*z) - px/(alpha**2*mu)
+                            flow[t,n,:] = exp(log(C)+alpha*z) - px/(alpha**2*self.mu)
                         else:
-                            flow[t,n,:] = -px/(alpha**2*mu)
+                            flow[t,n,:] = -px/(alpha**2*self.mu)
+                        flow[t,n,:] *= np.sign(v) # v only appears in abs
             else:
-                warnings.warn('U=0: returning zero flow for these time-steps.',
-                              UserWarning)
+                print('U=0: returning zero flow for these time-steps.')
             t += 1
 
         flow = flow.squeeze() # This is 2D Brinkman flow, either t,y,x or y,x.
@@ -251,15 +252,15 @@ class environment:
                 # no time; (y,x) -> (x,y) coordinates
                 flow = flow.T
                 self.flow = [flow, np.zeros_like(flow)] #x-direction, y-direction
-                self.__set_brinkman_flow_variables()
+                self.__set_flow_variables()
             else:
                 #time-dependent; (t,y,x)-> (t,x,y) coordinates
                 flow = np.transpose(flow, axes=(0, 2, 1))
                 self.flow = [flow, np.zeros_like(flow)]
                 if tspan is None:
-                    self.__set_brinkman_flow_variables(tspan=1)
+                    self.__set_flow_variables(tspan=1)
                 else:
-                    self.__set_brinkman_flow_variables(tspan=tspan)
+                    self.__set_flow_variables(tspan=tspan)
         else:
             # 3D
             if len(flow.shape) == 2:
@@ -268,7 +269,7 @@ class environment:
                 flow = np.transpose(flow, axes=(2, 0, 1)) #(x,y,z)
                 self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
 
-                self.__set_brinkman_flow_variables()
+                self.__set_flow_variables()
 
             else:
                 # (t,z,x) -> (t,z,y,x) coordinates
@@ -277,15 +278,15 @@ class environment:
                 self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
 
                 if tspan is None:
-                    self.__set_brinkman_flow_variables(tspan=1)
+                    self.__set_flow_variables(tspan=1)
                 else:
-                    self.__set_brinkman_flow_variables(tspan=tspan)
+                    self.__set_flow_variables(tspan=tspan)
         self.__reset_flow_variables()
         self.a = a
 
 
 
-    def __set_brinkman_flow_variables(self, tspan=None):
+    def __set_flow_variables(self, tspan=None):
         '''Store points at which flow is specified, and time information.
 
         Arguments:
@@ -318,6 +319,90 @@ class environment:
                 self.flow_times = np.array(tspan)
         else:
             self.flow_times = None
+
+
+
+    def set_two_layer_channel_flow(self, res, a, h_p, Cd, S):
+        '''Apply wide-channel flow with vegetation layer according to the
+        two-layer model described in Defina and Bixio (2005), 
+        "Vegetated Open Channel Flow". The decision to set 2D vs. 3D flow is 
+        based on the dimension of the domain. The following parameters must be given:
+
+        Arguments:
+            res: number of points at which to resolve the flow (int), including boundaries
+            a: vegetation density, given by Az*m, where Az is the frontal area
+                of vegetation per unit depth and m the number of stems per unit area (1/m)
+                (assumed constant)
+            h_p: plant height (m)
+            Cd: drag coefficient (assumed uniform) (unitless)
+            S: bottom slope (unitless, 0-1 with 0 being no slope, resulting in no flow)
+
+        Sets:
+            self.flow: [U.size by] res by res ndarray of flow velocity
+            self.a = a
+
+        Calls:
+            self.__set_flow_variables
+        '''
+        # Get channel height
+        H = self.L[-1]
+        # Get empirical length scale, Meijer and Van Valezen (1999)
+        alpha = 0.0144*np.sqrt(H*h_p)
+        # dimensionless beta
+        beta = np.sqrt(Cd*a*h_p**2/alpha)
+        # Von Karman's constant
+        chi = 0.4
+
+        # Get y-mesh
+        if len(self.L) == 2:
+            y_mesh = np.linspace(0, self.L[1], res)
+        else:
+            y_mesh = np.linspace(0, self.L[2], res)
+
+        # Find layer division
+        h_p_index = np.searchsorted(y_mesh,h_p)
+
+        # get flow velocity profile for vegetation layer
+        u = np.zeros_like(y_mesh)
+        u[:h_p_index] = np.sqrt(2*self.g*S/(beta*alpha/h_p**2)*(
+            (H/h_p-1)*np.sinh(beta*y_mesh[:h_p_index]/h_p)/np.cosh(beta) + 1/beta))
+
+        # compute u_h_p
+        u_h_p = np.sqrt(2*self.g*S/(beta*alpha/h_p**2)*(
+                        (H/h_p-1)*np.sinh(beta)/np.cosh(beta) + 1/beta))
+        # estimate du_h_p/dz
+        delta_z = 0.000001
+        u_h_p_lower = np.sqrt(2*self.g*S/(beta*alpha/h_p**2)*(
+            (H/h_p-1)*np.sinh(beta*(h_p-delta_z)/h_p)/np.cosh(beta) + 1/beta))
+        du_h_pdz = (u_h_p-u_h_p_lower)/delta_z
+
+        # calculate h_s parameter
+        h_s = (self.g*S+np.sqrt((self.g*S)**2 + (4*(chi*du_h_pdz)**2)
+               *self.g*S*(H-h_p) ))/(2*chi**2*du_h_pdz**2)
+
+        # friction velocity, Klopstra et al. (1997), Nepf and Vivoni (2000)
+        d = h_p - h_s
+        u_star = np.sqrt(self.g*S*(H-d))
+
+        # calculate z_0 parameter
+        z_0 = h_s*np.exp(-chi*u_h_p/u_star)
+
+        # get flow velocity profile for surface layer
+        u[h_p_index:] = u_star/chi*np.log((y_mesh[h_p_index:]-d)/z_0)
+
+        # broadcast to flow
+        if len(self.L) == 2:
+            # 2D
+            self.flow = [np.broadcast_to(u,(res,res)), np.zeros((res,res))]
+        else:
+            # 3D
+            self.flow = [np.broadcast_to(u,(res,res)), np.zeros((res,res)),
+                         np.zeros((res,res))]
+
+        # housekeeping
+        self.__set_flow_variables()
+        self.__reset_flow_variables()
+        self.a = h_p
 
 
 
@@ -411,8 +496,8 @@ class environment:
 
         ### Save data ###
         self.flow = [np.array(X_vel).squeeze(), np.array(Y_vel).squeeze()] 
-        if start != finish:
-            self.flow_times = np.arange(start,finish+1)*print_dump*dt
+        if d_start != d_finish:
+            self.flow_times = np.arange(d_start,finish+1)*print_dump*dt
         else:
             self.flow_times = None
         # shift domain to quadrant 1
@@ -420,7 +505,7 @@ class environment:
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(2)]
-        self.__reset_flow_variables(incl_re_rho=True)
+        self.__reset_flow_variables(incl_rho_mu=True)
         self.reset()
 
 
@@ -494,10 +579,45 @@ class environment:
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(3)]
-        self.__reset_flow_variables(incl_re_rho=True)
+        self.__reset_flow_variables(incl_rho_mu=True)
         # record the original lower left corner (can be useful for later imports)
         self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
         # reset time
+        self.reset()
+
+
+
+    def read_pickled_vtk_data(self, path, prefix='', flow_file='flow.pickle',
+                              flow_times_file='flow_times.pickle',
+                              flow_points_file='flow_points.pickle',
+                              flow_LLC_file='flow_LLC.pickle'):
+        '''Reads in pickled vtk flow data generated by IB2d and sets environment
+        variables accordingly.
+
+        Arguments:
+            prefix: a prefix to add to each of the file names (instead of
+                specifying each one individually)
+            flow_file: string location/name of flow pickle file
+            flow_times_file: string location/name of flow_times pickle file
+            flow_points_file: string location/name of flow_points pickle file
+            flow_LLC_file: string location/name of LLC domain info, used in 3D only
+        '''
+
+        path = Path(path)
+        assert path.exists(), "Path {} not found!".format(str(path))
+        with open(path/(prefix+flow_file), 'rb') as f:
+            self.flow = pickle.load(f, encoding="latin1")
+        with open(path/(prefix+flow_times_file), 'rb') as f:
+            self.flow_times = pickle.load(f, encoding="latin1")
+        with open(path/(prefix+flow_points_file), 'rb') as f:
+            self.flow_points = pickle.load(f, encoding="latin1")
+        if len(self.flow) == 3:
+            with open(path/(prefix+flow_LLC_file), 'rb') as f:
+                self.fluid_domain_LLC = pickle.load(f, encoding="latin1")
+
+        ### Convert environment dimensions and reset simulation time ###
+        self.L = [self.flow_points[dim][-1] for dim in range(len(self.flow))]
+        self.__reset_flow_variables(incl_rho_mu=True)
         self.reset()
 
 
@@ -535,23 +655,44 @@ class environment:
 
             for n, flow in enumerate(self.flow):
                 new_flow = np.zeros(new_flow_shape)
-                new_flow[:flow_shape[0],0,...] = flow[:,0,...]
-                new_flow[0,:flow_shape[1],...] = flow[0,:,...]
+                # copy bottom-left corner
+                new_flow[0,0,...] = flow[0,0,...]
+                # tile first row/column
+                if DIM3:
+                    r_tile_num = (x,1)
+                    c_tile_num = (y,1)
+                else:
+                    r_tile_num = x
+                    c_tile_num = y
+                new_flow[1:,0,...] = np.tile(flow[1:,0,...], r_tile_num)
+                new_flow[0,1:,...] = np.tile(flow[0,1:,...], c_tile_num)
+                # tile interior
                 new_flow[1:,1:,...] = np.tile(flow[1:,1:,...], tile_num)
                 self.flow[n] = new_flow
         else:
             # time dependent flow
+            tile_num_time = [1]+list(tile_num) # prepend a 1; do not tile time
             flow_shape = self.flow[0].shape
             new_flow_shape = np.array(flow_shape)
             # get new dimensions
             for dim in range(1,len(flow_shape)):
-                new_flow_shape[dim] += (flow_shape[dim]-1)*(tile_num[dim-1]-1)
+                new_flow_shape[dim] += (flow_shape[dim]-1)*(tile_num_time[dim]-1)
 
             for n, flow in enumerate(self.flow):
                 new_flow = np.zeros(new_flow_shape)
-                new_flow[:,:flow_shape[1],0,...] = flow[:,:,0,...]
-                new_flow[:,0,:flow_shape[2],...] = flow[:,0,:,...]
-                new_flow[:,1:,1:,...] = np.tile(flow[:,1:,1:,...], tile_num)
+                # copy bottom-left corner
+                new_flow[:,0,0,...] = flow[:,0,0,...]
+                # tile first row/column
+                if DIM3:
+                    r_tile_num = (1,x,1)
+                    c_tile_num = (1,y,1)
+                else:
+                    r_tile_num = (1,x)
+                    c_tile_num = (1,y)
+                new_flow[:,1:,0,...] = np.tile(flow[:,1:,0,...], r_tile_num)
+                new_flow[:,0,1:,...] = np.tile(flow[:,0,1:,...], c_tile_num)
+                # tile interior
+                new_flow[:,1:,1:,...] = np.tile(flow[:,1:,1:,...], tile_num_time)
                 self.flow[n] = new_flow
             
         # update environment dimensions and meshes
@@ -581,11 +722,18 @@ class environment:
 
         if isinstance(swarm_s, swarm):
             swarm_s.envir = self
+            # check if the dimesion matches, project if possible
+            if swarm_s.positions.shape[1] != len(self.L):
+                if swarm_s.positions.shape[1] > len(self.L):
+                    swarm_s.positions = swarm_s.positions[:,:2]
+                    swarm_s.velocity = swarm_s.velocity[:,:2]
+                    swarm_s.acceleration = swarm_s.acceleration[:,:2]
+                else:
+                    raise RuntimeError("Swarm dimension smaller than environment dimension!")
             self.swarms.append(swarm_s)
         else:
             return swarm(swarm_s, self, init, **kwargs)
             
-
 
 
     def move_swarms(self, dt=1.0, params=None):
@@ -649,7 +797,7 @@ class environment:
 
 
 
-    def __reset_flow_variables(self, incl_re_rho=False):
+    def __reset_flow_variables(self, incl_rho_mu=False):
         '''To be used when the fluid flow changes. Resets all the helper
         parameters.'''
 
@@ -659,20 +807,22 @@ class environment:
         self.orig_L = None
         self.plot_structs = []
         self.plot_structs_args = []
-        if incl_re_rho:
-            self.re = None
+        if incl_rho_mu:
+            self.mu = None
             self.rho = None
 
 
 
 class swarm:
 
-    def __init__(self, swarm_size=100, envir=None, phys=None, init='random', **kwargs):
+    def __init__(self, swarm_size=100, envir=None, char_L=None, phys=None,
+                 init='random', **kwargs):
         ''' Initalizes planktos swarm in an environment.
 
         Arguments:
             swarm_size: Size of the swarm (int)
             envir: environment for the swarm, defaults to the standard environment
+            char_L: characteristic length
             phys: dictionary of physical properties to be used by equations of motion
             init: Method for initalizing positions.
             kwargs: keyword arguments to be passed to the method for
@@ -687,9 +837,9 @@ class swarm:
                 - z = (optional, float) z-coordinate, if 3D
         '''
 
-        # use a new default environment if one was not given
+        # use a new, 3D default environment if one was not given
         if envir is None:
-            self.envir = environment(init_swarms=self)
+            self.envir = environment(init_swarms=self, Lz=10)
         else:
             try:
                 assert isinstance(envir, environment)
@@ -700,6 +850,7 @@ class swarm:
                 raise
 
         # set physical properties
+        self.char_L = char_L
         self.phys = phys
 
         # initialize bug locations
@@ -718,6 +869,21 @@ class swarm:
         # Initialize position history
         self.pos_history = []
 
+        # Apply boundary conditions in case of domain mismatch
+        self.apply_boundary_conditions()
+
+
+
+    def calc_re(self, u):
+        '''Calculate Reynolds number based on environment variables and given
+        flow velocity, u'''
+
+        if self.envir.rho is not None and self.envir.mu is not None and\
+            self.char_L is not None:
+            return self.envir.rho*u*self.char_L/self.envir.mu
+        else:
+            raise RuntimeError("Parameters necessary for Re calculation are undefined.")
+
 
 
     def move(self, dt=1.0, params=None, update_time=True):
@@ -734,7 +900,7 @@ class swarm:
         # Put current position in the history
         self.pos_history.append(self.positions.copy())
 
-        # Check that something is left in the domain to move!
+        # Check that something is left in the domain to move, and move it.
         if not np.all(self.positions.mask):
             # Update positions
             self.update_positions(dt, params)
@@ -767,7 +933,8 @@ class swarm:
         THIS IS THE METHOD TO OVERRIDE IF YOU WANT TO TRY DIFFERENT MOVEMENT!
         Note: do not change the call signature.
         The result of this method should be to overwrite self.positions with
-        the new agent positions after a time step of length dt.
+        the new agent positions after a time step of length dt. It should also
+        update the agent velocities at the end of the timestep in self.velocity.
 
         What is included in this implementation is a basic jitter behavior with
         drift according to the fluid flow.
@@ -791,13 +958,20 @@ class swarm:
                 assert len(params[0]) == 3, "mu must be length 3"
                 assert params[1].shape == (3,3), "cov must be shape (3,3)"
         else:
-            params = (np.zeros(len(self.envir.L)), np.eye(len(self.envir.L)))
+            params = (np.zeros(len(self.envir.L)), 0.01*np.eye(len(self.envir.L)))
 
-        # Get fluid-based drift and add Gaussian bias
+
+        ### Passive movement ###
+        # Get fluid-based drift and add to Gaussian bias
         mu = self.get_fluid_drift() + params[0]
+        #mu = mv_swarm.massive_drift(self, dt) + params[0]
 
-        # Just have everyone move according to a Gaussian random walk.
+        ### Active movement ###
+        # Add jitter and move according to a Gaussian random walk.
         mv_swarm.gaussian_walk(self.positions, dt*mu, dt*params[1])
+
+        # Update velocity of swarm
+        self.velocity = (self.positions - self.pos_history[-1])/dt
 
 
 
@@ -829,27 +1003,55 @@ class swarm:
 
 
 
-    def get_projectile_motion(self):
+    def get_projectile_motion(self, high_re=False):
         '''Return acceleration using equations of projectile motion.
-        Includes gravity, drag and inertia.
+        Includes drag, inertia, and background flow velocity. Does not include
+        gravity.
+
+        Arguments:
+            high_re: If false (default), assume Re<0.1 for all agents. Otherwise,
+            assume Re > 10 for all agents.
         
         Requires that the following are specified in self.phys:
             Cd: Drag coefficient
             S: cross-sectional area of each agent
             m: mass of each agent
+            L: diameter of the agent (low Re only)
 
         Requires that the following are specified in envir:
-            Re: Reynolds number of fluid (either >10 or <0.1)
             rho: fluid density
+            mu: dynamic viscosity (if low Re)
+
+        Returns:
+            2D array of accelerations in each dimension for each agent.
+            Each row corresponds to an agent (in the same order as listed in 
+            self.positions) and each column is a dimension.
         '''
         
         # Get fluid velocity
         vel = self.get_fluid_drift()
 
-        # 3D?
-        DIM3 = vel.shape[1] == 3
+        # Check for self.phys and other parameters
+        assert isinstance(self.phys, dict), "swarm.phys not specified"
+        for key in ['Cd', 'm']:
+            assert key in self.phys, "{} not found in swarm.phys".format(key)
+        assert self.envir.rho is not None, "rho not specified"
+        if not high_re:
+            assert self.envir.mu is not None, "mu not specified"
+            assert self.char_L is not None, "characteristic length not specified"
+        else:
+            assert 'S' in self.phys, "Cross-sectional area (S) not found in "+\
+            "swarm.phys"
 
-        pass
+        if high_re:
+            diff = np.linalg.norm(self.velocity-vel,axis=1)
+            return self.acceleration/self.phys['m'] -\
+            (self.envir.rho*self.phys['Cd']*self.phys['S']/2/self.phys['m'])*\
+            (self.velocity - vel)*np.stack((diff,diff,diff)).T
+        else:
+            return self.acceleration/self.phys['m'] -\
+            (self.envir.mu*self.phys['Cd']*self.char_L/2/self.phys['m'])*\
+            (self.velocity - vel)
 
 
 

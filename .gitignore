@@ -43,6 +43,7 @@ coverage.xml
 *.bbl
 *.blg
 *.spl
+*.gz
 
 # =========================
 # Operating System Files

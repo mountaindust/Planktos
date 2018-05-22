@@ -4,7 +4,7 @@
 import numpy as np
 import sys
 sys.path.append('..')
-import agents, data_IO
+import framework, data_IO
 
 def plot_cylinders(ax3d, bounds):
     '''Plot a vertical cylinder on a matplotlib Axes3D object.
@@ -27,7 +27,7 @@ def plot_cylinders(ax3d, bounds):
 
 
 
-envir = agents.environment()
+envir = framework.environment()
 envir.read_IBAMR3d_vtk_data('../tests/IBAMR_test_data', start=5, finish=None)
 # tile flow in a 3,3 grid
 envir.tile_flow(3,3)
