@@ -15,12 +15,11 @@ around line 250.
 Created on Tues April 11 2017
 
 Author: Christopher Strickland
-Email: wcstrick@live.unc.edu
+Email: cstric12@utk.edu
 '''
 
 import sys, os
 import argparse
-import numpy as np
 ############# Edit with proper VisIt path!!! #############
 sys.path.append("C:/Program Files/LLNL/VisIt 2.11.0/lib/site-packages")
 #############

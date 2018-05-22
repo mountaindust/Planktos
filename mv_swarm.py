@@ -6,11 +6,11 @@ Library of functions for initializing and moving a provided swarm group.
 Created on Tues Jan 24 2017
 
 Author: Christopher Strickland
-Email: wcstrick@live.unc.edu
+Email: cstric12@utk.edu
 '''
 
 __author__ = "Christopher Strickland"
-__email__ = "wcstrick@live.unc.edu"
+__email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
 import numpy as np

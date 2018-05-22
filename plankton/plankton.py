@@ -4,7 +4,7 @@ File for defining plankton behavior in flow.
 Created on Fri April 07 2017
 
 Author: Christopher Strickland
-Email: wcstrick@live.unc.edu
+Email: cstric12@utk.edu
 '''
 
 import sys, warnings
