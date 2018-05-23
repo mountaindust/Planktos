@@ -82,13 +82,14 @@ def test_basic():
         sw.move(0.25)
 
 def test_brinkman_2D():
-    '''Test 2D dynamics using brinkman flow'''
+    '''Test several 2D dynamics using brinkman flow'''
     ### Single swarm, time-independent flow ###
     envir = framework.environment(Lx=10, Ly=10, x_bndry=('zero','zero'), 
                                y_bndry=('noflux','zero'), rho=1000, mu=5000)
     assert len(envir.L) == 2, "default dim is not 2"
     envir.set_brinkman_flow(alpha=66, a=1.5, res=101, U=.5, dpdx=0.22306)
     assert envir.flow_times is None, "flow_times should be None for stationary flow"
+    assert len(envir.flow[0].shape) == 2, "Flow vector should be 2D"
     assert np.isclose(envir.flow[0][50,-1],.5), "top of the domain should match U"
     envir.add_swarm(swarm_s=110, init='random')
     assert len(envir.swarms) == 1, "too many swarms in envir"
@@ -204,6 +205,7 @@ def test_brinkman_3D():
                                z_bndry=('noflux','noflux'), rho=1000, mu=250000)
     envir.set_brinkman_flow(alpha=66, a=15, res=100, U=5, dpdx=0.22306)
     assert envir.flow_times is None, "flow_times should be None for stationary flow"
+    assert len(envir.flow[0].shape) == 3, "Flow vector should be 3D"
 
     #tile flow
     envir.tile_flow(2,2)
@@ -288,3 +290,91 @@ def test_massive_physics():
     assert len(sw.pos_history) == 10, "all movements not recorded"
     assert envir.time == 5, "incorrect final time"
     assert len(envir.time_history) == 10, "all times not recorded"
+
+
+
+def test_channel_flow():
+    '''Test specification of channel flow in the environment'''
+    ### 2D, time-independent flow ###
+    envir = framework.environment(Lx=20, Ly=10, x_bndry=('zero','zero'), 
+                               y_bndry=('noflux','zero'), rho=1000, mu=5000)
+    envir.set_two_layer_channel_flow(res=101, a=1, h_p=1, Cd=0.25, S=0.1)
+    assert envir.flow_times is None, "flow_times should be None for stationary flow"
+    assert len(envir.flow[0].shape) == 2, "Flow vector should be 2D"
+    # tests to make sure you are getting what you think you are
+    #
+    #
+    envir.add_swarm(swarm_s=110, init='random')
+    sw = envir.swarms[0]
+    for ii in range(20):
+        sw.move(0.5)
+    assert len(sw.pos_history) == 20, "all movements not recorded"
+    assert envir.time == 10, "incorrect final time"
+    assert len(envir.time_history) == 20, "all times not recorded"
+
+    ### 3D, time-independent flow ###
+    envir = framework.environment(Lx=20, Ly=30, Lz=10, x_bndry=('zero','zero'), 
+                               y_bndry=('zero','zero'),
+                               z_bndry=('noflux','noflux'), rho=1000, mu=5000)
+    envir.set_two_layer_channel_flow(res=101, a=1, h_p=1, Cd=0.25, S=0.1)
+    assert envir.flow_times is None, "flow_times should be None for stationary flow"
+    assert len(envir.flow[0].shape) == 3, "Flow vector should be 3D"
+    # tests to make sure you are getting what you think you are
+    #
+    #
+    envir.add_swarm(swarm_s=110, init='random')
+    sw = envir.swarms[0]
+    for ii in range(20):
+        sw.move(0.5)
+    assert len(sw.pos_history) == 20, "all movements not recorded"
+    assert envir.time == 10, "incorrect final time"
+    assert len(envir.time_history) == 20, "all times not recorded"
+
+    ### 2D, time dependent flow ###
+
+
+    ### 3D, time dependent flow ###
+
+
+
+def test_canopy_flow():
+    '''Test specificiation of canopy flow in the enviornment'''
+    ### 2D, time-independent flow ###
+    envir = framework.environment(Lx=40, Ly=40, x_bndry=('zero','zero'), 
+                               y_bndry=('noflux','zero'), rho=1000, mu=5000)
+    envir.set_canopy_flow(res=101, h=15, a=1, U_h=1)
+    assert envir.flow_times is None, "flow_times should be None for stationary flow"
+    assert len(envir.flow[0].shape) == 2, "Flow vector should be 2D"
+    # tests to make sure you are getting what you think you are
+    #
+    #
+    envir.add_swarm(swarm_s=110, init='random')
+    sw = envir.swarms[0]
+    for ii in range(20):
+        sw.move(0.5)
+    assert len(sw.pos_history) == 20, "all movements not recorded"
+    assert envir.time == 10, "incorrect final time"
+    assert len(envir.time_history) == 20, "all times not recorded"
+
+    ### 3D, time-independent flow ###
+    envir = framework.environment(Lx=20, Ly=30, Lz=10, x_bndry=('zero','zero'), 
+                               y_bndry=('zero','zero'),
+                               z_bndry=('noflux','noflux'), rho=1000, mu=5000)
+    envir.set_canopy_flow(res=101, h=15, a=1, U_h=1)
+    assert envir.flow_times is None, "flow_times should be None for stationary flow"
+    assert len(envir.flow[0].shape) == 3, "Flow vector should be 3D"
+    # tests to make sure you are getting what you think you are
+    #
+    #
+    envir.add_swarm(swarm_s=110, init='random')
+    sw = envir.swarms[0]
+    for ii in range(20):
+        sw.move(0.5)
+    assert len(sw.pos_history) == 20, "all movements not recorded"
+    assert envir.time == 10, "incorrect final time"
+    assert len(envir.time_history) == 20, "all times not recorded"
+
+    ### 2D, time dependent flow ###
+
+
+    ### 3D, time dependent flow ###

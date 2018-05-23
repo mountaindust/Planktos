@@ -1,20 +1,20 @@
 #! /usr/bin/env python3
 
-'''Test pickle load of VTK data.
-Requires pickle data to already be generated and present in IBAMR_test_data.'''
+'''Test npy/npz load of VTK data.
+Requires npy/npz data to already be generated and present in IBAMR_test_data.'''
 
 import numpy as np
 import numpy.ma as ma
 import framework
 
-def test_IBAMR_pickle_load():
-    '''Test loading pickled IBAMR fluid data into the environment'''
+def test_IBAMR_npy_load():
+    '''Test loading npy/npz IBAMR fluid data into the environment'''
     pathname = 'tests/IBAMR_test_data'
     prefix = 'IBAMR_end_'
     envir = framework.environment() # default environment, 2D.
 
-    ##### Load the pickled flow for the final recorded time #####
-    envir.read_pickled_vtk_data(pathname, prefix)
+    ##### Load the npz flow for the final recorded time #####
+    envir.read_npy_vtk_data(pathname, prefix)
     envir.set_boundary_conditions(('zero','zero'), ('zero','zero'), ('noflux','noflux'))
 
     # test properties
@@ -58,9 +58,9 @@ def test_IBAMR_pickle_load():
             assert 0 <= pos[0] <= envir.L[0] and 0 <= pos[1] <= envir.L[1],\
                    "zero bndry not respected"
 
-    ##### Load the pickled flow from all three IBAMR test files #####
+    ##### Load the npz flow from all three IBAMR test files #####
     prefix = "IBAMR_"
-    envir.read_pickled_vtk_data(pathname, prefix)
+    envir.read_npy_vtk_data(pathname, prefix)
     # Remove swarms
     envir.reset(rm_swarms=True)
 
