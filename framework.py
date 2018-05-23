@@ -403,19 +403,23 @@ class environment:
 
 
 
-    def set_canopy_flow(self, res, h, beta, C, a, mu_star):
+    def set_canopy_flow(self, res, h, a, u_star=None, U_h=None, beta=0.3, C=0.25):
         '''Apply flow within and above a uniform homogenous canopy according to the
         model described in Finnigan and Belcher (2004), 
         "Flow over a hill covered with a plant canopy". The decision to set 2D vs. 3D flow is 
-        based on the dimension of the domain. The following parameters must be given:
+        based on the dimension of the domain. Default values for beta and C are
+        based on Finnigan & Belcher. Must specify EITHER u_star or U_h; 
+        u_star is the canopy friction velocity and U_h is the wind speed at
+        the top of the canopy.
 
         Arguments:
             res: number of points at which to resolve the flow (int), including boundaries
             h: height of canopy (m)
+            a: leaf area per unit volume of space m^{-1}
+            u_star: canopy friction velocity. u_star = U_h*beta
+            U_h: wind speed at top of canopy. U_h = u_star/beta
             beta: mass flux through the canopy (u_star/U_h)
             C: drag coefficient of indivudal canopy elements
-            a: leaf area per unit volume of space m^{-1}
-            u_star: canopy friction velocity. U_h = u_star/beta
 
         Sets:
             self.flow: [U.size by] res by res ndarray of flow velocity
@@ -439,9 +443,16 @@ class environment:
         l = 2*beta**3*L_c
         print("Canopy mixing length, l = {} m".format(l))
 
-        # calculate mean wind speed at top of the canopy
-        U_h = u_star/beta
-        print("Mean wind spead at canopy top, U_h = {} m/s".format(U_h))
+        if u_star is not None:
+            if U_h is not None:
+                assert np.isclose(U_h, u_star/beta), "Flow not set: the relation U_h=u_star/beta must be satisfied."
+            else:
+                # calculate mean wind speed at top of the canopy
+                U_h = u_star/beta
+                print("Mean wind spead at canopy top, U_h = {} m/s".format(U_h))
+        else:
+            assert U_h is not None, "Flow not set: One of u_star or U_h must be specified."
+            print("Canopy friction velocity, u_star = {}.".format(U_h*beta))
 
         # calculate vertical wind profile at given resolution
         U_B = U_h*np.exp(beta*zmesh/l)
