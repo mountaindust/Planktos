@@ -211,12 +211,12 @@ class environment:
                 # Calculate C and D constants and then get A and B based on these
 
                 C = (px*(-0.5*alpha**2*b**2+exp(log(alpha*b)-alpha*a)-exp(-alpha*a)+1) +
-                    np.abs(v)*alpha**2*self.mu)/(alpha**2*self.mu*(exp(log(alpha*b)-2*alpha*a)+alpha*b-
+                    abs(v)*alpha**2*self.mu)/(alpha**2*self.mu*(exp(log(alpha*b)-2*alpha*a)+alpha*b-
                     exp(-2*alpha*a)+1))
 
                 D = (px*(exp(log(0.5*alpha**2*b**2)-2*alpha*a)+exp(log(alpha*b)-alpha*a)+
                     exp(-alpha*a)-exp(-2*alpha*a)) - 
-                    exp(log(np.abs(v)*alpha**2*self.mu)-2*alpha*a))/(alpha**2*self.mu*
+                    exp(log(abs(v)*alpha**2*self.mu)-2*alpha*a))/(alpha**2*self.mu*
                     (exp(log(alpha*b)-2*alpha*a)+alpha*b-exp(-2*alpha*a)+1))
 
                 A = alpha*C - alpha*D
