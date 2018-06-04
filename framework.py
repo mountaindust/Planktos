@@ -479,11 +479,11 @@ class environment:
             iter_length = len(tspan)
         # Convert flow parameters to numpy arrays to deal with inf/nan division
         if u_star is not None:
-            u_star = np.array(u_star, dtype=np.float64)
+            u_star = np.array([u_star], dtype=np.float64).squeeze()
         if U_h is not None:
-            U_h = np.array(U_h, dtype=np.float64)
+            U_h = np.array([U_h], dtype=np.float64).squeeze()
         if beta is not None:
-            beta = np.array(beta, dtype=np.float64)
+            beta = np.array([beta], dtype=np.float64).squeeze()
 
         # Get domain height
         d_height = self.L[-1]
@@ -523,19 +523,53 @@ class environment:
             print("Canopy friction velocity, u_star = {}.".format(U_h*beta))
 
         # calculate vertical wind profile at given resolution
-        U_B = U_h*np.exp(beta*zmesh/l)
+        if iter_length is None:
+            U_B = U_h*np.exp(beta*zmesh/l)
+        else:
+            with np.errstate(divide='ignore', invalid='ignore'):
+                beta_l = beta/l
+                if type(beta_l) is np.ndarray:
+                    beta_l[beta_l == np.inf] = 0
+                    beta_l[beta_l == -np.inf] = 0
+                    beta_l[beta_l == np.nan] = 0
+            U_B = np.tile(U_h,(len(zmesh),1)).T*np.exp(np.outer(beta_l,zmesh))
+            # each row is a different time point, and z is across columns
 
         # broadcast to flow
-        if len(self.L) == 2:
-            # 2D
-            self.flow = [np.broadcast_to(U_B,(res,res)), np.zeros((res,res))]
+        if iter_length is None:
+            # time independent
+            if len(self.L) == 2:
+                # 2D
+                flow = np.broadcast_to(U_B,(res,res))
+                self.flow = [flow, np.zeros_like(flow)]
+            else:
+                # 3D
+                flow = np.broadcast_to(U_B,(res,res,res))
+                self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
+            self.__set_flow_variables()
         else:
-            # 3D
-            self.flow = [np.broadcast_to(U_B,(res,res,res)), np.zeros((res,res,res)),
-                         np.zeros((res,res,res))]
+            # time dependent
+            if len(self.L) == 2:
+                # 2D
+                # broadcast from (t,y) -> (x,t,y)
+                flow = np.broadcast_to(U_B, (res, iter_length, res))
+                # transpose: (x,t,y) -> (t,x,y)
+                flow = np.transpose(flow, axes=(1, 0, 2))
+                self.flow = [flow, np.zeros_like(flow)]
+            else:
+                # 3D
+                # broadcast from (t,y) -> (x,y,t,z)
+                flow = np.broadcast_to(U_B, (res, res, iter_length, res))
+                # transpose: (x,y,t,z) -> (t,x,y,z)
+                flow = np.transpose(flow, axes=(2,0,1,3))
+                self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
+            if tspan is None:
+                self.__set_flow_variables(tspan=1)
+            else:
+                self.__set_flow_variables(tspan=tspan)
+
 
         # housekeeping
-        self.__set_flow_variables()
         self.__reset_flow_variables()
         self.a = h
 

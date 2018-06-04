@@ -332,7 +332,6 @@ def test_channel_flow():
 
 
 
-
 def test_canopy_flow():
     '''Test specificiation of canopy flow in the enviornment'''
     ### 2D, time-independent flow ###
@@ -371,6 +370,15 @@ def test_canopy_flow():
     assert len(envir.time_history) == 20, "all times not recorded"
 
     ### 2D, time dependent flow ###
+    envir = framework.environment(Lx=50, Ly=40, rho=1000, mu=1000)
+    U_h = np.arange(-0.5,1.2,0.1)
+    U_h[5] = 0
+    envir.set_canopy_flow(res=101, h=15, a=1, U_h=U_h, tspan=[0,20])
+    assert envir.flow_times[-1] == 20
+    assert len(envir.flow_times) == len(U_h)
+    assert len(envir.flow[0].shape) == 3
+    assert np.all(envir.flow[0][-1,:,-1] > envir.flow[0][-1,:,50])
+    assert np.all(envir.flow[0][-1,:,-1] > envir.flow[0][-2,:,-1])
 
 
     ### 3D, time dependent flow ###
