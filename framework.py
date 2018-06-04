@@ -171,10 +171,15 @@ class environment:
         '''
 
         ##### Parse parameters #####
+        if tspan is not None and not hasattr(U, '__iter__'):
+            warnings.warn("tspan specified but U is constant: Flow will be constant in time.", UserWarning)
+        assert tspan is None or (hasattr(tspan, '__iter__') and len(tspan) > 1), 'tspan not recognized.'
         if hasattr(U, '__iter__'):
             try:
                 assert hasattr(dpdx, '__iter__')
                 assert len(dpdx) == len(U)
+                if tspan is not None and len(tspan) > 2:
+                    assert len(tspan) == len(dpdx)
             except AssertionError:
                 print('dpdx must be the same length as U.')
                 raise
@@ -326,7 +331,8 @@ class environment:
         '''Apply wide-channel flow with vegetation layer according to the
         two-layer model described in Defina and Bixio (2005), 
         "Vegetated Open Channel Flow". The decision to set 2D vs. 3D flow is 
-        based on the dimension of the domain. The following parameters must be given:
+        based on the dimension of the domain and this flow is always
+        time-independent by nature. The following parameters must be given:
 
         Arguments:
             res: number of points at which to resolve the flow (int), including boundaries
@@ -417,7 +423,7 @@ class environment:
             h: height of canopy (m)
             a: leaf area per unit volume of space m^{-1}. Typical values are
                 a=1.0 for dense spruce to a=0.1 for open woodland
-            u_star: canopy friction velocity. u_star = U_h*beta
+            u_star: canopy friction velocity. u_star = U_h*beta OR
             U_h: wind speed at top of canopy. U_h = u_star/beta
             beta: mass flux through the canopy (u_star/U_h)
             C: drag coefficient of indivudal canopy elements

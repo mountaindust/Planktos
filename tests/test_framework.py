@@ -330,10 +330,6 @@ def test_channel_flow():
     assert envir.time == 10, "incorrect final time"
     assert len(envir.time_history) == 20, "all times not recorded"
 
-    ### 2D, time dependent flow ###
-
-
-    ### 3D, time dependent flow ###
 
 
 
