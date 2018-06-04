@@ -178,17 +178,13 @@ class environment:
             try:
                 assert hasattr(dpdx, '__iter__')
                 assert len(dpdx) == len(U)
-                if tspan is not None and len(tspan) > 2:
-                    assert len(tspan) == len(dpdx)
             except AssertionError:
                 print('dpdx must be the same length as U.')
                 raise
+            if tspan is not None and len(tspan) > 2:
+                assert len(tspan) == len(dpdx), "tspan must be same length as U/dpdx"
         else:
-            try:
-                assert not hasattr(dpdx, '__iter__')
-            except AssertionError:
-                print('dpdx must be the same length as U.')
-                raise
+            assert not hasattr(dpdx, '__iter__'), 'dpdx must be the same length as U.'
             U = [U]
             dpdx = [dpdx]
 
@@ -409,14 +405,15 @@ class environment:
 
 
 
-    def set_canopy_flow(self, res, h, a, u_star=None, U_h=None, beta=0.3, C=0.25):
+    def set_canopy_flow(self, res, h, a, u_star=None, U_h=None, beta=0.3, C=0.25,
+                        tspan=None):
         '''Apply flow within and above a uniform homogenous canopy according to the
         model described in Finnigan and Belcher (2004), 
         "Flow over a hill covered with a plant canopy". The decision to set 2D vs. 3D flow is 
         based on the dimension of the domain. Default values for beta and C are
-        based on Finnigan & Belcher. Must specify EITHER u_star or U_h; 
-        u_star is the canopy friction velocity and U_h is the wind speed at
-        the top of the canopy.
+        based on Finnigan & Belcher. Must specify two of u_star, U_h, and beta, 
+        though beta has a default value of 0.3 so just giving u_star or U_h will also work. 
+        TODO: If one of u_star, U_h, or beta is given as a list-like object, the flow will vary in time.
 
         Arguments:
             res: number of points at which to resolve the flow (int), including boundaries
@@ -427,6 +424,8 @@ class environment:
             U_h: wind speed at top of canopy. U_h = u_star/beta
             beta: mass flux through the canopy (u_star/U_h)
             C: drag coefficient of indivudal canopy elements
+            TODO: tspan: [tstart, tend] or iterable of times at which flow is specified
+                if None and u_star, U_h, and/or beta are iterable, dt=1 will be used.
 
         Sets:
             self.flow: [U.size by] res by res ndarray of flow velocity
@@ -435,6 +434,56 @@ class environment:
         Calls:
             self.__set_flow_variables
         '''
+
+        ##### Parse parameters #####
+        # Make sure that at least two of the three flow parameters have been specified
+        none_num = 0
+        if u_star is None:
+            none_num +=1
+        if U_h is None:
+            none_num +=1
+        if beta is None:
+            none_num +=1
+        assert none_num < 2, "At least two of u_star, U_h, and beta must be specified."
+        # If tspan is given, check that a flow parameter varies.
+        if tspan is not None and not (hasattr(u_star, '__iter__') or 
+            hasattr(U_h, '__iter__') or hasattr(beta, '__iter__')):
+            warnings.warn("tspan specified but parameters are constant: Flow will be constant in time.", UserWarning)
+        assert tspan is None or (hasattr(tspan, '__iter__') and len(tspan) > 1), 'tspan format not recognized.'
+        # Sanity checks for time varying flow
+        iter_length = None # variable for time length
+        if hasattr(u_star, '__iter__') or hasattr(U_h, '__iter__') or hasattr(beta, '__iter__'):
+            # check that less than two are scalars, otherwise relation won't hold.
+            # Also get the number of time points
+            scal_num = 0
+            if not hasattr(u_star, '__iter__') and u_star is not None:
+                scal_num +=1
+            elif u_star is not None:
+                iter_length = len(u_star)
+            if not hasattr(U_h, '__iter__') and U_h is not None:
+                scal_num +=1
+            elif iter_length is not None and U_h is not None:
+                assert len(U_h) == iter_length, "u_star and U_h must be the same length"
+            elif U_h is not None:
+                iter_length = len(U_h)
+            if not hasattr(beta, '__iter__') and beta is not None:
+                scal_num +=1
+            elif iter_length is not None and beta is not None:
+                assert len(beta) == iter_length, "non-scalar flow parameters must be the same length"
+            elif beta is not None:
+                iter_length = len(beta)
+            assert scal_num < 2, "Only one of u_star, U_h, and beta can be scalars for time varying flow"
+            if tspan is not None and len(tspan) > 2:
+                assert len(tspan) == iter_length, "tspan must be same length as time-varying parameters"
+        elif tspan is not None:
+            iter_length = len(tspan)
+        # Convert flow parameters to numpy arrays to deal with inf/nan division
+        if u_star is not None:
+            u_star = np.array(u_star, dtype=np.float64)
+        if U_h is not None:
+            U_h = np.array(U_h, dtype=np.float64)
+        if beta is not None:
+            beta = np.array(beta, dtype=np.float64)
 
         # Get domain height
         d_height = self.L[-1]
@@ -447,15 +496,27 @@ class environment:
         print("h/L_c = {}. Model assumes h/L_c >> 1; verify that this is the case!!".format(h/L_c))
 
         # calculate canopy mixing length and print
+        if beta is None:
+            with np.errstate(divide='ignore', invalid='ignore'):
+                beta = u_star/U_h
+                # U_h==0 and/or u_star==0 implies no flow
+                beta[beta == np.inf] = 0
+                beta[beta == -np.inf] = 0
+                beta[beta == np.nan] = 0
         l = 2*beta**3*L_c
         print("Canopy mixing length, l = {} m".format(l))
 
         if u_star is not None:
             if U_h is not None:
-                assert np.isclose(U_h, u_star/beta), "Flow not set: the relation U_h=u_star/beta must be satisfied."
+                assert np.isclose(U_h*beta, u_star), "Flow not set: the relation U_h=u_star/beta must be satisfied."
             else:
                 # calculate mean wind speed at top of the canopy
-                U_h = u_star/beta
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    U_h = u_star/beta
+                    # beta==0 and/or u_star==0 implies no flow
+                    U_h[U_h == np.inf] = 0
+                    U_h[U_h == -np.inf] = 0
+                    U_h[U_h == np.nan] = 0
                 print("Mean wind spead at canopy top, U_h = {} m/s".format(U_h))
         else:
             assert U_h is not None, "Flow not set: One of u_star or U_h must be specified."
