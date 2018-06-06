@@ -41,8 +41,12 @@ Class: environment
     - `re` optional parameter for storing Reynolds number
     - `rho` optional parameter for storing dynamic fluid velocity
     - `char_L` optional parameter for storing the characteristic length
+    - `mu` optional parameter for dynamic viscosity
+    - `g` acceleration due to gravity (9.80665 m/s**2)
 - Methods
     - `set_brinkman_flow` Given several (possibly time-dependent) fluid variables, calculate Brinkman flow on a regular grid with a given resolution and set that as the environment's fluid  velocity. Capable of handling both 2D and 3D domains.
+    - `set_two_layer_channel_flow` Apply wide-channel flow with vegetation layer according to the two-layer model described in Defina and Bixio (2005) "Vegetated Open Channel Flow".
+    - `set_canopy_flow` Apply flow within and above a uniform homogenous canopy according to the model described in Finnigan and Belcher (2004), "Flow over a hill covered with a plant canopy".
     - `read_IB2d_vtk_data` Read in 2D fluid velocity data from IB2d and set the environment's flow variable.
     - `read_IBAMR3d_vtk_data` Read in 3D fluid velocity data from vtk files obtained from IBAMR. See read_IBAMR3d_py27.py for converting IBAMR data to vtk format using VisIt.
     - `tile_flow` Tile the current fluid flow in the x and/or y directions. It is assumed that the flow is roughly periodic in the direction(s) specified - no checking will be done, and no errors thrown if not.
@@ -61,6 +65,7 @@ Class: swarm
     - `move` move each agent in the swarm. Do not override: see update_positions.
     - `update_positions` defines the agent's movement behavior. OVERRIDE THIS WHEN SUBCLASSING!
     - `get_fluid_drift` get the fluid velocity at each agent's position via interpolation
+    - `get_projectile_motion` Return acceleration using equations of projectile motion. Includes drag, inertia, and background flow velocity. Does not include gravity.
     - `apply_boundary_condition` method used to enforce the boundary conditions during a move
     - `plot` plot the swarm's current position or a previous position at the time provided
     - `plot_all` plot all of the swarm's positions up to the current time
