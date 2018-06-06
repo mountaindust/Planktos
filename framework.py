@@ -413,7 +413,7 @@ class environment:
         based on the dimension of the domain. Default values for beta and C are
         based on Finnigan & Belcher. Must specify two of u_star, U_h, and beta, 
         though beta has a default value of 0.3 so just giving u_star or U_h will also work. 
-        TODO: If one of u_star, U_h, or beta is given as a list-like object, the flow will vary in time.
+        If one of u_star, U_h, or beta is given as a list-like object, the flow will vary in time.
 
         Arguments:
             res: number of points at which to resolve the flow (int), including boundaries
@@ -424,7 +424,7 @@ class environment:
             U_h: wind speed at top of canopy. U_h = u_star/beta
             beta: mass flux through the canopy (u_star/U_h)
             C: drag coefficient of indivudal canopy elements
-            TODO: tspan: [tstart, tend] or iterable of times at which flow is specified
+            tspan: [tstart, tend] or iterable of times at which flow is specified
                 if None and u_star, U_h, and/or beta are iterable, dt=1 will be used.
 
         Sets:
@@ -520,19 +520,35 @@ class environment:
                 print("Mean wind spead at canopy top, U_h = {} m/s".format(U_h))
         else:
             assert U_h is not None, "Flow not set: One of u_star or U_h must be specified."
-            print("Canopy friction velocity, u_star = {}.".format(U_h*beta))
+            u_star = U_h*beta
+            #print("Canopy friction velocity, u_star = {}.".format(U_h*beta))
+
+        # calculate constants needed above canopy
+        kappa = 0.4 # von Karman's constant
+        d = l/kappa
 
         # calculate vertical wind profile at given resolution
         if iter_length is None:
-            U_B = U_h*np.exp(beta*zmesh/l)
+            U_B = np.zeros_like(zmesh)
+            U_B[zmesh<=0] = U_h*np.exp(beta*zmesh[zmesh<=0]/l)
+            U_B[zmesh>0] = u_star/kappa*np.log((zmesh[zmesh>0]+d)/(d*np.exp(-kappa/beta)))
         else:
             with np.errstate(divide='ignore', invalid='ignore'):
                 beta_l = beta/l
+                kappa_beta = kappa/beta
                 if type(beta_l) is np.ndarray:
                     beta_l[beta_l == np.inf] = 0
+                    kappa_beta[kappa_beta == np.inf] = 0
                     beta_l[beta_l == -np.inf] = 0
+                    kappa_beta[kappa_beta == -np.inf] = 0
                     beta_l[beta_l == np.nan] = 0
-            U_B = np.tile(U_h,(len(zmesh),1)).T*np.exp(np.outer(beta_l,zmesh))
+                    kappa_beta[kappa_beta == np.nan] = 0
+            U_B = np.zeros((iter_length,len(zmesh)))
+            U_B[:,zmesh<=0] = np.tile(U_h,(len(zmesh[zmesh<=0]),1)).T*np.exp(
+                            np.outer(beta_l,zmesh[zmesh<=0]))
+            z_0_mat = np.tile(d*np.exp(-kappa_beta),(len(zmesh[zmesh>0]),1)).T
+            U_B[:,zmesh>0] = np.tile(u_star/kappa,(len(zmesh[zmesh>0]),1)).T*np.log(
+                            np.add.outer(d,zmesh[zmesh>0])/z_0_mat)
             # each row is a different time point, and z is across columns
 
         # broadcast to flow
@@ -1017,7 +1033,7 @@ class swarm:
             self.envir = environment(init_swarms=self, Lz=10)
         else:
             try:
-                assert isinstance(envir, environment)
+                assert envir.__class__.__name__ == 'environment'
                 envir.swarms.append(self)
                 self.envir = envir
             except AssertionError:
