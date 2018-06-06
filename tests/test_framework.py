@@ -176,7 +176,7 @@ def test_brinkman_2D():
     
 def test_multiple_2D_swarms():
     envir = framework.environment(rho=1000, mu=5000)
-    envir.set_brinkman_flow(alpha=66, a=1.5, res=100, U=.5, dpdx=0.22306)
+    envir.set_brinkman_flow(alpha=66, a=1.5, res=50, U=.5, dpdx=0.22306)
     envir.add_swarm()
     s2 = envir.add_swarm()
     assert len(envir.swarms) == 2, "Two swarms are not present"
@@ -203,7 +203,7 @@ def test_brinkman_3D():
     envir = framework.environment(Lx=50, Ly=50, Lz=50, x_bndry=('zero','zero'), 
                                y_bndry=('zero','zero'),
                                z_bndry=('noflux','noflux'), rho=1000, mu=250000)
-    envir.set_brinkman_flow(alpha=66, a=15, res=100, U=5, dpdx=0.22306)
+    envir.set_brinkman_flow(alpha=66, a=15, res=50, U=5, dpdx=0.22306)
     assert envir.flow_times is None, "flow_times should be None for stationary flow"
     assert len(envir.flow[0].shape) == 3, "Flow vector should be 3D"
 
@@ -239,7 +239,7 @@ def test_brinkman_3D():
     ### Single swarm, time-dependent flow ###
     envir = framework.environment(Lz=10, rho=1000, mu=1000)
     U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-3,6,2)))
-    envir.set_brinkman_flow(alpha=66, a=1.5, res=100, U=U, 
+    envir.set_brinkman_flow(alpha=66, a=1.5, res=50, U=U, 
                             dpdx=np.ones(20)*0.22306, tspan=[0, 40])
     # tile flow
     envir.tile_flow(2,1)
@@ -248,7 +248,7 @@ def test_brinkman_3D():
 
     # replace original flow for speed
     envir = framework.environment(Lz=10, rho=1000, mu=1000)
-    envir.set_brinkman_flow(alpha=66, a=1.5, res=100, U=U, 
+    envir.set_brinkman_flow(alpha=66, a=1.5, res=50, U=U, 
                             dpdx=np.ones(20)*0.22306, tspan=[0, 40])
     envir.add_swarm()
     assert envir.flow_times is not None, "flow_times unset"
@@ -267,7 +267,7 @@ def test_massive_physics():
     ### Get a 3D, time-dependent flow environment ###
     envir = framework.environment(Lz=10, rho=1000, mu=1000)
     U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-3,6,2)))
-    envir.set_brinkman_flow(alpha=66, a=1.5, res=100, U=U, 
+    envir.set_brinkman_flow(alpha=66, a=1.5, res=50, U=U, 
                             dpdx=np.ones(20)*0.22306, tspan=[0, 40])
     ### specify physical properties of swarm and move swarm with low Re ###
     phys = {'Cd':0.47, 'm':0.01}
@@ -298,13 +298,13 @@ def test_channel_flow():
     ### 2D, time-independent flow ###
     envir = framework.environment(Lx=20, Ly=10, x_bndry=('zero','zero'), 
                                y_bndry=('noflux','zero'), rho=1000, mu=5000)
-    envir.set_two_layer_channel_flow(res=101, a=1, h_p=1, Cd=0.25, S=0.1)
+    envir.set_two_layer_channel_flow(res=51, a=1, h_p=1, Cd=0.25, S=0.1)
     assert envir.flow_times is None, "flow_times should be None for stationary flow"
     assert len(envir.flow[0].shape) == 2, "Flow vector should be 2D"
     # tests to make sure you are getting what you think you are
     #
     #
-    envir.add_swarm(swarm_s=110, init='random')
+    envir.add_swarm(swarm_s=55, init='random')
     sw = envir.swarms[0]
     for ii in range(20):
         sw.move(0.5)
@@ -316,13 +316,13 @@ def test_channel_flow():
     envir = framework.environment(Lx=20, Ly=30, Lz=10, x_bndry=('zero','zero'), 
                                y_bndry=('zero','zero'),
                                z_bndry=('noflux','noflux'), rho=1000, mu=5000)
-    envir.set_two_layer_channel_flow(res=101, a=1, h_p=1, Cd=0.25, S=0.1)
+    envir.set_two_layer_channel_flow(res=51, a=1, h_p=1, Cd=0.25, S=0.1)
     assert envir.flow_times is None, "flow_times should be None for stationary flow"
     assert len(envir.flow[0].shape) == 3, "Flow vector should be 3D"
     # tests to make sure you are getting what you think you are
     #
     #
-    envir.add_swarm(swarm_s=110, init='random')
+    envir.add_swarm(swarm_s=55, init='random')
     sw = envir.swarms[0]
     for ii in range(20):
         sw.move(0.5)
@@ -337,13 +337,13 @@ def test_canopy_flow():
     ### 2D, time-independent flow ###
     envir = framework.environment(Lx=40, Ly=40, x_bndry=('zero','zero'), 
                                y_bndry=('noflux','zero'), rho=1000, mu=5000)
-    envir.set_canopy_flow(res=101, h=15, a=1, U_h=1)
+    envir.set_canopy_flow(res=51, h=15, a=1, U_h=1)
     assert envir.flow_times is None, "flow_times should be None for stationary flow"
     assert len(envir.flow[0].shape) == 2, "Flow vector should be 2D"
     # tests to make sure you are getting what you think you are
     #
     #
-    envir.add_swarm(swarm_s=110, init='random')
+    envir.add_swarm(swarm_s=55, init='random')
     sw = envir.swarms[0]
     for ii in range(20):
         sw.move(0.5)
@@ -355,13 +355,13 @@ def test_canopy_flow():
     envir = framework.environment(Lx=20, Ly=30, Lz=10, x_bndry=('zero','zero'), 
                                y_bndry=('zero','zero'),
                                z_bndry=('noflux','noflux'), rho=1000, mu=5000)
-    envir.set_canopy_flow(res=101, h=15, a=1, U_h=1)
+    envir.set_canopy_flow(res=51, h=15, a=1, U_h=1)
     assert envir.flow_times is None, "flow_times should be None for stationary flow"
     assert len(envir.flow[0].shape) == 3, "Flow vector should be 3D"
     # tests to make sure you are getting what you think you are
     #
     #
-    envir.add_swarm(swarm_s=110, init='random')
+    envir.add_swarm(swarm_s=55, init='random')
     sw = envir.swarms[0]
     for ii in range(20):
         sw.move(0.5)
@@ -373,12 +373,23 @@ def test_canopy_flow():
     envir = framework.environment(Lx=50, Ly=40, rho=1000, mu=1000)
     U_h = np.arange(-0.5,1.2,0.1)
     U_h[5] = 0
-    envir.set_canopy_flow(res=101, h=15, a=1, U_h=U_h, tspan=[0,20])
+    envir.set_canopy_flow(res=51, h=15, a=1, U_h=U_h, tspan=[0,20])
     assert envir.flow_times[-1] == 20
     assert len(envir.flow_times) == len(U_h)
-    assert len(envir.flow[0].shape) == 3
-    assert np.all(envir.flow[0][-1,:,-1] > envir.flow[0][-1,:,50])
-    assert np.all(envir.flow[0][-1,:,-1] > envir.flow[0][-2,:,-1])
-
+    assert len(envir.flow[0].shape) == 3 #(t,x,y), all flow moves in x direction only
+    assert np.all(envir.flow[0][-1,:,-1] > envir.flow[0][-1,:,25]), "flow increases as y increases"
+    assert np.all(envir.flow[0][-1,:,-1] > envir.flow[0][-2,:,-1]), "flow increases over time"
+    assert np.all(envir.flow[0][0,0,-1] == envir.flow[0][0,-1,-1]), "flow is constant w.r.t x"
 
     ### 3D, time dependent flow ###
+    envir = framework.environment(Lx=50, Ly=30, Lz=40, rho=1000, mu=1000)
+    U_h = np.arange(-0.5,1.2,0.1)
+    U_h[5] = 0
+    envir.set_canopy_flow(res=51, h=15, a=1, U_h=U_h, tspan=[0,20])
+    assert envir.flow_times[-1] == 20
+    assert len(envir.flow_times) == len(U_h)
+    assert len(envir.flow[0].shape) == 4 #(t,x,y,z), all flow moves in x direction only
+    assert np.all(envir.flow[0][-1,:,:,-1] > envir.flow[0][-1,:,:,25]), "flow increases as z increases"
+    assert np.all(envir.flow[0][-1,:,:,-1] > envir.flow[0][-2,:,:,-1]), "flow increases over time"
+    assert np.all(envir.flow[0][0,0,:,-1] == envir.flow[0][0,-1,:,-1]), "flow is constant w.r.t x"
+    assert np.all(envir.flow[0][-1,:,0,-1] == envir.flow[0][-1,:,-1,-1]), "flow is constant w.r.t y"
