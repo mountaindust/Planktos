@@ -18,8 +18,8 @@ envir.add_swarm()
 s = envir.swarms[0]
 
 print('Moving swarm...')
-for ii in range(25):
-    s.move(0.5)
+for ii in range(240):
+    s.move(0.1)
 
-#s.plot_all('ex_3d.mp4', fps=10)
+#s.plot_all('ex_3d.mp4', fps=20)
 s.plot_all()

@@ -37,7 +37,7 @@ def test_IBAMR_load():
     envir = framework.environment() # default environment, 2D.
 
     ##### Load only the final recorded flow #####
-    envir.read_IBAMR3d_vtk_data(pathname, start=5, finish=None)
+    envir.read_IBAMR3d_vtk_dataset(pathname, start=5, finish=None)
     envir.set_boundary_conditions(('zero','zero'), ('zero','zero'), ('noflux','noflux'))
 
     # test properties
@@ -82,7 +82,7 @@ def test_IBAMR_load():
                    "zero bndry not respected"
 
     ##### Load all three IBAMR test files #####
-    envir.read_IBAMR3d_vtk_data(pathname, start=3, finish=None)
+    envir.read_IBAMR3d_vtk_dataset(pathname, start=3, finish=None)
     # Remove swarms
     envir.reset(rm_swarms=True)
 

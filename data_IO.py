@@ -79,11 +79,11 @@ def read_vtk_Rectilinear_Grid_Vector(filename):
     # np_data is an (n,3) array of n vectors
 
     # Split and reshape vectors to a matrix
-    x_data = np.reshape(np_data[:,0], mesh_shape[::-1])
-    y_data = np.reshape(np_data[:,1], mesh_shape[::-1])
-    z_data = np.reshape(np_data[:,2], mesh_shape[::-1])
-    # Each of these are indexed via [z,y,x], since x changes, then y, then z
-    #   in the flattened array.
+    x_data = np.reshape(np_data[:,0], mesh_shape[::-1]).T
+    y_data = np.reshape(np_data[:,1], mesh_shape[::-1]).T
+    z_data = np.reshape(np_data[:,2], mesh_shape[::-1]).T
+    # Each of these are originally indexed via [z,y,x], since x changes, then y, 
+    # then z in the flattened array. Transpose to [x,y,z]
 
     ##### This code is now hanging indefinitely due to some sort of   #####
     #####   internal vtk dataset_adapter error. Using a workaround... #####
