@@ -1,5 +1,9 @@
 #! /usr/bin/env python3
 
+from sys import platform
+if platform == 'darwin': # OSX backend does not support blitting
+    import matplotlib
+    matplotlib.use('TkAgg')
 import numpy as np
 import sys
 sys.path.append('..')
@@ -14,7 +18,8 @@ envir.add_swarm()
 s = envir.swarms[0]
 
 print('Moving swarm...')
-for ii in range(50):
+for ii in range(25):
     s.move(0.5)
 
+#s.plot_all('ex_3d.mp4', fps=10)
 s.plot_all()

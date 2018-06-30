@@ -4,6 +4,7 @@ __pycache__/
 
 # Data files
 vtk3d/
+*.mp4
 
 # Autobackup files
 ~*

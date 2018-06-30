@@ -10,6 +10,7 @@ Email: cstric12@utk.edu
 '''
 
 import sys, warnings, pickle
+from sys import platform
 from pathlib import Path
 from math import exp, log
 import numpy as np
@@ -1587,8 +1588,9 @@ class swarm:
 
 
 
-    def plot_all(self, save_filename=None):
-        ''' Plot the entire history of the swarm's movement, incl. current '''
+    def plot_all(self, movie_filename=None, fps=10):
+        ''' Plot the entire history of the swarm's movement, incl. current.
+        If movie_filename is specified, output a movie file instead.'''
 
         if len(self.envir.time_history) == 0:
             print('No position history! Plotting current position...')
@@ -1783,13 +1785,15 @@ class swarm:
                                     interval=dt*100, repeat=False, blit=True,
                                     save_count=len(self.pos_history)+1)
 
-        if save_filename is not None:
+        if movie_filename is not None:
             try:
-                anim.save(save_filename, dpi=150)
-                print('Video saved to {}.'.format(save_filename))
+                Writer = animation.writers['ffmpeg']
+                writer = Writer(fps=fps, metadata=dict(artist='Christopher Strickland'))#, bitrate=1800)
+                anim.save(movie_filename, writer=writer, dpi=300)
+                print('Video saved to {}.'.format(movie_filename))
             except:
                 print('Failed to save animation.')
                 print('Check that you have ffmpeg or mencoder installed!')
                 return
-
-        plt.show()
+        else:
+            plt.show()
