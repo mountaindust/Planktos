@@ -54,7 +54,19 @@ class environment:
             mu: dynamic viscosity, kg/m/s, Pa*s, N*s/m**2 (optional)
             init_swarms: initial swarms in this environment
 
-        Right now, supported boundary conditions are 'zero' (default) and 'noflux'.
+        Other properties:
+            flow_points:
+            fluid_domain_LLC:
+            tiling:
+            orig_L:
+            a: height of porous region
+            g: accel due to gravity (m/s**2)
+            struct_plots: List of functions that plot additional environment structures
+            struct_plot_args: List of argument tuples to be passed to these functions, after ax
+            time:
+            time_history:
+
+        Right now, supported agent boundary conditions are 'zero' (default) and 'noflux'.
         '''
 
         # Save domain size
@@ -1060,6 +1072,9 @@ class swarm:
                 - x = (float) x-coordinate
                 - y = (float) y-coordinate
                 - z = (optional, float) z-coordinate, if 3D
+
+        To customize agent behavior, subclass this class and re-implement the
+        method update_positions (do not change the call signature.
         '''
 
         # use a new, 3D default environment if one was not given
