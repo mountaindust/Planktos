@@ -69,5 +69,5 @@ if PLOT_CYL:
         envir.plot_structs_args.append((bounds,))
 
 ##########              Plot!               ###########
-#s.plot_all('brine_shrimp_IBAMR.mp4', fps=20)
+s.plot_all('brine_shrimp_IBAMR.mp4', fps=20)
 #s.plot_all()
