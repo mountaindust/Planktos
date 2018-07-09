@@ -208,13 +208,14 @@ class environment:
             raise AttributeError
 
         ##### Calculate constant parameters #####
-        b = self.L[1] - a
 
         # Get y-mesh
         if len(self.L) == 2:
             y_mesh = np.linspace(0, self.L[1], res)
+            b = self.L[1] - a
         else:
             y_mesh = np.linspace(0, self.L[2], res)
+            b = self.L[2] - a
 
         ##### Calculate flow velocity #####
         flow = np.zeros((len(U), res, res)) # t, y, x
@@ -224,14 +225,12 @@ class environment:
             if v != 0:
                 # Calculate C and D constants and then get A and B based on these
 
-                C = (px*(-0.5*alpha**2*b**2+exp(log(alpha*b)-alpha*a)-exp(-alpha*a)+1) +
-                    abs(v)*alpha**2*self.mu)/(alpha**2*self.mu*(exp(log(alpha*b)-2*alpha*a)+alpha*b-
-                    exp(-2*alpha*a)+1))
+                D = ((exp(-alpha*a)/(alpha**2*self.mu)*px - exp(-2*alpha*a)*(
+                    v/(1+alpha*b)+(2-alpha**2*b**2)*px/(2*alpha**2*self.mu*(1+alpha*b))))/
+                    (1-exp(-2*alpha*a)*((1-alpha*b)/(1+alpha*b))))
 
-                D = (px*(exp(log(0.5*alpha**2*b**2)-2*alpha*a)+exp(log(alpha*b)-alpha*a)+
-                    exp(-alpha*a)-exp(-2*alpha*a)) - 
-                    exp(log(abs(v)*alpha**2*self.mu)-2*alpha*a))/(alpha**2*self.mu*
-                    (exp(log(alpha*b)-2*alpha*a)+alpha*b-exp(-2*alpha*a)+1))
+                C = (v/(1+alpha*b) + (2-alpha**2*b**2)*px/((2*alpha**2*self.mu)*(1+alpha*b)) - 
+                    D*(1-alpha*b)/(1+alpha*b))
 
                 A = alpha*C - alpha*D
                 B = C + D - px/(alpha**2*self.mu)
