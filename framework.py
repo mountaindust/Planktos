@@ -1449,6 +1449,7 @@ class swarm:
             ax.set_ylabel('Y')
             ax.set_zlabel('Z')
             ax.set_title('Organism positions')
+            ax.set_aspect('equal','box')
 
             # histograms
             int_ticks = MaxNLocator(nbins='auto', integer=True)
@@ -1611,7 +1612,7 @@ class swarm:
                       transform=ax.transAxes, horizontalalignment='right',
                       fontsize=10)
             ax.text2D(0.02, 0, '{:.1f}% remain\n'.format(perc_left),
-                      transform=ax.transAxes, fontsize=10)
+                      transform=fig.transFigure, fontsize=10)
             axHistx.text(0.02, 0.98, 'Avg x vel: {:.2g} m/s\n'.format(avg_spd_x),
                          transform=axHistx.transAxes, verticalalignment='top',
                          fontsize=10)
@@ -1703,7 +1704,7 @@ class swarm:
                                   horizontalalignment='right', fontsize=10)
             perc_text = ax.text2D(0.02, 0,
                                   '{:.1f}% remain\n'.format(perc_left),
-                                  transform=ax.transAxes, animated=True,
+                                  transform=fig.transFigure, animated=True,
                                   fontsize=10)
             x_flow_text = axHistx.text(0.02, 0.98,
                                        'Avg x vel: {:.2g} m/s\n'.format(avg_spd_x),
