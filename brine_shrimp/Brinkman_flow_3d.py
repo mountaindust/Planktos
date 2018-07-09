@@ -14,10 +14,9 @@ envir = framework.environment(Lx=.5,Ly=.5,Lz=1, rho=1000, mu=10)
 # Specify static velocity along the top of the domain
 U = 0.09818
 # Specify pressure gradient
-dpdx = -1.8609931787
+dpdx = 0.0234759411877
 
-envir.set_brinkman_flow(alpha=37.24, a=0.15, res=101, U=U, 
-                        dpdx=dpdx, tspan=[0, 20])
+envir.set_brinkman_flow(alpha=37.24, a=0.15, res=101, U=U, dpdx=dpdx)
 envir.add_swarm()
 s = envir.swarms[0]
 
