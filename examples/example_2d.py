@@ -1,5 +1,9 @@
 #! /usr/bin/env python3
 
+from sys import platform
+if platform == 'darwin': # OSX backend does not support blitting
+    import matplotlib
+    matplotlib.use('TkAgg')
 import numpy as np
 import sys
 sys.path.append('..')
