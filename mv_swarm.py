@@ -21,11 +21,10 @@ def init_pos(swarm, func_name, kwargs):
     if func_name == init_methods[0]:
         random(swarm.positions, swarm.envir.L)
     elif func_name == init_methods[1]:
-        if 'z' in kwargs:
-            zarg = kwargs['z']
-        else:
-            zarg = None
-        point(swarm.positions, kwargs['x'], kwargs['y'], zarg)
+        # 'point' requires position data, give as tuple
+        # pos=(x,y,z) where z is optional
+        assert 'pos' in kwargs, 'point source requires pos key word argument'
+        point(swarm.positions, kwargs['pos'])
     else:
         print("Initialization method {} not implemented.".format(func_name))
         print("Exiting...")
@@ -52,18 +51,22 @@ def random(swarm_pos, L):
 
 
 
-def point(swarm_pos, x, y, z):
+def point(swarm_pos, pos):
     '''Point source'''
 
-    if z is None:
+    if len(pos) == 2:
+        x,y = pos
         print('Initializing swarm with at x={}, y={}'.format(x,y))
         swarm_pos[:,0] = x
         swarm_pos[:,1] = y
-    else:
+    elif len(pos) == 3:
+        x,y,z = pos
         print('Initializing swarm with at x={}, y={}, z={}'.format(x,y,z))
         swarm_pos[:,0] = x
         swarm_pos[:,1] = y
         swarm_pos[:,2] = z
+    else:
+        raise RuntimeError('Length of pos argument must be 2 or 3.')
 
 
 

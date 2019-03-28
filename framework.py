@@ -239,7 +239,6 @@ class environment:
                     if z > 0:
                         #Region I
                         flow[t,n,:] = z**2*px/(2*self.mu) + A*z + B
-                        flow[t,n,:] *= np.sign(v) # v only appears in abs
                     else:
                         #Region 2
                         if C > 0 and D > 0:
@@ -250,7 +249,6 @@ class environment:
                             flow[t,n,:] = exp(log(C)+alpha*z) - px/(alpha**2*self.mu)
                         else:
                             flow[t,n,:] = -px/(alpha**2*self.mu)
-                        flow[t,n,:] *= np.sign(v) # v only appears in abs
             else:
                 print('U=0: returning zero flow for these time-steps.')
             t += 1
