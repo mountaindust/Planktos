@@ -7,13 +7,13 @@ if platform == 'darwin': # OSX backend does not support blitting
     import matplotlib
     matplotlib.use('TkAgg')
 import numpy as np
-import framework, data_IO
+import Planktos, data_IO
 
 # Whether or not to show the cylinders based on the mesh data
 PLOT_CYL = True
 
 # Intialize environment
-envir = framework.environment()
+envir = Planktos.environment()
 
 # Import IBMAR data on flow
 envir.read_IBAMR3d_vtk_data('data/16towers_Re10_len10.vtk')
