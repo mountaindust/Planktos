@@ -7,10 +7,10 @@ if platform == 'darwin': # OSX backend does not support blitting
     import matplotlib
     matplotlib.use('TkAgg')
 import numpy as np
-import framework, data_IO
+import Planktos, data_IO
 
 # High-viscous enviornment (Re=10)
-envir = framework.environment(Lx=.5,Ly=.5,Lz=1, rho=1000, mu=10)
+envir = Planktos.environment(Lx=.5,Ly=.5,Lz=1, rho=1000, mu=10)
 # Specify static velocity along the top of the domain
 U = 0.09818
 # Specify pressure gradient

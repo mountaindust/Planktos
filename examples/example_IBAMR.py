@@ -8,7 +8,7 @@ if platform == 'darwin': # OSX backend does not support blitting
 import numpy as np
 import sys
 sys.path.append('..')
-import framework, data_IO
+import Planktos, data_IO
 
 def plot_cylinders(ax3d, bounds):
     '''Plot a vertical cylinder on a matplotlib Axes3D object.
@@ -31,7 +31,7 @@ def plot_cylinders(ax3d, bounds):
 
 
 
-envir = framework.environment()
+envir = Planktos.environment()
 envir.read_IBAMR3d_vtk_dataset('../tests/IBAMR_test_data', start=5, finish=None)
 # tile flow in a 3,3 grid
 envir.tile_flow(3,3)

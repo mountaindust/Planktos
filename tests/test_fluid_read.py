@@ -1,5 +1,5 @@
 """
-Test suite for loading fluid data into framework environment.
+Test suite for loading fluid data into Planktos environment.
 For use with py.test package.
 
 Created on April 13 2017
@@ -11,7 +11,7 @@ import sys
 import pytest
 import numpy as np
 import numpy.ma as ma
-import framework
+import Planktos
 try:
     import data_IO
     NO_VTK = False
@@ -34,7 +34,7 @@ no_vtk = pytest.mark.skipif(NO_VTK, reason = 'Could not load VTK')
 def test_IBAMR_load():
     '''Test loading IBAMR fluid data into the environment'''
     pathname = 'tests/IBAMR_test_data'
-    envir = framework.environment() # default environment, 2D.
+    envir = Planktos.environment() # default environment, 2D.
 
     ##### Load only the final recorded flow #####
     envir.read_IBAMR3d_vtk_dataset(pathname, start=5, finish=None)

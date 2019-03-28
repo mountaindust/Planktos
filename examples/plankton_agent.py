@@ -10,13 +10,13 @@ Email: cstric12@utk.edu
 import sys, warnings
 sys.path.append('../')
 import numpy as np
-import framework, mv_swarm
+import Planktos, mv_swarm
 
-class plankton(framework.swarm):
+class plankton(Planktos.swarm):
 
     def __init__(self, swarm_size=100, envir=None, phys=None, init='random', **kwargs):
         ''' Initalizes plankton in an environment.
-        See framework.swarm for further details.
+        See Planktos.swarm for further details.
 
         Arguments:
             envir: environment for plankton, defaults to a standard environment
@@ -27,7 +27,7 @@ class plankton(framework.swarm):
         '''
         # Create a suitable environment with no flow for plankton
         if envir is None:
-            envir = framework.environment(Lx=10, Ly=10, x_bndry=['zero','zero'],
+            envir = Planktos.environment(Lx=10, Ly=10, x_bndry=['zero','zero'],
                                        y_bndry=['noflux','zero'],
                                        mu=1000, rho=1000)
         super(plankton, self).__init__(swarm_size, envir, init, **kwargs)
@@ -49,7 +49,7 @@ class plankton(framework.swarm):
         # We want to respond to flow somehow. Here is a brief example.
         if self.envir.flow is None:
             # Just do the default thing
-            framework.swarm.update_positions(self, dt, params)
+            Planktos.swarm.update_positions(self, dt, params)
         else:
             # 3D?
             DIM3 = (len(self.envir.L) == 3)
