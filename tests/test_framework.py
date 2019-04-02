@@ -191,6 +191,20 @@ def test_brinkman_2D():
     assert sw is envir.swarms[0], "swarm not in envir list"
     assert len(envir.swarms) == 1, "too many swarms in envir"
 
+    # extend flow
+    flow_shape_old = envir.flow[0].shape
+    L_old = list(envir.L)
+    envir.extend(y_plus=5)
+    assert envir.flow[0].shape == envir.flow[1].shape
+    assert envir.flow[0].shape[2] == flow_shape_old[2]+5
+    assert envir.flow[1].shape[1] == flow_shape_old[1]
+    assert envir.flow[0][1,100,-1] == envir.flow[0][1,100,-6]
+    assert envir.flow[1][5,100,-1] == envir.flow[1][5,100,-6]
+    assert envir.L[0] == L_old[0]
+    assert envir.L[1] != L_old[1]
+    assert len(envir.flow_points[0]) == envir.flow[0].shape[1]
+    assert len(envir.flow_points[1]) == envir.flow[0].shape[2]
+
     # test movement beyond final flow time (should maintain last flow)
     for ii in range(20):
         sw.move(0.5)
@@ -233,11 +247,27 @@ def test_brinkman_3D():
     assert envir.flow_times is None, "flow_times should be None for stationary flow"
     assert len(envir.flow[0].shape) == 3, "Flow vector should be 3D"
 
-    #tile flow
+    # tile flow
     envir.tile_flow(2,2)
     assert len(envir.flow_points[0]) == len(envir.flow_points[1])
     assert len(envir.flow_points[0]) > len(envir.flow_points[2])
     assert len(envir.flow_points[0]) == envir.flow[0].shape[0]
+
+    # extend flow
+    flow_shape_old = envir.flow[0].shape
+    L_old = list(envir.L)
+    envir.extend(x_minus=5, y_plus=3)
+    assert envir.flow[0].shape == envir.flow[1].shape
+    assert envir.flow[1].shape == envir.flow[2].shape
+    assert envir.L[0] != L_old[0]
+    assert envir.L[1] != L_old[1]
+    assert envir.L[2] == L_old[2]
+    assert len(envir.flow_points[0]) == envir.flow[0].shape[0]
+    assert len(envir.flow_points[1]) == envir.flow[0].shape[1]
+    assert len(envir.flow_points[0]) == flow_shape_old[0] + 5
+    assert len(envir.flow_points[1]) == flow_shape_old[1] + 3
+    assert envir.flow[1].shape[2] == flow_shape_old[2]
+    
 
     envir.add_swarm()
     assert len(envir.swarms) == 1, "too many swarms in envir"
@@ -271,6 +301,21 @@ def test_brinkman_3D():
     envir.tile_flow(2,1)
     assert len(envir.flow_points[0]) > len(envir.flow_points[1])
     assert len(envir.flow_points[0]) == envir.flow[0].shape[1]
+
+    # extend flow
+    flow_shape_old = envir.flow[0].shape
+    L_old = list(envir.L)
+    envir.extend(x_minus=5, y_plus=3)
+    assert envir.flow[0].shape == envir.flow[1].shape
+    assert envir.flow[1].shape == envir.flow[2].shape
+    assert envir.L[0] != L_old[0]
+    assert envir.L[1] != L_old[1]
+    assert envir.L[2] == L_old[2]
+    assert len(envir.flow_points[0]) == envir.flow[0].shape[1]
+    assert len(envir.flow_points[1]) == envir.flow[0].shape[2]
+    assert len(envir.flow_points[0]) == flow_shape_old[1] + 5
+    assert len(envir.flow_points[1]) == flow_shape_old[2] + 3
+    assert envir.flow[1].shape[3] == flow_shape_old[3]
 
     # replace original flow for speed
     envir = Planktos.environment(Lz=10, rho=1000, mu=1000)
