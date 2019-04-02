@@ -15,8 +15,8 @@ import Planktos, mv_swarm
 
 ############                    Decorators                ############
 
-slow = pytest.mark.skipif(not pytest.config.getoption('--runslow'),
-    reason = 'need --runslow option to run')
+# @pytest.mark.slow : slow test, run only with --runslow
+# @pytest.mark.vkt : won't run if unable to load vtk
 
 ############   Basic Overrides to test different physics  ############
 
@@ -83,7 +83,7 @@ def test_basic():
 
 def test_brinkman_2D():
     '''Test several 2D dynamics using brinkman flow'''
-    ### Single swarm, time-independent flow ###
+    ########## Single swarm, time-independent flow ##########
     envir = Planktos.environment(Lx=10, Ly=10, x_bndry=('zero','zero'), 
                                y_bndry=('noflux','zero'), rho=1000, mu=5000)
     assert len(envir.L) == 2, "default dim is not 2"
@@ -123,6 +123,32 @@ def test_brinkman_2D():
     assert len(envir.flow_points[0]) == len(envir.flow_points[1])
     assert len(envir.flow_points[0]) == envir.flow[0].shape[0]
 
+    # extend flow
+    # note: currently flow is 301 points over length 30 domain in both directions
+    flow_shape_old = envir.flow[0].shape
+    envir.extend(x_minus=3, x_plus=2, y_minus=1, y_plus=5)
+    assert envir.flow[0].shape == envir.flow[1].shape
+    assert envir.flow[0].shape[0] == flow_shape_old[0]+5
+    assert envir.flow[0].shape[1] == flow_shape_old[1]+6
+
+    assert envir.flow[0][0,50] == envir.flow[0][3,50]
+    assert envir.flow[1][0,50] == envir.flow[1][3,50]
+    assert envir.flow[0][-1,50] == envir.flow[0][-3,50]
+    assert envir.flow[1][-1,50] == envir.flow[1][-3,50]
+
+    assert envir.flow[0][50,0] == envir.flow[0][50,1]
+    assert envir.flow[1][50,0] == envir.flow[1][50,1]
+    assert envir.flow[0][50,-1] == envir.flow[0][50,-6]
+    assert envir.flow[1][50,-1] == envir.flow[1][50,-6]
+
+    assert envir.L == [30.5, 30.6] # added total of .5 in x, .6 in y
+    assert envir.flow_points[0][-1] == 30.5
+    assert len(envir.flow_points[0]) == 100*3+1+5
+    assert len(envir.flow_points[1]) == 100*3+1+6
+    assert len(envir.flow_points[0]) == envir.flow[0].shape[0]
+    assert len(envir.flow_points[1]) == envir.flow[0].shape[1]
+    
+
     envir.add_swarm(swarm_s=110, init='random')
     sw = envir.swarms[0]
     for ii in range(20):
@@ -142,7 +168,7 @@ def test_brinkman_2D():
             assert 0 <= pos[0] <= envir.L[0] and pos[1] <= envir.L[1], \
                    "zero bndry not respected"
 
-    ### Single swarm, time-dependent flow ###
+    ########## Single swarm, time-dependent flow ##########
     envir = Planktos.environment(rho=1000, mu=20000)
     envir.set_brinkman_flow(alpha=66, a=1.5, res=101, U=0.1*np.arange(-2,6),
                             dpdx=np.ones(8)*0.22306, tspan=[0, 10])
@@ -164,6 +190,20 @@ def test_brinkman_2D():
     sw = Planktos.swarm(swarm_size=70, envir=envir, init='point', pos=(5,5))
     assert sw is envir.swarms[0], "swarm not in envir list"
     assert len(envir.swarms) == 1, "too many swarms in envir"
+
+    # extend flow
+    flow_shape_old = envir.flow[0].shape
+    L_old = list(envir.L)
+    envir.extend(y_plus=5)
+    assert envir.flow[0].shape == envir.flow[1].shape
+    assert envir.flow[0].shape[2] == flow_shape_old[2]+5
+    assert envir.flow[1].shape[1] == flow_shape_old[1]
+    assert envir.flow[0][1,100,-1] == envir.flow[0][1,100,-6]
+    assert envir.flow[1][5,100,-1] == envir.flow[1][5,100,-6]
+    assert envir.L[0] == L_old[0]
+    assert envir.L[1] != L_old[1]
+    assert len(envir.flow_points[0]) == envir.flow[0].shape[1]
+    assert len(envir.flow_points[1]) == envir.flow[0].shape[2]
 
     # test movement beyond final flow time (should maintain last flow)
     for ii in range(20):
@@ -199,7 +239,7 @@ def test_multiple_2D_swarms():
 
 def test_brinkman_3D():
     '''Test 3D dynamics using Brinkman flow'''
-    ### Single swarm, time-independent flow ###
+    ########## Single swarm, time-independent flow ##########
     envir = Planktos.environment(Lx=50, Ly=50, Lz=50, x_bndry=('zero','zero'), 
                                y_bndry=('zero','zero'),
                                z_bndry=('noflux','noflux'), rho=1000, mu=250000)
@@ -207,11 +247,27 @@ def test_brinkman_3D():
     assert envir.flow_times is None, "flow_times should be None for stationary flow"
     assert len(envir.flow[0].shape) == 3, "Flow vector should be 3D"
 
-    #tile flow
+    # tile flow
     envir.tile_flow(2,2)
     assert len(envir.flow_points[0]) == len(envir.flow_points[1])
     assert len(envir.flow_points[0]) > len(envir.flow_points[2])
     assert len(envir.flow_points[0]) == envir.flow[0].shape[0]
+
+    # extend flow
+    flow_shape_old = envir.flow[0].shape
+    L_old = list(envir.L)
+    envir.extend(x_minus=5, y_plus=3)
+    assert envir.flow[0].shape == envir.flow[1].shape
+    assert envir.flow[1].shape == envir.flow[2].shape
+    assert envir.L[0] != L_old[0]
+    assert envir.L[1] != L_old[1]
+    assert envir.L[2] == L_old[2]
+    assert len(envir.flow_points[0]) == envir.flow[0].shape[0]
+    assert len(envir.flow_points[1]) == envir.flow[0].shape[1]
+    assert len(envir.flow_points[0]) == flow_shape_old[0] + 5
+    assert len(envir.flow_points[1]) == flow_shape_old[1] + 3
+    assert envir.flow[1].shape[2] == flow_shape_old[2]
+    
 
     envir.add_swarm()
     assert len(envir.swarms) == 1, "too many swarms in envir"
@@ -236,7 +292,7 @@ def test_brinkman_3D():
             assert 0 <= pos[0] <= envir.L[0] and 0 <= pos[1] <= envir.L[1],\
                    "zero bndry not respected"
 
-    ### Single swarm, time-dependent flow ###
+    ########## Single swarm, time-dependent flow ##########
     envir = Planktos.environment(Lz=10, rho=1000, mu=1000)
     U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-3,6,2)))
     envir.set_brinkman_flow(alpha=66, a=1.5, res=50, U=U, 
@@ -245,6 +301,21 @@ def test_brinkman_3D():
     envir.tile_flow(2,1)
     assert len(envir.flow_points[0]) > len(envir.flow_points[1])
     assert len(envir.flow_points[0]) == envir.flow[0].shape[1]
+
+    # extend flow
+    flow_shape_old = envir.flow[0].shape
+    L_old = list(envir.L)
+    envir.extend(x_minus=5, y_plus=3)
+    assert envir.flow[0].shape == envir.flow[1].shape
+    assert envir.flow[1].shape == envir.flow[2].shape
+    assert envir.L[0] != L_old[0]
+    assert envir.L[1] != L_old[1]
+    assert envir.L[2] == L_old[2]
+    assert len(envir.flow_points[0]) == envir.flow[0].shape[1]
+    assert len(envir.flow_points[1]) == envir.flow[0].shape[2]
+    assert len(envir.flow_points[0]) == flow_shape_old[1] + 5
+    assert len(envir.flow_points[1]) == flow_shape_old[2] + 3
+    assert envir.flow[1].shape[3] == flow_shape_old[3]
 
     # replace original flow for speed
     envir = Planktos.environment(Lz=10, rho=1000, mu=1000)

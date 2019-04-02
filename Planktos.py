@@ -44,8 +44,8 @@ class environment:
             Lz: Length of domain in z direction, or None
             x_bndry: [left bndry condition, right bndry condition] (default: zero)
             y_bndry: [low bndry condition, high bndry condition] (default: zero)
-            flow: [x-vel field ndarray ([t],m,n), y-vel field ndarray ([t],m,n)]
-                Note! m is x index, n is y index, with the value of x/y increasing
+            flow: [x-vel field ndarray ([t],i,j,[k]), y-vel field ndarray ([t],i,j,[k])]
+                Note! i is x index, j is y index, with the value of x/y increasing
                 as the index increases. It is assumed that the flow mesh is equally 
                 spaced and includes values on the domain bndry
             flow_times: [tstart, tend] or iterable of times at which flow is specified
@@ -84,7 +84,7 @@ class environment:
         self.flow_points = None
         self.fluid_domain_LLC = None
         self.tiling = None # (x,y) tiling amount
-        self.orig_L = None # (Lx,Ly) before tiling
+        self.orig_L = None # (Lx,Ly) before tiling/extending
         self.flow = flow
 
         if flow is not None:
@@ -869,6 +869,7 @@ class environment:
         '''
 
         DIM3 = len(self.L) == 3
+        TIME_DEP = len(self.flow[0].shape) != len(self.L)
 
         if x is None:
             x = 1
@@ -879,7 +880,7 @@ class environment:
         else:
             tile_num = (x,y)
 
-        if len(self.flow[0].shape) == len(self.L):
+        if not TIME_DEP:
             # no time dependence
             flow_shape = self.flow[0].shape
             new_flow_shape = np.array(flow_shape)
@@ -941,6 +942,114 @@ class environment:
             new_points.append(self.flow_points[2])
         self.flow_points = tuple(new_points)
         self.tiling = (x,y)
+
+
+
+    def extend(self, x_minus=0, x_plus=0, y_minus=0, y_plus=0):
+        '''Duplicate the boundary of the fluid flow a number of times in 
+        the x (+ or -) and/or y (+ or -) directions, thus extending the domain
+        with constant fluid velocity. Good for extending domains with resolved
+        fluid flow before/after and on the sides of a structure.
+
+        Arguments:
+            x_minus: number of times to duplicate bndry in the x- direction
+            x_plus: number of times to duplicate bndry in the x+ direction
+            y_minus: number of times to duplicate bndry in the y- direction
+            y_plus: number of times to duplicate bndry in the y+ direction
+        '''
+
+        DIM3 = len(self.L) == 3
+        TIME_DEP = len(self.flow[0].shape) != len(self.L)
+
+        assert x_minus>=0 and x_plus>=0 and y_minus>=0 and y_plus>=0,\
+            "arguments must be nonnegative"
+
+        if not TIME_DEP:
+            res_x = self.L[0]/(self.flow[0].shape[0]-1)
+            res_y = self.L[1]/(self.flow[0].shape[1]-1)
+            for dim in range(len(self.L)):
+                # first, extend in x direction
+                self.flow[dim] = np.concatenate(tuple(
+                    np.array([self.flow[dim][0,...]]) for ii in range(x_minus)
+                    ) + (self.flow[dim],) + tuple(
+                    np.array([self.flow[dim][-1,...]]) for jj in range(x_plus)
+                    ), axis=0)
+                # next, extend in y direction. This requires a shuffling
+                #   (tranpose) of dimensions...
+                if DIM3:
+                    self.flow[dim] = np.concatenate(tuple(
+                        np.array([self.flow[dim][:,0,:]]).transpose(1,0,2)
+                        for ii in range(y_minus)
+                        ) + (self.flow[dim],) + tuple(
+                        np.array([self.flow[dim][:,-1,:]]).transpose(1,0,2)
+                        for jj in range(y_plus)
+                        ), axis=1)
+                else:
+                    self.flow[dim] = np.concatenate(tuple(
+                        np.array([self.flow[dim][:,0]]).T
+                        for ii in range(y_minus)
+                        ) + (self.flow[dim],) + tuple(
+                        np.array([self.flow[dim][:,-1]]).T
+                        for jj in range(y_plus)
+                        ), axis=1)
+
+        else:
+            res_x = self.L[0]/(self.flow[0].shape[1]-1)
+            res_y = self.L[1]/(self.flow[0].shape[2]-1)
+            for dim in range(len(self.L)):
+                if DIM3:
+                    # first, extend in x direction
+                    self.flow[dim] = np.concatenate(tuple(
+                        np.array([self.flow[dim][:,0,...]]).transpose(1,0,2,3) 
+                        for ii in range(x_minus)
+                        ) + (self.flow[dim],) + tuple(
+                        np.array([self.flow[dim][:,-1,...]]).transpose(1,0,2,3) 
+                        for jj in range(x_plus)
+                        ), axis=1)
+                    # next, extend in y direction
+                    self.flow[dim] = np.concatenate(tuple(
+                        np.array([self.flow[dim][:,:,0,:]]).transpose(1,2,0,3)
+                        for ii in range(y_minus)
+                        ) + (self.flow[dim],) + tuple(
+                        np.array([self.flow[dim][:,:,-1,:]]).transpose(1,2,0,3)
+                        for jj in range(y_plus)
+                        ), axis=2)
+                else:
+                    # first, extend in x direction
+                    self.flow[dim] = np.concatenate(tuple(
+                        np.array([self.flow[dim][:,0,:]]).transpose(1,0,2) 
+                        for ii in range(x_minus)
+                        ) + (self.flow[dim],) + tuple(
+                        np.array([self.flow[dim][:,-1,:]]).transpose(1,0,2) 
+                        for jj in range(x_plus)
+                        ), axis=1)
+                    # next, extend in y direction
+                    self.flow[dim] = np.concatenate(tuple(
+                        np.array([self.flow[dim][:,:,0]]).tranpsose(1,2,0)
+                        for ii in range(y_minus)
+                        ) + (self.flow[dim],) + tuple(
+                        np.array([self.flow[dim][:,:,-1]]).transpose(1,2,0)
+                        for jj in range(y_plus)
+                        ), axis=2)
+
+        # update environment dimensions and meshes
+        new_points = []
+        self.orig_L = tuple(self.L[:2])
+        self.L[0] += res_x*(x_minus+x_plus)
+        self.L[1] += res_y*(y_minus+y_plus)
+        if x_minus+x_plus > 0:
+            new_points.append(np.concatenate([self.flow_points[0]]+
+                [self.flow_points[0][-1]+res_x*np.arange(1,x_minus+x_plus+1)]))
+        else:
+            new_points.append(self.flow_points[0])
+        if y_minus+y_plus > 0:
+            new_points.append(np.concatenate([self.flow_points[1]]+
+                [self.flow_points[1][-1]+res_y*np.arange(1,y_minus+y_plus+1)]))
+        else:
+            new_points.append(self.flow_points[1])
+        if DIM3:
+            new_points.append(self.flow_points[2])
+        self.flow_points = tuple(new_points)
 
 
 
