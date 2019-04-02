@@ -20,9 +20,8 @@ except ModuleNotFoundError:
 
 ############                    Decorators                ############
 
-slow = pytest.mark.skipif(not pytest.config.getoption('--runslow'),
-    reason = 'need --runslow option to run')
-no_vtk = pytest.mark.skipif(NO_VTK, reason = 'Could not load VTK')
+# @pytest.mark.slow : slow test, run only with --runslow
+# @pytest.mark.vkt : won't run if unable to load vtk
 
 ###############################################################################
 #                                                                             #
@@ -30,7 +29,7 @@ no_vtk = pytest.mark.skipif(NO_VTK, reason = 'Could not load VTK')
 #                                                                             #
 ###############################################################################
 
-@no_vtk
+@pytest.mark.vtk
 def test_IBAMR_load():
     '''Test loading IBAMR fluid data into the environment'''
     pathname = 'tests/IBAMR_test_data'
@@ -132,7 +131,7 @@ def test_IBAMR_load():
                    "zero bndry not respected"
 
 
-@no_vtk
+@pytest.mark.vtk
 def test_point_load():
     '''Test loading singleton mesh points from an Unstructured Grid VTK in data_IO'''
     filename = 'tests/IBAMR_test_data/mesh_db.vtk'

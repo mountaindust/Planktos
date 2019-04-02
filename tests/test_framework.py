@@ -15,8 +15,8 @@ import Planktos, mv_swarm
 
 ############                    Decorators                ############
 
-slow = pytest.mark.skipif(not pytest.config.getoption('--runslow'),
-    reason = 'need --runslow option to run')
+# @pytest.mark.slow : slow test, run only with --runslow
+# @pytest.mark.vkt : won't run if unable to load vtk
 
 ############   Basic Overrides to test different physics  ############
 
