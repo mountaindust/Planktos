@@ -1075,7 +1075,7 @@ class environment:
                     raise RuntimeError("Swarm dimension smaller than environment dimension!")
             self.swarms.append(swarm_s)
         else:
-            return swarm(swarm_s, self, init, **kwargs)
+            return swarm(swarm_s, self, init=init, **kwargs)
             
 
 
@@ -1556,7 +1556,8 @@ class swarm:
             ax.set_ylabel('Y')
             ax.set_zlabel('Z')
             ax.set_title('Organism positions')
-            ax.set_aspect('equal','box')
+            # No real solution to 3D aspect ratio...
+            #ax.set_aspect('equal','box')
 
             # histograms
             int_ticks = MaxNLocator(nbins='auto', integer=True)
@@ -1942,7 +1943,7 @@ class swarm:
 
         if movie_filename is not None:
             try:
-                writer = animation.FFMpegFileWriter(fps=fps, 
+                writer = animation.FFMpegWriter(fps=fps, 
                     metadata=dict(artist='Christopher Strickland'))#, bitrate=1800)
                 anim.save(movie_filename, writer=writer, dpi=300)
                 print('Video saved to {}.'.format(movie_filename))
