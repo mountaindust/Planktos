@@ -1942,13 +1942,16 @@ class swarm:
 
         if movie_filename is not None:
             try:
-                Writer = animation.writers['ffmpeg']
-                writer = Writer(fps=fps, metadata=dict(artist='Christopher Strickland'))#, bitrate=1800)
+                writer = animation.FFMpegFileWriter(fps=fps, 
+                    metadata=dict(artist='Christopher Strickland'))#, bitrate=1800)
                 anim.save(movie_filename, writer=writer, dpi=300)
                 print('Video saved to {}.'.format(movie_filename))
             except:
                 print('Failed to save animation.')
-                print('Check that you have ffmpeg or mencoder installed!')
-                return
+                print('Check that you have ffmpeg or mencoder installed.')
+                print('If you are using Anaconda ffmpeg, check that it comes from')
+                print('  the conda-forge channel, as the default channel does not')
+                print('  include the H.264 encoder and is thus somewhat useless.')
+                raise
         else:
             plt.show()
