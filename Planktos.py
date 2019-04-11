@@ -1261,7 +1261,7 @@ class swarm:
             # Check for other swarms in environment and freeze them
             warned = False
             for s in self.envir.swarms:
-                if s is not self:
+                if s is not self and len(s.pos_history) < len(self.pos_history):
                     s.pos_history.append(s.positions)
                     if not warned:
                         warnings.warn("Other swarms in the environment were not"+
@@ -1276,7 +1276,7 @@ class swarm:
 
     def update_positions(self, dt, params):
         '''Update agent positions.
-        THIS IS THE METHOD TO OVERRIDE IF YOU WANT TO TRY DIFFERENT MOVEMENT!
+        THIS IS THE METHOD TO OVERRIDE IF YOU WANT DIFFERENT MOVEMENT!
         Note: do not change the call signature.
         The result of this method should be to overwrite self.positions with
         the new agent positions after a time step of length dt. It should also
