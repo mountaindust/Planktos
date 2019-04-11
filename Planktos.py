@@ -1158,16 +1158,16 @@ class environment:
 
 class swarm:
 
-    def __init__(self, swarm_size=100, envir=None, char_L=None, phys=None,
-                 init='random', **kwargs):
+    def __init__(self, swarm_size=100, envir=None, init='random', char_L=None,
+                 phys=None, **kwargs):
         ''' Initalizes planktos swarm in an environment.
 
         Arguments:
             swarm_size: Size of the swarm (int)
             envir: environment for the swarm, defaults to the standard environment
+            init: Method for initalizing positions.
             char_L: characteristic length
             phys: dictionary of physical properties to be used by equations of motion
-            init: Method for initalizing positions.
             kwargs: keyword arguments to be passed to the method for
                 initalizing positions
 
