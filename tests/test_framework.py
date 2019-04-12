@@ -49,7 +49,7 @@ class massive_swarm(Planktos.swarm):
         mu = mv_swarm.massive_drift(self, dt, high_re) + params[0]
 
         # Add jitter and move according to a Gaussian random walk.
-        mv_swarm.gaussian_walk(self.positions, dt*mu, dt*params[1])
+        mv_swarm.gaussian_walk(self, dt*mu, dt*params[1])
 
         # Update velocity of swarm
         self.velocity = (self.positions - self.pos_history[-1])/dt

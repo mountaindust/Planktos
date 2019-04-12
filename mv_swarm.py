@@ -19,12 +19,12 @@ def init_pos(swarm, func_name, kwargs):
     '''Initialize swarm positions with the correct function'''
 
     if func_name == init_methods[0]:
-        random(swarm.positions, swarm.envir.L)
+        random(swarm, swarm.envir.L)
     elif func_name == init_methods[1]:
         # 'point' requires position data, give as tuple
         # pos=(x,y,z) where z is optional
         assert 'pos' in kwargs, 'point source requires pos key word argument'
-        point(swarm.positions, kwargs['pos'])
+        point(swarm, kwargs['pos'])
     else:
         print("Initialization method {} not implemented.".format(func_name))
         print("Exiting...")
@@ -40,31 +40,31 @@ def init_pos(swarm, func_name, kwargs):
 
 init_methods = ['random', 'point']
 
-def random(swarm_pos, L):
+def random(swarm, L):
     '''Uniform random initialization'''
 
     print('Initializing swarm with uniform random positions...')
-    swarm_pos[:,0] = np.random.uniform(0, L[0], swarm_pos.shape[0])
-    swarm_pos[:,1] = np.random.uniform(0, L[1], swarm_pos.shape[0])
+    swarm.positions[:,0] = swarm.rndState.uniform(0, L[0], swarm.positions.shape[0])
+    swarm.positions[:,1] = swarm.rndState.uniform(0, L[1], swarm.positions.shape[0])
     if len(L) == 3:
-        swarm_pos[:,2] = np.random.uniform(0, L[2], swarm_pos.shape[0])
+        swarm.positions[:,2] = swarm.rndState.uniform(0, L[2], swarm.positions.shape[0])
 
 
 
-def point(swarm_pos, pos):
+def point(swarm, pos):
     '''Point source'''
 
     if len(pos) == 2:
         x,y = pos
         print('Initializing swarm with at x={}, y={}'.format(x,y))
-        swarm_pos[:,0] = x
-        swarm_pos[:,1] = y
+        swarm.positions[:,0] = x
+        swarm.positions[:,1] = y
     elif len(pos) == 3:
         x,y,z = pos
         print('Initializing swarm with at x={}, y={}, z={}'.format(x,y,z))
-        swarm_pos[:,0] = x
-        swarm_pos[:,1] = y
-        swarm_pos[:,2] = z
+        swarm.positions[:,0] = x
+        swarm.positions[:,1] = y
+        swarm.positions[:,2] = z
     else:
         raise RuntimeError('Length of pos argument must be 2 or 3.')
 
@@ -76,7 +76,7 @@ def point(swarm_pos, pos):
 #                                                                           #
 #############################################################################
 
-def gaussian_walk(swarm_pos, mean, cov):
+def gaussian_walk(swarm, mean, cov):
     ''' Move all rows of pos_array a random distance specified by
     a gaussian distribution with given mean and covarience matrix.
 
@@ -87,10 +87,11 @@ def gaussian_walk(swarm_pos, mean, cov):
         cov: a single covariance matrix'''
 
     if len(mean.shape) == 1:
-        swarm_pos += np.random.multivariate_normal(mean, cov, swarm_pos.shape[0])
+        swarm.positions += swarm.rndState.multivariate_normal(mean, cov,
+            swarm.positions.shape[0])
     else:
-        swarm_pos += np.random.multivariate_normal(np.zeros(mean.shape[1]),
-                                                   cov, swarm_pos.shape[0]) + mean
+        swarm.positions += swarm.rndState.multivariate_normal(np.zeros(mean.shape[1]),
+            cov, swarm.positions.shape[0]) + mean
                                                    
 
 

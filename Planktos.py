@@ -1053,12 +1053,13 @@ class environment:
 
 
 
-    def add_swarm(self, swarm_s=100, init='random', **kwargs):
+    def add_swarm(self, swarm_s=100, init='random', seed=None, **kwargs):
         ''' Adds a swarm into this environment.
 
         Arguments:
             swarm_s: swarm object or size of the swarm (int)
             init: Method for initalizing positions.
+            seed: Seed for random number generator
             kwargs: keyword arguments to be passed to the method for
                 initalizing positions
         '''
@@ -1075,7 +1076,7 @@ class environment:
                     raise RuntimeError("Swarm dimension smaller than environment dimension!")
             self.swarms.append(swarm_s)
         else:
-            return swarm(swarm_s, self, init=init, **kwargs)
+            return swarm(swarm_s, self, init=init, seed=seed, **kwargs)
             
 
 
@@ -1158,14 +1159,15 @@ class environment:
 
 class swarm:
 
-    def __init__(self, swarm_size=100, envir=None, init='random', char_L=None,
-                 phys=None, **kwargs):
+    def __init__(self, swarm_size=100, envir=None, init='random', seed=None, 
+                 char_L=None, phys=None, **kwargs):
         ''' Initalizes planktos swarm in an environment.
 
         Arguments:
             swarm_size: Size of the swarm (int)
             envir: environment for the swarm, defaults to the standard environment
             init: Method for initalizing positions.
+            seed: Seed for random number generator, int or None
             char_L: characteristic length
             phys: dictionary of physical properties to be used by equations of motion
             kwargs: keyword arguments to be passed to the method for
@@ -1198,6 +1200,9 @@ class swarm:
         # set physical properties
         self.char_L = char_L
         self.phys = phys
+
+        # initialize random number generator
+        self.rndState = np.random.RandomState(seed=seed)
 
         # initialize bug locations
         self.positions = ma.zeros((swarm_size, len(self.envir.L)))
@@ -1314,7 +1319,7 @@ class swarm:
 
         ### Active movement ###
         # Add jitter and move according to a Gaussian random walk.
-        mv_swarm.gaussian_walk(self.positions, dt*mu, dt*params[1])
+        mv_swarm.gaussian_walk(self, dt*mu, dt*params[1])
 
         # Update velocity of swarm
         self.velocity = (self.positions - self.pos_history[-1])/dt
