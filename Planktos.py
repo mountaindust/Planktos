@@ -1053,12 +1053,13 @@ class environment:
 
 
 
-    def add_swarm(self, swarm_s=100, init='random', **kwargs):
+    def add_swarm(self, swarm_s=100, init='random', seed=None, **kwargs):
         ''' Adds a swarm into this environment.
 
         Arguments:
             swarm_s: swarm object or size of the swarm (int)
             init: Method for initalizing positions.
+            seed: Seed for random number generator
             kwargs: keyword arguments to be passed to the method for
                 initalizing positions
         '''
@@ -1075,7 +1076,7 @@ class environment:
                     raise RuntimeError("Swarm dimension smaller than environment dimension!")
             self.swarms.append(swarm_s)
         else:
-            return swarm(swarm_s, self, init, **kwargs)
+            return swarm(swarm_s, self, init=init, seed=seed, **kwargs)
             
 
 
@@ -1158,16 +1159,17 @@ class environment:
 
 class swarm:
 
-    def __init__(self, swarm_size=100, envir=None, char_L=None, phys=None,
-                 init='random', **kwargs):
+    def __init__(self, swarm_size=100, envir=None, init='random', seed=None, 
+                 char_L=None, phys=None, **kwargs):
         ''' Initalizes planktos swarm in an environment.
 
         Arguments:
             swarm_size: Size of the swarm (int)
             envir: environment for the swarm, defaults to the standard environment
+            init: Method for initalizing positions.
+            seed: Seed for random number generator, int or None
             char_L: characteristic length
             phys: dictionary of physical properties to be used by equations of motion
-            init: Method for initalizing positions.
             kwargs: keyword arguments to be passed to the method for
                 initalizing positions
 
@@ -1198,6 +1200,9 @@ class swarm:
         # set physical properties
         self.char_L = char_L
         self.phys = phys
+
+        # initialize random number generator
+        self.rndState = np.random.RandomState(seed=seed)
 
         # initialize bug locations
         self.positions = ma.zeros((swarm_size, len(self.envir.L)))
@@ -1261,7 +1266,7 @@ class swarm:
             # Check for other swarms in environment and freeze them
             warned = False
             for s in self.envir.swarms:
-                if s is not self:
+                if s is not self and len(s.pos_history) < len(self.pos_history):
                     s.pos_history.append(s.positions)
                     if not warned:
                         warnings.warn("Other swarms in the environment were not"+
@@ -1276,7 +1281,7 @@ class swarm:
 
     def update_positions(self, dt, params):
         '''Update agent positions.
-        THIS IS THE METHOD TO OVERRIDE IF YOU WANT TO TRY DIFFERENT MOVEMENT!
+        THIS IS THE METHOD TO OVERRIDE IF YOU WANT DIFFERENT MOVEMENT!
         Note: do not change the call signature.
         The result of this method should be to overwrite self.positions with
         the new agent positions after a time step of length dt. It should also
@@ -1314,7 +1319,7 @@ class swarm:
 
         ### Active movement ###
         # Add jitter and move according to a Gaussian random walk.
-        mv_swarm.gaussian_walk(self.positions, dt*mu, dt*params[1])
+        mv_swarm.gaussian_walk(self, dt*mu, dt*params[1])
 
         # Update velocity of swarm
         self.velocity = (self.positions - self.pos_history[-1])/dt
@@ -1556,7 +1561,8 @@ class swarm:
             ax.set_ylabel('Y')
             ax.set_zlabel('Z')
             ax.set_title('Organism positions')
-            ax.set_aspect('equal','box')
+            # No real solution to 3D aspect ratio...
+            #ax.set_aspect('equal','box')
 
             # histograms
             int_ticks = MaxNLocator(nbins='auto', integer=True)
@@ -1942,13 +1948,16 @@ class swarm:
 
         if movie_filename is not None:
             try:
-                Writer = animation.writers['ffmpeg']
-                writer = Writer(fps=fps, metadata=dict(artist='Christopher Strickland'))#, bitrate=1800)
+                writer = animation.FFMpegWriter(fps=fps, 
+                    metadata=dict(artist='Christopher Strickland'))#, bitrate=1800)
                 anim.save(movie_filename, writer=writer, dpi=300)
                 print('Video saved to {}.'.format(movie_filename))
             except:
                 print('Failed to save animation.')
-                print('Check that you have ffmpeg or mencoder installed!')
-                return
+                print('Check that you have ffmpeg or mencoder installed.')
+                print('If you are using Anaconda ffmpeg, check that it comes from')
+                print('  the conda-forge channel, as the default channel does not')
+                print('  include the H.264 encoder and is thus somewhat useless.')
+                raise
         else:
             plt.show()

@@ -14,7 +14,7 @@ import Planktos, mv_swarm
 
 class plankton(Planktos.swarm):
 
-    def __init__(self, swarm_size=100, envir=None, phys=None, init='random', **kwargs):
+    def __init__(self, swarm_size=100, envir=None, init='random', **kwargs):
         ''' Initalizes plankton in an environment.
         See Planktos.swarm for further details.
 
@@ -79,4 +79,4 @@ class plankton(Planktos.swarm):
             drift = fluid_drift + resist + params[0]
 
             # Move according to random walk with drift
-            mv_swarm.gaussian_walk(self.positions, dt*drift, dt*params[1])
+            mv_swarm.gaussian_walk(self, dt*drift, dt*params[1])

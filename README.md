@@ -11,8 +11,9 @@ A suggested BibTeX entry is included in the file Planktos.bib.
 ### Dependencies
 - Python 3.5+
 - numpy/scipy
-- matplotlib
+- matplotlib 3.x
 - vtk
+- ffmpeg from conda-forge (not from default anaconda. Use `conda install -c conda-forge ffmpeg`.)
 - pytest (if running tests)
 
 You will also need a Python 2.7 environment with numpy and VisIt installed to convert IBAMR data into vtk data.
