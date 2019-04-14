@@ -14,12 +14,13 @@ import numpy as np
 import Planktos, data_IO
 
 # Whether or not to show the cylinders based on the mesh data
-PLOT_MODEL = False
+PLOT_MODEL = True
 
 # Intialize environment
 envir = Planktos.environment()
 
-# Import IBMAR data on flow
+############     Import IBMAR data on flow and extend domain     ############
+
 print('Reading VTK data. This will take a while...')
 envir.read_IBAMR3d_vtk_data('data/RAW_10x20x2cm_8_5s.vtk')
 print('Domain set to {} mm.'.format(envir.L))
@@ -39,19 +40,24 @@ print('Flow mesh is {}.'.format(envir.flow[0].shape))
 model_bounds = (2.5,77.5,85,235,0,20.5)
 print('-------------------------------------------')
 
-# Add swarm right in front of model
-s = envir.add_swarm(swarm_s=1000, init='point', pos=(40,84,1))
+
+############      Add swarm right in front of model      ############
+s = envir.add_swarm(swarm_s=1, init='point', pos=(40,84,1))
 
 # Specify amount of jitter (mean, covariance)
 # Set sigma**2 as 0.5cm**2/sec =  
 # (sigma**2=2*D, D for brine shrimp given in Kohler, Swank, Haefner, Powell 2010)
 shrimp_walk = ([0,0,0], 50*np.eye(3))
 
-print('Moving swarm...')
-for ii in range(240):
-    s.move(0.1, shrimp_walk)
 
-########## This bit plots the model as a translucent rectangle ##########
+############ Move the swarm according to the prescribed rules above ############
+
+print('Moving swarm...')
+for ii in range(10): #240
+    s.move(0.1, shrimp_walk) #1000
+
+
+############ This bit plots the model as a translucent rectangle ############
 
 def plot_model_rect(ax3d, bounds):
     '''Plot the model as a translucent rectangular prism
@@ -64,22 +70,22 @@ def plot_model_rect(ax3d, bounds):
     z_range = bounds[4:]
 
     xx, yy = np.meshgrid(x_range, y_range)
-    ax3d.plot_wireframe(xx, yy, z_range[0], color="g")
-    ax3d.plot_surface(xx, yy, z_range[0], color="g", alpha=0.2)
-    ax3d.plot_wireframe(xx, yy, z_range[1], color="g")
-    ax3d.plot_surface(xx, yy, z_range[1], color="g", alpha=0.2)
+    ax3d.plot_wireframe(xx, yy, z_range[0]*np.ones_like(xx), color="g")
+    ax3d.plot_surface(xx, yy, z_range[0]*np.ones_like(xx), color="g", alpha=0.2)
+    ax3d.plot_wireframe(xx, yy, z_range[1]*np.ones_like(xx), color="g")
+    ax3d.plot_surface(xx, yy, z_range[1]*np.ones_like(xx), color="g", alpha=0.2)
 
     yy, zz = np.meshgrid(y_range, z_range)
-    ax3d.plot_wireframe(x_range[0], yy, zz, color="g")
-    ax3d.plot_surface(x_range[0], yy, zz, color="g", alpha=0.2)
-    ax3d.plot_wireframe(x_range[1], yy, zz, color="g")
-    ax3d.plot_surface(x_range[1], yy, zz, color="g", alpha=0.2)
+    ax3d.plot_wireframe(x_range[0]*np.ones_like(yy), yy, zz, color="g")
+    ax3d.plot_surface(x_range[0]*np.ones_like(yy), yy, zz, color="g", alpha=0.2)
+    ax3d.plot_wireframe(x_range[1]*np.ones_like(yy), yy, zz, color="g")
+    ax3d.plot_surface(x_range[1]*np.ones_like(yy), yy, zz, color="g", alpha=0.2)
 
     xx, zz = np.meshgrid(x_range, z_range)
-    ax3d.plot_wireframe(xx, y_range[0], zz, color="g")
-    ax3d.plot_surface(xx, y_range[0], zz, color="g", alpha=0.2)
-    ax3d.plot_wireframe(xx, y_range[1], zz, color="g")
-    ax3d.plot_surface(xx, y_range[1], zz, color="g", alpha=0.2)
+    ax3d.plot_wireframe(xx, y_range[0]*np.ones_like(xx), zz, color="g")
+    ax3d.plot_surface(xx, y_range[0]*np.ones_like(xx), zz, color="g", alpha=0.2)
+    ax3d.plot_wireframe(xx, y_range[1]*np.ones_like(xx), zz, color="g")
+    ax3d.plot_surface(xx, y_range[1]*np.ones_like(xx), zz, color="g", alpha=0.2)
 
 if PLOT_MODEL:
     # Add model to plot list
@@ -87,6 +93,7 @@ if PLOT_MODEL:
     envir.plot_structs_args.append((model_bounds,))
 
 
-##########              Plot!               ###########
+############              Plot!               #############
+print('Creating movie...')
 s.plot_all('brine_shrimp_IBFE.mp4', fps=10)
 #s.plot_all()
