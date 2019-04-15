@@ -44,6 +44,7 @@ class environment:
             Lz: Length of domain in z direction, or None
             x_bndry: [left bndry condition, right bndry condition] (default: zero)
             y_bndry: [low bndry condition, high bndry condition] (default: zero)
+            z_bndry: [low bndry condition, high bndry condition] (default: noflux)
             flow: [x-vel field ndarray ([t],i,j,[k]), y-vel field ndarray ([t],i,j,[k])]
                 Note! i is x index, j is y index, with the value of x/y increasing
                 as the index increases. It is assumed that the flow mesh is equally 
@@ -1098,27 +1099,29 @@ class environment:
         '''
 
         supprted_conds = ['zero', 'noflux']
-        default_conds = ['zero', 'zero']
+        default_conds_x = ['zero', 'zero']
+        default_conds_y = ['zero', 'zero']
+        default_conds_z = ['noflux', 'noflux']
 
         self.bndry = []
 
         if x_bndry is None:
             # default boundary conditions
-            self.bndry.append(default_conds)
+            self.bndry.append(default_conds_x)
         elif x_bndry[0] not in supprted_conds or x_bndry[1] not in supprted_conds:
             raise NameError("X boundary condition {} not implemented.".format(x_bndry))
         else:
             self.bndry.append(x_bndry)
         if y_bndry is None:
             # default boundary conditions
-            self.bndry.append(default_conds)
+            self.bndry.append(default_conds_y)
         elif y_bndry[0] not in supprted_conds or y_bndry[1] not in supprted_conds:
             raise NameError("Y boundary condition {} not implemented.".format(y_bndry))
         else:
             self.bndry.append(y_bndry)
         if z_bndry is None:
             # default boundary conditions
-            self.bndry.append(default_conds)
+            self.bndry.append(default_conds_z)
         elif z_bndry[0] not in supprted_conds or z_bndry[1] not in supprted_conds:
             raise NameError("Z boundary condition {} not implemented.".format(z_bndry))
         else:
