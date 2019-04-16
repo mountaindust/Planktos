@@ -11,6 +11,8 @@ if platform == 'darwin': # OSX backend does not support blitting
     import matplotlib
     matplotlib.use('TkAgg')
 import numpy as np
+import pandas as pd
+from matplotlib import pyplot as plt
 import Planktos, data_IO
 
 # Whether or not to show the cylinders based on the mesh data
@@ -55,8 +57,10 @@ shrimp_walk = ([0,0,0], 50*np.eye(3))
 ############ Move the swarm according to the prescribed rules above ############
 
 print('Moving swarm...')
-for ii in range(10): #240
-    s.move(0.1, shrimp_walk) #1000
+dt = 0.1
+last_time = 10 #240
+for ii in range(last_time):
+    s.move(dt, shrimp_walk)
 
 
 ############ Gather data about flow tank observation area ############
@@ -71,9 +75,6 @@ cell_size=20
 gy_cells = [(g_bounds[0]+20*k, g_bounds[0]+20*k+20) for k in np.arange(8)%2]
 by_cells = [(b_bounds[0]+20*k, b_bounds[0]+20*k+20) for k in np.arange(8)%2]
 z_cells = [(20*k, 20*k+20) for k in np.arange(8)//2]
-# DEBUG
-print(gy_cells)
-print(by_cells)
 
 # Tabulate counts for each cell
 print('Obtaining counts...')
@@ -95,14 +96,6 @@ for shrimps in s.pos_history: # each time point in history
                zcell[0] <= shrimps[ii,2] < zcell[1]:
                b_cells_cnts[-1][-1] += 1
 
-# DEBUG
-assert len(g_cells_cnts) == len(s.pos_history)
-assert len(b_cells_cnts) == len(s.pos_history)
-assert len(g_cells_cnts[-1]) == 8
-assert len(b_cells_cnts[-1]) == 8
-assert len(g_cells_cnts[-2]) == 8
-assert len(b_cells_cnts[-2]) == 8
-
 # append last (current) time point
 g_cells_cnts.append([])
 b_cells_cnts.append([])
@@ -118,6 +111,32 @@ for bcell, zcell in zip(by_cells, z_cells): # each blue cell
         if bcell[0] <= shrimps[ii,1] < bcell[1] and\
             zcell[0] <= shrimps[ii,2] < zcell[1]:
             b_cells_cnts[-1][-1] += 1
+
+
+############ Create plot using all time points ############
+plot_order = [7,8,5,6,3,4,1,2]
+g_cells_cnts = np.array(g_cells_cnts)
+b_cells_cnts = np.array(b_cells_cnts)
+time_mesh = envir.time_history
+time_mesh.append(envir.time)
+
+plt.figure(figsize=(4.8, 6.4))
+for n, plot in enumerate(plot_order):
+    plt.subplot(4,2,plot)
+    plt.plot(time_mesh, g_cells_cnts[:,n])
+    plt.xlabel('time (s)')
+    plt.ylabel('counts')
+    plt.title('Cell number {}'.format(n))
+plt.savefig('green_cell_plots.pdf')
+
+plt.figure(figsize=(4.8, 6.4))
+for n, plot in enumerate(plot_order):
+    plt.subplot(4,2,plot)
+    plt.plot(time_mesh, b_cells_cnts[:,n])
+    plt.xlabel('time (s)')
+    plt.ylabel('counts')
+    plt.title('Cell number {}'.format(n))
+plt.savefig('blue_cell_plots.pdf')
         
 
 ############ This bit plots the model as a translucent rectangle ############
