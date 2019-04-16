@@ -27,15 +27,17 @@ print('Domain set to {} mm.'.format(envir.L))
 print('Flow mesh is {}.'.format(envir.flow[0].shape))
 print('-------------------------------------------')
 # Domain should be 80x320x80 mm
+# Flow mesh is 256x1024x256, so resolution is 5/16 mm per unit grid
 # Model sits (from,to): (2.5,77.5), (85,235), (0.5,20.5)
 # Need: 182 mm downstream from model to capture both zones
 
-# Extend domain downstream so Y is 420mm total length
-envir.extend(y_plus=100)
+# Extend domain downstream so Y is 440mm total length
+# Need to extend flow mesh by 120mm/(5/16)=384 mesh units
+envir.extend(y_plus=384)
 print('Domain extended to {} mm'.format(envir.L))
 print('Flow mesh is {}.'.format(envir.flow[0].shape))
 # NOW:
-# Domain should be 80x420x80 mm
+# Domain should be 80x460x80 mm
 # Model sits (from,to): (2.5,77.5), (85,235), (0.5,20.5)
 model_bounds = (2.5,77.5,85,235,0,20.5)
 print('-------------------------------------------')
@@ -45,7 +47,7 @@ print('-------------------------------------------')
 s = envir.add_swarm(swarm_s=1, init='point', pos=(40,84,1))
 
 # Specify amount of jitter (mean, covariance)
-# Set sigma**2 as 0.5cm**2/sec =  
+# Set sigma**2 as 0.5cm**2/sec = 50mm**2/sec, sigma~7mm
 # (sigma**2=2*D, D for brine shrimp given in Kohler, Swank, Haefner, Powell 2010)
 shrimp_walk = ([0,0,0], 50*np.eye(3))
 
@@ -56,6 +58,67 @@ print('Moving swarm...')
 for ii in range(10): #240
     s.move(0.1, shrimp_walk) #1000
 
+
+############ Gather data about flow tank observation area ############
+# Observation squares are 2cm**2 until the top
+# Green zone begins right where the model ends, at y=235. Ends at y=275 mm.
+g_bounds = (235, 275)
+# Blue zone begins 14.2-4=10.2 cm later, at y=377 mm. Ends at y=417 mm.
+b_bounds = (377, 417)
+# Each cell is 2cm x 2cm
+cell_size=20
+
+gy_cells = [(g_bounds[0]+20*k, g_bounds[0]+20*k+20) for k in np.arange(8)%2]
+by_cells = [(b_bounds[0]+20*k, b_bounds[0]+20*k+20) for k in np.arange(8)%2]
+z_cells = [(20*k, 20*k+20) for k in np.arange(8)//2]
+# DEBUG
+print(gy_cells)
+print(by_cells)
+
+# Tabulate counts for each cell
+print('Obtaining counts...')
+g_cells_cnts = list()
+b_cells_cnts = list()
+for shrimps in s.pos_history: # each time point in history
+    g_cells_cnts.append([])
+    b_cells_cnts.append([])
+    for gcell, zcell in zip(gy_cells, z_cells): # each green cell
+        g_cells_cnts[-1].append(0)
+        for ii in range(shrimps.shape[0]): # each shrimp
+            if gcell[0] <= shrimps[ii,1] < gcell[1] and\
+               zcell[0] <= shrimps[ii,2] < zcell[1]:
+               g_cells_cnts[-1][-1] += 1
+    for bcell, zcell in zip(by_cells, z_cells): # each blue cell
+        b_cells_cnts[-1].append(0)
+        for ii in range(shrimps.shape[0]): # each shrimp
+            if bcell[0] <= shrimps[ii,1] < bcell[1] and\
+               zcell[0] <= shrimps[ii,2] < zcell[1]:
+               b_cells_cnts[-1][-1] += 1
+
+# DEBUG
+assert len(g_cells_cnts) == len(s.pos_history)
+assert len(b_cells_cnts) == len(s.pos_history)
+assert len(g_cells_cnts[-1]) == 8
+assert len(b_cells_cnts[-1]) == 8
+assert len(g_cells_cnts[-2]) == 8
+assert len(b_cells_cnts[-2]) == 8
+
+# append last (current) time point
+g_cells_cnts.append([])
+b_cells_cnts.append([])
+for gcell, zcell in zip(gy_cells, z_cells): # each green cell
+    g_cells_cnts[-1].append(0)
+    for ii in range(s.positions.shape[0]): # each shrimp
+        if gcell[0] <= shrimps[ii,1] < gcell[1] and\
+            zcell[0] <= shrimps[ii,2] < zcell[1]:
+            g_cells_cnts[-1][-1] += 1
+for bcell, zcell in zip(by_cells, z_cells): # each blue cell
+    b_cells_cnts[-1].append(0)
+    for ii in range(s.positions.shape[0]): # each shrimp
+        if bcell[0] <= shrimps[ii,1] < bcell[1] and\
+            zcell[0] <= shrimps[ii,2] < zcell[1]:
+            b_cells_cnts[-1][-1] += 1
+        
 
 ############ This bit plots the model as a translucent rectangle ############
 
@@ -70,27 +133,50 @@ def plot_model_rect(ax3d, bounds):
     z_range = bounds[4:]
 
     xx, yy = np.meshgrid(x_range, y_range)
-    ax3d.plot_wireframe(xx, yy, z_range[0]*np.ones_like(xx), color="g")
-    ax3d.plot_surface(xx, yy, z_range[0]*np.ones_like(xx), color="g", alpha=0.2)
-    ax3d.plot_wireframe(xx, yy, z_range[1]*np.ones_like(xx), color="g")
-    ax3d.plot_surface(xx, yy, z_range[1]*np.ones_like(xx), color="g", alpha=0.2)
+    ax3d.plot_wireframe(xx, yy, z_range[0]*np.ones_like(xx), color="lightgray")
+    ax3d.plot_surface(xx, yy, z_range[0]*np.ones_like(xx), color="lightgray", alpha=0.2)
+    ax3d.plot_wireframe(xx, yy, z_range[1]*np.ones_like(xx), color="lightgray")
+    ax3d.plot_surface(xx, yy, z_range[1]*np.ones_like(xx), color="lightgray", alpha=0.2)
 
     yy, zz = np.meshgrid(y_range, z_range)
-    ax3d.plot_wireframe(x_range[0]*np.ones_like(yy), yy, zz, color="g")
-    ax3d.plot_surface(x_range[0]*np.ones_like(yy), yy, zz, color="g", alpha=0.2)
-    ax3d.plot_wireframe(x_range[1]*np.ones_like(yy), yy, zz, color="g")
-    ax3d.plot_surface(x_range[1]*np.ones_like(yy), yy, zz, color="g", alpha=0.2)
+    ax3d.plot_wireframe(x_range[0]*np.ones_like(yy), yy, zz, color="lightgray")
+    ax3d.plot_surface(x_range[0]*np.ones_like(yy), yy, zz, color="lightgray", alpha=0.2)
+    ax3d.plot_wireframe(x_range[1]*np.ones_like(yy), yy, zz, color="lightgray")
+    ax3d.plot_surface(x_range[1]*np.ones_like(yy), yy, zz, color="lightgray", alpha=0.2)
 
     xx, zz = np.meshgrid(x_range, z_range)
-    ax3d.plot_wireframe(xx, y_range[0]*np.ones_like(xx), zz, color="g")
-    ax3d.plot_surface(xx, y_range[0]*np.ones_like(xx), zz, color="g", alpha=0.2)
-    ax3d.plot_wireframe(xx, y_range[1]*np.ones_like(xx), zz, color="g")
-    ax3d.plot_surface(xx, y_range[1]*np.ones_like(xx), zz, color="g", alpha=0.2)
+    ax3d.plot_wireframe(xx, y_range[0]*np.ones_like(xx), zz, color="lightgray")
+    ax3d.plot_surface(xx, y_range[0]*np.ones_like(xx), zz, color="lightgray", alpha=0.2)
+    ax3d.plot_wireframe(xx, y_range[1]*np.ones_like(xx), zz, color="lightgray")
+    ax3d.plot_surface(xx, y_range[1]*np.ones_like(xx), zz, color="lightgray", alpha=0.2)
+
+
+############ This bit plots the sample areas ############
+
+def plot_sample_areas(ax3d, g_range, b_range, x_range):
+    '''Plot the sample areas on the base of the domain
+
+    Arguments:
+        ax3d: Axes3D object
+        g_bounds: (ymin, ymax)
+        b_bounds: (ymin, ymax)
+        x_bounds: (xmin, xmax)'''
+    xx, yy = np.meshgrid(x_range, g_range)
+    ax3d.plot_wireframe(xx, yy, np.zeros_like(xx), color="mediumseagreen")
+    ax3d.plot_surface(xx, yy, np.zeros_like(xx), color="mediumseagreen", alpha=0.2)
+    
+    xx, yy = np.meshgrid(x_range, b_range)
+    ax3d.plot_wireframe(xx, yy, np.zeros_like(xx), color="cornflowerblue")
+    ax3d.plot_surface(xx, yy, np.zeros_like(xx), color="cornflowerblue", alpha=0.2)
+
 
 if PLOT_MODEL:
     # Add model to plot list
     envir.plot_structs.append(plot_model_rect)
     envir.plot_structs_args.append((model_bounds,))
+    # Add sample areas to plot list
+    envir.plot_structs.append(plot_sample_areas)
+    envir.plot_structs_args.append((g_bounds, b_bounds, (0, envir.L[0])))
 
 
 ############              Plot!               #############
