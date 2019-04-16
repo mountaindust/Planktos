@@ -46,7 +46,7 @@ print('-------------------------------------------')
 
 
 ############      Add swarm right in front of model      ############
-s = envir.add_swarm(swarm_s=1, init='point', pos=(40,84,1))
+s = envir.add_swarm(swarm_s=1000, init='point', pos=(40,84,1))
 
 # Specify amount of jitter (mean, covariance)
 # Set sigma**2 as 0.5cm**2/sec = 50mm**2/sec, sigma~7mm
@@ -58,8 +58,8 @@ shrimp_walk = ([0,0,0], 50*np.eye(3))
 
 print('Moving swarm...')
 dt = 0.1
-last_time = 10 #240
-for ii in range(last_time):
+num_of_steps = 240
+for ii in range(num_of_steps):
     s.move(dt, shrimp_walk)
 
 
@@ -117,7 +117,7 @@ for bcell, zcell in zip(by_cells, z_cells): # each blue cell
 plot_order = [7,8,5,6,3,4,1,2]
 g_cells_cnts = np.array(g_cells_cnts)
 b_cells_cnts = np.array(b_cells_cnts)
-time_mesh = envir.time_history
+time_mesh = list(envir.time_history)
 time_mesh.append(envir.time)
 
 plt.figure(figsize=(4.8, 6.4))
@@ -126,7 +126,8 @@ for n, plot in enumerate(plot_order):
     plt.plot(time_mesh, g_cells_cnts[:,n])
     plt.xlabel('time (s)')
     plt.ylabel('counts')
-    plt.title('Cell number {}'.format(n))
+    plt.title('Cell number {}'.format(n+1))
+plt.tight_layout()
 plt.savefig('green_cell_plots.pdf')
 
 plt.figure(figsize=(4.8, 6.4))
@@ -135,8 +136,17 @@ for n, plot in enumerate(plot_order):
     plt.plot(time_mesh, b_cells_cnts[:,n])
     plt.xlabel('time (s)')
     plt.ylabel('counts')
-    plt.title('Cell number {}'.format(n))
+    plt.title('Cell number {}'.format(n+1))
+plt.tight_layout()
 plt.savefig('blue_cell_plots.pdf')
+
+
+############ Save data in an excel spreadsheet using pandas ############
+# Experimental data was every 0.5 sec
+df_g = pd.DataFrame(g_cells_cnts[0::5], index=time_mesh[0::5], columns=list(np.arange(1,9)))
+df_g.to_excel('green_cell_data.xlsx')
+df_b = pd.DataFrame(b_cells_cnts[0::5], index=time_mesh[0::5], columns=list(np.arange(1,9)))
+df_b.to_excel('blue_cell_data.xlsx')
         
 
 ############ This bit plots the model as a translucent rectangle ############
