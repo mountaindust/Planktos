@@ -44,6 +44,7 @@ class environment:
             Lz: Length of domain in z direction, or None
             x_bndry: [left bndry condition, right bndry condition] (default: zero)
             y_bndry: [low bndry condition, high bndry condition] (default: zero)
+            z_bndry: [low bndry condition, high bndry condition] (default: noflux)
             flow: [x-vel field ndarray ([t],i,j,[k]), y-vel field ndarray ([t],i,j,[k])]
                 Note! i is x index, j is y index, with the value of x/y increasing
                 as the index increases. It is assumed that the flow mesh is equally 
@@ -1053,12 +1054,13 @@ class environment:
 
 
 
-    def add_swarm(self, swarm_s=100, init='random', **kwargs):
+    def add_swarm(self, swarm_s=100, init='random', seed=None, **kwargs):
         ''' Adds a swarm into this environment.
 
         Arguments:
             swarm_s: swarm object or size of the swarm (int)
             init: Method for initalizing positions.
+            seed: Seed for random number generator
             kwargs: keyword arguments to be passed to the method for
                 initalizing positions
         '''
@@ -1075,7 +1077,7 @@ class environment:
                     raise RuntimeError("Swarm dimension smaller than environment dimension!")
             self.swarms.append(swarm_s)
         else:
-            return swarm(swarm_s, self, init=init, **kwargs)
+            return swarm(swarm_s, self, init=init, seed=seed, **kwargs)
             
 
 
@@ -1097,27 +1099,29 @@ class environment:
         '''
 
         supprted_conds = ['zero', 'noflux']
-        default_conds = ['zero', 'zero']
+        default_conds_x = ['zero', 'zero']
+        default_conds_y = ['zero', 'zero']
+        default_conds_z = ['noflux', 'noflux']
 
         self.bndry = []
 
         if x_bndry is None:
             # default boundary conditions
-            self.bndry.append(default_conds)
+            self.bndry.append(default_conds_x)
         elif x_bndry[0] not in supprted_conds or x_bndry[1] not in supprted_conds:
             raise NameError("X boundary condition {} not implemented.".format(x_bndry))
         else:
             self.bndry.append(x_bndry)
         if y_bndry is None:
             # default boundary conditions
-            self.bndry.append(default_conds)
+            self.bndry.append(default_conds_y)
         elif y_bndry[0] not in supprted_conds or y_bndry[1] not in supprted_conds:
             raise NameError("Y boundary condition {} not implemented.".format(y_bndry))
         else:
             self.bndry.append(y_bndry)
         if z_bndry is None:
             # default boundary conditions
-            self.bndry.append(default_conds)
+            self.bndry.append(default_conds_z)
         elif z_bndry[0] not in supprted_conds or z_bndry[1] not in supprted_conds:
             raise NameError("Z boundary condition {} not implemented.".format(z_bndry))
         else:
@@ -1158,16 +1162,17 @@ class environment:
 
 class swarm:
 
-    def __init__(self, swarm_size=100, envir=None, char_L=None, phys=None,
-                 init='random', **kwargs):
+    def __init__(self, swarm_size=100, envir=None, init='random', seed=None, 
+                 char_L=None, phys=None, **kwargs):
         ''' Initalizes planktos swarm in an environment.
 
         Arguments:
             swarm_size: Size of the swarm (int)
             envir: environment for the swarm, defaults to the standard environment
+            init: Method for initalizing positions.
+            seed: Seed for random number generator, int or None
             char_L: characteristic length
             phys: dictionary of physical properties to be used by equations of motion
-            init: Method for initalizing positions.
             kwargs: keyword arguments to be passed to the method for
                 initalizing positions
 
@@ -1198,6 +1203,9 @@ class swarm:
         # set physical properties
         self.char_L = char_L
         self.phys = phys
+
+        # initialize random number generator
+        self.rndState = np.random.RandomState(seed=seed)
 
         # initialize bug locations
         self.positions = ma.zeros((swarm_size, len(self.envir.L)))
@@ -1261,7 +1269,7 @@ class swarm:
             # Check for other swarms in environment and freeze them
             warned = False
             for s in self.envir.swarms:
-                if s is not self:
+                if s is not self and len(s.pos_history) < len(self.pos_history):
                     s.pos_history.append(s.positions)
                     if not warned:
                         warnings.warn("Other swarms in the environment were not"+
@@ -1276,7 +1284,7 @@ class swarm:
 
     def update_positions(self, dt, params):
         '''Update agent positions.
-        THIS IS THE METHOD TO OVERRIDE IF YOU WANT TO TRY DIFFERENT MOVEMENT!
+        THIS IS THE METHOD TO OVERRIDE IF YOU WANT DIFFERENT MOVEMENT!
         Note: do not change the call signature.
         The result of this method should be to overwrite self.positions with
         the new agent positions after a time step of length dt. It should also
@@ -1314,7 +1322,7 @@ class swarm:
 
         ### Active movement ###
         # Add jitter and move according to a Gaussian random walk.
-        mv_swarm.gaussian_walk(self.positions, dt*mu, dt*params[1])
+        mv_swarm.gaussian_walk(self, dt*mu, dt*params[1])
 
         # Update velocity of swarm
         self.velocity = (self.positions - self.pos_history[-1])/dt
