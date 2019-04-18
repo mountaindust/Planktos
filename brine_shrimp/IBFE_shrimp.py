@@ -28,7 +28,7 @@ parser.add_argument("--movie", action="store_true", default=False,
                     help="output a movie of the simulation")
 
 # Intialize environment
-envir = Planktos.environment()
+envir = Planktos.environment(x_bndry=['noflux', 'noflux'])
 
 ############     Import IBMAR data on flow and extend domain     ############
 
