@@ -10,10 +10,22 @@ from sys import platform
 if platform == 'darwin': # OSX backend does not support blitting
     import matplotlib
     matplotlib.use('TkAgg')
+import argparse
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 import Planktos, data_IO
+
+parser = argparse.ArgumentParser()
+parser.add_argument("-N", type=int, default=1000,
+                    help="number of shrimp to simulate")
+parser.add_argument("-s", "--seed", type=int, default=1,
+                    help="seed for the random number generator")
+# parser.add_argument("-o", "--filename", type=str, 
+#                     help="filename to write output to, no extension",
+#                     default='analysis')
+parser.add_argument("--movie", action="store_true", default=False,
+                    help="output a movie of the simulation")
 
 # Intialize environment
 envir = Planktos.environment()
@@ -181,33 +193,30 @@ def main(swarm_size=1000, seed=1, create_movie=False):
         g_cells_cnts.append([])
         b_cells_cnts.append([])
         for gcell, zcell in zip(gy_cells, z_cells): # each green cell
-            g_cells_cnts[-1].append(0)
-            for ii in range(shrimps.shape[0]): # each shrimp
-                if gcell[0] <= shrimps[ii,1] < gcell[1] and\
-                    zcell[0] <= shrimps[ii,2] < zcell[1]:
-                    g_cells_cnts[-1][-1] += 1
+            g_cells_cnts[-1].append(np.logical_and(
+                (gcell[0] <= shrimps[:,1]) & (shrimps[:,1] < gcell[1]),
+                (zcell[0] <= shrimps[:,2]) & (shrimps[:,2] < zcell[1])
+            ).sum())
         for bcell, zcell in zip(by_cells, z_cells): # each blue cell
-            b_cells_cnts[-1].append(0)
-            for ii in range(shrimps.shape[0]): # each shrimp
-                if bcell[0] <= shrimps[ii,1] < bcell[1] and\
-                    zcell[0] <= shrimps[ii,2] < zcell[1]:
-                    b_cells_cnts[-1][-1] += 1
+            b_cells_cnts[-1].append(np.logical_and(
+                (bcell[0] <= shrimps[:,1]) & (shrimps[:,1] < bcell[1]),
+                (zcell[0] <= shrimps[:,2]) & (shrimps[:,2] < zcell[1])
+            ).sum())
 
     # append last (current) time point
     g_cells_cnts.append([])
     b_cells_cnts.append([])
     for gcell, zcell in zip(gy_cells, z_cells): # each green cell
-        g_cells_cnts[-1].append(0)
-        for ii in range(s.positions.shape[0]): # each shrimp
-            if gcell[0] <= shrimps[ii,1] < gcell[1] and\
-                zcell[0] <= shrimps[ii,2] < zcell[1]:
-                g_cells_cnts[-1][-1] += 1
+        g_cells_cnts[-1].append(np.logical_and(
+            (gcell[0] <= s.positions[:,1]) & (s.positions[:,1] < gcell[1]),
+            (zcell[0] <= s.positions[:,2]) & (s.positions[:,2] < zcell[1])
+        ).sum())
     for bcell, zcell in zip(by_cells, z_cells): # each blue cell
-        b_cells_cnts[-1].append(0)
-        for ii in range(s.positions.shape[0]): # each shrimp
-            if bcell[0] <= shrimps[ii,1] < bcell[1] and\
-                zcell[0] <= shrimps[ii,2] < zcell[1]:
-                b_cells_cnts[-1][-1] += 1
+        b_cells_cnts[-1].append(np.logical_and(
+            (bcell[0] <= s.positions[:,1]) & (s.positions[:,1] < bcell[1]),
+            (zcell[0] <= s.positions[:,2]) & (s.positions[:,2] < zcell[1])
+        ).sum())
+
 
     ########## Plot and save the run ##########
     # Create time mesh for plotting and saving data in excel
@@ -232,4 +241,5 @@ def main(swarm_size=1000, seed=1, create_movie=False):
 
 
 if __name__ == "__main__":
-    main()
+    args = parser.parse_args()
+    main(args.N, args.seed, args.movie)
