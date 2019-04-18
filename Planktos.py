@@ -34,7 +34,7 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 class environment:
 
     def __init__(self, Lx=10, Ly=10, Lz=None,
-                 x_bndry=None, y_bndry=None, z_bndry=None, flow=None,
+                 x_bndry='zero', y_bndry='zero', z_bndry='noflux', flow=None,
                  flow_times=None, rho=None, mu=None, init_swarms=None, units='mm'):
         ''' Initialize environmental variables.
 
@@ -44,6 +44,7 @@ class environment:
             Lz: Length of domain in z direction, or None
             x_bndry: [left bndry condition, right bndry condition] (default: zero)
             y_bndry: [low bndry condition, high bndry condition] (default: zero)
+            z_bndry: [low bndry condition, high bndry condition] (default: noflux)
             flow: [x-vel field ndarray ([t],i,j,[k]), y-vel field ndarray ([t],i,j,[k])]
                 Note! i is x index, j is y index, with the value of x/y increasing
                 as the index increases. It is assumed that the flow mesh is equally 
@@ -1096,35 +1097,82 @@ class environment:
 
     def set_boundary_conditions(self, x_bndry, y_bndry, z_bndry=None):
         '''Check and set boundary conditions. Set Z-dimension only if
-        zdim is not None.
+        zdim is not None. Each boundary condition must be either a list or an
+        iterable of length 2.
         '''
 
         supprted_conds = ['zero', 'noflux']
-        default_conds = ['zero', 'zero']
+        default_conds_x = ('zero', 'zero')
+        default_conds_y = ('zero', 'zero')
+        default_conds_z = ('noflux', 'noflux')
 
         self.bndry = []
 
         if x_bndry is None:
             # default boundary conditions
-            self.bndry.append(default_conds)
-        elif x_bndry[0] not in supprted_conds or x_bndry[1] not in supprted_conds:
-            raise NameError("X boundary condition {} not implemented.".format(x_bndry))
+            self.bndry.append(default_conds_x)
+        elif isinstance(x_bndry, str):
+            if x_bndry not in supprted_conds:
+                self.bndry = [default_conds_x, default_conds_y, default_conds_z]
+                raise NameError("X boundary condition {} not implemented.".format(x_bndry))
+            self.bndry.append([x_bndry, x_bndry])
         else:
-            self.bndry.append(x_bndry)
+            try:
+                iter(x_bndry)
+            except TypeError:
+                print("x_bndry must be either an iterable or a string.")
+                self.bndry = [default_conds_x, default_conds_y, default_conds_z]
+                raise
+            else:
+                if x_bndry[0] not in supprted_conds or x_bndry[1] not in supprted_conds:
+                    self.bndry = [default_conds_x, default_conds_y, default_conds_z]
+                    raise NameError("x boundary condition {} not implemented.".format(x_bndry))
+                else:
+                    self.bndry.append(x_bndry)
+
         if y_bndry is None:
             # default boundary conditions
-            self.bndry.append(default_conds)
-        elif y_bndry[0] not in supprted_conds or y_bndry[1] not in supprted_conds:
-            raise NameError("Y boundary condition {} not implemented.".format(y_bndry))
+            self.bndry.append(default_conds_y)
+        elif isinstance(y_bndry, str):
+            if y_bndry not in supprted_conds:
+                self.bndry += [default_conds_y, default_conds_z]
+                raise NameError("Y boundary condition {} not implemented.".format(y_bndry))
+            self.bndry.append([y_bndry, y_bndry])
         else:
-            self.bndry.append(y_bndry)
+            try:
+                iter(y_bndry)
+            except TypeError:
+                print("y_bndry must be either an iterable or a string.")
+                self.bndry += [default_conds_y, default_conds_z]
+                raise
+            else:
+                if y_bndry[0] not in supprted_conds or y_bndry[1] not in supprted_conds:
+                    self.bndry += [default_conds_y, default_conds_z]
+                    raise NameError("y boundary condition {} not implemented.".format(y_bndry))
+                else:
+                    self.bndry.append(y_bndry)
+
         if z_bndry is None:
             # default boundary conditions
-            self.bndry.append(default_conds)
-        elif z_bndry[0] not in supprted_conds or z_bndry[1] not in supprted_conds:
-            raise NameError("Z boundary condition {} not implemented.".format(z_bndry))
+            self.bndry.append(default_conds_z)
+        elif isinstance(z_bndry, str):
+            if z_bndry not in supprted_conds:
+                self.bndry.append(default_conds_z)
+                raise NameError("Z boundary condition {} not implemented.".format(z_bndry))
+            self.bndry.append([z_bndry, z_bndry])
         else:
-            self.bndry.append(z_bndry)
+            try:
+                iter(z_bndry)
+            except TypeError:
+                self.bndry.append(default_conds_z)
+                print("z_bndry must be either an iterable or a string.")
+                raise
+            else:
+                if z_bndry[0] not in supprted_conds or z_bndry[1] not in supprted_conds:
+                    self.bndry.append(default_conds_z)
+                    raise NameError("z boundary condition {} not implemented.".format(z_bndry))
+                else:
+                    self.bndry.append(z_bndry)
 
 
 
