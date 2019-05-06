@@ -167,7 +167,7 @@ def main(swarm_size=1000, seed=1, create_movie=False):
     ########## Move the swarm according to the prescribed rules above ##########
     print('Moving swarm...')
     dt = 0.1
-    num_of_steps = 240
+    num_of_steps = 550
     for ii in range(num_of_steps):
         s.move(dt, shrimp_walk)
 
