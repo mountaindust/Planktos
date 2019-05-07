@@ -156,7 +156,7 @@ def main(swarm_size=1000, seed=1, create_movie=False):
     something to see the effect.'''
 
     # Add swarm right in front of model
-    s = envir.add_swarm(swarm_s=swarm_size, init='point', pos=(40,84,1), seed=seed)
+    s = envir.add_swarm(swarm_s=swarm_size, init='point', pos=(40,84,3), seed=seed)
 
     # Specify amount of jitter (mean, covariance)
     # Set sigma**2 as 0.5cm**2/sec = 50mm**2/sec, sigma~7mm
