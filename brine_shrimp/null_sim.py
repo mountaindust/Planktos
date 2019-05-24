@@ -28,13 +28,23 @@ parser.add_argument("--movie", action="store_true", default=False,
 parser.add_argument("-t", "--time", type=int, default=55,
                     help="time in sec to run the simulation")
 
-# Intialize environment
-envir = Planktos.environment(x_bndry=['noflux', 'noflux'])
-
 ############     Import IBMAR data on flow and extend domain     ############
 
-print('Reading VTK data. This will take a while...')
-envir.read_IBAMR3d_vtk_data('data/RAW_10x20x2cm_8_5s.vtk')
+print('Reading parabolic flow data...')
+npzfile = np.load('data/parabolic_flow.npz')
+print('Setting up environment using saved, uniform flow field at y=0...')
+flow_x = np.zeros((256,1024,256))
+flow_y = np.zeros((256,1024,256))
+flow_z = np.zeros((256,1024,256))
+for y in range(1024):
+    flow_x[:,y,:] = npzfile['x_flow']
+    flow_y[:,y,:] = npzfile['y_flow']
+    flow_z[:,y,:] = npzfile['z_flow']
+
+# Intialize environment with this flow and the original length
+envir = Planktos.environment(Lx=80, Ly=320, Lz=80, x_bndry=['noflux', 'noflux'],
+                             flow = [flow_x, flow_y, flow_z])
+
 print('Domain set to {} mm.'.format(envir.L))
 print('Flow mesh is {}.'.format(envir.flow[0].shape))
 print('-------------------------------------------')
