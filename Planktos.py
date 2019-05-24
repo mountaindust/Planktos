@@ -60,7 +60,7 @@ class environment:
             units: length units to use
 
         Other properties:
-            flow_points:
+            flow_points: points defining the spatial grid for flow data
             fluid_domain_LLC:
             tiling:
             orig_L:
@@ -70,6 +70,8 @@ class environment:
             struct_plot_args: List of argument tuples to be passed to these functions, after ax
             time:
             time_history:
+            grad: gradient of flow magnitude
+            grad_time: sim time at which gradient was calculated
 
         Right now, supported agent boundary conditions are 'zero' (default) and 'noflux'.
         '''
@@ -91,6 +93,8 @@ class environment:
         self.fluid_domain_LLC = None
         self.tiling = None # (x,y) tiling amount
         self.orig_L = None # (Lx,Ly) before tiling/extending
+        self.grad = None
+        self.grad_time = None
         self.flow = flow
 
         if flow is not None:
@@ -1204,6 +1208,8 @@ class environment:
         self.orig_L = None
         self.plot_structs = []
         self.plot_structs_args = []
+        self.grad = None
+        self.grad_time = None
         if incl_rho_mu:
             self.mu = None
             self.rho = None
@@ -1404,6 +1410,47 @@ class swarm:
                 # temporal flow. interpolate in time, and then in space.
                 return self.__interpolate_flow(self.__interpolate_temporal_flow(),
                                              method='linear')
+
+
+
+    def get_fluid_gradient(self):
+        '''Return the gradient of the magnitude of the fluid velocity at all
+        agent positions via linear interpolation of the gradient. Gradient is
+        calculated via second order accurate central differences with second 
+        order accuracy at the boundaries and saved in case it is needed again.
+        The gradient is linearly interpolated from the fluid grid to the
+        agent locations.
+        '''
+
+        TIME_DEP = len(self.envir.flow[0].shape) != len(self.envir.L)
+        flow_grad = None
+
+        # If available, use the already calculuated gradient
+        if self.envir.grad is not None:
+            if not TIME_DEP:
+                flow_grad = self.envir.grad
+            elif self.envir.grad_time == self.envir.time:
+                flow_grad = self.envir.grad
+
+        # Otherwise, calculate the gradient
+        if flow_grad is None:
+            if not TIME_DEP:
+                flow_grad = np.gradient(np.sqrt(
+                                np.sum(np.array(self.envir.flow)**2, axis=0)
+                                ), self.envir.flow_points, edge_order=2)
+            else:
+                # first, interpolate flow in time. Then calculate gradient.
+                flow_grad = np.gradient(
+                                np.sqrt(np.sum(
+                                np.array(self.__interpolate_temporal_flow())**2,
+                                axis=0)), self.envir.flow_points, edge_order=2)
+            # save the newly calculuate gradient
+            self.envir.grad = flow_grad
+            self.envir.grad_time = self.envir.time
+
+        # Interpolate the gradient at agent positions and return
+        return interpolate.interpn(self.envir.flow_points, flow_grad,
+                                   self.positions, method='linear')
 
 
 
