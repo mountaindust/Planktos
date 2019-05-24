@@ -11,6 +11,9 @@ Email: cstric12@utk.edu
 
 import sys, warnings, pickle
 from sys import platform
+if platform == 'darwin': # OSX backend does not support blitting
+    import matplotlib
+    matplotlib.use('TkAgg')
 from pathlib import Path
 from math import exp, log
 import numpy as np
