@@ -89,7 +89,8 @@ def main(swarm_size=1000, time=55, seed=1, create_movie=False, prefix=''):
     # Each cell is 2cm x 2cm
     cell_size=20
 
-    g_cells_cnts, b_cells_cnts = shrimp_funcs.collect_cell_counts(s)
+    g_cells_cnts, b_cells_cnts = shrimp_funcs.collect_cell_counts(s, g_bounds,
+                                                            b_bounds, cell_size)
 
 
     ########## Plot and save the run ##########
@@ -116,4 +117,8 @@ def main(swarm_size=1000, time=55, seed=1, create_movie=False, prefix=''):
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    main(args.N, args.time, args.seed, args.movie, args.prefix)
+    if args.prefix != '':
+        prefix = args.prefix + '_'
+    else:
+        prefix = args.prefix
+    main(args.N, args.time, args.seed, args.movie, prefix)

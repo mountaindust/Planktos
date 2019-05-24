@@ -61,15 +61,9 @@ print('-------------------------------------------')
 
 class Bshrimp(Planktos.swarm):
 
-    def get_fluid_gradient(self):
-        '''Eventually, add this to Planktos.
-        This consists of two parts:
-            1) Calculate the gradient of the velocity field. Save for recall.
-            2) Interpolate this gradient at each of the agent locations.'''
-
-        pass
-
     def update_positions(self, dt, params):
+        '''Use the new get_fluid_gradient method to advect the brine shrimp
+        in the direction of slowest flow'''
         pass
 
 
@@ -108,7 +102,8 @@ def main(swarm_size=1000, time=55, seed=1, create_movie=False, prefix=''):
     # Each cell is 2cm x 2cm
     cell_size=20
 
-    g_cells_cnts, b_cells_cnts = shrimp_funcs.collect_cell_counts(s)
+    g_cells_cnts, b_cells_cnts = shrimp_funcs.collect_cell_counts(s, g_bounds,
+                                                            b_bounds, cell_size)
 
 
     ########## Plot and save the run ##########
@@ -135,4 +130,8 @@ def main(swarm_size=1000, time=55, seed=1, create_movie=False, prefix=''):
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    main(args.N, args.time, args.seed, args.movie, args.prefix)
+    if args.prefix != '':
+        prefix = args.prefix + '_'
+    else:
+        prefix = args.prefix
+    main(args.N, args.time, args.seed, args.movie, prefix)
