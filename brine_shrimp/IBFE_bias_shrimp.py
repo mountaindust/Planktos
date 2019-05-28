@@ -13,7 +13,7 @@ if platform == 'darwin': # OSX backend does not support blitting
 import argparse
 import numpy as np
 import shrimp_funcs
-import Planktos, data_IO
+import Planktos, data_IO, mv_swarm
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-N", type=int, default=1000,
@@ -61,10 +61,27 @@ print('-------------------------------------------')
 
 class Bshrimp(Planktos.swarm):
 
-    def update_positions(self, dt, params):
+    def update_positions(self, dt, params=None):
         '''Use the new get_fluid_gradient method to advect the brine shrimp
         in the direction of slowest flow'''
-        pass
+        if self.envir.flow is None:
+            super(Bshrimp, self).update_positions(dt, params)
+        else:
+            
+            # get unit vector in direction of greatest descent
+            mvdir = -self.get_fluid_gradient()/np.tile(np.linalg.norm(
+                        self.get_fluid_gradient(), axis=1), (len(self.envir.L),1)).T
+            assert len(self.get_fluid_gradient().shape) == 2
+
+            # sigma**2 w/o advection is 0.5cm**2/sec = 50mm**2/sec, sigma~7mm
+            # (sigma**2=2*D, D for brine shrimp given in Kohler, Swank, Haefner, Powell 2010)
+            # 50 mm variance in no flow... split between advection and diffusion
+            mu = self.get_fluid_drift() + mvdir*25
+
+            mv_swarm.gaussian_walk(self, dt*mu, dt*25*np.eye(3))
+
+            # Update velocity of swarm
+            self.velocity = (self.positions - self.pos_history[-1])/dt
 
 
 
@@ -79,18 +96,12 @@ def main(swarm_size=1000, time=55, seed=1, create_movie=False, prefix=''):
     # Add swarm right in front of model
     s = envir.add_swarm(swarm_s=swarm_size, init='point', pos=(40,84,3), seed=seed)
 
-    # Specify amount of jitter (mean, covariance)
-    # Set sigma**2 as 0.5cm**2/sec = 50mm**2/sec, sigma~7mm
-    # (sigma**2=2*D, D for brine shrimp given in Kohler, Swank, Haefner, Powell 2010)
-    shrimp_walk = ([0,0,0], 50*np.eye(3))
-
-
     ########## Move the swarm according to the prescribed rules above ##########
     print('Moving swarm...')
     dt = 0.1
     num_of_steps = time*10
     for ii in range(num_of_steps):
-        s.move(dt, shrimp_walk)
+        s.move(dt)
 
 
     ############## Gather data about flow tank observation area ##############
