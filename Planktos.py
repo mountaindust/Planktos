@@ -11,6 +11,9 @@ Email: cstric12@utk.edu
 
 import sys, warnings, pickle
 from sys import platform
+if platform == 'darwin': # OSX backend does not support blitting
+    import matplotlib
+    matplotlib.use('TkAgg')
 from pathlib import Path
 from math import exp, log
 import numpy as np
@@ -34,7 +37,7 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 class environment:
 
     def __init__(self, Lx=10, Ly=10, Lz=None,
-                 x_bndry=None, y_bndry=None, z_bndry=None, flow=None,
+                 x_bndry='zero', y_bndry='zero', z_bndry='noflux', flow=None,
                  flow_times=None, rho=None, mu=None, init_swarms=None, units='mm'):
         ''' Initialize environmental variables.
 
@@ -44,6 +47,7 @@ class environment:
             Lz: Length of domain in z direction, or None
             x_bndry: [left bndry condition, right bndry condition] (default: zero)
             y_bndry: [low bndry condition, high bndry condition] (default: zero)
+            z_bndry: [low bndry condition, high bndry condition] (default: noflux)
             flow: [x-vel field ndarray ([t],i,j,[k]), y-vel field ndarray ([t],i,j,[k])]
                 Note! i is x index, j is y index, with the value of x/y increasing
                 as the index increases. It is assumed that the flow mesh is equally 
@@ -56,7 +60,7 @@ class environment:
             units: length units to use
 
         Other properties:
-            flow_points:
+            flow_points: points defining the spatial grid for flow data
             fluid_domain_LLC:
             tiling:
             orig_L:
@@ -66,6 +70,8 @@ class environment:
             struct_plot_args: List of argument tuples to be passed to these functions, after ax
             time:
             time_history:
+            grad: gradient of flow magnitude
+            grad_time: sim time at which gradient was calculated
 
         Right now, supported agent boundary conditions are 'zero' (default) and 'noflux'.
         '''
@@ -87,6 +93,8 @@ class environment:
         self.fluid_domain_LLC = None
         self.tiling = None # (x,y) tiling amount
         self.orig_L = None # (Lx,Ly) before tiling/extending
+        self.grad = None
+        self.grad_time = None
         self.flow = flow
 
         if flow is not None:
@@ -1096,35 +1104,82 @@ class environment:
 
     def set_boundary_conditions(self, x_bndry, y_bndry, z_bndry=None):
         '''Check and set boundary conditions. Set Z-dimension only if
-        zdim is not None.
+        zdim is not None. Each boundary condition must be either a list or an
+        iterable of length 2.
         '''
 
         supprted_conds = ['zero', 'noflux']
-        default_conds = ['zero', 'zero']
+        default_conds_x = ('zero', 'zero')
+        default_conds_y = ('zero', 'zero')
+        default_conds_z = ('noflux', 'noflux')
 
         self.bndry = []
 
         if x_bndry is None:
             # default boundary conditions
-            self.bndry.append(default_conds)
-        elif x_bndry[0] not in supprted_conds or x_bndry[1] not in supprted_conds:
-            raise NameError("X boundary condition {} not implemented.".format(x_bndry))
+            self.bndry.append(default_conds_x)
+        elif isinstance(x_bndry, str):
+            if x_bndry not in supprted_conds:
+                self.bndry = [default_conds_x, default_conds_y, default_conds_z]
+                raise NameError("X boundary condition {} not implemented.".format(x_bndry))
+            self.bndry.append([x_bndry, x_bndry])
         else:
-            self.bndry.append(x_bndry)
+            try:
+                iter(x_bndry)
+            except TypeError:
+                print("x_bndry must be either an iterable or a string.")
+                self.bndry = [default_conds_x, default_conds_y, default_conds_z]
+                raise
+            else:
+                if x_bndry[0] not in supprted_conds or x_bndry[1] not in supprted_conds:
+                    self.bndry = [default_conds_x, default_conds_y, default_conds_z]
+                    raise NameError("x boundary condition {} not implemented.".format(x_bndry))
+                else:
+                    self.bndry.append(x_bndry)
+
         if y_bndry is None:
             # default boundary conditions
-            self.bndry.append(default_conds)
-        elif y_bndry[0] not in supprted_conds or y_bndry[1] not in supprted_conds:
-            raise NameError("Y boundary condition {} not implemented.".format(y_bndry))
+            self.bndry.append(default_conds_y)
+        elif isinstance(y_bndry, str):
+            if y_bndry not in supprted_conds:
+                self.bndry += [default_conds_y, default_conds_z]
+                raise NameError("Y boundary condition {} not implemented.".format(y_bndry))
+            self.bndry.append([y_bndry, y_bndry])
         else:
-            self.bndry.append(y_bndry)
+            try:
+                iter(y_bndry)
+            except TypeError:
+                print("y_bndry must be either an iterable or a string.")
+                self.bndry += [default_conds_y, default_conds_z]
+                raise
+            else:
+                if y_bndry[0] not in supprted_conds or y_bndry[1] not in supprted_conds:
+                    self.bndry += [default_conds_y, default_conds_z]
+                    raise NameError("y boundary condition {} not implemented.".format(y_bndry))
+                else:
+                    self.bndry.append(y_bndry)
+
         if z_bndry is None:
             # default boundary conditions
-            self.bndry.append(default_conds)
-        elif z_bndry[0] not in supprted_conds or z_bndry[1] not in supprted_conds:
-            raise NameError("Z boundary condition {} not implemented.".format(z_bndry))
+            self.bndry.append(default_conds_z)
+        elif isinstance(z_bndry, str):
+            if z_bndry not in supprted_conds:
+                self.bndry.append(default_conds_z)
+                raise NameError("Z boundary condition {} not implemented.".format(z_bndry))
+            self.bndry.append([z_bndry, z_bndry])
         else:
-            self.bndry.append(z_bndry)
+            try:
+                iter(z_bndry)
+            except TypeError:
+                self.bndry.append(default_conds_z)
+                print("z_bndry must be either an iterable or a string.")
+                raise
+            else:
+                if z_bndry[0] not in supprted_conds or z_bndry[1] not in supprted_conds:
+                    self.bndry.append(default_conds_z)
+                    raise NameError("z boundary condition {} not implemented.".format(z_bndry))
+                else:
+                    self.bndry.append(z_bndry)
 
 
 
@@ -1153,6 +1208,8 @@ class environment:
         self.orig_L = None
         self.plot_structs = []
         self.plot_structs_args = []
+        self.grad = None
+        self.grad_time = None
         if incl_rho_mu:
             self.mu = None
             self.rho = None
@@ -1353,6 +1410,47 @@ class swarm:
                 # temporal flow. interpolate in time, and then in space.
                 return self.__interpolate_flow(self.__interpolate_temporal_flow(),
                                              method='linear')
+
+
+
+    def get_fluid_gradient(self):
+        '''Return the gradient of the magnitude of the fluid velocity at all
+        agent positions via linear interpolation of the gradient. Gradient is
+        calculated via second order accurate central differences with second 
+        order accuracy at the boundaries and saved in case it is needed again.
+        The gradient is linearly interpolated from the fluid grid to the
+        agent locations.
+        '''
+
+        TIME_DEP = len(self.envir.flow[0].shape) != len(self.envir.L)
+        flow_grad = None
+
+        # If available, use the already calculuated gradient
+        if self.envir.grad is not None:
+            if not TIME_DEP:
+                flow_grad = self.envir.grad
+            elif self.envir.grad_time == self.envir.time:
+                flow_grad = self.envir.grad
+
+        # Otherwise, calculate the gradient
+        if flow_grad is None:
+            if not TIME_DEP:
+                flow_grad = np.gradient(np.sqrt(
+                                np.sum(np.array(self.envir.flow)**2, axis=0)
+                                ), self.envir.flow_points, edge_order=2)
+            else:
+                # first, interpolate flow in time. Then calculate gradient.
+                flow_grad = np.gradient(
+                                np.sqrt(np.sum(
+                                np.array(self.__interpolate_temporal_flow())**2,
+                                axis=0)), self.envir.flow_points, edge_order=2)
+            # save the newly calculuate gradient
+            self.envir.grad = flow_grad
+            self.envir.grad_time = self.envir.time
+
+        # Interpolate the gradient at agent positions and return
+        return interpolate.interpn(self.envir.flow_points, flow_grad,
+                                   self.positions, method='linear')
 
 
 
