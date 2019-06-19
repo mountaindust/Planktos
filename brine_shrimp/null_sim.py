@@ -80,7 +80,7 @@ def main(swarm_size=1000, time=55, seed=1, create_movie=False, prefix=''):
     # Set sigma**2 as 0.5cm**2/sec = 50mm**2/sec, sigma~7mm
     # (sigma**2=2*D, D for brine shrimp given in Kohler, Swank, Haefner, Powell 2010)
     # Now simulating with half this varience for 2D -> 3D diffusion
-    shrimp_walk = ([0,0,0], 0.5*50*np.eye(3))
+    shrimp_walk = ([0,0,0], 2*50*np.eye(3))
 
 
     ########## Move the swarm according to the prescribed rules above ##########
