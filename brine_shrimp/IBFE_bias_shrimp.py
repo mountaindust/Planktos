@@ -93,8 +93,9 @@ def main(swarm_size=1000, time=55, seed=1, create_movie=False, prefix=''):
     '''Add swarm and simulate dispersal. Future: run this in loop while altering
     something to see the effect.'''
 
-    # Add swarm right in front of model
-    s = envir.add_swarm(swarm_s=swarm_size, init='point', pos=(40,84,3), seed=seed)
+    # Create swarm right in front of model with behavior as described above
+    s = Bshrimp(swarm_size=swarm_size, envir=envir, init='point',
+                    pos=(40,84,3), seed=seed)
 
     ########## Move the swarm according to the prescribed rules above ##########
     print('Moving swarm...')
