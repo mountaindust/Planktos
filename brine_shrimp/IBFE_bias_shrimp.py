@@ -70,17 +70,28 @@ class Bshrimp(Planktos.swarm):
             
             # get unit vector in direction of greatest descent
             grad = self.get_fluid_gradient()
-            import pdb; pdb.set_trace()
             denom = np.tile(
                         np.linalg.norm(grad, axis=1),
                         (len(self.envir.L),1)).T
+            # reduce movement as we approach a threshold
+            thres = 0.1
+            scale = np.ones_like(grad)
+            scale[denom<1] = (denom-0.1)/0.9
+            scale[scale<0] = 0
+
+            # if the norm of the gradient is below a certain amount, call it
+            #   undetectable and return zero
+            grad_low_idx = denom < thres # mm
+            # catch places where grad == 0
+            grad[grad_low_idx] = 0
+            denom[grad_low_idx] = 1
             mvdir = -grad/denom
             assert len(self.get_fluid_gradient().shape) == 2
 
             # sigma**2 w/o advection is 0.5cm**2/sec = 50mm**2/sec, sigma~7mm
             # (sigma**2=2*D, D for brine shrimp given in Kohler, Swank, Haefner, Powell 2010)
             # 50 mm variance in no flow... split between advection and diffusion
-            mu = self.get_fluid_drift() + mvdir*np.sqrt(25)
+            mu = self.get_fluid_drift() + mvdir*np.sqrt(25)*scale
 
             mv_swarm.gaussian_walk(self, dt*mu, dt*25*np.eye(3))
 
