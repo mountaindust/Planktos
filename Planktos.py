@@ -1437,13 +1437,13 @@ class swarm:
             if not TIME_DEP:
                 flow_grad = np.gradient(np.sqrt(
                                 np.sum(np.array(self.envir.flow)**2, axis=0)
-                                ), self.envir.flow_points, edge_order=2)
+                                ), *self.envir.flow_points, edge_order=2)
             else:
                 # first, interpolate flow in time. Then calculate gradient.
                 flow_grad = np.gradient(
                                 np.sqrt(np.sum(
                                 np.array(self.__interpolate_temporal_flow())**2,
-                                axis=0)), self.envir.flow_points, edge_order=2)
+                                axis=0)), *self.envir.flow_points, edge_order=2)
             # save the newly calculuate gradient
             self.envir.grad = flow_grad
             self.envir.grad_time = self.envir.time
