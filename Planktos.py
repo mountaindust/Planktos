@@ -1454,7 +1454,7 @@ class swarm:
         y_grad = interpolate.interpn(self.envir.flow_points, flow_grad[1],
                                    self.positions, method='linear')
         if len(self.envir.flow_points) == 3:
-            z_grad = interpolate.interpn(self.envir.flow_points, flow_grad[0],
+            z_grad = interpolate.interpn(self.envir.flow_points, flow_grad[2],
                                          self.positions, method='linear')
             return np.array([x_grad, y_grad, z_grad]).T
         else:
