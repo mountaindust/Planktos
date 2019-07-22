@@ -1451,9 +1451,9 @@ class swarm:
         # Interpolate the gradient at agent positions and return
         x_grad = interpolate.interpn(self.envir.flow_points, flow_grad[0],
                                    self.positions, method='linear')
-        x_grad = interpolate.interpn(self.envir.flow_points, flow_grad[1],
+        y_grad = interpolate.interpn(self.envir.flow_points, flow_grad[1],
                                    self.positions, method='linear')
-        if len(flow) == 3:
+        if len(self.envir.flow_points) == 3:
             z_grad = interpolate.interpn(self.envir.flow_points, flow_grad[0],
                                          self.positions, method='linear')
             return np.array([x_grad, y_grad, z_grad]).T
