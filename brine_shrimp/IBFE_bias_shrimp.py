@@ -76,7 +76,7 @@ class Bshrimp(Planktos.swarm):
             # reduce movement as we approach a threshold
             thres = 0.1
             scale = np.ones_like(grad)
-            scale[denom<1] = (denom-0.1)/0.9
+            scale[denom<1] = (denom[denom<1]-0.1)/0.9
             scale[scale<0] = 0
 
             # if the norm of the gradient is below a certain amount, call it
