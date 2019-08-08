@@ -1896,7 +1896,7 @@ class swarm:
 
 
 
-    def plot_all(self, movie_filename=None, frames=None, fps=10):
+    def plot_all(self, movie_filename=None, frames=None, downsamp=None, fps=10):
         ''' Plot the history of the swarm's movement, incl. current.
         If movie_filename is specified, output a movie file instead.
         
@@ -1906,6 +1906,12 @@ class swarm:
                 history of the swarm's movement including the present. If an
                 iterable, plot only the time steps of the swarm as indexed by
                 the iterable.
+            downsamp: iterable of integers, integer, or None. If None, do not
+                downsample the agents. If an integer, plot only the first n 
+                agents (equivalent to range(downsamp)). If an iterable, plot 
+                only the agents specified. In all cases, statistics are reported
+                for the TOTAL population, both shown and unshown. This includes
+                the histograms.
             fps: frames per second, only used if saving a movie to file. Make
                 sure this is at least a big as 1/dt, where dt is the time interval
                 between frames!        
@@ -1922,6 +1928,9 @@ class swarm:
             n0 = 0
         else:
             n0 = frames[0]
+            
+        if isinstance(downsamp, int):
+            downsamp = range(downsamp)
 
         if not DIM3:
             ### 2D setup ###
@@ -1962,9 +1971,15 @@ class swarm:
             fig = plt.figure(figsize=(10,5))
             ax, axHistx, axHisty, axHistz = self.__plot_setup(fig)
 
-            scat = ax.scatter(self.pos_history[n0][:,0], self.pos_history[n0][:,1],
-                              self.pos_history[n0][:,2], label='organism',
-                              animated=True)
+            if downsamp is None:
+                scat = ax.scatter(self.pos_history[n0][:,0], self.pos_history[n0][:,1],
+                                self.pos_history[n0][:,2], label='organism',
+                                animated=True)
+            else:
+                scat = ax.scatter(self.pos_history[n0][downsamp,0],
+                                self.pos_history[n0][downsamp,1],
+                                self.pos_history[n0][downsamp,2],
+                                label='organism', animated=True)
 
             # textual info
             time_text = ax.text2D(0.02, 1, 'time = {:.2f}'.format(
@@ -2023,7 +2038,10 @@ class swarm:
                                         'Max vel: {:.1g} {}/s\n'.format(max_spd, self.envir.units)+
                                         'Avg x vel: {:.1g} {}/s\n'.format(avg_spd_x, self.envir.units)+
                                         'Avg y vel: {:.1g} {}/s'.format(avg_spd_y, self.envir.units))
-                    scat.set_offsets(self.pos_history[n])
+                    if downsamp is None:
+                        scat.set_offsets(self.pos_history[n])
+                    else:
+                        scat.set_offsets(self.pos_history[n][downsamp,:])
                     n_x, _ = np.histogram(self.pos_history[n][:,0].compressed(), bins_x)
                     n_y, _ = np.histogram(self.pos_history[n][:,1].compressed(), bins_y)
                     for rect, h in zip(patches_x, n_x):
@@ -2042,9 +2060,14 @@ class swarm:
                     x_flow_text.set_text('Avg x vel: {:.2g} {}/s\n'.format(avg_spd_x, self.envir.units))
                     y_flow_text.set_text('Avg y vel: {:.2g} {}/s\n'.format(avg_spd_y, self.envir.units))
                     z_flow_text.set_text('Avg z vel: {:.2g} {}/s\n'.format(avg_spd_z, self.envir.units))
-                    scat._offsets3d = (np.ma.ravel(self.pos_history[n][:,0].compressed()),
-                                       np.ma.ravel(self.pos_history[n][:,1].compressed()),
-                                       np.ma.ravel(self.pos_history[n][:,2].compressed()))
+                    if downsamp is None:
+                        scat._offsets3d = (np.ma.ravel(self.pos_history[n][:,0].compressed()),
+                                        np.ma.ravel(self.pos_history[n][:,1].compressed()),
+                                        np.ma.ravel(self.pos_history[n][:,2].compressed()))
+                    else:
+                        scat._offsets3d = (np.ma.ravel(self.pos_history[n][downsamp,0].compressed()),
+                                        np.ma.ravel(self.pos_history[n][downsamp,1].compressed()),
+                                        np.ma.ravel(self.pos_history[n][downsamp,2].compressed()))
                     n_x, _ = np.histogram(self.pos_history[n][:,0].compressed(), bins_x)
                     n_y, _ = np.histogram(self.pos_history[n][:,1].compressed(), bins_y)
                     n_z, _ = np.histogram(self.pos_history[n][:,2].compressed(), bins_z)
@@ -2070,7 +2093,10 @@ class swarm:
                                         'Max vel: {:.1g} {}/s\n'.format(max_spd, self.envir.units)+
                                         'Avg x vel: {:.1g} {}/s\n'.format(avg_spd_x, self.envir.units)+
                                         'Avg y vel: {:.1g} {}/s'.format(avg_spd_y, self.envir.units))
-                    scat.set_offsets(self.positions)
+                    if downsamp is None:
+                        scat.set_offsets(self.positions)
+                    else:
+                        scat.set_offsets(self.positions[downsamp,:])
                     n_x, _ = np.histogram(self.positions[:,0].compressed(), bins_x)
                     n_y, _ = np.histogram(self.positions[:,1].compressed(), bins_y)
                     for rect, h in zip(patches_x, n_x):
@@ -2089,9 +2115,14 @@ class swarm:
                     x_flow_text.set_text('Avg x vel: {:.2g} {}/s\n'.format(avg_spd_x, self.envir.units))
                     y_flow_text.set_text('Avg y vel: {:.2g} {}/s\n'.format(avg_spd_y, self.envir.units))
                     z_flow_text.set_text('Avg z vel: {:.2g} {}/s\n'.format(avg_spd_z, self.envir.units))
-                    scat._offsets3d = (np.ma.ravel(self.positions[:,0].compressed()),
-                                       np.ma.ravel(self.positions[:,1].compressed()),
-                                       np.ma.ravel(self.positions[:,2].compressed()))
+                    if downsamp is None:
+                        scat._offsets3d = (np.ma.ravel(self.positions[:,0].compressed()),
+                                        np.ma.ravel(self.positions[:,1].compressed()),
+                                        np.ma.ravel(self.positions[:,2].compressed()))
+                    else:
+                        scat._offsets3d = (np.ma.ravel(self.positions[downsamp,0].compressed()),
+                                        np.ma.ravel(self.positions[downsamp,1].compressed()),
+                                        np.ma.ravel(self.positions[downsamp,2].compressed()))
                     n_x, _ = np.histogram(self.positions[:,0].compressed(), bins_x)
                     n_y, _ = np.histogram(self.positions[:,1].compressed(), bins_y)
                     n_z, _ = np.histogram(self.positions[:,2].compressed(), bins_z)
