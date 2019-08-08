@@ -866,6 +866,50 @@ class environment:
 
 
 
+    def read_comsol_vtu_data(self, filename, vel_conv=None, grid_conv=None):
+        '''Reads in vtu flow data from a single source and sets environment
+        variables accordingly. The resulting flow will be time invarient.
+        It is assumed this data is on a regular grid and that a grid section
+        is included in the data.
+
+        All environment variables will be reset.
+
+        Arguments:
+            filename: filename of data to read, incl. file extension
+            vel_conv: scalar to multiply the velocity by in order to convert units
+            grid_conv: scalar to multiply the grid by in order to convert units
+        '''
+        path = Path(filename)
+        assert path.is_file(), "File {} not found!".format(filename)
+
+        data, mesh = data_IO.read_vtu_mesh_velocity(filename)
+
+        if vel_conv is not None:
+            print("Converting vel units by a factor of {}.".format(vel_conv))
+            for ii, d in enumerate(data):
+                data[ii] = d*vel_conv
+        if grid_conv is not None:
+            print("Converting grid units by a factor of {}.".format(grid_conv))
+            for ii, m in enumerate(mesh):
+                mesh[ii] = m*grid_conv
+
+        self.flow = data
+        self.flow_times = None
+
+        # shift domain to quadrant 1
+        self.flow_points = (mesh[0]-mesh[0][0], mesh[1]-mesh[1][0],
+                            mesh[2]-mesh[2][0])
+
+        ### Convert environment dimensions and reset simulation time ###
+        self.L = [self.flow_points[dim][-1] for dim in range(3)]
+        self.__reset_flow_variables(incl_rho_mu=True)
+        # record the original lower left corner (can be useful for later imports)
+        self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
+        # reset time
+        self.reset()
+
+
+
     def tile_flow(self, x=2, y=1):
         '''Tile fluid flow a number of times in the x and/or y directions.
         While obviously this works best if the fluid is periodic in the

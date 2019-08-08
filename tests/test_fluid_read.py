@@ -8,6 +8,7 @@ Author: Christopher Strickland
 Email: cstric12@utk.edu
 """
 import sys
+from pathlib import Path
 import pytest
 import numpy as np
 import numpy.ma as ma
@@ -136,4 +137,44 @@ def test_point_load():
     '''Test loading singleton mesh points from an Unstructured Grid VTK in data_IO'''
     filename = 'tests/IBAMR_test_data/mesh_db.vtk'
     points, bounds = data_IO.read_vtk_Unstructured_Grid_Points(filename)
+
+
+@pytest.mark.vtu
+def test_vtu_load():
+    '''Test loading VTU data into the environment'''
+    pathname = 'tests/data/comsol/vtu_test_data.txt'
+    path = Path(pathname)
+    assert path.is_file(), "Comsol data {} not found!".format(pathname)
+    envir = Planktos.environment() # default environment, 2D.
+
+    envir.read_comsol_vtu_data(pathname, vel_conv=1000)
+    envir.set_boundary_conditions(('zero','zero'), ('zero','zero'), ('noflux','noflux'))
+
+    # test properties
+    assert len(envir.L) == 3, "Envir not 3D after loading data."
+    assert len(envir.bndry) == 3, "Not enough boundary conditions."
+    assert envir.flow_times is None
+    assert len(envir.flow_points) == 3, "Flow points has incorrect dimension."
+    assert [envir.flow_points[dim][0] for dim in range(3)] == [0, 0, 0], \
+           "All meshes should start at 0."
+    assert [envir.flow_points[dim][-1] for dim in range(3)] == envir.L, \
+           "Flow mesh should match environment dimensions."
+    assert len(envir.flow) == 3, "Flow does not contain X, Y, and Z directions."
+    assert len(envir.flow[0].shape) == 3, "Flow should be 3D, no time."
+    assert envir.flow[0].shape == envir.flow[1].shape == envir.flow[2].shape
+    assert [envir.flow[0].shape[dim] for dim in range(3)] == \
+           [len(envir.flow_points[dim]) for dim in range(3)], \
+           "Data dimensions must match mesh sizes."
+    assert envir.a is None, "Porous height should be reset after flow import."
+    assert envir.time == 0.0, "Time should be reset after flow import."
+    assert envir.time_history == [], "Time history should be reset after flow import."
+
+    # test swarm movement
+    envir.add_swarm(init='random')
+    sw = envir.swarms[0]
+    for ii in range(20):
+        sw.move(0.1, params=(np.zeros(3), np.eye(3)*0.001))
+    assert len(sw.pos_history) == 20, "all movements not recorded"
+    assert np.isclose(envir.time,2), "incorrect final time"
+    assert len(envir.time_history) == 20, "all times not recorded"
     
