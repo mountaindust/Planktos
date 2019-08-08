@@ -247,7 +247,7 @@ def read_vtu_mesh_velocity(filename):
             else:
                 # Non-comment line
                 if section_flag == 'Grid':
-                    grid.append(line)
+                    grid.append(np.loadtxt([line]))
                 if section_flag in ['x', 'y', 'z']:
                     # Do nothing with point data, already have grid
                     pass
@@ -258,10 +258,17 @@ def read_vtu_mesh_velocity(filename):
                         vel_data[section_flag] = []
                         print(section_flag+' units are '+section_units+'.')
                     else:
-                        vel_data[section_flag].append(line)
+                        vel_data[section_flag].append(np.loadtxt([line]))
     # Done reading file
 
-    # Parse the string data into numerical data for return
-    pass
+    # Gather the data and return
+    data = []
+    for vel in ['u', 'v']:
+        data.append(np.array(vel_data[vel]))
+    if len(vel_data.items()) == 3:
+        data.append(np.array(vel_data['w']))
+
+    return data, grid
+    
 
                 
