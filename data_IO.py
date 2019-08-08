@@ -208,3 +208,60 @@ def read_2DEulerian_Data_From_vtk(path, simNums, strChoice, xy=False):
             return data[0], data[1], x, y
         else:
             return data[0], data[1]
+
+
+
+def read_vtu_mesh_velocity(filename):
+    '''This method reads ascii COMSOL velocity data in a vtu or equivalent 
+    txt file. It is assumed that the data is on a regular grid.'''
+
+    with open(filename) as f:
+        dim = None
+        grid_units = None
+        section_flag = None
+        grid = []
+        vel_data = {}
+        for line in f:
+            line = line.strip()
+            if line[0] == '%':
+                # Comment line
+                line = line[1:].strip()
+                if 'Dimension:' == line[:10]:
+                    dim = int(line[10:].strip())
+                    section_flag = None
+                elif 'Length unit:' == line[:12]:
+                    grid_units = line[12:].strip()
+                    print('Grid units are in '+grid_units+'.')
+                    section_flag = None
+                elif line[:4] == 'Grid':
+                    section_flag = 'Grid'
+                elif line[:4] == 'Data':
+                    section_flag = 'Data'
+                elif section_flag == 'Data' and\
+                    line[0] in ['x', 'y', 'z', 'u', 'v', 'w']:
+                    # point or velocity data
+                    section_flag = line[0]
+                    section_units = line[2:]
+                else:
+                    section_flag = None
+            else:
+                # Non-comment line
+                if section_flag == 'Grid':
+                    grid.append(line)
+                if section_flag in ['x', 'y', 'z']:
+                    # Do nothing with point data, already have grid
+                    pass
+                if section_flag in ['u', 'v', 'w']:
+                    # Velocity data. With respect to the grid, this moves in x,
+                    #   then y, then z.
+                    if section_flag not in vel_data:
+                        vel_data[section_flag] = []
+                        print(section_flag+' units are '+section_units+'.')
+                    else:
+                        vel_data[section_flag].append(line)
+    # Done reading file
+
+    # Parse the string data into numerical data for return
+    pass
+
+                
