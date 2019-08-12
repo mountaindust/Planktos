@@ -23,34 +23,41 @@ parser.add_argument("-s", "--seed", type=int, default=1,
 parser.add_argument("-o", "--prefix", type=str, 
                     help="prefix to filenames with data output",
                     default='')
+parser.add_argument("-d", "--data", type=str, 
+                    help="name of flow data file within ./data",
+                    default='')
 parser.add_argument("--movie", action="store_true", default=False,
                     help="output a movie of the simulation")
 parser.add_argument("-t", "--time", type=int, default=55,
                     help="time in sec to run the simulation")
 
-# Intialize environment
-envir = Planktos.environment(x_bndry=['noflux', 'noflux'])
-
-############     Import COMSOL data on flow     ############
-
-print('Reading COMSOL data. This will take a while...')
-envir.read_comsol_vtu_data('data/Velocity_8x15_1cm.vtu', vel_conv=1000)
-print('Domain set to {} mm.'.format(envir.L))
-print('Flow mesh is {}.'.format(envir.flow[0].shape))
-# Domain should be 80x640x80 mm
-# Model sits (from,to): (2.5,77.5), (85,235), (0.5,20.5)
-model_bounds = (2.5,77.5,85,235,0,20.5)
-print('-------------------------------------------')
 
 ############################################################################
 ############                    RUN SIMULATION                  ############
 ############################################################################
 
-# From here down is EXACTLY the same as in IBFE_shrimp.py
-
-def main(swarm_size=1000, time=55, seed=1, create_movie=False, prefix=''):
+def main(swarm_size=1000, time=55, data='', seed=1, create_movie=False, prefix=''):
     '''Add swarm and simulate dispersal. Future: run this in loop while altering
     something to see the effect.'''
+
+    # Intialize environment
+    envir = Planktos.environment(x_bndry=['noflux', 'noflux'])
+
+    ############     Import COMSOL data on flow     ############
+
+    print('Reading COMSOL data. This will take a while...')
+    if data == '':
+        envir.read_comsol_vtu_data('data/Velocity_plate.vtu', vel_conv=1000)
+    else:
+        if data[-4:] != '.txt' and data[-4:] != '.vtu':
+            data = data+'.vtu'
+        envir.read_comsol_vtu_data('data/'+data, vel_conv=1000)
+    print('Domain set to {} mm.'.format(envir.L))
+    print('Flow mesh is {}.'.format(envir.flow[0].shape))
+    # Domain should be 80x640x80 mm
+    # Model sits (from,to): (2.5,77.5), (85,235), (0.5,20.5)
+    model_bounds = (2.5,77.5,85,235,0,20.5)
+    print('-------------------------------------------')
 
     # Add swarm right in front of model
     s = envir.add_swarm(swarm_s=swarm_size, init='point', pos=(40,84,3), seed=seed)
@@ -62,6 +69,7 @@ def main(swarm_size=1000, time=55, seed=1, create_movie=False, prefix=''):
     
     shrimp_walk = ([0,0,0], 5*np.eye(3))
 
+    # From here down is EXACTLY the same as in IBFE_shrimp.py
 
     ########## Move the swarm according to the prescribed rules above ##########
     print('Moving swarm...')
@@ -103,7 +111,7 @@ def main(swarm_size=1000, time=55, seed=1, create_movie=False, prefix=''):
         envir.plot_structs_args.append((g_bounds, b_bounds, (0, envir.L[0])))
         # Call plot_all to create movie
         print('Creating movie...')
-        s.plot_all(prefix+'brine_shrimp_COMSOL.mp4', fps=10)
+        s.plot_all(prefix+'brineshr_COMSOL.mp4', fps=10)
 
 
 if __name__ == "__main__":
@@ -112,5 +120,5 @@ if __name__ == "__main__":
         prefix = args.prefix + '_'
     else:
         prefix = args.prefix
-    main(args.N, args.time, args.seed, args.movie, prefix)
+    main(args.N, args.time, args.data, args.seed, args.movie, prefix)
 
