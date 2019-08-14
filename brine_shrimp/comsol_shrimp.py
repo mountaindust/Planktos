@@ -36,7 +36,7 @@ parser.add_argument("-t", "--time", type=int, default=55,
 ############                    RUN SIMULATION                  ############
 ############################################################################
 
-def main(swarm_size=1000, time=55, data='', seed=1, create_movie=False, prefix=''):
+def main(swarm_size=1000, time=200, data='', seed=1, create_movie=False, prefix=''):
     '''Add swarm and simulate dispersal. Future: run this in loop while altering
     something to see the effect.'''
 
@@ -72,8 +72,6 @@ def main(swarm_size=1000, time=55, data='', seed=1, create_movie=False, prefix='
     
     shrimp_walk = ([0,0,0], 5*np.eye(3))
 
-    # From here down is EXACTLY the same as in IBFE_shrimp.py
-
     ########## Move the swarm according to the prescribed rules above ##########
     print('Moving swarm...')
     dt = 0.1
@@ -94,6 +92,8 @@ def main(swarm_size=1000, time=55, data='', seed=1, create_movie=False, prefix='
     g_cells_cnts, b_cells_cnts = shrimp_funcs.collect_cell_counts(s, g_bounds,
                                                             b_bounds, cell_size)
 
+    g_mean, g_std, b_mean, b_std = shrimp_funcs.collect_zone_statistics(s, g_bounds, b_bounds)
+
 
     ########## Plot and save the run ##########
     # Create time mesh for plotting and saving data in excel
@@ -102,6 +102,9 @@ def main(swarm_size=1000, time=55, data='', seed=1, create_movie=False, prefix='
     # Plot and save the run
     shrimp_funcs.plot_cell_counts(time_mesh, g_cells_cnts, b_cells_cnts, prefix)
     shrimp_funcs.save_sim_to_excel(time_mesh, g_cells_cnts, b_cells_cnts, prefix)
+    # Output the zone stats
+    np.savez(prefix+'_stats', g_mean=g_mean, g_std=g_std, b_mean=b_mean, b_std=b_std)
+
     
     ########## Create movie if requested ##########
     # This takes a long time. Only do it if asked to.

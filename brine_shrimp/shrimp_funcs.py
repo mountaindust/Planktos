@@ -67,6 +67,70 @@ def collect_cell_counts(swm, g_bounds, b_bounds, cell_size):
 
     return g_cells_cnts, b_cells_cnts
 
+
+
+def collect_zone_statistics(swm, g_bounds, b_bounds):
+    '''Find the mean time (and std) for shrimp to enter each zone.
+
+    Arguments:
+        swm: swarm object
+        g_bounds: bounds of green zone in y-direction
+        b_bounds: bounds of blue zone in y-direction
+
+    Returns:
+        g_mean: mean entry time of green zone
+        g_std: std of entry time of green zone
+        b_mean: mean entry time of blue zone
+        b_std: std of entry time of blue zone
+    '''
+
+    g_zone_crossings = []
+    b_zone_crossings = []
+    g_zone_counted = np.zeros(swm.positions.shape[0], dtype=bool)
+    b_zone_counted = np.array(g_zone_counted)
+
+    print('Obtaining zone statistics...')
+    for shrimps in swm.pos_history:
+        # count how many first crossings there are and record
+        g_crossings = np.logical_and(shrimps[:,1] >= g_bounds[0], 
+                                     np.logical_not(g_zone_counted))
+        g_zone_crossings.append(g_crossings.sum())
+        # mark the ones that crossed
+        g_zone_counted[g_crossings] = True
+        # repeat for blue zone
+        b_crossings = np.logical_and(shrimps[:,1] >= b_bounds[0], 
+                                     np.logical_not(b_zone_counted))
+        b_zone_crossings.append(b_crossings.sum())
+        b_zone_counted[b_crossings] = True
+    # repeat for the current (final) time
+    g_crossings = np.logical_and(swm.positions[:,1] >= g_bounds[0], 
+                                    np.logical_not(g_zone_counted))
+    g_zone_crossings.append(g_crossings.sum())
+    g_zone_counted[g_crossings] = True
+    b_crossings = np.logical_and(swm.positions[:,1] >= b_bounds[0], 
+                                    np.logical_not(b_zone_counted))
+    b_zone_crossings.append(b_crossings.sum())
+    b_zone_counted[b_crossings] = True
+
+    # report how many never crossed
+    print('{} shrimp never entered the green zone.'.format(
+        np.logical_not(g_zone_counted).sum()
+    ))
+    print('{} shrimp never entered the blue zone.'.format(
+        np.logical_not(b_zone_counted).sum()
+    ))
+
+    # compute statistics
+    all_time = np.array(swm.envir.time_history + [swm.envir.time])
+    g_mean = np.average(all_time, weights=g_zone_crossings)
+    g_std = np.sqrt(np.average((all_time - g_mean)**2, weights=g_zone_crossings))
+    b_mean = np.average(all_time, weights=b_zone_crossings)
+    b_std = np.sqrt(np.average((all_time - b_mean)**2, weights=b_zone_crossings))
+
+    return g_mean, g_std, b_mean, b_std
+    
+
+
 def plot_cell_counts(time_mesh, g_cells_cnts, b_cells_cnts, prefix=''):
     '''Create plots of cell counts using all time points and save to pdf.
     Can add a prefix to the filenames.'''
