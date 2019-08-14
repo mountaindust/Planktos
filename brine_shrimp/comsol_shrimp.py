@@ -51,7 +51,10 @@ def main(swarm_size=1000, time=55, data='', seed=1, create_movie=False, prefix='
     else:
         if data[-4:] != '.txt' and data[-4:] != '.vtu':
             data = data+'.vtu'
-        envir.read_comsol_vtu_data('data/'+data, vel_conv=1000)
+        try:
+            envir.read_comsol_vtu_data(data, vel_conv=1000)
+        except AssertionError:
+            envir.read_comsol_vtu_data('data/'+data, vel_conv=1000)
     print('Domain set to {} mm.'.format(envir.L))
     print('Flow mesh is {}.'.format(envir.flow[0].shape))
     # Domain should be 80x640x80 mm
