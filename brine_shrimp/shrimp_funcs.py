@@ -78,9 +78,11 @@ def collect_zone_statistics(swm, g_bounds, b_bounds):
         b_bounds: bounds of blue zone in y-direction
 
     Returns:
-        g_mean: mean entry time of green zone
+        g_cross_frac: fraction crossing into green zone during sim
+        g_mean: mean entry time of green zone (given entry happened)
         g_std: std of entry time of green zone
-        b_mean: mean entry time of blue zone
+        b_cross_frac: fraction crossing into blue zone during sim
+        b_mean: mean entry time of blue zone (given entry happened)
         b_std: std of entry time of blue zone
     '''
 
@@ -119,15 +121,19 @@ def collect_zone_statistics(swm, g_bounds, b_bounds):
     print('{} shrimp never entered the blue zone.'.format(
         np.logical_not(b_zone_counted).sum()
     ))
+    g_cross_frac = g_zone_counted.sum()/len(g_zone_counted)
+    b_cross_frac = b_zone_counted.sum()/len(b_zone_counted)
 
     # compute statistics
+    # as a weighted time avg, this is an expected value conditioned on crossing
     all_time = np.array(swm.envir.time_history + [swm.envir.time])
     g_mean = np.average(all_time, weights=g_zone_crossings)
     g_std = np.sqrt(np.average((all_time - g_mean)**2, weights=g_zone_crossings))
     b_mean = np.average(all_time, weights=b_zone_crossings)
     b_std = np.sqrt(np.average((all_time - b_mean)**2, weights=b_zone_crossings))
+    
 
-    return g_mean, g_std, b_mean, b_std
+    return g_cross_frac, g_mean, g_std, b_cross_frac, b_mean, b_std
     
 
 

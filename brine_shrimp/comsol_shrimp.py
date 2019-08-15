@@ -92,7 +92,8 @@ def main(swarm_size=1000, time=600, data='', seed=1, create_movie=False, prefix=
     g_cells_cnts, b_cells_cnts = shrimp_funcs.collect_cell_counts(s, g_bounds,
                                                             b_bounds, cell_size)
 
-    g_mean, g_std, b_mean, b_std = shrimp_funcs.collect_zone_statistics(s, g_bounds, b_bounds)
+    g_cross_frac, g_mean, g_std, b_cross_frac, b_mean, b_std =\
+        shrimp_funcs.collect_zone_statistics(s, g_bounds, b_bounds)
 
 
     ########## Plot and save the run ##########
@@ -103,7 +104,8 @@ def main(swarm_size=1000, time=600, data='', seed=1, create_movie=False, prefix=
     shrimp_funcs.plot_cell_counts(time_mesh, g_cells_cnts, b_cells_cnts, prefix)
     shrimp_funcs.save_sim_to_excel(time_mesh, g_cells_cnts, b_cells_cnts, prefix)
     # Output the zone stats
-    np.savez(prefix+'_stats', g_mean=g_mean, g_std=g_std, b_mean=b_mean, b_std=b_std)
+    np.savez(prefix+'_stats', g_cross_frac=g_cross_frac, g_mean=g_mean, g_std=g_std, 
+             b_cross_frac=b_cross_frac, b_mean=b_mean, b_std=b_std)
 
     
     ########## Create movie if requested ##########
