@@ -36,7 +36,7 @@ parser.add_argument("-t", "--time", type=int, default=55,
 ############                    RUN SIMULATION                  ############
 ############################################################################
 
-def main(swarm_size=1000, time=200, data='', seed=1, create_movie=False, prefix=''):
+def main(swarm_size=1000, time=600, data='', seed=1, create_movie=False, prefix=''):
     '''Add swarm and simulate dispersal. Future: run this in loop while altering
     something to see the effect.'''
 
