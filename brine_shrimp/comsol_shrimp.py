@@ -45,7 +45,7 @@ def main(swarm_size=1000, time=600, data='', seed=1, create_movie=False, prefix=
 
     ############     Import COMSOL data on flow     ############
 
-    print('Reading COMSOL data. This will take a while...')
+    print('Reading COMSOL data.')
     if data == '':
         envir.read_comsol_vtu_data('data/Velocity_plate.vtu', vel_conv=1000)
     else:

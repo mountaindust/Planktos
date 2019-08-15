@@ -38,17 +38,18 @@ def collect_cell_counts(swm, g_bounds, b_bounds, cell_size):
     g_cells_cnts = list()
     b_cells_cnts = list()
     for shrimps in swm.pos_history: # each time point in history
+        # shrimps is a masked array
         g_cells_cnts.append([])
         b_cells_cnts.append([])
         for gcell, zcell in zip(gy_cells, z_cells): # each green cell
             g_cells_cnts[-1].append(np.logical_and(
-                (gcell[0] <= shrimps[:,1]) & (shrimps[:,1] < gcell[1]),
-                (zcell[0] <= shrimps[:,2]) & (shrimps[:,2] < zcell[1])
+                (gcell[0] <= shrimps[:,1].data) & (shrimps[:,1].data < gcell[1]),
+                (zcell[0] <= shrimps[:,2].data) & (shrimps[:,2].data < zcell[1])
             ).sum())
         for bcell, zcell in zip(by_cells, z_cells): # each blue cell
             b_cells_cnts[-1].append(np.logical_and(
-                (bcell[0] <= shrimps[:,1]) & (shrimps[:,1] < bcell[1]),
-                (zcell[0] <= shrimps[:,2]) & (shrimps[:,2] < zcell[1])
+                (bcell[0] <= shrimps[:,1].data) & (shrimps[:,1].data < bcell[1]),
+                (zcell[0] <= shrimps[:,2].data) & (shrimps[:,2].data < zcell[1])
             ).sum())
 
     # append last (current) time point
@@ -56,13 +57,13 @@ def collect_cell_counts(swm, g_bounds, b_bounds, cell_size):
     b_cells_cnts.append([])
     for gcell, zcell in zip(gy_cells, z_cells): # each green cell
         g_cells_cnts[-1].append(np.logical_and(
-            (gcell[0] <= swm.positions[:,1]) & (swm.positions[:,1] < gcell[1]),
-            (zcell[0] <= swm.positions[:,2]) & (swm.positions[:,2] < zcell[1])
+            (gcell[0] <= swm.positions[:,1].data) & (swm.positions[:,1].data < gcell[1]),
+            (zcell[0] <= swm.positions[:,2].data) & (swm.positions[:,2].data < zcell[1])
         ).sum())
     for bcell, zcell in zip(by_cells, z_cells): # each blue cell
         b_cells_cnts[-1].append(np.logical_and(
-            (bcell[0] <= swm.positions[:,1]) & (swm.positions[:,1] < bcell[1]),
-            (zcell[0] <= swm.positions[:,2]) & (swm.positions[:,2] < zcell[1])
+            (bcell[0] <= swm.positions[:,1].data) & (swm.positions[:,1].data < bcell[1]),
+            (zcell[0] <= swm.positions[:,2].data) & (swm.positions[:,2].data < zcell[1])
         ).sum())
 
     return g_cells_cnts, b_cells_cnts
@@ -98,22 +99,23 @@ def collect_zone_statistics(swm, g_bounds, b_bounds):
     print('Obtaining zone statistics...')
     for shrimps in swm.pos_history:
         # count how many first crossings there are and record
-        g_crossings = np.logical_and(shrimps[:,1] >= g_bounds[0], 
+        #   careful!! position is a masked array!
+        g_crossings = np.logical_and(shrimps[:,1].data >= g_bounds[0], 
                                      np.logical_not(g_zone_counted))
         g_zone_crossings.append(g_crossings.sum())
         # mark the ones that crossed
         g_zone_counted[g_crossings] = True
         # repeat for blue zone
-        b_crossings = np.logical_and(shrimps[:,1] >= b_bounds[0], 
+        b_crossings = np.logical_and(shrimps[:,1].data >= b_bounds[0], 
                                      np.logical_not(b_zone_counted))
         b_zone_crossings.append(b_crossings.sum())
         b_zone_counted[b_crossings] = True
     # repeat for the current (final) time
-    g_crossings = np.logical_and(swm.positions[:,1] >= g_bounds[0], 
+    g_crossings = np.logical_and(swm.positions[:,1].data >= g_bounds[0], 
                                     np.logical_not(g_zone_counted))
     g_zone_crossings.append(g_crossings.sum())
     g_zone_counted[g_crossings] = True
-    b_crossings = np.logical_and(swm.positions[:,1] >= b_bounds[0], 
+    b_crossings = np.logical_and(swm.positions[:,1].data >= b_bounds[0], 
                                     np.logical_not(b_zone_counted))
     b_zone_crossings.append(b_crossings.sum())
     b_zone_counted[b_crossings] = True
