@@ -16,3 +16,6 @@ def main():
         cmd = 'python comsol_shrimp.py -N 100000 -o {} -d {}'.format(name, f)
         print('Now processing {}.'.format(f))
         os.system(cmd)
+
+if __name__ == "__main__":
+    main()
