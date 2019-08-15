@@ -81,9 +81,13 @@ def collect_zone_statistics(swm, g_bounds, b_bounds):
         g_cross_frac: fraction crossing into green zone during sim
         g_mean: mean entry time of green zone (given entry happened)
         g_std: std of entry time of green zone
+        g_skew: Pearson's moment coefficient of skewness for green zone entry
+        g_kurt: Pearson's moment coefficient of kurtosis for green zone entry
         b_cross_frac: fraction crossing into blue zone during sim
         b_mean: mean entry time of blue zone (given entry happened)
         b_std: std of entry time of blue zone
+        b_skew: Pearson's moment coefficient of skewness for blue zone entry
+        b_kurt: Pearson's moment coefficient of kurtosis for blue zone entry
     '''
 
     g_zone_crossings = []
@@ -126,14 +130,52 @@ def collect_zone_statistics(swm, g_bounds, b_bounds):
 
     # compute statistics
     # as a weighted time avg, this is an expected value conditioned on crossing
+    # skew and kurtosis are Pearson coefficients
+    g_zone_crossings = np.array(g_zone_crossings)
+    b_zone_crossings = np.array(b_zone_crossings)
+    # sanity check
+    assert g_zone_counted.sum() == g_zone_crossings.sum()
+    assert b_zone_counted.sum() == b_zone_crossings.sum()
+    #
     all_time = np.array(swm.envir.time_history + [swm.envir.time])
     g_mean = np.average(all_time, weights=g_zone_crossings)
     g_std = np.sqrt(np.average((all_time - g_mean)**2, weights=g_zone_crossings))
+    g_skew = np.average(((all_time - g_mean)/g_std)**3, weights=g_zone_crossings)
+    g_kurt = np.average(((all_time - g_mean)/g_std)**4, weights=g_zone_crossings)
     b_mean = np.average(all_time, weights=b_zone_crossings)
     b_std = np.sqrt(np.average((all_time - b_mean)**2, weights=b_zone_crossings))
-    
+    b_skew = np.average(((all_time - b_mean)/b_std)**3, weights=b_zone_crossings)
+    b_kurt = np.average(((all_time - b_mean)/b_std)**4, weights=b_zone_crossings)
 
-    return g_cross_frac, g_mean, g_std, b_cross_frac, b_mean, b_std
+    # Get the median
+    g_num = g_zone_crossings.sum()
+    g_mid = int(g_num/2)
+    b_num = b_zone_crossings.sum()
+    b_mid = int(b_num/2)
+    for n, val in enumerate(np.cumsum(g_zone_crossings)):
+        if val >= g_mid:
+            if g_num % 2 == 0 and val == g_mid:
+                # even and necessary to get adverage
+                g_median = (all_time[n] + all_time[n+1])/2
+                break
+            else:
+                g_median = all_time[n]
+                break
+    for n, val in enumerate(np.cumsum(b_zone_crossings)):
+        if val >= b_mid:
+            if b_num % 2 == 0 and val == b_mid:
+                # even and necessary to get adverage
+                b_median = (all_time[n] + all_time[n+1])/2
+                break
+            else:
+                b_median = all_time[n]
+                break
+    # Get the mode
+    g_mode = all_time[np.argmax(g_zone_crossings)]
+    b_mode = all_time[np.argmax(b_zone_crossings)]
+
+    return g_cross_frac, g_mean, g_median, g_mode, g_std, g_skew, g_kurt,\
+        b_cross_frac, b_mean, b_median, b_mode, b_std, b_skew, b_kurt
     
 
 
