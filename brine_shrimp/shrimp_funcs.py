@@ -134,8 +134,11 @@ def collect_zone_statistics(swm, g_bounds, b_bounds):
     g_zone_crossings = np.array(g_zone_crossings)
     b_zone_crossings = np.array(b_zone_crossings)
     # sanity check
-    assert g_zone_counted.sum() == g_zone_crossings.sum()
-    assert b_zone_counted.sum() == b_zone_crossings.sum()
+    try:
+        assert g_zone_counted.sum() == g_zone_crossings.sum()
+        assert b_zone_counted.sum() == b_zone_crossings.sum()
+    except AssertionError:
+        import pdb; pdb.set_trace()
     #
     all_time = np.array(swm.envir.time_history + [swm.envir.time])
     g_mean = np.average(all_time, weights=g_zone_crossings)
