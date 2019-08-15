@@ -108,8 +108,8 @@ def main(swarm_size=1000, time=600, data='', seed=1, create_movie=False, prefix=
     np.savez(prefix+'_stats',
         g_cross_frac=g_cross_frac, g_mean=g_mean, g_median=g_median, g_mode=g_mode,
         g_std=g_std, g_skew=g_skew, g_kurt=g_kurt,
-        b_cross_frac=b_cross_frac, b_mean=b_mean, b_median=g_median, b_mode=g_mode,
-        b_std=b_std, b_skew=g_skew, b_kurt=g_kurt)
+        b_cross_frac=b_cross_frac, b_mean=b_mean, b_median=b_median, b_mode=b_mode,
+        b_std=b_std, b_skew=b_skew, b_kurt=b_kurt)
 
     
     ########## Create movie if requested ##########
