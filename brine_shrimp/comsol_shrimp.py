@@ -11,6 +11,7 @@ if platform == 'darwin': # OSX backend does not support blitting
     import matplotlib
     matplotlib.use('TkAgg')
 import argparse
+import pickle
 import numpy as np
 import shrimp_funcs
 import Planktos, data_IO
@@ -105,11 +106,15 @@ def main(swarm_size=1000, time=600, data='', seed=1, create_movie=False, prefix=
     shrimp_funcs.plot_cell_counts(time_mesh, g_cells_cnts, b_cells_cnts, prefix)
     shrimp_funcs.save_sim_to_excel(time_mesh, g_cells_cnts, b_cells_cnts, prefix)
     # Output the zone stats
-    np.savez(prefix+'_stats',
+    np.savez(prefix+'stats',
         g_cross_frac=g_cross_frac, g_mean=g_mean, g_median=g_median, g_mode=g_mode,
         g_std=g_std, g_skew=g_skew, g_kurt=g_kurt,
         b_cross_frac=b_cross_frac, b_mean=b_mean, b_median=b_median, b_mode=b_mode,
         b_std=b_std, b_skew=b_skew, b_kurt=b_kurt)
+
+    # write out the swarm object for later data inspection
+    with open(prefix+'obj.pickle', 'w+b') as f:
+        pickle.dump(s, f)
 
     
     ########## Create movie if requested ##########

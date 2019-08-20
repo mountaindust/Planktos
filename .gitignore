@@ -8,6 +8,7 @@ data/
 *.mp4
 *.xlsx
 *.npz
+*.pickle
 
 # Autobackup files
 ~*
