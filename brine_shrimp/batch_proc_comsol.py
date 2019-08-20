@@ -12,8 +12,8 @@ def main():
         prefix = 'Velocity_'
         suffix = '.vtu'
         name = f.name[len(prefix):]
-        name = name[:-len(suffix)] + '_var5_N100000'
-        cmd = 'python comsol_shrimp.py -N 100000 -o {} -d {}'.format(name, f)
+        name = name[:-len(suffix)] + '_var5_N10000'
+        cmd = 'python comsol_shrimp.py -N 10000 -t 600 -o {} -d {}'.format(name, f)
         print('Now processing {}.'.format(f))
         os.system(cmd)
 
