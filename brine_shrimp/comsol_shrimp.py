@@ -29,7 +29,7 @@ parser.add_argument("-d", "--data", type=str,
                     default='')
 parser.add_argument("--movie", action="store_true", default=False,
                     help="output a movie of the simulation")
-parser.add_argument("-t", "--time", type=int, default=55,
+parser.add_argument("-t", "--time", type=int, default=600,
                     help="time in sec to run the simulation")
 
 
@@ -69,7 +69,7 @@ def main(swarm_size=1000, time=600, data='', seed=1, create_movie=False, prefix=
     # Specify amount of jitter (mean, covariance)
     # (sigma**2=2*D, D for brine shrimp given in Kohler, Swank, Haefner, Powell 2010)
     # D was found to be 0.025 cm**2/sec (video data, real time was higher)
-    # Set sigma**2 as 2*D = 0.05cm**2/sec = 5mm**2/sec, sigma~7mm
+    # Set sigma**2 as 2*D = 0.05cm**2/sec = 5mm**2/sec
     
     shrimp_walk = ([0,0,0], 5*np.eye(3))
 
