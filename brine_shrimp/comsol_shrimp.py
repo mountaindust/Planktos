@@ -69,9 +69,10 @@ def main(swarm_size=1000, time=600, data='', seed=1, create_movie=False, prefix=
     # Specify amount of jitter (mean, covariance)
     # (sigma**2=2*D, D for brine shrimp given in Kohler, Swank, Haefner, Powell 2010)
     # D was found to be 0.025 cm**2/sec (video data, real time was higher)
-    # Set sigma**2 as 2*D = 0.05cm**2/sec = 5mm**2/sec
+    # Set sigma**2 as 2*D = 0.05 cm**2/sec = 5 mm**2/sec
+    # Then take half of this to account for 3D (vs. 2D) = 2.5 mm**2/sec
     
-    shrimp_walk = ([0,0,0], 5*np.eye(3))
+    shrimp_walk = ([0,0,0], 2.5*np.eye(3))
 
     ########## Move the swarm according to the prescribed rules above ##########
     print('Moving swarm...')
