@@ -19,6 +19,7 @@ from math import exp, log
 import numpy as np
 import numpy.ma as ma
 from scipy import interpolate
+import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.ticker import NullFormatter, MaxNLocator
 from mpl_toolkits.mplot3d import Axes3D
@@ -1219,7 +1220,7 @@ class environment:
 class swarm:
 
     def __init__(self, swarm_size=100, envir=None, init='random', seed=None, 
-                 char_L=None, phys=None, **kwargs):
+                 props=None, char_L=None, phys=None, **kwargs):
         ''' Initalizes planktos swarm in an environment.
 
         Arguments:
@@ -1227,6 +1228,7 @@ class swarm:
             envir: environment for the swarm, defaults to the standard environment
             init: Method for initalizing positions.
             seed: Seed for random number generator, int or None
+            props: (not implemented) Pandas dataframe of individual agent properties
             char_L: characteristic length
             phys: dictionary of physical properties to be used by equations of motion
             kwargs: keyword arguments to be passed to the method for
@@ -1256,23 +1258,35 @@ class swarm:
                 print("Error: invalid environment object.")
                 raise
 
-        # set physical properties
+        # Dataframe holding individual properties of each agent with the exception
+        #   of position/velocity/acceleration.
+        # Initialize by populating with mean and covariance for a standard 
+        #   random walk, but with variance 0.01 instead of 1.
+        if props is None:
+            self.props = pd.DataFrame(
+                    {'mu': [np.zeros(len(self.envir.L) for ii in range(swarm_size)],
+                    'cov': [0.01*np.eye(len(self.envir.L)) for ii in range(swarm_size)]}
+                    )
+        else:
+            self.props = props
+
+        # set physical properties (TODO: incorporate into props)
         self.char_L = char_L
         self.phys = phys
 
         # initialize random number generator
         self.rndState = np.random.RandomState(seed=seed)
 
-        # initialize bug locations
+        # initialize agent locations
         self.positions = ma.zeros((swarm_size, len(self.envir.L)))
         self.positions.harden_mask() # prevent unintentional mask overwites
         mv_swarm.init_pos(self, init, kwargs)
 
-        # initialize bug velocities
+        # initialize agent velocities
         self.velocity = ma.zeros((swarm_size, len(self.envir.L)))
         self.velocity.harden_mask()
 
-        # initialize bug accelerations
+        # initialize agent accelerations
         self.acceleration = ma.zeros((swarm_size, len(self.envir.L)))
         self.acceleration.harden_mask()
 
@@ -1303,7 +1317,7 @@ class swarm:
 
         Arguments:
             dt: time-step for move
-            params: iterable of parameters to pass along to update_positions
+            params: parameters to pass along to update_positions, if necessary
             update_time: whether or not to update the environment's time by dt
         '''
 
@@ -1346,9 +1360,10 @@ class swarm:
         the new agent positions after a time step of length dt. It should also
         update the agent velocities at the end of the timestep in self.velocity.
 
-        What is included in this implementation is a basic jitter behavior with
-        drift according to the fluid flow.
-        params = (mean=0, covariance matrix=np.eye)
+        What is included in this default implementation is a basic jitter behavior 
+        with drift according to the fluid flow. As an example, the jitter is
+        unbiased (mean=0) with a covariance of 0.01*np.eye, as set in the
+        default props argument of the swarm class.
 
         Arguments:
             dt: length of time step
@@ -1358,27 +1373,17 @@ class swarm:
         # 3D?
         DIM3 = (len(self.envir.L) == 3)
 
-        # Parse optional parameters
-        if params is not None:
-            assert isinstance(params[1], np.ndarray), "cov must be ndarray"
-            if not DIM3:
-                assert len(params[0]) == 2, "mu must be length 2"
-                assert params[1].shape == (2,2), "cov must be shape (2,2)"
-            else:
-                assert len(params[0]) == 3, "mu must be length 3"
-                assert params[1].shape == (3,3), "cov must be shape (3,3)"
-        else:
-            params = (np.zeros(len(self.envir.L)), 0.01*np.eye(len(self.envir.L)))
-
-
         ### Passive movement ###
         # Get fluid-based drift and add to Gaussian bias
-        mu = self.get_fluid_drift() + params[0]
-        #mu = mv_swarm.massive_drift(self, dt) + params[0]
+        mu = self.get_fluid_drift() + self.props['mu']
+        #mu = mv_swarm.massive_drift(self, dt) + self.props
+
+        # mu is now a Pandas Series object. convert to ndarray
+        np.stack(mu.array, axis=0)
 
         ### Active movement ###
         # Add jitter and move according to a Gaussian random walk.
-        mv_swarm.gaussian_walk(self, dt*mu, dt*params[1])
+        mv_swarm.gaussian_walk(self, mu, dt)
 
         # Update velocity of swarm
         self.velocity = (self.positions - self.pos_history[-1])/dt
