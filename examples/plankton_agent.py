@@ -32,13 +32,16 @@ class plankton(Planktos.swarm):
                                        mu=1000, rho=1000)
         super(plankton, self).__init__(swarm_size, envir, init, **kwargs)
 
+        # Less jitter
+        self.props['cov'] *= 0.01
+
         # Some plankton properties we might want?
         self.energy = 1
         self.memory = None
         
 
 
-    def update_positions(self, dt, params):
+    def update_positions(self, dt, params=None):
         ''' This method adds plankton behavior.
 
         Arguments:
@@ -51,21 +54,6 @@ class plankton(Planktos.swarm):
             # Just do the default thing
             Planktos.swarm.update_positions(self, dt, params)
         else:
-            # 3D?
-            DIM3 = (len(self.envir.L) == 3)
-
-            # Parse optional parameters
-            if params is not None:
-                assert isinstance(params[1], np.ndarray), "cov must be ndarray"
-                if not DIM3:
-                    assert len(params[0]) == 2, "mu must be length 2"
-                    assert params[1].shape == (2,2), "cov must be shape (2,2)"
-                else:
-                    assert len(params[0]) == 3, "mu must be length 3"
-                    assert params[1].shape == (3,3), "cov must be shape (3,3)"
-            else:
-                params = (0, 0.01*np.eye(len(self.envir.L)))
-
             ### Fight against the current to some degree? ###
             fluid_drift = self.get_fluid_drift()
             fluid_mag = np.sqrt(fluid_drift[:,0]**2 + fluid_drift[:,1]**2)
@@ -76,7 +64,7 @@ class plankton(Planktos.swarm):
             for dim in range(resist.shape[1]):
                 resist[:,dim] *= 3/(resist_over+3)
             # total drift with resistance
-            drift = fluid_drift + resist + params[0]
+            drift = fluid_drift + resist + self.get_prop('mu')
 
             # Move according to random walk with drift
-            mv_swarm.gaussian_walk(self, dt*drift, dt*params[1])
+            mv_swarm.gaussian_walk(self, drift, dt)

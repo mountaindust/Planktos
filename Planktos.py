@@ -1108,13 +1108,14 @@ class environment:
 
 
 
-    def add_swarm(self, swarm_s=100, init='random', seed=None, **kwargs):
+    def add_swarm(self, swarm_s=100, init='random', seed=None, props=None, **kwargs):
         ''' Adds a swarm into this environment.
 
         Arguments:
             swarm_s: swarm object or size of the swarm (int)
             init: Method for initalizing positions.
             seed: Seed for random number generator
+            props: Dataframe of properties
             kwargs: keyword arguments to be passed to the method for
                 initalizing positions
         '''
@@ -1124,9 +1125,23 @@ class environment:
             # check if the dimesion matches, project if possible
             if swarm_s.positions.shape[1] != len(self.L):
                 if swarm_s.positions.shape[1] > len(self.L):
+                    # Project swarm down to 2D
                     swarm_s.positions = swarm_s.positions[:,:2]
                     swarm_s.velocity = swarm_s.velocity[:,:2]
                     swarm_s.acceleration = swarm_s.acceleration[:,:2]
+                    # Update known properties
+                    if 'mu' in swarm_s.props:
+                        for n,mu in enumerate(swarm_s.props['mu']):
+                            swarm_s.props['mu'][n] = mu[:2]
+                        print('mu has been projected to 2D.')
+                    if 'cov' in swarm_s.props:
+                        for n,cov in enumerate(swarm_s.props['cov']):
+                            swarm_s.props['cov'][n] = cov[:2,:2]
+                        print('cov has been projected to 2D.')
+                    # warn about others
+                    other_props = [x for x in swarm_s.props if x not in ['mu', 'cov']]
+                    if len(other_props) > 0:
+                        print('WARNING: other properties {} were not projected.'.format(other_props))
                 else:
                     raise RuntimeError("Swarm dimension smaller than environment dimension!")
             self.swarms.append(swarm_s)
@@ -1287,7 +1302,7 @@ class swarm:
                 - z = (optional, float) z-coordinate, if 3D
 
         To customize agent behavior, subclass this class and re-implement the
-        method update_positions (do not change the call signature.
+        method update_positions (do not change the call signature).
         '''
 
         # use a new, 3D default environment if one was not given
@@ -1305,11 +1320,11 @@ class swarm:
         # Dataframe holding individual properties of each agent with the exception
         #   of position/velocity/acceleration.
         # Initialize by populating with mean and covariance for a standard 
-        #   random walk, but with variance 0.01 instead of 1.
+        #   random walk.
         if props is None:
             self.props = pd.DataFrame(
-                    {'mu': [np.zeros(len(self.envir.L) for ii in range(swarm_size)],
-                    'cov': [0.01*np.eye(len(self.envir.L)) for ii in range(swarm_size)]}
+                    {'mu': [np.zeros(len(self.envir.L)) for ii in range(swarm_size)],
+                    'cov': [np.eye(len(self.envir.L)) for ii in range(swarm_size)]}
                     )
         else:
             self.props = props
@@ -1339,6 +1354,18 @@ class swarm:
 
         # Apply boundary conditions in case of domain mismatch
         self.apply_boundary_conditions()
+
+
+
+    def get_prop(self, prop_name):
+        '''Return the property requested as a numpy array, ready for use in
+        vectorized operations.
+        
+        Arguments:
+            prop_name: name of the property to return
+        '''
+
+        return np.stack(self.props[prop_name].array, axis=0)
 
 
 
@@ -1372,6 +1399,8 @@ class swarm:
         if not np.all(self.positions.mask):
             # Update positions
             self.update_positions(dt, params)
+            # Update velocity of swarm
+            self.velocity = (self.positions - self.pos_history[-1])/dt
             # Apply boundary conditions.
             self.apply_boundary_conditions()
 
@@ -1396,7 +1425,7 @@ class swarm:
 
 
 
-    def update_positions(self, dt, params):
+    def update_positions(self, dt, params=None):
         '''Update agent positions.
         THIS IS THE METHOD TO OVERRIDE IF YOU WANT DIFFERENT MOVEMENT!
         Note: do not change the call signature.
@@ -1411,26 +1440,17 @@ class swarm:
 
         Arguments:
             dt: length of time step
-            params: iterable of any other parameters necessary
+            params: any other parameters necessary (optional)
         '''
-
-        # 3D?
-        DIM3 = (len(self.envir.L) == 3)
 
         ### Passive movement ###
         # Get fluid-based drift and add to Gaussian bias
-        mu = self.get_fluid_drift() + self.props['mu']
-        #mu = mv_swarm.massive_drift(self, dt) + self.props
-
-        # mu is now a Pandas Series object. convert to ndarray
-        np.stack(mu.array, axis=0)
+        mu = self.get_fluid_drift() + self.get_prop('mu')
+        #mu = mv_swarm.massive_drift(self, dt) + self.get_prop('mu')
 
         ### Active movement ###
         # Add jitter and move according to a Gaussian random walk.
         mv_swarm.gaussian_walk(self, mu, dt)
-
-        # Update velocity of swarm
-        self.velocity = (self.positions - self.pos_history[-1])/dt
 
 
 

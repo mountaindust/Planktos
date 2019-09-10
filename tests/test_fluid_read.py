@@ -62,8 +62,9 @@ def test_IBAMR_load():
     # test swarm movement
     envir.add_swarm(init='random')
     sw = envir.swarms[0]
+    sw.props['cov'] *= 0.001
     for ii in range(20):
-        sw.move(0.1, params=(np.zeros(3), np.eye(3)*0.001))
+        sw.move(0.1)
     assert len(sw.pos_history) == 20, "all movements not recorded"
     assert np.isclose(envir.time,2), "incorrect final time"
     assert len(envir.time_history) == 20, "all times not recorded"
@@ -112,8 +113,9 @@ def test_IBAMR_load():
     # test swarm movement
     envir.add_swarm(init='random')
     sw = envir.swarms[0]
+    sw.props['cov'] *= 0.001
     for ii in range(10):
-        sw.move(0.1, params=(np.zeros(3), np.eye(3)*0.001))
+        sw.move(0.1)
     assert len(sw.pos_history) == 10, "all movements not recorded"
     assert np.isclose(envir.time,1), "incorrect final time"
     assert len(envir.time_history) == 10, "all times not recorded"
@@ -172,8 +174,9 @@ def test_vtu_load():
     # test swarm movement
     envir.add_swarm(init='random')
     sw = envir.swarms[0]
+    sw.props['cov'] *= 0.001
     for ii in range(20):
-        sw.move(0.1, params=(np.zeros(3), np.eye(3)*0.001))
+        sw.move(0.1)
     assert len(sw.pos_history) == 20, "all movements not recorded"
     assert np.isclose(envir.time,2), "incorrect final time"
     assert len(envir.time_history) == 20, "all times not recorded"

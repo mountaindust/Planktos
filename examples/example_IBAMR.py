@@ -21,9 +21,11 @@ misc.add_cylinders_toplot(envir, '../tests/IBAMR_test_data/mesh_db.vtk')
 
 envir.add_swarm()
 s = envir.swarms[0]
+# amount of jitter (variance)
+s.props['cov'] *= 0.0001
 
 print('Moving swarm...')
 for ii in range(50):
-    s.move(0.1, params=(np.zeros(3), np.eye(3)*0.0001))
+    s.move(0.1)
 
 s.plot_all()

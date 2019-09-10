@@ -25,34 +25,19 @@ class massive_swarm(Planktos.swarm):
     def update_positions(self, dt, params):
         '''Uses projectile motion'''
 
-        # 3D?
-        DIM3 = (len(self.envir.L) == 3)
-
-        # Parse optional parameters
-        if params is not None:
-            assert isinstance(params[1], np.ndarray), "cov must be ndarray"
-            if not DIM3:
-                assert len(params[0]) == 2, "mu must be length 2"
-                assert params[1].shape == (2,2), "cov must be shape (2,2)"
-            else:
-                assert len(params[0]) == 3, "mu must be length 3"
-                assert params[1].shape == (3,3), "cov must be shape (3,3)"
-        else:
-            params = (np.zeros(len(self.envir.L)), np.eye(len(self.envir.L)))
-
-        if len(params) == 2:
+        if params is None:
             high_re = False
         else:
-            high_re = params[2]
+            high_re = params
 
         # Get fluid-based drift and add to Gaussian bias
-        mu = mv_swarm.massive_drift(self, dt, high_re) + params[0]
+        mu = mv_swarm.massive_drift(self, dt, high_re=high_re) + self.get_prop('mu')
+        #mu = mv_swarm.massive_drift(self, dt) + self.get_prop('mu')
 
+        ### Active movement ###
         # Add jitter and move according to a Gaussian random walk.
-        mv_swarm.gaussian_walk(self, dt*mu, dt*params[1])
+        mv_swarm.gaussian_walk(self, mu, dt)
 
-        # Update velocity of swarm
-        self.velocity = (self.positions - self.pos_history[-1])/dt
 
 
 ###############################################################################

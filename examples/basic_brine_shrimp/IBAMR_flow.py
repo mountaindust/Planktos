@@ -24,11 +24,11 @@ s = envir.swarms[0]
 
 # Specify amount of jitter (mean, covariance)
 # Set std as 1 cm = 0.01 m
-shrimp_walk = ([0,0,0], (0.01**2)*np.eye(3))
+s.props['cov'] *= 0.01**2
 
 print('Moving swarm...')
 for ii in range(240):
-    s.move(0.1, shrimp_walk)
+    s.move(0.1)
 
 ########## This bit is for plotting the cylinders, if so desired ##########
 
