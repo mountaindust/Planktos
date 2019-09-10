@@ -208,3 +208,89 @@ def read_2DEulerian_Data_From_vtk(path, simNums, strChoice, xy=False):
             return data[0], data[1], x, y
         else:
             return data[0], data[1]
+
+
+
+def read_vtu_mesh_velocity(filename):
+    '''This method reads ascii COMSOL velocity data in a vtu or equivalent 
+    txt file. It is assumed that the data is on a regular grid.
+    
+    Returns velocity data and grid as lists.'''
+
+    with open(filename) as f:
+        dimension = None
+        grid_units = None
+        section_flag = None
+        grid = []
+        vel_data = {}
+        for line in f:
+            line = line.strip()
+            if line[0] == '%':
+                # Comment line
+                line = line[1:].strip()
+                if 'Dimension:' == line[:10]:
+                    dimension = int(line[10:].strip())
+                    section_flag = None
+                elif 'Length unit:' == line[:12]:
+                    grid_units = line[12:].strip()
+                    print('Grid units are in '+grid_units+'.')
+                    section_flag = None
+                elif line[:4] == 'Grid':
+                    section_flag = 'Grid'
+                elif line[:4] == 'Data':
+                    section_flag = 'Data'
+                elif section_flag == 'Data' and\
+                    line[0] in ['x', 'y', 'z', 'u', 'v', 'w']:
+                    # point or velocity data
+                    section_flag = line[0]
+                    section_units = line[2:]
+                else:
+                    section_flag = None
+            else:
+                # Non-comment line
+                if section_flag == 'Grid':
+                    grid.append(np.loadtxt([line]))
+                if section_flag in ['x', 'y', 'z']:
+                    # Do nothing with point data, already have grid
+                    pass
+                if section_flag in ['u', 'v', 'w']:
+                    # Velocity data. With respect to the grid, this moves in x,
+                    #   then y, then z.
+                    if section_flag not in vel_data:
+                        print(section_flag+' units are '+section_units+'.')
+                        vel_data[section_flag] = [np.loadtxt([line])]
+                    else:
+                        vel_data[section_flag].append(np.loadtxt([line]))
+    # Done reading file
+
+    # Gather and parse the data and return
+    data = []
+    # need to reshape velocity data
+    # first, get the length of each dimension of the grid
+    dimlen = []
+    for dim in grid:
+        dimlen.append(len(dim))
+    # data is currently a list of 1D arrays. Convert to 2D array, then reshape
+    #   into 3D if necessary. x is read across rows of the txt data, so with
+    #   row-major ordering this will b3e [z,y,x]. Transpose to [x,y,z].
+    for vel in ['u', 'v']:
+        # convert to 2D array, replace nan with 0.0
+        vel_data[vel] = np.nan_to_num(np.array(vel_data[vel]), copy=False)
+    if len(vel_data.items()) == 3:
+        # convert to 2D array, replace nan with 0.0
+        vel_data['w'] = np.nan_to_num(np.array(vel_data['w']), copy=False)
+        # reshape all to [z,y,x] then transpose to [x,y,z]
+        for vel in ['u', 'v', 'w']:
+            data.append(np.reshape(vel_data[vel], dimlen[::-1]).T)
+    else:
+        for vel in ['u', 'v']:
+            # should already be shaped as [y,x]; transpose to [x,y]
+            data.append(vel_data[vel].T)
+    # check that the dimensions match up
+    for d in data:
+        assert d.shape == tuple(dimlen), "Vel dimensions do not match grid!"
+
+    return data, grid
+    
+
+                

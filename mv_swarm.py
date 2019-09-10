@@ -56,12 +56,12 @@ def point(swarm, pos):
 
     if len(pos) == 2:
         x,y = pos
-        print('Initializing swarm with at x={}, y={}'.format(x,y))
+        print('Initializing swarm as point source at x={}, y={}'.format(x,y))
         swarm.positions[:,0] = x
         swarm.positions[:,1] = y
     elif len(pos) == 3:
         x,y,z = pos
-        print('Initializing swarm with at x={}, y={}, z={}'.format(x,y,z))
+        print('Initializing swarm as point source at x={}, y={}, z={}'.format(x,y,z))
         swarm.positions[:,0] = x
         swarm.positions[:,1] = y
         swarm.positions[:,2] = z
