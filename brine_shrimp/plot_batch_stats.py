@@ -36,6 +36,9 @@ cols = ['g_mean', 'g_median', 'g_mode', 'g_std', 'g_skew', 'g_kurt',
     'b_mean', 'b_median', 'b_mode', 'b_std', 'b_skew', 'b_kurt']
 df = df[cols]
 
-# save it as latex
+# save it as latex as two tables
 # requires usepackage{booktabs}
-df.to_latex('stat_table.tex')
+df.to_latex('stat_table_green.tex', columns=
+    ['g_mean', 'g_median', 'g_mode', 'g_std', 'g_skew', 'g_kurt'])
+df.to_latex('stat_table_blue.tex', columns=
+    ['b_mean', 'b_median', 'b_mode', 'b_std', 'b_skew', 'b_kurt'])
