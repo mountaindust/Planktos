@@ -38,17 +38,18 @@ def collect_cell_counts(swm, g_bounds, b_bounds, cell_size):
     g_cells_cnts = list()
     b_cells_cnts = list()
     for shrimps in swm.pos_history: # each time point in history
+        # shrimps is a masked array
         g_cells_cnts.append([])
         b_cells_cnts.append([])
         for gcell, zcell in zip(gy_cells, z_cells): # each green cell
             g_cells_cnts[-1].append(np.logical_and(
-                (gcell[0] <= shrimps[:,1]) & (shrimps[:,1] < gcell[1]),
-                (zcell[0] <= shrimps[:,2]) & (shrimps[:,2] < zcell[1])
+                (gcell[0] <= shrimps[:,1].data) & (shrimps[:,1].data < gcell[1]),
+                (zcell[0] <= shrimps[:,2].data) & (shrimps[:,2].data < zcell[1])
             ).sum())
         for bcell, zcell in zip(by_cells, z_cells): # each blue cell
             b_cells_cnts[-1].append(np.logical_and(
-                (bcell[0] <= shrimps[:,1]) & (shrimps[:,1] < bcell[1]),
-                (zcell[0] <= shrimps[:,2]) & (shrimps[:,2] < zcell[1])
+                (bcell[0] <= shrimps[:,1].data) & (shrimps[:,1].data < bcell[1]),
+                (zcell[0] <= shrimps[:,2].data) & (shrimps[:,2].data < zcell[1])
             ).sum())
 
     # append last (current) time point
@@ -56,16 +57,132 @@ def collect_cell_counts(swm, g_bounds, b_bounds, cell_size):
     b_cells_cnts.append([])
     for gcell, zcell in zip(gy_cells, z_cells): # each green cell
         g_cells_cnts[-1].append(np.logical_and(
-            (gcell[0] <= swm.positions[:,1]) & (swm.positions[:,1] < gcell[1]),
-            (zcell[0] <= swm.positions[:,2]) & (swm.positions[:,2] < zcell[1])
+            (gcell[0] <= swm.positions[:,1].data) & (swm.positions[:,1].data < gcell[1]),
+            (zcell[0] <= swm.positions[:,2].data) & (swm.positions[:,2].data < zcell[1])
         ).sum())
     for bcell, zcell in zip(by_cells, z_cells): # each blue cell
         b_cells_cnts[-1].append(np.logical_and(
-            (bcell[0] <= swm.positions[:,1]) & (swm.positions[:,1] < bcell[1]),
-            (zcell[0] <= swm.positions[:,2]) & (swm.positions[:,2] < zcell[1])
+            (bcell[0] <= swm.positions[:,1].data) & (swm.positions[:,1].data < bcell[1]),
+            (zcell[0] <= swm.positions[:,2].data) & (swm.positions[:,2].data < zcell[1])
         ).sum())
 
     return g_cells_cnts, b_cells_cnts
+
+
+
+def collect_zone_statistics(swm, g_bounds, b_bounds):
+    '''Find the mean time (and std) for shrimp to enter each zone.
+
+    Arguments:
+        swm: swarm object
+        g_bounds: bounds of green zone in y-direction
+        b_bounds: bounds of blue zone in y-direction
+
+    Returns:
+        g_cross_frac: fraction crossing into green zone during sim
+        g_mean: mean entry time of green zone (given entry happened)
+        g_std: std of entry time of green zone
+        g_skew: Pearson's moment coefficient of skewness for green zone entry
+        g_kurt: Pearson's moment coefficient of kurtosis for green zone entry
+        b_cross_frac: fraction crossing into blue zone during sim
+        b_mean: mean entry time of blue zone (given entry happened)
+        b_std: std of entry time of blue zone
+        b_skew: Pearson's moment coefficient of skewness for blue zone entry
+        b_kurt: Pearson's moment coefficient of kurtosis for blue zone entry
+    '''
+
+    g_zone_crossings = []
+    b_zone_crossings = []
+    g_zone_counted = np.zeros(swm.positions.shape[0], dtype=bool)
+    b_zone_counted = np.array(g_zone_counted)
+
+    print('Obtaining zone statistics...')
+    for shrimps in swm.pos_history:
+        # count how many first crossings there are and record
+        #   careful!! position is a masked array!
+        g_crossings = np.logical_and(shrimps[:,1].data >= g_bounds[0], 
+                                     np.logical_not(g_zone_counted))
+        g_zone_crossings.append(g_crossings.sum())
+        # mark the ones that crossed
+        g_zone_counted[g_crossings] = True
+        # repeat for blue zone
+        b_crossings = np.logical_and(shrimps[:,1].data >= b_bounds[0], 
+                                     np.logical_not(b_zone_counted))
+        b_zone_crossings.append(b_crossings.sum())
+        b_zone_counted[b_crossings] = True
+    # repeat for the current (final) time
+    g_crossings = np.logical_and(swm.positions[:,1].data >= g_bounds[0], 
+                                    np.logical_not(g_zone_counted))
+    g_zone_crossings.append(g_crossings.sum())
+    g_zone_counted[g_crossings] = True
+    b_crossings = np.logical_and(swm.positions[:,1].data >= b_bounds[0], 
+                                    np.logical_not(b_zone_counted))
+    b_zone_crossings.append(b_crossings.sum())
+    b_zone_counted[b_crossings] = True
+
+    # report how many never crossed
+    print('{} shrimp never entered the green zone.'.format(
+        np.logical_not(g_zone_counted).sum()
+    ))
+    print('{} shrimp never entered the blue zone.'.format(
+        np.logical_not(b_zone_counted).sum()
+    ))
+    g_cross_frac = g_zone_counted.sum()/len(g_zone_counted)
+    b_cross_frac = b_zone_counted.sum()/len(b_zone_counted)
+
+    # compute statistics
+    # as a weighted time avg, this is an expected value conditioned on crossing
+    # skew and kurtosis are Pearson coefficients
+    g_zone_crossings = np.array(g_zone_crossings)
+    b_zone_crossings = np.array(b_zone_crossings)
+    # sanity check
+    try:
+        assert g_zone_counted.sum() == g_zone_crossings.sum()
+        assert b_zone_counted.sum() == b_zone_crossings.sum()
+    except AssertionError:
+        import pdb; pdb.set_trace()
+    #
+    all_time = np.array(swm.envir.time_history + [swm.envir.time])
+    g_mean = np.average(all_time, weights=g_zone_crossings)
+    g_std = np.sqrt(np.average((all_time - g_mean)**2, weights=g_zone_crossings))
+    g_skew = np.average(((all_time - g_mean)/g_std)**3, weights=g_zone_crossings)
+    g_kurt = np.average(((all_time - g_mean)/g_std)**4, weights=g_zone_crossings)
+    b_mean = np.average(all_time, weights=b_zone_crossings)
+    b_std = np.sqrt(np.average((all_time - b_mean)**2, weights=b_zone_crossings))
+    b_skew = np.average(((all_time - b_mean)/b_std)**3, weights=b_zone_crossings)
+    b_kurt = np.average(((all_time - b_mean)/b_std)**4, weights=b_zone_crossings)
+
+    # Get the median
+    g_num = g_zone_crossings.sum()
+    g_mid = int(g_num/2)
+    b_num = b_zone_crossings.sum()
+    b_mid = int(b_num/2)
+    for n, val in enumerate(np.cumsum(g_zone_crossings)):
+        if val >= g_mid:
+            if g_num % 2 == 0 and val == g_mid:
+                # even and necessary to get adverage
+                g_median = (all_time[n] + all_time[n+1])/2
+                break
+            else:
+                g_median = all_time[n]
+                break
+    for n, val in enumerate(np.cumsum(b_zone_crossings)):
+        if val >= b_mid:
+            if b_num % 2 == 0 and val == b_mid:
+                # even and necessary to get adverage
+                b_median = (all_time[n] + all_time[n+1])/2
+                break
+            else:
+                b_median = all_time[n]
+                break
+    # Get the mode
+    g_mode = all_time[np.argmax(g_zone_crossings)]
+    b_mode = all_time[np.argmax(b_zone_crossings)]
+
+    return g_cross_frac, g_mean, g_median, g_mode, g_std, g_skew, g_kurt,\
+        b_cross_frac, b_mean, b_median, b_mode, b_std, b_skew, b_kurt
+    
+
 
 def plot_cell_counts(time_mesh, g_cells_cnts, b_cells_cnts, prefix=''):
     '''Create plots of cell counts using all time points and save to pdf.

@@ -1,6 +1,7 @@
 '''File for configuring py.test tests'''
 
 import pytest
+from pathlib import Path
 try:
     import data_IO
     NO_VTK = False
@@ -27,4 +28,11 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "vtk" in item.keywords:
                 item.add_marker(skip_vtk)
+    # skip comsol tests if unable to find comsol data
+    path = Path('tests/data/comsol/')
+    if not path.is_dir():
+        skip_vtu = pytest.mark.skip(reason="could not load VTU data")
+        for item in items:
+            if "vtu" in item.keywords:
+                item.add_marker(skip_vtu)
     
