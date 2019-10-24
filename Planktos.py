@@ -13,7 +13,7 @@ import sys, warnings, pickle
 from sys import platform
 if platform == 'darwin': # OSX backend does not support blitting
     import matplotlib
-    matplotlib.use('TkAgg')
+    matplotlib.use('Qt5Agg')
 from pathlib import Path
 from math import exp, log
 import numpy as np
