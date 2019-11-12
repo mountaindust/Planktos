@@ -145,12 +145,20 @@ def collect_zone_statistics(swm, g_bounds, b_bounds):
     all_time = np.array(swm.envir.time_history + [swm.envir.time])
     g_mean = np.average(all_time, weights=g_zone_crossings)
     g_std = np.sqrt(np.average((all_time - g_mean)**2, weights=g_zone_crossings))
-    g_skew = np.average(((all_time - g_mean)/g_std)**3, weights=g_zone_crossings)
-    g_kurt = np.average(((all_time - g_mean)/g_std)**4, weights=g_zone_crossings)
+    if g_std != 0:
+        g_skew = np.average(((all_time - g_mean)/g_std)**3, weights=g_zone_crossings)
+        g_kurt = np.average(((all_time - g_mean)/g_std)**4, weights=g_zone_crossings)
+    else:
+        g_skew = 0.0
+        g_kurt = 0.0
     b_mean = np.average(all_time, weights=b_zone_crossings)
     b_std = np.sqrt(np.average((all_time - b_mean)**2, weights=b_zone_crossings))
-    b_skew = np.average(((all_time - b_mean)/b_std)**3, weights=b_zone_crossings)
-    b_kurt = np.average(((all_time - b_mean)/b_std)**4, weights=b_zone_crossings)
+    if b_std != 0:
+        b_skew = np.average(((all_time - b_mean)/b_std)**3, weights=b_zone_crossings)
+        b_kurt = np.average(((all_time - b_mean)/b_std)**4, weights=b_zone_crossings)
+    else:
+        b_skew = 0.0
+        b_kurt = 0.0
 
     # Get the median
     g_num = g_zone_crossings.sum()
