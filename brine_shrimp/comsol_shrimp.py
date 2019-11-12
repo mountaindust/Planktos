@@ -27,6 +27,8 @@ parser.add_argument("-o", "--prefix", type=str,
 parser.add_argument("-d", "--data", type=str, 
                     help="name of flow data file within ./data",
                     default='')
+parser.add_argument("-D", "--diff", type=float, default=None,
+                    help="diffusivity in mm**2/sec. See main for more info.")
 parser.add_argument("--movie", action="store_true", default=False,
                     help="output a movie of the simulation")
 parser.add_argument("-t", "--time", type=int, default=600,
@@ -37,9 +39,12 @@ parser.add_argument("-t", "--time", type=int, default=600,
 ############                    RUN SIMULATION                  ############
 ############################################################################
 
-def main(swarm_size=1000, time=600, data='', seed=1, create_movie=False, prefix=''):
+def main(swarm_size=1000, time=600, data='', D=None, seed=1, create_movie=False, prefix=''):
     '''Add swarm and simulate dispersal. Future: run this in loop while altering
-    something to see the effect.'''
+    something to see the effect.
+    
+    D is diffusivity in mm**2/sec. Default is 2.5; see below
+    '''
 
     # Intialize environment
     envir = Planktos.environment(x_bndry=['noflux', 'noflux'])
@@ -71,8 +76,10 @@ def main(swarm_size=1000, time=600, data='', seed=1, create_movie=False, prefix=
     # D was found to be 0.025 cm**2/sec (video data, real time was higher)
     # Set sigma**2 as 2*D = 0.05 cm**2/sec = 5 mm**2/sec
     # Then take half of this to account for 3D (vs. 2D) = 2.5 mm**2/sec
-    
-    shrimp_walk = ([0,0,0], 2.5*np.eye(3))
+    if D is None:
+        shrimp_walk = ([0,0,0], 2.5*np.eye(3))
+    else:
+        shrimp_walk = ([0,0,0], D*np.eye(3))
 
     ########## Move the swarm according to the prescribed rules above ##########
     print('Moving swarm...')
@@ -103,8 +110,11 @@ def main(swarm_size=1000, time=600, data='', seed=1, create_movie=False, prefix=
     # Create time mesh for plotting and saving data in excel
     time_mesh = list(envir.time_history)
     time_mesh.append(envir.time)
-    # Plot and save the run
-    shrimp_funcs.plot_cell_counts(time_mesh, g_cells_cnts, b_cells_cnts, prefix)
+    # Plot and save the run. Try not to die if no access to graphics
+    try:
+        shrimp_funcs.plot_cell_counts(time_mesh, g_cells_cnts, b_cells_cnts, prefix)
+    except:
+        print('Exception encountered; unable to save plots.')
     shrimp_funcs.save_sim_to_excel(time_mesh, g_cells_cnts, b_cells_cnts, prefix)
     # Output the zone stats
     np.savez(prefix+'stats',
@@ -138,5 +148,5 @@ if __name__ == "__main__":
         prefix = args.prefix + '_'
     else:
         prefix = args.prefix
-    main(args.N, args.time, args.data, args.seed, args.movie, prefix)
+    main(args.N, args.time, args.data, args.diff, args.seed, args.movie, prefix)
 

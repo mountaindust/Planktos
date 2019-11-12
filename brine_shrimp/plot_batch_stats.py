@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 
-dirname = '10min_var2.5_N10000'
+dirname = '10x20_2cm_Dsweep'
 
 folder = Path(dirname)
 
