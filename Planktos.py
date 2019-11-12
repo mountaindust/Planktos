@@ -1414,15 +1414,18 @@ class swarm:
         else:
             params = (np.zeros(len(self.envir.L)), 0.01*np.eye(len(self.envir.L)))
 
+        # check for zero jitter
+        if np.isclose(params[1].trace(),0):
+            self.positions += (params[0]+self.get_fluid_drift())*dt
+        else:
+            ### Passive movement ###
+            # Get fluid-based drift and add to Gaussian bias
+            mu = self.get_fluid_drift() + params[0]
+            #mu = mv_swarm.massive_drift(self, dt) + params[0]
 
-        ### Passive movement ###
-        # Get fluid-based drift and add to Gaussian bias
-        mu = self.get_fluid_drift() + params[0]
-        #mu = mv_swarm.massive_drift(self, dt) + params[0]
-
-        ### Active movement ###
-        # Add jitter and move according to a Gaussian random walk.
-        mv_swarm.gaussian_walk(self, dt*mu, dt*params[1])
+            ### Active movement ###
+            # Add jitter and move according to a Gaussian random walk.
+            mv_swarm.gaussian_walk(self, dt*mu, dt*params[1])
 
         # Update velocity of swarm
         self.velocity = (self.positions - self.pos_history[-1])/dt
