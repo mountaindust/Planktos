@@ -1603,6 +1603,44 @@ class swarm:
             else:
                 raise NameError
 
+            ###############################################################
+            # Pseudocode for new noflux boundary condition - to be expanded
+            #   to arbitrary interior boundaries
+            ###############################################################
+
+            # Detect if a boundary has been crossed:
+            #   This is currently done with zerorow = self.positions[:,dim] > self.envir.L[dim]
+            # Calculuate intercept:
+            #   Assume that agent took a straight path from start loc to finish loc
+            #   Get intersection pt with first boundary
+            # Let alpha be the length of travel from start loc to intersection
+            #   (Take 2 norm of point subtraction)
+            # Let beta be the length of travel from intersection to end loc
+            # Let gamma = beta/(alpha+beta) (proportion overshoot)
+            # Let v be the vector from interesection to end loc
+            # Project v onto boundary.
+
+            # Check for additional boundary crossings (convex piecewise):
+            #   If piecewise linear, this will always happen at bndry intersection points
+            #   Repeat process until there are no further crossings.
+            #   Keep greeks above, use new variables
+            
+            # Check for additional boundary crossings (concave):
+            #   Here, you haven't crossed a new piece of boundary, but you have
+            #   fallen off the edge of the one you were traveling on
+            #   Follow a vector given by the mean of the new boundary and the
+            #   previous boundary for the remainder of the length
+            #   Check for additional crossings
+
+            # If on a boundary at the end of slide (e.g. all cases except concave):
+            #   Jitter with std gamma*std in 180 degrees to interior
+            #   Find interior by comparing wiht start loc
+
+            # If not on a bndry at end of slide (concave case):
+            #   Jitter 360 degrees with std of gamma*std
+
+            # Check for boundary crossing again. If so, repeat with initial loc
+            #  as the end of slide/concave drift (not counting last jitter)
 
 
     def __interpolate_flow(self, flow, method):
