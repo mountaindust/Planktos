@@ -18,7 +18,7 @@ envir.set_brinkman_flow(alpha=66, a=1.5, res=101, U=U,
                         dpdx=np.ones(20)*0.22306, tspan=[0, 20])
 envir.add_swarm()
 s = envir.swarms[0]
-s.props['cov'] *= 0.01
+s.shared_props['cov'] *= 0.01
 
 print('Moving swarm...')
 for ii in range(240):

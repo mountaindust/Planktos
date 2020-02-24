@@ -73,35 +73,38 @@ def point(swarm, pos):
 #############################################################################
 #                                                                           #
 #           PREDEFINED SWARM MOVEMENT BEHAVIOR DEFINED BELOW!               #
+#      Each of these must be robust to fixed or varying parameters!         #
 #                                                                           #
 #############################################################################
 
-def gaussian_walk(swarm, mu, dt):
-    ''' Move all rows of pos_array a random distance specified by
-    a gaussian distribution with given mean and covarience matrix.
-
-    Requires:
-        swarm.props['mu']: ndarrays giving the mean
-        swarm.props['cov']: ndarrays giving the covariance matrix 
+def gaussian_walk(swarm, mu, cov, dt):
+    ''' Get movement according to a gaussian distribution with given mean 
+    and covarience matrix.
 
     Arguments:
-        swarm: swarm object
-        mu: kxN ndarray array (k agents, N dim) giving the drift
+        swarm: swarm.positions (to be read-only in this function!)
+        mu: N ndarray or kxN ndarray (k agents, N dim) giving the drift
+        cov: NxN ndarray or kxNxN ndarray giving the covariance
         dt: time interval
     '''
 
-    # If all the covariance matrices are the same, we can draw from just one
-    #   origin-centered distribution for speed.
-    # Comparing ndarrays directly is ambiguous, so convert to a string and compare.
+    # get critical info about number of agents and dimension of domain
+    n_agents = swarm.positions.shape[0]
+    n_dim = swarm.positions.shape[1]
 
-    if swarm.props['cov'].astype(str).nunique() == 1:
-        swarm.positions += swarm.rndState.multivariate_normal(np.zeros(mu.shape[1]),
-            dt*swarm.props['cov'][0], swarm.positions.shape[0]) + dt*mu
+    if cov.ndim == 2:
+        return swarm.rndState.multivariate_normal(np.zeros(n_dim), dt*cov, 
+            n_agents) + dt*mu
     else:
-        for ii in range(swarm.positions.shape[0]):
-            swarm.positions[ii,:] += swarm.rndState.multivariate_normal(
-                dt*mu[ii,:], dt*swarm.props['cov'][ii]
-            )
+        move = np.zeros_like(swarm.positions)
+        for ii in range(n_agents):
+            if mu.ndim > 1:
+                this_mu = mu[ii,:]
+            else:
+                this_mu = mu
+            move[ii,:] = swarm.rndState.multivariate_normal(
+                dt*this_mu, dt*cov[ii,:])
+        return move
                                                    
 
 

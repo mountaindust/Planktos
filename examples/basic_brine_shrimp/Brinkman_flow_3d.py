@@ -22,7 +22,7 @@ s = envir.swarms[0]
 
 # Specify amount of jitter (mean, covariance)
 # Set std as 1 cm = 0.01 m
-s.props['cov'] *= 0.01**2
+s.shared_props['cov'] *= 0.01**2
 
 print('Moving swarm...')
 for ii in range(240):

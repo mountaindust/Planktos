@@ -33,7 +33,7 @@ class plankton(Planktos.swarm):
         super(plankton, self).__init__(swarm_size, envir, init, **kwargs)
 
         # Less jitter
-        self.props['cov'] *= 0.01
+        self.shared_props['cov'] *= 0.01
 
         # Some plankton properties we might want?
         self.energy = 1
@@ -67,4 +67,4 @@ class plankton(Planktos.swarm):
             drift = fluid_drift + resist + self.get_prop('mu')
 
             # Move according to random walk with drift
-            mv_swarm.gaussian_walk(self, drift, dt)
+            self.positions += mv_swarm.gaussian_walk(self, drift, self.get_prop['cov'], dt)

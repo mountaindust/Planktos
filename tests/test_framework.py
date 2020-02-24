@@ -36,7 +36,7 @@ class massive_swarm(Planktos.swarm):
 
         ### Active movement ###
         # Add jitter and move according to a Gaussian random walk.
-        mv_swarm.gaussian_walk(self, mu, dt)
+        self.positions += mv_swarm.gaussian_walk(self, mu, self.get_prop('cov'), dt)
 
 
 
@@ -330,7 +330,7 @@ def test_massive_physics():
     sw = massive_swarm(char_L=0.002, phys=phys)
     envir.add_swarm(sw)
     assert sw is envir.swarms[0], "swarm improperly assigned to environment"
-    assert sw.phys is not None, "Physical properties of swarm not assigned"
+    assert sw.shared_props['phys'] is not None, "Physical properties of swarm not assigned"
     for ii in range(10):
         sw.move(0.5)
     assert len(sw.pos_history) == 10, "all movements not recorded"

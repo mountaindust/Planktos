@@ -36,3 +36,12 @@ def pytest_collection_modifyitems(config, items):
             if "vtu" in item.keywords:
                 item.add_marker(skip_vtu)
     
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "vtk: mark test as requiring vtk data"
+    )
+    config.addinivalue_line(
+        "markers",
+        "vtu: mark test as requiring vtu data"
+    )

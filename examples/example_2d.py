@@ -20,7 +20,7 @@ print(len(U))
 
 envir.add_swarm()
 s = envir.swarms[0]
-s.props['cov'] *= 0.01
+s.shared_props['cov'] *= 0.01
 
 print('Moving swarm...')
 for ii in range(240):

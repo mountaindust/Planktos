@@ -1121,30 +1121,7 @@ class environment:
         '''
 
         if isinstance(swarm_s, swarm):
-            swarm_s.envir = self
-            # check if the dimesion matches, project if possible
-            if swarm_s.positions.shape[1] != len(self.L):
-                if swarm_s.positions.shape[1] > len(self.L):
-                    # Project swarm down to 2D
-                    swarm_s.positions = swarm_s.positions[:,:2]
-                    swarm_s.velocity = swarm_s.velocity[:,:2]
-                    swarm_s.acceleration = swarm_s.acceleration[:,:2]
-                    # Update known properties
-                    if 'mu' in swarm_s.props:
-                        for n,mu in enumerate(swarm_s.props['mu']):
-                            swarm_s.props['mu'][n] = mu[:2]
-                        print('mu has been projected to 2D.')
-                    if 'cov' in swarm_s.props:
-                        for n,cov in enumerate(swarm_s.props['cov']):
-                            swarm_s.props['cov'][n] = cov[:2,:2]
-                        print('cov has been projected to 2D.')
-                    # warn about others
-                    other_props = [x for x in swarm_s.props if x not in ['mu', 'cov']]
-                    if len(other_props) > 0:
-                        print('WARNING: other properties {} were not projected.'.format(other_props))
-                else:
-                    raise RuntimeError("Swarm dimension smaller than environment dimension!")
-            self.swarms.append(swarm_s)
+            swarm_s.change_envir(self)
         else:
             return swarm(swarm_s, self, init=init, seed=seed, **kwargs)
             
@@ -1318,18 +1295,6 @@ class swarm:
                 print("Error: invalid environment object.")
                 raise
 
-        # Dataframe holding individual properties of each agent with the exception
-        #   of position/velocity/acceleration.
-        # Initialize by populating with mean and covariance for a standard 
-        #   random walk.
-        if props is None:
-            self.props = pd.DataFrame(
-                    {'mu': [np.zeros(len(self.envir.L)) for ii in range(swarm_size)],
-                    'cov': [np.eye(len(self.envir.L)) for ii in range(swarm_size)]}
-                    )
-        else:
-            self.props = props
-
         # Dictionary of shared properties
         if shared_props is None:
             self.shared_props = {}
@@ -1338,14 +1303,10 @@ class swarm:
             self.shared_props['cov'] = np.eye(len(self.envir.L))
         else:
             self.shared_props = shared_props
-        # if char_L is not None:
-        #     self.shared_props['char_L'] = char_L
-        # if phys is not None:
-        #     self.shared_props['phys'] = phys
-
-        # set physical properties (TODO: incorporate into props)
-        self.char_L = char_L
-        self.phys = phys
+        if char_L is not None:
+            self.shared_props['char_L'] = char_L
+        if phys is not None:
+            self.shared_props['phys'] = phys
 
         # initialize random number generator
         self.rndState = np.random.RandomState(seed=seed)
@@ -1355,18 +1316,18 @@ class swarm:
         self.positions.harden_mask() # prevent unintentional mask overwites
         mv_swarm.init_pos(self, init, kwargs)
 
-        # initialize individual agent properties Dataframe
-        # if props is None:
-        #     self.props = pd.DataFrame(
-        #         {'start_pos': [tuple(self.positions[ii,:]) for ii in range(swarm_size)]}
-        #     )
-        #     # with random cov
-        #     # self.props = pd.DataFrame(
-        #     #     {'start_pos': [tuple(self.positions[ii,:]) for ii in range(swarm_size)],
-        #     #     'cov': [np.eye(len(self.envir.L))*(0.5+np.random.rand()) for ii in range(swarm_size)]}
-        #     # )
-        # else:
-        #     self.props = props
+        # initialize Dataframe of non-shared properties
+        if props is None:
+            self.props = pd.DataFrame(
+                {'start_pos': [tuple(self.positions[ii,:]) for ii in range(swarm_size)]}
+            )
+            # with random cov
+            # self.props = pd.DataFrame(
+            #     {'start_pos': [tuple(self.positions[ii,:]) for ii in range(swarm_size)],
+            #     'cov': [np.eye(len(self.envir.L))*(0.5+np.random.rand()) for ii in range(swarm_size)]}
+            # )
+        else:
+            self.props = props
 
         # initialize agent velocities
         self.velocity = ma.zeros((swarm_size, len(self.envir.L)))
@@ -1384,13 +1345,50 @@ class swarm:
 
 
 
+    def change_envir(self, envir):
+        '''Manages a change from one environment to another'''
+
+        if self.positions.shape[1] != len(envir.L):
+            if self.positions.shape[1] > len(envir.L):
+                # Project swarm down to 2D
+                self.positions = self.positions[:,:2]
+                self.velocity = self.velocity[:,:2]
+                self.acceleration = self.acceleration[:,:2]
+                # Update known properties
+                if 'mu' in self.shared_props:
+                    self.shared_props['mu'] = self.shared_props['mu'][:2]
+                    print('mu has been projected to 2D.')
+                if 'mu' in self.props:
+                    for n,mu in enumerate(self.props['mu']):
+                        self.props['mu'][n] = mu[:2]
+                    print('mu has been projected to 2D.')
+                if 'cov' in self.shared_props:
+                    self.shared_props['cov'] = self.shared_props['cov'][:2,:2]
+                    print('cov has been projected to 2D.')
+                if 'cov' in self.props:
+                    for n,cov in enumerate(self.props['cov']):
+                        self.props['cov'][n] = cov[:2,:2]
+                    print('cov has been projected to 2D.')
+                # warn about others
+                other_props = [x for x in self.props if x not in ['mu', 'cov']]
+                other_props += [x for x in self.shared_props if x not in ['mu', 'cov']]
+                if len(other_props) > 0:
+                    print('WARNING: other properties {} were not projected.'.format(other_props))
+            else:
+                raise RuntimeError("Swarm dimension smaller than new environment dimension!"+
+                    " Cannot scale up!")
+        self.envir = envir
+        envir.swarms.append(self)
+
+
+
     def calc_re(self, u):
         '''Calculate Reynolds number based on environment variables and given
-        flow velocity, u'''
+        flow velocity, u, and char_L (in shared_props)'''
 
         if self.envir.rho is not None and self.envir.mu is not None and\
-            self.char_L is not None:
-            return self.envir.rho*u*self.char_L/self.envir.mu
+            'char_L' in self.shared_props:
+            return self.envir.rho*u*self.shared_props['char_L']/self.envir.mu
         else:
             raise RuntimeError("Parameters necessary for Re calculation are undefined.")
 
@@ -1458,26 +1456,42 @@ class swarm:
             params: any other parameters necessary (optional)
         '''
 
-        ### Passive movement ###
-        # Get fluid-based drift and add to Gaussian bias
-        mu = self.get_fluid_drift() + self.get_prop('mu')
-        #mu = mv_swarm.massive_drift(self, dt) + self.get_prop('mu')
-
         ### Active movement ###
-        # Add jitter and move according to a Gaussian random walk.
-        mv_swarm.gaussian_walk(self, mu, dt)
+        # Get jitter according to a Gaussian random walk.
+        mu = self.get_prop('mu')
+        cov = self.get_prop('cov')
+        jitter = mv_swarm.gaussian_walk(self, mu, cov, dt)
+
+        ### Passive movement ###
+        # Get fluid-based drift and add to Gaussian walk
+        movement = jitter + self.get_fluid_drift()
+
+        #####                                                         #####
+        ##### The result of this method should update self.positions! #####
+        #####                                                         #####
+
+        self.positions += movement
 
 
 
     def get_prop(self, prop_name):
-        '''Return the property requested as a numpy array, ready for use in
-        vectorized operations.
+        '''Return the property requested as either a scalar (if shared) or a 
+        numpy array, ready for use in vectorized operations (left-most index
+        specifies the agent).
         
         Arguments:
             prop_name: name of the property to return
         '''
 
-        return np.stack(self.props[prop_name].array, axis=0)
+        if prop_name in self.props:
+            if prop_name in self.shared_props:
+                warnings.warn('Property {} exists '.format(prop_name)+
+                'in both props and shared_props. Using the props version.')
+            return np.stack(self.props[prop_name].array, axis=0).squeeze()
+        elif prop_name in self.shared_props:
+            return self.shared_props[prop_name].squeeze()
+        else:
+            raise RuntimeError('Property {} not found.'.format(prop_name))
 
 
 
@@ -1559,7 +1573,8 @@ class swarm:
             high_re: If false (default), assume Re<0.1 for all agents. Otherwise,
             assume Re > 10 for all agents.
         
-        Requires that the following are specified in self.phys:
+        TODO: Note that we assume all members of a swarm are approx the same.
+        Requires that the following are specified in self.shared_props['phys']:
             Cd: Drag coefficient
             S: cross-sectional area of each agent
             m: mass of each agent
@@ -1578,26 +1593,29 @@ class swarm:
         # Get fluid velocity
         vel = self.get_fluid_drift()
 
-        # Check for self.phys and other parameters
-        assert isinstance(self.phys, dict), "swarm.phys not specified"
+        # Check for self.shared_props['phys'] and other parameters
+        assert 'phys' in self.shared_props and\
+            isinstance(self.shared_props['phys'], dict), "swarm phys not specified"
         for key in ['Cd', 'm']:
-            assert key in self.phys, "{} not found in swarm.phys".format(key)
+            assert key in self.shared_props['phys'], "{} not found in swarm phys".format(key)
         assert self.envir.rho is not None, "rho not specified"
         if not high_re:
             assert self.envir.mu is not None, "mu not specified"
-            assert self.char_L is not None, "characteristic length not specified"
+            assert 'char_L' in self.shared_props, "characteristic length not specified"
         else:
-            assert 'S' in self.phys, "Cross-sectional area (S) not found in "+\
-            "swarm.phys"
+            assert 'S' in self.shared_props['phys'], "Cross-sectional area (S) not found in "+\
+            "swarm phys"
+
+        phys = self.shared_props['phys']
 
         if high_re:
             diff = np.linalg.norm(self.velocity-vel,axis=1)
-            return self.acceleration/self.phys['m'] -\
-            (self.envir.rho*self.phys['Cd']*self.phys['S']/2/self.phys['m'])*\
+            return self.acceleration/phys['m'] -\
+            (self.envir.rho*phys['Cd']*phys['S']/2/phys['m'])*\
             (self.velocity - vel)*np.stack((diff,diff,diff)).T
         else:
-            return self.acceleration/self.phys['m'] -\
-            (self.envir.mu*self.phys['Cd']*self.char_L/2/self.phys['m'])*\
+            return self.acceleration/phys['m'] -\
+            (self.envir.mu*phys['Cd']*self.shared_props['char_L']/2/phys['m'])*\
             (self.velocity - vel)
 
 
