@@ -1279,7 +1279,7 @@ class environment:
 class swarm:
 
     def __init__(self, swarm_size=100, envir=None, init='random', seed=None, 
-                 props=None, char_L=None, phys=None, **kwargs):
+                 shared_props=None, props=None, char_L=None, phys=None, **kwargs):
         ''' Initalizes planktos swarm in an environment.
 
         Arguments:
@@ -1287,7 +1287,8 @@ class swarm:
             envir: environment for the swarm, defaults to the standard environment
             init: Method for initalizing positions.
             seed: Seed for random number generator, int or None
-            props: (not implemented) Pandas dataframe of individual agent properties
+            shared_props: dictionary of properties shared by all agents
+            props: Pandas dataframe of individual agent properties
             char_L: characteristic length
             phys: dictionary of physical properties to be used by equations of motion
             kwargs: keyword arguments to be passed to the method for
@@ -1329,6 +1330,19 @@ class swarm:
         else:
             self.props = props
 
+        # Dictionary of shared properties
+        if shared_props is None:
+            self.shared_props = {}
+            # standard random walk
+            self.shared_props['mu'] = np.zeros(len(self.envir.L))
+            self.shared_props['cov'] = np.eye(len(self.envir.L))
+        else:
+            self.shared_props = shared_props
+        # if char_L is not None:
+        #     self.shared_props['char_L'] = char_L
+        # if phys is not None:
+        #     self.shared_props['phys'] = phys
+
         # set physical properties (TODO: incorporate into props)
         self.char_L = char_L
         self.phys = phys
@@ -1340,6 +1354,19 @@ class swarm:
         self.positions = ma.zeros((swarm_size, len(self.envir.L)))
         self.positions.harden_mask() # prevent unintentional mask overwites
         mv_swarm.init_pos(self, init, kwargs)
+
+        # initialize individual agent properties Dataframe
+        # if props is None:
+        #     self.props = pd.DataFrame(
+        #         {'start_pos': [tuple(self.positions[ii,:]) for ii in range(swarm_size)]}
+        #     )
+        #     # with random cov
+        #     # self.props = pd.DataFrame(
+        #     #     {'start_pos': [tuple(self.positions[ii,:]) for ii in range(swarm_size)],
+        #     #     'cov': [np.eye(len(self.envir.L))*(0.5+np.random.rand()) for ii in range(swarm_size)]}
+        #     # )
+        # else:
+        #     self.props = props
 
         # initialize agent velocities
         self.velocity = ma.zeros((swarm_size, len(self.envir.L)))
@@ -1354,18 +1381,6 @@ class swarm:
 
         # Apply boundary conditions in case of domain mismatch
         self.apply_boundary_conditions()
-
-
-
-    def get_prop(self, prop_name):
-        '''Return the property requested as a numpy array, ready for use in
-        vectorized operations.
-        
-        Arguments:
-            prop_name: name of the property to return
-        '''
-
-        return np.stack(self.props[prop_name].array, axis=0)
 
 
 
@@ -1451,6 +1466,18 @@ class swarm:
         ### Active movement ###
         # Add jitter and move according to a Gaussian random walk.
         mv_swarm.gaussian_walk(self, mu, dt)
+
+
+
+    def get_prop(self, prop_name):
+        '''Return the property requested as a numpy array, ready for use in
+        vectorized operations.
+        
+        Arguments:
+            prop_name: name of the property to return
+        '''
+
+        return np.stack(self.props[prop_name].array, axis=0)
 
 
 
