@@ -41,7 +41,7 @@ class plankton(Planktos.swarm):
         
 
 
-    def update_positions(self, dt, params=None):
+    def get_movement(self, dt, params=None):
         ''' This method adds plankton behavior.
 
         Arguments:
@@ -52,7 +52,7 @@ class plankton(Planktos.swarm):
         # We want to respond to flow somehow. Here is a brief example.
         if self.envir.flow is None:
             # Just do the default thing
-            Planktos.swarm.update_positions(self, dt, params)
+            return Planktos.swarm.get_movement(self, dt, params)
         else:
             ### Fight against the current to some degree? ###
             fluid_drift = self.get_fluid_drift()
@@ -66,5 +66,5 @@ class plankton(Planktos.swarm):
             # total drift with resistance
             drift = fluid_drift + resist + self.get_prop('mu')
 
-            # Move according to random walk with drift
-            self.positions += mv_swarm.gaussian_walk(self, drift*dt, self.get_prop('cov')*dt)
+            # Return movement according to random walk with drift
+            return mv_swarm.gaussian_walk(self, drift*dt, self.get_prop('cov')*dt)

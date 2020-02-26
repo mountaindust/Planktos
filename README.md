@@ -86,7 +86,7 @@ Class: swarm
     - `calc_re` Calculate the Reynolds number based on environment variables.
     Requires rho and mu to be set in the environment, and char_L to be set in swarm
     - `move` move each agent in the swarm. Do not override: see update_positions.
-    - `update_positions` defines the agent's movement behavior. OVERRIDE THIS WHEN SUBCLASSING!
+    - `get_movement` defines the agent's movement behavior. OVERRIDE THIS WHEN SUBCLASSING!
     - `get_fluid_drift` get the fluid velocity at each agent's position via interpolation
     - `get_fluid_gradient` get the gradient of the magnitude of the fluid velocity
     at each agent's position via interpolation

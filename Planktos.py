@@ -1280,7 +1280,7 @@ class swarm:
                 - z = (optional, float) z-coordinate, if 3D
 
         To customize agent behavior, subclass this class and re-implement the
-        method update_positions (do not change the call signature).
+        method get_movement (do not change the call signature).
         '''
 
         # use a new, 3D default environment if one was not given
@@ -1396,12 +1396,12 @@ class swarm:
 
     def move(self, dt=1.0, params=None, update_time=True):
         '''Move all organisms in the swarm over an amount of time dt.
-        Do not override this method when subclassing - override update_positions
+        Do not override this method when subclassing - override get_movement
         instead!
 
         Arguments:
             dt: time-step for move
-            params: parameters to pass along to update_positions, if necessary
+            params: parameters to pass along to get_movement, if necessary
             update_time: whether or not to update the environment's time by dt
         '''
 
@@ -1411,7 +1411,7 @@ class swarm:
         # Check that something is left in the domain to move, and move it.
         if not np.all(self.positions.mask):
             # Update positions
-            self.update_positions(dt, params)
+            self.positions += self.get_movement(dt, params)
             # Update velocity of swarm
             self.velocity = (self.positions - self.pos_history[-1])/dt
             # Apply boundary conditions.
@@ -1438,18 +1438,18 @@ class swarm:
 
 
 
-    def update_positions(self, dt, params=None):
-        '''Update agent positions.
+    def get_movement(self, dt, params=None):
+        '''Return agent movement due to behavior, drift, etc.
         THIS IS THE METHOD TO OVERRIDE IF YOU WANT DIFFERENT MOVEMENT!
         Note: do not change the call signature.
-        The result of this method should be to overwrite self.positions with
-        the new agent positions after a time step of length dt. It should also
-        update the agent velocities at the end of the timestep in self.velocity.
+        The result of this method should be to return a vector (Delta x)
+        describing the change in position of each agent after a time step of 
+        length dt.
 
         What is included in this default implementation is a basic jitter behavior 
         with drift according to the fluid flow. As an example, the jitter is
-        unbiased (mean=0) with a covariance of 0.01*np.eye, as set in the
-        default props argument of the swarm class.
+        unbiased (mean=0) with a covariance of np.eye, as set in the default 
+        shared_props argument of the swarm class.
 
         Arguments:
             dt: length of time step
@@ -1463,14 +1463,8 @@ class swarm:
         jitter = mv_swarm.gaussian_walk(self, mu, cov)
 
         ### Passive movement ###
-        # Get fluid-based drift and add to Gaussian walk
-        movement = jitter + self.get_fluid_drift()*dt
-
-        #####                                                         #####
-        ##### The result of this method should update self.positions! #####
-        #####                                                         #####
-
-        self.positions += movement
+        # Get fluid-based drift, add to Gaussian walk, and return
+        return jitter + self.get_fluid_drift()*dt
 
 
 
