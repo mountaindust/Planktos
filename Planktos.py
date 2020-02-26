@@ -1457,10 +1457,10 @@ class swarm:
         '''
 
         ### Active movement ###
-        # Get jitter according to a Gaussian random walk.
-        mu = self.get_prop('mu')
-        cov = self.get_prop('cov')
-        jitter = mv_swarm.gaussian_walk(self, mu, cov, dt)
+        # Get jitter according to brownian motion for time dt
+        mu = self.get_prop('mu')*dt
+        cov = self.get_prop('cov')*dt
+        jitter = mv_swarm.gaussian_walk(self, mu, cov)
 
         ### Passive movement ###
         # Get fluid-based drift and add to Gaussian walk

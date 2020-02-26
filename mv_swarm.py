@@ -77,7 +77,7 @@ def point(swarm, pos):
 #                                                                           #
 #############################################################################
 
-def gaussian_walk(swarm, mu, cov, dt):
+def gaussian_walk(swarm, mu, cov):
     ''' Get movement according to a gaussian distribution with given mean 
     and covarience matrix.
 
@@ -94,10 +94,10 @@ def gaussian_walk(swarm, mu, cov, dt):
 
     if cov.ndim == 2:
         if not np.isclose(cov.trace(),0):
-            return swarm.rndState.multivariate_normal(np.zeros(n_dim), dt*cov, 
-                n_agents) + dt*mu
+            return swarm.rndState.multivariate_normal(np.zeros(n_dim), cov, 
+                n_agents) + mu
         else:
-            return dt*mu
+            return mu
     else:
         move = np.zeros_like(swarm.positions)
         for ii in range(n_agents):
@@ -106,10 +106,9 @@ def gaussian_walk(swarm, mu, cov, dt):
             else:
                 this_mu = mu
             if not np.isclose(cov[ii,:].trace(),0):
-                move[ii,:] = swarm.rndState.multivariate_normal(
-                    dt*this_mu, dt*cov[ii,:])
+                move[ii,:] = swarm.rndState.multivariate_normal(this_mu, cov[ii,:])
             else:
-                move[ii,:] = dt*this_mu
+                move[ii,:] = this_mu
         return move
                                                    
 

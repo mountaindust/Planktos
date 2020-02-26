@@ -36,7 +36,7 @@ class massive_swarm(Planktos.swarm):
 
         ### Active movement ###
         # Add jitter and move according to a Gaussian random walk.
-        self.positions += mv_swarm.gaussian_walk(self, mu, self.get_prop('cov'), dt)
+        self.positions += mv_swarm.gaussian_walk(self, mu*dt, self.get_prop('cov')*dt)
 
 
 
