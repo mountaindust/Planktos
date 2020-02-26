@@ -93,8 +93,11 @@ def gaussian_walk(swarm, mu, cov, dt):
     n_dim = swarm.positions.shape[1]
 
     if cov.ndim == 2:
-        return swarm.rndState.multivariate_normal(np.zeros(n_dim), dt*cov, 
-            n_agents) + dt*mu
+        if not np.isclose(cov.trace(),0):
+            return swarm.rndState.multivariate_normal(np.zeros(n_dim), dt*cov, 
+                n_agents) + dt*mu
+        else:
+            return dt*mu
     else:
         move = np.zeros_like(swarm.positions)
         for ii in range(n_agents):
@@ -102,8 +105,11 @@ def gaussian_walk(swarm, mu, cov, dt):
                 this_mu = mu[ii,:]
             else:
                 this_mu = mu
-            move[ii,:] = swarm.rndState.multivariate_normal(
-                dt*this_mu, dt*cov[ii,:])
+            if not np.isclose(cov[ii,:].trace(),0):
+                move[ii,:] = swarm.rndState.multivariate_normal(
+                    dt*this_mu, dt*cov[ii,:])
+            else:
+                move[ii,:] = dt*this_mu
         return move
                                                    
 

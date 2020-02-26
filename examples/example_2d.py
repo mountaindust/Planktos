@@ -3,7 +3,7 @@
 from sys import platform
 if platform == 'darwin': # OSX backend does not support blitting
     import matplotlib
-    matplotlib.use('TkAgg')
+    matplotlib.use('Qt5Agg')
 import numpy as np
 import sys
 sys.path.append('..')

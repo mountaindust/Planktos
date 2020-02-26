@@ -13,7 +13,7 @@ import sys, warnings, pickle
 from sys import platform
 if platform == 'darwin': # OSX backend does not support blitting
     import matplotlib
-    matplotlib.use('TkAgg')
+    matplotlib.use('Qt5Agg')
 from pathlib import Path
 from math import exp, log
 import numpy as np
@@ -1464,7 +1464,7 @@ class swarm:
 
         ### Passive movement ###
         # Get fluid-based drift and add to Gaussian walk
-        movement = jitter + self.get_fluid_drift()
+        movement = jitter + self.get_fluid_drift()*dt
 
         #####                                                         #####
         ##### The result of this method should update self.positions! #####
@@ -1547,20 +1547,28 @@ class swarm:
             if not TIME_DEP:
                 flow_grad = np.gradient(np.sqrt(
                                 np.sum(np.array(self.envir.flow)**2, axis=0)
-                                ), self.envir.flow_points, edge_order=2)
+                                ), *self.envir.flow_points, edge_order=2)
             else:
                 # first, interpolate flow in time. Then calculate gradient.
                 flow_grad = np.gradient(
                                 np.sqrt(np.sum(
                                 np.array(self.__interpolate_temporal_flow())**2,
-                                axis=0)), self.envir.flow_points, edge_order=2)
+                                axis=0)), *self.envir.flow_points, edge_order=2)
             # save the newly calculuate gradient
             self.envir.grad = flow_grad
             self.envir.grad_time = self.envir.time
 
         # Interpolate the gradient at agent positions and return
-        return interpolate.interpn(self.envir.flow_points, flow_grad,
+        x_grad = interpolate.interpn(self.envir.flow_points, flow_grad[0],
                                    self.positions, method='linear')
+        y_grad = interpolate.interpn(self.envir.flow_points, flow_grad[1],
+                                   self.positions, method='linear')
+        if len(self.envir.flow_points) == 3:
+            z_grad = interpolate.interpn(self.envir.flow_points, flow_grad[2],
+                                         self.positions, method='linear')
+            return np.array([x_grad, y_grad, z_grad]).T
+        else:
+            return np.array([x_grad, y_grad]).T
 
 
 
@@ -1662,6 +1670,44 @@ class swarm:
             else:
                 raise NameError
 
+            ###############################################################
+            # Pseudocode for new noflux boundary condition - to be expanded
+            #   to arbitrary interior boundaries
+            ###############################################################
+
+            # Detect if a boundary has been crossed:
+            #   This is currently done with zerorow = self.positions[:,dim] > self.envir.L[dim]
+            # Calculuate intercept:
+            #   Assume that agent took a straight path from start loc to finish loc
+            #   Get intersection pt with first boundary
+            # Let alpha be the length of travel from start loc to intersection
+            #   (Take 2 norm of point subtraction)
+            # Let beta be the length of travel from intersection to end loc
+            # Let gamma = beta/(alpha+beta) (proportion overshoot)
+            # Let v be the vector from interesection to end loc
+            # Project v onto boundary.
+
+            # Check for additional boundary crossings (convex piecewise):
+            #   If piecewise linear, this will always happen at bndry intersection points
+            #   Repeat process until there are no further crossings.
+            #   Keep greeks above, use new variables
+            
+            # Check for additional boundary crossings (concave):
+            #   Here, you haven't crossed a new piece of boundary, but you have
+            #   fallen off the edge of the one you were traveling on
+            #   Follow a vector given by the mean of the new boundary and the
+            #   previous boundary for the remainder of the length
+            #   Check for additional crossings
+
+            # If on a boundary at the end of slide (e.g. all cases except concave):
+            #   Jitter with std gamma*std in 180 degrees to interior
+            #   Find interior by comparing wiht start loc
+
+            # If not on a bndry at end of slide (concave case):
+            #   Jitter 360 degrees with std of gamma*std
+
+            # Check for boundary crossing again. If so, repeat with initial loc
+            #  as the end of slide/concave drift (not counting last jitter)
 
 
     def __interpolate_flow(self, flow, method):
