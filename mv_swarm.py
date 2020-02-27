@@ -92,13 +92,13 @@ def gaussian_walk(swarm, mu, cov):
     n_agents = swarm.positions.shape[0]
     n_dim = swarm.positions.shape[1]
 
-    if cov.ndim == 2:
+    if cov.ndim == 2: # Single cov matrix
         if not np.isclose(cov.trace(),0):
             return swarm.rndState.multivariate_normal(np.zeros(n_dim), cov, 
                 n_agents) + mu
         else:
             return mu
-    else:
+    else: # vector of cov matrices
         move = np.zeros_like(swarm.positions)
         for ii in range(n_agents):
             if mu.ndim > 1:

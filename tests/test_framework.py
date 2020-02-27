@@ -66,6 +66,44 @@ def test_basic():
     for ii in range(10):
         sw.move(0.25)
 
+
+
+def test_indiv_variation():
+    '''With no-flow, test individual variation using dataframe props.
+    This mainly just checks that there are no syntax errors.'''
+    swarm_size = 30
+    # 2D
+    envir = Planktos.environment()
+    sw = envir.add_swarm(swarm_s=swarm_size)
+    sw.add_prop('mu', [np.random.randn(2) for ii in range(swarm_size)])
+    assert 'mu' not in sw.shared_props
+    assert sw.get_prop('mu').ndim == 2
+    for ii in range(10):
+        sw.move(0.01)
+    sw.add_prop('cov', [np.eye(2)*np.random.rand() for ii in range(swarm_size)])
+    assert 'cov' not in sw.shared_props
+    assert sw.get_prop('cov').ndim == 3
+    for ii in range(10):
+        sw.move(0.01)
+    sw.add_prop('mu', np.zeros(2), shared=True)
+    assert 'mu' not in sw.props
+    for ii in range(10):
+        sw.move(0.01)
+    # 3D
+    envir = Planktos.environment(Lz=10)
+    sw = envir.add_swarm(swarm_s=swarm_size)
+    sw.add_prop('mu', [np.random.randn(3) for ii in range(swarm_size)])
+    for ii in range(10):
+        sw.move(0.01)
+    sw.add_prop('cov', [np.eye(3)*np.random.rand() for ii in range(swarm_size)])
+    for ii in range(10):
+        sw.move(0.01)
+    sw.add_prop('mu', np.zeros(3), shared=True)
+    for ii in range(10):
+        sw.move(0.01)
+
+
+
 def test_brinkman_2D():
     '''Test several 2D dynamics using brinkman flow'''
     ########## Single swarm, time-independent flow ##########

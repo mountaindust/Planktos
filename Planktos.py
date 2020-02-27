@@ -1489,6 +1489,20 @@ class swarm:
 
 
 
+    def add_prop(self, prop_name, value, shared=False):
+        '''Method that will automatically delete any conflicting properties
+        when adding a new one.'''
+        if shared:
+            self.shared_props[prop_name] = value
+            if prop_name in self.props:
+                del self.props[prop_name]
+        else:
+            self.props[prop_name] = value
+            if prop_name in self.shared_props:
+                del self.shared_props[prop_name]
+
+
+
     def get_fluid_drift(self):
         '''Return fluid-based drift for all agents via interpolation.
         
