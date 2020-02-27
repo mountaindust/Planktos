@@ -1,11 +1,11 @@
-# Planktos Agent Based Model Framework
+# Planktos Agent-based Modeling Framework
 
 This project focuses on building a framework for ABMs of plankton and tiny
 insects, or other small entities whose effect on the surrounding flow can be
 considered negligable. Work is ongoing.
 
 If you use this software in your project, please cite it as:  
-Strickland, C. (2018), *Planktos agent based modeling framework*. https://github.com/mountaindust/Planktos.  
+Strickland, C. (2018), *Planktos agent-based modeling framework*. https://github.com/mountaindust/Planktos.  
 A suggested BibTeX entry is included in the file Planktos.bib.
 
 ### Dependencies
@@ -24,7 +24,19 @@ All tests can be run by typing `py.test` into a terminal in the base directory.
 
 ## Quickstart
 
-There are three working examples in the examples folder, including a 2D simulation, a 3D simulation, and a simulation utilizing vtk data obtained from IBAMR which is located in the tests/IBAMR_test_data folder. More will be added. When experimenting with different agent behavior than what is prescribed in swarm.py (e.g., different movement rules), it is strongly suggested that you subclass swarm (found in framework.py) in an appropriate subfolder. That way, you can keep track of everything you have tried and its outcome. See the code in the plankton folder for an example.
+There are several working examples in the examples folder, including a 2D simulation, 
+a 2D simulation demonstrating individual variation, a 3D simulation, 
+a simulation utilizing vtk data obtained from IBAMR which is located in the 
+tests/IBAMR_test_data folder, and a simulation demonstrating subclassing of the get_movement method. More examples will be added as functionality is added. 
+To run any of these examples, change your working directory to the examples directory and then run the desired script.
+
+When experimenting with different agent behavior than what is prescribed in the
+swarm class by default (e.g. different movement rules), it is strongly suggested 
+that you subclass swarm (found in framework.py) in an appropriate subfolder. That 
+way, you can keep track of everything you have tried and its outcome. See the code 
+in the brine_shrimp folder for an example, though the data has not been included 
+to run these scripts as it is very large. The results of the brine_shrimp scripts 
+can be seen in Ozalp, Miller, Dombrowski, et al. (2020) *Biomimetics*.
 
 ## API
 Class: environment
