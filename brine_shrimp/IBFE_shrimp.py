@@ -70,7 +70,7 @@ def main(swarm_size=1000, time=55, seed=1, create_movie=False, prefix=''):
     # Set sigma**2 as 0.5cm**2/sec = 50mm**2/sec, sigma~7mm
     # (sigma**2=2*D, D for brine shrimp given in Kohler, Swank, Haefner, Powell 2010)
     # Now simulating with half this varience for 2D -> 3D diffusion
-    shrimp_walk = ([0,0,0], 2*50*np.eye(3))
+    s.shared_props['cov'] *= 2*50
 
 
     ########## Move the swarm according to the prescribed rules above ##########
@@ -78,7 +78,7 @@ def main(swarm_size=1000, time=55, seed=1, create_movie=False, prefix=''):
     dt = 0.1
     num_of_steps = time*10
     for ii in range(num_of_steps):
-        s.move(dt, shrimp_walk)
+        s.move(dt)
 
 
     ############## Gather data about flow tank observation area ##############

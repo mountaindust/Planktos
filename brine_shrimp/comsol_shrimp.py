@@ -77,16 +77,16 @@ def main(swarm_size=1000, time=600, data='', D=None, seed=1, create_movie=False,
     # Set sigma**2 as 2*D = 0.05 cm**2/sec = 5 mm**2/sec
     # Then take half of this to account for 3D (vs. 2D) = 2.5 mm**2/sec
     if D is None:
-        shrimp_walk = ([0,0,0], 2.5*np.eye(3))
+        s.shared_props['cov'] *= 2.5
     else:
-        shrimp_walk = ([0,0,0], D*np.eye(3))
+        s.shared_props['cov'] *= D
 
     ########## Move the swarm according to the prescribed rules above ##########
     print('Moving swarm...')
     dt = 0.1
     num_of_steps = time*10
     for ii in range(num_of_steps):
-        s.move(dt, shrimp_walk)
+        s.move(dt)
 
 
     ############## Gather data about flow tank observation area ##############
