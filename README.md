@@ -12,6 +12,7 @@ A suggested BibTeX entry is included in the file Planktos.bib.
 - Python 3.5+
 - numpy/scipy
 - matplotlib 3.x
+- pandas
 - vtk
 - ffmpeg from conda-forge (not from default anaconda. Use `conda install -c conda-forge ffmpeg`.)
 - pytest (if running tests)
@@ -43,9 +44,7 @@ Class: environment
     - `orig_L` length of each domain dimension before tiling
     - `fluid_domain_LLC` if fluid was imported from data, the spatial coordinates of the lower left corner of the original data. This is used internally to aid subsequent translations
     - `a` optional parameter for storing porous region height. If specified, the plotting routine will add some random grass with that height.
-    - `re` optional parameter for storing Reynolds number
     - `rho` optional parameter for storing dynamic fluid velocity
-    - `char_L` optional parameter for storing the characteristic length
     - `mu` optional parameter for dynamic viscosity
     - `g` acceleration due to gravity (9.80665 m/s**2)
 - Methods
@@ -72,21 +71,27 @@ Class: swarm
 
 - Properties
     - `positions` list of current spatial positions, one for each agent
-    - `pos_history` list of lists of past spatial positions
+    - `pos_history` list of previous "positions" lists
     - `velocity` list of current velocities, one for each agent (for use in
     projectile motion)
     - `acceleration` list of current accelerations, one for each agent (for use
     in projectile motion)
-    - `pos_history` list of previous "positions" lists
     - `envir` environment object that this swarm belongs to
     - `rndState` random number generator (for reproducability)
-    - `char_L` characteristic length for agents' Reynolds number (optional)
-    - `phys` dictionary of physical attributes (for use in projectile motion)
+    - `shared_props` properties shared by all members of the swarm. Includes:
+        - `mu` default mean for Gaussian walk (zeros)
+        - `cov` covariance matrix for Gaussian walk (identity matrix)
+        - `char_L` characteristic length for agents' Reynolds number (if provided)
+        - `phys` dictionary of physical attributes (if provided, for use in projectile motion)
+    - `props` Pandas DataFrame of properties that vary by individual agent.
 - Methods
+    - `change_envir` manages a change from one environment to another
     - `calc_re` Calculate the Reynolds number based on environment variables.
     Requires rho and mu to be set in the environment, and char_L to be set in swarm
-    - `move` move each agent in the swarm. Do not override: see update_positions.
+    - `move` move each agent in the swarm. Do not override: see get_movement.
     - `get_movement` defines the agent's movement behavior. OVERRIDE THIS WHEN SUBCLASSING!
+    - `get_prop` return the property requested as either a single value (if shared) or a numpy array
+    - `add_prop` add a new property and check that it isn't in both props and shared_props
     - `get_fluid_drift` get the fluid velocity at each agent's position via interpolation
     - `get_fluid_gradient` get the gradient of the magnitude of the fluid velocity
     at each agent's position via interpolation
