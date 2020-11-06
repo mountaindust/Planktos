@@ -1,13 +1,15 @@
 #! /usr/bin/env python3
 
 import sys
-sys.path.append('../..')
+sys.path.append('../..') # location of Planktos
+sys.path.append('..') # location of plt_cyl
 from sys import platform
 if platform == 'darwin': # OSX backend does not support blitting
     import matplotlib
     matplotlib.use('Qt5Agg')
 import numpy as np
-import Planktos, data_IO, misc
+import Planktos
+import plt_cyl
 
 # Whether or not to show the cylinders based on the mesh data
 PLOT_CYL = True
@@ -40,7 +42,7 @@ if PLOT_CYL:
             n_str = '0'+str(n)
         else:
             n_str = str(n)
-        misc.add_cylinders_toplot(envir, 'data/cyl_grids_'+n_str+'.vtk')
+        plt_cyl.add_cylinders_toplot(envir, 'data/cyl_grids_'+n_str+'.vtk')
 
 ##########              Plot!               ###########
 s.plot_all('brine_shrimp_IBAMR.mp4', fps=20)

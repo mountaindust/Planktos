@@ -1,4 +1,4 @@
-'''Functions for reading and writing data
+'''Functions for reading and writing data from vtk and vtu
 
 Created on Wed April 05 2017
 

@@ -1718,6 +1718,7 @@ class swarm:
             #  as the end of slide/concave drift (not counting last jitter)
 
 
+
     def __interpolate_flow(self, flow, method):
         '''Interpolate the fluid velocity field at swarm positions'''
 

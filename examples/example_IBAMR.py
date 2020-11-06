@@ -8,7 +8,8 @@ if platform == 'darwin': # OSX backend does not support blitting
 import numpy as np
 import sys
 sys.path.append('..')
-import Planktos, data_IO, misc
+import Planktos
+import plt_cyl
 
 
 envir = Planktos.environment()
@@ -17,7 +18,7 @@ envir.read_IBAMR3d_vtk_dataset('../tests/IBAMR_test_data', start=5, finish=None)
 envir.tile_flow(3,3)
 
 # plot cylinder in each tile
-misc.add_cylinders_toplot(envir, '../tests/IBAMR_test_data/mesh_db.vtk')
+plt_cyl.add_cylinders_toplot(envir, '../tests/IBAMR_test_data/mesh_db.vtk')
 
 envir.add_swarm()
 s = envir.swarms[0]

@@ -1,14 +1,15 @@
 #! /usr/bin/env python3
 
 '''
-Misc module for commonly used routines.
+Module for plotting cylinders from IBAMR data
 
 Created on Tues Apr 12 2019
 
 Author: Christopher Strickland
 Email: cstric12@utk.edu
 '''
-
+import sys
+sys.path.append('..')
 import numpy as np
 import data_IO
 
