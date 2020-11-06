@@ -1705,6 +1705,7 @@ class swarm:
             #   fallen off the edge of the one you were traveling on
             #   Follow a vector given by the mean of the new boundary and the
             #   previous boundary for the remainder of the length
+            #   INSTEAD: resume previous heading.
             #   Check for additional crossings
 
             # If on a boundary at the end of slide (e.g. all cases except concave):
@@ -1716,6 +1717,64 @@ class swarm:
 
             # Check for boundary crossing again. If so, repeat with initial loc
             #  as the end of slide/concave drift (not counting last jitter)
+
+
+    @staticmethod
+    def __seg_intersect_2D(P0, P1, Q0_list, Q1_list):
+        '''Find the intersection between two line segments, P and Q, returning
+        -1 if there isn't one or in all cases if they are parallel.
+        If Q is a 2D array, loop over the rows of Q finding all intersections
+        between P and each row of Q.
+
+        This algorithm uses a parameteric equation approach for speed, based on
+        http://geomalgorithms.com/a05-_intersect-1.html
+        
+        Arguments:
+            P0: length 2 array, first point in line segment P
+            P1: length 2 array, second point in line segment P 
+            Q0: Nx2 ndarray of first points in a list of line segments.
+            Q1: Nx2 ndarray of second points in a list of line segments.
+        '''
+
+        u = P1 - P0
+        v = Q1_list - Q0_list
+        w = P0 - Q0_list
+
+        u_perp = np.array([-u[1], u[0]])
+        v_perp = np.array([-v[...,1], v[...,0]]).T
+
+        if len(Q0_list.shape) == 1:
+            # only one point in Q list
+            denom = np.dot(v_perp,u)
+            if denom != 0:
+                s_I = np.dot(-v_perp,w)/denom
+                t_I = -np.dot(u_perp,w)/denom
+                if 0<=s_I<=1 and 0<=t_I<=1:
+                    return P0 + s_I*u
+            return np.array([-1,-1])
+
+        denom_list = np.multiply(v_perp,u).sum(1) #vectorized dot product
+
+        # record non-parallel cases
+        not_par = denom_list != 0
+
+        s_I_list = -np.ones_like(denom_list)
+        t_I_list = -np.ones_like(denom_list)
+        # now only need to calculuate s & t for non parallel cases; others
+        #   will report as not intersecting.
+        s_I_list[not_par] = np.multiply(-v_perp[not_par],w[not_par]).sum(1)/denom_list[not_par]
+        t_I_list[not_par] = -np.multiply(u_perp,w[not_par]).sum(1)/denom_list[not_par]
+
+        intersect = np.logical_and(
+                        np.logical_and(0<=s_I_list, s_I_list<=1),
+                        np.logical_and(0<=t_I_list, t_I_list<=1))
+
+        sol = -1*np.ones_like(Q0_list, dtype='float64')
+
+        for n, s_I in zip(np.arange(len(s_I_list))[intersect],s_I_list[intersect]):
+            sol[n] = P0 + s_I*u
+
+        return sol
 
 
 
