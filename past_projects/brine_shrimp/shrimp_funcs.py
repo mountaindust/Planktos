@@ -3,7 +3,7 @@ Supporting functions for shrimp data visualization and persistance
 '''
 
 import sys
-sys.path.append('..')
+sys.path.append('../..')
 from sys import platform
 if platform == 'darwin': # OSX backend does not support blitting
     import matplotlib

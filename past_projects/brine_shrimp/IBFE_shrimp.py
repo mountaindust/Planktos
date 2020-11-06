@@ -1,17 +1,16 @@
 #! /usr/bin/env python3
 '''
-Read COMSOL data for 3D cylinder model. Reproduce flowtank experiment with
+Read IBFE data for 3D cylinder model. Reproduce flowtank experiment with
 random walk agents.
 '''
 
 import sys
-sys.path.append('..')
+sys.path.append('../..')
 from sys import platform
 if platform == 'darwin': # OSX backend does not support blitting
     import matplotlib
-    matplotlib.use('TkAgg')
+    matplotlib.use('Qt5Agg')
 import argparse
-import pickle
 import numpy as np
 import shrimp_funcs
 import Planktos, data_IO
@@ -24,62 +23,55 @@ parser.add_argument("-s", "--seed", type=int, default=1,
 parser.add_argument("-o", "--prefix", type=str, 
                     help="prefix to filenames with data output",
                     default='')
-parser.add_argument("-d", "--data", type=str, 
-                    help="name of flow data file within ./data",
-                    default='')
-parser.add_argument("-D", "--diff", type=float, default=None,
-                    help="diffusivity in mm**2/sec. See main for more info.")
 parser.add_argument("--movie", action="store_true", default=False,
                     help="output a movie of the simulation")
-parser.add_argument("-t", "--time", type=int, default=600,
+parser.add_argument("-t", "--time", type=int, default=55,
                     help="time in sec to run the simulation")
+
+# Intialize environment
+envir = Planktos.environment(x_bndry=['noflux', 'noflux'])
+
+############     Import IBMAR data on flow and extend domain     ############
+
+print('Reading VTK data. This will take a while...')
+envir.read_IBAMR3d_vtk_data('data/RAW_10x20x2cm_8_5s.vtk')
+print('Domain set to {} mm.'.format(envir.L))
+print('Flow mesh is {}.'.format(envir.flow[0].shape))
+print('-------------------------------------------')
+# Domain should be 80x320x80 mm
+# Flow mesh is 256x1024x256, so resolution is 5/16 mm per unit grid
+# Model sits (from,to): (2.5,77.5), (85,235), (0.5,20.5)
+# Need: 182 mm downstream from model to capture both zones
+
+# Extend domain downstream so Y is 440mm total length
+# Need to extend flow mesh by 120mm/(5/16)=384 mesh units
+envir.extend(y_plus=384)
+print('Domain extended to {} mm'.format(envir.L))
+print('Flow mesh is {}.'.format(envir.flow[0].shape))
+# NOW:
+# Domain should be 80x440x80 mm
+# Model sits (from,to): (2.5,77.5), (85,235), (0.5,20.5)
+model_bounds = (2.5,77.5,85,235,0,20.5)
+print('-------------------------------------------')
 
 
 ############################################################################
 ############                    RUN SIMULATION                  ############
 ############################################################################
 
-def main(swarm_size=1000, time=600, data='', D=None, seed=1, create_movie=False, prefix=''):
+def main(swarm_size=1000, time=55, seed=1, create_movie=False, prefix=''):
     '''Add swarm and simulate dispersal. Future: run this in loop while altering
-    something to see the effect.
-    
-    D is diffusivity in mm**2/sec. Default is 2.5; see below
-    '''
-
-    # Intialize environment
-    envir = Planktos.environment(x_bndry=['noflux', 'noflux'])
-
-    ############     Import COMSOL data on flow     ############
-
-    print('Reading COMSOL data.')
-    if data == '':
-        envir.read_comsol_vtu_data('data/Velocity_plate.vtu', vel_conv=1000)
-    else:
-        if data[-4:] != '.txt' and data[-4:] != '.vtu':
-            data = data+'.vtu'
-        try:
-            envir.read_comsol_vtu_data(data, vel_conv=1000)
-        except AssertionError:
-            envir.read_comsol_vtu_data('data/'+data, vel_conv=1000)
-    print('Domain set to {} mm.'.format(envir.L))
-    print('Flow mesh is {}.'.format(envir.flow[0].shape))
-    # Domain should be 80x640x80 mm
-    # Model sits (from,to): (2.5,77.5), (85,235), (0.5,20.5)
-    model_bounds = (2.5,77.5,85,235,0,20.5)
-    print('-------------------------------------------')
+    something to see the effect.'''
 
     # Add swarm right in front of model
     s = envir.add_swarm(swarm_s=swarm_size, init='point', pos=(40,84,3), seed=seed)
 
     # Specify amount of jitter (mean, covariance)
+    # Set sigma**2 as 0.5cm**2/sec = 50mm**2/sec, sigma~7mm
     # (sigma**2=2*D, D for brine shrimp given in Kohler, Swank, Haefner, Powell 2010)
-    # D was found to be 0.025 cm**2/sec (video data, real time was higher)
-    # Set sigma**2 as 2*D = 0.05 cm**2/sec = 5 mm**2/sec
-    # Then take half of this to account for 3D (vs. 2D) = 2.5 mm**2/sec
-    if D is None:
-        s.shared_props['cov'] *= 2.5
-    else:
-        s.shared_props['cov'] *= D
+    # Now simulating with half this varience for 2D -> 3D diffusion
+    s.shared_props['cov'] *= 2*50
+
 
     ########## Move the swarm according to the prescribed rules above ##########
     print('Moving swarm...')
@@ -101,32 +93,14 @@ def main(swarm_size=1000, time=600, data='', D=None, seed=1, create_movie=False,
     g_cells_cnts, b_cells_cnts = shrimp_funcs.collect_cell_counts(s, g_bounds,
                                                             b_bounds, cell_size)
 
-    g_cross_frac, g_mean, g_median, g_mode, g_std, g_skew, g_kurt,\
-        b_cross_frac, b_mean, b_median, b_mode, b_std, b_skew, b_kurt =\
-        shrimp_funcs.collect_zone_statistics(s, g_bounds, b_bounds)
-
 
     ########## Plot and save the run ##########
     # Create time mesh for plotting and saving data in excel
     time_mesh = list(envir.time_history)
     time_mesh.append(envir.time)
-    # Plot and save the run. Try not to die if no access to graphics
-    try:
-        shrimp_funcs.plot_cell_counts(time_mesh, g_cells_cnts, b_cells_cnts, prefix)
-    except:
-        print('Exception encountered; unable to save plots.')
+    # Plot and save the run
+    shrimp_funcs.plot_cell_counts(time_mesh, g_cells_cnts, b_cells_cnts, prefix)
     shrimp_funcs.save_sim_to_excel(time_mesh, g_cells_cnts, b_cells_cnts, prefix)
-    # Output the zone stats
-    np.savez(prefix+'stats',
-        g_cross_frac=g_cross_frac, g_mean=g_mean, g_median=g_median, g_mode=g_mode,
-        g_std=g_std, g_skew=g_skew, g_kurt=g_kurt,
-        b_cross_frac=b_cross_frac, b_mean=b_mean, b_median=b_median, b_mode=b_mode,
-        b_std=b_std, b_skew=b_skew, b_kurt=b_kurt)
-
-    # write out the swarm object for later data inspection
-    with open(prefix+'obj.pickle', 'w+b') as f:
-        pickle.dump(s, f)
-
     
     ########## Create movie if requested ##########
     # This takes a long time. Only do it if asked to.
@@ -139,7 +113,7 @@ def main(swarm_size=1000, time=600, data='', D=None, seed=1, create_movie=False,
         envir.plot_structs_args.append((g_bounds, b_bounds, (0, envir.L[0])))
         # Call plot_all to create movie
         print('Creating movie...')
-        s.plot_all(prefix+'brineshr_COMSOL.mp4', fps=10)
+        s.plot_all(prefix+'brine_shrimp_IBFE.mp4', fps=10)
 
 
 if __name__ == "__main__":
@@ -148,5 +122,4 @@ if __name__ == "__main__":
         prefix = args.prefix + '_'
     else:
         prefix = args.prefix
-    main(args.N, args.time, args.data, args.diff, args.seed, args.movie, prefix)
-
+    main(args.N, args.time, args.seed, args.movie, prefix)

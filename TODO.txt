@@ -1,0 +1,9 @@
+- See if read_ py files can be updated to Python 3
+- Add immersed boundary interaction in 2D, then 3D
+  - Run examples of the above from IB2d, 3D cylinder mesh data
+- Start analysis library with some basic stuff. Include TDA.
+- Code up rolling locust swarm, then add Brinkman flow and gusts
+- LCS module?
+- documentation (/doc)
+
+--> Code release paper, single author. Target: Mathematical Models and Methods in Applied Sciences

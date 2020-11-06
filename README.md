@@ -20,7 +20,7 @@ A suggested BibTeX entry is included in the file Planktos.bib.
 You will also need a Python 2.7 environment with numpy and VisIt installed to convert IBAMR data into vtk data.
 
 ### Tests
-All tests can be run by typing `py.test` into a terminal in the base directory.
+All tests can be run by typing `pytest` into a terminal in the base directory.
 
 ## Quickstart
 

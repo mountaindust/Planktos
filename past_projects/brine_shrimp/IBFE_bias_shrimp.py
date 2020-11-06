@@ -1,11 +1,11 @@
 #! /usr/bin/env python3
 '''
 Read IBFE data for 3D cylinder model. Reproduce flowtank experiment with
-random walk agents.
+random walk agents, but with a bias based on the flow gradient.
 '''
 
 import sys
-sys.path.append('..')
+sys.path.append('../..')
 from sys import platform
 if platform == 'darwin': # OSX backend does not support blitting
     import matplotlib
@@ -13,7 +13,7 @@ if platform == 'darwin': # OSX backend does not support blitting
 import argparse
 import numpy as np
 import shrimp_funcs
-import Planktos, data_IO
+import Planktos, data_IO, mv_swarm
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-N", type=int, default=1000,
@@ -49,10 +49,53 @@ envir.extend(y_plus=384)
 print('Domain extended to {} mm'.format(envir.L))
 print('Flow mesh is {}.'.format(envir.flow[0].shape))
 # NOW:
-# Domain should be 80x440x80 mm
+# Domain should be 80x460x80 mm
 # Model sits (from,to): (2.5,77.5), (85,235), (0.5,20.5)
 model_bounds = (2.5,77.5,85,235,0,20.5)
 print('-------------------------------------------')
+
+
+############################################################################
+############                  SPECIFY BEHAVIOR                  ############
+############################################################################
+
+class Bshrimp(Planktos.swarm):
+
+    def get_movement(self, dt, params=None):
+        '''Use the new get_fluid_gradient method to advect the brine shrimp
+        in the direction of slowest flow'''
+        if self.envir.flow is None:
+            return super(Bshrimp, self).get_movement(dt, params)
+        else:
+            
+            # get unit vector in direction of greatest descent
+            grad = self.get_fluid_gradient()
+            denom = np.tile(
+                        np.linalg.norm(grad, axis=1),
+                        (len(self.envir.L),1)).T
+            # reduce movement as we approach a threshold
+            thres = 0.1
+            scale = np.ones_like(grad)
+            scale[denom<1] = (denom[denom<1]-0.1)/0.9
+            scale[scale<0] = 0
+
+            # if the norm of the gradient is below a certain amount, call it
+            #   undetectable and return zero
+            grad_low_idx = denom < thres # mm
+            # catch places where grad == 0
+            grad[grad_low_idx] = 0
+            denom[grad_low_idx] = 1
+            mvdir = -grad/denom
+            assert len(self.get_fluid_gradient().shape) == 2
+
+            # sigma**2 w/o advection is 0.5cm**2/sec = 50mm**2/sec, sigma~7mm
+            # (sigma**2=2*D, D for brine shrimp given in Kohler, Swank, Haefner, Powell 2010)
+            # 50 mm variance in no flow... split between advection and diffusion
+            mu = self.get_fluid_drift() + mvdir*np.sqrt(25)*scale
+
+            return mv_swarm.gaussian_walk(self, dt*mu, dt*25*np.eye(3))
+
+
 
 
 ############################################################################
@@ -63,15 +106,9 @@ def main(swarm_size=1000, time=55, seed=1, create_movie=False, prefix=''):
     '''Add swarm and simulate dispersal. Future: run this in loop while altering
     something to see the effect.'''
 
-    # Add swarm right in front of model
-    s = envir.add_swarm(swarm_s=swarm_size, init='point', pos=(40,84,3), seed=seed)
-
-    # Specify amount of jitter (mean, covariance)
-    # Set sigma**2 as 0.5cm**2/sec = 50mm**2/sec, sigma~7mm
-    # (sigma**2=2*D, D for brine shrimp given in Kohler, Swank, Haefner, Powell 2010)
-    # Now simulating with half this varience for 2D -> 3D diffusion
-    s.shared_props['cov'] *= 2*50
-
+    # Create swarm right in front of model with behavior as described above
+    s = Bshrimp(swarm_size=swarm_size, envir=envir, init='point',
+                    pos=(40,84,3), seed=seed)
 
     ########## Move the swarm according to the prescribed rules above ##########
     print('Moving swarm...')
