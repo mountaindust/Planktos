@@ -487,3 +487,46 @@ def test_canopy_flow():
     assert np.all(envir.flow[0][-1,:,:,-1] > envir.flow[0][-2,:,:,-1]), "flow increases over time"
     assert np.all(envir.flow[0][0,0,:,-1] == envir.flow[0][0,-1,:,-1]), "flow is constant w.r.t x"
     assert np.all(envir.flow[0][-1,:,0,-1] == envir.flow[0][-1,:,-1,-1]), "flow is constant w.r.t y"
+
+
+
+def test_intersection_methods():
+    '''These are static methods, so just test them directly.'''
+
+    ### 2D ###
+
+    # Two segments, parallel
+    p0 = np.array([0.0, 0.0]); p1 = np.array([0.0, 1.])
+    p2 = np.array([1., 0.]); p3 = np.array([1., 0.5])
+    assert Planktos.swarm._seg_intersect_2D(p0, p1, p2, p3) is None
+
+    # Two segments, no intersection
+    p0 = np.array([0.0, 0.0]); p1 = np.array([0.0, 1.])
+    p2 = np.array([1., 0.]); p3 = np.array([0.5, 0.5])
+    assert Planktos.swarm._seg_intersect_2D(p0, p1, p2, p3) is None
+
+    # Two segments, intersection
+    p0 = np.array([1.0, 0.0]); p1 = np.array([1.0, 1.])
+    p2 = np.array([2., 0.]); p3 = np.array([0., 0.5])
+    assert Planktos.swarm._seg_intersect_2D(p0, p1, p2, p3) is not None
+
+    # Many segments, no intersection
+    p0 = np.array([0.0, 0.0]); p1 = np.array([1., 1.])
+    Q0_list = np.array([[0., 1.],[0., 1.],[2.35, 3.001]])
+    Q1_list = np.array([[0., 2.],[1., 2.],[34.957, 11.3239]])
+    assert Planktos.swarm._seg_intersect_2D(p0, p1, Q0_list, Q1_list) is None
+    
+    # Many segments, one intersection
+    p0 = np.array([0.0, 0.0]); p1 = np.array([1., 1.])
+    Q0_list = np.array([[0., 1.],[0., 1.],[0.25, 0.75]])
+    Q1_list = np.array([[0., 2.],[1., 2.],[0.75, 0.25]])
+    assert Planktos.swarm._seg_intersect_2D(p0, p1, Q0_list, Q1_list) is not None
+
+    # Many segments, two intersections
+    p0 = np.array([1.0, 0.0]); p1 = np.array([1., 5.])
+    Q0_list = np.array([[0., 4.],[0., 1.],[0., 2.],[10., 10.]])
+    Q1_list = np.array([[5., 4.],[0.5, 2.],[3., 2.],[11., 11.]])
+    intersection = Planktos.swarm._seg_intersect_2D(p0, p1, Q0_list, Q1_list)
+    assert np.all(intersection[0] == np.array([1.,2.]))
+    assert intersection[1] == 2./5.
+    assert np.all(intersection[2] == np.array([3.,0.]))

@@ -1,4 +1,5 @@
 - Add immersed boundary interaction in 2D, then 3D
+  - Test 3D intersection routine
   - Run examples of the above from IB2d, 3D cylinder mesh data
 - Start analysis library with some basic stuff. Include TDA.
 - Code up rolling locust swarm, then add Brinkman flow and gusts

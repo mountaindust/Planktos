@@ -1720,20 +1720,37 @@ class swarm:
 
 
     @staticmethod
-    def __seg_intersect_2D(P0, P1, Q0_list, Q1_list):
+    def _seg_intersect_2D(P0, P1, Q0_list, Q1_list):
         '''Find the intersection between two line segments, P and Q, returning
-        -1 if there isn't one or in all cases if they are parallel.
+        None if there isn't one or if they are parallel.
         If Q is a 2D array, loop over the rows of Q finding all intersections
-        between P and each row of Q.
+        between P and each row of Q, but only return the closest intersection
+        to P0 (if there is one, otherwise None)
 
         This algorithm uses a parameteric equation approach for speed, based on
         http://geomalgorithms.com/a05-_intersect-1.html
+
+        TODO: May break down if denom is close to zero.
+            May want to return more than just the intersection point - e.g.,
+            we will probably need s_I and the directional vector of the line
+            it intersected
+            
+        SAVE COMPUTATION TIME BY ONLY CHECKING FOR INTERSECTIONS WITH MESH
+            SEGMENTS THAT FALL WITHIN A BALL OF THE AGENT START-POINT.
+            RADIUS OF THE BALL IS DISTANCE TRAVELED (APPROXIMATE BALL WITH
+            SQUARE THAT FULL ENCLOSES THE BALL)
         
         Arguments:
             P0: length 2 array, first point in line segment P
             P1: length 2 array, second point in line segment P 
             Q0: Nx2 ndarray of first points in a list of line segments.
             Q1: Nx2 ndarray of second points in a list of line segments.
+
+        Returns:
+            x: length 2 array giving the coordinates of the point of first intersection
+            s_I: the fraction of the line segment traveled from P0 before
+                intersection occurred (only if intersection occurred)
+            vec: directional vector of boundary (Q) intersected (only if intersection occurred)
         '''
 
         u = P1 - P0
@@ -1750,8 +1767,8 @@ class swarm:
                 s_I = np.dot(-v_perp,w)/denom
                 t_I = -np.dot(u_perp,w)/denom
                 if 0<=s_I<=1 and 0<=t_I<=1:
-                    return P0 + s_I*u
-            return np.array([-1,-1])
+                    return (P0 + s_I*u, s_I, v)
+            return None
 
         denom_list = np.multiply(v_perp,u).sum(1) #vectorized dot product
 
@@ -1769,12 +1786,112 @@ class swarm:
                         np.logical_and(0<=s_I_list, s_I_list<=1),
                         np.logical_and(0<=t_I_list, t_I_list<=1))
 
-        sol = -1*np.ones_like(Q0_list, dtype='float64')
+        if np.any(intersect):
+            # find the closest one and return it
+            v_intersected = v[intersect]
+            return (P0 + s_I_list[intersect].min()*u, s_I_list[intersect].min(),
+                    v_intersected[s_I_list[intersect].argmin()])
+        else:
+            return None
 
-        for n, s_I in zip(np.arange(len(s_I_list))[intersect],s_I_list[intersect]):
-            sol[n] = P0 + s_I*u
 
-        return sol
+
+    @staticmethod
+    def _seg_intersect_3D_triangles(P0, P1, Q0_list, Q1_list, Q2_list):
+        '''Find the intersection between a line segment P0 to P1 and any of the
+        triangles given by Q0, Q1, Q2 where each row is a different triangle.
+        Returns None if there is no intersection.
+
+        This algorithm uses a parameteric equation approach for speed, based on
+        http://geomalgorithms.com/a05-_intersect-1.html
+
+        TODO: May break down if denom is close to zero.
+            
+        SAVE COMPUTATION TIME BY ONLY CHECKING FOR INTERSECTIONS WITH MESH
+            SEGMENTS THAT FALL WITHIN A BALL OF THE AGENT START-POINT.
+            RADIUS OF THE BALL IS DISTANCE TRAVELED (APPROXIMATE BALL WITH
+            SQUARE THAT FULL ENCLOSES THE BALL)
+
+        Arguments:
+            P0: length 3 array, first point in line segment P
+            P1: length 3 array, second point in line segment P 
+            Q0: Nx3 ndarray of first points in a list of triangles.
+            Q1: Nx3 ndarray of second points in a list of triangles.
+            Q2: Nx3 ndarray of third points in a list of triangles.
+
+        Returns:
+            x: length 3 array giving the coordinates of the first point of intersection
+            s_I: the fraction of the line segment traveled from P0 before
+                intersection occurred (only if intersection occurred)
+            normal: normal vector to plane of intersection
+        '''
+
+        # First, determine the intersection between the line and the plane
+
+        # Get normal vectors
+        Q1Q0_diff = Q1_list-Q0_list
+        Q2Q0_diff = Q2_list-Q0_list
+        n_list = np.cross(Q1Q0_diff, Q2Q0_diff)
+
+        u = P1 - P0
+        w = P0 - Q0_list
+
+        # At intersection, w + su is perpendicular to n
+        if len(Q0_list.shape) == 1:
+            # only one triangle
+            denom = np.dot(n_list,u)
+            if denom != 0:
+                s_I = np.dot(-n_list,w)/denom
+                if 0<=s_I<=1:
+                    # line segment crosses full plane
+                    cross_pt = P0 + s_I*u
+                    # calculate barycentric coordinates
+                    normal = n_list/np.linalg.norm(n_list)
+                    A = np.dot(n_list, normal)
+                    Q0Pt = cross_pt-Q0_list
+                    A_u = np.dot(np.cross(Q2Q0_diff,Q0Pt),normal)
+                    A_v = np.dot(np.cross(Q0Pt,Q1Q0_diff),normal)
+                    coords = np.array([A_u/A, A_v/A, 0])
+                    coords[2] = 1 - coords[0] - coords[1]
+                    # check if point is in triangle
+                    if np.all(coords>=0):
+                        return (cross_pt, s_I, normal)
+            return None
+
+        denom_list = np.multiply(n_list,u).sum(1)
+
+        # record non-parallel cases
+        not_par = denom_list != 0
+
+        # default is not intersecting
+        s_I_list = -np.ones_like(denom_list)
+        
+        # get intersection parameters
+        s_I_list[not_par] = np.multiply(-n_list[not_par],w[not_par]).sum(1)/denom_list[not_par]
+        # test for intersection of line segment with full plane
+        plane_int = np.logical_and(0<=s_I_list, s_I_list<=1)
+
+        # calculate barycentric coordinates for each plane intersection
+        # Note: we only care about the closest triangle intersection!
+        closest_int = (None, -1, None)
+        for n, s_I in zip(np.arange(len(plane_int))[plane_int], s_I_list[plane_int]):
+            # see if we need to worry about this one
+            if closest_int[1] == -1 or closest_int[1] > s_I:
+                cross_pt = P0 + s_I*u
+                normal = n_list[n]/np.linalg.norm(n_list[n])
+                A = np.dot(n_list[n], normal)
+                Q0Pt = cross_pt-Q0_list[n]
+                A_u = np.dot(np.cross(Q2Q0_diff[n],Q0Pt),normal)
+                A_v = np.dot(np.cross(Q0Pt,Q1Q0_diff[n]),normal)
+                coords = np.array([A_u/A, A_v/A, 0])
+                coords[2] = 1 - coords[0] - coords[1]
+                # check if point is in triangle
+                if np.all(coords>=0):
+                    closest_int = (cross_pt, s_I, normal)
+        if closest_int[0] is None:
+            return None
+        else:
+            return closest_int
 
 
 
