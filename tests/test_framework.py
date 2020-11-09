@@ -530,3 +530,69 @@ def test_intersection_methods():
     assert np.all(intersection[0] == np.array([1.,2.]))
     assert intersection[1] == 2./5.
     assert np.all(intersection[2] == np.array([3.,0.]))
+
+    ### 3D ###
+
+    # Parallel case, no intersection
+    seg0 = np.array([0.5, 0.5, 2.]); seg1 = np.array([2.5, 2.5, 2.])
+    tri0 = np.array([1., 1., 1.]); tri1 = np.array([2., 1., 1.])
+    tri2 = np.array([1., 2., 1.])
+    assert Planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2) is None
+
+    # Parallel case, intersection
+    seg0 = np.array([0.5, 0.5, 1.]); seg1 = np.array([2.5, 2.5, 1.])
+    tri0 = np.array([1., 1., 1.]); tri1 = np.array([2., 1., 1.])
+    tri2 = np.array([1., 2., 1.])
+    assert Planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2) is None,\
+        "Parallel should return None in all cases."
+
+    # One non-parallel segment and triangle, no intersection
+    seg0 = np.array([0.5, 0.5, 2.]); seg1 = np.array([2.5, 2.5, 1.5])
+    tri0 = np.array([1., 1., 1.]); tri1 = np.array([2., 1., 1.])
+    tri2 = np.array([1., 2., 1.])
+    assert Planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2) is None
+
+    # One non-parallel segment and triangle with intersection
+    seg0 = np.array([0.5, 0.5, 0.5]); seg1 = np.array([2., 2., 1.5])
+    tri0 = np.array([1., 1., 1.]); tri1 = np.array([4., 1., 1.])
+    tri2 = np.array([1., 4., 1.])
+    intersection = Planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2)
+    assert intersection is not None
+    assert np.all(np.isclose(intersection[0], np.array([1.25, 1.25, 1.])))
+    assert np.isclose(intersection[1], 0.5)
+    assert np.isclose(np.dot(intersection[2],tri1-tri0), 0),\
+        "vector not normal"
+
+    # Many triangles, no intersection except in a parallel case
+    seg0 = np.array([0.5, 0.5, 1.]); seg1 = np.array([2.5, 2.5, 1.])
+    tri0 = np.array([[1., 1., 1.], [1., 1., 2.], [20.5, 0.5, 0.5]])
+    tri1 = np.array([[2., 1., 1.], [2., 1., 2.], [0.5, 20.5, 0.5]])
+    tri2 = np.array([[1., 2., 1.], [1., 2., 1.], [10.5, 10.5, 20.5]])
+    assert Planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2) is None
+
+    # Many triangles, one intersection
+    seg0 = np.array([0.5, 0.5, 0.5]); seg1 = np.array([2., 2., 1.5])
+    tri0 = np.array([[1., 1., 1.],[2.5, 2.5, 20.],[6., 1., 10.]])
+    tri1 = np.array([[4., 1., 1.],[4., 1., 1.],[4., 1., 1.]])
+    tri2 = np.array([[1., 4., 1.],[1., 4., 1.],[8., 1., 1.]])
+    intersection = Planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2)
+    assert intersection is not None
+    assert np.all(np.isclose(intersection[0], np.array([1.25, 1.25, 1.])))
+    assert np.isclose(intersection[1], 0.5)
+    assert np.isclose(np.dot(intersection[2],tri1[0,:]-tri0[0,:]), 0),\
+        "vector not normal"
+
+    # Many triangles, many intersections
+    seg0 = np.array([0.5, 0.5, 0.5]); seg1 = np.array([2., 2., 1.5])
+    tri0 = np.array([[1.,1.,1.2],[2.5, 2.5, 20.],[1., 1., 1.],
+                     [6., 1., 10.],[1.,1.,1.1]])
+    tri1 = np.array([[4., 1., 1.2],[4., 1., 1.],[4., 1., 1.],
+                     [4., 1., 1.],[4., 1., 1.1]])
+    tri2 = np.array([[1., 4., 1.2],[1., 4., 1.],[1., 4., 1.],
+                     [8., 1., 1.],[1., 4., 1.1]])
+    intersection = Planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2)
+    assert intersection is not None
+    assert np.all(np.isclose(intersection[0], np.array([1.25, 1.25, 1.])))
+    assert np.isclose(intersection[1], 0.5)
+    assert np.isclose(np.dot(intersection[2],tri1[0,:]-tri0[0,:]), 0),\
+        "vector not normal"

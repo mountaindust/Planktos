@@ -1847,11 +1847,11 @@ class swarm:
                     cross_pt = P0 + s_I*u
                     # calculate barycentric coordinates
                     normal = n_list/np.linalg.norm(n_list)
-                    A = np.dot(n_list, normal)
+                    A_dbl = np.dot(n_list, normal)
                     Q0Pt = cross_pt-Q0_list
-                    A_u = np.dot(np.cross(Q2Q0_diff,Q0Pt),normal)
-                    A_v = np.dot(np.cross(Q0Pt,Q1Q0_diff),normal)
-                    coords = np.array([A_u/A, A_v/A, 0])
+                    A_u_dbl = np.dot(np.cross(Q0Pt,Q2Q0_diff),normal)
+                    A_v_dbl = np.dot(np.cross(Q1Q0_diff,Q0Pt),normal)
+                    coords = np.array([A_u_dbl/A_dbl, A_v_dbl/A_dbl, 0])
                     coords[2] = 1 - coords[0] - coords[1]
                     # check if point is in triangle
                     if np.all(coords>=0):
@@ -1879,11 +1879,11 @@ class swarm:
             if closest_int[1] == -1 or closest_int[1] > s_I:
                 cross_pt = P0 + s_I*u
                 normal = n_list[n]/np.linalg.norm(n_list[n])
-                A = np.dot(n_list[n], normal)
+                A_dbl = np.dot(n_list[n], normal)
                 Q0Pt = cross_pt-Q0_list[n]
-                A_u = np.dot(np.cross(Q2Q0_diff[n],Q0Pt),normal)
-                A_v = np.dot(np.cross(Q0Pt,Q1Q0_diff[n]),normal)
-                coords = np.array([A_u/A, A_v/A, 0])
+                A_u_dbl = np.dot(np.cross(Q0Pt,Q2Q0_diff[n]),normal)
+                A_v_dbl = np.dot(np.cross(Q1Q0_diff[n],Q0Pt),normal)
+                coords = np.array([A_u_dbl/A_dbl, A_v_dbl/A_dbl, 0])
                 coords[2] = 1 - coords[0] - coords[1]
                 # check if point is in triangle
                 if np.all(coords>=0):
