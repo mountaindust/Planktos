@@ -529,7 +529,8 @@ def test_intersection_methods():
     intersection = Planktos.swarm._seg_intersect_2D(p0, p1, Q0_list, Q1_list)
     assert np.all(intersection[0] == np.array([1.,2.]))
     assert intersection[1] == 2./5.
-    assert np.all(intersection[2] == np.array([3.,0.]))
+    intsec = np.array([3.,0.])
+    assert np.all(intersection[2] == intsec/np.linalg.norm(intsec))
 
     ### 3D ###
 

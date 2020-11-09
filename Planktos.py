@@ -154,6 +154,10 @@ class environment:
         # accel due to gravity
         self.g = 9.80665
 
+        ##### Immersed Boundary Mesh #####
+        self.ibmesh = None # Nx2x2 or Nx3x3
+        self.max_meshpt_dist = None # max distance between mesh pts in an element
+
         ##### Environment Structure Plotting #####
 
         # List of functions that plot additional environment structures
@@ -1454,6 +1458,9 @@ class swarm:
         Arguments:
             dt: length of time step
             params: any other parameters necessary (optional)
+
+        Returns:
+            delta_x: change in position for each agent (ndarray)
         '''
 
         ### Active movement ###
@@ -1639,6 +1646,15 @@ class swarm:
     def apply_boundary_conditions(self):
         '''Apply boundary conditions to self.positions'''
 
+        # internal mesh boundaries go first
+        if self.envir.ibmesh is not None:
+            # loop over (non-masked) agents
+            for n, startpt, endpt in zip(np.arange(len(self.positions[:,0]))[~self.positions.mask[:,0]],
+                                         self.pos_history[-1][~self.positions.mask[:,0],:],
+                                         self.positions[~self.positions.mask[:,0],:]
+                                         ):
+                self.positions[n] = self._apply_internal_BC(startpt, endpt, self.envir.ibmesh)
+
         for dim, bndry in enumerate(self.envir.bndry):
 
             # Check for 3D
@@ -1699,13 +1715,12 @@ class swarm:
             #   If piecewise linear, this will always happen at bndry intersection points
             #   Repeat process until there are no further crossings.
             #   Keep greeks above, use new variables
+            ###### DONE ######
             
             # Check for additional boundary crossings (concave):
             #   Here, you haven't crossed a new piece of boundary, but you have
             #   fallen off the edge of the one you were traveling on
-            #   Follow a vector given by the mean of the new boundary and the
-            #   previous boundary for the remainder of the length
-            #   INSTEAD: resume previous heading.
+            #   Resume previous heading.
             #   Check for additional crossings
 
             # If on a boundary at the end of slide (e.g. all cases except concave):
@@ -1717,6 +1732,60 @@ class swarm:
 
             # Check for boundary crossing again. If so, repeat with initial loc
             #  as the end of slide/concave drift (not counting last jitter)
+
+
+
+    def _apply_internal_BC(self, startpt, endpt, mesh):
+        '''Apply internal boundaries to a trajectory starting and ending at
+        startpt and endpt, returning a new endpt (or the original one) as
+        appropriate.
+
+        Arguments:
+            startpt: start location for agent trajectory (len 2 or 3 ndarray)
+            endpt: end location for agent trajectory (len 2 or 3 ndarray)
+            mesh: Nx2x2 or Nx3x3 array of eligible mesh elements
+        '''
+
+        if len(startpt) == 2:
+            DIM = 2
+            diff_ary = np.array([startpt, startpt])
+        else:
+            DIM = 3
+            diff_ary = np.array([startpt, startpt, startpt])
+
+        # Get the distance for inclusion of meshpoints
+        traj_dist = np.linalg.norm(endpt - startpt)
+        search_dist = np.linalg.norm((traj_dist,self.envir.max_meshpt_dist))
+
+        # Find all mesh elements that have points within this distance
+        elem_bool = [np.any(np.linalg.norm(mesh[ii]-diff_ary,axis=1)<search_dist)
+            for ii in range(mesh.shape[0])]
+
+        # Get intersections
+        if DIM == 2:
+            intersection = self._seg_intersect_2D(startpt, endpt,
+                mesh[elem_bool,0,:], mesh[elem_bool,1,:])
+        else:
+            intersection = self._seg_intersect_3D_triangles(startpt, endpt,
+                mesh[elem_bool,0,:], mesh[elem_bool,1,:], mesh[elem_bool,2,:])
+
+        # Return endpt we already have if None.
+        if intersection is None:
+            return endpt
+        
+        # If we do have an intersection, project remaining piece of vector
+        #   onto mesh
+        vec = (1-intersection[1])*(endpt-startpt)
+        proj = np.dot(vec,intersection[2])*intersection[2]
+        # if 3D, this is the projection onto the normal vector.
+        #   subtract this component to get projection onto the plane.
+        if DIM == 3:
+            proj = vec - proj
+        newendpt = intersection[0] + proj
+
+        #TODO: what if we slide off the edge?
+        self._apply_internal_BC(intersection[0], newendpt, mesh[elem_bool])
+
 
 
     @staticmethod
@@ -1731,14 +1800,7 @@ class swarm:
         http://geomalgorithms.com/a05-_intersect-1.html
 
         TODO: May break down if denom is close to zero.
-            May want to return more than just the intersection point - e.g.,
-            we will probably need s_I and the directional vector of the line
-            it intersected
-            
-        SAVE COMPUTATION TIME BY ONLY CHECKING FOR INTERSECTIONS WITH MESH
-            SEGMENTS THAT FALL WITHIN A BALL OF THE AGENT START-POINT.
-            RADIUS OF THE BALL IS DISTANCE TRAVELED (APPROXIMATE BALL WITH
-            SQUARE THAT FULL ENCLOSES THE BALL)
+            NEED TO MAKE THIS ROBUST TO 3D IN ORDER TO DETECT FALLING OFF TRIANGLE
         
         Arguments:
             P0: length 2 array, first point in line segment P
@@ -1747,10 +1809,13 @@ class swarm:
             Q1: Nx2 ndarray of second points in a list of line segments.
 
         Returns:
+            None if there is no intersection. Otherwise:
             x: length 2 array giving the coordinates of the point of first intersection
             s_I: the fraction of the line segment traveled from P0 before
-                intersection occurred (only if intersection occurred)
-            vec: directional vector of boundary (Q) intersected (only if intersection occurred)
+                intersection occurred
+            vec: directional unit vector of boundary (Q) intersected
+            Q0: first endpoint of mesh segmented intersected
+            Q1: second endpoint of mesh segment intersected
         '''
 
         u = P1 - P0
@@ -1788,9 +1853,14 @@ class swarm:
 
         if np.any(intersect):
             # find the closest one and return it
+            Q0 = Q0_list[intersect]
+            Q1 = Q1_list[intersect]
             v_intersected = v[intersect]
-            return (P0 + s_I_list[intersect].min()*u, s_I_list[intersect].min(),
-                    v_intersected[s_I_list[intersect].argmin()])
+            s_I = s_I_list[intersect].min()
+            s_I_idx = s_I_list[intersect].argmin()
+            return (P0 + s_I*u, s_I,
+                    v_intersected[s_I_idx]/np.linalg.norm(v_intersected[s_I_idx]),
+                    Q0, Q1)
         else:
             return None
 
@@ -1806,11 +1876,6 @@ class swarm:
         http://geomalgorithms.com/a05-_intersect-1.html
 
         TODO: May break down if denom is close to zero.
-            
-        SAVE COMPUTATION TIME BY ONLY CHECKING FOR INTERSECTIONS WITH MESH
-            SEGMENTS THAT FALL WITHIN A BALL OF THE AGENT START-POINT.
-            RADIUS OF THE BALL IS DISTANCE TRAVELED (APPROXIMATE BALL WITH
-            SQUARE THAT FULL ENCLOSES THE BALL)
 
         Arguments:
             P0: length 3 array, first point in line segment P
@@ -1823,7 +1888,7 @@ class swarm:
             x: length 3 array giving the coordinates of the first point of intersection
             s_I: the fraction of the line segment traveled from P0 before
                 intersection occurred (only if intersection occurred)
-            normal: normal vector to plane of intersection
+            normal: normal unit vector to plane of intersection
         '''
 
         # First, determine the intersection between the line and the plane
