@@ -19,11 +19,29 @@ else:
     # Python 2
     PY3 = False
 import numpy as np
-import vtk
-from vtk.util import numpy_support # Converts vtkarray to/from numpy array
-from vtk.numpy_interface import dataset_adapter as dsa
+try:
+    import vtk
+    from vtk.util import numpy_support # Converts vtkarray to/from numpy array
+    from vtk.numpy_interface import dataset_adapter as dsa
+    VTK = True
+except ModuleNotFoundError:
+    print("Could not import vtk libraries. Reading of VTK files disabled.")
+    VTK = False
 
 
+def vtk_dep(func):
+    '''Decorator for VTK readers to check import.'''
+    def wrapper(*args, **kwargs):
+        if not VTK:
+            print("Cannot read VTK file: VTK library not found.")
+            raise RuntimeError("Cannot read VTK file: VTK library not found in data_IO.")
+        else:
+            return func(*args, **kwargs)
+    return wrapper
+
+
+
+@vtk_dep
 def read_vtk_Structured_Points(filename):
     '''This will read in either Scalar or Vector data!'''
 
@@ -57,6 +75,7 @@ def read_vtk_Structured_Points(filename):
 
 
 
+@vtk_dep
 def read_vtk_Rectilinear_Grid_Vector(filename):
     '''Reads a vtk file with Rectilinear Grid Vector data and TIME info'''
 
@@ -120,6 +139,7 @@ def read_vtk_Rectilinear_Grid_Vector(filename):
 
 
 
+@vtk_dep
 def read_vtk_Unstructured_Grid_Points(filename):
     '''This is meant to read mesh data exported from VisIt, where the mesh
     contains only singleton points.'''
@@ -178,6 +198,7 @@ def read_vtk_Unstructured_Grid_Points(filename):
 
 
 
+@vtk_dep
 def read_2DEulerian_Data_From_vtk(path, simNums, strChoice, xy=False):
     '''This is to read IB2d data, either scalar or vector.'''
 

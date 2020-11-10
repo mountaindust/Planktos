@@ -26,10 +26,7 @@ from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.cm as cm
 from matplotlib import animation
 import mv_swarm
-try:
-    import data_IO
-except ModuleNotFoundError:
-    print("vtk libraries not loaded")
+import data_IO
 
 __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
