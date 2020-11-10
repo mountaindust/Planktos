@@ -532,6 +532,33 @@ def test_intersection_methods():
     intsec = np.array([3.,0.])
     assert np.all(intersection[2] == intsec/np.linalg.norm(intsec))
 
+    ### 2D in 3D ###
+    # No bndry intersection
+    seg0 = np.array([1.1, 1.1, 1.]); seg1 = np.array([1.2, 1.2, 1.])
+    tri0 = np.array([1., 1., 1.]); tri1 = np.array([2., 1., 1.])
+    tri2 = np.array([1., 2., 1.])
+    Q0_list = np.array([tri0, tri1, tri2])
+    Q1_list = np.array([tri1, tri2, tri0])
+    intersection = Planktos.swarm._seg_intersect_2D(seg0, seg1, Q0_list, Q1_list)
+    assert intersection is None
+
+    # On a boundary, no interesection
+    seg0 = np.array([1.1, 1., 1.]); seg1 = np.array([1.5, 1., 1.])
+    intersection = Planktos.swarm._seg_intersect_2D(seg0, seg1, Q0_list, Q1_list)
+    assert intersection is None
+
+    # On a boundary, with interesection
+    seg0 = np.array([1.1, 1., 1.]); seg1 = np.array([2.1, 1., 1.])
+    intersection = Planktos.swarm._seg_intersect_2D(seg0, seg1, Q0_list, Q1_list)
+    assert np.all(intersection[0] == tri1)
+    assert np.isclose(intersection[1],0.9)
+
+    # Off boundary, with interesection
+    seg0 = np.array([1.1, 1.1, 1.]); seg1 = np.array([2.1, 2.1, 1.])
+    intersection = Planktos.swarm._seg_intersect_2D(seg0, seg1, Q0_list, Q1_list)
+    assert np.all(intersection[0] == np.array([1.5, 1.5, 1.]))
+    assert np.isclose(intersection[1],0.4)
+
     ### 3D ###
 
     # Parallel case, no intersection

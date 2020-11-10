@@ -1846,8 +1846,16 @@ class swarm:
         v = Q1_list - Q0_list
         w = P0 - Q0_list
 
-        u_perp = np.array([-u[1], u[0]])
-        v_perp = np.array([-v[...,1], v[...,0]]).T
+        if len(P0) == 2:
+            u_perp = np.array([-u[1], u[0]])
+            v_perp = np.array([-v[...,1], v[...,0]]).T
+        else:
+            normal = np.cross(v[0],v[1])
+            normal /= np.linalg.norm(normal)
+            assert np.isclose(np.dot(u,normal),0), "P vector not in Q plane"
+            u_perp = np.cross(u,normal)
+            v_perp = np.cross(v,normal)
+
 
         if len(Q0_list.shape) == 1:
             # only one point in Q list
