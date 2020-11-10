@@ -1783,8 +1783,32 @@ class swarm:
             proj = vec - proj
         newendpt = intersection[0] + proj
 
-        #TODO: what if we slide off the edge?
-        self._apply_internal_BC(intersection[0], newendpt, mesh[elem_bool])
+        # Detect sliding off 1D edge
+        if DIM == 2:
+            mesh_el_len = np.linalg.norm(intersection[4] - intersection[3])
+            Q0_dist = np.linalg.norm(newendpt-intersection[3])
+            Q1_dist = np.linalg.norm(newendpt-intersection[4])
+            if Q0_dist > mesh_el_len:
+                # went past Q1
+                newstartpt = intersection[4]
+                # project overshoot on original heading and add to bndry point
+                orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
+                newendpt = newstartpt + np.linalg.norm(newendpt-newstartpt)*orig_unit_vec
+                # repeat the whole process
+                self._apply_internal_BC(newstartpt, newendpt, mesh[elem_bool])
+            if Q1_dist > mesh_el_len:
+                # went past Q0
+                newstartpt = intersection[3]
+                # project overshoot on original heading and add to bndry point
+                orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
+                newendpt = newstartpt + np.linalg.norm(newendpt-newstartpt)*orig_unit_vec
+                # repeat the whole process
+                self._apply_internal_BC(newstartpt, newendpt, mesh[elem_bool])
+            # otherwise, we end on the mesh element
+            return newendpt
+        # Detect sliding off 2D edge using _seg_intersect_2D
+        if DIM == 3:
+            raise NotImplementedError("3D _seg_intersect_2D not implemented")
 
 
 
