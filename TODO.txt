@@ -1,5 +1,4 @@
 - Add immersed boundary interaction in 2D, then 3D
-  - Finish _apply_internal_BC
   - Add mesh loading. IB2d for 2D, stl for 3D using numpy-stl. Beware domain shifting.
   - Add plotting of stl meshes; see numpy-stl example
   - Run examples of the above from IB2d, 3D cylinder mesh data

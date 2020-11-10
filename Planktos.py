@@ -1648,12 +1648,14 @@ class swarm:
 
         # internal mesh boundaries go first
         if self.envir.ibmesh is not None:
-            # loop over (non-masked) agents
-            for n, startpt, endpt in zip(np.arange(len(self.positions[:,0]))[~self.positions.mask[:,0]],
-                                         self.pos_history[-1][~self.positions.mask[:,0],:],
-                                         self.positions[~self.positions.mask[:,0],:]
-                                         ):
-                self.positions[n] = self._apply_internal_BC(startpt, endpt, self.envir.ibmesh)
+            # loop over (non-masked) agents, applying internal BC
+            for n, startpt, endpt in \
+                zip(np.arange(len(self.positions[:,0]))[~self.positions.mask[:,0]],
+                    self.pos_history[-1][~self.positions.mask[:,0],:],
+                    self.positions[~self.positions.mask[:,0],:]
+                    ):
+                self.positions[n] = self._apply_internal_BC(startpt, endpt, 
+                                    self.envir.ibmesh, self.envir.max_meshpt_dist)
 
         for dim, bndry in enumerate(self.envir.bndry):
 
@@ -1694,48 +1696,10 @@ class swarm:
             else:
                 raise NameError
 
-            ###############################################################
-            # Pseudocode for new noflux boundary condition - to be expanded
-            #   to arbitrary interior boundaries
-            ###############################################################
 
-            # Detect if a boundary has been crossed:
-            #   This is currently done with zerorow = self.positions[:,dim] > self.envir.L[dim]
-            # Calculuate intercept:
-            #   Assume that agent took a straight path from start loc to finish loc
-            #   Get intersection pt with first boundary
-            # Let alpha be the length of travel from start loc to intersection
-            #   (Take 2 norm of point subtraction)
-            # Let beta be the length of travel from intersection to end loc
-            # Let gamma = beta/(alpha+beta) (proportion overshoot)
-            # Let v be the vector from interesection to end loc
-            # Project v onto boundary.
-
-            # Check for additional boundary crossings (convex piecewise):
-            #   If piecewise linear, this will always happen at bndry intersection points
-            #   Repeat process until there are no further crossings.
-            #   Keep greeks above, use new variables
-            ###### DONE ######
-            
-            # Check for additional boundary crossings (concave):
-            #   Here, you haven't crossed a new piece of boundary, but you have
-            #   fallen off the edge of the one you were traveling on
-            #   Resume previous heading.
-            #   Check for additional crossings
-
-            # If on a boundary at the end of slide (e.g. all cases except concave):
-            #   Jitter with std gamma*std in 180 degrees to interior
-            #   Find interior by comparing wiht start loc
-
-            # If not on a bndry at end of slide (concave case):
-            #   Jitter 360 degrees with std of gamma*std
-
-            # Check for boundary crossing again. If so, repeat with initial loc
-            #  as the end of slide/concave drift (not counting last jitter)
-
-
-
-    def _apply_internal_BC(self, startpt, endpt, mesh):
+    
+    @staticmethod
+    def _apply_internal_BC(startpt, endpt, mesh, max_meshpt_dist):
         '''Apply internal boundaries to a trajectory starting and ending at
         startpt and endpt, returning a new endpt (or the original one) as
         appropriate.
@@ -1744,6 +1708,12 @@ class swarm:
             startpt: start location for agent trajectory (len 2 or 3 ndarray)
             endpt: end location for agent trajectory (len 2 or 3 ndarray)
             mesh: Nx2x2 or Nx3x3 array of eligible mesh elements
+            max_meshpt_dist: max distance between two points on a mesh element
+                (used to determine how far away from startpt to search for
+                mesh elements)
+
+        Returns:
+            newendpt: new end location for agent trajectory
         '''
 
         if len(startpt) == 2:
@@ -1755,7 +1725,7 @@ class swarm:
 
         # Get the distance for inclusion of meshpoints
         traj_dist = np.linalg.norm(endpt - startpt)
-        search_dist = np.linalg.norm((traj_dist,self.envir.max_meshpt_dist))
+        search_dist = np.linalg.norm((traj_dist,max_meshpt_dist))
 
         # Find all mesh elements that have points within this distance
         elem_bool = [np.any(np.linalg.norm(mesh[ii]-diff_ary,axis=1)<search_dist)
@@ -1763,10 +1733,10 @@ class swarm:
 
         # Get intersections
         if DIM == 2:
-            intersection = self._seg_intersect_2D(startpt, endpt,
+            intersection = swarm._seg_intersect_2D(startpt, endpt,
                 mesh[elem_bool,0,:], mesh[elem_bool,1,:])
         else:
-            intersection = self._seg_intersect_3D_triangles(startpt, endpt,
+            intersection = swarm._seg_intersect_3D_triangles(startpt, endpt,
                 mesh[elem_bool,0,:], mesh[elem_bool,1,:], mesh[elem_bool,2,:])
 
         # Return endpt we already have if None.
@@ -1788,27 +1758,45 @@ class swarm:
             mesh_el_len = np.linalg.norm(intersection[4] - intersection[3])
             Q0_dist = np.linalg.norm(newendpt-intersection[3])
             Q1_dist = np.linalg.norm(newendpt-intersection[4])
-            if Q0_dist > mesh_el_len:
+            if Q0_dist > mesh_el_len and Q0_dist > Q1_dist:
                 # went past Q1
                 newstartpt = intersection[4]
                 # project overshoot on original heading and add to bndry point
                 orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
                 newendpt = newstartpt + np.linalg.norm(newendpt-newstartpt)*orig_unit_vec
-                # repeat the whole process
-                self._apply_internal_BC(newstartpt, newendpt, mesh[elem_bool])
-            if Q1_dist > mesh_el_len:
+                # repeat process to look for additional intersections
+                swarm._apply_internal_BC(newstartpt, newendpt, mesh[elem_bool],
+                                         max_meshpt_dist)
+            elif Q1_dist > mesh_el_len:
                 # went past Q0
                 newstartpt = intersection[3]
-                # project overshoot on original heading and add to bndry point
+                # project overshoot onto original heading and add to bndry point
                 orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
                 newendpt = newstartpt + np.linalg.norm(newendpt-newstartpt)*orig_unit_vec
-                # repeat the whole process
-                self._apply_internal_BC(newstartpt, newendpt, mesh[elem_bool])
-            # otherwise, we end on the mesh element
-            return newendpt
+                # repeat process to look for additional intersections
+                swarm._apply_internal_BC(newstartpt, newendpt, mesh[elem_bool],
+                                         max_meshpt_dist)
+            else:
+                # otherwise, we end on the mesh element
+                return newendpt
         # Detect sliding off 2D edge using _seg_intersect_2D
         if DIM == 3:
-            raise NotImplementedError("3D _seg_intersect_2D not implemented")
+            Q0_list = np.array(intersection[3:])
+            Q1_list = np.array(intersection[4:],intersection[3])
+            tri_intersect = swarm._seg_intersect_2D(intersection[0], newendpt,
+                                                    Q0_list, Q1_list)
+            # if we reach the triangle boundary, project overshoot onto original
+            #   heading and add to intersection point
+            if tri_intersect is not None:
+                newstartpt = tri_intersect[0]
+                orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
+                newendpt = newstartpt + np.linalg.norm(newendpt-newstartpt)*orig_unit_vec
+                # repeat process to look for additional intersections
+                swarm._apply_internal_BC(newstartpt, newendpt, mesh[elem_bool],
+                                         max_meshpt_dist)
+            else:
+                # otherwise, we end on the mesh element
+                return newendpt
 
 
 
@@ -1820,25 +1808,30 @@ class swarm:
         between P and each row of Q, but only return the closest intersection
         to P0 (if there is one, otherwise None)
 
+        This works for both 2D problems and problems in which P is a 3D segment
+        on a plane. The plane is described by the first two vectors Q, so
+        in this case, Q0_list and Q1_list must have at two rows.
+
         This algorithm uses a parameteric equation approach for speed, based on
         http://geomalgorithms.com/a05-_intersect-1.html
 
         TODO: May break down if denom is close to zero.
-            NEED TO MAKE THIS ROBUST TO 3D IN ORDER TO DETECT FALLING OFF TRIANGLE
+            May have other roundoff error problems.
         
         Arguments:
-            P0: length 2 array, first point in line segment P
-            P1: length 2 array, second point in line segment P 
-            Q0: Nx2 ndarray of first points in a list of line segments.
-            Q1: Nx2 ndarray of second points in a list of line segments.
+            P0: length 2 (or 3) array, first point in line segment P
+            P1: length 2 (or 3) array, second point in line segment P 
+            Q0_list: Nx2 (Nx3) ndarray of first points in a list of line segments.
+            Q1_list: Nx2 (Nx3) ndarray of second points in a list of line segments.
 
         Returns:
             None if there is no intersection. Otherwise:
-            x: length 2 array giving the coordinates of the point of first intersection
+            x: length 2 (or 3) array giving the coordinates of the point of first 
+               intersection
             s_I: the fraction of the line segment traveled from P0 before
                 intersection occurred
             vec: directional unit vector of boundary (Q) intersected
-            Q0: first endpoint of mesh segmented intersected
+            Q0: first endpoint of mesh segment intersected
             Q1: second endpoint of mesh segment intersected
         '''
 
@@ -1864,7 +1857,7 @@ class swarm:
                 s_I = np.dot(-v_perp,w)/denom
                 t_I = -np.dot(u_perp,w)/denom
                 if 0<=s_I<=1 and 0<=t_I<=1:
-                    return (P0 + s_I*u, s_I, v)
+                    return (P0 + s_I*u, s_I, v, Q0_list, Q1_list)
             return None
 
         denom_list = np.multiply(v_perp,u).sum(1) #vectorized dot product
@@ -1921,6 +1914,9 @@ class swarm:
             s_I: the fraction of the line segment traveled from P0 before
                 intersection occurred (only if intersection occurred)
             normal: normal unit vector to plane of intersection
+            Q0: first vertex of triangle intersected
+            Q1: second vertex of triangle intersected
+            Q3: third vertex of triangle intersected
         '''
 
         # First, determine the intersection between the line and the plane
@@ -1952,7 +1948,7 @@ class swarm:
                     coords[2] = 1 - coords[0] - coords[1]
                     # check if point is in triangle
                     if np.all(coords>=0):
-                        return (cross_pt, s_I, normal)
+                        return (cross_pt, s_I, normal, Q0_list, Q1_list, Q2_list)
             return None
 
         denom_list = np.multiply(n_list,u).sum(1)
@@ -1984,7 +1980,7 @@ class swarm:
                 coords[2] = 1 - coords[0] - coords[1]
                 # check if point is in triangle
                 if np.all(coords>=0):
-                    closest_int = (cross_pt, s_I, normal)
+                    closest_int = (cross_pt, s_I, normal, Q0_list[n], Q1_list[n], Q2_list[n])
         if closest_int[0] is None:
             return None
         else:
