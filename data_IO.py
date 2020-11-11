@@ -345,3 +345,18 @@ def read_stl_mesh(filename):
     return mesh.vectors, max_len
 
 
+
+def read_IB2d_vertices(filename):
+    '''Import Lagrangian mesh from IB2d vertex file.'''
+    with open(filename) as f:
+        number_of_vertices = f.readline()
+        vertices = np.zeros((number_of_vertices,2))
+        for n, line in enumerate(f):
+            vertex_str = line.split()
+            vertices[n,:] = (float(vertex_str[0]), float(vertex_str[1]))
+    assert number_of_vertices == n+1, "Mismatch btwn stated and actual number of vertices in file."
+
+    return vertices
+
+
+

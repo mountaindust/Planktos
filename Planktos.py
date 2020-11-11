@@ -935,6 +935,19 @@ class environment:
 
 
 
+    def read_IB2d_mesh_data(self, filename):
+        '''Reads in 2D vertex data from a .vertex file. Assumes that any vertices
+        closer than half the Eulerian mesh resolution are connected linearly.
+        '''
+
+        path = Path(filename)
+        assert path.is_file(), "File {} not found!".format(filename)
+
+        vertices = data_IO.read_IB2d_vertices(filename)
+        raise NotImplementedError("This function is still a work in progress.")
+
+
+
     def tile_flow(self, x=2, y=1):
         '''Tile fluid flow a number of times in the x and/or y directions.
         While obviously this works best if the fluid is periodic in the
