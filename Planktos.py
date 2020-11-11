@@ -88,7 +88,7 @@ class environment:
         ##### save flow #####
         self.flow_times = None
         self.flow_points = None
-        self.fluid_domain_LLC = None
+        self.fluid_domain_LLC = None # original lower-left corner, if fluid comes from data
         self.tiling = None # (x,y) tiling amount
         self.orig_L = None # (Lx,Ly) before tiling/extending
         self.grad = None
@@ -423,6 +423,7 @@ class environment:
         # housekeeping
         self.__set_flow_variables()
         self.__reset_flow_variables()
+        self.fluid_domain_LLC = None
         self.a = h_p
 
 
@@ -609,6 +610,7 @@ class environment:
 
         # housekeeping
         self.__reset_flow_variables()
+        self.fluid_domain_LLC = None
         self.a = h
 
 
@@ -709,6 +711,7 @@ class environment:
             self.flow_times = None
         # shift domain to quadrant 1
         self.flow_points = (x-x[0], y-y[0])
+        self.fluid_domain_LLC = (x[0], y[0])
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(2)]
@@ -914,12 +917,21 @@ class environment:
 
     def read_stl_mesh_data(self, filename):
         '''Reads in 3D mesh data from an ascii or binary stl file. Must have
-        the numpy-stl library installed.'''
+        the numpy-stl library installed. It is assumed that the coordinate
+        system of the stl mesh matches the coordinate system of the flow field.
+        Thus, the mesh will be translated using the flow LLC if necessary.'''
 
         path = Path(filename)
         assert path.is_file(), "File {} not found!".format(filename)
 
-        self.ibmesh, self.max_meshpt_dist = data_IO.read_stl_mesh(filename)
+        ibmesh, self.max_meshpt_dist = data_IO.read_stl_mesh(filename)
+
+        # shift coordinates to match any shift that happened in flow data
+        if self.fluid_domain_LLC is not None:
+            for ii in range(3):
+                ibmesh[:,:,ii] -= self.fluid_domain_LLC[ii]
+        
+        self.ibmesh = ibmesh
 
 
 
@@ -1252,7 +1264,6 @@ class environment:
         parameters.'''
 
         self.a = None
-        self.fluid_domain_LLC = None
         self.tiling = None
         self.orig_L = None
         self.plot_structs = []
@@ -1262,6 +1273,20 @@ class environment:
         if incl_rho_mu:
             self.mu = None
             self.rho = None
+
+
+
+    @property
+    def fluid_domain_LLC(self):
+        return self._fluid_domain_LLC
+
+    @fluid_domain_LLC.setter
+    def fluid_domain_LLC(self, LLC):
+        if LLC is not None and self.ibmesh is not None:
+            # move any ibmesh to match the LLC shift
+            for ii in range(len(LLC)):
+                self.ibmesh[:,:,ii] -= LLC[ii]
+        self._fluid_domain_LLC = LLC
 
 
 
