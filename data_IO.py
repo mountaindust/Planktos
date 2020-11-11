@@ -27,6 +27,12 @@ try:
 except ModuleNotFoundError:
     print("Could not import vtk libraries. Reading of VTK files disabled.")
     VTK = False
+try:
+    from stl import mesh as stlmesh
+    STL = True
+except ModuleNotFoundError:
+    STL = False
+
 
 
 def vtk_dep(func):
@@ -35,6 +41,18 @@ def vtk_dep(func):
         if not VTK:
             print("Cannot read VTK file: VTK library not found.")
             raise RuntimeError("Cannot read VTK file: VTK library not found in data_IO.")
+        else:
+            return func(*args, **kwargs)
+    return wrapper
+
+
+
+def stl_dep(func):
+    '''Decorator for STL readers to check import.'''
+    def wrapper(*args, **kwargs):
+        if not STL:
+            print("Cannot read STL file: numpy-stl library not found.")
+            raise RuntimeError("Cannot read STL file: numpy-stl library not found in data_IO.")
         else:
             return func(*args, **kwargs)
     return wrapper
@@ -314,4 +332,16 @@ def read_vtu_mesh_velocity(filename):
     return data, grid
     
 
-                
+
+@stl_dep
+def read_stl_mesh(filename):
+    '''Import a mesh from an stl file and return the vertex information as
+    an Nx3x3 array along with the maximum vector length.'''
+    mesh = stlmesh.Mesh.from_file(filename)
+    # find maximum segment length
+    max_len = np.concatenate(np.linalg.norm(mesh.v1 - mesh.v0, axis=1),
+                             np.linalg.norm(mesh.v2 - mesh.v1, axis=1),
+                             np.linalg.norm(mesh.v0 - mesh.v2, axis=1)).max()
+    return mesh.vectors, max_len
+
+

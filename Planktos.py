@@ -153,7 +153,7 @@ class environment:
 
         ##### Immersed Boundary Mesh #####
         self.ibmesh = None # Nx2x2 or Nx3x3
-        self.max_meshpt_dist = None # max distance between mesh pts in an element
+        self.max_meshpt_dist = None # max length of a mesh segment
 
         ##### Environment Structure Plotting #####
 
@@ -909,6 +909,17 @@ class environment:
         self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
         # reset time
         self.reset()
+
+
+
+    def read_stl_mesh_data(self, filename):
+        '''Reads in 3D mesh data from an ascii or binary stl file. Must have
+        the numpy-stl library installed.'''
+
+        path = Path(filename)
+        assert path.is_file(), "File {} not found!".format(filename)
+
+        self.ibmesh, self.max_meshpt_dist = data_IO.read_stl_mesh(filename)
 
 
 
