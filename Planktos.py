@@ -1009,7 +1009,7 @@ class environment:
                 new_flow[:,1:,1:,...] = np.tile(flow[:,1:,1:,...], tile_num_time)
                 self.flow[n] = new_flow
             
-        # update environment dimensions and meshes
+        # update environment dimensions and Eulerian meshes
         new_points = []
         self.orig_L = tuple(self.L[:2])
         for n in range(2):
@@ -1021,6 +1021,17 @@ class environment:
             new_points.append(self.flow_points[2])
         self.flow_points = tuple(new_points)
         self.tiling = (x,y)
+
+        # tile Lagrangian meshes
+        if self.ibmesh is not None:
+            newmeshs = [self.ibmesh]
+            for ii in range(self.tiling[0]):
+                for jj in range(self.tiling[1]):
+                    new_mesh = np.array(self.ibmesh)
+                    new_mesh[:,:,0] += self.orig_L[0]*ii
+                    new_mesh[:,:,1] += self.orig_L[1]*jj
+                    newmeshs.append(new_mesh)
+            self.ibmesh = np.concatenate(newmeshs)
 
 
 
