@@ -16,6 +16,7 @@ if platform == 'darwin': # OSX backend does not support blitting
     matplotlib.use('Qt5Agg')
 from pathlib import Path
 from math import exp, log
+from itertools import combinations
 import numpy as np
 import numpy.ma as ma
 from scipy import interpolate
@@ -88,7 +89,7 @@ class environment:
 
         ##### save flow #####
         self.flow_times = None
-        self.flow_points = None
+        self.flow_points = None # tuple (len==dim) of 1D arrays specifying the mesh
         self.fluid_domain_LLC = None # original lower-left corner, if fluid comes from data
         self.tiling = None # (x,y) tiling amount
         self.orig_L = None # (Lx,Ly) before tiling/extending
@@ -936,22 +937,32 @@ class environment:
 
 
 
-    def read_vertex_mesh_data(self, filename):
-        '''Reads in 2D vertex data from a .vertex file (IB2d). Reads in 3D 
-        vertex data from a .vtk. Assumes that any vertices closer than 
-        half the Eulerian mesh resolution are connected linearly.
-
-        Must have the vtk package installed to load vtk files.
+    def read_IB2d_vertex_data(self, filename):
+        '''Reads in 2D vertex data from a .vertex file (IB2d). Assumes that any 
+        vertices closer than half the Eulerian mesh resolution are connected 
+        linearly. Thus, the flow data must be imported first!
         '''
 
         path = Path(filename)
         assert path.is_file(), "File {} not found!".format(filename)
+        assert self.flow_points is not None, "Must import flow data first!"
+        DIM = len(self.flow_points)
+        dists = np.concatenate([self.flow_points[ii][1:]-self.flow_points[ii][0:-1]
+                                for ii in range(DIM)])
+        Eulerian_res = dists.min()
 
-        if filename[-7:] == '.vertex':
-            vertices = data_IO.read_IB2d_vertices(filename)
-            print("Processing vertex file for point-wise connections...")
-            dist_mat = distance.pdist(vertices)
-            raise NotImplementedError("This function is still a work in progress.")
+        vertices = data_IO.read_IB2d_vertices(filename)
+        print("Processing vertex file for point-wise connections...")
+        dist_mat_test = distance.pdist(vertices)<=0.5*Eulerian_res
+        idx = np.array(combinations(range(vertices.shape[0],2)))
+        self.ibmesh = np.array([vertices[idx[dist_mat_test,0],:],
+                                vertices[idx[dist_mat_test,1],:]])
+        self.ibmesh = np.transpose(self.ibmesh,(1,0,2))
+        # shift coordinates to match any shift that happened in flow data
+        if self.fluid_domain_LLC is not None:
+            for ii in range(2):
+                self.ibmesh[:,:,ii] -= self.fluid_domain_LLC[ii]
+        self.max_meshpt_dist = np.linalg.norm(self.ibmesh[:,0,:]-self.ibmesh[:,1,:],axis=1).max()
 
 
 

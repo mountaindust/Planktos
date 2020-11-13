@@ -1,6 +1,6 @@
 - Add immersed boundary interaction in 2D, then 3D (static mesh only)
-  - Add mesh loading for 2D vertex file. Beware domain shifting.
-  - Add mesh loading for 2D or 3D vtk unstructured grid points using same assumptions as in IB2d.
+  - Add mesh loading for 3D vtk unstructured grid points using Delaunay triangulation. Beware domain shifting.
+		(this for testing with IBAMR data)
   - Add plotting of 2D meshes
   - Add plotting of stl meshes; see numpy-stl example
   - Run examples of the above from IB2d, 3D cylinder mesh data
