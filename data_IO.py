@@ -339,9 +339,9 @@ def read_stl_mesh(filename):
     an Nx3x3 array along with the maximum vector length.'''
     mesh = stlmesh.Mesh.from_file(filename)
     # find maximum segment length
-    max_len = np.concatenate(np.linalg.norm(mesh.v1 - mesh.v0, axis=1),
+    max_len = np.concatenate((np.linalg.norm(mesh.v1 - mesh.v0, axis=1),
                              np.linalg.norm(mesh.v2 - mesh.v1, axis=1),
-                             np.linalg.norm(mesh.v0 - mesh.v2, axis=1)).max()
+                             np.linalg.norm(mesh.v0 - mesh.v2, axis=1))).max()
     return mesh.vectors, max_len
 
 

@@ -20,7 +20,7 @@ from itertools import combinations
 import numpy as np
 import numpy.ma as ma
 from scipy import interpolate
-from scipy.spatial import distance
+from scipy.spatial import distance, ConvexHull
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.ticker import NullFormatter, MaxNLocator
@@ -154,6 +154,16 @@ class environment:
         self.g = 9.80665
 
         ##### Immersed Boundary Mesh #####
+        # TODO: Storing the ibmesh in this way is memory inefficient!
+        #   HERE'S THE SOLUTION:
+        #   points = Nx2 or Nx3 ndarray of vertices
+        #   simplices = Nx2 or Nx3 ndarray of index connections
+        #       e.g. row [0,1] (for a line between vertex 0 and vertex 1)
+        #       or row [0,1,2] (for a triangle between vertices 0,1, and 2)
+        #   THEN: points[simplices] yields the 3D structure below.
+        #   Unfortunately, it returns it as a copy, not a view, but hopefully
+        #   slicing into it won't make this such an issue. And results can be
+        #   saved in the algorithm to prevent redundent copying.
         self.ibmesh = None # Nx2x2 or Nx3x3
         self.max_meshpt_dist = None # max length of a mesh segment
 
@@ -946,9 +956,8 @@ class environment:
         path = Path(filename)
         assert path.is_file(), "File {} not found!".format(filename)
         assert self.flow_points is not None, "Must import flow data first!"
-        DIM = len(self.flow_points)
         dists = np.concatenate([self.flow_points[ii][1:]-self.flow_points[ii][0:-1]
-                                for ii in range(DIM)])
+                                for ii in range(2)])
         Eulerian_res = dists.min()
 
         vertices = data_IO.read_IB2d_vertices(filename)
@@ -963,6 +972,35 @@ class environment:
             for ii in range(2):
                 self.ibmesh[:,:,ii] -= self.fluid_domain_LLC[ii]
         self.max_meshpt_dist = np.linalg.norm(self.ibmesh[:,0,:]-self.ibmesh[:,1,:],axis=1).max()
+
+
+
+    def read_vertex_data_to_convex_hull(self, filename):
+        '''Reads in 3D vertex data from a vtk file and applies Delaunay
+        triangulation to get a complete boundary. This uses Qhull through Scipy
+        under the hood http://www.qhull.org/.
+        TODO: Make this robust to 2D as well.
+        '''
+
+        path = Path(filename)
+        assert path.is_file(), "File {} not found!".format(filename)
+
+        points, bounds = data_IO.read_vtk_Unstructured_Grid_Points(filename)
+        # shift to first quadrant
+        for dim in range(3):
+            points[:,dim] -= self.fluid_domain_LLC[dim]
+
+        hull = ConvexHull(points)
+        self.ibmesh = points[hull.simplices]
+        if self.fluid_domain_LLC is not None:
+            for ii in range(3):
+                self.ibmesh[:,:,ii] -= self.fluid_domain_LLC[ii]
+        max_len = np.concatenate((
+                  np.linalg.norm(self.ibmesh[:,0,:]-self.ibmesh[:,1,:], axis=1),
+                  np.linalg.norm(self.ibmesh[:,1,:]-self.ibmesh[:,2,:], axis=1),
+                  np.linalg.norm(self.ibmesh[:,2,:]-self.ibmesh[:,0,:], axis=1)
+                  )).max()
+        self.max_meshpt_dist = max_len
 
 
 
