@@ -1,5 +1,7 @@
-- Add immersed boundary interaction in 2D, then 3D
-  - Add mesh loading. IB2d for 2D, stl for 3D using numpy-stl. Beware domain shifting.
+- Add immersed boundary interaction in 2D, then 3D (static mesh only)
+  - Add mesh loading for 2D vertex file. Beware domain shifting.
+  - Add mesh loading for 2D or 3D vtk unstructured grid points using same assumptions as in IB2d.
+  - Add plotting of 2D meshes
   - Add plotting of stl meshes; see numpy-stl example
   - Run examples of the above from IB2d, 3D cylinder mesh data
 - Start analysis library with some basic stuff. Include TDA.

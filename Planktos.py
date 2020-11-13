@@ -19,6 +19,7 @@ from math import exp, log
 import numpy as np
 import numpy.ma as ma
 from scipy import interpolate
+from scipy.spatial import distance
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.ticker import NullFormatter, MaxNLocator
@@ -935,16 +936,22 @@ class environment:
 
 
 
-    def read_IB2d_mesh_data(self, filename):
-        '''Reads in 2D vertex data from a .vertex file. Assumes that any vertices
-        closer than half the Eulerian mesh resolution are connected linearly.
+    def read_vertex_mesh_data(self, filename):
+        '''Reads in 2D vertex data from a .vertex file (IB2d). Reads in 3D 
+        vertex data from a .vtk. Assumes that any vertices closer than 
+        half the Eulerian mesh resolution are connected linearly.
+
+        Must have the vtk package installed to load vtk files.
         '''
 
         path = Path(filename)
         assert path.is_file(), "File {} not found!".format(filename)
 
-        vertices = data_IO.read_IB2d_vertices(filename)
-        raise NotImplementedError("This function is still a work in progress.")
+        if filename[-7:] == '.vertex':
+            vertices = data_IO.read_IB2d_vertices(filename)
+            print("Processing vertex file for point-wise connections...")
+            dist_mat = distance.pdist(vertices)
+            raise NotImplementedError("This function is still a work in progress.")
 
 
 
@@ -1775,18 +1782,17 @@ class swarm:
 
         if len(startpt) == 2:
             DIM = 2
-            diff_ary = np.array([startpt, startpt])
         else:
             DIM = 3
-            diff_ary = np.array([startpt, startpt, startpt])
 
         # Get the distance for inclusion of meshpoints
         traj_dist = np.linalg.norm(endpt - startpt)
+        # Must add to traj_dist to find endpoints of line segments
         search_dist = np.linalg.norm((traj_dist,max_meshpt_dist))
 
         # Find all mesh elements that have points within this distance
-        elem_bool = [np.any(np.linalg.norm(mesh[ii]-diff_ary,axis=1)<search_dist)
-            for ii in range(mesh.shape[0])]
+        elem_bool = [np.any(distance.cdist(startpt,mesh[ii])<search_dist)
+                     for ii in range(mesh.shape[0])]
 
         # Get intersections
         if DIM == 2:
@@ -1926,8 +1932,11 @@ class swarm:
         t_I_list = -np.ones_like(denom_list)
         # now only need to calculuate s & t for non parallel cases; others
         #   will report as not intersecting.
-        s_I_list[not_par] = np.multiply(-v_perp[not_par],w[not_par]).sum(1)/denom_list[not_par]
-        t_I_list[not_par] = -np.multiply(u_perp,w[not_par]).sum(1)/denom_list[not_par]
+        #   (einsum is faster for vectorized dot product, but need same length,
+        #   non-empty vectors)
+        if np.any(not_par):
+            s_I_list[not_par] = np.einsum('ij,ij->i',-v_perp[not_par],w[not_par])/denom_list[not_par]
+            t_I_list[not_par] = -np.multiply(u_perp,w[not_par]).sum(1)/denom_list[not_par]
 
         intersect = np.logical_and(
                         np.logical_and(0<=s_I_list, s_I_list<=1),
@@ -2008,7 +2017,7 @@ class swarm:
                         return (cross_pt, s_I, normal, Q0_list, Q1_list, Q2_list)
             return None
 
-        denom_list = np.multiply(n_list,u).sum(1)
+        denom_list = np.multiply(n_list,u).sum(1) #vectorized dot product
 
         # record non-parallel cases
         not_par = denom_list != 0
@@ -2017,7 +2026,9 @@ class swarm:
         s_I_list = -np.ones_like(denom_list)
         
         # get intersection parameters
-        s_I_list[not_par] = np.multiply(-n_list[not_par],w[not_par]).sum(1)/denom_list[not_par]
+        #   (einsum is faster for vectorized dot product, but need same length vectors)
+        if np.any(not_par):
+            s_I_list[not_par] = np.einsum('ij,ij->i',-n_list[not_par],w[not_par])/denom_list[not_par]
         # test for intersection of line segment with full plane
         plane_int = np.logical_and(0<=s_I_list, s_I_list<=1)
 
