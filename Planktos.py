@@ -24,9 +24,10 @@ from scipy.spatial import distance, ConvexHull
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.ticker import NullFormatter, MaxNLocator
-from mpl_toolkits.mplot3d import Axes3D
+from mpl_toolkits import mplot3d
 import matplotlib.cm as cm
 from matplotlib import animation
+from matplotlib.collections import LineCollection
 import mv_swarm
 import data_IO
 
@@ -2180,10 +2181,16 @@ class swarm:
                 for g in grass:
                     ax.axvline(x=g, ymax=self.envir.a/self.envir.L[1], color='.5')
 
-            # plot any structures
+            # plot any ghost structures
             for plot_func, args in zip(self.envir.plot_structs, 
                                        self.envir.plot_structs_args):
                 plot_func(ax, *args)
+
+            # plot ibmesh
+            if self.envir.ibmesh is not None:
+                line_segments = LineCollection(self.envir.ibmesh)
+                line_segments.set_color('k')
+                ax.add_collection(line_segments)
 
             return ax, axHistx, axHisty
 
@@ -2202,7 +2209,7 @@ class swarm:
             rect_histz = [left_h, bottom_z, width_h, height_h]
 
             # create scatter plot
-            ax = Axes3D(fig, rect=rect_scatter) #fig.add_subplot(121, projection='3d')
+            ax = mplot3d.Axes3D(fig, rect=rect_scatter) #fig.add_subplot(121, projection='3d')
             ax.set_xlim((0, self.envir.L[0]))
             ax.set_ylim((0, self.envir.L[1]))
             ax.set_zlim((0, self.envir.L[2]))
@@ -2241,6 +2248,10 @@ class swarm:
             for plot_func, args in zip(self.envir.plot_structs, 
                                        self.envir.plot_structs_args):
                 plot_func(ax, *args)
+
+            # plot ibmesh
+            if self.envir.ibmesh is not None:
+                ax.add_collection3d(mplot3d.art3d.Poly3DCollection(self.envir.ibmesh))
 
             return ax, axHistx, axHisty, axHistz
 
