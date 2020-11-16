@@ -210,7 +210,7 @@ def test_brinkman_2D():
     assert len(envir.flow_times) == 8, "flow_times don't match data"
     assert len(envir.flow_points[0]) > len(envir.flow_points[1])
     assert len(envir.flow_points[0]) == envir.flow[0].shape[1]
-    sw = Planktos.swarm(swarm_size=70, envir=envir, init='point', pos=(5,5))
+    sw = Planktos.swarm(swarm_size=70, envir=envir, init=(5,5))
     assert sw is envir.swarms[0], "swarm not in envir list"
     assert len(envir.swarms) == 1, "too many swarms in envir"
 

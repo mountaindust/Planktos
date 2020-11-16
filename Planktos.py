@@ -971,7 +971,7 @@ class environment:
 
 
     def read_vertex_data_to_convex_hull(self, filename):
-        '''Reads in 3D vertex data from a vtk file and applies Delaunay
+        '''Reads in 3D vertex data from a vtk file and applies ConvexHull
         triangulation to get a complete boundary. This uses Qhull through Scipy
         under the hood http://www.qhull.org/.
         TODO: Make this robust to 2D as well.
@@ -1213,6 +1213,8 @@ class environment:
         Arguments:
             swarm_s: swarm object or size of the swarm (int)
             init: Method for initalizing positions.
+                Accepts 'random', 1D array for a single point, or a 2D array 
+                to specify all points
             seed: Seed for random number generator
             props: Dataframe of properties
             kwargs: keyword arguments to be passed to the method for
@@ -1385,11 +1387,8 @@ class swarm:
 
         Methods for initializing the swarm:
             - 'random': Uniform random distribution throughout the domain
-            - 'point': All positions set to a single point.
-                Required keyword arguments:
-                - x = (float) x-coordinate
-                - y = (float) y-coordinate
-                - z = (optional, float) z-coordinate, if 3D
+            - 1D array-like: All positions set to a single point.
+            - 2D array: All positions as specified.
 
         To customize agent behavior, subclass this class and re-implement the
         method get_movement (do not change the call signature).
@@ -1426,7 +1425,25 @@ class swarm:
         # initialize agent locations
         self.positions = ma.zeros((swarm_size, len(self.envir.L)))
         self.positions.harden_mask() # prevent unintentional mask overwites
-        mv_swarm.init_pos(self, init, kwargs)
+        if isinstance(init,str):
+            if init == 'random':
+                print('Initializing swarm with uniform random positions...')
+                for ii in range(len(self.envir.L)):
+                    self.positions[:,ii] = self.rndState.uniform(0, 
+                                        self.envir.L[ii], self.positions.shape[0])
+            else:
+                print("Initialization method {} not implemented.".format(init))
+                print("Exiting...")
+                raise NameError
+        else:
+            if isinstance(init,np.ndarray) and len(init.shape) == 2:
+                assert init.shape[0] == swarm_size and init.shape[1] == len(self.envir.L),\
+                    "Initial location data must be {}x{} to match number of agents.".format(
+                    swarm_size,len(self.envir.L))
+                self.positions[:,:] = init[:,:]
+            else:
+                for ii in range(len(self.envir.L)):
+                    self.positions[:,ii] = init[ii]
 
         # initialize Dataframe of non-shared properties
         if props is None:

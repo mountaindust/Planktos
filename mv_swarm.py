@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 
 '''
-Library of functions for initializing and moving a provided swarm group.
+Library of functions for moving a provided swarm group.
 
 Created on Tues Jan 24 2017
 
@@ -14,61 +14,6 @@ __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
 import numpy as np
-
-def init_pos(swarm, func_name, kwargs):
-    '''Initialize swarm positions with the correct function'''
-
-    if func_name == init_methods[0]:
-        random(swarm, swarm.envir.L)
-    elif func_name == init_methods[1]:
-        # 'point' requires position data, give as tuple
-        # pos=(x,y,z) where z is optional
-        assert 'pos' in kwargs, 'point source requires pos key word argument'
-        point(swarm, kwargs['pos'])
-    else:
-        print("Initialization method {} not implemented.".format(func_name))
-        print("Exiting...")
-        raise NameError
-
-
-
-#############################################################################
-#                                                                           #
-#   PREDEFINED LIST OF SWARM INITIALIZATION FUNCTIONS SPECIFIED BELOW!      #
-#                                                                           #
-#############################################################################
-
-init_methods = ['random', 'point']
-
-def random(swarm, L):
-    '''Uniform random initialization'''
-
-    print('Initializing swarm with uniform random positions...')
-    swarm.positions[:,0] = swarm.rndState.uniform(0, L[0], swarm.positions.shape[0])
-    swarm.positions[:,1] = swarm.rndState.uniform(0, L[1], swarm.positions.shape[0])
-    if len(L) == 3:
-        swarm.positions[:,2] = swarm.rndState.uniform(0, L[2], swarm.positions.shape[0])
-
-
-
-def point(swarm, pos):
-    '''Point source'''
-
-    if len(pos) == 2:
-        x,y = pos
-        print('Initializing swarm as point source at x={}, y={}'.format(x,y))
-        swarm.positions[:,0] = x
-        swarm.positions[:,1] = y
-    elif len(pos) == 3:
-        x,y,z = pos
-        print('Initializing swarm as point source at x={}, y={}, z={}'.format(x,y,z))
-        swarm.positions[:,0] = x
-        swarm.positions[:,1] = y
-        swarm.positions[:,2] = z
-    else:
-        raise RuntimeError('Length of pos argument must be 2 or 3.')
-
-
 
 #############################################################################
 #                                                                           #
