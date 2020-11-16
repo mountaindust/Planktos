@@ -2671,3 +2671,46 @@ class swarm:
                 raise
         else:
             plt.show()
+
+
+
+class ibmesh:
+    """Container class for immersed boundary meshes. Goals are efficiency and
+    flexibility to expand to moving meshes in the future.
+    """
+
+    def __init__(self, points, simplices):
+        '''Defines an ibmesh object as it will be stored internally.
+
+        Arguments:
+            points: Mx2 or Mx3 array of vertices in the mesh
+            simplices: Nx2 or Nx3 array of line or triangles, specified using the
+                indices for the points they connect together
+        '''
+
+        self.points = points
+        self.simplices = simplices
+
+
+
+    def elem(self, items):
+        '''Returns an Nx2x2 or Nx3x3 array of faces selected by a bool array
+        of items.
+        
+        Arguments:
+            items: bool array of simplices to return
+        '''
+
+        return self.points[self.simplices[items]]
+
+
+
+    @property
+    def full(self):
+        '''Returns the full Nx2x2 or Nx3x3 array of simplices'''
+
+        return self.points[self.simplices]
+
+
+
+    
