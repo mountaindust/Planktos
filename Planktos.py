@@ -154,16 +154,10 @@ class environment:
         self.g = 9.80665
 
         ##### Immersed Boundary Mesh #####
-        # TODO: Storing the ibmesh in this way is memory inefficient!
-        #   HERE'S THE SOLUTION:
-        #   points = Nx2 or Nx3 ndarray of vertices
-        #   simplices = Nx2 or Nx3 ndarray of index connections
-        #       e.g. row [0,1] (for a line between vertex 0 and vertex 1)
-        #       or row [0,1,2] (for a triangle between vertices 0,1, and 2)
-        #   THEN: points[simplices] yields the 3D structure below.
-        #   Unfortunately, it returns it as a copy, not a view, but hopefully
-        #   slicing into it won't make this such an issue. And results can be
-        #   saved in the algorithm to prevent redundent copying.
+        # When we implement a moving mesh, use np.unique to return both
+        #   unique vertex values in the ibmesh AND unique_inverse, the indices
+        #   to reconstruct the mesh from the unique array. Then can update
+        #   points and reconstruct.
         self.ibmesh = None # Nx2x2 or Nx3x3
         self.max_meshpt_dist = None # max length of a mesh segment
 
@@ -2671,46 +2665,6 @@ class swarm:
                 raise
         else:
             plt.show()
-
-
-
-class ibmesh:
-    """Container class for immersed boundary meshes. Goals are efficiency and
-    flexibility to expand to moving meshes in the future.
-    """
-
-    def __init__(self, points, simplices):
-        '''Defines an ibmesh object as it will be stored internally.
-
-        Arguments:
-            points: Mx2 or Mx3 array of vertices in the mesh
-            simplices: Nx2 or Nx3 array of line or triangles, specified using the
-                indices for the points they connect together
-        '''
-
-        self.points = points
-        self.simplices = simplices
-
-
-
-    def elem(self, items):
-        '''Returns an Nx2x2 or Nx3x3 array of faces selected by a bool array
-        of items.
-        
-        Arguments:
-            items: bool array of simplices to return
-        '''
-
-        return self.points[self.simplices[items]]
-
-
-
-    @property
-    def full(self):
-        '''Returns the full Nx2x2 or Nx3x3 array of simplices'''
-
-        return self.points[self.simplices]
-
 
 
     

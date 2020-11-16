@@ -1,5 +1,4 @@
 - Add immersed boundary interaction in 2D, then 3D (static mesh only)
-  - Consider re-doing ibmesh data structure according to comments
   - Add plotting of 2D meshes
   - Add plotting of stl meshes; see numpy-stl example
   - Run examples of the above from IB2d, 3D cylinder mesh data
