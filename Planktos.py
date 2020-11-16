@@ -1772,15 +1772,23 @@ class swarm:
         '''Apply boundary conditions to self.positions'''
 
         # internal mesh boundaries go first
-        if self.envir.ibmesh is not None:
+        if self.envir.ibmesh is not None and self.envir.time != 0:
+            # if there is no mask, loop over all agents, appyling internal BC
             # loop over (non-masked) agents, applying internal BC
-            for n, startpt, endpt in \
-                zip(np.arange(len(self.positions[:,0]))[~self.positions.mask[:,0]],
-                    self.pos_history[-1][~self.positions.mask[:,0],:],
-                    self.positions[~self.positions.mask[:,0],:]
-                    ):
-                self.positions[n] = self._apply_internal_BC(startpt, endpt, 
-                                    self.envir.ibmesh, self.envir.max_meshpt_dist)
+            if np.any(self.positions.mask):
+                for n, startpt, endpt in \
+                    zip(np.arange(self.positions.shape[0])[~self.positions.mask[:,0]],
+                        self.pos_history[-1][~self.positions.mask[:,0],:],
+                        self.positions[~self.positions.mask[:,0],:]
+                        ):
+                    self.positions[n] = self._apply_internal_BC(startpt, endpt, 
+                                        self.envir.ibmesh, self.envir.max_meshpt_dist)      
+            else:
+                for n in range(self.positions.shape[0]):
+                    self.positions[n] = self._apply_internal_BC(
+                        self.pos_history[-1][n,:], self.positions[n,:],
+                        self.envir.ibmesh, self.envir.max_meshpt_dist
+                    )
 
         for dim, bndry in enumerate(self.envir.bndry):
 
@@ -1852,7 +1860,7 @@ class swarm:
         search_dist = np.linalg.norm((traj_dist,max_meshpt_dist))
 
         # Find all mesh elements that have points within this distance
-        elem_bool = [np.any(distance.cdist(startpt,mesh[ii])<search_dist)
+        elem_bool = [np.any(np.linalg.norm(mesh[ii]-startpt,axis=1)<search_dist)
                      for ii in range(mesh.shape[0])]
 
         # Get intersections
