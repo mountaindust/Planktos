@@ -982,8 +982,6 @@ class environment:
 
         points, bounds = data_IO.read_vtk_Unstructured_Grid_Points(filename)
         # shift to first quadrant
-        for dim in range(3):
-            points[:,dim] -= self.fluid_domain_LLC[dim]
 
         hull = ConvexHull(points)
         self.ibmesh = points[hull.simplices]
@@ -2276,7 +2274,10 @@ class swarm:
 
             # plot ibmesh
             if self.envir.ibmesh is not None:
-                ax.add_collection3d(mplot3d.art3d.Poly3DCollection(self.envir.ibmesh))
+                structures = mplot3d.art3d.Poly3DCollection(self.envir.ibmesh)
+                structures.set_color('g')
+                structures.set_alpha(0.3)
+                ax.add_collection3d(structures)
 
             return ax, axHistx, axHisty, axHistz
 
