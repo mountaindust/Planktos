@@ -1912,7 +1912,7 @@ class swarm:
         # Detect sliding off 2D edge using _seg_intersect_2D
         if DIM == 3:
             Q0_list = np.array(intersection[3:])
-            Q1_list = np.array(intersection[4:],intersection[3])
+            Q1_list = Q0_list[(1,2,0),:]
             tri_intersect = swarm._seg_intersect_2D(intersection[0], newendpt,
                                                     Q0_list, Q1_list)
             # if we reach the triangle boundary, project overshoot onto original
@@ -2049,7 +2049,7 @@ class swarm:
             normal: normal unit vector to plane of intersection
             Q0: first vertex of triangle intersected
             Q1: second vertex of triangle intersected
-            Q3: third vertex of triangle intersected
+            Q2: third vertex of triangle intersected
         '''
 
         # First, determine the intersection between the line and the plane
@@ -2434,7 +2434,7 @@ class swarm:
             axHistz.hist(positions[:,2].compressed(), bins=bins_z, alpha=0.8)
 
         # show the plot
-        plt.show(blocking)
+        plt.show(block=blocking)
 
 
 
@@ -2590,7 +2590,7 @@ class swarm:
                         rect.set_height(h)
                     for rect, h in zip(patches_y, n_y):
                         rect.set_width(h)
-                    return [scat, time_text, stats_text]+patches_x+patches_y
+                    return [scat, time_text, stats_text]
                     
                 else:
                     # 3D
@@ -2621,7 +2621,7 @@ class swarm:
                         rect.set_height(h)
                     fig.canvas.draw()
                     return [scat, time_text, flow_text, perc_text, x_flow_text, 
-                        y_flow_text, z_flow_text]+patches_x+patches_y+patches_z
+                        y_flow_text, z_flow_text]
                     
             else:
                 time_text.set_text('time = {:.2f}'.format(self.envir.time))
@@ -2645,7 +2645,7 @@ class swarm:
                         rect.set_height(h)
                     for rect, h in zip(patches_y, n_y):
                         rect.set_width(h)
-                    return [scat, time_text, stats_text]+patches_x+patches_y
+                    return [scat, time_text, stats_text]
                     
                 else:
                     # 3D end
@@ -2676,7 +2676,7 @@ class swarm:
                         rect.set_height(h)
                     fig.canvas.draw()
                     return [scat, time_text, flow_text, perc_text, x_flow_text, 
-                        y_flow_text, z_flow_text]+patches_x+patches_y+patches_z
+                        y_flow_text, z_flow_text]
 
         # infer animation rate from dt between current and last position
         dt = self.envir.time - self.envir.time_history[-1]
