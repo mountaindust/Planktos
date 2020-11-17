@@ -1780,7 +1780,7 @@ class swarm:
                         self.positions[~self.positions.mask[:,0],:]
                         ):
                     self.positions[n] = self._apply_internal_BC(startpt, endpt, 
-                                        self.envir.ibmesh, self.envir.max_meshpt_dist)      
+                                self.envir.ibmesh, self.envir.max_meshpt_dist)
             else:
                 for n in range(self.positions.shape[0]):
                     self.positions[n] = self._apply_internal_BC(
@@ -1895,8 +1895,8 @@ class swarm:
                 orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
                 newendpt = newstartpt + np.linalg.norm(newendpt-newstartpt)*orig_unit_vec
                 # repeat process to look for additional intersections
-                swarm._apply_internal_BC(newstartpt, newendpt, mesh[elem_bool],
-                                         max_meshpt_dist)
+                return swarm._apply_internal_BC(newstartpt, newendpt,
+                                                mesh[elem_bool], max_meshpt_dist)
             elif Q1_dist > mesh_el_len:
                 # went past Q0
                 newstartpt = intersection[3]
@@ -1904,8 +1904,8 @@ class swarm:
                 orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
                 newendpt = newstartpt + np.linalg.norm(newendpt-newstartpt)*orig_unit_vec
                 # repeat process to look for additional intersections
-                swarm._apply_internal_BC(newstartpt, newendpt, mesh[elem_bool],
-                                         max_meshpt_dist)
+                return swarm._apply_internal_BC(newstartpt, newendpt, 
+                                                mesh[elem_bool], max_meshpt_dist)
             else:
                 # otherwise, we end on the mesh element
                 return newendpt
@@ -1922,8 +1922,8 @@ class swarm:
                 orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
                 newendpt = newstartpt + np.linalg.norm(newendpt-newstartpt)*orig_unit_vec
                 # repeat process to look for additional intersections
-                swarm._apply_internal_BC(newstartpt, newendpt, mesh[elem_bool],
-                                         max_meshpt_dist)
+                return swarm._apply_internal_BC(newstartpt, newendpt, 
+                                                mesh[elem_bool], max_meshpt_dist)
             else:
                 # otherwise, we end on the mesh element
                 return newendpt
