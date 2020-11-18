@@ -20,7 +20,7 @@ from itertools import combinations
 import numpy as np
 import numpy.ma as ma
 from scipy import interpolate
-from scipy.spatial import distance, ConvexHull
+from scipy.spatial import distance, ConvexHull, Delaunay
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.ticker import NullFormatter, MaxNLocator
@@ -161,6 +161,7 @@ class environment:
         #   points and reconstruct.
         self.ibmesh = None # Nx2x2 or Nx3x3
         self.max_meshpt_dist = None # max length of a mesh segment
+        self.Dhull = None # Delaunay hull for debugging
 
         ##### Environment Structure Plotting #####
 
@@ -984,16 +985,19 @@ class environment:
         # shift to first quadrant
 
         hull = ConvexHull(points)
-        self.ibmesh = points[hull.simplices]
         if self.fluid_domain_LLC is not None:
             for ii in range(3):
-                self.ibmesh[:,:,ii] -= self.fluid_domain_LLC[ii]
+                points[:,ii] -= self.fluid_domain_LLC[ii]
+        self.ibmesh = points[hull.simplices]
         max_len = np.concatenate((
                   np.linalg.norm(self.ibmesh[:,0,:]-self.ibmesh[:,1,:], axis=1),
                   np.linalg.norm(self.ibmesh[:,1,:]-self.ibmesh[:,2,:], axis=1),
                   np.linalg.norm(self.ibmesh[:,2,:]-self.ibmesh[:,0,:], axis=1)
                   )).max()
         self.max_meshpt_dist = max_len
+
+        ### For debugging ###
+        self.Dhull = Delaunay(points)
 
 
 
@@ -1468,7 +1472,7 @@ class swarm:
         self.pos_history = []
 
         # Apply boundary conditions in case of domain mismatch
-        self.apply_boundary_conditions()
+        self.apply_boundary_conditions(no_ib=True)
 
 
 
@@ -1766,11 +1770,11 @@ class swarm:
 
 
 
-    def apply_boundary_conditions(self):
+    def apply_boundary_conditions(self, no_ib=False):
         '''Apply boundary conditions to self.positions'''
 
         # internal mesh boundaries go first
-        if self.envir.ibmesh is not None and self.envir.time != 0:
+        if self.envir.ibmesh is not None and not no_ib:
             # if there is no mask, loop over all agents, appyling internal BC
             # loop over (non-masked) agents, applying internal BC
             if np.any(self.positions.mask):
@@ -1779,14 +1783,27 @@ class swarm:
                         self.pos_history[-1][~self.positions.mask[:,0],:],
                         self.positions[~self.positions.mask[:,0],:]
                         ):
-                    self.positions[n] = self._apply_internal_BC(startpt, endpt, 
+                    # DEBUGGING: check the new location before assignment
+                    new_loc = self._apply_internal_BC(startpt, endpt, 
                                 self.envir.ibmesh, self.envir.max_meshpt_dist)
+                    # This may pick up agents ON the convex hull...?
+                    if not np.all(self.envir.Dhull.find_simplex(new_loc) < 0):
+                        import pdb; pdb.set_trace()
+                        new_loc = self._apply_internal_BC(startpt, endpt, 
+                                self.envir.ibmesh, self.envir.max_meshpt_dist)
+                    self.positions[n] = new_loc
             else:
                 for n in range(self.positions.shape[0]):
-                    self.positions[n] = self._apply_internal_BC(
-                        self.pos_history[-1][n,:], self.positions[n,:],
-                        self.envir.ibmesh, self.envir.max_meshpt_dist
-                    )
+                    startpt = self.pos_history[-1][n,:]
+                    endpt = self.positions[n,:]
+                    new_loc = self._apply_internal_BC(startpt, endpt,
+                                self.envir.ibmesh, self.envir.max_meshpt_dist)
+                    # This may pick up agents ON the convex hull...?
+                    if not np.all(self.envir.Dhull.find_simplex(new_loc) < 0):
+                        import pdb; pdb.set_trace()
+                        new_loc = self._apply_internal_BC(startpt, endpt, 
+                                self.envir.ibmesh, self.envir.max_meshpt_dist)
+                    self.positions[n] = new_loc
 
         for dim, bndry in enumerate(self.envir.bndry):
 
