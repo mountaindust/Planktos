@@ -1864,6 +1864,10 @@ class swarm:
             newendpt: new end location for agent trajectory
         '''
 
+        # small number to perturb off of the actual boundary in order to avoid
+        #   roundoff errors that would allow penetration
+        EPS = 1e-8
+
         if len(startpt) == 2:
             DIM = 2
         else:
@@ -1891,13 +1895,18 @@ class swarm:
             return endpt
         
         # If we do have an intersection, project remaining piece of vector
-        #   onto mesh
+        #   onto mesh and get a unit normal pointing out from the simplex
         vec = (1-intersection[1])*(endpt-startpt)
         proj = np.dot(vec,intersection[2])*intersection[2]
         # if 3D, this is the projection onto the normal vector.
         #   subtract this component to get projection onto the plane.
         if DIM == 3:
             proj = vec - proj
+            # we know proj is a normal that points from outside bndry inside
+            norm_out = -proj/np.linalg.norm(proj)
+        else:
+            # vec - proj is a normal that points from outside bndry inside
+            norm_out = (proj-vec)/np.linalg.norm(proj-vec)
         newendpt = intersection[0] + proj
 
         # Detect sliding off 1D edge
@@ -1907,7 +1916,8 @@ class swarm:
             Q1_dist = np.linalg.norm(newendpt-intersection[4])
             if Q0_dist > mesh_el_len and Q0_dist > Q1_dist:
                 # went past Q1
-                newstartpt = intersection[4]
+                # put a new start point at the crossing + EPS*norm_out
+                newstartpt = intersection[4] + EPS*norm_out
                 # project overshoot on original heading and add to bndry point
                 orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
                 newendpt = newstartpt + np.linalg.norm(newendpt-newstartpt)*orig_unit_vec
@@ -1916,7 +1926,7 @@ class swarm:
                                                 mesh[elem_bool], max_meshpt_dist)
             elif Q1_dist > mesh_el_len:
                 # went past Q0
-                newstartpt = intersection[3]
+                newstartpt = intersection[3] + EPS*norm_out
                 # project overshoot onto original heading and add to bndry point
                 orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
                 newendpt = newstartpt + np.linalg.norm(newendpt-newstartpt)*orig_unit_vec
@@ -1925,7 +1935,7 @@ class swarm:
                                                 mesh[elem_bool], max_meshpt_dist)
             else:
                 # otherwise, we end on the mesh element
-                return newendpt
+                return newendpt + EPS*norm_out
         # Detect sliding off 2D edge using _seg_intersect_2D
         if DIM == 3:
             Q0_list = np.array(intersection[3:])
@@ -1935,7 +1945,7 @@ class swarm:
             # if we reach the triangle boundary, project overshoot onto original
             #   heading and add to intersection point
             if tri_intersect is not None:
-                newstartpt = tri_intersect[0]
+                newstartpt = tri_intersect[0] + EPS*norm_out
                 orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
                 newendpt = newstartpt + np.linalg.norm(newendpt-newstartpt)*orig_unit_vec
                 # repeat process to look for additional intersections
@@ -1943,7 +1953,7 @@ class swarm:
                                                 mesh[elem_bool], max_meshpt_dist)
             else:
                 # otherwise, we end on the mesh element
-                return newendpt
+                return newendpt + EPS*norm_out
 
 
 
