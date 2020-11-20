@@ -989,10 +989,11 @@ class environment:
         vertices = data_IO.read_IB2d_vertices(filename)
         print("Processing vertex file for point-wise connections...")
         dist_mat_test = distance.pdist(vertices)<=0.5*Eulerian_res
-        idx = np.array(combinations(range(vertices.shape[0],2)))
+        idx = np.array(list(combinations(range(vertices.shape[0]),2)))
         self.ibmesh = np.array([vertices[idx[dist_mat_test,0],:],
                                 vertices[idx[dist_mat_test,1],:]])
         self.ibmesh = np.transpose(self.ibmesh,(1,0,2))
+        print("Done!")
         # shift coordinates to match any shift that happened in flow data
         if self.fluid_domain_LLC is not None:
             for ii in range(2):
