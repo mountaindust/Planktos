@@ -1783,14 +1783,13 @@ class swarm:
                         self.pos_history[-1][~self.positions.mask[:,0],:],
                         self.positions[~self.positions.mask[:,0],:]
                         ):
-                    # DEBUGGING: check the new location before assignment
                     new_loc = self._apply_internal_BC(startpt, endpt, 
                                 self.envir.ibmesh, self.envir.max_meshpt_dist)
-                    # This may pick up agents ON the convex hull...?
-                    if not np.all(self.envir.Dhull.find_simplex(new_loc) < 0):
-                        import pdb; pdb.set_trace()
-                        new_loc = self._apply_internal_BC(startpt, endpt, 
-                                self.envir.ibmesh, self.envir.max_meshpt_dist)
+                    ### DEBUGGING: check the new location before assignment ###
+                    # if not np.all(self.envir.Dhull.find_simplex(new_loc) < 0):
+                    #     import pdb; pdb.set_trace()
+                    #     new_loc = self._apply_internal_BC(startpt, endpt, 
+                    #             self.envir.ibmesh, self.envir.max_meshpt_dist)
                     self.positions[n] = new_loc
             else:
                 for n in range(self.positions.shape[0]):
@@ -1798,11 +1797,11 @@ class swarm:
                     endpt = self.positions[n,:]
                     new_loc = self._apply_internal_BC(startpt, endpt,
                                 self.envir.ibmesh, self.envir.max_meshpt_dist)
-                    # This may pick up agents ON the convex hull...?
-                    if not np.all(self.envir.Dhull.find_simplex(new_loc) < 0):
-                        import pdb; pdb.set_trace()
-                        new_loc = self._apply_internal_BC(startpt, endpt, 
-                                self.envir.ibmesh, self.envir.max_meshpt_dist)
+                    ### DEBUGGING: check the new location before assignment ###
+                    # if not np.all(self.envir.Dhull.find_simplex(new_loc) < 0):
+                    #     import pdb; pdb.set_trace()
+                    #     new_loc = self._apply_internal_BC(startpt, endpt, 
+                    #             self.envir.ibmesh, self.envir.max_meshpt_dist)
                     self.positions[n] = new_loc
 
         for dim, bndry in enumerate(self.envir.bndry):
@@ -1864,10 +1863,6 @@ class swarm:
             newendpt: new end location for agent trajectory
         '''
 
-        # small number to perturb off of the actual boundary in order to avoid
-        #   roundoff errors that would allow penetration
-        EPS = 1e-8
-
         if len(startpt) == 2:
             DIM = 2
         else:
@@ -1876,7 +1871,7 @@ class swarm:
         # Get the distance for inclusion of meshpoints
         traj_dist = np.linalg.norm(endpt - startpt)
         # Must add to traj_dist to find endpoints of line segments
-        search_dist = np.linalg.norm((traj_dist,max_meshpt_dist))
+        search_dist = np.linalg.norm((traj_dist,max_meshpt_dist*0.5))
 
         # Find all mesh elements that have points within this distance
         elem_bool = [np.any(np.linalg.norm(mesh[ii]-startpt,axis=1)<search_dist)
@@ -1895,17 +1890,53 @@ class swarm:
             return endpt
         
         # If we do have an intersection, project remaining piece of vector
-        #   onto mesh and get a unit normal pointing out from the simplex
+        #   onto mesh and repeat processes as necessary until we have a final
+        #   result.
+        return swarm._project_and_slide(startpt, endpt, intersection,
+                                        mesh[elem_bool], max_meshpt_dist, DIM)
+
+
+
+    @staticmethod
+    def _project_and_slide(startpt, endpt, intersection, mesh, max_meshpt_dist, DIM):
+        '''Once we have an intersection, project and slide the remaining movement,
+        and determine what happens if we fall off the edge of the simplex in
+        both convex and concave cases.
+
+        Arguments:
+            startpt: original start point of movement, before intersection
+            endpt: original end point of movement, after intersection
+            intersection: result of _seg_intersect_2D or _seg_intersect_3D_triangles
+            mesh: Nx2x2 or Nx3x3 array of eligible mesh elements
+            max_meshpt_dist: max distance between two points on a mesh element
+                (used to determine how far away from startpt to search for
+                mesh elements) - for passthrough to possible recursion
+            DIM: dimension of system, either 2 or 3
+
+        Returns:
+            newendpt: new endpoint for movement
+        '''
+
+        # small number to perturb off of the actual boundary in order to avoid
+        #   roundoff errors that would allow penetration
+        EPS = 1e-7
+
+        # Project remaining piece of vector from intersection onto mesh and get 
+        #   a unit normal pointing out from the simplex
+        # NOTE: intersection[2] is a vector on the simplex in the case of 2D,
+        #   and a normal vector to the simplex in the case of 3D
         vec = (1-intersection[1])*(endpt-startpt)
         proj = np.dot(vec,intersection[2])*intersection[2]
-        # if 3D, this is the projection onto the normal vector.
-        #   subtract this component to get projection onto the plane.
         if DIM == 3:
-            proj = vec - proj
-            # we know proj is a normal that points from outside bndry inside
+            # Get a normalized version of proj with revese direction, since
+            #   proj points into the simplex
             norm_out = -proj/np.linalg.norm(proj)
+            # If 3D, proj is the projection onto the normal vector. Subtract 
+            #   this component to get projection onto the plane.
+            proj = vec - proj
         else:
             # vec - proj is a normal that points from outside bndry inside
+            #   reverse direction and normalize to get unit vector pointing out
             norm_out = (proj-vec)/np.linalg.norm(proj-vec)
         newendpt = intersection[0] + proj
 
@@ -1914,25 +1945,50 @@ class swarm:
             mesh_el_len = np.linalg.norm(intersection[4] - intersection[3])
             Q0_dist = np.linalg.norm(newendpt-intersection[3])
             Q1_dist = np.linalg.norm(newendpt-intersection[4])
-            if Q0_dist > mesh_el_len and Q0_dist > Q1_dist:
-                # went past Q1
-                # put a new start point at the crossing + EPS*norm_out
-                newstartpt = intersection[4] + EPS*norm_out
-                # project overshoot on original heading and add to bndry point
+            if Q0_dist*(1+EPS) > mesh_el_len or Q1_dist*(1+EPS) > mesh_el_len:
+                ##### went past either Q0 or Q1 #####
+                # we check assuming the agent slid an additional EPS, because
+                #   if we end up in the non-convex case and fall off, we will
+                #   want to go EPS further so as to avoid corner penetration
+
+                # check for new, concave crossing of simplex attached to the
+                #   current simplex
+                adj_elem_bool = [np.any(np.linalg.norm(
+                    mesh[ii]-intersection[0],axis=1)<=np.linalg.norm(proj))
+                    for ii in range(mesh.shape[0])]
+                # check for intersection, but translate start/end points back
+                #   from the simplex a bit for numerical stability
+                adj_intersect = swarm._seg_intersect_2D(intersection[0]+EPS*norm_out,
+                    newendpt+EPS*proj+EPS*norm_out, mesh[adj_elem_bool,0,:],
+                    mesh[adj_elem_bool,1,:])
+                if adj_intersect is not None:
+                    # Convex intersection, repeat slide at this new intersection, 
+                    #   test for sliding off again, etc.
+                    return swarm._project_and_slide(intersection[0]+EPS*norm_out, 
+                                                    newendpt+EPS*proj+EPS*norm_out, 
+                                                    adj_intersect, mesh, 
+                                                    max_meshpt_dist, DIM)
+            # DIM == 2, adj_intersect is None: non-concave case
+            if Q0_dist >= mesh_el_len and Q0_dist >= Q1_dist:
+                ##### went past Q1 #####
+                # put a new start point at the point crossing+EPS and bring out
+                #   EPS*norm_out
+                newstartpt = intersection[4] + EPS*proj + EPS*norm_out
+                # project overshoot on original heading and add to newstartpt
                 orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
                 newendpt = newstartpt + np.linalg.norm(newendpt-newstartpt)*orig_unit_vec
                 # repeat process to look for additional intersections
                 return swarm._apply_internal_BC(newstartpt, newendpt,
-                                                mesh[elem_bool], max_meshpt_dist)
-            elif Q1_dist > mesh_el_len:
-                # went past Q0
-                newstartpt = intersection[3] + EPS*norm_out
+                                                mesh, max_meshpt_dist)
+            elif Q1_dist >= mesh_el_len:
+                ##### went past Q0 #####
+                newstartpt = intersection[3] + EPS*proj + EPS*norm_out
                 # project overshoot onto original heading and add to bndry point
                 orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
                 newendpt = newstartpt + np.linalg.norm(newendpt-newstartpt)*orig_unit_vec
                 # repeat process to look for additional intersections
                 return swarm._apply_internal_BC(newstartpt, newendpt, 
-                                                mesh[elem_bool], max_meshpt_dist)
+                                                mesh, max_meshpt_dist)
             else:
                 # otherwise, we end on the mesh element
                 return newendpt + EPS*norm_out
@@ -1940,17 +1996,41 @@ class swarm:
         if DIM == 3:
             Q0_list = np.array(intersection[3:])
             Q1_list = Q0_list[(1,2,0),:]
-            tri_intersect = swarm._seg_intersect_2D(intersection[0], newendpt,
+            # go a little further along trajectory to treat concave case
+            tri_intersect = swarm._seg_intersect_2D(intersection[0],
+                                                    newendpt + EPS*proj,
                                                     Q0_list, Q1_list)
-            # if we reach the triangle boundary, project overshoot onto original
-            #   heading and add to intersection point
+            # if we reach the triangle boundary, check for a concave crossing
+            #   then project overshoot onto original heading and add to 
+            #   intersection point
             if tri_intersect is not None:
-                newstartpt = tri_intersect[0] + EPS*norm_out
+                ### check for new, concave crossing of simplex attached to ###
+                ###   the current simplex                                  ###
+                adj_elem_bool = [np.any(np.linalg.norm(
+                    mesh[ii]-intersection[0],axis=1)<=np.linalg.norm(proj))
+                    for ii in range(mesh.shape[0])]
+                # check for intersection, but translate start/end points back
+                #   from the simplex a bit for numerical stability
+                adj_intersect = swarm._seg_intersect_3D_triangles(
+                    intersection[0]+EPS*norm_out,
+                    newendpt+EPS*proj+EPS*norm_out, mesh[adj_elem_bool,0,:],
+                    mesh[adj_elem_bool,1,:], mesh[adj_elem_bool,2,:])
+                if adj_intersect is not None:
+                    # Convex intersection, repeat slide at this new intersection, 
+                    #   test for sliding off again, etc.
+                    return swarm._project_and_slide(intersection[0]+EPS*norm_out, 
+                                                    newendpt+EPS*proj+EPS*norm_out, 
+                                                    adj_intersect, mesh, 
+                                                    max_meshpt_dist, DIM)
+                ### DIM == 3, adj_intersect is None: non-concave case ###
+                # put the new start point on the edge of the simplex +EPS) and
+                #   project remaining movement along original heading
+                newstartpt = tri_intersect[0] + EPS*proj + EPS*norm_out
                 orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
                 newendpt = newstartpt + np.linalg.norm(newendpt-newstartpt)*orig_unit_vec
                 # repeat process to look for additional intersections
                 return swarm._apply_internal_BC(newstartpt, newendpt, 
-                                                mesh[elem_bool], max_meshpt_dist)
+                                                mesh, max_meshpt_dist)
             else:
                 # otherwise, we end on the mesh element
                 return newendpt + EPS*norm_out
@@ -2147,6 +2227,16 @@ class swarm:
             return None
         else:
             return closest_int
+
+
+
+    @staticmethod
+    def _dist_point_to_plane(P0, normal, Q0):
+        '''Return the distance from the point P0 to the plane given by a
+        normal vector and a point on the plane, Q0. For debugging'''
+
+        d = np.dot(normal, Q0)
+        return np.abs(np.dot(normal,P0)-d)/np.linalg.norm(normal)
 
 
 
