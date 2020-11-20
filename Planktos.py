@@ -162,7 +162,7 @@ class environment:
         #   points and reconstruct.
         self.ibmesh = None # Nx2x2 or Nx3x3
         self.max_meshpt_dist = None # max length of a mesh segment
-        self.Dhull = None # Delaunay hull for debugging 3D ConvexHull example
+        self.Dhull = None # Delaunay hull for debugging 2D/3D ibmeshes
 
         ##### Environment Structure Plotting #####
 
@@ -740,6 +740,8 @@ class environment:
                      np.transpose(np.dstack(Y_vel),(2,0,1))] 
         if d_start != d_finish:
             self.flow_times = np.arange(d_start,d_finish+1)*print_dump*dt
+            # shift time so that flow starts at t=0
+            self.flow_times -= self.flow_times[0]
         else:
             self.flow_times = None
         # shift domain to quadrant 1
@@ -913,6 +915,8 @@ class environment:
         It is assumed this data is on a regular grid and that a grid section
         is included in the data.
 
+        FOR NOW, THIS IS TIME INVARIANT ONLY.
+
         All environment variables will be reset.
 
         Arguments:
@@ -1003,9 +1007,9 @@ class environment:
                 self.ibmesh[:,:,ii] -= self.fluid_domain_LLC[ii]
         self.max_meshpt_dist = np.linalg.norm(self.ibmesh[:,0,:]-self.ibmesh[:,1,:],axis=1).max()
 
-        ### For debugging ###
-        circle_y = np.logical_and(vertices[:,1]>2.6e-02, vertices[:,1]<2.24e-01)
-        self.Dhull = Delaunay(vertices[circle_y,:])
+        ### For debugging 2D channel flow ###
+        # circle_y = np.logical_and(vertices[:,1]>2.6e-02, vertices[:,1]<2.24e-01)
+        # self.Dhull = Delaunay(vertices[circle_y,:])
 
 
 
@@ -2185,7 +2189,7 @@ class swarm:
             s_I_idx = s_I_list[intersect].argmin()
             return (P0 + s_I*u, s_I,
                     v_intersected[s_I_idx]/np.linalg.norm(v_intersected[s_I_idx]),
-                    Q0, Q1)
+                    Q0[s_I_idx], Q1[s_I_idx])
         else:
             return None
 

@@ -29,4 +29,4 @@ print('Moving swarm...')
 for ii in range(40):
     s.move(0.1)
 
-s.plot_all()
+s.plot_all(movie_filename='IBAMR_cyl_ibmesh.mp4')
