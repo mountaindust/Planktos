@@ -239,8 +239,9 @@ def read_2DEulerian_Data_From_vtk(path, simNum, strChoice, xy=False):
         # reconstruct mesh
         origin = data[-2]
         spacing = data[-1]
-        x = np.arange(data[0].shape[0])*spacing[0]+origin[0]
-        y = np.arange(data[0].shape[1])*spacing[1]+origin[1]
+        # data[0,1] are indexed [y,x]!
+        x = np.arange(data[0].shape[1])*spacing[0]+origin[0]
+        y = np.arange(data[0].shape[0])*spacing[1]+origin[1]
 
     # infer if it was a vector or not and return accordingly
     if len(data) == 3:
