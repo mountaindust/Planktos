@@ -217,14 +217,22 @@ def read_vtk_Unstructured_Grid_Points(filename):
 
 
 @vtk_dep
-def read_2DEulerian_Data_From_vtk(path, simNums, strChoice, xy=False):
-    '''This is to read IB2d data, either scalar or vector.'''
+def read_2DEulerian_Data_From_vtk(path, simNum, strChoice, xy=False):
+    '''This is to read IB2d data, either scalar or vector.
+    
+    Arguments:
+        path: path (str) to the directory containing the vtk files
+        simNum: sim number as a string, as given in the filename
+            (with leading zeros)
+        strChoice: prefix on the filenames. typically 'u' or 'uX' or 'uY'
+        xy: if true, also return mesh data
+    '''
 
     if PY3:
-        filename = Path(path) / (strChoice + '.' + str(simNums) + '.vtk')
+        filename = Path(path) / (strChoice + '.' + str(simNum) + '.vtk')
         data = read_vtk_Structured_Points(str(filename))
     else:
-        filename = os.path.normpath(path)+strChoice+'.'+str(simNums)+'.vtk'
+        filename = os.path.normpath(path)+strChoice+'.'+str(simNum)+'.vtk'
         data = read_vtk_Structured_Points(filename)
 
     if xy:
@@ -349,7 +357,7 @@ def read_stl_mesh(filename):
 def read_IB2d_vertices(filename):
     '''Import Lagrangian mesh from IB2d vertex file.'''
     with open(filename) as f:
-        number_of_vertices = f.readline()
+        number_of_vertices = int(f.readline())
         vertices = np.zeros((number_of_vertices,2))
         for n, line in enumerate(f):
             vertex_str = line.split()
