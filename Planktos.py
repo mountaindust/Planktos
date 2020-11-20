@@ -974,8 +974,9 @@ class environment:
 
     def read_IB2d_vertex_data(self, filename):
         '''Reads in 2D vertex data from a .vertex file (IB2d). Assumes that any 
-        vertices closer than half the Eulerian mesh resolution are connected 
-        linearly. Thus, the flow data must be imported first!
+        vertices closer than half (+ a bit for numerical stability) the Eulerian 
+        mesh resolution are connected linearly. Thus, the flow data must be 
+        imported first!
         '''
 
         path = Path(filename)
@@ -987,8 +988,9 @@ class environment:
         Eulerian_res = dists.min()
 
         vertices = data_IO.read_IB2d_vertices(filename)
-        print("Processing vertex file for point-wise connections...")
-        dist_mat_test = distance.pdist(vertices)<=0.5*Eulerian_res
+        print("Processing vertex file for point-wise connections within {}.".format(
+            0.50005*Eulerian_res))
+        dist_mat_test = distance.pdist(vertices)<=0.50005*Eulerian_res
         idx = np.array(list(combinations(range(vertices.shape[0]),2)))
         self.ibmesh = np.array([vertices[idx[dist_mat_test,0],:],
                                 vertices[idx[dist_mat_test,1],:]])
