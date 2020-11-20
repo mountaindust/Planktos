@@ -739,7 +739,8 @@ class environment:
             filename: filename of data to read
         '''
         path = Path(filename)
-        assert path.is_file(), "File {} not found!".format(filename)
+        if not path.is_file(): 
+            raise FileNotFoundError("File {} not found!".format(filename))
 
         data, mesh, time = data_IO.read_vtk_Rectilinear_Grid_Vector(filename)
 
@@ -777,7 +778,8 @@ class environment:
         '''
 
         path = Path(path)
-        assert path.exists(), "Path {} not found!".format(str(path))
+        if not path.is_dir(): 
+            raise FileNotFoundError("Directory {} not found!".format(str(path)))
         file_names = [x.name for x in path.iterdir() if x.is_file() and
                       x.name[:9] == 'IBAMR_db_']
         file_nums = sorted([int(f[9:12]) for f in file_names])
@@ -853,7 +855,8 @@ class environment:
             flow_LLC_file: string location/name of LLC domain info, used in 3D only
         '''
         path = Path(path)
-        assert path.exists(), "Path {} not found!".format(str(path))
+        if not path.is_dir(): 
+            raise FileNotFoundError("Directory {} not found!".format(str(path)))
         flow_data = np.load(str(path/(prefix+flow_file)))
         self.flow = [flow_data['xflow'], flow_data['yflow'], flow_data['zflow']]
         flow_data.close()
@@ -893,7 +896,8 @@ class environment:
             grid_conv: scalar to multiply the grid by in order to convert units
         '''
         path = Path(filename)
-        assert path.is_file(), "File {} not found!".format(filename)
+        if not path.is_file(): 
+            raise FileNotFoundError("File {} not found!".format(str(filename)))
 
         data, mesh = data_IO.read_vtu_mesh_velocity(filename)
 
@@ -930,7 +934,8 @@ class environment:
         Thus, the mesh will be translated using the flow LLC if necessary.'''
 
         path = Path(filename)
-        assert path.is_file(), "File {} not found!".format(filename)
+        if not path.is_file(): 
+            raise FileNotFoundError("File {} not found!".format(filename))
 
         ibmesh, self.max_meshpt_dist = data_IO.read_stl_mesh(filename)
 
@@ -950,7 +955,8 @@ class environment:
         '''
 
         path = Path(filename)
-        assert path.is_file(), "File {} not found!".format(filename)
+        if not path.is_file(): 
+            raise FileNotFoundError("File {} not found!".format(filename))
         assert self.flow_points is not None, "Must import flow data first!"
         dists = np.concatenate([self.flow_points[ii][1:]-self.flow_points[ii][0:-1]
                                 for ii in range(2)])
@@ -972,27 +978,35 @@ class environment:
 
 
     def read_vertex_data_to_convex_hull(self, filename):
-        '''Reads in 3D vertex data from a vtk file and applies ConvexHull
-        triangulation to get a complete boundary. This uses Qhull through Scipy
-        under the hood http://www.qhull.org/.
-        TODO: Make this robust to 2D as well.
+        '''Reads in 2D or 3D vertex data from a vtk file or a vertex file and 
+        applies ConvexHull triangulation to get a complete boundary. This uses 
+        Qhull through Scipy under the hood http://www.qhull.org/.
         '''
 
         path = Path(filename)
-        assert path.is_file(), "File {} not found!".format(filename)
+        if not path.is_file(): 
+            raise FileNotFoundError("File {} not found!".format(filename))
 
-        points, bounds = data_IO.read_vtk_Unstructured_Grid_Points(filename)
+        if filename.strip()[-4:] == '.vtk':
+            points, bounds = data_IO.read_vtk_Unstructured_Grid_Points(filename)
+        elif filename.strip()[-7:] == '.vertex':
+            points = data_IO.read_IB2d_vertices(filename)
+        else:
+            raise RuntimeError("File extension for {} not recognized.".format(filename))
+
+        # get dimension
+        DIM = points.shape[1]
+
         # shift to first quadrant
 
         hull = ConvexHull(points)
         if self.fluid_domain_LLC is not None:
-            for ii in range(3):
+            for ii in range(DIM):
                 points[:,ii] -= self.fluid_domain_LLC[ii]
         self.ibmesh = points[hull.simplices]
-        max_len = np.concatenate((
-                  np.linalg.norm(self.ibmesh[:,0,:]-self.ibmesh[:,1,:], axis=1),
-                  np.linalg.norm(self.ibmesh[:,1,:]-self.ibmesh[:,2,:], axis=1),
-                  np.linalg.norm(self.ibmesh[:,2,:]-self.ibmesh[:,0,:], axis=1)
+        max_len = np.concatenate(tuple(
+                  np.linalg.norm(self.ibmesh[:,ii,:]-self.ibmesh[:,(ii+1)%DIM,:], axis=1)
+                  for ii  in range(DIM)
                   )).max()
         self.max_meshpt_dist = max_len
 
@@ -1786,10 +1800,10 @@ class swarm:
                     new_loc = self._apply_internal_BC(startpt, endpt, 
                                 self.envir.ibmesh, self.envir.max_meshpt_dist)
                     ### DEBUGGING: check the new location before assignment ###
-                    # if not np.all(self.envir.Dhull.find_simplex(new_loc) < 0):
-                    #     import pdb; pdb.set_trace()
-                    #     new_loc = self._apply_internal_BC(startpt, endpt, 
-                    #             self.envir.ibmesh, self.envir.max_meshpt_dist)
+                    if not np.all(self.envir.Dhull.find_simplex(new_loc) < 0):
+                        import pdb; pdb.set_trace()
+                        new_loc = self._apply_internal_BC(startpt, endpt, 
+                                self.envir.ibmesh, self.envir.max_meshpt_dist)
                     self.positions[n] = new_loc
             else:
                 for n in range(self.positions.shape[0]):
@@ -1798,10 +1812,10 @@ class swarm:
                     new_loc = self._apply_internal_BC(startpt, endpt,
                                 self.envir.ibmesh, self.envir.max_meshpt_dist)
                     ### DEBUGGING: check the new location before assignment ###
-                    # if not np.all(self.envir.Dhull.find_simplex(new_loc) < 0):
-                    #     import pdb; pdb.set_trace()
-                    #     new_loc = self._apply_internal_BC(startpt, endpt, 
-                    #             self.envir.ibmesh, self.envir.max_meshpt_dist)
+                    if not np.all(self.envir.Dhull.find_simplex(new_loc) < 0):
+                        import pdb; pdb.set_trace()
+                        new_loc = self._apply_internal_BC(startpt, endpt, 
+                                self.envir.ibmesh, self.envir.max_meshpt_dist)
                     self.positions[n] = new_loc
 
         for dim, bndry in enumerate(self.envir.bndry):
