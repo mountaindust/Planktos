@@ -162,7 +162,7 @@ class environment:
         #   points and reconstruct.
         self.ibmesh = None # Nx2x2 or Nx3x3
         self.max_meshpt_dist = None # max length of a mesh segment
-        self.Dhull = None # Delaunay hull for debugging
+        self.Dhull = None # Delaunay hull for debugging 3D ConvexHull example
 
         ##### Environment Structure Plotting #####
 
@@ -736,7 +736,8 @@ class environment:
             ###################################################
 
         ### Save data ###
-        self.flow = [np.dstack(X_vel), np.dstack(Y_vel)] 
+        self.flow = [np.transpose(np.dstack(X_vel),(2,0,1)), 
+                     np.transpose(np.dstack(Y_vel),(2,0,1))] 
         if d_start != d_finish:
             self.flow_times = np.arange(d_start,d_finish+1)*print_dump*dt
         else:
@@ -1002,6 +1003,10 @@ class environment:
                 self.ibmesh[:,:,ii] -= self.fluid_domain_LLC[ii]
         self.max_meshpt_dist = np.linalg.norm(self.ibmesh[:,0,:]-self.ibmesh[:,1,:],axis=1).max()
 
+        ### For debugging ###
+        circle_y = np.logical_and(vertices[:,1]>2.6e-02, vertices[:,1]<2.24e-01)
+        self.Dhull = Delaunay(vertices[circle_y,:])
+
 
 
     def read_vertex_data_to_convex_hull(self, filename):
@@ -1038,7 +1043,7 @@ class environment:
         self.max_meshpt_dist = max_len
 
         ### For debugging ###
-        self.Dhull = Delaunay(points)
+        # self.Dhull = Delaunay(points)
 
 
 
@@ -1827,10 +1832,17 @@ class swarm:
                     new_loc = self._apply_internal_BC(startpt, endpt, 
                                 self.envir.ibmesh, self.envir.max_meshpt_dist)
                     ### DEBUGGING: check the new location before assignment ###
-                    if not np.all(self.envir.Dhull.find_simplex(new_loc) < 0):
-                        import pdb; pdb.set_trace()
-                        new_loc = self._apply_internal_BC(startpt, endpt, 
-                                self.envir.ibmesh, self.envir.max_meshpt_dist)
+                    # this only works for the ib2d_ibmesh example for channel flow
+                    # if not 2.5e-02 <= new_loc[1] < 2.25e-01 and not\
+                    #     np.all(self.envir.Dhull.find_simplex(new_loc) < 0):
+                    #     import pdb; pdb.set_trace()
+                    #     new_loc = self._apply_internal_BC(startpt, endpt, 
+                    #             self.envir.ibmesh, self.envir.max_meshpt_dist)
+                    ### 3D DEBUGGING: check the new location before assignment ###
+                    # if not np.all(self.envir.Dhull.find_simplex(new_loc) < 0):
+                    #     import pdb; pdb.set_trace()
+                    #     new_loc = self._apply_internal_BC(startpt, endpt, 
+                    #             self.envir.ibmesh, self.envir.max_meshpt_dist)
                     self.positions[n] = new_loc
             else:
                 for n in range(self.positions.shape[0]):
@@ -1839,10 +1851,17 @@ class swarm:
                     new_loc = self._apply_internal_BC(startpt, endpt,
                                 self.envir.ibmesh, self.envir.max_meshpt_dist)
                     ### DEBUGGING: check the new location before assignment ###
-                    if not np.all(self.envir.Dhull.find_simplex(new_loc) < 0):
-                        import pdb; pdb.set_trace()
-                        new_loc = self._apply_internal_BC(startpt, endpt, 
-                                self.envir.ibmesh, self.envir.max_meshpt_dist)
+                    # this only works for the ib2d_ibmesh example for channel flow
+                    # if not 2.5e-02 <= new_loc[1] < 2.25e-01 and not\
+                    #     np.all(self.envir.Dhull.find_simplex(new_loc) < 0):
+                    #     import pdb; pdb.set_trace()
+                    #     new_loc = self._apply_internal_BC(startpt, endpt, 
+                    #             self.envir.ibmesh, self.envir.max_meshpt_dist)
+                    ### 3D DEBUGGING: check the new location before assignment ###
+                    # if not np.all(self.envir.Dhull.find_simplex(new_loc) < 0):
+                    #     import pdb; pdb.set_trace()
+                    #     new_loc = self._apply_internal_BC(startpt, endpt, 
+                    #             self.envir.ibmesh, self.envir.max_meshpt_dist)
                     self.positions[n] = new_loc
 
         for dim, bndry in enumerate(self.envir.bndry):
