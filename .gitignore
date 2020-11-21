@@ -9,6 +9,9 @@ data/
 *.xlsx
 *.npz
 *.pickle
+*.vtk
+input2d
+*.vertex
 
 # Autobackup files
 ~*

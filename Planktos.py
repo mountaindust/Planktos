@@ -2545,7 +2545,8 @@ class swarm:
         if len(self.envir.L) == 2:
             # 2D plot
             aspectratio = self.envir.L[0]/self.envir.L[1]
-            fig = plt.figure(figsize=(5*aspectratio+1,6))
+            x_length = np.min((5*aspectratio+1,12))
+            fig = plt.figure(figsize=(x_length,6))
             ax, axHistx, axHisty = self.__plot_setup(fig)
 
             # scatter plot and time text
@@ -2658,7 +2659,8 @@ class swarm:
         if not DIM3:
             ### 2D setup ###
             aspectratio = self.envir.L[0]/self.envir.L[1]
-            fig = plt.figure(figsize=(5*aspectratio+1,6))
+            x_length = np.min((5*aspectratio+1,12))
+            fig = plt.figure(figsize=(x_length,6))
             ax, axHistx, axHisty = self.__plot_setup(fig)
 
             scat = ax.scatter([], [], label='organism')
@@ -2872,7 +2874,8 @@ class swarm:
             try:
                 writer = animation.FFMpegWriter(fps=fps, 
                     metadata=dict(artist='Christopher Strickland'))#, bitrate=1800)
-                anim.save(movie_filename, writer=writer, dpi=300)
+                anim.save(movie_filename, writer=writer,dpi=150)
+                plt.close()
                 print('Video saved to {}.'.format(movie_filename))
             except:
                 print('Failed to save animation.')

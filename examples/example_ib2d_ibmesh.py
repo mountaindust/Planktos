@@ -36,4 +36,4 @@ for ii in range(46):
     t += dt
     print('time = {}'.format(t))
 
-s.plot_all(movie_filename='channel_flow_ibmesh.mp4')
+s.plot_all(movie_filename='channel_flow_ibmesh.mp4',fps=3)
