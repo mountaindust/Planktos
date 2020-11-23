@@ -156,6 +156,7 @@ class environment:
         self.g = 9.80665
 
         ##### Immersed Boundary Mesh #####
+
         # When we implement a moving mesh, use np.unique to return both
         #   unique vertex values in the ibmesh AND unique_inverse, the indices
         #   to reconstruct the mesh from the unique array. Then can update
@@ -165,6 +166,7 @@ class environment:
         self.Dhull = None # Delaunay hull for debugging 2D/3D ibmeshes
 
         ##### Environment Structure Plotting #####
+        # NOTE: the agents do not interact with these structures; for plotting only!
 
         # List of functions that plot additional environment structures
         self.struct_plots = []
