@@ -1938,16 +1938,23 @@ class swarm:
         search_dist = np.linalg.norm((traj_dist,max_meshpt_dist*0.5))
 
         # Find all mesh elements that have points within this distance
-        elem_bool = [np.any(np.linalg.norm(mesh[ii]-startpt,axis=1)<search_dist)
-                     for ii in range(mesh.shape[0])]
+        #   NOTE: This is a major bottleneck if not done carefully.
+        pt_bool = np.linalg.norm(
+                mesh.reshape((mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-startpt,
+                axis=1)<search_dist
+        pt_bool = pt_bool.reshape((mesh.shape[0],mesh.shape[1]))
+        close_mesh = mesh[np.any(pt_bool,axis=1)]
+
+        # elem_bool = [np.any(np.linalg.norm(mesh[ii]-startpt,axis=1)<search_dist)
+        #              for ii in range(mesh.shape[0])]
 
         # Get intersections
         if DIM == 2:
             intersection = swarm._seg_intersect_2D(startpt, endpt,
-                mesh[elem_bool,0,:], mesh[elem_bool,1,:])
+                close_mesh[:,0,:], close_mesh[:,1,:])
         else:
             intersection = swarm._seg_intersect_3D_triangles(startpt, endpt,
-                mesh[elem_bool,0,:], mesh[elem_bool,1,:], mesh[elem_bool,2,:])
+                close_mesh[:,0,:], close_mesh[:,1,:], close_mesh[:,2,:])
 
         # Return endpt we already have if None.
         if intersection is None:
@@ -1957,7 +1964,7 @@ class swarm:
         #   onto mesh and repeat processes as necessary until we have a final
         #   result.
         return swarm._project_and_slide(startpt, endpt, intersection,
-                                        mesh[elem_bool], max_meshpt_dist, DIM)
+                                        close_mesh, max_meshpt_dist, DIM)
 
 
 
@@ -2017,6 +2024,7 @@ class swarm:
 
                 # check for new, concave crossing of simplex attached to the
                 #   current simplex
+                # TODO: speed this up
                 adj_elem_bool = [np.any(np.linalg.norm(
                     mesh[ii]-intersection[0],axis=1)<=np.linalg.norm(proj))
                     for ii in range(mesh.shape[0])]
@@ -2070,6 +2078,7 @@ class swarm:
             if tri_intersect is not None:
                 ### check for new, concave crossing of simplex attached to ###
                 ###   the current simplex                                  ###
+                # TODO: speed this up
                 adj_elem_bool = [np.any(np.linalg.norm(
                     mesh[ii]-intersection[0],axis=1)<=np.linalg.norm(proj))
                     for ii in range(mesh.shape[0])]
