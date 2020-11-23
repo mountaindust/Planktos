@@ -27,13 +27,8 @@ s = envir.swarms[0]
 # amount of jitter (variance)
 s.shared_props['cov'] *= 0.0001
 
-dt = 0.025
-t = 0
-
 print('Moving swarm...')
 for ii in range(46):
     s.move(0.025)
-    t += dt
-    print('time = {}'.format(t))
 
 s.plot_all(movie_filename='channel_flow_ibmesh.mp4',fps=3)

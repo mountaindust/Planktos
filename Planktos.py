@@ -1289,6 +1289,7 @@ class environment:
         # update time
         self.time_history.append(self.time)
         self.time += dt
+        print('time = {}'.format(np.round(self.time,11)))
 
 
 
@@ -1602,6 +1603,7 @@ class swarm:
         if update_time:
             self.envir.time_history.append(self.envir.time)
             self.envir.time += dt
+            print('time = {}'.format(np.round(self.envir.time,11)))
 
             # Check for other swarms in environment and freeze them
             warned = False
