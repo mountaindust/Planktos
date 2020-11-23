@@ -2024,15 +2024,16 @@ class swarm:
 
                 # check for new, concave crossing of simplex attached to the
                 #   current simplex
-                # TODO: speed this up
-                adj_elem_bool = [np.any(np.linalg.norm(
-                    mesh[ii]-intersection[0],axis=1)<=np.linalg.norm(proj))
-                    for ii in range(mesh.shape[0])]
+                pt_bool = np.linalg.norm(mesh.reshape(
+                    (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-intersection[0],
+                    axis=1)<=np.linalg.norm(proj)
+                pt_bool = pt_bool.reshape((mesh.shape[0],mesh.shape[1]))
+                adj_mesh = mesh[np.any(pt_bool,axis=1)]
                 # check for intersection, but translate start/end points back
                 #   from the simplex a bit for numerical stability
                 adj_intersect = swarm._seg_intersect_2D(intersection[0]+EPS*norm_out,
-                    newendpt+EPS*proj+EPS*norm_out, mesh[adj_elem_bool,0,:],
-                    mesh[adj_elem_bool,1,:])
+                    newendpt+EPS*proj+EPS*norm_out, adj_mesh[:,0,:],
+                    adj_mesh[:,1,:])
                 if adj_intersect is not None:
                     # Convex intersection, repeat slide at this new intersection, 
                     #   test for sliding off again, etc.
@@ -2078,16 +2079,17 @@ class swarm:
             if tri_intersect is not None:
                 ### check for new, concave crossing of simplex attached to ###
                 ###   the current simplex                                  ###
-                # TODO: speed this up
-                adj_elem_bool = [np.any(np.linalg.norm(
-                    mesh[ii]-intersection[0],axis=1)<=np.linalg.norm(proj))
-                    for ii in range(mesh.shape[0])]
+                pt_bool = np.linalg.norm(mesh.reshape(
+                    (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-intersection[0],
+                    axis=1)<=np.linalg.norm(proj)
+                pt_bool = pt_bool.reshape((mesh.shape[0],mesh.shape[1]))
+                adj_mesh = mesh[np.any(pt_bool,axis=1)]
                 # check for intersection, but translate start/end points back
                 #   from the simplex a bit for numerical stability
                 adj_intersect = swarm._seg_intersect_3D_triangles(
                     intersection[0]+EPS*norm_out,
-                    newendpt+EPS*proj+EPS*norm_out, mesh[adj_elem_bool,0,:],
-                    mesh[adj_elem_bool,1,:], mesh[adj_elem_bool,2,:])
+                    newendpt+EPS*proj+EPS*norm_out, adj_mesh[:,0,:],
+                    adj_mesh[:,1,:], adj_mesh[:,2,:])
                 if adj_intersect is not None:
                     # Convex intersection, repeat slide at this new intersection, 
                     #   test for sliding off again, etc.
