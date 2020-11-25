@@ -1,6 +1,7 @@
+- Replace projectile motion with finite-size inertial particles. See dropbox notes.
+- FTLE?
 - Start analysis library with some basic stuff. Include TDA.
 - Code up rolling locust swarm, then add Brinkman flow and gusts
-- LCS module?
 - documentation (/doc)
 
 --> Code release paper. Target: Mathematical Models and Methods in Applied Sciences
