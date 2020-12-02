@@ -16,7 +16,7 @@ U = 0.09818
 # Specify pressure gradient
 dpdx = 0.0234759411877
 
-envir.set_brinkman_flow(alpha=37.24, a=0.15, res=101, U=U, dpdx=dpdx)
+envir.set_brinkman_flow(alpha=37.24, a=0.15, U=U, dpdx=dpdx, res=101)
 envir.add_swarm()
 s = envir.swarms[0]
 

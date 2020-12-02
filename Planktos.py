@@ -181,7 +181,7 @@ class environment:
 
 
 
-    def set_brinkman_flow(self, alpha, a, res, U, dpdx, tspan=None):
+    def set_brinkman_flow(self, alpha, a, U, dpdx, res=101, tspan=None):
         '''Specify fully developed 2D or 3D flow with a porous region.
         Velocity gradient is zero in the x-direction; all flow moves parallel to
         the x-axis. Porous region is the lower part of the y-domain (2D) or
@@ -192,9 +192,9 @@ class environment:
         Arguments:
             alpha: equal to 1/(hydraulic permeability). alpha=0 implies free flow (infinitely permeable)
             a: height of porous region
-            res: number of points at which to resolve the flow (int), including boundaries
             U: velocity at top of domain (v in input3d). scalar or list-like.
             dpdx: dp/dx change in momentum constant. scalar or list-like.
+            res: number of points at which to resolve the flow (int), including boundaries
             tspan: [tstart, tend] or iterable of times at which flow is specified
                 if None and U/dpdx are iterable, dt=1 will be used.
 
@@ -356,7 +356,7 @@ class environment:
 
 
 
-    def set_two_layer_channel_flow(self, res, a, h_p, Cd, S):
+    def set_two_layer_channel_flow(self, a, h_p, Cd, S, res=101):
         '''Apply wide-channel flow with vegetation layer according to the
         two-layer model described in Defina and Bixio (2005), 
         "Vegetated Open Channel Flow". The decision to set 2D vs. 3D flow is 
@@ -364,13 +364,13 @@ class environment:
         time-independent by nature. The following parameters must be given:
 
         Arguments:
-            res: number of points at which to resolve the flow (int), including boundaries
             a: vegetation density, given by Az*m, where Az is the frontal area
                 of vegetation per unit depth and m the number of stems per unit area (1/m)
                 (assumed constant)
             h_p: plant height (m)
             Cd: drag coefficient (assumed uniform) (unitless)
             S: bottom slope (unitless, 0-1 with 0 being no slope, resulting in no flow)
+            res: number of points at which to resolve the flow (int), including boundaries
 
         Sets:
             self.flow: [U.size by] res by res ndarray of flow velocity
@@ -439,8 +439,8 @@ class environment:
 
 
 
-    def set_canopy_flow(self, res, h, a, u_star=None, U_h=None, beta=0.3, C=0.25,
-                        tspan=None):
+    def set_canopy_flow(self, h, a, u_star=None, U_h=None, beta=0.3, C=0.25,
+                        res=101, tspan=None):
         '''Apply flow within and above a uniform homogenous canopy according to the
         model described in Finnigan and Belcher (2004), 
         "Flow over a hill covered with a plant canopy". The decision to set 2D vs. 3D flow is 
@@ -450,7 +450,6 @@ class environment:
         If one of u_star, U_h, or beta is given as a list-like object, the flow will vary in time.
 
         Arguments:
-            res: number of points at which to resolve the flow (int), including boundaries
             h: height of canopy (m)
             a: leaf area per unit volume of space m^{-1}. Typical values are
                 a=1.0 for dense spruce to a=0.1 for open woodland
@@ -458,6 +457,7 @@ class environment:
             U_h: wind speed at top of canopy. U_h = u_star/beta
             beta: mass flux through the canopy (u_star/U_h)
             C: drag coefficient of indivudal canopy elements
+            res: number of points at which to resolve the flow (int), including boundaries
             tspan: [tstart, tend] or iterable of times at which flow is specified
                 if None and u_star, U_h, and/or beta are iterable, dt=1 will be used.
 
