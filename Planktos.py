@@ -1422,6 +1422,125 @@ class environment:
 
 
 
+    def _plot_setup(self, fig):
+        ''' Setup figures for plotting '''
+
+        if len(self.L) == 2:
+            # 2D plot
+
+            # chop up the axes to include histograms
+            left, width = 0.1, 0.65
+            bottom, height = 0.1, 0.65
+            bottom_h = left_h = left + width + 0.02
+
+            rect_scatter = [left, bottom, width, height]
+            rect_histx = [left, bottom_h, width, 0.2]
+            rect_histy = [left_h, bottom, 0.2, height]
+
+            ax = plt.axes(rect_scatter, xlim=(0, self.L[0]), 
+                          ylim=(0, self.L[1]))
+            axHistx = plt.axes(rect_histx)
+            axHisty = plt.axes(rect_histy)
+
+            # no labels on histogram next to scatter plot
+            nullfmt = NullFormatter()
+            axHistx.xaxis.set_major_formatter(nullfmt)
+            axHisty.yaxis.set_major_formatter(nullfmt)
+
+            # set histogram limits/ticks
+            axHistx.set_xlim(ax.get_xlim())
+            axHisty.set_ylim(ax.get_ylim())
+            int_ticks = MaxNLocator(nbins='auto', integer=True)
+            pruned_ticks = MaxNLocator(prune='lower', nbins='auto',
+                                       integer=True, min_n_ticks=3)
+            axHistx.yaxis.set_major_locator(int_ticks)
+            axHisty.xaxis.set_major_locator(pruned_ticks)
+
+            # add a grassy porous layer background (if porous layer present)
+            if self.a is not None:
+                grass = np.random.rand(80)*self.L[0]
+                for g in grass:
+                    ax.axvline(x=g, ymax=self.a/self.L[1], color='.5')
+
+            # plot any ghost structures
+            for plot_func, args in zip(self.plot_structs, 
+                                       self.plot_structs_args):
+                plot_func(ax, *args)
+
+            # plot ibmesh
+            if self.ibmesh is not None:
+                line_segments = LineCollection(self.ibmesh)
+                line_segments.set_color('k')
+                ax.add_collection(line_segments)
+
+            return ax, axHistx, axHisty
+
+        else:
+            # 3D plot
+
+            # chop up axes for a tight layout with histograms
+            left_s, width_s = 0.025, 0.45
+            bottom_s, height_s = 0.05, 0.9
+            bottom_z, bottom_y, bottom_x = 0.05, 0.375, 0.7
+            height_h, left_h, width_h = 0.25, 0.575, 0.4
+
+            rect_scatter = [left_s, bottom_s, width_s, height_s]
+            rect_histx = [left_h, bottom_x, width_h, height_h]
+            rect_histy = [left_h, bottom_y, width_h, height_h]
+            rect_histz = [left_h, bottom_z, width_h, height_h]
+
+            # create scatter plot
+            ax = mplot3d.Axes3D(fig, rect=rect_scatter) #fig.add_subplot(121, projection='3d')
+            ax.set_xlim((0, self.L[0]))
+            ax.set_ylim((0, self.L[1]))
+            ax.set_zlim((0, self.L[2]))
+            ax.set_xlabel('X')
+            ax.set_ylabel('Y')
+            ax.set_zlabel('Z')
+            ax.set_title('Organism positions')
+            # No real solution to 3D aspect ratio...
+            #ax.set_aspect('equal','box')
+
+            # histograms
+            int_ticks = MaxNLocator(nbins='auto', integer=True)
+            axHistx = plt.axes(rect_histx)
+            axHistx.set_xlim((0, self.L[0]))
+            axHistx.yaxis.set_major_locator(int_ticks)
+            axHistx.set_ylabel('X    ', rotation=0)
+            axHisty = plt.axes(rect_histy)
+            axHisty.set_xlim((0, self.L[1]))
+            axHisty.yaxis.set_major_locator(int_ticks)
+            axHisty.set_ylabel('Y    ', rotation=0)
+            axHistz = plt.axes(rect_histz)
+            axHistz.set_xlim((0, self.L[2]))
+            axHistz.yaxis.set_major_locator(int_ticks)
+            axHistz.set_ylabel('Z    ', rotation=0)
+
+            # add a grassy porous layer background (if porous layer present)
+            if self.a is not None:
+                grass = np.random.rand(120,2)
+                grass[:,0] *= self.L[0]
+                grass[:,1] *= self.L[1]
+                for g in grass:
+                    ax.plot([g[0],g[0]], [g[1],g[1]], [0,self.a],
+                            'k-', alpha=0.5)
+
+            # plot any structures
+            for plot_func, args in zip(self.plot_structs, 
+                                       self.plot_structs_args):
+                plot_func(ax, *args)
+
+            # plot ibmesh
+            if self.ibmesh is not None:
+                structures = mplot3d.art3d.Poly3DCollection(self.ibmesh)
+                structures.set_color('g')
+                structures.set_alpha(0.3)
+                ax.add_collection3d(structures)
+
+            return ax, axHistx, axHisty, axHistz
+
+
+
 class swarm:
 
     def __init__(self, swarm_size=100, envir=None, init='random', seed=None, 
@@ -2466,125 +2585,6 @@ class swarm:
 
 
 
-    def __plot_setup(self, fig):
-        ''' Setup figures for plotting '''
-
-        if len(self.envir.L) == 2:
-            # 2D plot
-
-            # chop up the axes to include histograms
-            left, width = 0.1, 0.65
-            bottom, height = 0.1, 0.65
-            bottom_h = left_h = left + width + 0.02
-
-            rect_scatter = [left, bottom, width, height]
-            rect_histx = [left, bottom_h, width, 0.2]
-            rect_histy = [left_h, bottom, 0.2, height]
-
-            ax = plt.axes(rect_scatter, xlim=(0, self.envir.L[0]), 
-                          ylim=(0, self.envir.L[1]))
-            axHistx = plt.axes(rect_histx)
-            axHisty = plt.axes(rect_histy)
-
-            # no labels on histogram next to scatter plot
-            nullfmt = NullFormatter()
-            axHistx.xaxis.set_major_formatter(nullfmt)
-            axHisty.yaxis.set_major_formatter(nullfmt)
-
-            # set histogram limits/ticks
-            axHistx.set_xlim(ax.get_xlim())
-            axHisty.set_ylim(ax.get_ylim())
-            int_ticks = MaxNLocator(nbins='auto', integer=True)
-            pruned_ticks = MaxNLocator(prune='lower', nbins='auto',
-                                       integer=True, min_n_ticks=3)
-            axHistx.yaxis.set_major_locator(int_ticks)
-            axHisty.xaxis.set_major_locator(pruned_ticks)
-
-            # add a grassy porous layer background (if porous layer present)
-            if self.envir.a is not None:
-                grass = np.random.rand(80)*self.envir.L[0]
-                for g in grass:
-                    ax.axvline(x=g, ymax=self.envir.a/self.envir.L[1], color='.5')
-
-            # plot any ghost structures
-            for plot_func, args in zip(self.envir.plot_structs, 
-                                       self.envir.plot_structs_args):
-                plot_func(ax, *args)
-
-            # plot ibmesh
-            if self.envir.ibmesh is not None:
-                line_segments = LineCollection(self.envir.ibmesh)
-                line_segments.set_color('k')
-                ax.add_collection(line_segments)
-
-            return ax, axHistx, axHisty
-
-        else:
-            # 3D plot
-
-            # chop up axes for a tight layout with histograms
-            left_s, width_s = 0.025, 0.45
-            bottom_s, height_s = 0.05, 0.9
-            bottom_z, bottom_y, bottom_x = 0.05, 0.375, 0.7
-            height_h, left_h, width_h = 0.25, 0.575, 0.4
-
-            rect_scatter = [left_s, bottom_s, width_s, height_s]
-            rect_histx = [left_h, bottom_x, width_h, height_h]
-            rect_histy = [left_h, bottom_y, width_h, height_h]
-            rect_histz = [left_h, bottom_z, width_h, height_h]
-
-            # create scatter plot
-            ax = mplot3d.Axes3D(fig, rect=rect_scatter) #fig.add_subplot(121, projection='3d')
-            ax.set_xlim((0, self.envir.L[0]))
-            ax.set_ylim((0, self.envir.L[1]))
-            ax.set_zlim((0, self.envir.L[2]))
-            ax.set_xlabel('X')
-            ax.set_ylabel('Y')
-            ax.set_zlabel('Z')
-            ax.set_title('Organism positions')
-            # No real solution to 3D aspect ratio...
-            #ax.set_aspect('equal','box')
-
-            # histograms
-            int_ticks = MaxNLocator(nbins='auto', integer=True)
-            axHistx = plt.axes(rect_histx)
-            axHistx.set_xlim((0, self.envir.L[0]))
-            axHistx.yaxis.set_major_locator(int_ticks)
-            axHistx.set_ylabel('X    ', rotation=0)
-            axHisty = plt.axes(rect_histy)
-            axHisty.set_xlim((0, self.envir.L[1]))
-            axHisty.yaxis.set_major_locator(int_ticks)
-            axHisty.set_ylabel('Y    ', rotation=0)
-            axHistz = plt.axes(rect_histz)
-            axHistz.set_xlim((0, self.envir.L[2]))
-            axHistz.yaxis.set_major_locator(int_ticks)
-            axHistz.set_ylabel('Z    ', rotation=0)
-
-            # add a grassy porous layer background (if porous layer present)
-            if self.envir.a is not None:
-                grass = np.random.rand(120,2)
-                grass[:,0] *= self.envir.L[0]
-                grass[:,1] *= self.envir.L[1]
-                for g in grass:
-                    ax.plot([g[0],g[0]], [g[1],g[1]], [0,self.envir.a],
-                            'k-', alpha=0.5)
-
-            # plot any structures
-            for plot_func, args in zip(self.envir.plot_structs, 
-                                       self.envir.plot_structs_args):
-                plot_func(ax, *args)
-
-            # plot ibmesh
-            if self.envir.ibmesh is not None:
-                structures = mplot3d.art3d.Poly3DCollection(self.envir.ibmesh)
-                structures.set_color('g')
-                structures.set_alpha(0.3)
-                ax.add_collection3d(structures)
-
-            return ax, axHistx, axHisty, axHistz
-
-
-
     def __calc_basic_stats(self, DIM3, t_indx=None):
         ''' Return basic stats about % remaining and flow for plot printing.
         DIM3 indicates the dimension of the domain, bool
@@ -2668,7 +2668,7 @@ class swarm:
             aspectratio = self.envir.L[0]/self.envir.L[1]
             x_length = np.min((5*aspectratio+1,12))
             fig = plt.figure(figsize=(x_length,6))
-            ax, axHistx, axHisty = self.__plot_setup(fig)
+            ax, axHistx, axHisty = self.envir._plot_setup(fig)
 
             # scatter plot and time text
             ax.scatter(positions[:,0], positions[:,1], label='organism')
@@ -2697,7 +2697,7 @@ class swarm:
         else:
             # 3D plot
             fig = plt.figure(figsize=(10,5))
-            ax, axHistx, axHisty, axHistz = self.__plot_setup(fig)
+            ax, axHistx, axHisty, axHistz = self.envir._plot_setup(fig)
 
             # scatter plot and time text
             ax.scatter(positions[:,0], positions[:,1], positions[:,2],
@@ -2785,7 +2785,7 @@ class swarm:
             aspectratio = self.envir.L[0]/self.envir.L[1]
             x_length = np.min((5*aspectratio+1,12))
             fig = plt.figure(figsize=(x_length,6))
-            ax, axHistx, axHisty = self.__plot_setup(fig)
+            ax, axHistx, axHisty = self.envir._plot_setup(fig)
 
             scat = ax.scatter([], [], label='organism')
 
@@ -2818,7 +2818,7 @@ class swarm:
         else:
             ### 3D setup ###
             fig = plt.figure(figsize=(10,5))
-            ax, axHistx, axHisty, axHistz = self.__plot_setup(fig)
+            ax, axHistx, axHisty, axHistz = self.envir._plot_setup(fig)
 
             if downsamp is None:
                 scat = ax.scatter(self.pos_history[n0][:,0], self.pos_history[n0][:,1],
