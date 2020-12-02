@@ -1914,7 +1914,7 @@ class swarm:
 
     
     @staticmethod
-    def _apply_internal_BC(startpt, endpt, mesh, max_meshpt_dist):
+    def _apply_internal_BC(startpt, endpt, mesh, max_meshpt_dist, old_intersection=None):
         '''Apply internal boundaries to a trajectory starting and ending at
         startpt and endpt, returning a new endpt (or the original one) as
         appropriate.
@@ -1926,6 +1926,9 @@ class swarm:
             max_meshpt_dist: max distance between two points on a mesh element
                 (used to determine how far away from startpt to search for
                 mesh elements)
+            old_intersection: for internal use only, to check if we are
+                bouncing back and forth between two boundaries as a result of
+                a concave angle and the right kind of trajectory vector.
 
         Returns:
             newendpt: new end location for agent trajectory
@@ -1968,15 +1971,17 @@ class swarm:
         #   onto mesh and repeat processes as necessary until we have a final
         #   result.
         return swarm._project_and_slide(startpt, endpt, intersection,
-                                        close_mesh, max_meshpt_dist, DIM)
+                                        close_mesh, max_meshpt_dist, DIM,
+                                        old_intersection)
 
 
 
     @staticmethod
-    def _project_and_slide(startpt, endpt, intersection, mesh, max_meshpt_dist, DIM):
+    def _project_and_slide(startpt, endpt, intersection, mesh, max_meshpt_dist,
+                           DIM, old_intersection=None):
         '''Once we have an intersection, project and slide the remaining movement,
         and determine what happens if we fall off the edge of the simplex in
-        both convex and concave cases.
+        both obtuse and acute cases.
 
         Arguments:
             startpt: original start point of movement, before intersection
@@ -1987,6 +1992,9 @@ class swarm:
                 (used to determine how far away from startpt to search for
                 mesh elements) - for passthrough to possible recursion
             DIM: dimension of system, either 2 or 3
+            old_intersection: for internal use only, to check if we are
+                bouncing back and forth between two boundaries as a result of
+                a concave angle and the right kind of trajectory vector.
 
         Returns:
             newendpt: new endpoint for movement
@@ -2015,18 +2023,28 @@ class swarm:
             norm_out = (proj-vec)/np.linalg.norm(proj-vec)
         newendpt = intersection[0] + proj
 
-        # Detect sliding off 1D edge
+        ################################
+        ###########    2D    ###########
+        ################################
         if DIM == 2:
+            # Detect sliding off 1D edge
             mesh_el_len = np.linalg.norm(intersection[4] - intersection[3])
             Q0_dist = np.linalg.norm(newendpt-intersection[3])
             Q1_dist = np.linalg.norm(newendpt-intersection[4])
             if Q0_dist*(1+EPS) > mesh_el_len or Q1_dist*(1+EPS) > mesh_el_len:
-                ##### went past either Q0 or Q1 #####
-                # we check assuming the agent slid an additional EPS, because
-                #   if we end up in the non-convex case and fall off, we will
-                #   want to go EPS further so as to avoid corner penetration
+                ##########      Went past either Q0 or Q1      ##########
 
-                # check for new, concave crossing of simplex attached to the
+                # We check assuming the agent slid an additional EPS, because
+                #   if we end up in the non-concave case and fall off, we will
+                #   want to go EPS further so as to avoid corner penetration
+                #   The result of adding EPS in both the projection and normal
+                #   directions (below) is that some concave intersections will be
+                #   discovered (all acute, some obtuse) but others won't. However,
+                #   All undiscovered ones will be obtuse, so while re-detecting
+                #   the subsequent intersection is not the most efficient thing,
+                #   it should be stable.
+
+                # check for new, acute crossing of simplex attached to the
                 #   current simplex
                 pt_bool = np.linalg.norm(mesh.reshape(
                     (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-intersection[0],
@@ -2039,13 +2057,50 @@ class swarm:
                     newendpt+EPS*proj+EPS*norm_out, adj_mesh[:,0,:],
                     adj_mesh[:,1,:])
                 if adj_intersect is not None:
-                    # Convex intersection, repeat slide at this new intersection, 
-                    #   test for sliding off again, etc.
-                    return swarm._project_and_slide(intersection[0]+EPS*norm_out, 
-                                                    newendpt+EPS*proj+EPS*norm_out, 
-                                                    adj_intersect, mesh, 
-                                                    max_meshpt_dist, DIM)
-            # DIM == 2, adj_intersect is None: non-concave case
+                    ##########      Intersected adjoining element!      ##########
+                    # check that we haven't intersected this before
+                    if old_intersection is not None and\
+                        adj_intersect[3] == old_intersection[3] and\
+                        adj_intersect[4] == old_intersection[4]:
+                        # Going back and forth! Movement stops here.
+                        # Back away from the intersection point slightly for
+                        #   numerical stability.
+                        return adj_intersect[0] - EPS*proj
+                    # Concave intersection of segments. 
+                    # Determine if the intersection is acute or obtuse.
+                    if Q0_dist*(1+EPS) > mesh_el_len and Q0_dist*(1+EPS) > Q1_dist*(1+EPS):
+                        # went past Q1; base vectors off Q1 vertex
+                        idx = 4
+                        nidx = 3
+                    else:
+                        # went past Q0; base vectors off Q0 vertex
+                        idx = 3
+                        nidx = 4
+                    vec0 = intersection[nidx] - intersection[idx]
+                    adj_idx = np.argmin([adj_intersect[3]-intersection[idx],
+                                    adj_intersect[4]-intersection[idx]]) + 3
+                    vec1 = adj_intersect[adj_idx] - intersection[idx]
+                    # check angle
+                    if np.dot(vec0,vec1) >= 0:
+                        # Acute. Movement stops here.
+                        # Back away from the intersection point slightly for
+                        #   numerical stability.
+                        return adj_intersect[0] - EPS*proj
+                    else:
+                        # Obtuse. Repeat project_and_slide on new segment,
+                        #   but send along info about old segment so we don't
+                        #   get in an infinite loop.
+                        return swarm._project_and_slide(intersection[0]+EPS*norm_out, 
+                                                        newendpt+EPS*proj+EPS*norm_out, 
+                                                        adj_intersect, mesh, 
+                                                        max_meshpt_dist, DIM,
+                                                        intersection)
+
+            ##########      Did not intersect adjoining element!      ##########
+            # NOTE: There could still be a more obtuse adjoining elment.
+            #   But we will project along original heading as if there isn't one
+            #   and subsequently detect any intersections.
+            # DIM == 2, adj_intersect is None
             if Q0_dist >= mesh_el_len and Q0_dist >= Q1_dist:
                 ##### went past Q1 #####
                 # put a new start point at the point crossing+EPS and bring out
@@ -2055,8 +2110,10 @@ class swarm:
                 orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
                 newendpt = newstartpt + np.linalg.norm(newendpt-newstartpt)*orig_unit_vec
                 # repeat process to look for additional intersections
+                #   pass along current intersection in case of obtuse concave case
                 return swarm._apply_internal_BC(newstartpt, newendpt,
-                                                mesh, max_meshpt_dist)
+                                                mesh, max_meshpt_dist,
+                                                intersection)
             elif Q1_dist >= mesh_el_len:
                 ##### went past Q0 #####
                 newstartpt = intersection[3] + EPS*proj + EPS*norm_out
@@ -2064,25 +2121,32 @@ class swarm:
                 orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
                 newendpt = newstartpt + np.linalg.norm(newendpt-newstartpt)*orig_unit_vec
                 # repeat process to look for additional intersections
+                #   pass along current intersection in case of obtuse concave case
                 return swarm._apply_internal_BC(newstartpt, newendpt, 
-                                                mesh, max_meshpt_dist)
+                                                mesh, max_meshpt_dist,
+                                                intersection)
             else:
                 # otherwise, we end on the mesh element
                 return newendpt + EPS*norm_out
-        # Detect sliding off 2D edge using _seg_intersect_2D
+        
+        ################################
+        ###########    3D    ###########
+        ################################
         if DIM == 3:
+            # Detect sliding off 2D edge using _seg_intersect_2D
             Q0_list = np.array(intersection[3:])
             Q1_list = Q0_list[(1,2,0),:]
-            # go a little further along trajectory to treat concave case
+            # go a little further along trajectory to treat acute case
             tri_intersect = swarm._seg_intersect_2D(intersection[0],
                                                     newendpt + EPS*proj,
                                                     Q0_list, Q1_list)
-            # if we reach the triangle boundary, check for a concave crossing
+            # if we reach the triangle boundary, check for a acute crossing
             #   then project overshoot onto original heading and add to 
             #   intersection point
             if tri_intersect is not None:
-                ### check for new, concave crossing of simplex attached to ###
-                ###   the current simplex                                  ###
+                ##########      Went past triangle boundary      ##########
+                ### check for new, acute(-ish) crossing of simplex attached to ###
+                ###   the current simplex                                      ###
                 pt_bool = np.linalg.norm(mesh.reshape(
                     (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-intersection[0],
                     axis=1)<=np.linalg.norm(proj)
@@ -2095,21 +2159,61 @@ class swarm:
                     newendpt+EPS*proj+EPS*norm_out, adj_mesh[:,0,:],
                     adj_mesh[:,1,:], adj_mesh[:,2,:])
                 if adj_intersect is not None:
-                    # Convex intersection, repeat slide at this new intersection, 
-                    #   test for sliding off again, etc.
+                    ##########      Intersected adjoining element!      ##########
+                    # Acute or slightly obtuse intersection. In 3D, we will slide
+                    #   regardless of if it is acute or not.
+                    # First, Detect if we're hitting a simplex we've already 
+                    #   been on before. If so, we follow the intersection line.
+                    if old_intersection is not None and\
+                        adj_intersect[3] == old_intersection[3] and\
+                        adj_intersect[4] == old_intersection[4] and\
+                        adj_intersect[5] == old_intersection[5]:
+                        # Going back and forth between two elements. Project
+                        #   onto the line of intersection.
+                        # Find the points in common between adj_intersect and
+                        #   intersection
+                        dist_mat = distance.cdist(intersection[3:],adj_intersect[3:])
+                        pt_bool = np.isclose(dist_mat, np.zeros_like(dist_mat)).any(1)
+                        two_pts = intersection[3:][pt_bool]
+                        assert two_pts.shape[0] == 2, "Other than two points found?"
+                        assert two_pts.shape[1] == 3, "Points aren't 3D?"
+                        # Get a vector from these points
+                        vec_intersect = two_pts[1,:] - two_pts[0,:]
+                        vec_intersect /= np.linalg.norm(vec_intersect)
+                        # Back up a tad from the intersection point, and project
+                        #   leftover movement onto the intersection vector
+                        newstartpt = adj_intersect[0] - EPS*proj
+                        # Leave off EPS from leftover distance
+                        leftover_dist = np.linalg.norm(newendpt-adj_intersect[0])
+                        # Projection to get new endpoint
+                        newendpt = newstartpt + vec_intersect*leftover_dist
+                        # Check for more intersections
+                        return swarm._apply_internal_BC(newstartpt, newendpt,
+                                                        mesh, max_meshpt_dist)
+
+                    # Not an already discovered mesh element.
+                    # We slide. Pass along info about the old element.
                     return swarm._project_and_slide(intersection[0]+EPS*norm_out, 
                                                     newendpt+EPS*proj+EPS*norm_out, 
                                                     adj_intersect, mesh, 
-                                                    max_meshpt_dist, DIM)
-                ### DIM == 3, adj_intersect is None: non-concave case ###
-                # put the new start point on the edge of the simplex +EPS) and
+                                                    max_meshpt_dist, DIM,
+                                                    intersection)
+
+                ##########      Did not intersect adjoining element!      ##########
+                # NOTE: There could still be a more obtuse adjoining element.
+                #   But we will project along original heading as if there isn't
+                #   one and subsequently detect any intersections.
+                # DIM == 3, adj_intersect is None
+                # put the new start point on the edge of the simplex (+EPS) and
                 #   project remaining movement along original heading
                 newstartpt = tri_intersect[0] + EPS*proj + EPS*norm_out
                 orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
-                newendpt = newstartpt + np.linalg.norm(newendpt-newstartpt)*orig_unit_vec
+                # norm(newendpt - tri_intersect[0]) is the length of the overshoot.
+                newendpt = newstartpt + np.linalg.norm(newendpt-tri_intersect[0])*orig_unit_vec
                 # repeat process to look for additional intersections
                 return swarm._apply_internal_BC(newstartpt, newendpt, 
-                                                mesh, max_meshpt_dist)
+                                                mesh, max_meshpt_dist,
+                                                intersection)
             else:
                 # otherwise, we end on the mesh element
                 return newendpt + EPS*norm_out
@@ -2660,6 +2764,9 @@ class swarm:
             print('No position history! Plotting current position...')
             self.plot()
             return
+
+        if movie_filename is not None:
+            print("Creating video...")
         
         DIM3 = (len(self.envir.L) == 3)
 
