@@ -13,7 +13,7 @@ if platform == 'darwin': # OSX backend does not support blitting
 import argparse
 import numpy as np
 import shrimp_funcs
-import Planktos, data_IO, mv_swarm
+import Planktos, data_IO, motion
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-N", type=int, default=1000,
@@ -61,11 +61,11 @@ print('-------------------------------------------')
 
 class Bshrimp(Planktos.swarm):
 
-    def get_movement(self, dt, params=None):
+    def update_positions(self, dt, params=None):
         '''Use the new get_fluid_gradient method to advect the brine shrimp
         in the direction of slowest flow'''
         if self.envir.flow is None:
-            return super(Bshrimp, self).get_movement(dt, params)
+            super(Bshrimp, self).update_positions(dt, params)
         else:
             
             # get unit vector in direction of greatest descent
@@ -93,7 +93,7 @@ class Bshrimp(Planktos.swarm):
             # 50 mm variance in no flow... split between advection and diffusion
             mu = self.get_fluid_drift() + mvdir*np.sqrt(25)*scale
 
-            return mv_swarm.gaussian_walk(self, dt*mu, dt*25*np.eye(3))
+            self.positions += motion.gaussian_walk(self, dt*mu, dt*25*np.eye(3))
 
 
 

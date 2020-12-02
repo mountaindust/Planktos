@@ -1,7 +1,12 @@
 #! /usr/bin/env python3
 
 '''
-Library of functions for moving a provided swarm group.
+Library for different sorts of particle motion, including implementations or
+interfaces to various numerical methods for relevant equations of motion. Most
+of these will take in a swarm object from which information about the particles
+and their environment can be accessed, along with parameters. They will then
+return the new particle positions after a time dt, or Delta x depending on
+implementation.
 
 Created on Tues Jan 24 2017
 

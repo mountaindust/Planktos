@@ -28,7 +28,7 @@ from mpl_toolkits import mplot3d
 import matplotlib.cm as cm
 from matplotlib import animation
 from matplotlib.collections import LineCollection
-import mv_swarm
+import motion
 import data_IO
 
 __author__ = "Christopher Strickland"
@@ -1446,7 +1446,7 @@ class swarm:
             - 2D array: All positions as specified.
 
         To customize agent behavior, subclass this class and re-implement the
-        method get_movement (do not change the call signature).
+        method update_positions (do not change the call signature).
         '''
 
         # use a new, 3D default environment if one was not given
@@ -1580,12 +1580,12 @@ class swarm:
 
     def move(self, dt=1.0, params=None, update_time=True):
         '''Move all organisms in the swarm over an amount of time dt.
-        Do not override this method when subclassing - override get_movement
+        Do not override this method when subclassing - override update_positions
         instead!
 
         Arguments:
             dt: time-step for move
-            params: parameters to pass along to get_movement, if necessary
+            params: parameters to pass along to update_positions, if necessary
             update_time: whether or not to update the environment's time by dt
         '''
 
@@ -1595,7 +1595,7 @@ class swarm:
         # Check that something is left in the domain to move, and move it.
         if not np.all(self.positions.mask):
             # Update positions
-            self.positions += self.get_movement(dt, params)
+            self.update_positions(dt, params)
             # Update velocity of swarm
             self.velocity = (self.positions - self.pos_history[-1])/dt
             # Apply boundary conditions.
@@ -1623,13 +1623,18 @@ class swarm:
 
 
 
-    def get_movement(self, dt, params=None):
-        '''Return agent movement due to behavior, drift, etc.
+    def update_positions(self, dt, params=None):
+        '''Updates all agent positions after a time step of dt.
+
         THIS IS THE METHOD TO OVERRIDE IF YOU WANT DIFFERENT MOVEMENT!
-        Note: do not change the call signature.
-        The result of this method should be to return a vector (Delta x)
-        describing the change in position of each agent after a time step of 
-        length dt.
+        NOTE: Do not change the call signature.
+
+        This method must assign to self.positions the new positions of all 
+        agents following a time step of length dt, whether due to behavior, 
+        drift, or anything else. self.positions is an NxD masked array, where
+        N is the number of agents and D is the spatial dimension. The mask is
+        False if the corresponding agent is in the interior of the domain and 
+        True otherwise.
 
         What is included in this default implementation is a basic jitter behavior 
         with drift according to the fluid flow. As an example, the jitter is
@@ -1639,20 +1644,17 @@ class swarm:
         Arguments:
             dt: length of time step
             params: any other parameters necessary (optional)
-
-        Returns:
-            delta_x: change in position for each agent (ndarray)
         '''
 
         ### Active movement ###
         # Get jitter according to brownian motion for time dt
         mu = self.get_prop('mu')*dt
         cov = self.get_prop('cov')*dt
-        jitter = mv_swarm.gaussian_walk(self, mu, cov)
+        jitter = motion.gaussian_walk(self, mu, cov)
 
         ### Passive movement ###
         # Get fluid-based drift, add to Gaussian walk, and return
-        return jitter + self.get_fluid_drift()*dt
+        self.positions += jitter + self.get_fluid_drift()*dt
 
 
 

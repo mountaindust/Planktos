@@ -11,7 +11,7 @@ Email: cstric12@utk.edu
 import pytest
 import numpy as np
 import numpy.ma as ma
-import Planktos, mv_swarm
+import Planktos, motion
 
 ############                    Decorators                ############
 
@@ -31,12 +31,12 @@ class massive_swarm(Planktos.swarm):
             high_re = params
 
         # Get fluid-based drift and add to Gaussian bias
-        mu = mv_swarm.massive_drift(self, dt, high_re=high_re) + self.get_prop('mu')
+        mu = motion.massive_drift(self, dt, high_re=high_re) + self.get_prop('mu')
         #mu = mv_swarm.massive_drift(self, dt) + self.get_prop('mu')
 
         ### Active movement ###
         # Add jitter and move according to a Gaussian random walk.
-        self.positions += mv_swarm.gaussian_walk(self, mu*dt, self.get_prop('cov')*dt)
+        self.positions += motion.gaussian_walk(self, mu*dt, self.get_prop('cov')*dt)
 
 
 
