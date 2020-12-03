@@ -55,7 +55,7 @@ def test_IBAMR_load():
     assert [envir.flow[0].shape[dim] for dim in range(3)] == \
            [len(envir.flow_points[dim]) for dim in range(3)], \
            "Data dimensions must match mesh sizes."
-    assert envir.a is None, "Porous height should be reset after flow import."
+    assert envir.h_p is None, "Porous height should be reset after flow import."
     assert envir.time == 0.0, "Time should be reset after flow import."
     assert envir.time_history == [], "Time history should be reset after flow import."
 
@@ -106,7 +106,7 @@ def test_IBAMR_load():
     assert [envir.flow[0].shape[dim] for dim in range(1,4)] == \
            [len(envir.flow_points[dim]) for dim in range(3)], \
            "Data dimensions must match mesh sizes."
-    assert envir.a is None, "Porous height should be reset after flow import."
+    assert envir.h_p is None, "Porous height should be reset after flow import."
     assert envir.time == 0.0, "Time should be reset after flow import."
     assert envir.time_history == [], "Time history should be reset after flow import."
 
@@ -167,7 +167,7 @@ def test_vtu_load():
     assert [envir.flow[0].shape[dim] for dim in range(3)] == \
            [len(envir.flow_points[dim]) for dim in range(3)], \
            "Data dimensions must match mesh sizes."
-    assert envir.a is None, "Porous height should be reset after flow import."
+    assert envir.h_p is None, "Porous height should be reset after flow import."
     assert envir.time == 0.0, "Time should be reset after flow import."
     assert envir.time_history == [], "Time history should be reset after flow import."
 

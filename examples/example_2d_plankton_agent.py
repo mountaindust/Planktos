@@ -9,7 +9,7 @@ from plankton_agent import plankton
 
 p = plankton(swarm_size=100, init='random')
 U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-5,8,3)))
-p.envir.set_brinkman_flow(alpha=66, a=1.5, U=U, dpdx=np.ones(20)*0.22306,
+p.envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(20)*0.22306,
                           res=100, tspan=[0, 20])
 
 print('Moving plankton...')

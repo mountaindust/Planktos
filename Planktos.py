@@ -39,7 +39,8 @@ class environment:
 
     def __init__(self, Lx=10, Ly=10, Lz=None,
                  x_bndry='zero', y_bndry='zero', z_bndry='noflux', flow=None,
-                 flow_times=None, rho=None, mu=None, nu=None, init_swarms=None, units='m'):
+                 flow_times=None, rho=None, mu=None, nu=None, char_L=None, 
+                 init_swarms=None, units='m'):
         ''' Initialize environmental variables.
 
         Arguments:
@@ -62,6 +63,9 @@ class environment:
                 Auto-calculated if rho and nu are provided.
             nu: kinematic viscosity, m**2/s (optional, m here meaning length units).
                 Auto-calculated if rho and mu are provided.
+            char_L: characteristic length scale. Used for calculating Reynolds
+                number, especially in the case of immersed structures (ibmesh)
+                and/or when simulating inertial particles
             init_swarms: initial swarms in this environment
             units: length units to use, default is meters. Note that you will
                 manually need to change self.g (accel due to gravity) if using
@@ -170,8 +174,10 @@ class environment:
             self.mu = mu
             self.nu = nu
 
+        # characteristic length
+        self.char_L = char_L
         # porous region height
-        self.a = None
+        self.h_p = None
         # accel due to gravity
         self.g = 9.80665 # m/s**2
 
@@ -215,7 +221,7 @@ class environment:
 
 
 
-    def set_brinkman_flow(self, alpha, a, U, dpdx, res=101, tspan=None):
+    def set_brinkman_flow(self, alpha, h_p, U, dpdx, res=101, tspan=None):
         '''Specify fully developed 2D or 3D flow with a porous region.
         Velocity gradient is zero in the x-direction; all flow moves parallel to
         the x-axis. Porous region is the lower part of the y-domain (2D) or
@@ -225,7 +231,7 @@ class environment:
 
         Arguments:
             alpha: equal to 1/(hydraulic permeability). alpha=0 implies free flow (infinitely permeable)
-            a: height of porous region
+            h_p: height of porous region
             U: velocity at top of domain (v in input3d). scalar or list-like.
             dpdx: dp/dx change in momentum constant. scalar or list-like.
             res: number of points at which to resolve the flow (int), including boundaries
@@ -234,7 +240,7 @@ class environment:
 
         Sets:
             self.flow: [U.size by] res by res ndarray of flow velocity
-            self.a = a
+            self.h_p = h_p
 
         Calls:
             self.__set_flow_variables
@@ -269,10 +275,10 @@ class environment:
         # Get y-mesh
         if len(self.L) == 2:
             y_mesh = np.linspace(0, self.L[1], res)
-            b = self.L[1] - a
+            b = self.L[1] - h_p
         else:
             y_mesh = np.linspace(0, self.L[2], res)
-            b = self.L[2] - a
+            b = self.L[2] - h_p
 
         ##### Calculate flow velocity #####
         flow = np.zeros((len(U), res, res)) # t, y, x
@@ -282,9 +288,9 @@ class environment:
             if v != 0:
                 # Calculate C and D constants and then get A and B based on these
 
-                D = ((exp(-alpha*a)/(alpha**2*self.mu)*px - exp(-2*alpha*a)*(
+                D = ((exp(-alpha*h_p)/(alpha**2*self.mu)*px - exp(-2*alpha*h_p)*(
                     v/(1+alpha*b)+(2-alpha**2*b**2)*px/(2*alpha**2*self.mu*(1+alpha*b))))/
-                    (1-exp(-2*alpha*a)*((1-alpha*b)/(1+alpha*b))))
+                    (1-exp(-2*alpha*h_p)*((1-alpha*b)/(1+alpha*b))))
 
                 C = (v/(1+alpha*b) + (2-alpha**2*b**2)*px/((2*alpha**2*self.mu)*(1+alpha*b)) - 
                     D*(1-alpha*b)/(1+alpha*b))
@@ -292,7 +298,7 @@ class environment:
                 A = alpha*C - alpha*D
                 B = C + D - px/(alpha**2*self.mu)
 
-                for n, z in enumerate(y_mesh-a):
+                for n, z in enumerate(y_mesh-h_p):
                     if z > 0:
                         #Region I
                         flow[t,n,:] = z**2*px/(2*self.mu) + A*z + B
@@ -350,7 +356,7 @@ class environment:
                 else:
                     self.__set_flow_variables(tspan=tspan)
         self.__reset_flow_variables()
-        self.a = a
+        self.h_p = h_p
 
 
 
@@ -408,7 +414,7 @@ class environment:
 
         Sets:
             self.flow: [U.size by] res by res ndarray of flow velocity
-            self.a = a
+            self.h_p = a
 
         Calls:
             self.__set_flow_variables
@@ -469,7 +475,7 @@ class environment:
         self.__set_flow_variables()
         self.__reset_flow_variables()
         self.fluid_domain_LLC = None
-        self.a = h_p
+        self.h_p = h_p
 
 
 
@@ -497,7 +503,7 @@ class environment:
 
         Sets:
             self.flow: [U.size by] res by res ndarray of flow velocity
-            self.a = h
+            self.h_p = h
 
         Calls:
             self.__set_flow_variables
@@ -656,7 +662,7 @@ class environment:
         # housekeeping
         self.__reset_flow_variables()
         self.fluid_domain_LLC = None
-        self.a = h
+        self.h_p = h
 
 
 
@@ -1429,7 +1435,7 @@ class environment:
         '''To be used when the fluid flow changes. Resets all the helper
         parameters.'''
 
-        self.a = None
+        self.h_p = None
         self.tiling = None
         self.orig_L = None
         self.plot_structs = []
@@ -1479,10 +1485,10 @@ class environment:
                 axHisty.xaxis.set_major_locator(pruned_ticks)
 
             # add a grassy porous layer background (if porous layer present)
-            if self.a is not None:
+            if self.h_p is not None:
                 grass = np.random.rand(80)*self.L[0]
                 for g in grass:
-                    ax.axvline(x=g, ymax=self.a/self.L[1], color='.5')
+                    ax.axvline(x=g, ymax=self.h_p/self.L[1], color='.5')
 
             # plot any ghost structures
             for plot_func, args in zip(self.plot_structs, 
@@ -1547,12 +1553,12 @@ class environment:
             ax.set_zlabel('Z')
 
             # add a grassy porous layer background (if porous layer present)
-            if self.a is not None:
+            if self.h_p is not None:
                 grass = np.random.rand(120,2)
                 grass[:,0] *= self.L[0]
                 grass[:,1] *= self.L[1]
                 for g in grass:
-                    ax.plot([g[0],g[0]], [g[1],g[1]], [0,self.a],
+                    ax.plot([g[0],g[0]], [g[1],g[1]], [0,self.h_p],
                             'k-', alpha=0.5)
 
             # plot any structures

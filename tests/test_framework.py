@@ -110,7 +110,7 @@ def test_brinkman_2D():
     envir = Planktos.environment(Lx=10, Ly=10, x_bndry=('zero','zero'), 
                                y_bndry=('noflux','zero'), rho=1000, mu=5000)
     assert len(envir.L) == 2, "default dim is not 2"
-    envir.set_brinkman_flow(alpha=66, a=1.5, U=.5, dpdx=0.22306, res=101)
+    envir.set_brinkman_flow(alpha=66, h_p=1.5, U=.5, dpdx=0.22306, res=101)
     assert envir.flow_times is None, "flow_times should be None for stationary flow"
     assert len(envir.flow[0].shape) == 2, "Flow vector should be 2D"
     assert np.isclose(envir.flow[0][50,-1],.5), "top of the domain should match U"
@@ -193,7 +193,7 @@ def test_brinkman_2D():
 
     ########## Single swarm, time-dependent flow ##########
     envir = Planktos.environment(rho=1000, mu=20000)
-    envir.set_brinkman_flow(alpha=66, a=1.5, U=0.1*np.arange(-2,6),
+    envir.set_brinkman_flow(alpha=66, h_p=1.5, U=0.1*np.arange(-2,6),
                             dpdx=np.ones(8)*0.22306, res=101, tspan=[0, 10])
     assert envir.flow_times is not None, "flow_times unset"
     assert len(envir.flow_times) == 8, "flow_times don't match data"
@@ -239,7 +239,7 @@ def test_brinkman_2D():
     
 def test_multiple_2D_swarms():
     envir = Planktos.environment(rho=1000, mu=5000)
-    envir.set_brinkman_flow(alpha=66, a=1.5, U=.5, dpdx=0.22306, res=50)
+    envir.set_brinkman_flow(alpha=66, h_p=1.5, U=.5, dpdx=0.22306, res=50)
     envir.add_swarm()
     s2 = envir.add_swarm()
     assert len(envir.swarms) == 2, "Two swarms are not present"
@@ -266,7 +266,7 @@ def test_brinkman_3D():
     envir = Planktos.environment(Lx=50, Ly=50, Lz=50, x_bndry=('zero','zero'), 
                                y_bndry=('zero','zero'),
                                z_bndry=('noflux','noflux'), rho=1000, mu=250000)
-    envir.set_brinkman_flow(alpha=66, a=15, U=5, dpdx=0.22306, res=50)
+    envir.set_brinkman_flow(alpha=66, h_p=15, U=5, dpdx=0.22306, res=50)
     assert envir.flow_times is None, "flow_times should be None for stationary flow"
     assert len(envir.flow[0].shape) == 3, "Flow vector should be 3D"
 
@@ -318,7 +318,7 @@ def test_brinkman_3D():
     ########## Single swarm, time-dependent flow ##########
     envir = Planktos.environment(Lz=10, rho=1000, mu=1000)
     U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-3,6,2)))
-    envir.set_brinkman_flow(alpha=66, a=1.5, U=U, dpdx=np.ones(20)*0.22306,
+    envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(20)*0.22306,
                             tspan=[0, 40], res=50)
     # tile flow
     envir.tile_flow(2,1)
@@ -342,7 +342,7 @@ def test_brinkman_3D():
 
     # replace original flow for speed
     envir = Planktos.environment(Lz=10, rho=1000, mu=1000)
-    envir.set_brinkman_flow(alpha=66, a=1.5, U=U, dpdx=np.ones(20)*0.22306,
+    envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(20)*0.22306,
                             res=50, tspan=[0, 40])
     envir.add_swarm()
     assert envir.flow_times is not None, "flow_times unset"
@@ -361,7 +361,7 @@ def test_massive_physics():
     ### Get a 3D, time-dependent flow environment ###
     envir = Planktos.environment(Lz=10, rho=1000, mu=1000)
     U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-3,6,2)))
-    envir.set_brinkman_flow(alpha=66, a=1.5, U=U, dpdx=np.ones(20)*0.22306, 
+    envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(20)*0.22306, 
                             res=50, tspan=[0, 40])
     ### specify physical properties of swarm and move swarm with low Re ###
     phys = {'Cd':0.47, 'm':0.01}
