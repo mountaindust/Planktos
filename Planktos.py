@@ -1985,13 +1985,16 @@ class swarm:
 
 
 
-    def get_fluid_drift(self):
+    def get_fluid_drift(self, positions=None):
         '''Return fluid-based drift for all agents via interpolation.
+
+        Current swarm position is used unless alternative positions are explicitly
+        passed in.
         
         In the returned 2D ndarray, each row corresponds to an agent (in the
         same order as listed in self.positions) and each column is a dimension.
         '''
-        
+
         # 3D?
         DIM3 = (len(self.envir.L) == 3)
 
@@ -2005,22 +2008,29 @@ class swarm:
             if (not DIM3 and len(self.envir.flow[0].shape) == 2) or \
                (DIM3 and len(self.envir.flow[0].shape) == 3):
                 # temporally constant flow
-                return self._interpolate_flow(self.envir.flow, method='linear')
+                return self._interpolate_flow(self.envir.flow, 
+                                              positions=positions, 
+                                              method='linear')
             else:
                 # temporal flow. interpolate in time, and then in space.
                 return self._interpolate_flow(self._interpolate_temporal_flow(),
-                                             method='linear')
+                                              positions=positions,
+                                              method='linear')
 
 
 
-    def get_fluid_gradient(self):
+    def get_fluid_gradient(self, positions=None):
         '''Return the gradient of the magnitude of the fluid velocity at all
-        agent positions via linear interpolation of the gradient. Gradient is
-        calculated via second order accurate central differences with second 
-        order accuracy at the boundaries and saved in case it is needed again.
+        agent positions (or at provided positions) via linear interpolation of 
+        the gradient. Gradient is calculated via second order accurate central 
+        differences with second order accuracy at the boundaries and saved in 
+        case it is needed again.
         The gradient is linearly interpolated from the fluid grid to the
         agent locations.
         '''
+
+        if positions is None:
+            positions = self.positions
 
         TIME_DEP = len(self.envir.flow[0].shape) != len(self.envir.L)
         flow_grad = None
@@ -2050,12 +2060,12 @@ class swarm:
 
         # Interpolate the gradient at agent positions and return
         x_grad = interpolate.interpn(self.envir.flow_points, flow_grad[0],
-                                   self.positions, method='linear')
+                                     positions, method='linear')
         y_grad = interpolate.interpn(self.envir.flow_points, flow_grad[1],
-                                   self.positions, method='linear')
+                                     positions, method='linear')
         if len(self.envir.flow_points) == 3:
             z_grad = interpolate.interpn(self.envir.flow_points, flow_grad[2],
-                                         self.positions, method='linear')
+                                         positions, method='linear')
             return np.array([x_grad, y_grad, z_grad]).T
         else:
             return np.array([x_grad, y_grad]).T

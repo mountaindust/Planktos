@@ -68,59 +68,56 @@ def inertial_particles(swarm, dt):
                                                    
 
 
-def massive_drift(swarm, dt, net_g=0, high_re=False):
-    '''Get drift of the swarm due to background flow assuming massive particles 
-    with boyancy acceleration net_g.
+def highRe_massive_drift(swarm, net_g=0):
+    '''Get drift of the swarm due to background flow assuming Re > 10 with 
+    neutrally bouyant massive particles and net acceleration due to gravity net_g.
     Includes drag, inertia, and background flow velocity.
 
     Arguments:
         dt: time interval
         net_g: net acceleration due to gravity
-        high_re: If false (default), assume Re<0.1 for all agents. Otherwise,
-        assume Re > 10 for all agents.
-    
-    TODO: Note that we assume all members of a swarm are approx the same.
-    Requires that the following are specified in swarm.shared_props['phys']:
-        Cd: Drag coefficient
-        S: cross-sectional area of each agent
-        m: mass of each agent
-        L: diameter of the agent (low Re only)
 
-    Requires that the following are specified in envir:
+    Requires that the following are specified in either swarm.shared_props
+    (if uniform across agents) or swarm.props (for individual variation):
+        m: mass of each agent
+        Cd: Drag coefficient
+        cross_sec: cross-sectional area of each agent
+
+    Requires that the following are specified in the fluid environment:
         rho: fluid density
-        mu: dynamic viscosity (if low Re)
     '''
 
     # Get fluid velocity
     vel = swarm.get_fluid_drift()
 
-    # Check for swarm.shared_props['phys'] and other parameters
-    assert 'phys' in swarm.shared_props and\
-        isinstance(swarm.shared_props['phys'], dict), "swarm phys not specified"
-    for key in ['Cd', 'm']:
-        assert key in swarm.shared_props['phys'], "{} not found in swarm phys".format(key)
-    assert swarm.envir.rho is not None, "rho not specified"
-    if not high_re:
-        assert swarm.envir.mu is not None, "mu not specified"
-        assert 'diam' in swarm.shared_props, "diameter of agents not specified"
+    ##### Check for presence of required physical parameters #####
+    if 'm' in swarm.shared_props:
+        m = swarm.shared_props['m']
+    elif 'm' in swarm.props['m']:
+        m = swarm.props['m'].to_numpy()
     else:
-        assert 'S' in swarm.shared_props['phys'], "Cross-sectional area (S) not found in "+\
-        "swarm phys"
-
-    phys = swarm.shared_props['phys']
+        raise RuntimeError('Property m not found in swarm.shared_props or swarm.props.')
+    if 'Cd' in swarm.shared_props:
+        Cd = swarm.shared_props['Cd']
+    elif 'Cd' in swarm.props['Cd']:
+        Cd = swarm.props['Cd'].to_numpy()
+    else:
+        raise RuntimeError('Property Cd not found in swarm.shared_props or swarm.props.')
+    assert swarm.envir.rho is not None, "rho (fluid density) not specified"
+    if 'cross_sec' in swarm.shared_props:
+        cross_sec = swarm.shared_props['cross_sec']
+    elif 'cross_sec' in swarm.props['cross_sec']:
+        cross_sec = swarm.props['cross_sec'].to_numpy()
+    else:
+        raise RuntimeError('Property cross_sec not found in swarm.shared_props or swarm.props.')
 
     # Get acceleration of each agent in neutral boyancy
-    if high_re:
-        diff = np.linalg.norm(swarm.velocity-vel,axis=1)
-        dvdt = swarm.acceleration/phys['m'] -\
-        (swarm.envir.rho*phys['Cd']*phys['S']/2/phys['m'])*\
-        (swarm.velocity - vel)*np.stack((diff,diff,diff)).T
-    else:
-        dvdt = swarm.acceleration/phys['m'] -\
-        (swarm.envir.mu*phys['Cd']*swarm.shared_props['diam']/2/phys['m'])*\
-        (swarm.velocity - vel)
+    diff = np.linalg.norm(swarm.velocity-vel,axis=1)
+    dvdt = (swarm.envir.rho*Cd*cross_sec/2/m)*\
+    (vel - swarm.velocity)*np.stack((diff,diff,diff)).T
 
     # Add in accel due to gravity
     dvdt[:,-1] += net_g
+
     # Solve and return velocity of agents with an Euler step
     return dvdt*dt + swarm.velocity
