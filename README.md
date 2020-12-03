@@ -119,7 +119,6 @@ Class: swarm
     - `get_fluid_drift` get the fluid velocity at each agent's position via interpolation
     - `get_fluid_gradient` get the gradient of the magnitude of the fluid velocity
     at each agent's position via interpolation
-    - `get_projectile_motion` Return acceleration using equations of projectile motion. Includes drag, inertia, and background flow velocity. Does not include gravity.
     - `apply_boundary_condition` method used to enforce the boundary conditions during a move
     - `plot` plot the swarm's current position or a previous position at the time provided
     - `plot_all` plot all of the swarm's positions up to the current time

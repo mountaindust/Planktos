@@ -60,15 +60,66 @@ def gaussian_walk(swarm, mu, cov):
             else:
                 move[ii,:] = this_mu
         return move
+
+
+
+def inertial_particles(swarm, dt):
+    pass
                                                    
 
 
 def massive_drift(swarm, dt, net_g=0, high_re=False):
     '''Get drift of the swarm due to background flow assuming massive particles 
-    with boyancy accleration net_g'''
+    with boyancy acceleration net_g.
+    Includes drag, inertia, and background flow velocity.
+
+    Arguments:
+        dt: time interval
+        net_g: net acceleration due to gravity
+        high_re: If false (default), assume Re<0.1 for all agents. Otherwise,
+        assume Re > 10 for all agents.
+    
+    TODO: Note that we assume all members of a swarm are approx the same.
+    Requires that the following are specified in swarm.shared_props['phys']:
+        Cd: Drag coefficient
+        S: cross-sectional area of each agent
+        m: mass of each agent
+        L: diameter of the agent (low Re only)
+
+    Requires that the following are specified in envir:
+        rho: fluid density
+        mu: dynamic viscosity (if low Re)
+    '''
+
+    # Get fluid velocity
+    vel = swarm.get_fluid_drift()
+
+    # Check for swarm.shared_props['phys'] and other parameters
+    assert 'phys' in swarm.shared_props and\
+        isinstance(swarm.shared_props['phys'], dict), "swarm phys not specified"
+    for key in ['Cd', 'm']:
+        assert key in swarm.shared_props['phys'], "{} not found in swarm phys".format(key)
+    assert swarm.envir.rho is not None, "rho not specified"
+    if not high_re:
+        assert swarm.envir.mu is not None, "mu not specified"
+        assert 'diam' in swarm.shared_props, "diameter of agents not specified"
+    else:
+        assert 'S' in swarm.shared_props['phys'], "Cross-sectional area (S) not found in "+\
+        "swarm phys"
+
+    phys = swarm.shared_props['phys']
 
     # Get acceleration of each agent in neutral boyancy
-    dvdt = swarm.get_projectile_motion(high_re=high_re)
+    if high_re:
+        diff = np.linalg.norm(swarm.velocity-vel,axis=1)
+        dvdt = swarm.acceleration/phys['m'] -\
+        (swarm.envir.rho*phys['Cd']*phys['S']/2/phys['m'])*\
+        (swarm.velocity - vel)*np.stack((diff,diff,diff)).T
+    else:
+        dvdt = swarm.acceleration/phys['m'] -\
+        (swarm.envir.mu*phys['Cd']*swarm.shared_props['diam']/2/phys['m'])*\
+        (swarm.velocity - vel)
+
     # Add in accel due to gravity
     dvdt[:,-1] += net_g
     # Solve and return velocity of agents with an Euler step

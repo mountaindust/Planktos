@@ -1843,7 +1843,7 @@ class swarm:
 
     def calc_re(self, u):
         '''Calculate Reynolds number as experienced by the swarm based on 
-        environment variables and given flow velocity, u, and diam (in shared_props)'''
+        environment variables and given flow speed, u, and diam (in shared_props)'''
 
         if self.envir.rho is not None and self.envir.mu is not None and\
             'diam' in self.shared_props:
@@ -2042,62 +2042,6 @@ class swarm:
             return np.array([x_grad, y_grad, z_grad]).T
         else:
             return np.array([x_grad, y_grad]).T
-
-
-
-    def get_projectile_motion(self, high_re=False):
-        '''Return acceleration using equations of projectile motion.
-        Includes drag, inertia, and background flow velocity. Does not include
-        gravity.
-
-        Arguments:
-            high_re: If false (default), assume Re<0.1 for all agents. Otherwise,
-            assume Re > 10 for all agents.
-        
-        TODO: Note that we assume all members of a swarm are approx the same.
-        Requires that the following are specified in self.shared_props['phys']:
-            Cd: Drag coefficient
-            S: cross-sectional area of each agent
-            m: mass of each agent
-            L: diameter of the agent (low Re only)
-
-        Requires that the following are specified in envir:
-            rho: fluid density
-            mu: dynamic viscosity (if low Re)
-
-        Returns:
-            2D array of accelerations in each dimension for each agent.
-            Each row corresponds to an agent (in the same order as listed in 
-            self.positions) and each column is a dimension.
-        '''
-        
-        # Get fluid velocity
-        vel = self.get_fluid_drift()
-
-        # Check for self.shared_props['phys'] and other parameters
-        assert 'phys' in self.shared_props and\
-            isinstance(self.shared_props['phys'], dict), "swarm phys not specified"
-        for key in ['Cd', 'm']:
-            assert key in self.shared_props['phys'], "{} not found in swarm phys".format(key)
-        assert self.envir.rho is not None, "rho not specified"
-        if not high_re:
-            assert self.envir.mu is not None, "mu not specified"
-            assert 'diam' in self.shared_props, "diameter of agents not specified"
-        else:
-            assert 'S' in self.shared_props['phys'], "Cross-sectional area (S) not found in "+\
-            "swarm phys"
-
-        phys = self.shared_props['phys']
-
-        if high_re:
-            diff = np.linalg.norm(self.velocity-vel,axis=1)
-            return self.acceleration/phys['m'] -\
-            (self.envir.rho*phys['Cd']*phys['S']/2/phys['m'])*\
-            (self.velocity - vel)*np.stack((diff,diff,diff)).T
-        else:
-            return self.acceleration/phys['m'] -\
-            (self.envir.mu*phys['Cd']*self.shared_props['diam']/2/phys['m'])*\
-            (self.velocity - vel)
 
 
 
