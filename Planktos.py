@@ -39,7 +39,7 @@ class environment:
 
     def __init__(self, Lx=10, Ly=10, Lz=None,
                  x_bndry='zero', y_bndry='zero', z_bndry='noflux', flow=None,
-                 flow_times=None, rho=None, mu=None, init_swarms=None, units='mm'):
+                 flow_times=None, rho=None, mu=None, nu=None, init_swarms=None, units='m'):
         ''' Initialize environmental variables.
 
         Arguments:
@@ -56,10 +56,16 @@ class environment:
                 spaced and includes values on the domain bndry
             flow_times: [tstart, tend] or iterable of times at which flow is specified
                      or scalar dt; required if flow is time-dependent.
-            rho: fluid density of environment, kg/m**3 (optional, m here meaning length units)
-            mu: dynamic viscosity, kg/m/s, Pa*s, N*s/m**2 (optional, m here meaning length units) 
+            rho: fluid density of environment, kg/m**3 (optional, m here meaning length units).
+                Auto-calculated if mu and nu are provided.
+            mu: dynamic viscosity, kg/(m*s), Pa*s, N*s/m**2 (optional, m here meaning length units).
+                Auto-calculated if rho and nu are provided.
+            nu: kinematic viscosity, m**2/s (optional, m here meaning length units).
+                Auto-calculated if rho and mu are provided.
             init_swarms: initial swarms in this environment
-            units: length units to use
+            units: length units to use, default is meters. Note that you will
+                manually need to change self.g (accel due to gravity) if using
+                something else.
 
         Other properties:
             flow_points: points defining the spatial grid for flow data
@@ -142,18 +148,32 @@ class environment:
                 sw.envir = self
 
         ##### Fluid Variables #####
-
-        # Fluid density kg/(length units)**3
-        self.rho = rho
-        # Dynamic viscosity kg/length units/s
-        if mu == 0:
-            raise RuntimeError("Dynamic viscosity, mu, cannot be zero.")
-        else:
+        # rho: Fluid density kg/m**3
+        # mu: Dynamic viscosity kg/(m*s)
+        # nu: Kinematic viscosity m**2/s
+        if rho == 0 or mu == 0 or nu == 0:
+            raise RuntimeError("Viscosity and density of fluid cannot be zero.")
+        if rho is not None and mu is not None:
+            self.rho = rho
             self.mu = mu
+            self.nu = mu/rho
+        elif rho is not None and nu is not None:
+            self.rho = rho
+            self.mu = nu*rho
+            self.nu = nu
+        elif mu is not None and nu is not None:
+            self.rho = mu/nu
+            self.mu = mu
+            self.nu = nu
+        else:
+            self.rho = rho
+            self.mu = mu
+            self.nu = nu
+
         # porous region height
         self.a = None
         # accel due to gravity
-        self.g = 9.80665
+        self.g = 9.80665 # m/s**2
 
         ##### Immersed Boundary Mesh #####
 
@@ -1674,7 +1694,7 @@ class environment:
 class swarm:
 
     def __init__(self, swarm_size=100, envir=None, init='random', seed=None, 
-                 shared_props=None, props=None, char_L=None, phys=None, **kwargs):
+                 shared_props=None, props=None, diam=None, phys=None, **kwargs):
         ''' Initalizes planktos swarm in an environment.
 
         Arguments:
@@ -1684,7 +1704,7 @@ class swarm:
             seed: Seed for random number generator, int or None
             shared_props: dictionary of properties shared by all agents
             props: Pandas dataframe of individual agent properties
-            char_L: characteristic length
+            diam: diameter of the particles (optional)
             phys: dictionary of physical properties to be used by equations of motion
             kwargs: keyword arguments to be passed to the method for
                 initalizing positions
@@ -1718,8 +1738,8 @@ class swarm:
             self.shared_props['cov'] = np.eye(len(self.envir.L))
         else:
             self.shared_props = shared_props
-        if char_L is not None:
-            self.shared_props['char_L'] = char_L
+        if diam is not None:
+            self.shared_props['diam'] = diam
         if phys is not None:
             self.shared_props['phys'] = phys
 
@@ -1816,12 +1836,12 @@ class swarm:
 
 
     def calc_re(self, u):
-        '''Calculate Reynolds number based on environment variables and given
-        flow velocity, u, and char_L (in shared_props)'''
+        '''Calculate Reynolds number as experienced by the swarm based on 
+        environment variables and given flow velocity, u, and diam (in shared_props)'''
 
         if self.envir.rho is not None and self.envir.mu is not None and\
-            'char_L' in self.shared_props:
-            return self.envir.rho*u*self.shared_props['char_L']/self.envir.mu
+            'diam' in self.shared_props:
+            return self.envir.rho*u*self.shared_props['diam']/self.envir.mu
         else:
             raise RuntimeError("Parameters necessary for Re calculation are undefined.")
 
@@ -2056,7 +2076,7 @@ class swarm:
         assert self.envir.rho is not None, "rho not specified"
         if not high_re:
             assert self.envir.mu is not None, "mu not specified"
-            assert 'char_L' in self.shared_props, "characteristic length not specified"
+            assert 'diam' in self.shared_props, "diameter of agents not specified"
         else:
             assert 'S' in self.shared_props['phys'], "Cross-sectional area (S) not found in "+\
             "swarm phys"
@@ -2070,7 +2090,7 @@ class swarm:
             (self.velocity - vel)*np.stack((diff,diff,diff)).T
         else:
             return self.acceleration/phys['m'] -\
-            (self.envir.mu*phys['Cd']*self.shared_props['char_L']/2/phys['m'])*\
+            (self.envir.mu*phys['Cd']*self.shared_props['diam']/2/phys['m'])*\
             (self.velocity - vel)
 
 

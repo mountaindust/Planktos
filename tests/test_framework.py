@@ -365,7 +365,7 @@ def test_massive_physics():
                             res=50, tspan=[0, 40])
     ### specify physical properties of swarm and move swarm with low Re ###
     phys = {'Cd':0.47, 'm':0.01}
-    sw = massive_swarm(char_L=0.002, phys=phys)
+    sw = massive_swarm(diam=0.002, phys=phys)
     envir.add_swarm(sw)
     assert sw is envir.swarms[0], "swarm improperly assigned to environment"
     assert sw.shared_props['phys'] is not None, "Physical properties of swarm not assigned"
@@ -377,7 +377,7 @@ def test_massive_physics():
     ### do it again but for high Re ###
     envir.reset(rm_swarms=True)
     phys = {'Cd':0.47, 'm':1, 'S':np.pi*0.1**2}
-    sw = massive_swarm(char_L=0.2, phys=phys)
+    sw = massive_swarm(diam=0.2, phys=phys)
     envir.add_swarm(sw)
     for ii in range(10):
         sw.move(0.5, (np.zeros(3), 0.3*np.eye(3), True))
