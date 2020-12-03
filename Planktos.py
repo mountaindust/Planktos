@@ -1736,19 +1736,6 @@ class swarm:
                 print("Error: invalid environment object.")
                 raise
 
-        # Dictionary of shared properties
-        if shared_props is None:
-            self.shared_props = {}
-            # standard random walk
-            self.shared_props['mu'] = np.zeros(len(self.envir.L))
-            self.shared_props['cov'] = np.eye(len(self.envir.L))
-        else:
-            self.shared_props = shared_props
-        if diam is not None:
-            self.shared_props['diam'] = diam
-        if phys is not None:
-            self.shared_props['phys'] = phys
-
         # initialize random number generator
         self.rndState = np.random.RandomState(seed=seed)
 
@@ -1775,19 +1762,6 @@ class swarm:
                 for ii in range(len(self.envir.L)):
                     self.positions[:,ii] = init[ii]
 
-        # initialize Dataframe of non-shared properties
-        if props is None:
-            self.props = pd.DataFrame(
-                {'start_pos': [tuple(self.positions[ii,:]) for ii in range(swarm_size)]}
-            )
-            # with random cov
-            # self.props = pd.DataFrame(
-            #     {'start_pos': [tuple(self.positions[ii,:]) for ii in range(swarm_size)],
-            #     'cov': [np.eye(len(self.envir.L))*(0.5+np.random.rand()) for ii in range(swarm_size)]}
-            # )
-        else:
-            self.props = props
-
         # initialize agent velocities
         self.velocity = ma.zeros((swarm_size, len(self.envir.L)))
         self.velocity.harden_mask()
@@ -1801,6 +1775,43 @@ class swarm:
 
         # Apply boundary conditions in case of domain mismatch
         self.apply_boundary_conditions(no_ib=True)
+
+        # initialize Dataframe of non-shared properties
+        if props is None:
+            self.props = pd.DataFrame(
+                {'start_pos': [tuple(self.positions[ii,:]) for ii in range(swarm_size)]}
+            )
+            # with random cov
+            # self.props = pd.DataFrame(
+            #     {'start_pos': [tuple(self.positions[ii,:]) for ii in range(swarm_size)],
+            #     'cov': [np.eye(len(self.envir.L))*(0.5+np.random.rand()) for ii in range(swarm_size)]}
+            # )
+        else:
+            self.props = props
+
+        # Dictionary of shared properties
+        if shared_props is None:
+            self.shared_props = {}
+        else:
+            self.shared_props = shared_props
+
+        # Include parameters for a uniform standard random walk by default
+        if 'mu' not in self.shared_props and 'mu' not in self.props:
+            self.shared_props['mu'] = np.zeros(len(self.envir.L))
+        if 'cov' not in self.shared_props and 'cov' not in self.props:
+            self.shared_props['cov'] = np.eye(len(self.envir.L))
+
+        # Record any passed physical parameters in the appropriate place
+        if diam is not None:
+            try:
+                if len(diam) != swarm_size:
+                    raise RuntimeError("Iterable diam must have length swarm_size.")
+                else:
+                    self.props['diam'] = diam
+            except TypeError:
+                self.shared_props['diam'] = diam
+        if phys is not None:
+            self.shared_props['phys'] = phys
 
 
 
