@@ -181,6 +181,20 @@ class environment:
 
 
 
+    @property
+    def fluid_domain_LLC(self):
+        return self._fluid_domain_LLC
+
+    @fluid_domain_LLC.setter
+    def fluid_domain_LLC(self, LLC):
+        if LLC is not None and self.ibmesh is not None:
+            # move any ibmesh to match the LLC shift
+            for ii in range(len(LLC)):
+                self.ibmesh[:,:,ii] -= LLC[ii]
+        self._fluid_domain_LLC = LLC
+
+
+
     def set_brinkman_flow(self, alpha, a, U, dpdx, res=101, tspan=None):
         '''Specify fully developed 2D or 3D flow with a porous region.
         Velocity gradient is zero in the x-direction; all flow moves parallel to
@@ -1408,53 +1422,41 @@ class environment:
 
 
 
-    @property
-    def fluid_domain_LLC(self):
-        return self._fluid_domain_LLC
-
-    @fluid_domain_LLC.setter
-    def fluid_domain_LLC(self, LLC):
-        if LLC is not None and self.ibmesh is not None:
-            # move any ibmesh to match the LLC shift
-            for ii in range(len(LLC)):
-                self.ibmesh[:,:,ii] -= LLC[ii]
-        self._fluid_domain_LLC = LLC
-
-
-
-    def _plot_setup(self, fig):
+    def _plot_setup(self, fig, nohist=False):
         ''' Setup figures for plotting '''
 
+        ########## 2D plot ##########
         if len(self.L) == 2:
-            # 2D plot
+            if nohist:
+                ax = plt.axes(xlim=(0, self.L[0]), ylim=(0, self.L[1]))
+            else:
+                # chop up the axes to include histograms
+                left, width = 0.1, 0.65
+                bottom, height = 0.1, 0.65
+                bottom_h = left_h = left + width + 0.02
 
-            # chop up the axes to include histograms
-            left, width = 0.1, 0.65
-            bottom, height = 0.1, 0.65
-            bottom_h = left_h = left + width + 0.02
+                rect_scatter = [left, bottom, width, height]
+                rect_histx = [left, bottom_h, width, 0.2]
+                rect_histy = [left_h, bottom, 0.2, height]
 
-            rect_scatter = [left, bottom, width, height]
-            rect_histx = [left, bottom_h, width, 0.2]
-            rect_histy = [left_h, bottom, 0.2, height]
+                ax = plt.axes(rect_scatter, xlim=(0, self.L[0]), 
+                            ylim=(0, self.L[1]))
+                axHistx = plt.axes(rect_histx)
+                axHisty = plt.axes(rect_histy)
 
-            ax = plt.axes(rect_scatter, xlim=(0, self.L[0]), 
-                          ylim=(0, self.L[1]))
-            axHistx = plt.axes(rect_histx)
-            axHisty = plt.axes(rect_histy)
+                # no labels on histogram next to scatter plot
+                nullfmt = NullFormatter()
+                axHistx.xaxis.set_major_formatter(nullfmt)
+                axHisty.yaxis.set_major_formatter(nullfmt)
 
-            # no labels on histogram next to scatter plot
-            nullfmt = NullFormatter()
-            axHistx.xaxis.set_major_formatter(nullfmt)
-            axHisty.yaxis.set_major_formatter(nullfmt)
-
-            # set histogram limits/ticks
-            axHistx.set_xlim(ax.get_xlim())
-            axHisty.set_ylim(ax.get_ylim())
-            int_ticks = MaxNLocator(nbins='auto', integer=True)
-            pruned_ticks = MaxNLocator(prune='lower', nbins='auto',
-                                       integer=True, min_n_ticks=3)
-            axHistx.yaxis.set_major_locator(int_ticks)
-            axHisty.xaxis.set_major_locator(pruned_ticks)
+                # set histogram limits/ticks
+                axHistx.set_xlim(ax.get_xlim())
+                axHisty.set_ylim(ax.get_ylim())
+                int_ticks = MaxNLocator(nbins='auto', integer=True)
+                pruned_ticks = MaxNLocator(prune='lower', nbins='auto',
+                                        integer=True, min_n_ticks=3)
+                axHistx.yaxis.set_major_locator(int_ticks)
+                axHisty.xaxis.set_major_locator(pruned_ticks)
 
             # add a grassy porous layer background (if porous layer present)
             if self.a is not None:
@@ -1473,48 +1475,56 @@ class environment:
                 line_segments.set_color('k')
                 ax.add_collection(line_segments)
 
-            return ax, axHistx, axHisty
+            if nohist:
+                return ax
+            else:
+                return ax, axHistx, axHisty
 
+
+        ########## 3D plot ##########
         else:
-            # 3D plot
+            if nohist:
+                ax = mplot3d.Axes3D(fig)
+            else:
+                # chop up axes for a tight layout with histograms
+                left_s, width_s = 0.025, 0.45
+                bottom_s, height_s = 0.05, 0.9
+                bottom_z, bottom_y, bottom_x = 0.05, 0.375, 0.7
+                height_h, left_h, width_h = 0.25, 0.575, 0.4
 
-            # chop up axes for a tight layout with histograms
-            left_s, width_s = 0.025, 0.45
-            bottom_s, height_s = 0.05, 0.9
-            bottom_z, bottom_y, bottom_x = 0.05, 0.375, 0.7
-            height_h, left_h, width_h = 0.25, 0.575, 0.4
+                rect_scatter = [left_s, bottom_s, width_s, height_s]
+                rect_histx = [left_h, bottom_x, width_h, height_h]
+                rect_histy = [left_h, bottom_y, width_h, height_h]
+                rect_histz = [left_h, bottom_z, width_h, height_h]
 
-            rect_scatter = [left_s, bottom_s, width_s, height_s]
-            rect_histx = [left_h, bottom_x, width_h, height_h]
-            rect_histy = [left_h, bottom_y, width_h, height_h]
-            rect_histz = [left_h, bottom_z, width_h, height_h]
+                # create scatter plot
+                ax = mplot3d.Axes3D(fig, rect=rect_scatter) #fig.add_subplot(121, projection='3d')
+                ax.set_title('Organism positions')
+                # No real solution to 3D aspect ratio...
+                #ax.set_aspect('equal','box')
 
-            # create scatter plot
-            ax = mplot3d.Axes3D(fig, rect=rect_scatter) #fig.add_subplot(121, projection='3d')
+                # histograms
+                int_ticks = MaxNLocator(nbins='auto', integer=True)
+                axHistx = plt.axes(rect_histx)
+                axHistx.set_xlim((0, self.L[0]))
+                axHistx.yaxis.set_major_locator(int_ticks)
+                axHistx.set_ylabel('X    ', rotation=0)
+                axHisty = plt.axes(rect_histy)
+                axHisty.set_xlim((0, self.L[1]))
+                axHisty.yaxis.set_major_locator(int_ticks)
+                axHisty.set_ylabel('Y    ', rotation=0)
+                axHistz = plt.axes(rect_histz)
+                axHistz.set_xlim((0, self.L[2]))
+                axHistz.yaxis.set_major_locator(int_ticks)
+                axHistz.set_ylabel('Z    ', rotation=0)
+
+            # 3D plot labels and limits
             ax.set_xlim((0, self.L[0]))
             ax.set_ylim((0, self.L[1]))
             ax.set_zlim((0, self.L[2]))
             ax.set_xlabel('X')
             ax.set_ylabel('Y')
             ax.set_zlabel('Z')
-            ax.set_title('Organism positions')
-            # No real solution to 3D aspect ratio...
-            #ax.set_aspect('equal','box')
-
-            # histograms
-            int_ticks = MaxNLocator(nbins='auto', integer=True)
-            axHistx = plt.axes(rect_histx)
-            axHistx.set_xlim((0, self.L[0]))
-            axHistx.yaxis.set_major_locator(int_ticks)
-            axHistx.set_ylabel('X    ', rotation=0)
-            axHisty = plt.axes(rect_histy)
-            axHisty.set_xlim((0, self.L[1]))
-            axHisty.yaxis.set_major_locator(int_ticks)
-            axHisty.set_ylabel('Y    ', rotation=0)
-            axHistz = plt.axes(rect_histz)
-            axHistz.set_xlim((0, self.L[2]))
-            axHistz.yaxis.set_major_locator(int_ticks)
-            axHistz.set_ylabel('Z    ', rotation=0)
 
             # add a grassy porous layer background (if porous layer present)
             if self.a is not None:
@@ -1537,7 +1547,127 @@ class environment:
                 structures.set_alpha(0.3)
                 ax.add_collection3d(structures)
 
-            return ax, axHistx, axHisty, axHistz
+            if nohist:
+                return ax
+            else:
+                return ax, axHistx, axHisty, axHistz
+
+
+
+    def plot_flow(self, t=None, downsamp=None, interval=None, **kwargs):
+        '''Plot the velocity field of the fluid at a given time t or at all
+        times if t is None. If t is not in self.flow_times, the nearest time
+        will be shown without interpolation.
+
+        For densely sampled velocity fields, specify an int for downsamp to plot
+        every nth vector in each direction.
+
+        For time dependent velocity fields, interval is the delay between plotting
+        of each time's flow data, in milliseconds. Defaults to 500.
+        
+        Extra keyword arguments will be passed to pyplot's quiver.
+
+        2D arrow lengths are scaled based on the maximum of all the data over 
+        all times.
+        '''
+
+        # Locate the flow field that will need plotting, or None if not
+        #   time-dependent or we are going to plot all of them.
+        if t is not None and self.flow_times is not None:
+            loc = np.searchsorted(self.flow_times, t)
+            if loc == len(self.flow_times):
+                loc = -1
+            elif t < self.flow_times[loc]:
+                if (self.flow_times[loc]-t) > (t-self.flow_times[loc-1]):
+                    loc -= 1
+        else:
+            loc = None
+
+        if downsamp is None:
+            M = 1
+        else:
+            assert isinstance(downsamp, int), "downsamp must be int or None"
+            M = downsamp
+
+        def animate(n, quiver, kwargs):
+            time_text.set_text('time = {:.2f}'.format(self.flow_times[n]))
+            if len(self.L) == 2:
+                quiver.set_UVC(np.flipud(self.flow[0][n][::M,::M].T),
+                               np.flipud(self.flow[1][n][::M,::M].T))
+            else:
+                quiver = ax.quiver(x,y,z,self.flow[0][n][::M,::M,::M],
+                                         self.flow[1][n][::M,::M,::M],
+                                         self.flow[2][n][::M,::M,::M], **kwargs)
+                fig.canvas.draw()
+            return [quiver, time_text]
+
+        fig = plt.figure()
+        ax = self._plot_setup(fig, nohist=True)
+
+        ########## 2D Plot #########
+        if len(self.L) == 2:
+            # get worse case max velocity vector for scaling
+            max_u = self.flow[0].max(); max_v = self.flow[1].max()
+            max_mag = np.linalg.norm(np.array([max_u,max_v]))
+            if len(self.L) == len(self.flow[0].shape) or t is not None:
+                # Single-time plot.
+                if loc is None:
+                    ax.quiver(self.flow_points[0][::M], self.flow_points[1][::M],
+                              np.flipud(self.flow[0][::M,::M].T),
+                              np.flipud(self.flow[1][::M,::M].T), 
+                              scale=max_mag*5, **kwargs)
+                else:
+                    ax.quiver(self.flow_points[0][::M], self.flow_points[1][::M],
+                              np.flipud(self.flow[0][loc][::M,::M].T),
+                              np.flipud(self.flow[1][loc][::M,::M].T), 
+                              scale=max_mag*5, **kwargs)
+            else:
+                # Animation plot
+                # create quiver object
+                quiver = ax.quiver(self.flow_points[0][::M], self.flow_points[1][::M], 
+                                np.flipud(self.flow[0][0][::M,::M].T),
+                                np.flipud(self.flow[1][0][::M,::M].T), 
+                                scale=max_mag*5, **kwargs)
+                # textual info
+                time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
+                                    fontsize=12)
+        ########## 3D Plot #########        
+        else:
+            # get worse case max velocity vector for scaling
+            max_u = self.flow[0].max()
+            max_v = self.flow[1].max()
+            max_w = self.flow[2].max()
+            max_mag = np.linalg.norm(np.array([max_u,max_v,max_w]))
+            x, y, z = np.meshgrid(self.flow_points[0][::M], self.flow_points[1][::M], 
+                                  self.flow_points[2][::M])
+            if len(self.L) == len(self.flow[0].shape) or t is not None:
+                # Single-time plot.
+                if loc is None:
+                    ax.quiver(x,y,z,self.flow[0][::M,::M,::M],
+                                    self.flow[1][::M,::M,::M],
+                                    self.flow[2][::M,::M,::M], **kwargs)
+                else:
+                    ax.quiver(x,y,z,self.flow[0][loc][::M,::M,::M],
+                                    self.flow[1][loc][::M,::M,::M],
+                                    self.flow[2][loc][::M,::M,::M], **kwargs)
+            else:
+                # Animation plot
+                quiver = ax.quiver(x,y,z,self.flow[0][0][::M,::M,::M],
+                                         self.flow[1][0][::M,::M,::M],
+                                         self.flow[2][0][::M,::M,::M], **kwargs)
+                # textual info
+                time_text = ax.text2D(0.02, 1, 'time = {:.2f}'.format(
+                                  self.flow_times[0]),
+                                  transform=ax.transAxes, animated=True,
+                                  verticalalignment='top', fontsize=12)
+
+        if len(self.L) < len(self.flow[0].shape) and t is None:
+            frames = range(len(self.flow_times))
+            anim = animation.FuncAnimation(fig, animate, frames=frames,
+                                        fargs=(quiver,kwargs),
+                                        interval=500, repeat=False,
+                                        blit=True, save_count=len(frames))
+        plt.show()
 
 
 
