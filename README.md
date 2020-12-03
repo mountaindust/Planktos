@@ -88,6 +88,8 @@ Class: environment
     - `move_swarms` Call the move method of each swarm in the environment
     - `set_boundary_conditions` Check that each boundary condition is implemented before setting the bndry property.
     - `reset` Resets environment to time=0. Swarm history will be lost, and all swarms will maintain their last position. This is typically called automatically if the fluid flow has been altered by another method. If rm_swarms=True, remove all swarms.
+    - `plot_flow` Plot quiver velocity field in 2D or 3D, including time-varying flows. Probably not ever going to be pretty, but 
+    useful for a sanity check.
     
 Class: swarm
 
