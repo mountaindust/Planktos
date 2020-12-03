@@ -1700,7 +1700,8 @@ class environment:
 class swarm:
 
     def __init__(self, swarm_size=100, envir=None, init='random', seed=None, 
-                 shared_props=None, props=None, diam=None, phys=None, **kwargs):
+                 shared_props=None, props=None, diam=None, m=None, Cd=None, 
+                 cross_sec=None, **kwargs):
         ''' Initalizes planktos swarm in an environment.
 
         Arguments:
@@ -1710,8 +1711,10 @@ class swarm:
             seed: Seed for random number generator, int or None
             shared_props: dictionary of properties shared by all agents
             props: Pandas dataframe of individual agent properties
-            diam: diameter of the particles (optional)
-            phys: dictionary of physical properties to be used by equations of motion
+            diam: diameter of the particles (optional, float or iterable)
+            m: mass of the particles (optional, float or iterable)
+            Cd: drag coefficient of the particles (optional, float or iterable)
+            cross_sec: cross-sectional area of the particles (optional, float or iterable)
             kwargs: keyword arguments to be passed to the method for
                 initalizing positions
 
@@ -1802,16 +1805,17 @@ class swarm:
             self.shared_props['cov'] = np.eye(len(self.envir.L))
 
         # Record any passed physical parameters in the appropriate place
-        if diam is not None:
-            try:
-                if len(diam) != swarm_size:
-                    raise RuntimeError("Iterable diam must have length swarm_size.")
-                else:
-                    self.props['diam'] = diam
-            except TypeError:
-                self.shared_props['diam'] = diam
-        if phys is not None:
-            self.shared_props['phys'] = phys
+        phys_params = (diam, m, Cd, cross_sec)
+        phys_names = ('diam', 'm', 'Cd', 'cross_sec')
+        for obj, name in zip(phys_params, phys_names):
+            if obj is not None:
+                try:
+                    if len(obj) != swarm_size:
+                        raise RuntimeError("Iterable diam must have length swarm_size.")
+                    else:
+                        self.props[name] = obj
+                except TypeError:
+                    self.shared_props[name] = obj
 
 
 
@@ -1882,8 +1886,10 @@ class swarm:
         if not np.all(self.positions.mask):
             # Update positions
             self.update_positions(dt, params)
-            # Update velocity of swarm
-            self.velocity = (self.positions - self.pos_history[-1])/dt
+            # Update velocity and acceleration of swarm
+            velocity = (self.positions - self.pos_history[-1])/dt
+            self.acceleration = (velocity - self.velocity)/dt
+            self.velocity = velocity
             # Apply boundary conditions.
             self.apply_boundary_conditions()
 
@@ -1999,10 +2005,10 @@ class swarm:
             if (not DIM3 and len(self.envir.flow[0].shape) == 2) or \
                (DIM3 and len(self.envir.flow[0].shape) == 3):
                 # temporally constant flow
-                return self.__interpolate_flow(self.envir.flow, method='linear')
+                return self._interpolate_flow(self.envir.flow, method='linear')
             else:
                 # temporal flow. interpolate in time, and then in space.
-                return self.__interpolate_flow(self.__interpolate_temporal_flow(),
+                return self._interpolate_flow(self._interpolate_temporal_flow(),
                                              method='linear')
 
 
@@ -2036,7 +2042,7 @@ class swarm:
                 # first, interpolate flow in time. Then calculate gradient.
                 flow_grad = np.gradient(
                                 np.sqrt(np.sum(
-                                np.array(self.__interpolate_temporal_flow())**2,
+                                np.array(self._interpolate_temporal_flow())**2,
                                 axis=0)), *self.envir.flow_points, edge_order=2)
             # save the newly calculuate gradient
             self.envir.grad = flow_grad
@@ -2655,30 +2661,40 @@ class swarm:
 
 
 
-    def __interpolate_flow(self, flow, method):
-        '''Interpolate the fluid velocity field at swarm positions'''
+    def _interpolate_flow(self, flow, positions=None, method='linear'):
+        '''Interpolate the given fluid velocity field at current swarm 
+        positions (default) or at the positions indicated using the 
+        scipy.interpolate.interpn method indicated.'''
 
+        if positions is None:
+            positions = self.positions
+        
         x_vel = interpolate.interpn(self.envir.flow_points, flow[0],
-                                    self.positions, method=method)
+                                    positions, method=method)
         y_vel = interpolate.interpn(self.envir.flow_points, flow[1],
-                                    self.positions, method=method)
+                                    positions, method=method)
         if len(flow) == 3:
             z_vel = interpolate.interpn(self.envir.flow_points, flow[2],
-                                        self.positions, method=method)
+                                        positions, method=method)
             return np.array([x_vel, y_vel, z_vel]).T
         else:
             return np.array([x_vel, y_vel]).T
 
 
 
-    def __interpolate_temporal_flow(self, t_indx=None):
-        '''Linearly interpolate flow in time
-        t_indx is the time index for pos_history or None for current time
+    def _interpolate_temporal_flow(self, t_indx=None, time=None):
+        '''Linearly interpolate flow in time. Defaults to interpolating at
+        the current time, given by self.envir.time.
+
+        Arguments:
+            t_indx: Interpolate at a time referred to by
+                self.envir.time_history[t_indx]
+            time: Interpolate at a specific time
         '''
 
-        if t_indx is None:
+        if t_indx is None and time is None:
             time = self.envir.time
-        else:
+        elif t_indx is not None:
             time = self.envir.time_history[t_indx]
 
         # boundary cases
@@ -2721,7 +2737,7 @@ class swarm:
                 flow = self.envir.flow
             else:
                 # temporally changing flow
-                flow = self.__interpolate_temporal_flow(t_indx)
+                flow = self._interpolate_temporal_flow(t_indx)
             flow_spd = np.sqrt(flow[0]**2 + flow[1]**2)
             avg_spd_x = flow[0].mean()
             avg_spd_y = flow[1].mean()
@@ -2736,7 +2752,7 @@ class swarm:
                 flow = self.envir.flow
             else:
                 # temporally changing flow
-                flow = self.__interpolate_temporal_flow(t_indx)
+                flow = self._interpolate_temporal_flow(t_indx)
             flow_spd = np.sqrt(flow[0]**2 + flow[1]**2 + flow[2]**2)
             avg_spd_x = flow[0].mean()
             avg_spd_y = flow[1].mean()
