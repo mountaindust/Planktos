@@ -1,7 +1,14 @@
+- Replace gaussian walk with Euler-step SDE solver for robustness
+	- Ready get rid of old method. This will break pretty much all code that was
+	subclassing, so it will need to be re-written.
+	- A good example is how to combine the Euler SDE solver with inertial particle
+	motion. Should make it possible to pass in an ode to Euler_brownian_motion
+	which will both solve for mu and update swarm.velocities (in the case of equations
+	of motion which are second order). This will also require re-thinking swarm.velocities.
+	It should probably be set as the local flow velocity initially as default. Note that with a straight Euler solver, position updates will always be one dt behind the velocity updates. Instead, use a Taylor Series method in the Euler solver to make use of known
+	second derivatives: x_{t+1} = x_t + x_t'*dt + x_t''*dt^2/2
 - Replace projectile motion with finite-size inertial particles. See dropbox notes.
-- FTLE?
-- Start analysis library with some basic stuff. Include TDA.
-- Code up rolling locust swarm, then add Brinkman flow and gusts
-- documentation (/doc)
+- FTLE
+- sphinx documentation (/doc)
 
 --> Code release paper. Target: Mathematical Models and Methods in Applied Sciences

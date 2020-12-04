@@ -92,6 +92,12 @@ def Euler_brownian_motion(swarm, dt, mu, sigma=None):
             be an n x n array, or an N x n x n array where N is the number of
             agents. Since this is an Euler step solver, sigma is assumed constant
             across dt.
+
+    Note that if sigma is spatially dependent, a superior but similar numerical
+    method is that due to Milstein (1974). This might be useful for turbulant
+    models, or models where the energy of the random walk is dependent upon
+    local fluid properties. Since these are more niche scenarios, implementing
+    this here is currently left as a TODO.
     '''
     
     # get critical info about number of agents and dimension of domain
@@ -207,6 +213,12 @@ def Euler_brownian_fdrift_motion(swarm, dt, mu=None, sigma=None):
             be an n x n array, or an N x n x n array where N is the number of
             agents. Since this is an Euler step solver, sigma is assumed constant
             across dt.
+
+    Note that if sigma is spatially dependent, a superior but similar numerical
+    method is that due to Milstein (1974). This might be useful for turbulant
+    models, or models where the energy of the random walk is dependent upon
+    local fluid properties. Since these are more niche scenarios, implementing
+    this here is currently left as a TODO.
     '''
     
     # get critical info about number of agents and dimension of domain
