@@ -1819,6 +1819,43 @@ class swarm:
 
 
 
+    @property
+    def full_pos_history(self):
+        '''History of self.positions, including present time.'''
+        return [*self.pos_history, self.positions]
+
+
+
+    def save_positions_to_csv(self, filename, fmt='%.18e'):
+        '''Save the full position history, including present time, to a csv.
+        The format is as follows:
+        The first row contains time information. Each time stamp is repeated
+            D times, where D is the spatial dimension of the system.
+        Each subsequent row corresponds to a different agent in the swarm.
+        Reading across the columns of an agent row, position vectors are given
+            in groups of D columns for the x, y, (and z) direction. Each set
+            of D columns corresponds to a different time, as labeled by the
+            values in the first row.
+        The result is a csv that is N+1 by D*T, where N is the number of agents,
+            D is the dimension of the system, and T is the number of times
+            recorded.
+
+        Arguments:
+            filename: (string) path/name of the file to save the data to
+            fmt: fmt argument to be passed to numpy.savetxt
+        '''
+        if filename[-4:] != '.csv':
+            filename = filename + '.csv'
+
+        full_time = [*self.envir.time_history, self.envir.time]
+        tiled_time = np.repeat(full_time, self.positions.shape[1])
+
+        np.savetxt(filename, np.vstack((tiled_time, 
+                                        np.hstack(self.full_pos_history))),
+                                        fmt=fmt, delimiter=',')
+
+
+
     def change_envir(self, envir):
         '''Manages a change from one environment to another'''
 
@@ -1985,7 +2022,7 @@ class swarm:
 
 
 
-    def get_fluid_drift(self, positions=None):
+    def get_fluid_drift(self, time=None, positions=None):
         '''Return fluid-based drift for all agents via interpolation.
 
         Current swarm position is used unless alternative positions are explicitly
@@ -2013,7 +2050,7 @@ class swarm:
                                               method='linear')
             else:
                 # temporal flow. interpolate in time, and then in space.
-                return self._interpolate_flow(self._interpolate_temporal_flow(),
+                return self._interpolate_flow(self._interpolate_temporal_flow(time=time),
                                               positions=positions,
                                               method='linear')
 

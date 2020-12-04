@@ -20,6 +20,22 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 
 import numpy as np
 
+# Decorator to convert 2NxD ODE function into a flattened version that
+#   can be read into scipy.integrate.ode
+def flatten_ode(swarm):
+    '''Get a decorator capable of converting a flattened, passed in x into a 
+    2NxD shape for the ODE functions, and then take the result of the ODE
+    functions and reflatten. Need knowledge of the dimension of swarm for this.'''
+    dim = swarm.positions.shape[1]
+    N_dbl = swarm.positions.shape[0]*2
+    def decorator(func):
+        def wrapper(t,x):
+            result = func(t,np.reshape(x,(N_dbl,dim)))
+            return result.flatten()
+        return wrapper
+    return decorator
+    
+
 #############################################################################
 #                                                                           #
 #           PREDEFINED SWARM MOVEMENT BEHAVIOR DEFINED BELOW!               #
@@ -63,19 +79,46 @@ def gaussian_walk(swarm, mu, cov):
 
 
 
-def inertial_particles(swarm, dt):
-    pass
-                                                   
-
-
-def highRe_massive_drift(swarm, net_g=0):
-    '''Get drift of the swarm due to background flow assuming Re > 10 with 
-    neutrally bouyant massive particles and net acceleration due to gravity net_g.
-    Includes drag, inertia, and background flow velocity.
+def inertial_particles(swarm):
+    '''Function generator for ODEs governing small, rigid, spherical particles 
+    whose dynamics can be described by the linearized Maxey-Riley equation 
+    described in Haller and Sapsis (2008). Critically, it is assumed that 
+    mu = R/St, where R is the density ratio 2*rho_f/(rho_f+2*rho_p) and St is 
+    the Stokes number, is much greater than 1.
 
     Arguments:
-        dt: time interval
-        net_g: net acceleration due to gravity
+        swarm: swarm object
+
+    Requires that the following are specified in either swarm.shared_props
+    (if uniform across agents) or swarm.props (for individual variation):
+        rho or R: particle density or density ratio, respectively.
+            if supplying R, 0<R<2/3 corresponds to aerosols, R=2/3 is
+            neutrally buoyant, and 2/3<R<2 corresponds to bubbles.
+        diam: diameter of particle
+
+    Requires that the following are specified in the fluid environment:
+        TODO
+
+    References:
+        Maxey, M.R. and Riley, J.J. (1983). Equation of motion for a small rigid
+            sphere in a nonuniform flow. Phys. Fluids, 26(4), 883-889.
+        Haller, G. and Sapsis, T. (2008). Where do inertial particles go in
+            fluid flows? Physica D: Nonlinear Phenomena, 237(5), 573-583.
+    '''
+    
+    ##### Check for presence of required physical parameters #####
+    pass
+
+                                                   
+
+def highRe_massive_drift(swarm):
+    '''Function generator for ODEs governing high Re massive drift with
+    drag and inertia. Assumes Re > 10 with neutrally buoyant particles
+    possessing mass and a known cross-sectional area given by the property
+    cross_sec.
+
+    Arguments:
+        swarm: swarm object
 
     Requires that the following are specified in either swarm.shared_props
     (if uniform across agents) or swarm.props (for individual variation):
@@ -86,9 +129,6 @@ def highRe_massive_drift(swarm, net_g=0):
     Requires that the following are specified in the fluid environment:
         rho: fluid density
     '''
-
-    # Get fluid velocity
-    vel = swarm.get_fluid_drift()
 
     ##### Check for presence of required physical parameters #####
     if 'm' in swarm.shared_props:
@@ -104,6 +144,7 @@ def highRe_massive_drift(swarm, net_g=0):
     else:
         raise RuntimeError('Property Cd not found in swarm.shared_props or swarm.props.')
     assert swarm.envir.rho is not None, "rho (fluid density) not specified"
+    rho = swarm.envir.rho
     if 'cross_sec' in swarm.shared_props:
         cross_sec = swarm.shared_props['cross_sec']
     elif 'cross_sec' in swarm.props['cross_sec']:
@@ -112,12 +153,25 @@ def highRe_massive_drift(swarm, net_g=0):
         raise RuntimeError('Property cross_sec not found in swarm.shared_props or swarm.props.')
 
     # Get acceleration of each agent in neutral boyancy
-    diff = np.linalg.norm(swarm.velocity-vel,axis=1)
-    dvdt = (swarm.envir.rho*Cd*cross_sec/2/m)*\
-    (vel - swarm.velocity)*np.stack((diff,diff,diff)).T
+    def ODEs(t,x):
+        '''Given a current time and an array of shape 2NxD, where
+        the first N entries are the particle positions and the second N entries
+        are the particle velocities with D as the dimension.
 
-    # Add in accel due to gravity
-    dvdt[:,-1] += net_g
+        NOTE: This x will need to be flattened into a 2*N*D 1D array for use
+            in a scipy solver.
+        
+        Returns: 
+            a 2NxD array that gives dxdt=v then dvdt
+        '''
 
-    # Solve and return velocity of agents with an Euler step
-    return dvdt*dt + swarm.velocity
+        N = np.round(x.shape[0]/2)
+        fluid_vel = swarm.get_fluid_drift(t,x[:N])
+
+        diff = np.linalg.norm(x[N:]-fluid_vel,axis=1)
+        dvdt = (rho*Cd*cross_sec/2/m)*(fluid_vel-x[N:])*np.stack((diff,diff,diff)).T
+
+        return np.concatenate(x[N:],dvdt)
+
+    # Return equations
+    return ODEs
