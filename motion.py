@@ -43,6 +43,238 @@ def flatten_ode(swarm):
 #                                                                           #
 #############################################################################
 
+# TODO: diffusion in porous media https://en.wikipedia.org/wiki/Diffusion#Diffusion_in_porous_media
+
+
+def Euler_brownian_motion(swarm, dt, mu, sigma=None):
+    '''Uses the Euler-Maruyama method to solve the Ito SDE:
+    
+        :math:`dX_t = \mu dt + \sigma dW_t`
+
+    where :math:`\mu` passed in as a parameter. :math:`\sigma` can be provided a 
+    number of ways (see below), and can be dependent on time and/or position
+    (in addition to agent) if passed in directly.
+
+    Use this function when modeling something other than tracer particles, or
+    when modeling particles whose behavior changes based on the fluid velocity.
+
+    Arguments:
+        swarm: swarm object
+        dt: time interval
+        mu: drift as an array of shape N x n, where N is the number of agents
+            and n is the spatial dimension.
+        sigma: (optional) brownian diffusion coefficient. If None, use the
+            'cov' property of the swarm object, or lacking that, the 'D' property.
+            See below.
+
+    Returns:
+        New agent positions after Euler step.
+    
+    For convienence, :math:`\sigma` can be provided in several ways:
+        - As a covariance matrix, swarm.get_prop('cov'). This matrix is assumed
+            to be given by :math:`\sigma\sigma^T` and independent of time or
+            spatial location. The result is that the integrated Wiener process
+            over an interval dt has covariance swarm.get_prop('cov')*dt, and this
+            will be fed directly into the random number generator to produce
+            motion with these characteristics.
+            The covariance matrix should have shape n x n, where n is the spatial
+            dimension.
+        - As a diffusion tensor (matrix). The diffusion tensor is given by
+            :math:`D = 0.5*\sigma\sigma^T`, so it is really just half the
+            covariance matrix. This is the diffusion tensor as given in the
+            Fokker-Planck equation or the heat equation. As in the case of the
+            covariance matrix, it is assumed constant in time and space, and
+            should be specified as a swarm property with the name 'D'. Again,
+            it will be fed directly into the random number generator. 
+            D should be a matrix with shape n x n, where n is the spatial 
+            dimension.
+        - Given directly as an argument to this function. In this case, it should
+            be an n x n array, or an N x n x n array where N is the number of
+            agents. Since this is an Euler step solver, sigma is assumed constant
+            across dt.
+    '''
+    
+    # get critical info about number of agents and dimension of domain
+    n_agents = swarm.positions.shape[0]
+    n_dim = swarm.positions.shape[1]
+
+    # go ahead and multiply mu by dt, since that's all that happens in an
+    #   Euler step.
+    mu = dt*mu
+
+    # Depending on the type of diffusion coefficient/covariance passed in,
+    #   do different things.
+
+    if sigma is None:
+        try:
+            # go ahead and multiply cov by dt to get the final covariance for
+            #   this time step.
+            cov = dt*swarm.get_prop('cov')
+        except KeyError:
+            try:
+                # convert D to cov and multiply by dt
+                cov = dt*2*swarm.get_prop('D')
+            except KeyError as ke:
+                raise type(ke)('When sigma=None, swarm must have either a '+
+                               'cov or D property in swarm.shared_props or swarm.props.')
+        if cov.ndim == 2: # Single cov matrix
+            if not np.isclose(cov.trace(),0):
+                # mu already multiplied by dt
+                return swarm.positions + mu +\
+                    swarm.rndState.multivariate_normal(np.zeros(n_dim), cov, n_agents)
+            else:
+                # mu already multiplied by dt
+                return swarm.positions + mu
+        else: # vector of cov matrices
+            move = np.zeros_like(swarm.positions)
+            for ii in range(n_agents):
+                if mu.ndim > 1:
+                    this_mu = mu[ii,:]
+                else:
+                    this_mu = mu
+                if not np.isclose(cov[ii,:].trace(),0):
+                    move[ii,:] = this_mu +\
+                        swarm.rndState.multivariate_normal(np.zeros(n_dim), cov[ii,:])
+                else:
+                    move[ii,:] = this_mu
+            return swarm.positions + move
+    else:
+        # passed in sigma
+        if sigma.ndim == 2: # Single sigma for all agents
+            # mu already multiplied by dt
+            return swarm.positions + mu +\
+                sigma @ swarm.rndState.multivariate_normal(np.zeros(n_dim), np.eye(n_dim))
+        else: # Different sigma for each agent
+            move = np.zeros_like(swarm.positions)
+            for ii in range(n_agents):
+                if mu.ndim > 1:
+                    this_mu = mu[ii,:]
+                else:
+                    this_mu = mu
+                move[ii,:] = this_mu +\
+                    sigma[ii,...] @ swarm.rndState.multivariate_normal(np.zeros(n_dim), np.eye(n_dim))
+            return swarm.positions + move
+
+
+
+def Euler_brownian_fdrift_motion(swarm, dt, mu=None, sigma=None):
+    '''Uses the Euler-Maruyama method to solve the Ito SDE:
+    
+        :math:`dX_t = (f(X_t,t)+\mu)dt + \sigma dW_t`
+
+    where :math:`f(X_t,t)` is the fluid velocity at the current swarm position
+    and :math:`\mu` is the brownian drift given by swarm.get_prop('mu') or passed
+    in as a parameter. :math:`\sigma` can be provided a number of ways (see below).
+    Both :math:`\mu` and :math:`\sigma` can be dependent on time and/or position
+    (in addition to agent) if passed in directly.
+
+    Use this function for really basic behavior that does not depend on the fluid
+    and to which you would like fluid drift to be automatically added.
+
+    Arguments:
+        swarm: swarm object
+        dt: time interval
+        mu: (optional) brownian drift as an array of shape n or N x n, where n
+            is the spatial dimension and N is the number of agents. Since this
+            function takes an Euler step, mu is assumed constant across dt.
+            If None, use the mu available as a property of swarm
+        sigma: (optional) brownian diffusion coefficient. If None, use the
+            'cov' property of the swarm object, or lacking that, the 'D' property.
+            See below.
+
+    Returns:
+        New agent positions after Euler step.
+    
+    For convienence, :math:`\sigma` can be provided in several ways:
+        - As a covariance matrix, swarm.get_prop('cov'). This matrix is assumed
+            to be given by :math:`\sigma\sigma^T` and independent of time or
+            spatial location. The result is that the integrated Wiener process
+            over an interval dt has covariance swarm.get_prop('cov')*dt, and this
+            will be fed directly into the random number generator to produce
+            motion with these characteristics.
+            The covariance matrix should have shape n x n, where n is the spatial
+            dimension.
+        - As a diffusion tensor (matrix). The diffusion tensor is given by
+            :math:`D = 0.5*\sigma\sigma^T`, so it is really just half the
+            covariance matrix. This is the diffusion tensor as given in the
+            Fokker-Planck equation or the heat equation. As in the case of the
+            covariance matrix, it is assumed constant in time and space, and
+            should be specified as a swarm property with the name 'D'. Again,
+            it will be fed directly into the random number generator. 
+            D should be a matrix with shape n x n, where n is the spatial 
+            dimension.
+        - Given directly as an argument to this function. In this case, it should
+            be an n x n array, or an N x n x n array where N is the number of
+            agents. Since this is an Euler step solver, sigma is assumed constant
+            across dt.
+    '''
+    
+    # get critical info about number of agents and dimension of domain
+    n_agents = swarm.positions.shape[0]
+    n_dim = swarm.positions.shape[1]
+
+    # go ahead and multiply mu by dt, since that's all that happens in an
+    #   Euler step.
+    if mu is None:
+        mu = dt*swarm.get_prop('mu')
+    else:
+        mu = dt*mu
+
+    # Depending on the type of diffusion coefficient/covariance passed in,
+    #   do different things.
+
+    if sigma is None:
+        try:
+            # go ahead and multiply cov by dt to get the final covariance for
+            #   this time step.
+            cov = dt*swarm.get_prop('cov')
+        except KeyError:
+            try:
+                # convert D to cov and multiply by dt
+                cov = dt*2*swarm.get_prop('D')
+            except KeyError as ke:
+                raise type(ke)('When sigma=None, swarm must have either a '+
+                               'cov or D property in swarm.shared_props or swarm.props.')
+        if cov.ndim == 2: # Single cov matrix
+            if not np.isclose(cov.trace(),0):
+                # mu already multiplied by dt
+                return swarm.positions + swarm.get_fluid_drift()*dt + mu +\
+                    swarm.rndState.multivariate_normal(np.zeros(n_dim), cov, n_agents)
+            else:
+                # mu already multiplied by dt
+                return swarm.positions + swarm.get_fluid_drift()*dt + mu
+        else: # vector of cov matrices
+            move = np.zeros_like(swarm.positions)
+            for ii in range(n_agents):
+                if mu.ndim > 1:
+                    this_mu = mu[ii,:]
+                else:
+                    this_mu = mu
+                if not np.isclose(cov[ii,:].trace(),0):
+                    move[ii,:] = this_mu +\
+                        swarm.rndState.multivariate_normal(np.zeros(n_dim), cov[ii,:])
+                else:
+                    move[ii,:] = this_mu
+            return swarm.positions + swarm.get_fluid_drift()*dt + move
+    else:
+        # passed in sigma
+        if sigma.ndim == 2: # Single sigma for all agents
+            # mu already multiplied by dt
+            return swarm.positions + swarm.get_fluid_drift()*dt + mu +\
+                sigma @ swarm.rndState.multivariate_normal(np.zeros(n_dim), np.eye(n_dim))
+        else: # Different sigma for each agent
+            move = np.zeros_like(swarm.positions)
+            for ii in range(n_agents):
+                if mu.ndim > 1:
+                    this_mu = mu[ii,:]
+                else:
+                    this_mu = mu
+                move[ii,:] = this_mu +\
+                    sigma[ii,...] @ swarm.rndState.multivariate_normal(np.zeros(n_dim), np.eye(n_dim))
+            return swarm.positions + swarm.get_fluid_drift()*dt + move
+
+
+
 def gaussian_walk(swarm, mu, cov):
     ''' Get movement according to a gaussian distribution with given mean 
     and covarience matrix.
@@ -158,8 +390,8 @@ def highRe_massive_drift(swarm):
         the first N entries are the particle positions and the second N entries
         are the particle velocities with D as the dimension.
 
-        NOTE: This x will need to be flattened into a 2*N*D 1D array for use
-            in a scipy solver.
+        This x will need to be flattened into a 2*N*D 1D array for use
+            in a scipy solver. A decorator is provided for this purpose.
         
         Returns: 
             a 2NxD array that gives dxdt=v then dvdt

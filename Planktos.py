@@ -1975,15 +1975,17 @@ class swarm:
             params: any other parameters necessary (optional)
         '''
 
-        ### Active movement ###
-        # Get jitter according to brownian motion for time dt
-        mu = self.get_prop('mu')*dt
-        cov = self.get_prop('cov')*dt
-        jitter = motion.gaussian_walk(self, mu, cov)
+        self.positions = motion.Euler_brownian_fdrift_motion(self, dt)
 
-        ### Passive movement ###
-        # Get fluid-based drift, add to Gaussian walk, and return
-        self.positions += jitter + self.get_fluid_drift()*dt
+        # ### Active movement ###
+        # # Get jitter according to brownian motion for time dt
+        # mu = self.get_prop('mu')*dt
+        # cov = self.get_prop('cov')*dt
+        # jitter = motion.gaussian_walk(self, mu, cov)
+
+        # ### Passive movement ###
+        # # Get fluid-based drift, add to Gaussian walk, and return
+        # self.positions += jitter + self.get_fluid_drift()*dt
 
 
 
@@ -2004,7 +2006,7 @@ class swarm:
         elif prop_name in self.shared_props:
             return self.shared_props[prop_name].squeeze()
         else:
-            raise RuntimeError('Property {} not found.'.format(prop_name))
+            raise KeyError('Property {} not found.'.format(prop_name))
 
 
 
