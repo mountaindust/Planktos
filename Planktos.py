@@ -1316,7 +1316,7 @@ class environment:
         '''
 
         if isinstance(swarm_s, swarm):
-            swarm_s.change_envir(self)
+            swarm_s._change_envir(self)
         else:
             return swarm(swarm_s, self, init=init, seed=seed, **kwargs)
             
@@ -1856,7 +1856,7 @@ class swarm:
 
 
 
-    def change_envir(self, envir):
+    def _change_envir(self, envir):
         '''Manages a change from one environment to another'''
 
         if self.positions.shape[1] != len(envir.L):

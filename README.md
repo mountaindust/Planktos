@@ -96,6 +96,7 @@ Class: swarm
 - Properties
     - `positions` list of current spatial positions, one for each agent
     - `pos_history` list of previous "positions" lists
+    - `full_pos_history` list of both previous and current spatial positions
     - `velocity` list of current velocities, one for each agent (for use in
     projectile motion)
     - `acceleration` list of current accelerations, one for each agent (for use
@@ -105,16 +106,20 @@ Class: swarm
     - `shared_props` properties shared by all members of the swarm. Includes:
         - `mu` default mean for Gaussian walk (zeros)
         - `cov` covariance matrix for Gaussian walk (identity matrix)
-        - `char_L` characteristic length for agents' Reynolds number (if provided)
-        - `phys` dictionary of physical attributes (if provided, for use in projectile motion)
-    - `props` Pandas DataFrame of properties that vary by individual agent.
+        - `diam` characteristic length for agents' Reynolds number (if provided)
+        - `m` mass of agents (if provided)
+        - `Cd` drag coefficient of agents (if provided)
+        - `cross_sec` cross sectional area of agents (if provided)
+    - `props` Pandas DataFrame of properties that vary by individual agent. Any
+    of the properties mentioned under shared_props above can be provided here
+    instead.
 - Methods
-    - `change_envir` manages a change from one environment to another
+    - `save_positions_to_csv` save all current and past agent positions to csv
     - `calc_re` Calculate the Reynolds number based on environment variables.
-    Requires rho and mu to be set in the environment, and char_L to be set in swarm
+    Requires rho and mu to be set in the environment, and diam to be set in swarm
     - `move` move each agent in the swarm. Do not override: see update_positions.
     - `update_positions` updates the agents' physical locations. OVERRIDE THIS WHEN SUBCLASSING!
-    - `get_prop` return the property requested as either a single value (if shared) or a numpy array
+    - `get_prop` return the property requested as either a single value (if shared) or a numpy array (if varying by individual)
     - `add_prop` add a new property and check that it isn't in both props and shared_props
     - `get_fluid_drift` get the fluid velocity at each agent's position via interpolation
     - `get_fluid_gradient` get the gradient of the magnitude of the fluid velocity
