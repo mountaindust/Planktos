@@ -1418,6 +1418,36 @@ class environment:
 
 
 
+    def interpolate_temporal_flow(self, t_indx=None, time=None):
+        '''Linearly interpolate flow in time. Defaults to interpolating at
+        the current time, given by self.time.
+
+        Arguments:
+            t_indx: Interpolate at a time referred to by
+                self.envir.time_history[t_indx]
+            time: Interpolate at a specific time
+        '''
+
+        if t_indx is None and time is None:
+            time = self.time
+        elif t_indx is not None:
+            time = self.time_history[t_indx]
+
+        # boundary cases
+        if time <= self.flow_times[0]:
+            return [f[0, ...] for f in self.flow]
+        elif time >= self.flow_times[-1]:
+            return [f[-1, ...] for f in self.flow]
+        else:
+            # linearly interpolate
+            indx = np.searchsorted(self.flow_times, time)
+            diff = self.flow_times[indx] - time
+            dt = self.flow_times[indx] - self.flow_times[indx-1]
+            return [f[indx, ...]*(dt-diff)/dt + f[indx-1, ...]*diff/dt
+                    for f in self.flow]
+
+
+
     def reset(self, rm_swarms=False):
         '''Resets environment to time=0. Swarm history will be lost, and all
         swarms will maintain their last position and velocities. 
@@ -1986,16 +2016,6 @@ class swarm:
 
         return motion.Euler_brownian_fdrift_motion(self, dt)
 
-        # ### Active movement ###
-        # # Get jitter according to brownian motion for time dt
-        # mu = self.get_prop('mu')*dt
-        # cov = self.get_prop('cov')*dt
-        # jitter = motion.gaussian_walk(self, mu, cov)
-
-        # ### Passive movement ###
-        # # Get fluid-based drift, add to Gaussian walk, and return
-        # self.positions += jitter + self.get_fluid_drift()*dt
-
 
 
     def get_prop(self, prop_name):
@@ -2061,7 +2081,7 @@ class swarm:
                                               method='linear')
             else:
                 # temporal flow. interpolate in time, and then in space.
-                return self._interpolate_flow(self._interpolate_temporal_flow(time=time),
+                return self._interpolate_flow(self.envir.interpolate_temporal_flow(time=time),
                                               positions=positions,
                                               method='linear')
 
@@ -2100,7 +2120,7 @@ class swarm:
                 # first, interpolate flow in time. Then calculate gradient.
                 flow_grad = np.gradient(
                                 np.sqrt(np.sum(
-                                np.array(self._interpolate_temporal_flow())**2,
+                                np.array(self.envir.interpolate_temporal_flow())**2,
                                 axis=0)), *self.envir.flow_points, edge_order=2)
             # save the newly calculuate gradient
             self.envir.grad = flow_grad
@@ -2740,36 +2760,6 @@ class swarm:
 
 
 
-    def _interpolate_temporal_flow(self, t_indx=None, time=None):
-        '''Linearly interpolate flow in time. Defaults to interpolating at
-        the current time, given by self.envir.time.
-
-        Arguments:
-            t_indx: Interpolate at a time referred to by
-                self.envir.time_history[t_indx]
-            time: Interpolate at a specific time
-        '''
-
-        if t_indx is None and time is None:
-            time = self.envir.time
-        elif t_indx is not None:
-            time = self.envir.time_history[t_indx]
-
-        # boundary cases
-        if time <= self.envir.flow_times[0]:
-            return [f[0, ...] for f in self.envir.flow]
-        elif time >= self.envir.flow_times[-1]:
-            return [f[-1, ...] for f in self.envir.flow]
-        else:
-            # linearly interpolate
-            indx = np.searchsorted(self.envir.flow_times, time)
-            diff = self.envir.flow_times[indx] - time
-            dt = self.envir.flow_times[indx] - self.envir.flow_times[indx-1]
-            return [f[indx, ...]*(dt-diff)/dt + f[indx-1, ...]*diff/dt
-                    for f in self.envir.flow]
-
-
-
     def __calc_basic_stats(self, DIM3, t_indx=None):
         ''' Return basic stats about % remaining and flow for plot printing.
         DIM3 indicates the dimension of the domain, bool
@@ -2795,7 +2785,7 @@ class swarm:
                 flow = self.envir.flow
             else:
                 # temporally changing flow
-                flow = self._interpolate_temporal_flow(t_indx)
+                flow = self.envir.interpolate_temporal_flow(t_indx)
             flow_spd = np.sqrt(flow[0]**2 + flow[1]**2)
             avg_spd_x = flow[0].mean()
             avg_spd_y = flow[1].mean()
@@ -2810,7 +2800,7 @@ class swarm:
                 flow = self.envir.flow
             else:
                 # temporally changing flow
-                flow = self._interpolate_temporal_flow(t_indx)
+                flow = self.envir.interpolate_temporal_flow(t_indx)
             flow_spd = np.sqrt(flow[0]**2 + flow[1]**2 + flow[2]**2)
             avg_spd_x = flow[0].mean()
             avg_spd_y = flow[1].mean()
