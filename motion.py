@@ -99,11 +99,14 @@ def Euler_brownian_motion(swarm, dt, mu, sigma=None):
             agents. Since this is an Euler step solver, sigma is assumed constant
             across dt.
 
-    Note that if sigma is spatially dependent, a superior but similar numerical
-    method is that due to Milstein (1974). This might be useful for turbulant
-    models, or models where the energy of the random walk is dependent upon
-    local fluid properties. Since these are more niche scenarios, implementing
-    this here is currently left as a TODO.
+    Note that if sigma is spatially dependent, in order to maintain strong order
+    1 convergence we need the method due to Milstein (1974) (see Kloeden and Platen). 
+    This might be useful for turbulant models, or models where the energy of the 
+    random walk is dependent upon local fluid properties. Since these are more 
+    niche scenarios, implementing this here is currently left as a TODO. We
+    should implement a Stratonovich function call at that time too, because
+    with a spatially dependent sigma, Ito and Stratonovich are no longer
+    equivalent.
     '''
     
     # get critical info about number of agents and dimension of domain
@@ -297,42 +300,6 @@ def Euler_brownian_fdrift_motion(swarm, dt, mu=None, sigma=None):
                 move[ii,:] = this_mu +\
                     sigma[ii,...] @ swarm.rndState.multivariate_normal(np.zeros(n_dim), np.eye(n_dim))
             return swarm.positions + swarm.get_fluid_drift()*dt + move
-
-
-
-def gaussian_walk(swarm, mu, cov):
-    ''' Get movement according to a gaussian distribution with given mean 
-    and covarience matrix.
-
-    Arguments:
-        swarm: swarm.positions (to be read-only in this function!)
-        mu: N ndarray or kxN ndarray (k agents, N dim) giving the drift
-        cov: NxN ndarray or kxNxN ndarray giving the covariance
-        dt: time interval
-    '''
-
-    # get critical info about number of agents and dimension of domain
-    n_agents = swarm.positions.shape[0]
-    n_dim = swarm.positions.shape[1]
-
-    if cov.ndim == 2: # Single cov matrix
-        if not np.isclose(cov.trace(),0):
-            return swarm.rndState.multivariate_normal(np.zeros(n_dim), cov, 
-                n_agents) + mu
-        else:
-            return mu
-    else: # vector of cov matrices
-        move = np.zeros_like(swarm.positions)
-        for ii in range(n_agents):
-            if mu.ndim > 1:
-                this_mu = mu[ii,:]
-            else:
-                this_mu = mu
-            if not np.isclose(cov[ii,:].trace(),0):
-                move[ii,:] = swarm.rndState.multivariate_normal(this_mu, cov[ii,:])
-            else:
-                move[ii,:] = this_mu
-        return move
 
 
 

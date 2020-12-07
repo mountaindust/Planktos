@@ -93,7 +93,7 @@ class Bshrimp(Planktos.swarm):
             # 50 mm variance in no flow... split between advection and diffusion
             mu = self.get_fluid_drift() + mvdir*np.sqrt(25)*scale
 
-            return self.positions + motion.gaussian_walk(self, dt*mu, dt*25*np.eye(3))
+            return motion.Euler_brownian_motion(self, dt, mu)
 
 
 

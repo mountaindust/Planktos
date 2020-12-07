@@ -67,4 +67,4 @@ class plankton(Planktos.swarm):
             drift = fluid_drift + resist + self.get_prop('mu')
 
             # Return movement according to random walk with drift
-            return self.positions + motion.gaussian_walk(self, drift*dt, self.get_prop('cov')*dt)
+            return motion.Euler_brownian_motion(self, dt, drift)
