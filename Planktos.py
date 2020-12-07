@@ -1426,6 +1426,9 @@ class environment:
             t_indx: Interpolate at a time referred to by
                 self.envir.time_history[t_indx]
             time: Interpolate at a specific time
+
+        Returns:
+            interpolated flow field as a list of ndarrays
         '''
 
         if t_indx is None and time is None:
@@ -1445,6 +1448,39 @@ class environment:
             dt = self.flow_times[indx] - self.flow_times[indx-1]
             return [f[indx, ...]*(dt-diff)/dt + f[indx-1, ...]*diff/dt
                     for f in self.flow]
+
+
+
+    def get_mean_fluid_speed(self):
+        '''Return the mean fluid speed at the current time, temporally
+        interpolating the flow field if necessary. For use in calculating
+        Reynolds number.'''
+
+        DIM3 = (len(self.L) == 3)
+
+        if (not DIM3 and len(self.flow[0].shape) == 2) or \
+            (DIM3 and len(self.flow[0].shape) == 3):
+            # temporally constant flow
+            flow_now = self.flow
+        else:
+            # temporal flow. interpolate in time, and then in space.
+            flow_now = self.interpolate_temporal_flow()
+
+        if DIM3:
+            fluid_speed = np.sqrt(flow_now[0]**2+flow_now[1]**2+flow_now[2]**2)
+        else:
+            fluid_speed = np.sqrt(flow_now[0]**2+flow_now[1]**2)
+
+        return np.mean(fluid_speed)
+
+
+
+    @property
+    def Re(self):
+        '''Return the Reynolds number at the current time based on mean fluid
+        speed. Must have set self.char_L and self.nu'''
+
+        return self.get_mean_fluid_speed()*self.char_L/self.nu
 
 
 
