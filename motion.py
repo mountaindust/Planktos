@@ -111,7 +111,7 @@ def Euler_brownian_motion(swarm, dt, mu, sigma=None):
     n_dim = swarm.positions.shape[1]
 
     if callable(mu):
-        mu = mu(swarm.envir.time, np.vstack((swarm.positions,swarm.velocity)))
+        mu = mu(swarm.envir.time, np.vstack((swarm.positions,swarm.velocities)))
 
     # Take Euler step of deterministic part, possibly with Taylor series method
     if mu.shape[0] == n_agents:

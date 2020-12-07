@@ -1766,12 +1766,12 @@ class swarm:
                     self.positions[:,ii] = init[ii]
 
         # initialize agent velocities
-        self.velocity = ma.zeros((swarm_size, len(self.envir.L)))
-        self.velocity.harden_mask()
+        self.velocities = ma.zeros((swarm_size, len(self.envir.L)))
+        self.velocities.harden_mask()
 
         # initialize agent accelerations
-        self.acceleration = ma.zeros((swarm_size, len(self.envir.L)))
-        self.acceleration.harden_mask()
+        self.accelerations = ma.zeros((swarm_size, len(self.envir.L)))
+        self.accelerations.harden_mask()
 
         # Initialize position history
         self.pos_history = []
@@ -1863,8 +1863,8 @@ class swarm:
             if self.positions.shape[1] > len(envir.L):
                 # Project swarm down to 2D
                 self.positions = self.positions[:,:2]
-                self.velocity = self.velocity[:,:2]
-                self.acceleration = self.acceleration[:,:2]
+                self.velocities = self.velocities[:,:2]
+                self.accelerations = self.accelerations[:,:2]
                 # Update known properties
                 if 'mu' in self.shared_props:
                     self.shared_props['mu'] = self.shared_props['mu'][:2]
@@ -1925,8 +1925,8 @@ class swarm:
             self.update_positions(dt, params)
             # Update velocity and acceleration of swarm
             velocity = (self.positions - self.pos_history[-1])/dt
-            self.acceleration = (velocity - self.velocity)/dt
-            self.velocity = velocity
+            self.accelerations = (velocity - self.velocities)/dt
+            self.velocities = velocity
             # Apply boundary conditions.
             self.apply_boundary_conditions()
 
@@ -2171,14 +2171,14 @@ class swarm:
                 # mask everything exiting on the left
                 maskrow = self.positions[:,dim] < 0
                 self.positions[maskrow, :] = ma.masked
-                self.velocity[maskrow, :] = ma.masked
-                self.acceleration[maskrow, :] = ma.masked
+                self.velocities[maskrow, :] = ma.masked
+                self.accelerations[maskrow, :] = ma.masked
             elif bndry[0] == 'noflux':
                 # pull everything exiting on the left to 0
                 zerorow = self.positions[:,dim] < 0
                 self.positions[zerorow, dim] = 0
-                self.velocity[zerorow, dim] = 0
-                self.acceleration[zerorow, dim] = 0
+                self.velocities[zerorow, dim] = 0
+                self.accelerations[zerorow, dim] = 0
             else:
                 raise NameError
 
@@ -2187,14 +2187,14 @@ class swarm:
                 # mask everything exiting on the right
                 maskrow = self.positions[:,dim] > self.envir.L[dim]
                 self.positions[maskrow, :] = ma.masked
-                self.velocity[maskrow, :] = ma.masked
-                self.acceleration[maskrow, :] = ma.masked
+                self.velocities[maskrow, :] = ma.masked
+                self.accelerations[maskrow, :] = ma.masked
             elif bndry[1] == 'noflux':
                 # pull everything exiting on the left to 0
                 zerorow = self.positions[:,dim] > self.envir.L[dim]
                 self.positions[zerorow, dim] = self.envir.L[dim]
-                self.velocity[zerorow, dim] = 0
-                self.acceleration[zerorow, dim] = 0
+                self.velocities[zerorow, dim] = 0
+                self.accelerations[zerorow, dim] = 0
             else:
                 raise NameError
 

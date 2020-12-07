@@ -97,9 +97,9 @@ Class: swarm
     - `positions` list of current spatial positions, one for each agent
     - `pos_history` list of previous "positions" lists
     - `full_pos_history` list of both previous and current spatial positions
-    - `velocity` list of current velocities, one for each agent (for use in
+    - `velocities` list of current velocities, one for each agent (for use in
     projectile motion)
-    - `acceleration` list of current accelerations, one for each agent (for use
+    - `accelerations` list of current accelerations, one for each agent (for use
     in projectile motion)
     - `envir` environment object that this swarm belongs to
     - `rndState` random number generator (for reproducability)
