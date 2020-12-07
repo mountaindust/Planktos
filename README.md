@@ -29,7 +29,7 @@ All tests can be run by typing `pytest` into a terminal in the base directory.
 There are several working examples in the examples folder, including a 2D simulation, 
 a 2D simulation demonstrating individual variation, a 3D simulation, 
 a simulation utilizing vtk data obtained from IBAMR which is located in the 
-tests/IBAMR_test_data folder, and a simulation demonstrating subclassing of the update_positions method for user-defined agent behavior. There are also two examples demonstrating how to import vertex data (from IB2d and IBAMR), automatically
+tests/IBAMR_test_data folder, and a simulation demonstrating subclassing of the get_positions method for user-defined agent behavior. There are also two examples demonstrating how to import vertex data (from IB2d and IBAMR), automatically
 create immersed meshes out of this data, and then simulate agent movement with these meshes as solid boundaries which the agents respect. More examples will be added as functionality is added. To run any of these examples, change your working directory 
 to the examples directory and then run the desired script.
 
@@ -117,8 +117,8 @@ Class: swarm
     - `save_positions_to_csv` save all current and past agent positions to csv
     - `calc_re` Calculate the Reynolds number based on environment variables.
     Requires rho and mu to be set in the environment, and diam to be set in swarm
-    - `move` move each agent in the swarm. Do not override: see update_positions.
-    - `update_positions` updates the agents' physical locations. OVERRIDE THIS WHEN SUBCLASSING!
+    - `move` move each agent in the swarm. Do not override: see get_positions.
+    - `get_positions` returns new physical locations for the agents. OVERRIDE THIS WHEN SUBCLASSING!
     - `get_prop` return the property requested as either a single value (if shared) or a numpy array (if varying by individual)
     - `add_prop` add a new property and check that it isn't in both props and shared_props
     - `get_fluid_drift` get the fluid velocity at each agent's position via interpolation

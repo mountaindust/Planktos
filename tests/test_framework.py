@@ -22,7 +22,7 @@ import Planktos, motion
 
 class massive_swarm(Planktos.swarm):
 
-    def update_positions(self, dt, params):
+    def get_positions(self, dt, params):
         '''Uses projectile motion'''
 
         if params is None:
@@ -36,7 +36,7 @@ class massive_swarm(Planktos.swarm):
 
         ### Active movement ###
         # Add jitter and move according to a Gaussian random walk.
-        self.positions += motion.gaussian_walk(self, mu*dt, self.get_prop('cov')*dt)
+        return self.positions + motion.gaussian_walk(self, mu*dt, self.get_prop('cov')*dt)
 
 
 

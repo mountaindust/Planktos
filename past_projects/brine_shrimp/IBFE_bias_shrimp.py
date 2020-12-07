@@ -61,11 +61,11 @@ print('-------------------------------------------')
 
 class Bshrimp(Planktos.swarm):
 
-    def update_positions(self, dt, params=None):
+    def get_positions(self, dt, params=None):
         '''Use the new get_fluid_gradient method to advect the brine shrimp
         in the direction of slowest flow'''
         if self.envir.flow is None:
-            super(Bshrimp, self).update_positions(dt, params)
+            super(Bshrimp, self).get_positions(dt, params)
         else:
             
             # get unit vector in direction of greatest descent
@@ -93,7 +93,7 @@ class Bshrimp(Planktos.swarm):
             # 50 mm variance in no flow... split between advection and diffusion
             mu = self.get_fluid_drift() + mvdir*np.sqrt(25)*scale
 
-            self.positions += motion.gaussian_walk(self, dt*mu, dt*25*np.eye(3))
+            return self.positions + motion.gaussian_walk(self, dt*mu, dt*25*np.eye(3))
 
 
 

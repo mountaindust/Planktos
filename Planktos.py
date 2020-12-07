@@ -55,6 +55,8 @@ class environment:
                 Note! i is x index, j is y index, with the value of x/y increasing
                 as the index increases. It is assumed that the flow mesh is equally 
                 spaced and includes values on the domain bndry
+                self.flow = None is a valid flow, recognized to have fluid
+                velocity of zero everywhere.
             flow_times: [tstart, tend] or iterable of times at which flow is specified
                      or scalar dt; required if flow is time-dependent.
             rho: fluid density of environment, kg/m**3 (optional, m here meaning length units).
@@ -1418,8 +1420,8 @@ class environment:
 
     def reset(self, rm_swarms=False):
         '''Resets environment to time=0. Swarm history will be lost, and all
-        swarms will maintain their last position. If rm_swarms=True, remove
-        all swarms.'''
+        swarms will maintain their last position and velocities. 
+        If rm_swarms=True, remove all swarms.'''
 
         self.time = 0.0
         self.time_history = []
@@ -1718,13 +1720,16 @@ class swarm:
             kwargs: keyword arguments to be passed to the method for
                 initalizing positions
 
-        Methods for initializing the swarm:
+        Methods for initializing the swarm positions:
             - 'random': Uniform random distribution throughout the domain
             - 1D array-like: All positions set to a single point.
             - 2D array: All positions as specified.
+        
+        Initial agent velocities will be set as the local fluid velocity if present,
+        otherwise zero. Assign to self.velocities to set your own.
 
         To customize agent behavior, subclass this class and re-implement the
-        method update_positions (do not change the call signature).
+        method get_positions (do not change the call signature).
         '''
 
         # use a new, 3D default environment if one was not given
@@ -1735,9 +1740,9 @@ class swarm:
                 assert envir.__class__.__name__ == 'environment'
                 envir.swarms.append(self)
                 self.envir = envir
-            except AssertionError:
+            except AssertionError as ae:
                 print("Error: invalid environment object.")
-                raise
+                raise ae
 
         # initialize random number generator
         self.rndState = np.random.RandomState(seed=seed)
@@ -1768,6 +1773,8 @@ class swarm:
         # initialize agent velocities
         self.velocities = ma.zeros((swarm_size, len(self.envir.L)))
         self.velocities.harden_mask()
+        if self.envir.flow is not None:
+            self.velocities = self.get_fluid_drift()
 
         # initialize agent accelerations
         self.accelerations = ma.zeros((swarm_size, len(self.envir.L)))
@@ -1907,12 +1914,12 @@ class swarm:
 
     def move(self, dt=1.0, params=None, update_time=True):
         '''Move all organisms in the swarm over an amount of time dt.
-        Do not override this method when subclassing - override update_positions
+        Do not override this method when subclassing - override get_positions
         instead!
 
         Arguments:
             dt: time-step for move
-            params: parameters to pass along to update_positions, if necessary
+            params: parameters to pass along to get_positions, if necessary
             update_time: whether or not to update the environment's time by dt
         '''
 
@@ -1921,12 +1928,12 @@ class swarm:
 
         # Check that something is left in the domain to move, and move it.
         if not np.all(self.positions.mask):
-            # Update positions
-            self.update_positions(dt, params)
+            # Update positions, preserving mask
+            self.positions[:,:] = self.get_positions(dt, params)
             # Update velocity and acceleration of swarm
             velocity = (self.positions - self.pos_history[-1])/dt
-            self.accelerations = (velocity - self.velocities)/dt
-            self.velocities = velocity
+            self.accelerations[:,:] = (velocity - self.velocities)/dt
+            self.velocities[:,:] = velocity
             # Apply boundary conditions.
             self.apply_boundary_conditions()
 
@@ -1952,30 +1959,32 @@ class swarm:
 
 
 
-    def update_positions(self, dt, params=None):
-        '''Updates all agent positions after a time step of dt.
+    def get_positions(self, dt, params=None):
+        '''Returns all agent positions after a time step of dt.
 
         THIS IS THE METHOD TO OVERRIDE IF YOU WANT DIFFERENT MOVEMENT!
         NOTE: Do not change the call signature.
 
-        This method must assign to self.positions the new positions of all 
-        agents following a time step of length dt, whether due to behavior, 
-        drift, or anything else. self.positions is an NxD masked array, where
-        N is the number of agents and D is the spatial dimension. The mask is
-        False if the corresponding agent is in the interior of the domain and 
-        True otherwise.
+        This method must return the new positions of all agents following a time 
+        step of length dt, whether due to behavior, drift, or anything else. 
 
-        What is included in this default implementation is a basic jitter behavior 
-        with drift according to the fluid flow. As an example, the jitter is
-        unbiased (mean=0) with a covariance of np.eye, as set in the default 
-        shared_props argument of the swarm class.
+        In this default implementation, movement is a random walk with drift
+        as given by an Euler step solver of the appropriate SDE for this process.
+        Drift is the local fluid velocity plus self.get_prop('mu'), and the
+        stochasticity is determined by the covariance matrix self.get_prop('cov').
+
+        NOTE: self.velocities and self.accelerations will automatically be updated
+        outside of this method using finite differences.
 
         Arguments:
             dt: length of time step
             params: any other parameters necessary (optional)
+
+        Returns:
+            new agent positions
         '''
 
-        self.positions = motion.Euler_brownian_fdrift_motion(self, dt)
+        return motion.Euler_brownian_fdrift_motion(self, dt)
 
         # ### Active movement ###
         # # Get jitter according to brownian motion for time dt
