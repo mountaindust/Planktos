@@ -61,8 +61,14 @@ def Euler_brownian_motion(swarm, dt, mu, sigma=None):
     Arguments:
         swarm: swarm object
         dt: time interval
-        mu: drift as an array of shape N x n, where N is the number of agents
-            and n is the spatial dimension.
+        mu: drift velocity as an array of shape N x D, where N is the number of 
+            agents and D is the spatial dimension, or as an array of shape
+            2N x D, where the first N rows give the velocity and the second
+            N rows are the acceleration. In this case, a Taylor series method
+            Euler step will be used. Alternatively, an ODE function can be
+            passed in for mu with call signature func(t,x), where t is the current
+            time and x is a 2N x D array of positions/velocities. It must return
+            an N x D or 2N x D array of velocities/accelerations.
         sigma: (optional) brownian diffusion coefficient. If None, use the
             'cov' property of the swarm object, or lacking that, the 'D' property.
             See below.
@@ -78,7 +84,7 @@ def Euler_brownian_motion(swarm, dt, mu, sigma=None):
             will be fed directly into the random number generator to produce
             motion with these characteristics.
             The covariance matrix should have shape n x n, where n is the spatial
-            dimension.
+            dimension, and be symmetric.
         - As a diffusion tensor (matrix). The diffusion tensor is given by
             :math:`D = 0.5*\sigma\sigma^T`, so it is really just half the
             covariance matrix. This is the diffusion tensor as given in the
@@ -87,7 +93,7 @@ def Euler_brownian_motion(swarm, dt, mu, sigma=None):
             should be specified as a swarm property with the name 'D'. Again,
             it will be fed directly into the random number generator. 
             D should be a matrix with shape n x n, where n is the spatial 
-            dimension.
+            dimension, and it should be symmetric.
         - Given directly as an argument to this function. In this case, it should
             be an n x n array, or an N x n x n array where N is the number of
             agents. Since this is an Euler step solver, sigma is assumed constant
@@ -104,9 +110,16 @@ def Euler_brownian_motion(swarm, dt, mu, sigma=None):
     n_agents = swarm.positions.shape[0]
     n_dim = swarm.positions.shape[1]
 
-    # go ahead and multiply mu by dt, since that's all that happens in an
-    #   Euler step.
-    mu = dt*mu
+    if callable(mu):
+        mu = mu(swarm.envir.time, np.vstack((swarm.positions,swarm.velocity)))
+
+    # Take Euler step of deterministic part, possibly with Taylor series method
+    if mu.shape[0] == n_agents:
+        # velocity data only; regular Euler step
+        mu = dt*mu
+    else:
+        # assume mu.shape[0] == 2N. Use accel data for better accuracy.
+        mu = dt*mu[:n_agents] + (dt**2)/2*mu[n_agents:]
 
     # Depending on the type of diffusion coefficient/covariance passed in,
     #   do different things.
@@ -199,7 +212,7 @@ def Euler_brownian_fdrift_motion(swarm, dt, mu=None, sigma=None):
             will be fed directly into the random number generator to produce
             motion with these characteristics.
             The covariance matrix should have shape n x n, where n is the spatial
-            dimension.
+            dimension, and be symmetric.
         - As a diffusion tensor (matrix). The diffusion tensor is given by
             :math:`D = 0.5*\sigma\sigma^T`, so it is really just half the
             covariance matrix. This is the diffusion tensor as given in the
@@ -208,7 +221,7 @@ def Euler_brownian_fdrift_motion(swarm, dt, mu=None, sigma=None):
             should be specified as a swarm property with the name 'D'. Again,
             it will be fed directly into the random number generator. 
             D should be a matrix with shape n x n, where n is the spatial 
-            dimension.
+            dimension, and it should be symmetric.
         - Given directly as an argument to this function. In this case, it should
             be an n x n array, or an N x n x n array where N is the number of
             agents. Since this is an Euler step solver, sigma is assumed constant
