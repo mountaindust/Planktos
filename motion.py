@@ -233,7 +233,7 @@ def inertial_particles(swarm):
     Requires that the following are specified in the fluid environment:
         char_L: characteristic length scale for Reynolds number calculation
         nu: kinematic viscosity
-        g: acceleration due to gravity
+        g: acceleration due to gravity (set by default to 9.80665)
         rho: fluid density (unless R is specified in swarm)
 
     References:

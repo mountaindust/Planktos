@@ -1321,8 +1321,7 @@ class environment:
                 to specify all points
             seed: Seed for random number generator
             props: Dataframe of properties
-            kwargs: keyword arguments to be passed to the method for
-                initalizing positions
+            kwargs: keyword arguments to be set as swarm properties
         '''
 
         if isinstance(swarm_s, swarm):
@@ -1870,8 +1869,7 @@ class environment:
 class swarm:
 
     def __init__(self, swarm_size=100, envir=None, init='random', seed=None, 
-                 shared_props=None, props=None, diam=None, m=None, Cd=None, 
-                 cross_sec=None, **kwargs):
+                 shared_props=None, props=None, **kwargs):
         ''' Initalizes planktos swarm in an environment.
 
         Arguments:
@@ -1881,12 +1879,16 @@ class swarm:
             seed: Seed for random number generator, int or None
             shared_props: dictionary of properties shared by all agents
             props: Pandas dataframe of individual agent properties
-            diam: diameter of the particles (optional, float or iterable)
-            m: mass of the particles (optional, float or iterable)
-            Cd: drag coefficient of the particles (optional, float or iterable)
-            cross_sec: cross-sectional area of the particles (optional, float or iterable)
-            kwargs: keyword arguments to be passed to the method for
-                initalizing positions
+            kwargs: keyword arguments to be set as a swarm property. They can
+                be floats, ndarrays, or iterables, but keep in mind that
+                problems will result with parsing if the number of agents is
+                equal to the spatial dimension - this is to be avoided.
+                Example key word arguments to include are:  
+                diam -- diameter of the particles
+                m -- mass of the particles
+                Cd -- drag coefficient of the particles
+                cross_sec -- cross-sectional area of the particles
+                R -- density ratio
 
         Methods for initializing the swarm positions:
             - 'random': Uniform random distribution throughout the domain
@@ -1979,19 +1981,23 @@ class swarm:
         if 'cov' not in self.shared_props and 'cov' not in self.props:
             self.shared_props['cov'] = np.eye(len(self.envir.L))
 
-        # Record any passed physical parameters in the appropriate place
-        phys_params = (diam, m, Cd, cross_sec)
-        phys_names = ('diam', 'm', 'Cd', 'cross_sec')
-        for obj, name in zip(phys_params, phys_names):
-            if obj is not None:
-                try:
-                    if len(obj) != swarm_size:
-                        raise RuntimeError("Iterable diam must have length swarm_size.")
-                    else:
-                        self.props[name] = obj
-                except TypeError:
+        # Record any kwargs as swarm parameters
+        for name, obj in kwargs.items():
+            try:
+                if isinstance(obj,np.ndarray) and obj.shape[0] == swarm_size and\
+                    obj.shape[0] != len(self.envir.L):
+                    self.props[name] = obj
+                elif isinstance(obj,np.ndarray):
                     self.shared_props[name] = obj
-
+                elif len(obj) == swarm_size and len(obj) != len(self.envir.L):
+                    self.props[name] = obj
+                else:
+                    # convert iterable to ndarray first
+                    self.shared_props[name] = np.array(obj)
+            except TypeError:
+                # Called len on something that wasn't iterable
+                self.shared_props[name] = obj
+                    
 
 
     @property
@@ -2174,7 +2180,7 @@ class swarm:
                 'in both props and shared_props. Using the props version.')
             return np.stack(self.props[prop_name].array, axis=0).squeeze()
         elif prop_name in self.shared_props:
-            return self.shared_props[prop_name].squeeze()
+            return self.shared_props[prop_name]
         else:
             raise KeyError('Property {} not found.'.format(prop_name))
 

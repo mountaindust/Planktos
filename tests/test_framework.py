@@ -20,23 +20,33 @@ import Planktos, motion
 
 ############   Basic Overrides to test different physics  ############
 
-class massive_swarm(Planktos.swarm):
+class highRe_massive_swarm(Planktos.swarm):
 
-    def get_positions(self, dt, params):
+    def get_positions(self, dt, params=None):
         '''Uses projectile motion'''
 
-        if params is None:
-            high_re = False
-        else:
-            high_re = params
+        # Get drift/drag/inertia due to fluid using high Reynolds number equation
+        #   of motion.
+        ode = motion.highRe_massive_drift(self)
 
-        # Get fluid-based drift and add to Gaussian bias
-        mu = motion.massive_drift(self, dt, high_re=high_re) + self.get_prop('mu')
-        #mu = mv_swarm.massive_drift(self, dt) + self.get_prop('mu')
+        # mu property of swarm will automatically be added to ode equations
+        #   in the right way.
+        return motion.Euler_brownian_motion(self, dt, ode=ode)
 
-        ### Active movement ###
-        # Add jitter and move according to a Gaussian random walk.
-        return motion.Euler_brownian_motion(self, dt, mu)
+
+
+class lowRe_massive_swarm(Planktos.swarm):
+
+    def get_positions(self, dt, params=None):
+        '''Uses Haller and Sapsis'''
+
+        # Get drift/drag/inertia due to fluid using high Reynolds number equation
+        #   of motion.
+        ode = motion.inertial_particles(self)
+
+        # mu property of swarm will automatically be added to ode equations
+        #   in the right way.
+        return motion.Euler_brownian_motion(self, dt, ode=ode)
 
 
 
@@ -356,35 +366,32 @@ def test_brinkman_3D():
     assert len(envir.time_history) == 10, "all times not recorded"
 
 
-##### Inertial particle test commented while methods undergo changes #####
 
-# def test_massive_physics():
-#     ### Get a 3D, time-dependent flow environment ###
-#     envir = Planktos.environment(Lz=10, rho=1000, mu=1000)
-#     U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-3,6,2)))
-#     envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(20)*0.22306, 
-#                             res=50, tspan=[0, 40])
-#     ### specify physical properties of swarm and move swarm with low Re ###
-#     phys = {'Cd':0.47, 'm':0.01}
-#     sw = massive_swarm(diam=0.002, phys=phys)
-#     envir.add_swarm(sw)
-#     assert sw is envir.swarms[0], "swarm improperly assigned to environment"
-#     assert sw.shared_props['phys'] is not None, "Physical properties of swarm not assigned"
-#     for ii in range(10):
-#         sw.move(0.5)
-#     assert len(sw.pos_history) == 10, "all movements not recorded"
-#     assert envir.time == 5, "incorrect final time"
-#     assert len(envir.time_history) == 10, "all times not recorded"
-#     ### do it again but for high Re ###
-#     envir.reset(rm_swarms=True)
-#     phys = {'Cd':0.47, 'm':1, 'S':np.pi*0.1**2}
-#     sw = massive_swarm(diam=0.2, phys=phys)
-#     envir.add_swarm(sw)
-#     for ii in range(10):
-#         sw.move(0.5, (np.zeros(3), 0.3*np.eye(3), True))
-#     assert len(sw.pos_history) == 10, "all movements not recorded"
-#     assert envir.time == 5, "incorrect final time"
-#     assert len(envir.time_history) == 10, "all times not recorded"
+def test_massive_physics():
+    ### Get a 3D, time-dependent flow environment ###
+    envir = Planktos.environment(Lz=10, rho=1000, mu=1000, char_L=10)
+    # kinematic viscosity nu should be calculated automatically from rho and mu
+    U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-3,6,2)))
+    envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(20)*0.22306, 
+                            res=50, tspan=[0, 40])
+    ### specify physical properties of swarm and move swarm with low Re ###
+    sw = lowRe_massive_swarm(diam=0.002, R=2/3)
+    envir.add_swarm(sw)
+    assert sw is envir.swarms[0], "swarm improperly assigned to environment"
+    for ii in range(10):
+        sw.move(0.5)
+    assert len(sw.pos_history) == 10, "all movements not recorded"
+    assert envir.time == 5, "incorrect final time"
+    assert len(envir.time_history) == 10, "all times not recorded"
+    ### do it again but for high Re ###
+    envir.reset(rm_swarms=True)
+    sw = highRe_massive_swarm(diam=0.2, m=0.01, Cd=0.47, cross_sec=np.pi*0.1**2)
+    envir.add_swarm(sw)
+    for ii in range(10):
+        sw.move(0.5, (np.zeros(3), 0.3*np.eye(3), True))
+    assert len(sw.pos_history) == 10, "all movements not recorded"
+    assert envir.time == 5, "incorrect final time"
+    assert len(envir.time_history) == 10, "all times not recorded"
 
 
 
