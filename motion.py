@@ -321,7 +321,10 @@ def inertial_particles(swarm):
         diam: diameter of particle
 
     Requires that the following are specified in the fluid environment:
-        TODO
+        char_L: characteristic length scale for Reynolds number calculation
+        nu: kinematic viscosity
+        g: acceleration due to gravity
+        rho: fluid density (unless R is specified in swarm)
 
     References:
         Maxey, M.R. and Riley, J.J. (1983). Equation of motion for a small rigid
@@ -331,7 +334,54 @@ def inertial_particles(swarm):
     '''
     
     ##### Check for presence of required physical parameters #####
-    pass
+    try:
+        R = swarm.get_prop('R')
+    except KeyError:
+        rho_p = swarm.get_prop('rho')
+        rho_f = swarm.envir.rho
+        R = 2*rho_f/(rho_f+2*rho_p)
+
+    a = swarm.get_prop('diam')*0.5 # radius of particles
+
+    assert swarm.envir.char_L is not None, "Characteristic length scale in envir not specified."
+    L = swarm.envir.char_L
+    assert swarm.envir.nu is not None, "Kinematic viscosity in envir not specified."
+    
+    g = swarm.envir.g
+
+    def ODEs(t,x):
+        '''Given a current time and array of shape 2NxD, where the first N entries
+        are the particle positions and the second N entries are the particle
+        velocities and D is the dimension, return a 2NxD array representing the
+        derivatives of position and velocity as given by the linearized
+        Maxey-Riley equation described in Haller and Sapsis (2008).
+        
+        This x will need to be flattened into a 2*N*D 1D array for use
+            in a scipy solver. A decorator is provided for this purpose.
+        
+        Returns: 
+            a 2NxD array that gives dxdt=v then dvdt
+
+        References:
+        Maxey, M.R. and Riley, J.J. (1983). Equation of motion for a small rigid
+            sphere in a nonuniform flow. Phys. Fluids, 26(4), 883-889.
+        Haller, G. and Sapsis, T. (2008). Where do inertial particles go in
+            fluid flows? Physica D: Nonlinear Phenomena, 237(5), 573-583.
+        '''
+
+        N = round(x.shape[0]/2)
+        fluid_vel = swarm.get_fluid_drift(t,x[:N])
+        dudt = swarm.get_dudt(t,x[:N])
+        Re = swarm.envir.Re # Reynolds number
+        St = 2/9*(a/L)**2*Re # Stokes number
+        mu = R/St
+
+        dvdt = 3*R/2*dudt - mu*(x[N:]-fluid_vel) + (1 - 3*R/2)*g
+        return np.concatenate(x[N:],dvdt)
+
+    # Return equations
+    return ODEs
+
 
                                                    
 
@@ -354,33 +404,19 @@ def highRe_massive_drift(swarm):
         rho: fluid density
     '''
 
-    ##### Check for presence of required physical parameters #####
-    if 'm' in swarm.shared_props:
-        m = swarm.shared_props['m']
-    elif 'm' in swarm.props['m']:
-        m = swarm.props['m'].to_numpy()
-    else:
-        raise RuntimeError('Property m not found in swarm.shared_props or swarm.props.')
-    if 'Cd' in swarm.shared_props:
-        Cd = swarm.shared_props['Cd']
-    elif 'Cd' in swarm.props['Cd']:
-        Cd = swarm.props['Cd'].to_numpy()
-    else:
-        raise RuntimeError('Property Cd not found in swarm.shared_props or swarm.props.')
+    ##### Get required physical parameters #####
+    m = swarm.get_prop('m')
+    Cd = swarm.get_prop('Cd')
     assert swarm.envir.rho is not None, "rho (fluid density) not specified"
     rho = swarm.envir.rho
-    if 'cross_sec' in swarm.shared_props:
-        cross_sec = swarm.shared_props['cross_sec']
-    elif 'cross_sec' in swarm.props['cross_sec']:
-        cross_sec = swarm.props['cross_sec'].to_numpy()
-    else:
-        raise RuntimeError('Property cross_sec not found in swarm.shared_props or swarm.props.')
+    cross_sec = swarm.get_prop('cross_sec')
 
     # Get acceleration of each agent in neutral boyancy
     def ODEs(t,x):
-        '''Given a current time and an array of shape 2NxD, where
-        the first N entries are the particle positions and the second N entries
-        are the particle velocities with D as the dimension.
+        '''Given a current time and array of shape 2NxD, where the first N entries
+        are the particle positions and the second N entries are the particle
+        velocities and D is the dimension, return a 2NxD array representing the
+        derivatives of position and velocity for high Re massive drift.
 
         This x will need to be flattened into a 2*N*D 1D array for use
             in a scipy solver. A decorator is provided for this purpose.
@@ -389,7 +425,7 @@ def highRe_massive_drift(swarm):
             a 2NxD array that gives dxdt=v then dvdt
         '''
 
-        N = np.round(x.shape[0]/2)
+        N = round(x.shape[0]/2)
         fluid_vel = swarm.get_fluid_drift(t,x[:N])
 
         diff = np.linalg.norm(x[N:]-fluid_vel,axis=1)

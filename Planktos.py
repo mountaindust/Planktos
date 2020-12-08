@@ -2195,7 +2195,8 @@ class swarm:
         '''Return fluid-based drift for all agents via interpolation.
 
         Current swarm position is used unless alternative positions are explicitly
-        passed in.
+        passed in. Any passed-in positions must be an NxD array where N is the
+        number of points and D is the spatial dimension of the system.
         
         In the returned 2D ndarray, each row corresponds to an agent (in the
         same order as listed in self.positions) and each column is a dimension.
