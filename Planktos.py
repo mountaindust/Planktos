@@ -1457,12 +1457,6 @@ class environment:
             # interpolate
             return [f(time) for f in self.t_interp]
 
-            # indx = np.searchsorted(self.flow_times, time)
-            # diff = self.flow_times[indx] - time
-            # dt = self.flow_times[indx] - self.flow_times[indx-1]
-            # return [f[indx, ...]*(dt-diff)/dt + f[indx-1, ...]*diff/dt
-            #         for f in self.flow]
-
 
 
     def _create_temporal_interpolations(self):
@@ -1478,6 +1472,42 @@ class environment:
             #   to use constant extrapolation instead.
             self.t_interp.append(interpolate.CubicSpline(self.flow_times, flow))
             self.dt_interp.append(self.t_interp[-1].derivative())
+
+
+
+    def interpolate_flow(self, positions, flow=None, time=None, method='linear'):
+        '''Spatially interpolate the fluid velocity field (or another flow field) 
+        at the supplied positions. If flow is None and self.flow is time-varying,
+        the flow field will be interpolated in time first, using the current 
+        environmental time, or a different time if provided.
+
+        Arguments:
+            positions: NxD locations at which to interpolate the flow field,
+                where D is the dimension of the system.
+            flow: if None, the environmental flow field. interpolated in time
+                if necessary.
+            time: if None, the present time. Otherwise, the flow field will be
+                interpolated to the time given.
+            method: spatial interpolation method to be passed to 
+                scipy.interpolate.interpn.'''
+
+        if flow is None:
+            if len(self.flow[0].shape) == len(self.L):
+                # non time-varying flow
+                flow = self.flow
+            else:
+                flow = self.interpolate_temporal_flow(time=time)
+        
+        x_vel = interpolate.interpn(self.flow_points, flow[0],
+                                    positions, method=method)
+        y_vel = interpolate.interpn(self.flow_points, flow[1],
+                                    positions, method=method)
+        if len(flow) == 3:
+            z_vel = interpolate.interpn(self.flow_points, flow[2],
+                                        positions, method=method)
+            return np.array([x_vel, y_vel, z_vel]).T
+        else:
+            return np.array([x_vel, y_vel]).T
 
 
 
@@ -1514,14 +1544,14 @@ class environment:
 
 
 
-    def get_dudt(self, t_indx=None, time=None):
+    def dudt(self, t_indx=None, time=None):
         '''Return the derivative of the fluid velocity with respect to time.
         Defaults to interpolating at the current time, given by self.time.
 
         Arguments:
             t_indx: Interpolate at a time referred to by
                 self.envir.time_history[t_indx]
-            time: Interpolate at a specific time
+            time: Interpolate at a specific time. default is current time.
 
         Returns:
             interpolated flow field as a list of ndarrays
@@ -2174,6 +2204,9 @@ class swarm:
         # 3D?
         DIM3 = (len(self.envir.L) == 3)
 
+        if positions is None:
+            positions = self.positions
+
         # Interpolate fluid flow
         if self.envir.flow is None:
             if not DIM3:
@@ -2181,17 +2214,29 @@ class swarm:
             else:
                 return np.array([0, 0, 0])
         else:
-            if (not DIM3 and len(self.envir.flow[0].shape) == 2) or \
-               (DIM3 and len(self.envir.flow[0].shape) == 3):
-                # temporally constant flow
-                return self._interpolate_flow(self.envir.flow, 
-                                              positions=positions, 
-                                              method='linear')
+            if time is None:
+                return self.envir.interpolate_flow(positions, method='linear')
             else:
-                # temporal flow. interpolate in time, and then in space.
-                return self._interpolate_flow(self.envir.interpolate_temporal_flow(time=time),
-                                              positions=positions,
-                                              method='linear')
+                return self.envir.interpolate_flow(positions, time=time,
+                                                   method='linear')
+
+
+
+    def get_dudt(self, time=None, positions=None):
+        '''Return fluid time derivative at given positions via interpolation.
+
+        Current swarm position is used unless alternative positions are explicitly
+        passed in.
+        
+        In the returned 2D ndarray, each row corresponds to an agent (in the
+        same order as listed in self.positions) and each column is a dimension.
+        '''
+
+        if positions is None:
+            positions = self.positions
+
+        return self.envir.interpolate_flow(positions, self.envir.dudt(time=time), 
+                                           method='linear')
 
 
 
@@ -2844,27 +2889,6 @@ class swarm:
 
         d = np.dot(normal, Q0)
         return np.abs(np.dot(normal,P0)-d)/np.linalg.norm(normal)
-
-
-
-    def _interpolate_flow(self, flow, positions=None, method='linear'):
-        '''Interpolate the given fluid velocity field at current swarm 
-        positions (default) or at the positions indicated using the 
-        scipy.interpolate.interpn method indicated.'''
-
-        if positions is None:
-            positions = self.positions
-        
-        x_vel = interpolate.interpn(self.envir.flow_points, flow[0],
-                                    positions, method=method)
-        y_vel = interpolate.interpn(self.envir.flow_points, flow[1],
-                                    positions, method=method)
-        if len(flow) == 3:
-            z_vel = interpolate.interpn(self.envir.flow_points, flow[2],
-                                        positions, method=method)
-            return np.array([x_vel, y_vel, z_vel]).T
-        else:
-            return np.array([x_vel, y_vel]).T
 
 
 
