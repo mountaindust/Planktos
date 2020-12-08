@@ -46,29 +46,40 @@ def flatten_ode(swarm):
 # TODO: diffusion in porous media https://en.wikipedia.org/wiki/Diffusion#Diffusion_in_porous_media
 
 
-def Euler_brownian_motion(swarm, dt, mu, sigma=None):
+def Euler_brownian_motion(swarm, dt, mu=None, ode=None, sigma=None):
     '''Uses the Euler-Maruyama method to solve the Ito SDE:
     
         :math:`dX_t = \mu dt + \sigma dW_t`
 
-    where :math:`\mu` passed in as a parameter. :math:`\sigma` can be provided a 
-    number of ways (see below), and can be dependent on time and/or position
-    (in addition to agent) if passed in directly.
-
-    Use this function when modeling something other than tracer particles, or
-    when modeling particles whose behavior changes based on the fluid velocity.
+    where :math:`\mu` is the drift and :math:`\sigma` is the diffusion.
+    :math:`\mu` can be specified directly as a constant or via an ode, or both.
+    If both are left as None, the default is to use the mu property of the swarm
+    object plus the local fluid drift. If an ode is given but mu is not, the
+    the mu property of the swarm will be added to the ode velocity term before
+    solving (however, the swarm mu is zero by default).
+    
+    :math:`\sigma` can be provided a number of ways (see below), and can be 
+    dependent on time and/or position (in addition to agent) if passed in directly.
+    However, this solver is only order 0.5 if :math:`\sigma` is dependent on
+    spatial position.
 
     Arguments:
         swarm: swarm object
         dt: time interval
-        mu: drift velocity as an array of shape N x D, where N is the number of 
-            agents and D is the spatial dimension, or as an array of shape
-            2N x D, where the first N rows give the velocity and the second
-            N rows are the acceleration. In this case, a Taylor series method
-            Euler step will be used. Alternatively, an ODE function can be
-            passed in for mu with call signature func(t,x), where t is the current
-            time and x is a 2N x D array of positions/velocities. It must return
-            an N x D or 2N x D array of velocities/accelerations.
+        mu: drift velocity as a 1D array of length D, an array of shape N x D, 
+            or as an array of shape 2N x D, where N is the number of agents and 
+            D is the spatial dimension. In the last case, the first N rows give 
+            the velocity and the second N rows are the acceleration. In this 
+            case, a Taylor series method Euler step will be used. If no mu and 
+            no ode is given, a default brownian drift of swarm.get_prop('mu') + 
+            the local fluid drift will be used. If no mu is given but an ode is 
+            given, the default for mu will be swarm.get_prop('mu') alone, as 
+            fluid interaction is assumed to be handled by the ode. Note that the 
+            default swarm value for mu is zeros, in which case the ode will 
+            specify the entire drift term.
+        ode: (optional) an ODE function for mu with call signature func(t,x),
+            where t is the current time and x is a 2N x D array of positions/velocities.
+            It must return a 2N x D array of velocities/accelerations.
         sigma: (optional) brownian diffusion coefficient. If None, use the
             'cov' property of the swarm object, or lacking that, the 'D' property.
             See below.
@@ -113,20 +124,43 @@ def Euler_brownian_motion(swarm, dt, mu, sigma=None):
     n_agents = swarm.positions.shape[0]
     n_dim = swarm.positions.shape[1]
 
-    if callable(mu):
-        mu = mu(swarm.envir.time, np.vstack((swarm.positions,swarm.velocities)))
-
-    # Take Euler step of deterministic part, possibly with Taylor series method
-    if mu.shape[0] == n_agents:
-        # velocity data only; regular Euler step
-        mu = dt*mu
+    # parse mu and ode arguments
+    if mu is None and ode is None:
+        # default mu is mean drift plus local fluid velocity
+        stoc_mu = swarm.get_prop('mu') + swarm.get_fluid_drift()
+    elif mu is None:
+        stoc_mu = swarm.get_prop('mu')
     else:
-        # assume mu.shape[0] == 2N. Use accel data for better accuracy.
-        mu = dt*mu[:n_agents] + (dt**2)/2*mu[n_agents:]
+        if mu.ndim == 1:
+            assert len(mu) == n_dim, "mu must be specified all spatial dimensions"
+        else:
+            assert mu.shape == (n_agents, n_dim)\
+                or mu.shape == (n_agents*2, n_dim),\
+                "mu must have shape N_agents x N_dim or 2*N_agents x N_dim"
+        stoc_mu = mu
+
+    ##### Take Euler step in deterministic part, possibly with Taylor series #####
+    if ode is not None:
+        assert callable(ode), "ode must be a callable function with signature ode(t,x)."
+        # assume that ode retuns a vector of shape 2NxD
+        ode_mu = ode(swarm.envir.time, np.vstack((swarm.positions,swarm.velocities)))
+        if stoc_mu.ndim == 1 or stoc_mu.shape[0] == n_agents:
+            ode_mu[:n_agents] += stoc_mu
+        else:
+            ode_mu += stoc_mu
+        # Take Euler step with Taylor series
+        mu = dt*ode_mu[:n_agents] + (dt**2)/2*ode_mu[n_agents:]
+    else:
+        if stoc_mu.ndim == 1 or stoc_mu.shape[0] == n_agents:
+            mu = dt*stoc_mu
+        else:
+            mu = dt*stoc_mu[:n_agents] + (dt**2)/2*stoc_mu[n_agents:]
+
+    # mu is now a differentiated 1D array of length n_dim or an array of shape 
+    #   n_agents x n_dim. We dropped any acceleration terms (no longer needed).
 
     # Depending on the type of diffusion coefficient/covariance passed in,
-    #   do different things.
-
+    #   do different things to evaluate the diffusion part
     if sigma is None:
         try:
             # go ahead and multiply cov by dt to get the final covariance for
@@ -176,130 +210,6 @@ def Euler_brownian_motion(swarm, dt, mu, sigma=None):
                 move[ii,:] = this_mu +\
                     sigma[ii,...] @ swarm.rndState.multivariate_normal(np.zeros(n_dim), np.eye(n_dim))
             return swarm.positions + move
-
-
-
-def Euler_brownian_fdrift_motion(swarm, dt, mu=None, sigma=None):
-    '''Uses the Euler-Maruyama method to solve the Ito SDE:
-    
-        :math:`dX_t = (f(X_t,t)+\mu)dt + \sigma dW_t`
-
-    where :math:`f(X_t,t)` is the fluid velocity at the current swarm position
-    and :math:`\mu` is the brownian drift given by swarm.get_prop('mu') or passed
-    in as a parameter. :math:`\sigma` can be provided a number of ways (see below).
-    Both :math:`\mu` and :math:`\sigma` can be dependent on time and/or position
-    (in addition to agent) if passed in directly.
-
-    Use this function for really basic behavior that does not depend on the fluid
-    and to which you would like fluid drift to be automatically added.
-
-    Arguments:
-        swarm: swarm object
-        dt: time interval
-        mu: (optional) brownian drift as an array of shape n or N x n, where n
-            is the spatial dimension and N is the number of agents. Since this
-            function takes an Euler step, mu is assumed constant across dt.
-            If None, use the mu available as a property of swarm
-        sigma: (optional) brownian diffusion coefficient. If None, use the
-            'cov' property of the swarm object, or lacking that, the 'D' property.
-            See below.
-
-    Returns:
-        New agent positions after Euler step.
-    
-    For convienence, :math:`\sigma` can be provided in several ways:
-        - As a covariance matrix, swarm.get_prop('cov'). This matrix is assumed
-            to be given by :math:`\sigma\sigma^T` and independent of time or
-            spatial location. The result is that the integrated Wiener process
-            over an interval dt has covariance swarm.get_prop('cov')*dt, and this
-            will be fed directly into the random number generator to produce
-            motion with these characteristics.
-            The covariance matrix should have shape n x n, where n is the spatial
-            dimension, and be symmetric.
-        - As a diffusion tensor (matrix). The diffusion tensor is given by
-            :math:`D = 0.5*\sigma\sigma^T`, so it is really just half the
-            covariance matrix. This is the diffusion tensor as given in the
-            Fokker-Planck equation or the heat equation. As in the case of the
-            covariance matrix, it is assumed constant in time and space, and
-            should be specified as a swarm property with the name 'D'. Again,
-            it will be fed directly into the random number generator. 
-            D should be a matrix with shape n x n, where n is the spatial 
-            dimension, and it should be symmetric.
-        - Given directly as an argument to this function. In this case, it should
-            be an n x n array, or an N x n x n array where N is the number of
-            agents. Since this is an Euler step solver, sigma is assumed constant
-            across dt.
-
-    Note that if sigma is spatially dependent, a superior but similar numerical
-    method is that due to Milstein (1974). This might be useful for turbulant
-    models, or models where the energy of the random walk is dependent upon
-    local fluid properties. Since these are more niche scenarios, implementing
-    this here is currently left as a TODO.
-    '''
-    
-    # get critical info about number of agents and dimension of domain
-    n_agents = swarm.positions.shape[0]
-    n_dim = swarm.positions.shape[1]
-
-    # go ahead and multiply mu by dt, since that's all that happens in an
-    #   Euler step.
-    if mu is None:
-        mu = dt*swarm.get_prop('mu')
-    else:
-        mu = dt*mu
-
-    # Depending on the type of diffusion coefficient/covariance passed in,
-    #   do different things.
-
-    if sigma is None:
-        try:
-            # go ahead and multiply cov by dt to get the final covariance for
-            #   this time step.
-            cov = dt*swarm.get_prop('cov')
-        except KeyError:
-            try:
-                # convert D to cov and multiply by dt
-                cov = dt*2*swarm.get_prop('D')
-            except KeyError as ke:
-                raise type(ke)('When sigma=None, swarm must have either a '+
-                               'cov or D property in swarm.shared_props or swarm.props.')
-        if cov.ndim == 2: # Single cov matrix
-            if not np.isclose(cov.trace(),0):
-                # mu already multiplied by dt
-                return swarm.positions + swarm.get_fluid_drift()*dt + mu +\
-                    swarm.rndState.multivariate_normal(np.zeros(n_dim), cov, n_agents)
-            else:
-                # mu already multiplied by dt
-                return swarm.positions + swarm.get_fluid_drift()*dt + mu
-        else: # vector of cov matrices
-            move = np.zeros_like(swarm.positions)
-            for ii in range(n_agents):
-                if mu.ndim > 1:
-                    this_mu = mu[ii,:]
-                else:
-                    this_mu = mu
-                if not np.isclose(cov[ii,:].trace(),0):
-                    move[ii,:] = this_mu +\
-                        swarm.rndState.multivariate_normal(np.zeros(n_dim), cov[ii,:])
-                else:
-                    move[ii,:] = this_mu
-            return swarm.positions + swarm.get_fluid_drift()*dt + move
-    else:
-        # passed in sigma
-        if sigma.ndim == 2: # Single sigma for all agents
-            # mu already multiplied by dt
-            return swarm.positions + swarm.get_fluid_drift()*dt + mu +\
-                sigma @ swarm.rndState.multivariate_normal(np.zeros(n_dim), np.eye(n_dim))
-        else: # Different sigma for each agent
-            move = np.zeros_like(swarm.positions)
-            for ii in range(n_agents):
-                if mu.ndim > 1:
-                    this_mu = mu[ii,:]
-                else:
-                    this_mu = mu
-                move[ii,:] = this_mu +\
-                    sigma[ii,...] @ swarm.rndState.multivariate_normal(np.zeros(n_dim), np.eye(n_dim))
-            return swarm.positions + swarm.get_fluid_drift()*dt + move
 
 
 

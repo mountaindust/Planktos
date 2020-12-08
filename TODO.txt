@@ -1,4 +1,5 @@
-- Replace projectile motion with finite-size inertial particles. See dropbox notes.
+- Replace projectile motion with finite-size inertial particles.
+	- need to test our new toys
 - FTLE
 - sphinx documentation (/doc)
 

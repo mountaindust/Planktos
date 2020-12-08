@@ -2152,7 +2152,10 @@ class swarm:
             new agent positions
         '''
 
-        return motion.Euler_brownian_fdrift_motion(self, dt)
+        # default behavior for Euler_brownian_motion is dift due to mu property
+        #   plus local fluid velocity and diffusion given by cov property
+        #   specifying the covariance matrix.
+        return motion.Euler_brownian_motion(self, dt)
 
 
 
