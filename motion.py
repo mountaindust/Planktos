@@ -233,6 +233,7 @@ def inertial_particles(swarm):
     Requires that the following are specified in the fluid environment:
         char_L: characteristic length scale for Reynolds number calculation
         nu: kinematic viscosity
+        U: characteristic fluid speed
         g: acceleration due to gravity (set by default to 9.80665)
         rho: fluid density (unless R is specified in swarm)
 
@@ -255,6 +256,7 @@ def inertial_particles(swarm):
 
     assert swarm.envir.char_L is not None, "Characteristic length scale in envir not specified."
     L = swarm.envir.char_L
+    assert swarm.envir.U is not None, "Characteristic fluid speed in envir not specified."
     assert swarm.envir.nu is not None, "Kinematic viscosity in envir not specified."
     
     g = swarm.envir.g

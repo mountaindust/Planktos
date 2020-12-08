@@ -40,7 +40,7 @@ class environment:
     def __init__(self, Lx=10, Ly=10, Lz=None,
                  x_bndry='zero', y_bndry='zero', z_bndry='noflux', flow=None,
                  flow_times=None, rho=None, mu=None, nu=None, char_L=None, 
-                 init_swarms=None, units='m'):
+                 U=None, init_swarms=None, units='m'):
         ''' Initialize environmental variables.
 
         Arguments:
@@ -182,6 +182,8 @@ class environment:
 
         # characteristic length
         self.char_L = char_L
+        # characteristic fluid speed
+        self.U = U
         # porous region height
         self.h_p = None
         # accel due to gravity
@@ -800,7 +802,7 @@ class environment:
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(2)]
-        self.__reset_flow_variables(incl_rho_mu=True)
+        self.__reset_flow_variables(incl_rho_mu_U=True)
         self.reset()
 
 
@@ -830,7 +832,7 @@ class environment:
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(3)]
-        self.__reset_flow_variables(incl_rho_mu=True)
+        self.__reset_flow_variables(incl_rho_mu_U=True)
         # record the original lower left corner (can be useful for later imports)
         self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
         # reset time
@@ -908,7 +910,7 @@ class environment:
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(3)]
-        self.__reset_flow_variables(incl_rho_mu=True)
+        self.__reset_flow_variables(incl_rho_mu_U=True)
         # record the original lower left corner (can be useful for later imports)
         self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
         # reset time
@@ -954,7 +956,7 @@ class environment:
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(len(self.flow))]
-        self.__reset_flow_variables(incl_rho_mu=True)
+        self.__reset_flow_variables(incl_rho_mu_U=True)
         self.reset()
 
 
@@ -998,7 +1000,7 @@ class environment:
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(3)]
-        self.__reset_flow_variables(incl_rho_mu=True)
+        self.__reset_flow_variables(incl_rho_mu_U=True)
         # record the original lower left corner (can be useful for later imports)
         self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
         # reset time
@@ -1512,8 +1514,7 @@ class environment:
 
     def get_mean_fluid_speed(self):
         '''Return the mean fluid speed at the current time, temporally
-        interpolating the flow field if necessary. For use in calculating
-        Reynolds number.'''
+        interpolating the flow field if necessary.'''
 
         DIM3 = (len(self.L) == 3)
 
@@ -1539,7 +1540,7 @@ class environment:
         '''Return the Reynolds number at the current time based on mean fluid
         speed. Must have set self.char_L and self.nu'''
 
-        return self.get_mean_fluid_speed()*self.char_L/self.nu
+        return self.U*self.char_L/self.nu
 
 
 
@@ -1591,7 +1592,7 @@ class environment:
 
 
 
-    def __reset_flow_variables(self, incl_rho_mu=False):
+    def __reset_flow_variables(self, incl_rho_mu_U=False):
         '''To be used when the fluid flow changes. Resets all the helper
         parameters.'''
 
@@ -1601,9 +1602,10 @@ class environment:
         self.plot_structs = []
         self.plot_structs_args = []
         self.__reset_flow_deriv()
-        if incl_rho_mu:
+        if incl_rho_mu_U:
             self.mu = None
             self.rho = None
+            self.U = None
 
 
 

@@ -374,6 +374,7 @@ def test_massive_physics():
     U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-3,6,2)))
     envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(20)*0.22306, 
                             res=50, tspan=[0, 40])
+    envir.U = U.max()
     ### specify physical properties of swarm and move swarm with low Re ###
     sw = lowRe_massive_swarm(diam=0.002, R=2/3)
     envir.add_swarm(sw)
