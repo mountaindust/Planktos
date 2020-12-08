@@ -75,15 +75,15 @@ class environment:
 
         Other properties:
             flow_points: points defining the spatial grid for flow data
-            fluid_domain_LLC:
-            tiling:
-            orig_L:
-            a: height of porous region
+            fluid_domain_LLC: original lower-left corner of domain (if from data)
+            tiling: (x,y) how much tiling was done in the x and y direction
+            orig_L: length of the domain in x and y direction (Lx,Ly) before tiling occured
+            h_p: height of porous region
             g: accel due to gravity (length units/s**2)
             struct_plots: List of functions that plot additional environment structures
             struct_plot_args: List of argument tuples to be passed to these functions, after ax
-            time:
-            time_history:
+            time: current time
+            time_history: list of past time states
             grad: gradient of flow magnitude
             grad_time: sim time at which gradient was calculated
 
@@ -101,7 +101,7 @@ class environment:
         self.bndry = []
         self.set_boundary_conditions(x_bndry, y_bndry, z_bndry)
 
-        ##### save flow #####
+        ##### Fluid velocity field variables #####
         self.flow_times = None
         self.flow_points = None # tuple (len==dim) of 1D arrays specifying the mesh
         self.fluid_domain_LLC = None # original lower-left corner, if fluid comes from data
@@ -110,6 +110,8 @@ class environment:
         self.grad = None
         self.grad_time = None
         self.flow = flow
+        self.t_interp = None # list of PPoly objs for temporal CubicSpline interpolation
+        self.dt_interp = None # list of PPoly objs for temporal derivative interpolation
 
         if flow is not None:
             try:
@@ -142,6 +144,7 @@ class environment:
                     self.__set_flow_variables()
 
         ##### swarm list #####
+
         if init_swarms is None:
             self.swarms = []
         else:
@@ -154,6 +157,7 @@ class environment:
                 sw.envir = self
 
         ##### Fluid Variables #####
+
         # rho: Fluid density kg/m**3
         # mu: Dynamic viscosity kg/(m*s)
         # nu: Kinematic viscosity m**2/s
@@ -194,6 +198,7 @@ class environment:
         self.Dhull = None # Delaunay hull for debugging 2D/3D ibmeshes
 
         ##### Environment Structure Plotting #####
+
         # NOTE: the agents do not interact with these structures; for plotting only!
 
         # List of functions that plot additional environment structures
@@ -202,6 +207,7 @@ class environment:
         self.struct_plot_args = []
 
         ##### Initalize Time #####
+
         # By default, time is updated whenever an individual swarm moves (swarm.move()),
         #   or when all swarms in the environment are collectively moved.
         self.time = 0.0
@@ -1192,6 +1198,7 @@ class environment:
                     new_mesh[:,:,1] += self.orig_L[1]*jj
                     newmeshs.append(new_mesh)
             self.ibmesh = np.concatenate(newmeshs)
+        self.__reset_flow_deriv()
 
 
 
@@ -1300,6 +1307,7 @@ class environment:
         if DIM3:
             new_points.append(self.flow_points[2])
         self.flow_points = tuple(new_points)
+        self.__reset_flow_deriv()
 
 
 
@@ -1419,8 +1427,8 @@ class environment:
 
 
     def interpolate_temporal_flow(self, t_indx=None, time=None):
-        '''Linearly interpolate flow in time. Defaults to interpolating at
-        the current time, given by self.time.
+        '''Interpolate flow in time using a cubic spline. Defaults to 
+        interpolating at the current time, given by self.time.
 
         Arguments:
             t_indx: Interpolate at a time referred to by
@@ -1431,23 +1439,45 @@ class environment:
             interpolated flow field as a list of ndarrays
         '''
 
+        # If PPoly CubicSplines do not exist, create them.
+        if self.t_interp is None:
+            self._create_temporal_interpolations()
+
         if t_indx is None and time is None:
             time = self.time
         elif t_indx is not None:
             time = self.time_history[t_indx]
 
-        # boundary cases
+        # Enforce constant extrapolation
         if time <= self.flow_times[0]:
             return [f[0, ...] for f in self.flow]
         elif time >= self.flow_times[-1]:
             return [f[-1, ...] for f in self.flow]
         else:
-            # linearly interpolate
-            indx = np.searchsorted(self.flow_times, time)
-            diff = self.flow_times[indx] - time
-            dt = self.flow_times[indx] - self.flow_times[indx-1]
-            return [f[indx, ...]*(dt-diff)/dt + f[indx-1, ...]*diff/dt
-                    for f in self.flow]
+            # interpolate
+            return [f(time) for f in self.t_interp]
+
+            # indx = np.searchsorted(self.flow_times, time)
+            # diff = self.flow_times[indx] - time
+            # dt = self.flow_times[indx] - self.flow_times[indx-1]
+            # return [f[indx, ...]*(dt-diff)/dt + f[indx-1, ...]*diff/dt
+            #         for f in self.flow]
+
+
+
+    def _create_temporal_interpolations(self):
+        '''Create PPoly CubicSplines to interpolate the fluid velocity in time.'''
+        self.t_interp = []
+        self.dt_interp = []
+        for flow in self.flow:
+            # Defaults to axis=0 along which data is varying, which is t axis
+            # Defaults to not-a-knot boundary condition, resulting in first
+            #   and second segments at curve ends being the same polynomial
+            # Defaults to extrapolating out-of-bounds points based on first
+            #   and last intervals. This will be overriden by this method
+            #   to use constant extrapolation instead.
+            self.t_interp.append(interpolate.CubicSpline(self.flow_times, flow))
+            self.dt_interp.append(self.t_interp[-1].derivative())
 
 
 
@@ -1484,6 +1514,39 @@ class environment:
 
 
 
+    def get_dudt(self, t_indx=None, time=None):
+        '''Return the derivative of the fluid velocity with respect to time.
+        Defaults to interpolating at the current time, given by self.time.
+
+        Arguments:
+            t_indx: Interpolate at a time referred to by
+                self.envir.time_history[t_indx]
+            time: Interpolate at a specific time
+
+        Returns:
+            interpolated flow field as a list of ndarrays
+        '''
+
+        DIM3 = (len(self.L) == 3)
+
+        if t_indx is None and time is None:
+            time = self.time
+        elif t_indx is not None:
+            time = self.time_history[t_indx]
+
+        if (not DIM3 and len(self.flow[0].shape) == 2) or \
+            (DIM3 and len(self.flow[0].shape) == 3):
+            # temporally constant flow
+            return [np.zeros_like(f) for f in self.flow]
+        else:
+            # temporal flow.
+            # If PPoly CubicSplines do not exist, create them.
+            if self.t_interp is None:
+                self._create_temporal_interpolations()
+            return [dfdt(time) for dfdt in self.dt_interp]
+
+
+
     def reset(self, rm_swarms=False):
         '''Resets environment to time=0. Swarm history will be lost, and all
         swarms will maintain their last position and velocities. 
@@ -1508,11 +1571,20 @@ class environment:
         self.orig_L = None
         self.plot_structs = []
         self.plot_structs_args = []
-        self.grad = None
-        self.grad_time = None
+        self.__reset_flow_deriv()
         if incl_rho_mu:
             self.mu = None
             self.rho = None
+
+
+
+    def __reset_flow_deriv(self):
+        '''Reset properties that are derived from the flow velocity itself.'''
+
+        self.grad = None
+        self.grad_time = None
+        self.t_interp = None
+        self.dt_interp = None
 
 
 

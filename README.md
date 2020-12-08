@@ -57,14 +57,19 @@ Class: environment
     - `time_history` history of time points simulated
     - `ibmesh` Nx2x2 or Nx3x3 ndarray of mesh elements, given as line segment vertices (2D) or triangle vertices (3D)
     - `max_meshpt_dist` max distance between two vertices in ibmesh. Used internally.
+    - `t_interp` scipy.interpolate PPoly instance giving a CubicSpline interpolation of flow in time
+    - `t_interp` scipy.interpolate PPoly instance giving the time derivative of the flow velocity field
     - `struct_plots` additional items (structures) can be plotted along with the simulation by storing function handles in this list. The plotting routine will call each of them in order, passing the main axes handle as the first argument
     - `struct_plots_args` list of tuples supplying additional arguments to be passed to the struct_plots functions
     - `tiling` if the domain has been tiled, the amount of tiling is recorded here (x,y)
     - `orig_L` length of each domain dimension before tiling
     - `fluid_domain_LLC` if fluid was imported from data, the spatial coordinates of the lower left corner of the original data. This is used internally to aid subsequent translations
-    - `a` optional parameter for storing porous region height. If specified, the plotting routine will add some random grass with that height.
+    - `char_L` optional parameter for characteristic length scale
+    - `h_p` optional parameter for storing porous region height. If specified, the plotting routine will add some random grass with that height.
     - `rho` optional parameter for storing dynamic fluid velocity
     - `mu` optional parameter for dynamic viscosity
+    - `nu` optional parameter kinematic viscosity
+    - `Re` read-only Reynolds number calculated from above parameters
     - `g` acceleration due to gravity (9.80665 m/s**2)
 - Methods
     - `set_brinkman_flow` Given several (possibly time-dependent) fluid variables, calculate Brinkman flow on a regular grid with a given resolution and set that as the environment's fluid  velocity. Capable of handling both 2D and 3D domains.
