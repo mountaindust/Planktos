@@ -19,6 +19,7 @@ __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
 import numpy as np
+import numpy.ma as ma
 
 # Decorator to convert 2NxD ODE function into a flattened version that
 #   can be read into scipy.integrate.ode
@@ -72,7 +73,7 @@ def Euler_brownian_motion(swarm, dt, mu=None, ode=None, sigma=None):
             the velocity and the second N rows are the acceleration. In this 
             case, a Taylor series method Euler step will be used. If no mu and 
             no ode is given, a default brownian drift of swarm.get_prop('mu') + 
-            the local fluid drift will be used. If no mu is given but an ode is 
+            the local fluid drift will be used. If mu=None but an ode is 
             given, the default for mu will be swarm.get_prop('mu') alone, as 
             fluid interaction is assumed to be handled by the ode. Note that the 
             default swarm value for mu is zeros, in which case the ode will 
@@ -143,7 +144,7 @@ def Euler_brownian_motion(swarm, dt, mu=None, ode=None, sigma=None):
     if ode is not None:
         assert callable(ode), "ode must be a callable function with signature ode(t,x)."
         # assume that ode retuns a vector of shape 2NxD
-        ode_mu = ode(swarm.envir.time, np.vstack((swarm.positions,swarm.velocities)))
+        ode_mu = ode(swarm.envir.time, ma.concatenate((swarm.positions,swarm.velocities)))
         if stoc_mu.ndim == 1 or stoc_mu.shape[0] == n_agents:
             ode_mu[:n_agents] += stoc_mu
         else:
@@ -289,7 +290,7 @@ def inertial_particles(swarm):
         mu = R/St
 
         dvdt = 3*R/2*dudt - mu*(x[N:]-fluid_vel) + (1 - 3*R/2)*g
-        return np.concatenate(x[N:],dvdt)
+        return ma.concatenate((x[N:],dvdt))
 
     # Return equations
     return ODEs
@@ -343,7 +344,7 @@ def highRe_massive_drift(swarm):
         diff = np.linalg.norm(x[N:]-fluid_vel,axis=1)
         dvdt = (rho*Cd*cross_sec/2/m)*(fluid_vel-x[N:])*np.stack((diff,diff,diff)).T
 
-        return np.concatenate(x[N:],dvdt)
+        return ma.concatenate((x[N:],dvdt))
 
     # Return equations
     return ODEs

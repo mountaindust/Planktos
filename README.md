@@ -69,6 +69,7 @@ Class: environment
     - `rho` optional parameter for storing dynamic fluid velocity
     - `mu` optional parameter for dynamic viscosity
     - `nu` optional parameter kinematic viscosity
+    - `U` optional parameter for characteristic fluid speed
     - `Re` read-only Reynolds number calculated from above parameters
     - `g` acceleration due to gravity (9.80665 m/s**2)
 - Methods
@@ -95,9 +96,9 @@ Class: environment
     - `interpolate_flow` Interpolate a fluid velocity field in space at the given positions
     - `interpolate_temporal_flow` Linearly interpolate the flow field in time
     - `dudt` Returns a temporally interpolated time-derivative of the flow field
+    - `get_mean_fluid_speed` Return the mean fluid speed at the current time, interpolating if necessary
     - `reset` Resets environment to time=0. Swarm history will be lost, and all swarms will maintain their last position. This is typically called automatically if the fluid flow has been altered by another method. If rm_swarms=True, remove all swarms.
-    - `plot_flow` Plot quiver velocity field in 2D or 3D, including time-varying flows. Probably not ever going to be pretty, but 
-    useful for a sanity check.
+    - `plot_flow` Plot quiver velocity field in 2D or 3D, including time-varying flows. Probably not ever going to be pretty, but useful for a sanity check.
     
 Class: swarm
 
@@ -118,10 +119,12 @@ Class: swarm
         - `m` mass of agents (if provided)
         - `Cd` drag coefficient of agents (if provided)
         - `cross_sec` cross sectional area of agents (if provided)
+        - `R` density ratio (if provided)
     - `props` Pandas DataFrame of properties that vary by individual agent. Any
     of the properties mentioned under shared_props above can be provided here
     instead.
 - Methods
+    - `full_pos_history` return the full position history of the swarm, past and present
     - `save_positions_to_csv` save all current and past agent positions to csv
     - `calc_re` Calculate the Reynolds number based on environment variables.
     Requires rho and mu to be set in the environment, and diam to be set in swarm

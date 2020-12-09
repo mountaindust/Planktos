@@ -61,6 +61,17 @@ print('-------------------------------------------')
 
 class Bshrimp(Planktos.swarm):
 
+    def __init__(self, *args, **kwargs):
+        super(Bshrimp, self).__init__(*args, **kwargs)
+
+        # sigma**2 w/o advection is 0.5cm**2/sec = 50mm**2/sec, sigma~7mm
+        # (sigma**2=2*D, D for brine shrimp given in Kohler, Swank, Haefner, Powell 2010)
+        # 50 mm variance in no flow... split between advection and diffusion
+        
+        # set diffusion portion here
+        self.shared_props['cov'] = 25*np.eye(3)
+        # set advection portion below
+
     def get_positions(self, dt, params=None):
         '''Use the new get_fluid_gradient method to advect the brine shrimp
         in the direction of slowest flow'''
@@ -88,9 +99,6 @@ class Bshrimp(Planktos.swarm):
             mvdir = -grad/denom
             assert len(self.get_fluid_gradient().shape) == 2
 
-            # sigma**2 w/o advection is 0.5cm**2/sec = 50mm**2/sec, sigma~7mm
-            # (sigma**2=2*D, D for brine shrimp given in Kohler, Swank, Haefner, Powell 2010)
-            # 50 mm variance in no flow... split between advection and diffusion
             mu = self.get_fluid_drift() + mvdir*np.sqrt(25)*scale
 
             return motion.Euler_brownian_motion(self, dt, mu)
