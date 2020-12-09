@@ -1836,7 +1836,7 @@ class environment:
             max_w = self.flow[2].max()
             max_mag = np.linalg.norm(np.array([max_u,max_v,max_w]))
             x, y, z = np.meshgrid(self.flow_points[0][::M], self.flow_points[1][::M], 
-                                  self.flow_points[2][::M])
+                                  self.flow_points[2][::M], indexing='ij')
             if len(self.L) == len(self.flow[0].shape) or t is not None:
                 # Single-time plot.
                 if loc is None:

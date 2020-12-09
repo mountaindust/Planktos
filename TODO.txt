@@ -1,6 +1,5 @@
-- Replace projectile motion with finite-size inertial particles.
-	- need to test our new toys
 - FTLE
+- Testing. In particular, really step through immersed boundary situations, including convex.
 - sphinx documentation (/doc)
 
 --> Code release paper. Target: Mathematical Models and Methods in Applied Sciences
