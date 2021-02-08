@@ -720,6 +720,8 @@ class environment:
         Y_vel = []
         path = str(path) # Get string for passing into functions
 
+        print('Reading vtk data...')
+        
         for n in range(d_start, d_finish+1):
             # Points to desired data viz_IB2d data file
             if n < 10:
@@ -786,6 +788,8 @@ class environment:
             #                                            strChoice,first)
 
             ###################################################
+
+        print('Done!')
 
         ### Save data ###
         self.flow = [np.transpose(np.dstack(X_vel),(2,0,1)), 
@@ -1029,11 +1033,11 @@ class environment:
 
 
 
-    def read_IB2d_vertex_data(self, filename):
+    def read_IB2d_vertex_data(self, filename, res_factor=0.50005):
         '''Reads in 2D vertex data from a .vertex file (IB2d). Assumes that any 
-        vertices closer than half (+ a bit for numerical stability) the Eulerian 
-        mesh resolution are connected linearly. Thus, the flow data must be 
-        imported first!
+        vertices closer than res_factor (default is half + a bit for numerical 
+        stability) times the Eulerian mesh resolution are connected linearly. 
+        Thus, the flow data must be imported first!
         '''
 
         path = Path(filename)
@@ -1046,13 +1050,13 @@ class environment:
 
         vertices = data_IO.read_IB2d_vertices(filename)
         print("Processing vertex file for point-wise connections within {}.".format(
-            0.50005*Eulerian_res))
-        dist_mat_test = distance.pdist(vertices)<=0.50005*Eulerian_res
+            res_factor*Eulerian_res))
+        dist_mat_test = distance.pdist(vertices)<=res_factor*Eulerian_res
         idx = np.array(list(combinations(range(vertices.shape[0]),2)))
         self.ibmesh = np.array([vertices[idx[dist_mat_test,0],:],
                                 vertices[idx[dist_mat_test,1],:]])
         self.ibmesh = np.transpose(self.ibmesh,(1,0,2))
-        print("Done!")
+        print("Done! Visually check structure with environment.plot_envir().")
         # shift coordinates to match any shift that happened in flow data
         if self.fluid_domain_LLC is not None:
             for ii in range(2):
@@ -1672,6 +1676,16 @@ class environment:
                 line_segments.set_color('k')
                 ax.add_collection(line_segments)
 
+            # include tick labels for endpoints
+            xticks = ax.get_xticks()
+            yticks = ax.get_yticks()
+            if xticks[-1] > self.L[0]:
+                xticks[-1] = np.around(self.L[0], 3)
+                ax.set_xticks(xticks)
+            if yticks[-1] > self.L[1]:
+                yticks[-1] = np.around(self.L[1], 3)
+                ax.set_yticks(yticks)
+
             if nohist:
                 return ax
             else:
@@ -1744,10 +1758,34 @@ class environment:
                 structures.set_alpha(0.3)
                 ax.add_collection3d(structures)
 
+            # include tick labels for endpoints
+            xticks = ax.get_xticks()
+            yticks = ax.get_yticks()
+            zticks = ax.get_zticks()
+            if xticks[-1] > self.L[0]:
+                xticks[-1] = np.around(self.L[0], 3)
+                ax.set_xticks(xticks)
+            if yticks[-1] > self.L[1]:
+                yticks[-1] = np.around(self.L[1], 3)
+                ax.set_yticks(yticks)
+            if zticks[-1] > self.L[2]:
+                zticks[-1] = np.around(self.L[2], 3)
+                ax.set_zticks(zticks)
+
             if nohist:
                 return ax
             else:
                 return ax, axHistx, axHisty, axHistz
+
+
+
+    def plot_envir(self):
+        '''Plot the environment without the flow, e.g. to verify ibmesh
+        formed correctly, dimensions are correct, etc.'''
+
+        fig = plt.figure()
+        ax = self._plot_setup(fig, nohist=True)
+        plt.show()
 
 
 
@@ -2541,8 +2579,8 @@ class swarm:
                     ##########      Intersected adjoining element!      ##########
                     # check that we haven't intersected this before
                     if old_intersection is not None and\
-                        adj_intersect[3] == old_intersection[3] and\
-                        adj_intersect[4] == old_intersection[4]:
+                        np.all(adj_intersect[3] == old_intersection[3]) and\
+                        np.all(adj_intersect[4] == old_intersection[4]):
                         # Going back and forth! Movement stops here.
                         # Back away from the intersection point slightly for
                         #   numerical stability.
@@ -2558,8 +2596,9 @@ class swarm:
                         idx = 3
                         nidx = 4
                     vec0 = intersection[nidx] - intersection[idx]
-                    adj_idx = np.argmin([adj_intersect[3]-intersection[idx],
-                                    adj_intersect[4]-intersection[idx]]) + 3
+                    adj_idx = np.argmin([
+                        np.linalg.norm(adj_intersect[3]-intersection[idx]),
+                        np.linalg.norm(adj_intersect[4]-intersection[idx])]) + 3
                     vec1 = adj_intersect[adj_idx] - intersection[idx]
                     # check angle
                     if np.dot(vec0,vec1) >= 0:
@@ -2646,9 +2685,9 @@ class swarm:
                     # First, Detect if we're hitting a simplex we've already 
                     #   been on before. If so, we follow the intersection line.
                     if old_intersection is not None and\
-                        adj_intersect[3] == old_intersection[3] and\
-                        adj_intersect[4] == old_intersection[4] and\
-                        adj_intersect[5] == old_intersection[5]:
+                        np.all(adj_intersect[3] == old_intersection[3]) and\
+                        np.all(adj_intersect[4] == old_intersection[4]) and\
+                        np.all(adj_intersect[5] == old_intersection[5]):
                         # Going back and forth between two elements. Project
                         #   onto the line of intersection.
                         # Find the points in common between adj_intersect and

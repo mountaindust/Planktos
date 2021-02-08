@@ -1,5 +1,6 @@
 - FTLE
 - Testing. In particular, really step through immersed boundary situations, including convex.
+- Reorganize code, package
 - sphinx documentation (/doc)
 
 --> Code release paper. Target: Mathematical Models and Methods in Applied Sciences

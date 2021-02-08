@@ -15,7 +15,9 @@ import Planktos
 
 
 envir = Planktos.environment()
+# read in vtk data with dt=5.0e-5, print_dump=1000. Start on dump 1.
 envir.read_IB2d_vtk_data('ib2d_data', 5.0e-5, 1000, d_start=1)
+# read in vertex data, attaching nearby points
 envir.read_IB2d_vertex_data('ib2d_data/channel.vertex')
 
 # tile flow in a 3,3 grid
