@@ -30,8 +30,16 @@ There are several working examples in the examples folder, including a 2D simula
 a 2D simulation demonstrating individual variation, a 3D simulation, 
 a simulation utilizing vtk data obtained from IBAMR which is located in the 
 tests/IBAMR_test_data folder, and a simulation demonstrating subclassing of the get_positions method for user-defined agent behavior. There are also two examples demonstrating how to import vertex data (from IB2d and IBAMR), automatically
-create immersed meshes out of this data, and then simulate agent movement with these meshes as solid boundaries which the agents respect. More examples will be added as functionality is added. To run any of these examples, change your working directory 
+create immersed boundaries out of this data, and then simulate agent movement with these meshes as solid boundaries which the agents respect. More examples will be added as functionality is added. To run any of these examples, change your working directory 
 to the examples directory and then run the desired script.
+
+An important note about immersed boundary meshes: it is assumed that segments
+of the boundary do not cross except at vertices. This is to keep computational
+speed up and numerical complexity down. So, especially if you are auto-creating
+boundaries from vertex data, be sure and check that boundary segments are not
+intersecting each other away from specified vertices! A quick way to do this is
+to call environment.plot_envir() after the mesh import is done to visually check 
+that the boundary formed correctly and doesn't cross itself in unexpected ways.
 
 When experimenting with different agent behavior than what is prescribed in the
 swarm class by default (e.g. different movement rules), it is strongly suggested 
