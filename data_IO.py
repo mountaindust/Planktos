@@ -52,7 +52,8 @@ def stl_dep(func):
     def wrapper(*args, **kwargs):
         if not STL:
             print("Cannot read STL file: numpy-stl library not found.")
-            raise RuntimeError("Cannot read STL file: numpy-stl library not found in data_IO.")
+            raise RuntimeError("Cannot read STL file: numpy-stl library not found in data_IO. "+
+                               "Please install numpy-stl with conda -c conda-forge or using pip.")
         else:
             return func(*args, **kwargs)
     return wrapper
@@ -262,6 +263,8 @@ def read_2DEulerian_Data_From_vtk(path, simNum, strChoice, xy=False):
 def read_vtu_mesh_velocity(filename):
     '''This method reads ascii COMSOL velocity data in a vtu or equivalent 
     txt file. It is assumed that the data is on a regular grid.
+
+    Currently, no support for multiple time points!
     
     Returns velocity data and grid as lists.'''
 
@@ -328,8 +331,13 @@ def read_vtu_mesh_velocity(filename):
         # convert to 2D array, replace nan with 0.0
         vel_data['w'] = np.nan_to_num(np.array(vel_data['w']), copy=False)
         # reshape all to [z,y,x] then transpose to [x,y,z]
-        for vel in ['u', 'v', 'w']:
-            data.append(np.reshape(vel_data[vel], dimlen[::-1]).T)
+        try:
+            for vel in ['u', 'v', 'w']:
+                data.append(np.reshape(vel_data[vel], dimlen[::-1]).T)
+        except ValueError as e:
+            print("If this is a cannot reshape array error, it is likely because "+
+            "multiple time points are included in the vtu. This is not supported!")
+            raise e
     else:
         for vel in ['u', 'v']:
             # should already be shaped as [y,x]; transpose to [x,y]
