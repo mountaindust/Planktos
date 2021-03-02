@@ -45,5 +45,5 @@ if PLOT_CYL:
         plt_cyl.add_cylinders_toplot(envir, 'data/cyl_grids_'+n_str+'.vtk')
 
 ##########              Plot!               ###########
-s.plot_all('brine_shrimp_IBAMR.mp4', fps=20)
+s.plot_all(movie_filename='brine_shrimp_IBAMR.mp4', fps=20)
 #s.plot_all()

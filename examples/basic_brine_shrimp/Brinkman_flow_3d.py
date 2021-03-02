@@ -30,5 +30,5 @@ for ii in range(240):
 
 
 ##########              Plot!               ###########
-s.plot_all('brine_shrimp_Brinkman.mp4', fps=20)
+s.plot_all(movie_filename='brine_shrimp_Brinkman.mp4', fps=20)
 #s.plot_all()

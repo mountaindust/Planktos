@@ -2525,22 +2525,33 @@ class swarm:
 
         # Project remaining piece of vector from intersection onto mesh and get 
         #   a unit normal pointing out from the simplex
-        # NOTE: intersection[2] is a vector on the simplex in the case of 2D,
-        #   and a normal vector to the simplex in the case of 3D
+        # The first two entries of an intersection object are always:
+        #   0) The point of intersection
+        #   1) The fraction of line segment traveled before intersection occurred
+        # NOTE: In the case of 2D, intersection[2] is a unit vector on the line
+        #       In the case of 3D, intersection[2] is a unit normal to the triangle
+        #   The remaining entries give the vertices of the line/triangle
+
+        # Get leftover portion of travel vector
         vec = (1-intersection[1])*(endpt-startpt)
-        proj = np.dot(vec,intersection[2])*intersection[2]
-        if DIM == 3:
-            # Get a normalized version of proj with revese direction, since
-            #   proj points into the simplex
-            norm_out = -proj/np.linalg.norm(proj)
-            # If 3D, proj is the projection onto the normal vector. Subtract 
-            #   this component to get projection onto the plane.
-            proj = vec - proj
-        else:
+        if DIM == 2:
+            # project vec onto the line
+            proj = np.dot(vec,intersection[2])*intersection[2]
             # vec - proj is a normal that points from outside bndry inside
             #   reverse direction and normalize to get unit vector pointing out
             norm_out = (proj-vec)/np.linalg.norm(proj-vec)
-        newendpt = intersection[0] + proj
+        if DIM == 3:
+            # get a unit normal vector pointing back the way we came
+            norm_out = -np.sign(np.dot(vec,intersection[2]))*intersection[2]
+            # Get the component of vec that lies in the plane. We do this by
+            #   subtracting off the component which is in the normal direction
+            proj = vec - np.dot(vec,norm_out)*norm_out
+            
+        # There can be roundoff error in the projection vector which may point
+        #   inward slightly. Counteract this by perturbing outward by EPS
+        newendpt = intersection[0] + proj + EPS*norm_out
+
+        # TODO: walk through 2D thinking about this thing.
 
         ################################
         ###########    2D    ###########
@@ -2693,8 +2704,9 @@ class swarm:
                         # Find the points in common between adj_intersect and
                         #   intersection
                         dist_mat = distance.cdist(intersection[3:],adj_intersect[3:])
-                        pt_bool = np.isclose(dist_mat, np.zeros_like(dist_mat)).any(1)
-                        two_pts = intersection[3:][pt_bool]
+                        pt_bool = np.isclose(dist_mat, np.zeros_like(dist_mat),
+                                             atol=1e-6).any(1)
+                        two_pts = np.array(intersection[3:])[pt_bool]
                         assert two_pts.shape[0] == 2, "Other than two points found?"
                         assert two_pts.shape[1] == 3, "Points aren't 3D?"
                         # Get a vector from these points
@@ -2785,7 +2797,8 @@ class swarm:
         else:
             normal = np.cross(v[0],v[1])
             normal /= np.linalg.norm(normal)
-            assert np.isclose(np.dot(u,normal),0), "P vector not in Q plane"
+            # roundoff error in only an np.dot projection can be as high as 1e-7
+            assert np.isclose(np.dot(u,normal),0,atol=1e-6), "P vector not in Q plane"
             u_perp = np.cross(u,normal)
             v_perp = np.cross(v,normal)
 
