@@ -2500,7 +2500,7 @@ class swarm:
                            DIM, old_intersection=None):
         '''Once we have an intersection, project and slide the remaining movement,
         and determine what happens if we fall off the edge of the simplex in
-        both obtuse and acute cases.
+        all angle cases.
 
         Arguments:
             startpt: original start point of movement, before intersection
@@ -2547,17 +2547,17 @@ class swarm:
             #   subtracting off the component which is in the normal direction
             proj = vec - np.dot(vec,norm_out)*norm_out
             
-        # There can be roundoff error in the projection vector which may point
-        #   inward slightly. Counteract this by perturbing outward by EPS
+        # IMPORTANT: there can be roundoff error, so proj should be considered
+        #   an approximation to an in-boundary slide.
+        # For this reason, pull newendpt back a bit for numerical stability
         newendpt = intersection[0] + proj + EPS*norm_out
-
-        # TODO: walk through 2D thinking about this thing.
 
         ################################
         ###########    2D    ###########
         ################################
         if DIM == 2:
             # Detect sliding off 1D edge
+            # Equivalent to going past the endpoints
             mesh_el_len = np.linalg.norm(intersection[4] - intersection[3])
             Q0_dist = np.linalg.norm(newendpt-intersection[3])
             Q1_dist = np.linalg.norm(newendpt-intersection[4])
@@ -2574,30 +2574,34 @@ class swarm:
                 #   the subsequent intersection is not the most efficient thing,
                 #   it should be stable.
 
-                # check for new, acute crossing of simplex attached to the
-                #   current simplex
+                # check for new crossing of segment attached to the
+                #   current line segment
+                # First, find adjacent mesh segments
                 pt_bool = np.linalg.norm(mesh.reshape(
                     (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-intersection[0],
                     axis=1)<=np.linalg.norm(proj)
                 pt_bool = pt_bool.reshape((mesh.shape[0],mesh.shape[1]))
                 adj_mesh = mesh[np.any(pt_bool,axis=1)]
                 # check for intersection, but translate start/end points back
-                #   from the simplex a bit for numerical stability
+                #   from the segment a bit for numerical stability
+                # this has already been done for newendpt
+                # also go EPS further than newendpt for stability for what follows
                 adj_intersect = swarm._seg_intersect_2D(intersection[0]+EPS*norm_out,
-                    newendpt+EPS*proj+EPS*norm_out, adj_mesh[:,0,:],
-                    adj_mesh[:,1,:])
+                    newendpt+EPS*proj, adj_mesh[:,0,:], adj_mesh[:,1,:])
                 if adj_intersect is not None:
                     ##########      Intersected adjoining element!      ##########
                     # check that we haven't intersected this before
+                    #   (should be impossible)
                     if old_intersection is not None and\
                         np.all(adj_intersect[3] == old_intersection[3]) and\
                         np.all(adj_intersect[4] == old_intersection[4]):
                         # Going back and forth! Movement stops here.
                         # Back away from the intersection point slightly for
-                        #   numerical stability.
+                        #   numerical stability and stay put.
                         return adj_intersect[0] - EPS*proj
-                    # Concave intersection of segments. 
-                    # Determine if the intersection is acute or obtuse.
+                        # Throw an error instead, since this shouldn't happen...?
+                        # raise RuntimeError('Repeated element intersection. Debug.')
+                    # Otherwise:
                     if Q0_dist*(1+EPS) > mesh_el_len and Q0_dist*(1+EPS) > Q1_dist*(1+EPS):
                         # went past Q1; base vectors off Q1 vertex
                         idx = 4
@@ -2611,24 +2615,25 @@ class swarm:
                         np.linalg.norm(adj_intersect[3]-intersection[idx]),
                         np.linalg.norm(adj_intersect[4]-intersection[idx])]) + 3
                     vec1 = adj_intersect[adj_idx] - intersection[idx]
-                    # check angle
+                    # Determine if the angle of mesh elements is acute or obtuse.
                     if np.dot(vec0,vec1) >= 0:
                         # Acute. Movement stops here.
                         # Back away from the intersection point slightly for
-                        #   numerical stability.
+                        #   numerical stability and stay put
                         return adj_intersect[0] - EPS*proj
                     else:
                         # Obtuse. Repeat project_and_slide on new segment,
                         #   but send along info about old segment so we don't
-                        #   get in an infinite loop.
+                        #   get in an infinite loop (should be impossible!).
                         return swarm._project_and_slide(intersection[0]+EPS*norm_out, 
-                                                        newendpt+EPS*proj+EPS*norm_out, 
+                                                        newendpt+EPS*proj, 
                                                         adj_intersect, mesh, 
                                                         max_meshpt_dist, DIM,
                                                         intersection)
 
             ##########      Did not intersect adjoining element!      ##########
-            # NOTE: There could still be a more obtuse adjoining elment.
+
+            # NOTE: There could still be an adjoining element at >180 degrees
             #   But we will project along original heading as if there isn't one
             #   and subsequently detect any intersections.
             # DIM == 2, adj_intersect is None
@@ -2658,7 +2663,7 @@ class swarm:
                                                 intersection)
             else:
                 # otherwise, we end on the mesh element
-                return newendpt + EPS*norm_out
+                return newendpt
         
         ################################
         ###########    3D    ###########
@@ -2668,7 +2673,7 @@ class swarm:
             Q0_list = np.array(intersection[3:])
             Q1_list = Q0_list[(1,2,0),:]
             # go a little further along trajectory to treat acute case
-            tri_intersect = swarm._seg_intersect_2D(intersection[0],
+            tri_intersect = swarm._seg_intersect_2D(intersection[0] + EPS*norm_out,
                                                     newendpt + EPS*proj,
                                                     Q0_list, Q1_list)
             # if we reach the triangle boundary, check for a acute crossing
@@ -2676,8 +2681,7 @@ class swarm:
             #   intersection point
             if tri_intersect is not None:
                 ##########      Went past triangle boundary      ##########
-                ### check for new, acute(-ish) crossing of simplex attached to ###
-                ###   the current simplex                                      ###
+                # check for new crossing of simplex attached to the current simplex 
                 pt_bool = np.linalg.norm(mesh.reshape(
                     (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-intersection[0],
                     axis=1)<=np.linalg.norm(proj)
@@ -2685,15 +2689,17 @@ class swarm:
                 adj_mesh = mesh[np.any(pt_bool,axis=1)]
                 # check for intersection, but translate start/end points back
                 #   from the simplex a bit for numerical stability
+                # this has already been done for newendpt
+                # also go EPS further than newendpt for stability for what follows
                 adj_intersect = swarm._seg_intersect_3D_triangles(
                     intersection[0]+EPS*norm_out,
-                    newendpt+EPS*proj+EPS*norm_out, adj_mesh[:,0,:],
+                    newendpt+EPS*proj, adj_mesh[:,0,:],
                     adj_mesh[:,1,:], adj_mesh[:,2,:])
                 if adj_intersect is not None:
                     ##########      Intersected adjoining element!      ##########
                     # Acute or slightly obtuse intersection. In 3D, we will slide
                     #   regardless of if it is acute or not.
-                    # First, Detect if we're hitting a simplex we've already 
+                    # First, detect if we're hitting a simplex we've already 
                     #   been on before. If so, we follow the intersection line.
                     if old_intersection is not None and\
                         np.all(adj_intersect[3] == old_intersection[3]) and\
@@ -2709,13 +2715,13 @@ class swarm:
                         two_pts = np.array(intersection[3:])[pt_bool]
                         assert two_pts.shape[0] == 2, "Other than two points found?"
                         assert two_pts.shape[1] == 3, "Points aren't 3D?"
-                        # Get a vector from these points
+                        # Get a unit vector from these points
                         vec_intersect = two_pts[1,:] - two_pts[0,:]
                         vec_intersect /= np.linalg.norm(vec_intersect)
                         # Back up a tad from the intersection point, and project
-                        #   leftover movement onto the intersection vector
+                        #   leftover movement in the direction of intersection vector
                         newstartpt = adj_intersect[0] - EPS*proj
-                        # Leave off EPS from leftover distance
+                        # Get leftover distance (w/o slight pullback)
                         leftover_dist = np.linalg.norm(newendpt-adj_intersect[0])
                         # Projection to get new endpoint
                         newendpt = newstartpt + vec_intersect*leftover_dist
@@ -2732,7 +2738,7 @@ class swarm:
                                                     intersection)
 
                 ##########      Did not intersect adjoining element!      ##########
-                # NOTE: There could still be a more obtuse adjoining element.
+                # NOTE: There could still be an adjoining element w/ >180 connection
                 #   But we will project along original heading as if there isn't
                 #   one and subsequently detect any intersections.
                 # DIM == 3, adj_intersect is None
@@ -2748,7 +2754,7 @@ class swarm:
                                                 intersection)
             else:
                 # otherwise, we end on the mesh element
-                return newendpt + EPS*norm_out
+                return newendpt
 
 
 
@@ -2761,8 +2767,11 @@ class swarm:
         to P0 (if there is one, otherwise None)
 
         This works for both 2D problems and problems in which P is a 3D segment
-        on a plane. The plane is described by the first two vectors Q, so
-        in this case, Q0_list and Q1_list must have at two rows.
+        roughly on a plane. The plane is described by the first two vectors Q, so
+        in this case, Q0_list and Q1_list must have at two rows. The 3D problem
+        is robust to cases where P is not exactly in the plane because the
+        algorithm is actually checking to see if its projection onto the
+        triangle crosses any of the lines in Q.
 
         This algorithm uses a parameteric equation approach for speed, based on
         http://geomalgorithms.com/a05-_intersect-1.html
@@ -2798,7 +2807,7 @@ class swarm:
             normal = np.cross(v[0],v[1])
             normal /= np.linalg.norm(normal)
             # roundoff error in only an np.dot projection can be as high as 1e-7
-            assert np.isclose(np.dot(u,normal),0,atol=1e-6), "P vector not in Q plane"
+            assert np.isclose(np.dot(u,normal),0,atol=1e-6), "P vector not parallel to Q plane"
             u_perp = np.cross(u,normal)
             v_perp = np.cross(v,normal)
 
@@ -2816,24 +2825,33 @@ class swarm:
         denom_list = np.multiply(v_perp,u).sum(1) #vectorized dot product
 
         # record non-parallel cases
-        not_par = denom_list != 0
+        not_par = np.logical_not(np.isclose(denom_list,0))
 
+        # All non-parallel lines in the same plane intersect at some point.
+        #   Find the parametric values for both vectors at which that intersect
+        #   happens. Call these s_I and t_I respectively.
         s_I_list = -np.ones_like(denom_list)
         t_I_list = -np.ones_like(denom_list)
-        # now only need to calculuate s & t for non parallel cases; others
-        #   will report as not intersecting.
+        # Now only need to calculuate s_I & t_I for non parallel cases; others
+        #   will report as not intersecting automatically (as -1)
         #   (einsum is faster for vectorized dot product, but need same length,
         #   non-empty vectors)
+        # In 3D, we are actually projecting u onto the plane of the triangle
+        #   and doing our calculation there. So no problem about numerical
+        #   error and offsets putting u above the plane.
         if np.any(not_par):
             s_I_list[not_par] = np.einsum('ij,ij->i',-v_perp[not_par],w[not_par])/denom_list[not_par]
             t_I_list[not_par] = -np.multiply(u_perp,w[not_par]).sum(1)/denom_list[not_par]
 
+        # The length of our vectors parameterizing the lines is the same as the
+        #   length of the line segment. So for the line segments to have intersected,
+        #   the parameter values for their intersect must both be in the unit interval.
         intersect = np.logical_and(
                         np.logical_and(0<=s_I_list, s_I_list<=1),
                         np.logical_and(0<=t_I_list, t_I_list<=1))
 
         if np.any(intersect):
-            # find the closest one and return it
+            # find the closest intersection and return it
             Q0 = Q0_list[intersect]
             Q1 = Q1_list[intersect]
             v_intersected = v[intersect]
