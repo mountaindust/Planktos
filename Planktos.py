@@ -2433,7 +2433,8 @@ class swarm:
 
     
     @staticmethod
-    def _apply_internal_BC(startpt, endpt, mesh, max_meshpt_dist, old_intersection=None):
+    def _apply_internal_BC(startpt, endpt, mesh, max_meshpt_dist, 
+                           old_intersection=None, kill=False):
         '''Apply internal boundaries to a trajectory starting and ending at
         startpt and endpt, returning a new endpt (or the original one) as
         appropriate.
@@ -2448,6 +2449,10 @@ class swarm:
             old_intersection: for internal use only, to check if we are
                 bouncing back and forth between two boundaries as a result of
                 a concave angle and the right kind of trajectory vector.
+            kill: set to True in 3D case if we have previously slid along the
+                boundary line between two mesh elements. This prevents such
+                a thing from happening more than once, in case of pathological
+                cases.
 
         Returns:
             newendpt: new end location for agent trajectory
@@ -2491,13 +2496,13 @@ class swarm:
         #   result.
         return swarm._project_and_slide(startpt, endpt, intersection,
                                         close_mesh, max_meshpt_dist, DIM,
-                                        old_intersection)
+                                        old_intersection, kill)
 
 
 
     @staticmethod
     def _project_and_slide(startpt, endpt, intersection, mesh, max_meshpt_dist,
-                           DIM, old_intersection=None):
+                           DIM, old_intersection=None, kill=False):
         '''Once we have an intersection, project and slide the remaining movement,
         and determine what happens if we fall off the edge of the simplex in
         all angle cases.
@@ -2514,6 +2519,10 @@ class swarm:
             old_intersection: for internal use only, to check if we are
                 bouncing back and forth between two boundaries as a result of
                 a concave angle and the right kind of trajectory vector.
+            kill: set to True in 3D case if we have previously slid along the
+                boundary line between two mesh elements. This prevents such
+                a thing from happening more than once, in case of pathological
+                cases.
 
         Returns:
             newendpt: new endpoint for movement
@@ -2596,11 +2605,14 @@ class swarm:
                         np.all(adj_intersect[3] == old_intersection[3]) and\
                         np.all(adj_intersect[4] == old_intersection[4]):
                         # Going back and forth! Movement stops here.
+                        # NOTE: This happens when 1) trying to go through a
+                        #   mesh element, you 2) slide and intersect another
+                        #   mesh element. The angle between elements is acute,
+                        #   so you 3) slide back into the same element you
+                        #   intersected in (1). 
                         # Back away from the intersection point slightly for
                         #   numerical stability and stay put.
                         return adj_intersect[0] - EPS*proj
-                        # Throw an error instead, since this shouldn't happen...?
-                        # raise RuntimeError('Repeated element intersection. Debug.')
                     # Otherwise:
                     if Q0_dist*(1+EPS) > mesh_el_len and Q0_dist*(1+EPS) > Q1_dist*(1+EPS):
                         # went past Q1; base vectors off Q1 vertex
@@ -2707,8 +2719,25 @@ class swarm:
                         np.all(adj_intersect[5] == old_intersection[5]):
                         # Going back and forth between two elements. Project
                         #   onto the line of intersection.
+                        # NOTE: This happens when 1) trying to go through a
+                        #   mesh element, you 2) slide and intersect another
+                        #   mesh element. The angle between elements is acute,
+                        #   so you 3) slide back into the same element you
+                        #   intersected in (1).
+                        # NOTE: In rare cases, solving this problem by following
+                        #   the line of intersection can result in an infinite
+                        #   loop. For example, when going toward the point of
+                        #   a tetrahedron. This is what the kill switch is for.
+                        if kill:
+                            # End here to prevent possible bad behavior.
+                            return adj_intersect[0] - EPS*proj
+
+                        kill = True
                         # Find the points in common between adj_intersect and
                         #   intersection
+                        
+                        # Enter debugging here to test algorithm
+                        # import pdb; pdb.set_trace()
                         dist_mat = distance.cdist(intersection[3:],adj_intersect[3:])
                         pt_bool = np.isclose(dist_mat, np.zeros_like(dist_mat),
                                              atol=1e-6).any(1)
@@ -2721,13 +2750,16 @@ class swarm:
                         # Back up a tad from the intersection point, and project
                         #   leftover movement in the direction of intersection vector
                         newstartpt = adj_intersect[0] - EPS*proj
-                        # Get leftover distance (w/o slight pullback)
-                        leftover_dist = np.linalg.norm(newendpt-adj_intersect[0])
-                        # Projection to get new endpoint
-                        newendpt = newstartpt + vec_intersect*leftover_dist
+                        # Get leftover portion of the travel vector
+                        vec_to_project = (1-adj_intersect[1])*proj
+                        # project vec onto the line
+                        proj_vec = np.dot(vec_to_project,vec_intersect)*vec_intersect
+                        # Get new endpoint
+                        newendpt = newstartpt + proj_vec
                         # Check for more intersections
                         return swarm._apply_internal_BC(newstartpt, newendpt,
-                                                        mesh, max_meshpt_dist)
+                                                        mesh, max_meshpt_dist,
+                                                        adj_intersect, kill)
 
                     # Not an already discovered mesh element.
                     # We slide. Pass along info about the old element.
@@ -2735,7 +2767,7 @@ class swarm:
                                                     newendpt+EPS*proj+EPS*norm_out, 
                                                     adj_intersect, mesh, 
                                                     max_meshpt_dist, DIM,
-                                                    intersection)
+                                                    intersection, kill)
 
                 ##########      Did not intersect adjoining element!      ##########
                 # NOTE: There could still be an adjoining element w/ >180 connection
@@ -2743,7 +2775,7 @@ class swarm:
                 #   one and subsequently detect any intersections.
                 # DIM == 3, adj_intersect is None
                 # put the new start point on the edge of the simplex (+EPS) and
-                #   project remaining movement along original heading
+                #   continue full amount of remaining movement along original heading
                 newstartpt = tri_intersect[0] + EPS*proj + EPS*norm_out
                 orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
                 # norm(newendpt - tri_intersect[0]) is the length of the overshoot.
@@ -2751,7 +2783,7 @@ class swarm:
                 # repeat process to look for additional intersections
                 return swarm._apply_internal_BC(newstartpt, newendpt, 
                                                 mesh, max_meshpt_dist,
-                                                intersection)
+                                                intersection, kill)
             else:
                 # otherwise, we end on the mesh element
                 return newendpt
