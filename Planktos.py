@@ -3317,7 +3317,7 @@ class swarm:
                         rect.set_height(h)
                     for rect, h in zip(patches_y, n_y):
                         rect.set_width(h)
-                    return [scat, time_text, stats_text]
+                    return [scat, time_text, stats_text] + list(patches_x) + list(patches_y)
                     
                 else:
                     # 3D
@@ -3348,7 +3348,7 @@ class swarm:
                         rect.set_height(h)
                     fig.canvas.draw()
                     return [scat, time_text, flow_text, perc_text, x_flow_text, 
-                        y_flow_text, z_flow_text]
+                        y_flow_text, z_flow_text] + list(patches_x) + list(patches_y) + list(patches_z)
                     
             else:
                 time_text.set_text('time = {:.2f}'.format(self.envir.time))
@@ -3372,7 +3372,7 @@ class swarm:
                         rect.set_height(h)
                     for rect, h in zip(patches_y, n_y):
                         rect.set_width(h)
-                    return [scat, time_text, stats_text]
+                    return [scat, time_text, stats_text] + list(patches_x) + list(patches_y)
                     
                 else:
                     # 3D end
@@ -3403,7 +3403,7 @@ class swarm:
                         rect.set_height(h)
                     fig.canvas.draw()
                     return [scat, time_text, flow_text, perc_text, x_flow_text, 
-                        y_flow_text, z_flow_text]
+                        y_flow_text, z_flow_text] + list(patches_x) + list(patches_y) + list(patches_z)
 
         # infer animation rate from dt between current and last position
         dt = self.envir.time - self.envir.time_history[-1]
