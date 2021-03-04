@@ -2598,7 +2598,7 @@ class swarm:
                 adj_intersect = swarm._seg_intersect_2D(intersection[0]+EPS*norm_out,
                     newendpt+EPS*proj, adj_mesh[:,0,:], adj_mesh[:,1,:])
                 if adj_intersect is not None:
-                    ##########      Intersected adjoining element!      ##########
+                    ##########  Went past and intersected adjoining element! ##########
                     # check that we haven't intersected this before
                     #   (should be impossible)
                     if old_intersection is not None and\
@@ -2643,18 +2643,26 @@ class swarm:
                                                         max_meshpt_dist, DIM,
                                                         intersection)
 
-            ##########      Did not intersect adjoining element!      ##########
+                ######  Went past, but did not intersect adjoining element! ######
 
-            # NOTE: There could still be an adjoining element at >180 degrees
-            #   But we will project along original heading as if there isn't one
-            #   and subsequently detect any intersections.
-            # DIM == 2, adj_intersect is None
-            if Q0_dist >= mesh_el_len and Q0_dist >= Q1_dist:
-                ##### went past Q1 #####
-                # put a new start point at the point crossing+EPS and bring out
-                #   EPS*norm_out
-                newstartpt = intersection[4] + EPS*proj + EPS*norm_out
-                # project overshoot on original heading and add to newstartpt
+                # NOTE: There could still be an adjoining element at >180 degrees
+                #   But we will project along original heading as if there isn't one
+                #   and subsequently detect any intersections.
+                # DIM == 2, adj_intersect is None
+                
+                if Q0_dist >= mesh_el_len and Q0_dist >= Q1_dist:
+                    ##### went past Q1 #####
+                    # put a new start point at the point crossing+EPS and bring out
+                    #   EPS*norm_out
+                    newstartpt = intersection[4] + EPS*proj + EPS*norm_out
+                elif Q1_dist >= mesh_el_len:
+                    ##### went past Q0 #####
+                    newstartpt = intersection[3] + EPS*proj + EPS*norm_out
+                else:
+                    raise RuntimeError("Impossible case??")
+                
+                # continue full amount of remaining movement along original heading
+                #   starting at newstartpt
                 orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
                 newendpt = newstartpt + np.linalg.norm(newendpt-newstartpt)*orig_unit_vec
                 # repeat process to look for additional intersections
@@ -2662,19 +2670,10 @@ class swarm:
                 return swarm._apply_internal_BC(newstartpt, newendpt,
                                                 mesh, max_meshpt_dist,
                                                 intersection)
-            elif Q1_dist >= mesh_el_len:
-                ##### went past Q0 #####
-                newstartpt = intersection[3] + EPS*proj + EPS*norm_out
-                # project overshoot onto original heading and add to bndry point
-                orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
-                newendpt = newstartpt + np.linalg.norm(newendpt-newstartpt)*orig_unit_vec
-                # repeat process to look for additional intersections
-                #   pass along current intersection in case of obtuse concave case
-                return swarm._apply_internal_BC(newstartpt, newendpt, 
-                                                mesh, max_meshpt_dist,
-                                                intersection)
+
             else:
-                # otherwise, we end on the mesh element
+                ##########      Did not go past either Q0 or Q1      ##########
+                # We simply end on the mesh element
                 return newendpt
         
         ################################
