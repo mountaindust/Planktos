@@ -2568,8 +2568,12 @@ class swarm:
             # Detect sliding off 1D edge
             # Equivalent to going past the endpoints
             mesh_el_len = np.linalg.norm(intersection[4] - intersection[3])
-            Q0_dist = np.linalg.norm(newendpt-intersection[3])
-            Q1_dist = np.linalg.norm(newendpt-intersection[4])
+            Q0_dist = np.linalg.norm(newendpt-EPS*norm_out - intersection[3])
+            Q1_dist = np.linalg.norm(newendpt-EPS*norm_out - intersection[4])
+            # Since we are sliding on the mesh element, if the distance from
+            #   our new location to either of the mesh endpoints is greater
+            #   than the length of the mesh element, we must have gone beyond
+            #   the segment.
             if Q0_dist*(1+EPS) > mesh_el_len or Q1_dist*(1+EPS) > mesh_el_len:
                 ##########      Went past either Q0 or Q1      ##########
 
@@ -2585,18 +2589,30 @@ class swarm:
 
                 # check for new crossing of segment attached to the
                 #   current line segment
-                # First, find adjacent mesh segments
-                pt_bool = np.linalg.norm(mesh.reshape(
-                    (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-intersection[0],
-                    axis=1)<=np.linalg.norm(proj)
+                # First, find adjacent mesh segments. These are ones that share
+                #   one of, but not both, endpoints with the current segment.
+                #   This will also pick up our current segment, but we shouldn't
+                #   be intersecting it. And if by some numerical error we do,
+                #   we need to treat it.
+                pt_bool = np.logical_or(
+                    np.isclose(np.linalg.norm(mesh.reshape(
+                    (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-intersection[3],
+                    axis=1),0),
+                    np.isclose(np.linalg.norm(mesh.reshape(
+                    (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-intersection[4],
+                    axis=1),0)
+                )
                 pt_bool = pt_bool.reshape((mesh.shape[0],mesh.shape[1]))
                 adj_mesh = mesh[np.any(pt_bool,axis=1)]
-                # check for intersection, but translate start/end points back
-                #   from the segment a bit for numerical stability
-                # this has already been done for newendpt
-                # also go EPS further than newendpt for stability for what follows
-                adj_intersect = swarm._seg_intersect_2D(intersection[0]+EPS*norm_out,
-                    newendpt+EPS*proj, adj_mesh[:,0,:], adj_mesh[:,1,:])
+                # Check for intersection with these segemtns, but translate 
+                #   start/end points back from the segment a bit for numerical stability
+                # This has already been done for newendpt
+                # Also go EPS further than newendpt for stability for what follows
+                if len(adj_mesh) > 0:
+                    adj_intersect = swarm._seg_intersect_2D(intersection[0]+EPS*norm_out,
+                        newendpt+EPS*proj, adj_mesh[:,0,:], adj_mesh[:,1,:])
+                else:
+                    adj_intersect = None
                 if adj_intersect is not None:
                     ##########  Went past and intersected adjoining element! ##########
                     # check that we haven't intersected this before
@@ -2636,7 +2652,7 @@ class swarm:
                     else:
                         # Obtuse. Repeat project_and_slide on new segment,
                         #   but send along info about old segment so we don't
-                        #   get in an infinite loop (should be impossible!).
+                        #   get in an infinite loop.
                         return swarm._project_and_slide(intersection[0]+EPS*norm_out, 
                                                         newendpt+EPS*proj, 
                                                         adj_intersect, mesh, 
@@ -2692,20 +2708,36 @@ class swarm:
             #   intersection point
             if tri_intersect is not None:
                 ##########      Went past triangle boundary      ##########
-                # check for new crossing of simplex attached to the current simplex 
-                pt_bool = np.linalg.norm(mesh.reshape(
-                    (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-intersection[0],
-                    axis=1)<=np.linalg.norm(proj)
+                # check for new crossing of simplex attached to the current triangle
+                # First, find adjacent mesh segments. These are ones that share
+                #   one of, but not both, endpoints with the current segment.
+                #   This will also pick up our current segment, but we shouldn't
+                #   be intersecting it. And if by some numerical error we do,
+                #   we need to treat it.
+                pt_bool = np.logical_or(np.logical_or(
+                    np.isclose(np.linalg.norm(mesh.reshape(
+                    (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-intersection[3],
+                    axis=1),0),
+                    np.isclose(np.linalg.norm(mesh.reshape(
+                    (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-intersection[4],
+                    axis=1),0)),
+                    np.isclose(np.linalg.norm(mesh.reshape(
+                    (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-intersection[5],
+                    axis=1),0)
+                )
                 pt_bool = pt_bool.reshape((mesh.shape[0],mesh.shape[1]))
                 adj_mesh = mesh[np.any(pt_bool,axis=1)]
                 # check for intersection, but translate start/end points back
                 #   from the simplex a bit for numerical stability
                 # this has already been done for newendpt
                 # also go EPS further than newendpt for stability for what follows
-                adj_intersect = swarm._seg_intersect_3D_triangles(
-                    intersection[0]+EPS*norm_out,
-                    newendpt+EPS*proj, adj_mesh[:,0,:],
-                    adj_mesh[:,1,:], adj_mesh[:,2,:])
+                if len(adj_mesh) > 0:
+                    adj_intersect = swarm._seg_intersect_3D_triangles(
+                        intersection[0]+EPS*norm_out,
+                        newendpt+EPS*proj, adj_mesh[:,0,:],
+                        adj_mesh[:,1,:], adj_mesh[:,2,:])
+                else:
+                    adj_intersect = None
                 if adj_intersect is not None:
                     ##########      Intersected adjoining element!      ##########
                     # Acute or slightly obtuse intersection. In 3D, we will slide
