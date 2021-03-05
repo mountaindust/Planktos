@@ -15,6 +15,7 @@ import Planktos
 envir = Planktos.environment()
 envir.read_IB2d_vtk_data('data/leaf_data', 1.0e-5, 100, d_start=1)
 envir.read_IB2d_vertex_data('data/leaf_data/leaf.vertex', 1.45)
+envir.add_vertices_to_2D_ibmesh()
 
 envir.add_swarm(seed=10)
 s = envir.swarms[0]
@@ -22,11 +23,13 @@ s.positions[89,:] = (0.05, 0.075)
 s.positions[95,:] = (0.17, 0.1)
 s.shared_props['cov'] *= 0.001
 
-# envir.plot_envir()
+#envir.plot_envir()
 # s.plot()
 
+# TODO: Around step 193 -> 194, unexplained tunnelling.
+
 print('Moving swarm...')
-for ii in range(550):
+for ii in range(300):
     s.move(0.0005)
     
 s.plot_all()

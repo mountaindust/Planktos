@@ -195,7 +195,7 @@ class environment:
         #   unique vertex values in the ibmesh AND unique_inverse, the indices
         #   to reconstruct the mesh from the unique array. Then can update
         #   points and reconstruct.
-        self.ibmesh = None # Nx2x2 or Nx3x3
+        self.ibmesh = None # Nx2x2 or Nx3x3 (element, pt in element, (x,y,z))
         self.max_meshpt_dist = None # max length of a mesh segment
         self.Dhull = None # Delaunay hull for debugging 2D/3D ibmeshes
 
@@ -1066,6 +1066,88 @@ class environment:
         ### For debugging 2D channel flow ###
         # circle_y = np.logical_and(vertices[:,1]>2.6e-02, vertices[:,1]<2.24e-01)
         # self.Dhull = Delaunay(vertices[circle_y,:])
+
+
+
+    def add_vertices_to_2D_ibmesh(self):
+        '''Methods for auto-connecting mesh vertices into line segments may
+        result in line segments that cross each other away from vertex points.
+        This will cause undesirable behavior including mesh crossing. This
+        method adds a vertex point at any such intersection to avoid such
+        problems.'''
+
+        if self.ibmesh is None:
+            print("No ibmesh found!")
+            return
+        elif self.ibmesh.shape[1] > 2:
+            print("This method does not work for 3D problems!")
+            return
+
+        new_ibmesh = [seg for seg in self.ibmesh]
+
+        # we will be altering the mesh as we go, so loop until we have considered
+        #   all segments once.
+        n = 0
+        print("Breaking up intersecting mesh segments...")
+        # go until there are no longer at least two segments to consider
+        while n+1 < len(new_ibmesh):
+            seg = new_ibmesh[n]
+            forward_meshes = np.array(new_ibmesh[n+1:])
+            # Find all mesh elements that have points within max_meshpt_dist*2
+            pt_bool = np.linalg.norm(
+                forward_meshes.reshape((forward_meshes.shape[0]*forward_meshes.shape[1],
+                                        forward_meshes.shape[2]))-seg[0,:],
+                axis=1)<self.max_meshpt_dist*2
+            pt_bool = pt_bool.reshape((forward_meshes.shape[0],forward_meshes.shape[1]))
+            close_mesh = forward_meshes[np.any(pt_bool,axis=1)]
+            intersections = swarm._seg_intersect_2D(seg[0,:], seg[1,:], 
+                close_mesh[:,0,:], close_mesh[:,1,:], get_all=True)
+            if intersections is None:
+                # Nothing to do; increment counter and continue
+                n += 1
+                continue
+            else:
+                # Use s_I to order the intersections and then go down the line,
+                #   breaking segments into new segments.
+                intersections = sorted(intersections, key=lambda x: x[1])
+                new_seg_pieces = []
+                new_int_pieces = []
+                for intersection in intersections:
+                    if len(new_seg_pieces) == 0:
+                        # first one has P0 as an endpoint
+                        new_seg_pieces.append(
+                            np.array([seg[0,:],intersection[0]]))
+                    else:
+                        # each other has the second point of the previous segment
+                        #   as an endpoint
+                        new_seg_pieces.append(
+                            np.array([new_seg_pieces[-1][1,:],intersection[0]]))
+                    # now break up the segment that intersected seg
+                    new_int_pieces.append(
+                        np.array([intersection[3],intersection[0]]))
+                    new_int_pieces.append(
+                        np.array([intersection[0],intersection[4]]))
+                    # and delete the original intersecting segment from the list
+                    for ii, elem in enumerate(new_ibmesh[n+1:]):
+                        if np.all(elem == np.array([intersection[3],intersection[4]]))\
+                            or np.all(elem == np.array([intersection[4],intersection[3]])):
+                            new_ibmesh.pop(ii+n+1)
+                            break
+                # add on the last segment which ends at the other endpoint
+                new_seg_pieces.append(
+                    np.array([new_seg_pieces[-1][1,:],seg[1,:]]))
+                # remove the mesh piece we just examined and replace with the
+                #   broken up ones
+                new_ibmesh.pop(n)
+                new_ibmesh[n:n] = new_seg_pieces
+                # add the sliced up intersecting elements to the end
+                new_ibmesh += new_int_pieces
+                # increment counter by the number of seg pieces we added
+                n += len(new_seg_pieces)
+        # Done.
+
+        # Replace ibmesh with new_ibmesh
+        self.ibmesh =  np.array(new_ibmesh)
 
 
 
@@ -2822,7 +2904,7 @@ class swarm:
 
 
     @staticmethod
-    def _seg_intersect_2D(P0, P1, Q0_list, Q1_list):
+    def _seg_intersect_2D(P0, P1, Q0_list, Q1_list, get_all=False):
         '''Find the intersection between two line segments, P and Q, returning
         None if there isn't one or if they are parallel.
         If Q is a 2D array, loop over the rows of Q finding all intersections
@@ -2847,6 +2929,7 @@ class swarm:
             P1: length 2 (or 3) array, second point in line segment P 
             Q0_list: Nx2 (Nx3) ndarray of first points in a list of line segments.
             Q1_list: Nx2 (Nx3) ndarray of second points in a list of line segments.
+            get_all: Return all intersections instead of just the first one.
 
         Returns:
             None if there is no intersection. Otherwise:
@@ -2914,15 +2997,25 @@ class swarm:
                         np.logical_and(0<=t_I_list, t_I_list<=1))
 
         if np.any(intersect):
-            # find the closest intersection and return it
-            Q0 = Q0_list[intersect]
-            Q1 = Q1_list[intersect]
-            v_intersected = v[intersect]
-            s_I = s_I_list[intersect].min()
-            s_I_idx = s_I_list[intersect].argmin()
-            return (P0 + s_I*u, s_I,
-                    v_intersected[s_I_idx]/np.linalg.norm(v_intersected[s_I_idx]),
-                    Q0[s_I_idx], Q1[s_I_idx])
+            if get_all:
+                x = []
+                for s_I in s_I_list[intersect]:
+                    x.append(P0+s_I*u)
+                return zip(
+                    x, s_I_list[intersect], 
+                    v[intersect]/np.linalg.norm(v[intersect]),
+                    Q0_list[intersect], Q1_list[intersect]
+                )
+            else:
+                # find the closest intersection and return it
+                Q0 = Q0_list[intersect]
+                Q1 = Q1_list[intersect]
+                v_intersected = v[intersect]
+                s_I = s_I_list[intersect].min()
+                s_I_idx = s_I_list[intersect].argmin()
+                return (P0 + s_I*u, s_I,
+                        v_intersected[s_I_idx]/np.linalg.norm(v_intersected[s_I_idx]),
+                        Q0[s_I_idx], Q1[s_I_idx])
         else:
             return None
 
