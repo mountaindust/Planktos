@@ -2920,9 +2920,6 @@ class swarm:
 
         This algorithm uses a parameteric equation approach for speed, based on
         http://geomalgorithms.com/a05-_intersect-1.html
-
-        TODO: May break down if denom is close to zero.
-            May have other roundoff error problems.
         
         Arguments:
             P0: length 2 (or 3) array, first point in line segment P
@@ -2970,8 +2967,14 @@ class swarm:
 
         denom_list = np.multiply(v_perp,u).sum(1) #vectorized dot product
 
-        # record non-parallel cases
-        not_par = np.logical_not(np.isclose(denom_list,0))
+        # We need to deal with parallel cases. With roundoff error, exact zeros
+        #   are unlikely (but ruled out below). Another possiblity is getting
+        #   inf values, but these will not record as being between 0 and 1, and
+        #   will not throw errors when compared to these values. So all should
+        #   be good.
+        # 
+        # Non-parallel cases:
+        not_par = denom_list != 0
 
         # All non-parallel lines in the same plane intersect at some point.
         #   Find the parametric values for both vectors at which that intersect
@@ -3029,8 +3032,6 @@ class swarm:
 
         This algorithm uses a parameteric equation approach for speed, based on
         http://geomalgorithms.com/a05-_intersect-1.html
-
-        TODO: May break down if denom is close to zero.
 
         Arguments:
             P0: length 3 array, first point in line segment P

@@ -26,10 +26,10 @@ s.shared_props['cov'] *= 0.001
 #envir.plot_envir()
 # s.plot()
 
-# TODO: Around step 193 -> 194, unexplained tunnelling.
+# TODO: At step 193, time=0.0965, unexplained tunnelling
 
 print('Moving swarm...')
-for ii in range(300):
+for ii in range(500):
     s.move(0.0005)
     
 s.plot_all()
