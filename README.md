@@ -24,6 +24,38 @@ Python 2.7).
 ### Tests
 All tests can be run by typing `pytest` into a terminal in the base directory.
 
+## Overview
+Currently, Planktos has built-in capabilities to load either time-independent or 
+time-dependent 2D or 3D fluid velocity data specified on a regular mesh. ASCII 
+vtk format is supported, as well as ASCII vtu files from COMSOL (single-time 
+data only). More regular grid formats, especially if part of the open-source 
+VTK format, may be supported in the future; please contact the author (cstric12@utk.edu) 
+if you have a format you would like to see supported. A few analytical, 1D flow 
+fields are also available and can be generated in either 2D or 3D environments; 
+these include Brinkman flow, two layer channel flow, and canopy flow. Flow fields 
+can also be extended and tiled in simple ways as appropriate. Mesh data must be 
+time-invariant and loaded via IB2d/IBAMR-style vertex data (2D) or via stl file 
+in 3D. Again, more (open source) formats may be considered if requested.
+
+For agents, there is support for multiple species (swarms) along with individual 
+variation though a Pandas Dataframe property of the swarm class (swarm.props). 
+Individual agents have access to the local flow field through interpolation of 
+the spatial-temporal fluid velocity grid - specifically, Planktos implements a 
+cubic spline in time with linear interpolation in space 
+(**Future: tricubic spline in space**). In addition to more custom behavior, 
+included in Planktos is an Ito SDE solver (Euler-Maruyama method) for movement 
+specified as an SDE of the type dX_t = \mu dt + \sigma dW_t and an inertial 
+particle behavior for dynamics described by the linearized Maxey-Riley equation 
+(Haller and Sapsis, 2008). These two may be combined, and other, user-supplied 
+ODEs can also be fed into the drift term of the Ito SDE. Finally, agents will 
+treat immersed boundary meshes as solid barriers. Upon encountering an immersed 
+mesh boundary, any remaining movement will be projected onto the mesh. Both 
+concanve and convex mesh joints are supported, and pains have been taken to make 
+the projection algorithm as numerically stable as possible.
+
+Single-time and animation plotting of results is available in 2D and 3D; support 
+for plotting multiple agent species together has not yet been implemented.
+
 ## Quickstart
 
 There are several working examples in the examples folder, including a 2D simulation, 
@@ -39,7 +71,14 @@ speed up and numerical complexity down. So, especially if you are auto-creating
 boundaries from vertex data, be sure and check that boundary segments are not
 intersecting each other away from specified vertices! A quick way to do this is
 to call environment.plot_envir() after the mesh import is done to visually check 
-that the boundary formed correctly and doesn't cross itself in unexpected ways.
+that the boundary formed correctly and doesn't cross itself in unexpected ways. 
+There is also a method of the environment class called add_vertices_to_2D_ibmesh 
+which will add vertices at all 2D mesh crossing points, however it's use is
+discouraged because it results in complex vertices that attach more than two
+mesh segments and leftover segments that do not contribute to the dynamics at all. 
+Do not expect meshes resulting from this method to have undergone rigorous testing, 
+and running the method will add significant computational overhead due to the 
+need to search for crossings.
 
 When experimenting with different agent behavior than what is prescribed in the
 swarm class by default (e.g. different movement rules), it is strongly suggested 
@@ -95,6 +134,8 @@ Class: environment
     - `read_stl_mesh_data` Reads in 3D immersed boundary data from an ascii or binary stl file. Only static meshes are supported.
     - `read_IB2d_vertex_data` Read in 2D immersed boundary data from a .vertex file used in IB2d. Will assume that vertices closer than half (+ epsilon) the Eulerian mesh resolution are connected linearly. Only static meshes are supported.
     - `read_vertex_data_to_convex_hull` Read in 2D or 3D vertex data from a vtk file or a .vertex file and create a structure by computing the convex hull. Only static meshes are supported.
+    - `add_vertices_to_2D_ibmesh` Try to repair 2D mesh segments which intersect away from 
+    specified vertices by adding vertices at the intersections.
     - `tile_flow` Tile the current fluid flow in the x and/or y directions. It is assumed that the flow is roughly periodic in the direction(s) specified - no checking will be done, and no errors thrown if not.
     - `extend` Extend the domain by duplicating the boundary flow a number of times in a given (or multiple) directions. Good when there is fully resolved fluid \
     flow before/after or on the sides of a structure.

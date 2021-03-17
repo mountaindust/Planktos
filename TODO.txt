@@ -1,5 +1,4 @@
 - FTLE
-- Testing. In particular, really step through immersed boundary situations, including convex.
 - Reorganize code, package
 - Walk through and document steps in ibmesh - agent interaction for publication
 - sphinx documentation (/doc)
