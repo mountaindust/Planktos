@@ -2122,6 +2122,78 @@ class swarm:
                     
 
 
+    def grid_init(self, x_num, y_num, z_num=None, testdir=None):
+        '''Return a grid of initial positions, potentially masking any grid 
+        points in the interior of a closed, immersed structure. The full, unmasked 
+        grid will be x_num by y_num in the interior of the domain.
+        
+        The output of this method is appropriate for finding FTLE.
+
+        If 2D, grid list moves in X direction, then Y direction.
+        If 3D, grid list moves in Z direction, then X, then Y.
+
+        Arguments:
+            x_num, y_num, [z_num]: number of grid points in each direction
+            testdir: to check if a point is an interior to an immersed structure, 
+                a line will be drawn from the point to a boundary. If the number 
+                of immersed boundary intersections is odd, the point will be 
+                considered interior and masked. This check will not be run at all 
+                if testdir is None. Otherwise, specify a direction with one of 
+                the following: 'x0','x1','y0','y1','z0','z1' (the last two for 
+                3D problems only) denoting the dimension (x,y, or z) and the 
+                direction (0 for negative, 1 for positive).
+
+        NOTE: This algorithm is meant as a huristic only! It is not guaranteed 
+        to mask all interior grid points, and will mask non-interior points if 
+        there is not a clear line from the point to one of the boundaries of the 
+        domain. If this method fails for your geometry and better accuracy is 
+        needed, use this method as a starting point and mask/unmask as necessary.
+        '''
+
+        # Form initial grid
+        x_pts = np.linspace(0, self.envir.L[0], x_num+2)[1:-1]
+        y_pts = np.linspace(0, self.envir.L[1], y_num+2)[1:-1]
+        if z_num is not None:
+            z_pts = np.linspace(0, self.envir.L[2], z_num+2)[1:-1]
+            X1, X2, X3 = np.meshgrid(x_pts, y_pts, z_pts)
+            grid = ma.array([X1.flatten(), X2.flatten(), X3.flatten]).T
+        elif len(self.envir.L) > 2:
+            raise RuntimeError("Must specify z_num for 3D problems.")
+        else:
+            X1, X2 = np.meshgrid(x_pts, y_pts)
+            grid = ma.array([X1.flatten(), X2.flatten()]).T
+
+        if testdir is None:
+            return grid
+        elif testdir[0] == 'z' and len(self.envir.L) < 3:
+            raise RuntimeError("z-direction unavailable in 2D problems.")
+
+        # Loop over grid points, masking ones that fail test
+        for n,pt in enumerate(grid):
+            # get point on edge of domain
+            pt2 = np.array(pt)
+            if testdir == 'x0':
+                pt2[0] = 0
+            elif testdir == 'x1':
+                pt2[0] = self.envir.L[0]
+            elif testdir == 'y0':
+                pt2[1] = 0
+            elif testdir == 'y1':
+                pt2[1] = self.envir.L[1]
+            elif testdir == 'z0':
+                pt2[2] = 0
+            elif testdir == 'z1':
+                pt2[2] = self.envir.L[2]
+            else:
+                raise RuntimeError("Unrecognized value for testdir.")
+
+            # get intersections.
+            # this needs to be done in an intellegent way or else it will be
+            #   REALLY slow.
+            pass
+
+
+
     @property
     def full_pos_history(self):
         '''History of self.positions, including present time.'''
@@ -3025,7 +3097,7 @@ class swarm:
 
 
     @staticmethod
-    def _seg_intersect_3D_triangles(P0, P1, Q0_list, Q1_list, Q2_list):
+    def _seg_intersect_3D_triangles(P0, P1, Q0_list, Q1_list, Q2_list, get_all=False):
         '''Find the intersection between a line segment P0 to P1 and any of the
         triangles given by Q0, Q1, Q2 where each row is a different triangle.
         Returns None if there is no intersection.
@@ -3039,6 +3111,7 @@ class swarm:
             Q0: Nx3 ndarray of first points in a list of triangles.
             Q1: Nx3 ndarray of second points in a list of triangles.
             Q2: Nx3 ndarray of third points in a list of triangles.
+            get_all: Return all intersections instead of just the first one.
 
         Returns:
             x: length 3 array giving the coordinates of the first point of intersection
@@ -3098,11 +3171,12 @@ class swarm:
         plane_int = np.logical_and(0<=s_I_list, s_I_list<=1)
 
         # calculate barycentric coordinates for each plane intersection
-        # Note: we only care about the closest triangle intersection!
         closest_int = (None, -1, None)
+        intersections = []
         for n, s_I in zip(np.arange(len(plane_int))[plane_int], s_I_list[plane_int]):
+            # if get_all is False, we only care about the closest triangle intersection!
             # see if we need to worry about this one
-            if closest_int[1] == -1 or closest_int[1] > s_I:
+            if closest_int[1] == -1 or closest_int[1] > s_I or get_all:
                 cross_pt = P0 + s_I*u
                 normal = n_list[n]/np.linalg.norm(n_list[n])
                 A_dbl = np.dot(n_list[n], normal)
@@ -3113,11 +3187,20 @@ class swarm:
                 coords[2] = 1 - coords[0] - coords[1]
                 # check if point is in triangle
                 if np.all(coords>=0):
-                    closest_int = (cross_pt, s_I, normal, Q0_list[n], Q1_list[n], Q2_list[n])
-        if closest_int[0] is None:
-            return None
+                    if get_all:
+                        intersections.append((cross_pt, s_I, normal, Q0_list[n], Q1_list[n], Q2_list[n]))
+                    else:
+                        closest_int = (cross_pt, s_I, normal, Q0_list[n], Q1_list[n], Q2_list[n])
+        if not get_all:
+            if closest_int[0] is None:
+                return None
+            else:
+                return closest_int
         else:
-            return closest_int
+            if len(intersections) == 0:
+                return None
+            else:
+                return intersections
 
 
 
