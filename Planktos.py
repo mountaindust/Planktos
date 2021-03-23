@@ -2129,8 +2129,7 @@ class swarm:
         
         The output of this method is appropriate for finding FTLE.
 
-        If 2D, grid list moves in X direction, then Y direction.
-        If 3D, grid list moves in Z direction, then X, then Y.
+        Grid list moves in the [Z direction], Y direction, then X direction.
 
         Arguments:
             x_num, y_num, [z_num]: number of grid points in each direction
@@ -2155,42 +2154,192 @@ class swarm:
         y_pts = np.linspace(0, self.envir.L[1], y_num+2)[1:-1]
         if z_num is not None:
             z_pts = np.linspace(0, self.envir.L[2], z_num+2)[1:-1]
-            X1, X2, X3 = np.meshgrid(x_pts, y_pts, z_pts)
-            grid = ma.array([X1.flatten(), X2.flatten(), X3.flatten]).T
+            X1, X2, X3 = np.meshgrid(x_pts, y_pts, z_pts, indexing='ij')
+            xidx, yidx, zidx = np.meshgrid(np.arange(x_num), np.arange(y_num), 
+                                           np.arange(z_num), indexing='ij')
+            DIM = 3
         elif len(self.envir.L) > 2:
             raise RuntimeError("Must specify z_num for 3D problems.")
         else:
-            X1, X2 = np.meshgrid(x_pts, y_pts)
-            grid = ma.array([X1.flatten(), X2.flatten()]).T
+            X1, X2 = np.meshgrid(x_pts, y_pts, indexing='ij')
+            xidx, yidx = np.meshgrid(np.arange(x_num), np.arange(y_num), 
+                                     indexing='ij')
+            DIM = 2
 
         if testdir is None:
-            return grid
+            if DIM == 2:
+                return ma.array([X1.flatten(), X2.flatten()]).T
+            else:
+                return ma.array([X1.flatten(), X2.flatten(), X3.flatten]).T
         elif testdir[0] == 'z' and len(self.envir.L) < 3:
             raise RuntimeError("z-direction unavailable in 2D problems.")
 
-        # Loop over grid points, masking ones that fail test
-        for n,pt in enumerate(grid):
-            # get point on edge of domain
-            pt2 = np.array(pt)
-            if testdir == 'x0':
-                pt2[0] = 0
-            elif testdir == 'x1':
-                pt2[0] = self.envir.L[0]
-            elif testdir == 'y0':
-                pt2[1] = 0
-            elif testdir == 'y1':
-                pt2[1] = self.envir.L[1]
-            elif testdir == 'z0':
-                pt2[2] = 0
-            elif testdir == 'z1':
-                pt2[2] = self.envir.L[2]
-            else:
-                raise RuntimeError("Unrecognized value for testdir.")
+        # Convert X1, X2, X3 to masked arrays
+        X1 = ma.array(X1)
+        X2 = ma.array(X2)
+        if DIM == 3:
+            X3 = ma.array(X3)
 
-            # get intersections.
-            # this needs to be done in an intellegent way or else it will be
-            #   REALLY slow.
-            pass
+        # Translate directional input
+        startdim = [0,0]
+        if testdir[0] == 'x':
+            startdim[0] = 0
+            if DIM == 2:
+                perp_idx = 1
+            else:
+                perp_idx = [1,2]
+        elif testdir[0] == 'y':
+            startdim[0] = 1
+            if DIM == 2:
+                perp_idx = 0
+            else:
+                perp_idx = [0,2]
+        elif testdir[0] == 'z':
+            startdim[0] = 2
+            perp_idx = [0,1]
+        else:
+            raise RuntimeError("Unrecognized value in testdir, {}.".format(testdir))
+        try:
+            startdim[1] = int(testdir[1]) - 1
+        except ValueError:
+            raise RuntimeError("Unrecognized value in testdir, {}.".format(testdir))
+        
+        # Idea: start on opposite side of domain as given direction and take a
+            #   full grid on the boundary. See if there are intersections.
+            #   If none, none of the points along that ray need to be tested further
+            #   Otherwise, we are also given the intersection points. Use to
+            #   deduce the rest.
+
+        # startdim gives the dimension and index on which to place a grid
+        
+        X1 = ma.array(X1)
+        X2 = ma.array(X2)
+        if DIM == 3:
+            X3 = ma.array(X3)
+            grids = [X1, X2, X3]
+            idx_list = [xidx, yidx, zidx]
+        else:
+            grids = [X1, X2]
+            idx_list = [xidx, yidx]
+
+        # get a list of the gridpoints on correct side of the domain
+        firstpts = []
+        first_idx_list = []
+        for X, idx in zip(grids,idx_list):
+            if startdim[0] == 0:
+                firstpts.append(X[startdim[1],...])
+                first_idx_list.append(idx[startdim[1],...])
+            elif startdim[0] == 1:
+                firstpts.append(X[:,startdim[1],...])
+                first_idx_list.append(idx[:,startdim[1],...])
+            else:
+                firstpts.append(X[:,:,startdim[1]])
+                first_idx_list.append(idx[:,:,startdim[1]])
+        firstpts = np.array([X.flatten() for X in firstpts]).T
+        idx_vals = np.array([idx.flatten() for idx in first_idx_list]).T
+
+        mesh = self.envir.ibmesh
+        meshptlist = mesh.reshape((mesh.shape[0]*mesh.shape[1],mesh.shape[2]))
+        for pt, idx in zip(firstpts,idx_vals):
+            # for each pt in the grid, get a list of eligibible mesh elements as
+            #   those who have a point within a cylinder of diameter envir.max_meshpt_dist
+            pt_bool = np.linalg.norm(meshptlist[:,perp_idx]-pt[perp_idx], 
+                axis=1)<=self.envir.max_meshpt_dist/2
+            pt_bool = pt_bool.reshape((mesh.shape[0], mesh.shape[1]))
+            close_mesh = mesh[np.any(pt_bool, axis=1)]
+
+            endpt = np.array(pt)
+            if startdim[1] == -1:
+                endpt[startdim[0]] = 0
+            else:
+                endpt[startdim[0]] = self.envir.L[startdim[0]]
+
+            # Get intersections
+            if DIM == 2:
+                intersections = swarm._seg_intersect_2D(pt, endpt,
+                    close_mesh[:,0,:], close_mesh[:,1,:], get_all=True)
+            else:
+                intersections = swarm._seg_intersect_3D_triangles(pt, endpt,
+                    close_mesh[:,0,:], close_mesh[:,1,:], close_mesh[:,2,:], get_all=True)
+
+            # For completeness, we should also worry about edge cases where 
+            #   intersections are not of mesh facets but of triangle points, but
+            #   as a heuristic, we will ignore this. A tweaking of the number of
+            #   grid points used could fix this problem in most cases, or it
+            #   could be fixed by hand.
+
+            if intersections is not None:
+                # Sort the intersections by distance away from pt
+                intersections = sorted(intersections, key=lambda x: x[1])
+
+                n = len(intersections)
+                # get list of all x,y, or z values for points along the ray
+                #   (where the dimension matches the direction of the ray)
+                if startdim[0] == 0:
+                    current_pt_val = pt[0] - 10e-7
+                    if DIM == 3:
+                        val_list = X1[:,idx[1],idx[2]]
+                    else:
+                        val_list = X1[:,idx[1]]
+                elif startdim[0] == 1:
+                    current_pt_val = pt[1] - 10e-7
+                    if DIM == 3:
+                        val_list = X2[idx[0],:,idx[2]]
+                    else:
+                        val_list = X2[idx[0],:]
+                else:
+                    current_pt_val = pt[2] - 10e-7
+                    val_list = X3[idx[0],idx[1],:]
+
+                while n > 0:
+                    intersection = intersections.pop(0)
+                    if startdim[0] == 0:
+                        intersect_val = intersection[0][0]
+                    elif startdim[0] == 1:
+                        intersect_val = intersection[0][1]
+                    else:
+                        intersect_val = intersection[0][2]
+
+                    if current_pt_val < intersect_val:
+                        pair = [current_pt_val, intersect_val]
+                    else:
+                        pair = [intersect_val, current_pt_val]
+                    
+                    # gather all points between current one and intersection
+                    #   This will always mask points exactly on a mesh boundary
+                    bool_list = np.logical_and(pair[0]<=val_list,val_list<=pair[1])
+
+                    # set mask if number of intersections is odd
+                    if n%2 == 1:
+                        if startdim[0] == 0:
+                            if DIM == 3:
+                                X1[bool_list,idx[1],idx[2]] = ma.masked
+                                X2[bool_list,idx[1],idx[2]] = ma.masked
+                                X3[bool_list,idx[1],idx[2]] = ma.masked
+                            else:
+                                X1[bool_list,idx[1]] = ma.masked
+                                X2[bool_list,idx[1]] = ma.masked
+                        elif startdim[0] == 1:
+                            if DIM == 3:
+                                X1[idx[0],bool_list,idx[2]] = ma.masked
+                                X2[idx[0],bool_list,idx[2]] = ma.masked
+                                X3[idx[0],bool_list,idx[2]] = ma.masked
+                            else:
+                                X1[idx[0],bool_list] = ma.masked
+                                X2[idx[0],bool_list] = ma.masked
+                        else:
+                            X1[idx[0],idx[1],bool_list] = ma.masked
+                            X2[idx[0],idx[1],bool_list] = ma.masked
+                            X3[idx[0],idx[1],bool_list] = ma.masked
+
+                    # Update current_pt_val to latest intersection
+                    current_pt_val = intersect_val
+
+        # all points done.
+        if DIM == 2:
+            return ma.array([X1.flatten(), X2.flatten()]).T
+        else:
+            return ma.array([X1.flatten(), X2.flatten(), X3.flatten]).T
 
 
 
