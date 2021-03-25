@@ -19,7 +19,7 @@ from math import exp, log
 from itertools import combinations
 import numpy as np
 import numpy.ma as ma
-from scipy import interpolate
+from scipy import interpolate, stats
 from scipy.spatial import distance, ConvexHull, Delaunay
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -3446,11 +3446,23 @@ class swarm:
 
 
 
-    def plot(self, t=None, blocking=True):
+    def plot(self, t=None, blocking=True, dist='density', figsize=None):
         '''Plot the position of the swarm at time t, or at the current time
         if no time is supplied. The actual time plotted will depend on the
         history of movement steps; the closest entry in
-        environment.time_history will be shown without interpolation.'''
+        environment.time_history will be shown without interpolation.
+        
+        Arguments:
+            t: time to plot. if None, the current time.
+            blocking: whether the plot should block execution or not
+            dist: whether to plot Gaussian kernel density estimation or histogram.
+                Options are:
+                'density': plot Gaussian KDE using Scotts Factor from scipy.stats.gaussian_kde
+                'cov': use the variance in each direction from self.shared_props['cov']
+                float: a bandwidth factor to multiply the KDE variance by
+                'hist': plot histogram
+            figsize: figure size. default is a heurstic that works... most of the time?
+        '''
 
         if t is not None and len(self.envir.time_history) != 0:
             loc = np.searchsorted(self.envir.time_history, t)
@@ -3477,7 +3489,10 @@ class swarm:
             # 2D plot
             aspectratio = self.envir.L[0]/self.envir.L[1]
             x_length = np.min((5*aspectratio+1,12))
-            fig = plt.figure(figsize=(x_length,6))
+            if figsize is None:
+                fig = plt.figure(figsize=(x_length,6))
+            else:
+                fig = plt.figure(figsize=figsize)
             ax, axHistx, axHisty = self.envir._plot_setup(fig)
 
             # scatter plot and time text
@@ -3497,16 +3512,40 @@ class swarm:
                         'Avg y vel: {:.1g} {}/s'.format(avg_spd_y, self.envir.units),
                         fontsize=10)
 
-            # histograms
-            bins_x = np.linspace(0, self.envir.L[0], 26)
-            bins_y = np.linspace(0, self.envir.L[1], 26)
-            axHistx.hist(positions[:,0].compressed(), bins=bins_x)
-            axHisty.hist(positions[:,1].compressed(), bins=bins_y,
-                         orientation='horizontal')
+            if dist == 'hist':
+                # histograms
+                bins_x = np.linspace(0, self.envir.L[0], 26)
+                bins_y = np.linspace(0, self.envir.L[1], 26)
+                axHistx.hist(positions[:,0].compressed(), bins=bins_x)
+                axHisty.hist(positions[:,1].compressed(), bins=bins_y,
+                                orientation='horizontal')
+            else:
+                # Gaussian Kernel Density Estimation
+                if dist == 'cov':
+                    fac_x = self.shared_props['cov'][0,0]
+                    fac_y = self.shared_props['cov'][1,1]
+                else:
+                    try:
+                        fac_x = float(dist)
+                        fac_y = fac_x
+                    except:
+                        fac_x = None
+                        fac_y = None
+                xmesh = np.linspace(0, self.envir.L[0])
+                ymesh = np.linspace(0, self.envir.L[1])
+                x_density = stats.gaussian_kde(positions[:,0].compressed(), fac_x)
+                y_density = stats.gaussian_kde(positions[:,1].compressed(), fac_y)
+                axHistx.plot(xmesh, x_density(xmesh))
+                axHisty.plot(y_density(ymesh),ymesh)
+                axHistx.get_yaxis().set_ticks([])
+                axHisty.get_xaxis().set_ticks([])
 
         else:
             # 3D plot
-            fig = plt.figure(figsize=(10,5))
+            if figsize is None:
+                fig = plt.figure(figsize=(10,5))
+            else:
+                fig = plt.figure(figsize=figsize)
             ax, axHistx, axHisty, axHistz = self.envir._plot_setup(fig)
 
             # scatter plot and time text
@@ -3538,20 +3577,49 @@ class swarm:
                          transform=axHistz.transAxes, verticalalignment='top',
                          fontsize=10)
 
-            # histograms
-            bins_x = np.linspace(0, self.envir.L[0], 26)
-            bins_y = np.linspace(0, self.envir.L[1], 26)
-            bins_z = np.linspace(0, self.envir.L[2], 26)
-            axHistx.hist(positions[:,0].compressed(), bins=bins_x, alpha=0.8)
-            axHisty.hist(positions[:,1].compressed(), bins=bins_y, alpha=0.8)
-            axHistz.hist(positions[:,2].compressed(), bins=bins_z, alpha=0.8)
+            if dist == 'hist':
+                # histograms
+                bins_x = np.linspace(0, self.envir.L[0], 26)
+                bins_y = np.linspace(0, self.envir.L[1], 26)
+                bins_z = np.linspace(0, self.envir.L[2], 26)
+                axHistx.hist(positions[:,0].compressed(), bins=bins_x, alpha=0.8)
+                axHisty.hist(positions[:,1].compressed(), bins=bins_y, alpha=0.8)
+                axHistz.hist(positions[:,2].compressed(), bins=bins_z, alpha=0.8)
+            else:
+                # Gaussian Kernel Density Estimation
+                if dist == 'cov':
+                    fac_x = self.shared_props['cov'][0,0]
+                    fac_y = self.shared_props['cov'][1,1]
+                    fac_z = self.shared_props['cov'][2,2]
+                else:
+                    try:
+                        fac_x = float(dist)
+                        fac_y = fac_x
+                        fac_z = fac_x
+                    except:
+                        fac_x = None
+                        fac_y = None
+                        fac_z = None
+                xmesh = np.linspace(0, self.envir.L[0])
+                ymesh = np.linspace(0, self.envir.L[1])
+                zmesh = np.linspace(0, self.envir.L[2])
+                x_density = stats.gaussian_kde(positions[:,0].compressed(), fac_x)
+                y_density = stats.gaussian_kde(positions[:,1].compressed(), fac_y)
+                z_density = stats.gaussian_kde(positions[:,2].compressed(), fac_z)
+                axHistx.plot(xmesh, x_density(xmesh))
+                axHisty.plot(ymesh, y_density(ymesh))
+                axHistz.plot(zmesh, z_density(zmesh))
+                axHistx.get_yaxis().set_ticks([])
+                axHisty.get_yaxis().set_ticks([])
+                axHistz.get_yaxis().set_ticks([])
 
         # show the plot
         plt.show(block=blocking)
 
 
 
-    def plot_all(self, movie_filename=None, frames=None, downsamp=None, fps=10):
+    def plot_all(self, movie_filename=None, frames=None, downsamp=None, fps=10, 
+                 dist='density', figsize=None):
         ''' Plot the history of the swarm's movement, incl. current.
         If movie_filename is specified, output a movie file instead.
         
@@ -3569,7 +3637,14 @@ class swarm:
                 the histograms.
             fps: frames per second, only used if saving a movie to file. Make
                 sure this is at least a big as 1/dt, where dt is the time interval
-                between frames!        
+                between frames!
+            dist: whether to plot Gaussian kernel density estimation or histogram.
+                Options are:
+                'density': plot Gaussian KDE using Scotts Factor from scipy.stats.gaussian_kde
+                'cov': use the variance in each direction from self.shared_props['cov']
+                float: a bandwidth factor to multiply the KDE variance by
+                'hist': plot histogram
+            figsize: figure size. default is a heurstic that works... most of the time?     
         '''
 
         if len(self.envir.time_history) == 0:
@@ -3594,7 +3669,10 @@ class swarm:
             ### 2D setup ###
             aspectratio = self.envir.L[0]/self.envir.L[1]
             x_length = np.min((5*aspectratio+1,12))
-            fig = plt.figure(figsize=(x_length,6))
+            if figsize is None:
+                fig = plt.figure(figsize=(x_length,6))
+            else:
+                fig = plt.figure(figsize=figsize)
             ax, axHistx, axHisty = self.envir._plot_setup(fig)
 
             scat = ax.scatter([], [], label='organism')
@@ -3616,18 +3694,44 @@ class swarm:
                          fontsize=10, transform=axStats.transAxes,
                          verticalalignment='top')
 
-            # histograms
-            data_x = self.pos_history[n0][:,0].compressed()
-            data_y = self.pos_history[n0][:,1].compressed()
-            bins_x = np.linspace(0, self.envir.L[0], 26)
-            bins_y = np.linspace(0, self.envir.L[1], 26)
-            n_x, bins_x, patches_x = axHistx.hist(data_x, bins=bins_x)
-            n_y, bins_y, patches_y = axHisty.hist(data_y, bins=bins_y, 
-                                                  orientation='horizontal')
+            if dist == 'hist':
+                # histograms
+                data_x = self.pos_history[n0][:,0].compressed()
+                data_y = self.pos_history[n0][:,1].compressed()
+                bins_x = np.linspace(0, self.envir.L[0], 26)
+                bins_y = np.linspace(0, self.envir.L[1], 26)
+                n_x, bins_x, patches_x = axHistx.hist(data_x, bins=bins_x)
+                n_y, bins_y, patches_y = axHisty.hist(data_y, bins=bins_y, 
+                                                      orientation='horizontal')
+            else:
+                # Gaussian Kernel Density Estimation
+                if dist == 'cov':
+                        fac_x = self.shared_props['cov'][0,0]
+                        fac_y = self.shared_props['cov'][1,1]
+                else:
+                    try:
+                        fac_x = float(dist)
+                        fac_y = fac_x
+                    except:
+                        fac_x = None
+                        fac_y = None
+                xmesh = np.linspace(0, self.envir.L[0])
+                ymesh = np.linspace(0, self.envir.L[1])
+                x_density = stats.gaussian_kde(self.pos_history[n0][:,0].compressed(), fac_x)
+                y_density = stats.gaussian_kde(self.pos_history[n0][:,1].compressed(), fac_y)
+                xdens_plt, = axHistx.plot(xmesh, x_density(xmesh))
+                ydens_plt, = axHisty.plot(y_density(ymesh),ymesh)
+                axHistx.set_ylim(top=np.max(xdens_plt.get_ydata()))
+                axHisty.set_xlim(right=np.max(ydens_plt.get_xdata()))
+                axHistx.get_yaxis().set_ticks([])
+                axHisty.get_xaxis().set_ticks([])
             
         else:
             ### 3D setup ###
-            fig = plt.figure(figsize=(10,5))
+            if figsize is None:
+                fig = plt.figure(figsize=(10,5))
+            else:
+                fig = plt.figure(figsize=figsize)
             ax, axHistx, axHisty, axHistz = self.envir._plot_setup(fig)
 
             if downsamp is None:
@@ -3672,16 +3776,47 @@ class swarm:
                                        transform=axHistz.transAxes, animated=True,
                                        verticalalignment='top', fontsize=10)
 
-            # histograms
-            data_x = self.pos_history[n0][:,0].compressed()
-            data_y = self.pos_history[n0][:,1].compressed()
-            data_z = self.pos_history[n0][:,2].compressed()
-            bins_x = np.linspace(0, self.envir.L[0], 26)
-            bins_y = np.linspace(0, self.envir.L[1], 26)
-            bins_z = np.linspace(0, self.envir.L[2], 26)
-            n_x, bins_x, patches_x = axHistx.hist(data_x, bins=bins_x, alpha=0.8)
-            n_y, bins_y, patches_y = axHisty.hist(data_y, bins=bins_y, alpha=0.8)
-            n_z, bins_z, patches_z = axHistz.hist(data_z, bins=bins_z, alpha=0.8)
+            if dist == 'hist':
+                # histograms
+                data_x = self.pos_history[n0][:,0].compressed()
+                data_y = self.pos_history[n0][:,1].compressed()
+                data_z = self.pos_history[n0][:,2].compressed()
+                bins_x = np.linspace(0, self.envir.L[0], 26)
+                bins_y = np.linspace(0, self.envir.L[1], 26)
+                bins_z = np.linspace(0, self.envir.L[2], 26)
+                n_x, bins_x, patches_x = axHistx.hist(data_x, bins=bins_x, alpha=0.8)
+                n_y, bins_y, patches_y = axHisty.hist(data_y, bins=bins_y, alpha=0.8)
+                n_z, bins_z, patches_z = axHistz.hist(data_z, bins=bins_z, alpha=0.8)
+            else:
+                # Gaussian Kernel Density Estimation
+                if dist == 'cov':
+                    fac_x = self.shared_props['cov'][0,0]
+                    fac_y = self.shared_props['cov'][1,1]
+                    fac_z = self.shared_props['cov'][2,2]
+                else:
+                    try:
+                        fac_x = float(dist)
+                        fac_y = fac_x
+                        fac_z = fac_x
+                    except:
+                        fac_x = None
+                        fac_y = None
+                        fac_z = None
+                xmesh = np.linspace(0, self.envir.L[0])
+                ymesh = np.linspace(0, self.envir.L[1])
+                zmesh = np.linspace(0, self.envir.L[2])
+                x_density = stats.gaussian_kde(self.pos_history[n0][:,0].compressed(), fac_x)
+                y_density = stats.gaussian_kde(self.pos_history[n0][:,1].compressed(), fac_y)
+                z_density = stats.gaussian_kde(self.pos_history[n0][:,2].compressed(), fac_z)
+                xdens_plt, = axHistx.plot(xmesh, x_density(xmesh))
+                ydens_plt, = axHisty.plot(ymesh, y_density(ymesh))
+                zdens_plt, = axHistz.plot(zmesh, z_density(zmesh))
+                axHistx.set_ylim(top=np.max(xdens_plt.get_ydata()))
+                axHisty.set_ylim(top=np.max(ydens_plt.get_ydata()))
+                axHistz.set_ylim(top=np.max(zdens_plt.get_ydata()))
+                axHistx.get_yaxis().set_ticks([])
+                axHisty.get_yaxis().set_ticks([])
+                axHistz.get_yaxis().set_ticks([])
 
         # animation function. Called sequentially
         def animate(n):
@@ -3701,13 +3836,22 @@ class swarm:
                         scat.set_offsets(self.pos_history[n])
                     else:
                         scat.set_offsets(self.pos_history[n][downsamp,:])
-                    n_x, _ = np.histogram(self.pos_history[n][:,0].compressed(), bins_x)
-                    n_y, _ = np.histogram(self.pos_history[n][:,1].compressed(), bins_y)
-                    for rect, h in zip(patches_x, n_x):
-                        rect.set_height(h)
-                    for rect, h in zip(patches_y, n_y):
-                        rect.set_width(h)
-                    return [scat, time_text, stats_text] + list(patches_x) + list(patches_y)
+                    if dist == 'hist':
+                        n_x, _ = np.histogram(self.pos_history[n][:,0].compressed(), bins_x)
+                        n_y, _ = np.histogram(self.pos_history[n][:,1].compressed(), bins_y)
+                        for rect, h in zip(patches_x, n_x):
+                            rect.set_height(h)
+                        for rect, h in zip(patches_y, n_y):
+                            rect.set_width(h)
+                        return [scat, time_text, stats_text] + list(patches_x) + list(patches_y)
+                    else:
+                        x_density = stats.gaussian_kde(self.pos_history[n][:,0].compressed(), fac_x)
+                        y_density = stats.gaussian_kde(self.pos_history[n][:,1].compressed(), fac_y)
+                        xdens_plt.set_ydata(x_density(xmesh))
+                        ydens_plt.set_xdata(y_density(ymesh))
+                        axHistx.set_ylim(top=np.max(xdens_plt.get_ydata()))
+                        axHisty.set_xlim(right=np.max(ydens_plt.get_xdata()))
+                        return [scat, time_text, stats_text, xdens_plt, ydens_plt]
                     
                 else:
                     # 3D
@@ -3727,18 +3871,32 @@ class swarm:
                         scat._offsets3d = (np.ma.ravel(self.pos_history[n][downsamp,0].compressed()),
                                         np.ma.ravel(self.pos_history[n][downsamp,1].compressed()),
                                         np.ma.ravel(self.pos_history[n][downsamp,2].compressed()))
-                    n_x, _ = np.histogram(self.pos_history[n][:,0].compressed(), bins_x)
-                    n_y, _ = np.histogram(self.pos_history[n][:,1].compressed(), bins_y)
-                    n_z, _ = np.histogram(self.pos_history[n][:,2].compressed(), bins_z)
-                    for rect, h in zip(patches_x, n_x):
-                        rect.set_height(h)
-                    for rect, h in zip(patches_y, n_y):
-                        rect.set_height(h)
-                    for rect, h in zip(patches_z, n_z):
-                        rect.set_height(h)
-                    fig.canvas.draw()
-                    return [scat, time_text, flow_text, perc_text, x_flow_text, 
-                        y_flow_text, z_flow_text] + list(patches_x) + list(patches_y) + list(patches_z)
+                    if dist == 'hist':
+                        n_x, _ = np.histogram(self.pos_history[n][:,0].compressed(), bins_x)
+                        n_y, _ = np.histogram(self.pos_history[n][:,1].compressed(), bins_y)
+                        n_z, _ = np.histogram(self.pos_history[n][:,2].compressed(), bins_z)
+                        for rect, h in zip(patches_x, n_x):
+                            rect.set_height(h)
+                        for rect, h in zip(patches_y, n_y):
+                            rect.set_height(h)
+                        for rect, h in zip(patches_z, n_z):
+                            rect.set_height(h)
+                        fig.canvas.draw()
+                        return [scat, time_text, flow_text, perc_text, x_flow_text, 
+                            y_flow_text, z_flow_text] + list(patches_x) + list(patches_y) + list(patches_z)
+                    else:
+                        x_density = stats.gaussian_kde(self.pos_history[n][:,0].compressed(), fac_x)
+                        y_density = stats.gaussian_kde(self.pos_history[n][:,1].compressed(), fac_y)
+                        z_density = stats.gaussian_kde(self.pos_history[n][:,2].compressed(), fac_z)
+                        xdens_plt.set_ydata(x_density(xmesh))
+                        ydens_plt.set_ydata(y_density(ymesh))
+                        zdens_plt.set_ydata(z_density(zmesh))
+                        axHistx.set_ylim(top=np.max(xdens_plt.get_ydata()))
+                        axHisty.set_ylim(top=np.max(ydens_plt.get_ydata()))
+                        axHistz.set_ylim(top=np.max(zdens_plt.get_ydata()))
+                        fig.canvas.draw()
+                        return [scat, time_text, flow_text, perc_text, x_flow_text, 
+                                y_flow_text, z_flow_text, xdens_plt, ydens_plt, zdens_plt]
                     
             else:
                 time_text.set_text('time = {:.2f}'.format(self.envir.time))
@@ -3756,13 +3914,20 @@ class swarm:
                         scat.set_offsets(self.positions)
                     else:
                         scat.set_offsets(self.positions[downsamp,:])
-                    n_x, _ = np.histogram(self.positions[:,0].compressed(), bins_x)
-                    n_y, _ = np.histogram(self.positions[:,1].compressed(), bins_y)
-                    for rect, h in zip(patches_x, n_x):
-                        rect.set_height(h)
-                    for rect, h in zip(patches_y, n_y):
-                        rect.set_width(h)
-                    return [scat, time_text, stats_text] + list(patches_x) + list(patches_y)
+                    if dist == 'hist':
+                        n_x, _ = np.histogram(self.positions[:,0].compressed(), bins_x)
+                        n_y, _ = np.histogram(self.positions[:,1].compressed(), bins_y)
+                        for rect, h in zip(patches_x, n_x):
+                            rect.set_height(h)
+                        for rect, h in zip(patches_y, n_y):
+                            rect.set_width(h)
+                        return [scat, time_text, stats_text] + list(patches_x) + list(patches_y)
+                    else:
+                        x_density = stats.gaussian_kde(self.positions[:,0].compressed(), fac_x)
+                        y_density = stats.gaussian_kde(self.positions[:,1].compressed(), fac_y)
+                        xdens_plt.set_ydata(x_density(xmesh))
+                        ydens_plt.set_xdata(y_density(ymesh))
+                        return [scat, time_text, stats_text, xdens_plt, ydens_plt]
                     
                 else:
                     # 3D end
@@ -3782,18 +3947,29 @@ class swarm:
                         scat._offsets3d = (np.ma.ravel(self.positions[downsamp,0].compressed()),
                                         np.ma.ravel(self.positions[downsamp,1].compressed()),
                                         np.ma.ravel(self.positions[downsamp,2].compressed()))
-                    n_x, _ = np.histogram(self.positions[:,0].compressed(), bins_x)
-                    n_y, _ = np.histogram(self.positions[:,1].compressed(), bins_y)
-                    n_z, _ = np.histogram(self.positions[:,2].compressed(), bins_z)
-                    for rect, h in zip(patches_x, n_x):
-                        rect.set_height(h)
-                    for rect, h in zip(patches_y, n_y):
-                        rect.set_height(h)
-                    for rect, h in zip(patches_z, n_z):
-                        rect.set_height(h)
-                    fig.canvas.draw()
-                    return [scat, time_text, flow_text, perc_text, x_flow_text, 
-                        y_flow_text, z_flow_text] + list(patches_x) + list(patches_y) + list(patches_z)
+                    if dist == 'hist':
+                        n_x, _ = np.histogram(self.positions[:,0].compressed(), bins_x)
+                        n_y, _ = np.histogram(self.positions[:,1].compressed(), bins_y)
+                        n_z, _ = np.histogram(self.positions[:,2].compressed(), bins_z)
+                        for rect, h in zip(patches_x, n_x):
+                            rect.set_height(h)
+                        for rect, h in zip(patches_y, n_y):
+                            rect.set_height(h)
+                        for rect, h in zip(patches_z, n_z):
+                            rect.set_height(h)
+                        fig.canvas.draw()
+                        return [scat, time_text, flow_text, perc_text, x_flow_text, 
+                            y_flow_text, z_flow_text] + list(patches_x) + list(patches_y) + list(patches_z)
+                    else:
+                        x_density = stats.gaussian_kde(self.positions[:,0].compressed(), fac_x)
+                        y_density = stats.gaussian_kde(self.positions[:,1].compressed(), fac_y)
+                        z_density = stats.gaussian_kde(self.positions[:,2].compressed(), fac_z)
+                        xdens_plt.set_ydata(x_density(xmesh))
+                        ydens_plt.set_ydata(y_density(ymesh))
+                        zdens_plt.set_ydata(z_density(zmesh))
+                        fig.canvas.draw()
+                        return [scat, time_text, flow_text, perc_text, x_flow_text, 
+                                y_flow_text, z_flow_text, xdens_plt, ydens_plt, zdens_plt]
 
         # infer animation rate from dt between current and last position
         dt = self.envir.time - self.envir.time_history[-1]
