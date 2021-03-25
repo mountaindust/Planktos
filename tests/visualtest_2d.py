@@ -36,8 +36,7 @@ envir.read_IB2d_vertex_data('circle.vertex')
 #######
 
 ### Test for mesh_init ###
-s = envir.add_swarm()
-s.positions = s.grid_init(30,40,testdir='x0')
+s = envir.add_swarm(init='grid', num=(30,40), testdir='x0')
 #######
 
 # envir.plot_envir()

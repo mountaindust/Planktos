@@ -1399,17 +1399,19 @@ class environment:
 
 
 
-    def add_swarm(self, swarm_s=100, init='random', seed=None, props=None, **kwargs):
+    def add_swarm(self, swarm_s=100, init='random', seed=None, **kwargs):
         ''' Adds a swarm into this environment.
 
         Arguments:
-            swarm_s: swarm object or size of the swarm (int)
-            init: Method for initalizing positions.
+            swarm_s: swarm object or size of the swarm (int). If a swarm object
+                is given, the following arguments will be ignored (since the 
+                object is already initialized)
+            init: Method for initializing positions.
                 Accepts 'random', 1D array for a single point, or a 2D array 
                 to specify all points
             seed: Seed for random number generator
-            props: Dataframe of properties
             kwargs: keyword arguments to be set as swarm properties
+                (see swarm class for details)
         '''
 
         if isinstance(swarm_s, swarm):
@@ -1992,12 +1994,12 @@ class swarm:
 
     def __init__(self, swarm_size=100, envir=None, init='random', seed=None, 
                  shared_props=None, props=None, **kwargs):
-        ''' Initalizes planktos swarm in an environment.
+        ''' Initializes planktos swarm in an environment.
 
         Arguments:
             swarm_size: Size of the swarm (int)
             envir: environment for the swarm, defaults to the standard environment
-            init: Method for initalizing positions.
+            init: Method for initalizing positions. See below.
             seed: Seed for random number generator, int or None
             shared_props: dictionary of properties shared by all agents
             props: Pandas dataframe of individual agent properties
@@ -2014,6 +2016,17 @@ class swarm:
 
         Methods for initializing the swarm positions:
             - 'random': Uniform random distribution throughout the domain
+            - 'grid': Uniform grid on interior of the domain, including capability
+                to leave out closed immersed structures. In this case, swarm_size 
+                is ignored since it is determined by the grid dimensions.
+                Requires the additional keyword parameters:
+                num = tuple of number of grid points in x, y, [and z] directions
+                testdir: (optional) two character string for testing if points 
+                    are in the interior of an immersed structure and if so, masking
+                    them. The first char is x,y, or z denoting the dimensional direction
+                    of the search ray, the second is either 0 or 1 denoting the 
+                    direction (backward vs. forward) along that direction. See 
+                    documentation of swarm.grid_init for more information.
             - 1D array-like: All positions set to a single point.
             - 2D array: All positions as specified.
         
@@ -2041,13 +2054,26 @@ class swarm:
 
         # initialize agent locations
         self.positions = ma.zeros((swarm_size, len(self.envir.L)))
-        self.positions.harden_mask() # prevent unintentional mask overwites
         if isinstance(init,str):
             if init == 'random':
                 print('Initializing swarm with uniform random positions...')
                 for ii in range(len(self.envir.L)):
                     self.positions[:,ii] = self.rndState.uniform(0, 
                                         self.envir.L[ii], self.positions.shape[0])
+            elif init == 'grid':
+                assert 'num' in kwargs, "Required key word argument num missing for grid init."
+                x_num = kwargs['num'][0]; y_num = kwargs['num'][1]
+                if len(self.envir.L) > 2:
+                    z_num = kwargs['num'][2]
+                else:
+                    z_num = None
+                if 'testdir' in kwargs:
+                    testdir = kwargs['testdir']
+                else:
+                    testdir = None
+                print('Initializing swarm with grid positions...')
+                self.positions = self.grid_init(x_num, y_num, z_num, testdir)
+                swarm_size = self.positions.shape[0]
             else:
                 print("Initialization method {} not implemented.".format(init))
                 print("Exiting...")
@@ -2062,11 +2088,13 @@ class swarm:
                 for ii in range(len(self.envir.L)):
                     self.positions[:,ii] = init[ii]
 
+        self.positions.harden_mask() # prevent writes to masked elements
+
         # initialize agent velocities
         self.velocities = ma.zeros((swarm_size, len(self.envir.L)))
-        self.velocities.harden_mask()
         if self.envir.flow is not None:
-            self.velocities = self.get_fluid_drift()
+            self.velocities = ma.array(self.get_fluid_drift())
+        self.velocities.harden_mask()
 
         # initialize agent accelerations
         self.accelerations = ma.zeros((swarm_size, len(self.envir.L)))
@@ -2125,7 +2153,7 @@ class swarm:
     def grid_init(self, x_num, y_num, z_num=None, testdir=None):
         '''Return a grid of initial positions, potentially masking any grid 
         points in the interior of a closed, immersed structure. The full, unmasked 
-        grid will be x_num by y_num in the interior of the domain.
+        grid will be x_num by y_num [by z_num] in the interior of the domain.
         
         The output of this method is appropriate for finding FTLE.
 
@@ -2134,7 +2162,7 @@ class swarm:
         Arguments:
             x_num, y_num, [z_num]: number of grid points in each direction
             testdir: to check if a point is an interior to an immersed structure, 
-                a line will be drawn from the point to a boundary. If the number 
+                a line will be drawn from the point to a domain boundary. If the number 
                 of immersed boundary intersections is odd, the point will be 
                 considered interior and masked. This check will not be run at all 
                 if testdir is None. Otherwise, specify a direction with one of 
