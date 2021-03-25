@@ -1033,7 +1033,7 @@ class environment:
 
 
 
-    def read_IB2d_vertex_data(self, filename, res_factor=0.50005):
+    def read_IB2d_vertex_data(self, filename, res_factor=0.501):
         '''Reads in 2D vertex data from a .vertex file (IB2d). Assumes that any 
         vertices closer than res_factor (default is half + a bit for numerical 
         stability) times the Eulerian mesh resolution are connected linearly. 
@@ -2243,8 +2243,12 @@ class swarm:
         for pt, idx in zip(firstpts,idx_vals):
             # for each pt in the grid, get a list of eligibible mesh elements as
             #   those who have a point within a cylinder of diameter envir.max_meshpt_dist
-            pt_bool = np.linalg.norm(meshptlist[:,perp_idx]-pt[perp_idx], 
-                axis=1)<=self.envir.max_meshpt_dist/2
+            if DIM == 3:
+                pt_bool = np.linalg.norm(meshptlist[:,perp_idx]-pt[perp_idx], 
+                    axis=1)<=self.envir.max_meshpt_dist/2
+            else:
+                pt_bool = np.abs(meshptlist[:,perp_idx]-pt[perp_idx])\
+                    <=self.envir.max_meshpt_dist/2
             pt_bool = pt_bool.reshape((mesh.shape[0], mesh.shape[1]))
             close_mesh = mesh[np.any(pt_bool, axis=1)]
 
@@ -2272,7 +2276,6 @@ class swarm:
                 # Sort the intersections by distance away from pt
                 intersections = sorted(intersections, key=lambda x: x[1])
 
-                n = len(intersections)
                 # get list of all x,y, or z values for points along the ray
                 #   (where the dimension matches the direction of the ray)
                 if startdim[0] == 0:
@@ -2291,7 +2294,8 @@ class swarm:
                     current_pt_val = pt[2] - 10e-7
                     val_list = X3[idx[0],idx[1],:]
 
-                while n > 0:
+                while len(intersections) > 0:
+                    n = len(intersections)
                     intersection = intersections.pop(0)
                     if startdim[0] == 0:
                         intersect_val = intersection[0][0]
@@ -2339,7 +2343,7 @@ class swarm:
         if DIM == 2:
             return ma.array([X1.flatten(), X2.flatten()]).T
         else:
-            return ma.array([X1.flatten(), X2.flatten(), X3.flatten]).T
+            return ma.array([X1.flatten(), X2.flatten(), X3.flatten()]).T
 
 
 
