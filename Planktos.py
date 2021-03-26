@@ -3395,8 +3395,9 @@ class swarm:
 
 
 
-    def __calc_basic_stats(self, DIM3, t_indx=None):
-        ''' Return basic stats about % remaining and flow for plot printing.
+    def _calc_basic_stats(self, DIM3, t_indx=None):
+        ''' Return basic stats about % agents remaining, fluid velocity, and 
+        agent velocity for plot printing.
         DIM3 indicates the dimension of the domain, bool
         t_indx is the time index for pos_history or None for current time
         '''
@@ -3412,6 +3413,17 @@ class swarm:
             num_orig = num_left
         perc_left = 100*num_left/num_orig
 
+        # get average swarm velocity
+        if t_indx is None:
+            vel_data = self.velocities[~self.velocities.mask.any(axis=1)]
+            avg_swrm_vel = vel_data.mean(axis=0)
+        elif t_indx == 0:
+            avg_swrm_vel = np.zeros(len(self.envir.L))
+        else:
+            vel_data = (self.pos_history[t_indx] - self.pos_history[t_indx-1])/(
+                        self.envir.time_history[t_indx]-self.envir.time_history[t_indx-1])
+            avg_swrm_vel = vel_data.mean(axis=0)
+
         if not DIM3:
             # 2D flow
             # get current fluid flow info
@@ -3426,7 +3438,7 @@ class swarm:
             avg_spd_y = flow[1].mean()
             avg_spd = flow_spd.mean()
             max_spd = flow_spd.max()
-            return perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y
+            return perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_swrm_vel
 
         else:
             # 3D flow
@@ -3442,7 +3454,7 @@ class swarm:
             avg_spd_z = flow[2].mean()
             avg_spd = flow_spd.mean()
             max_spd = flow_spd.max()
-            return perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_spd_z
+            return perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel
 
 
 
@@ -3501,16 +3513,23 @@ class swarm:
                     transform=ax.transAxes, fontsize=12)
 
             # textual info
-            perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y = \
-                self.__calc_basic_stats(DIM3=False, t_indx=loc)
-            plt.figtext(0.77, 0.81,
+            perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_swrm_vel = \
+                self._calc_basic_stats(DIM3=False, t_indx=loc)
+            plt.figtext(0.77, 0.77,
                         '{:.1f}% remain\n'.format(perc_left)+
-                        '\n------Flow info------\n'+
-                        'Avg vel: {:.1g} {}/s\n'.format(avg_spd, self.envir.units)+
-                        'Max vel: {:.1g} {}/s\n'.format(max_spd, self.envir.units)+
-                        'Avg x vel: {:.1g} {}/s\n'.format(avg_spd_x, self.envir.units)+
-                        'Avg y vel: {:.1g} {}/s'.format(avg_spd_y, self.envir.units),
+                        '\n  ------ Info ------\n'+
+                        r'Fluid $v_{max}$'+': {:.1g} {}/s\n'.format(max_spd, self.envir.units)+
+                        r'Fluid $\overline{v}$'+': {:.1g} {}/s\n'.format(avg_spd, self.envir.units)+
+                        r'Agent $\overline{v}$'+': {:.1g} {}/s\n'.format(np.linalg.norm(avg_swrm_vel), self.envir.units),
                         fontsize=10)
+            axHistx.text(0.01, 0.98, r'Fluid $\overline{v}_x$'+': {:.2g} \n'.format(avg_spd_x)+
+                         r'Agent $\overline{v}_x$'+': {:.2g}'.format(avg_swrm_vel[0]),
+                         transform=axHistx.transAxes, verticalalignment='top',
+                         fontsize=10)
+            axHisty.text(0.02, 0.99, r'Fluid $\overline{v}_y$'+': {:.2g} \n'.format(avg_spd_y)+
+                         r'Agent $\overline{v}_y$'+': {:.2g}'.format(avg_swrm_vel[1]),
+                         transform=axHisty.transAxes, verticalalignment='top',
+                         fontsize=10)
 
             if dist == 'hist':
                 # histograms
@@ -3556,23 +3575,30 @@ class swarm:
                       fontsize=12)
 
             # textual info
-            perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_spd_z = \
-                self.__calc_basic_stats(DIM3=True, t_indx=loc)
-            ax.text2D(1, 0.945, 'Avg vel: {:.2g} {}/s\n'.format(avg_spd, self.envir.units)+
-                      'Max vel: {:.2g} {}/s'.format(max_spd, self.envir.units),
-                      transform=ax.transAxes, horizontalalignment='right',
+            perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel = \
+                self._calc_basic_stats(DIM3=True, t_indx=loc)
+            ax.text2D(0.75, 0.9, r'Fluid $v_{max}$'+': {:.2g} {}/s\n'.format(max_spd, self.envir.units)+
+                      r'Fluid $v_{avg}$'+': {:.2g} {}/s\n'.format(avg_spd, self.envir.units)+
+                      r'Agent $v_{avg}$'+': {:.2g} {}/s'.format(np.linalg.norm(avg_swrm_vel), self.envir.units),
+                      transform=ax.transAxes, horizontalalignment='left',
                       fontsize=10)
             ax.text2D(0.02, 0, '{:.1f}% remain\n'.format(perc_left),
                       transform=fig.transFigure, fontsize=10)
-            axHistx.text(0.02, 0.98, 'Avg x vel: {:.2g} {}/s\n'.format(avg_spd_x,
+            axHistx.text(0.02, 0.98, r'Fluid $\overline{v}_x$'+': {:.2g} {}/s\n'.format(avg_spd_x,
+                         self.envir.units)+
+                         r'Agent $\overline{v}_x$'+': {:.2g} {}/s'.format(avg_swrm_vel[0],
                          self.envir.units),
                          transform=axHistx.transAxes, verticalalignment='top',
                          fontsize=10)
-            axHisty.text(0.02, 0.98, 'Avg y vel: {:.2g} {}/s\n'.format(avg_spd_y,
+            axHisty.text(0.02, 0.98, r'Fluid $\overline{v}_y$'+': {:.2g} {}/s\n'.format(avg_spd_y,
+                         self.envir.units)+
+                         r'Agent $\overline{v}_y$'+': {:.2g} {}/s'.format(avg_swrm_vel[1],
                          self.envir.units),
                          transform=axHisty.transAxes, verticalalignment='top',
                          fontsize=10)
-            axHistz.text(0.02, 0.98, 'Avg z vel: {:.2g} {}/s\n'.format(avg_spd_z,
+            axHistz.text(0.02, 0.98, r'Fluid $\overline{v}_z$'+': {:.2g} {}/s\n'.format(avg_spd_z,
+                         self.envir.units)+
+                         r'Agent $\overline{v}_z$'+': {:.2g} {}/s'.format(avg_swrm_vel[2],
                          self.envir.units),
                          transform=axHistz.transAxes, verticalalignment='top',
                          fontsize=10)
@@ -3680,19 +3706,26 @@ class swarm:
             # textual info
             time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
                                 fontsize=12)
-            perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y = \
-                self.__calc_basic_stats(DIM3=False, t_indx=n0)
+            perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_swrm_vel = \
+                self._calc_basic_stats(DIM3=False, t_indx=n0)
             axStats = plt.axes([0.77, 0.77, 0.25, 0.2], frameon=False)
             axStats.set_axis_off()
             stats_text = axStats.text(0,1,
                          '{:.1f}% remain\n'.format(perc_left)+
-                         '\n------Flow info------\n'+
-                         'Avg vel: {:.1g} {}/s\n'.format(avg_spd, self.envir.units)+
-                         'Max vel: {:.1g} {}/s\n'.format(max_spd, self.envir.units)+
-                         'Avg x vel: {:.1g} {}/s\n'.format(avg_spd_x, self.envir.units)+
-                         'Avg y vel: {:.1g} {}/s'.format(avg_spd_y, self.envir.units),
+                         '\n  ------ Info ------\n'+
+                         r'Fluid $v_{max}$'+': {:.1g} {}/s\n'.format(max_spd, self.envir.units)+
+                         r'Fluid $\overline{v}$'+': {:.1g} {}/s\n'.format(avg_spd, self.envir.units)+
+                         r'Agent $\overline{v}$'+': {:.1g} {}/s\n'.format(np.linalg.norm(avg_swrm_vel), self.envir.units),
                          fontsize=10, transform=axStats.transAxes,
                          verticalalignment='top')
+            x_text = axHistx.text(0.01, 0.98, r'Fluid $\overline{v}_x$'+': {:.2g} \n'.format(avg_spd_x)+
+                         r'Agent $\overline{v}_x$'+': {:.2g}'.format(avg_swrm_vel[0]),
+                         transform=axHistx.transAxes, verticalalignment='top',
+                         fontsize=10)
+            y_text = axHisty.text(0.02, 0.99, r'Fluid $\overline{v}_y$'+': {:.2g} \n'.format(avg_spd_y)+
+                         r'Agent $\overline{v}_y$'+': {:.2g}'.format(avg_swrm_vel[1]),
+                         transform=axHisty.transAxes, verticalalignment='top',
+                         fontsize=10)
 
             if dist == 'hist':
                 # histograms
@@ -3749,32 +3782,42 @@ class swarm:
                                   self.envir.time_history[n0]),
                                   transform=ax.transAxes, animated=True,
                                   verticalalignment='top', fontsize=12)
-            perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_spd_z = \
-                self.__calc_basic_stats(DIM3=True, t_indx=n0)
-            flow_text = ax.text2D(1, 0.945,
-                                  'Avg vel: {:.2g} {}/s\n'.format(avg_spd, self.envir.units)+
-                                  'Max vel: {:.2g} {}/s'.format(max_spd, self.envir.units),
+            perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel = \
+                self._calc_basic_stats(DIM3=True, t_indx=n0)
+            flow_text = ax.text2D(0.75, 0.9,
+                                  r'Fluid $v_{max}$'+': {:.2g} {}/s\n'.format(
+                                  max_spd, self.envir.units)+
+                                  r'Fluid $v_{avg}$'+': {:.2g} {}/s\n'.format(
+                                  avg_spd, self.envir.units)+
+                                  r'Agent $v_{avg}$'+': {:.2g} {}/s'.format(
+                                  np.linalg.norm(avg_swrm_vel), self.envir.units),
                                   transform=ax.transAxes, animated=True,
-                                  horizontalalignment='right', fontsize=10)
+                                  horizontalalignment='left', fontsize=10)
             perc_text = ax.text2D(0.02, 0,
                                   '{:.1f}% remain\n'.format(perc_left),
                                   transform=fig.transFigure, animated=True,
                                   fontsize=10)
-            x_flow_text = axHistx.text(0.02, 0.98,
-                                       'Avg x vel: {:.2g} {}/s\n'.format(avg_spd_x,
-                                       self.envir.units),
-                                       transform=axHistx.transAxes, animated=True,
-                                       verticalalignment='top', fontsize=10)
-            y_flow_text = axHisty.text(0.02, 0.98,
-                                       'Avg y vel: {:.2g} {}/s\n'.format(avg_spd_y,
-                                       self.envir.units),
-                                       transform=axHisty.transAxes, animated=True,
-                                       verticalalignment='top', fontsize=10)
-            z_flow_text = axHistz.text(0.02, 0.98,
-                                       'Avg z vel: {:.2g} {}/s\n'.format(avg_spd_z,
-                                       self.envir.units),
-                                       transform=axHistz.transAxes, animated=True,
-                                       verticalalignment='top', fontsize=10)
+            x_text = axHistx.text(0.02, 0.98,
+                                  r'Fluid $\overline{v}_x$'+': {:.2g} {}/s\n'.format(
+                                  avg_spd_x, self.envir.units)+
+                                  r'Agent $\overline{v}_x$'+': {:.2g} {}/s'.format(
+                                  avg_swrm_vel[0], self.envir.units),
+                                  transform=axHistx.transAxes, animated=True,
+                                  verticalalignment='top', fontsize=10)
+            y_text = axHisty.text(0.02, 0.98,
+                                  r'Fluid $\overline{v}_y$'+': {:.2g} {}/s\n'.format(
+                                  avg_spd_y, self.envir.units)+
+                                  r'Agent $\overline{v}_y$'+': {:.2g} {}/s'.format(
+                                  avg_swrm_vel[1], self.envir.units),
+                                  transform=axHisty.transAxes, animated=True,
+                                  verticalalignment='top', fontsize=10)
+            z_text = axHistz.text(0.02, 0.98,
+                                  r'Fluid $\overline{v}_z$'+': {:.2g} {}/s\n'.format(
+                                  avg_spd_z, self.envir.units)+
+                                  r'Agent $\overline{v}_z$'+': {:.2g} {}/s'.format(
+                                  avg_swrm_vel[2], self.envir.units),
+                                  transform=axHistz.transAxes, animated=True,
+                                  verticalalignment='top', fontsize=10)
 
             if dist == 'hist':
                 # histograms
@@ -3824,14 +3867,17 @@ class swarm:
                 time_text.set_text('time = {:.2f}'.format(self.envir.time_history[n]))
                 if not DIM3:
                     # 2D
-                    perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y = \
-                        self.__calc_basic_stats(DIM3=False, t_indx=n)
+                    perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_swrm_vel = \
+                        self._calc_basic_stats(DIM3=False, t_indx=n)
                     stats_text.set_text('{:.1f}% remain\n'.format(perc_left)+
-                                        '\n------Flow info------\n'+
-                                        'Avg vel: {:.1g} {}/s\n'.format(avg_spd, self.envir.units)+
-                                        'Max vel: {:.1g} {}/s\n'.format(max_spd, self.envir.units)+
-                                        'Avg x vel: {:.1g} {}/s\n'.format(avg_spd_x, self.envir.units)+
-                                        'Avg y vel: {:.1g} {}/s'.format(avg_spd_y, self.envir.units))
+                         '\n  ------ Info ------\n'+
+                         r'Fluid $v_{max}$'+': {:.1g} {}/s\n'.format(max_spd, self.envir.units)+
+                         r'Fluid $\overline{v}$'+': {:.1g} {}/s\n'.format(avg_spd, self.envir.units)+
+                         r'Agent $\overline{v}$'+': {:.1g} {}/s\n'.format(np.linalg.norm(avg_swrm_vel), self.envir.units))
+                    x_text.set_text(r'Fluid $\overline{v}_x$'+': {:.2g} \n'.format(avg_spd_x)+
+                         r'Agent $\overline{v}_x$'+': {:.2g}'.format(avg_swrm_vel[0]))
+                    y_text.set_text(r'Fluid $\overline{v}_y$'+': {:.2g} \n'.format(avg_spd_y)+
+                         r'Agent $\overline{v}_y$'+': {:.2g}'.format(avg_swrm_vel[1]))
                     if downsamp is None:
                         scat.set_offsets(self.pos_history[n])
                     else:
@@ -3843,7 +3889,7 @@ class swarm:
                             rect.set_height(h)
                         for rect, h in zip(patches_y, n_y):
                             rect.set_width(h)
-                        return [scat, time_text, stats_text] + list(patches_x) + list(patches_y)
+                        return [scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
                     else:
                         x_density = stats.gaussian_kde(self.pos_history[n][:,0].compressed(), fac_x)
                         y_density = stats.gaussian_kde(self.pos_history[n][:,1].compressed(), fac_y)
@@ -3851,18 +3897,31 @@ class swarm:
                         ydens_plt.set_xdata(y_density(ymesh))
                         axHistx.set_ylim(top=np.max(xdens_plt.get_ydata()))
                         axHisty.set_xlim(right=np.max(ydens_plt.get_xdata()))
-                        return [scat, time_text, stats_text, xdens_plt, ydens_plt]
+                        return [scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
                     
                 else:
                     # 3D
-                    perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_spd_z = \
-                        self.__calc_basic_stats(DIM3=True, t_indx=n)
-                    flow_text.set_text('Avg vel: {:.2g} {}/s\n'.format(avg_spd, self.envir.units)+
-                                       'Max vel: {:.2g} {}/s'.format(max_spd, self.envir.units))
+                    perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel = \
+                        self._calc_basic_stats(DIM3=True, t_indx=n)
+                    flow_text.set_text(r'Fluid $v_{max}$'+': {:.2g} {}/s\n'.format(
+                                       max_spd, self.envir.units)+
+                                       r'Fluid $v_{avg}$'+': {:.2g} {}/s\n'.format(
+                                       avg_spd, self.envir.units)+
+                                       r'Agent $v_{avg}$'+': {:.2g} {}/s'.format(
+                                       np.linalg.norm(avg_swrm_vel), self.envir.units))
                     perc_text.set_text('{:.1f}% remain\n'.format(perc_left))
-                    x_flow_text.set_text('Avg x vel: {:.2g} {}/s\n'.format(avg_spd_x, self.envir.units))
-                    y_flow_text.set_text('Avg y vel: {:.2g} {}/s\n'.format(avg_spd_y, self.envir.units))
-                    z_flow_text.set_text('Avg z vel: {:.2g} {}/s\n'.format(avg_spd_z, self.envir.units))
+                    x_text.set_text(r'Fluid $\overline{v}_x$'+': {:.2g} {}/s\n'.format(
+                                    avg_spd_x, self.envir.units)+
+                                    r'Agent $\overline{v}_x$'+': {:.2g} {}/s'.format(
+                                    avg_swrm_vel[0], self.envir.units))
+                    y_text.set_text(r'Fluid $\overline{v}_y$'+': {:.2g} {}/s\n'.format(
+                                    avg_spd_y, self.envir.units)+
+                                    r'Agent $\overline{v}_y$'+': {:.2g} {}/s'.format(
+                                    avg_swrm_vel[1], self.envir.units))
+                    z_text.set_text(r'Fluid $\overline{v}_z$'+': {:.2g} {}/s\n'.format(
+                                    avg_spd_z, self.envir.units)+
+                                    r'Agent $\overline{v}_z$'+': {:.2g} {}/s'.format(
+                                    avg_swrm_vel[2], self.envir.units))
                     if downsamp is None:
                         scat._offsets3d = (np.ma.ravel(self.pos_history[n][:,0].compressed()),
                                         np.ma.ravel(self.pos_history[n][:,1].compressed()),
@@ -3882,8 +3941,8 @@ class swarm:
                         for rect, h in zip(patches_z, n_z):
                             rect.set_height(h)
                         fig.canvas.draw()
-                        return [scat, time_text, flow_text, perc_text, x_flow_text, 
-                            y_flow_text, z_flow_text] + list(patches_x) + list(patches_y) + list(patches_z)
+                        return [scat, time_text, flow_text, perc_text, x_text, 
+                            y_text, z_text] + list(patches_x) + list(patches_y) + list(patches_z)
                     else:
                         x_density = stats.gaussian_kde(self.pos_history[n][:,0].compressed(), fac_x)
                         y_density = stats.gaussian_kde(self.pos_history[n][:,1].compressed(), fac_y)
@@ -3895,21 +3954,24 @@ class swarm:
                         axHisty.set_ylim(top=np.max(ydens_plt.get_ydata()))
                         axHistz.set_ylim(top=np.max(zdens_plt.get_ydata()))
                         fig.canvas.draw()
-                        return [scat, time_text, flow_text, perc_text, x_flow_text, 
-                                y_flow_text, z_flow_text, xdens_plt, ydens_plt, zdens_plt]
+                        return [scat, time_text, flow_text, perc_text, x_text, 
+                                y_text, z_text, xdens_plt, ydens_plt, zdens_plt]
                     
             else:
                 time_text.set_text('time = {:.2f}'.format(self.envir.time))
                 if not DIM3:
                     # 2D end
-                    perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y = \
-                        self.__calc_basic_stats(DIM3=False, t_indx=None)
+                    perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_swrm_vel = \
+                        self._calc_basic_stats(DIM3=False, t_indx=None)
                     stats_text.set_text('{:.1f}% remain\n'.format(perc_left)+
-                                        '\n-----Flow info-----\n'+
-                                        'Avg vel: {:.1g} {}/s\n'.format(avg_spd, self.envir.units)+
-                                        'Max vel: {:.1g} {}/s\n'.format(max_spd, self.envir.units)+
-                                        'Avg x vel: {:.1g} {}/s\n'.format(avg_spd_x, self.envir.units)+
-                                        'Avg y vel: {:.1g} {}/s'.format(avg_spd_y, self.envir.units))
+                         '\n  ------ Info ------\n'+
+                         r'Fluid $v_{max}$'+': {:.1g} {}/s\n'.format(max_spd, self.envir.units)+
+                         r'Fluid $\overline{v}$'+': {:.1g} {}/s\n'.format(avg_spd, self.envir.units)+
+                         r'Agent $\overline{v}$'+': {:.1g} {}/s\n'.format(np.linalg.norm(avg_swrm_vel), self.envir.units))
+                    x_text.set_text(r'Fluid $\overline{v}_x$'+': {:.2g} \n'.format(avg_spd_x)+
+                         r'Agent $\overline{v}_x$'+': {:.2g}'.format(avg_swrm_vel[0]))
+                    y_text.set_text(r'Fluid $\overline{v}_y$'+': {:.2g} \n'.format(avg_spd_y)+
+                         r'Agent $\overline{v}_y$'+': {:.2g}'.format(avg_swrm_vel[1]))
                     if downsamp is None:
                         scat.set_offsets(self.positions)
                     else:
@@ -3921,24 +3983,37 @@ class swarm:
                             rect.set_height(h)
                         for rect, h in zip(patches_y, n_y):
                             rect.set_width(h)
-                        return [scat, time_text, stats_text] + list(patches_x) + list(patches_y)
+                        return [scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
                     else:
                         x_density = stats.gaussian_kde(self.positions[:,0].compressed(), fac_x)
                         y_density = stats.gaussian_kde(self.positions[:,1].compressed(), fac_y)
                         xdens_plt.set_ydata(x_density(xmesh))
                         ydens_plt.set_xdata(y_density(ymesh))
-                        return [scat, time_text, stats_text, xdens_plt, ydens_plt]
+                        return [scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
                     
                 else:
                     # 3D end
-                    perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_spd_z = \
-                        self.__calc_basic_stats(DIM3=True)
-                    flow_text.set_text('Avg vel: {:.2g} {}/s\n'.format(avg_spd, self.envir.units)+
-                                       'Max vel: {:.2g} {}/s'.format(max_spd, self.envir.units))
+                    perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel = \
+                        self._calc_basic_stats(DIM3=True)
+                    flow_text.set_text(r'Fluid $v_{max}$'+': {:.2g} {}/s\n'.format(
+                                       max_spd, self.envir.units)+
+                                       r'Fluid $v_{avg}$'+': {:.2g} {}/s\n'.format(
+                                       avg_spd, self.envir.units)+
+                                       r'Agent $v_{avg}$'+': {:.2g} {}/s'.format(
+                                       np.linalg.norm(avg_swrm_vel), self.envir.units))
                     perc_text.set_text('{:.1f}% remain\n'.format(perc_left))
-                    x_flow_text.set_text('Avg x vel: {:.2g} {}/s\n'.format(avg_spd_x, self.envir.units))
-                    y_flow_text.set_text('Avg y vel: {:.2g} {}/s\n'.format(avg_spd_y, self.envir.units))
-                    z_flow_text.set_text('Avg z vel: {:.2g} {}/s\n'.format(avg_spd_z, self.envir.units))
+                    x_text.set_text(r'Fluid $\overline{v}_x$'+': {:.2g} {}/s\n'.format(
+                                    avg_spd_x, self.envir.units)+
+                                    r'Agent $\overline{v}_x$'+': {:.2g} {}/s'.format(
+                                    avg_swrm_vel[0], self.envir.units))
+                    y_text.set_text(r'Fluid $\overline{v}_y$'+': {:.2g} {}/s\n'.format(
+                                    avg_spd_y, self.envir.units)+
+                                    r'Agent $\overline{v}_y$'+': {:.2g} {}/s'.format(
+                                    avg_swrm_vel[1], self.envir.units))
+                    z_text.set_text(r'Fluid $\overline{v}_z$'+': {:.2g} {}/s\n'.format(
+                                    avg_spd_z, self.envir.units)+
+                                    r'Agent $\overline{v}_z$'+': {:.2g} {}/s'.format(
+                                    avg_swrm_vel[2], self.envir.units))
                     if downsamp is None:
                         scat._offsets3d = (np.ma.ravel(self.positions[:,0].compressed()),
                                         np.ma.ravel(self.positions[:,1].compressed()),
@@ -3958,8 +4033,8 @@ class swarm:
                         for rect, h in zip(patches_z, n_z):
                             rect.set_height(h)
                         fig.canvas.draw()
-                        return [scat, time_text, flow_text, perc_text, x_flow_text, 
-                            y_flow_text, z_flow_text] + list(patches_x) + list(patches_y) + list(patches_z)
+                        return [scat, time_text, flow_text, perc_text, x_text, 
+                            y_text, z_text] + list(patches_x) + list(patches_y) + list(patches_z)
                     else:
                         x_density = stats.gaussian_kde(self.positions[:,0].compressed(), fac_x)
                         y_density = stats.gaussian_kde(self.positions[:,1].compressed(), fac_y)
@@ -3968,8 +4043,8 @@ class swarm:
                         ydens_plt.set_ydata(y_density(ymesh))
                         zdens_plt.set_ydata(z_density(zmesh))
                         fig.canvas.draw()
-                        return [scat, time_text, flow_text, perc_text, x_flow_text, 
-                                y_flow_text, z_flow_text, xdens_plt, ydens_plt, zdens_plt]
+                        return [scat, time_text, flow_text, perc_text, x_text, 
+                                y_text, z_text, xdens_plt, ydens_plt, zdens_plt]
 
         # infer animation rate from dt between current and last position
         dt = self.envir.time - self.envir.time_history[-1]
