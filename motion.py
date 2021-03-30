@@ -21,12 +21,15 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 import numpy as np
 import numpy.ma as ma
 
-# Decorator to convert 2NxD ODE function into a flattened version that
-#   can be read into scipy.integrate.ode
+# Decorator to convert an ODE function expecting a 2NxD shaped x into a flattened
+#   version that can be read into scipy.integrate.ode
 def flatten_ode(swarm):
     '''Get a decorator capable of converting a flattened, passed in x into a 
     2NxD shape for the ODE functions, and then take the result of the ODE
-    functions and reflatten. Need knowledge of the dimension of swarm for this.'''
+    functions and reflatten. Need knowledge of the dimension of swarm for this.
+    2N accounts for N equations giving the derivative of position w.r.t time and
+    N equations giving the derivative of velocity. D is the dimension of the
+    problem (2D or 3D).'''
     dim = swarm.positions.shape[1]
     N_dbl = swarm.positions.shape[0]*2
     def decorator(func):
@@ -211,6 +214,16 @@ def Euler_brownian_motion(swarm, dt, mu=None, ode=None, sigma=None):
                 move[ii,:] = this_mu +\
                     sigma[ii,...] @ swarm.rndState.multivariate_normal(np.zeros(n_dim), np.eye(n_dim))
             return swarm.positions + move
+
+
+
+#############################################################################
+#                                                                           #
+#                        ODE GENERATOR FUNCTIONS                            #
+#  These functions generate a handle to an ODE for use within a stochastic  #
+#      solver or scipy.integrate.ode (with the flatten_ode decorator).      #
+#                                                                           #
+#############################################################################
 
 
 

@@ -9,7 +9,7 @@ Author: Christopher Strickland
 Email: cstric12@utk.edu
 '''
 
-import sys, warnings, pickle
+import sys, warnings, pickle, copy
 from sys import platform
 if platform == 'darwin': # OSX backend does not support blitting
     import matplotlib
@@ -1620,6 +1620,70 @@ class environment:
             fluid_speed = np.sqrt(flow_now[0]**2+flow_now[1]**2)
 
         return np.mean(fluid_speed)
+
+
+
+    def calculate_FTLE(self, grid_dim, testdir=None, t0=None, T=1, dt=1, 
+                       ode=None, swarm=None):
+        '''Calculate the FTLE field at the given time(s) t0 with integration 
+        length T on a discrete grid with given dimensions. The calculation will 
+        be conducted with respect to the fluid velocity field loaded in this 
+        environment and either tracer particle movement (default), an ode specifying
+        deterministic equations of motion, or other arbitrary particle movement 
+        as specified by a swarm object's get_positions method and updated in 
+        discrete time intervals of length dt.
+
+        All FTLE calculations will be done using a swarm object. This means that:
+        1) The boundary conditions specified by this environment will be respected.
+        2) Immersed boundaries (if any are loaded into this environment) will be 
+        treated as impassible to all particles and movement vectors crossing these 
+        boundaries will be projected onto them.
+
+        Arguments:
+            grid_dim: tuple of integers denoting the size of the grid in each
+                dimension (x, y, [z]).
+            testdir: grid points can heuristically be removed from the interior 
+                of immersed structures. To accomplish this, a line will be drawn 
+                from each point to a domain boundary. If the number of intersections
+                is odd, the point is considered interior and masked. See grid_init 
+                for details - this argument sets the direction that the line 
+                will be drawn in (e.g. 'x1' for positive x-direction, 'y0' for 
+                negative y-direction). If None, do not perform this check and use 
+                all gridpoints.
+            t0: start time for calculating FTLE (float) or an iterable of start 
+                times to calculate the FTLE at many times. If None, default 
+                behavior is to set t0=0 for time invariant flows or to calculate 
+                FTLE at all times the flow field was specified at (self.flow_times) 
+                for time varying flows.
+            T: integration time (float). Default is 1, but longer is better 
+                (up to a point).
+            dt: time step to use for numerical integration. This primarly matters for 
+                the following two reasons:
+                1) Boundary conditions (immersed or otherwise)
+                2) swarm object passed in which will take Euler steps
+                TODO: We're going to need an explicit RK45 solver so that we can 
+                treat boundary conditions (particularly going outside the environment)
+            ode: [optional] function handle for an ode to be solved specifying 
+                deterministic equations of motion. Should have call signature 
+                ODEs(t,x), where t is the current time (float) and x is a 2*NxD 
+                array with the first N rows giving v=dxdt and the second N rows 
+                giving dvdt. D is the spatial dimension of the problem. See the 
+                ODE generator functions in motion.py for examples of valid functions. 
+                The passed in ODEs will be solved using a grid of initial conditions 
+                with Runge-Kutta.
+            swarm: [optional] swarm object with user-defined movement rules as 
+                specified by the get_positions method. This allows for arbitrary 
+                FTLE calculations through subclassing and overriding this method. 
+                Steps of length dt will be taken until the integration length T 
+                is reached. The swarm object itself will not be altered; a shallow 
+                copy will be created for the purpose of calculating the FTLE on 
+                a grid.
+
+        If both ode and swarm arguments are None, the default is to calculate the 
+        FTLE based on massless tracer particles.
+        '''
+
+        pass
 
 
 
