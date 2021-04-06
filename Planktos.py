@@ -21,6 +21,7 @@ import numpy as np
 import numpy.ma as ma
 from scipy import interpolate, stats
 from scipy.spatial import distance, ConvexHull, Delaunay
+from scipy.integrate import RK45
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.ticker import NullFormatter, MaxNLocator
@@ -1623,7 +1624,7 @@ class environment:
 
 
 
-    def calculate_FTLE(self, grid_dim, testdir=None, t0=None, T=1, dt=1, 
+    def calculate_FTLE(self, grid_dim, testdir=None, t0=None, T=1, dt=None, 
                        ode=None, swrm=None, **kwargs):
         '''Calculate the FTLE field at the given time(s) t0 with integration 
         length T on a discrete grid with given dimensions. The calculation will 
@@ -1689,28 +1690,148 @@ class environment:
         FTLE based on massless tracer particles.
 
         In the case of ode or tracer particles, additional keyword arguments 
-        will be passed to scipy.integrate.RK45.
+        will be passed to scipy.integrate.RK45. In the case of a supplied swarm 
+        object, a keyword argument 'params' may be given which will be passed to 
+        the get_positions method of the swarm.
         '''
 
         ###### setup swarm object ######
         if swrm is None:
-            swrm = swarm(envir=self, init='grid', grid_dim=grid_dim, testdir=testdir)
+            s = swarm(envir=self, init='grid', grid_dim=grid_dim, testdir=testdir)
             # NOTE: swarm has been appended to this environment!
         else:
+            assert dt is not None, "dt required with swarm object."
             # Get a soft copy of the swarm passed in
-            swrm = copy.copy(swrm)
+            s = copy.copy(swrm)
             # Add swarm to environment and re-initialize swarm positions
-            self.add_swarm(swrm)
-            swrm.positions = swrm.grid_init(*grid_dim, testdir=testdir)
-            swrm.pos_history = []
-            swrm.velocities = ma.zeros((swrm.positions.shape[0], len(self.L)))
+            self.add_swarm(s)
+            s.positions = s.grid_init(*grid_dim, testdir=testdir)
+            s.pos_history = []
             if self.flow is not None:
-                swrm.velocities = ma.array(swrm.get_fluid_drift())
-            swrm.accelerations = ma.zeros((swrm.positions.shape[0], len(self.L)))
+                s.velocities = ma.array(s.get_fluid_drift(), mask=s.positions.mask)
+            else:
+                s.velocities = ma.array(np.zeros((s.positions.shape[0], len(self.L))), 
+                                        mask=s.positions.mask) 
+            s.accelerations = ma.array(np.zeros((s.positions.shape[0], len(self.L))),
+                                        mask=s.positions.mask)
 
-        ###### if applicable, set up solver ######
+        # get an array to record the last position of all agents before domain exit
+        last_pos = s.positions.copy()
+
+        ###### Solve ODEs if no swarm object was passed in ######
+        # NOTE: the scipy.integrate solvers convert masked arrays into ndarrays, 
+        #   removing the mask entirely. We want to integrate only over the non-masked
+        #   components for efficiency.
+        if swrm is None:
+            ### Setup solver ###
+            if dt is None:
+                if 'max_step' in kwargs:
+                    dt = kwargs.pop('max_step')
+                else:
+                    dt = np.inf
+            if ode is None:
+                ode_flt = motion.tracer_particles(s, incl_dvdt=False)
+                # setup RK45 solver
+                # NOTE: For a masked 2D array M, M[~M.mask] returns the same result as
+                #   M.flatten() but without the masked elements.
+                solver = RK45(ode_flt, 0, s.positions[~s.positions.mask], 
+                              T, max_step=dt, **kwargs)
+            else:
+                # get a decorator to flatten ODEs
+                ode_dec = motion.flatten_ode(s)
+                ode_flt = ode_dec(ode)
+                # setup RK45 solver
+                solver = RK45(ode_flt, 0, 
+                              np.concatenate((s.positions[~s.positions.mask], 
+                              s.velocities[~s.velocities.mask])), 
+                              T, max_step=dt, **kwargs)
+
+            if 'first_step' in kwargs:
+                kwargs.pop('first_step')
+            ### Solve ###
+            while solver.status != 'finished':
+                if solver.status == 'failed':
+                    print('RK45 solver failed at time {} with step_size {}.'.format(solver.t, solver.step_size))
+                    self.swarms.pop()
+                    return
+
+                solver.step()
+
+                # pull solution into swarm object's position/velocity attributes
+                if ode is None:
+                    s.positions[~s.positions.mask] = solver.y
+                else:
+                    N = round(len(solver.y)/2)
+                    s.positions[~s.positions.mask] = solver.y[:N]
+                    s.velocities[~s.velocities.mask] = solver.y[N:]
+                # apply boundary conditions
+                old_mask = np.array(s.positions.mask)
+                s.apply_boundary_conditions()
+                # copy non-masked locations to last_pos
+                last_pos[~s.positions.mask] = s.positions[~s.positions.mask]
+
+                # if all agents have left the domain, quit early
+                if np.all(s.positions.mask):
+                    print('FTLE solver quit early at time {} after all agents left the domain.'.format(solver.t))
+                    break
+
+                # if there were any boundary interactions, reset the solver
+                nobndry = False
+                if np.all(old_mask==s.positions.mask):
+                    if np.all(s.positions[~old_mask] == solver.y):
+                        nobndry = True
+                if not nobndry:
+                    if ode is None:
+                        solver = RK45(ode_flt, solver.t, s.positions[~s.positions.mask], 
+                              T, max_step=dt, first_step=solver.step_size, **kwargs)
+                    else:
+                        solver = RK45(ode_flt, solver.t, 
+                              np.concatenate((s.positions[~s.positions.mask], 
+                              s.velocities[~s.velocities.mask])), 
+                              T, max_step=dt, first_step=solver.step_size, **kwargs)
+            # DONE SOLVING
+
+        ###### Run get_positions on supplied swarm object ######
+        else:
+            # save this environment's time history
+            envir_time = self.time
+            envir_time_history = list(self.time_history)
+            # now track this swarm's time
+            self.time = t0
+            self.time_history = []
+            if 'params' in kwargs:
+                params = kwargs['params']
+            else:
+                params = None
+            while self.time < T:
+                # Put current position in the history
+                s.pos_history.append(s.positions.copy())
+                # Update positions
+                s.positions[:,:] = s.get_positions(dt, params)
+                # Update velocity and acceleration
+                velocity = (s.positions - s.pos_history[-1])/dt
+                s.accelerations[:,:] = (velocity - s.velocities)/dt
+                s.velocities[:,:] = velocity
+                # Apply boundary conditions.
+                s.apply_boundary_conditions()
+                # copy non-masked locations to last_pos
+                last_pos[~s.positions.mask] = s.positions[~s.positions.mask]
+                # Update time
+                self.time_history.append(self.time)
+                self.time += dt
+
+                # if all agents have left the domain, quit early
+                if np.all(s.positions.mask):
+                    print('FTLE solver quit early at time {} after all agents left the domain.'.format(self.time))
+                    break
+
+            # DONE SOLVING
+            # reset environment
+            self.time = envir_time
+            self.time_history = envir_time_history
+
+        ###### Calculate FTLE field ######
         pass
-
 
 
     @property
@@ -2194,12 +2315,15 @@ class swarm:
         #   and accelerations should always have a hard mask automatically.
 
         # initialize agent velocities
-        self.velocities = ma.zeros((swarm_size, len(self.envir.L)))
         if self.envir.flow is not None:
-            self.velocities = ma.array(self.get_fluid_drift())
+            self.velocities = ma.array(self.get_fluid_drift(), mask=self.positions.mask)
+        else:
+            self.velocities = ma.array(np.zeros((swarm_size, len(self.envir.L))), 
+                                       mask=self.positions.mask)
 
         # initialize agent accelerations
-        self.accelerations = ma.zeros((swarm_size, len(self.envir.L)))
+        self.accelerations = ma.array(np.zeros((swarm_size, len(self.envir.L))),
+                                      mask=self.positions.mask)
 
         # Initialize position history
         self.pos_history = []

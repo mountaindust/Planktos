@@ -361,3 +361,36 @@ def highRe_massive_drift(swarm):
 
     # Return equations
     return ODEs
+
+
+
+def tracer_particles(swarm, incl_dvdt=True):
+    '''Function generator for ODEs describing tracer particles.
+
+    Arguments:
+        swarm: swarm object
+        incl_dvdt: whether or not to include equations for dvdt so that x has 
+            shape 2NxD matching most other ODEs (dvdt will just be given as 0).
+            If False, will produce a pre-flattened version of the ODEs - that is, 
+            x will be assumed to be 1D of length N*D.
+    '''
+
+    def ODEs(t,x):
+        '''Return ODEs for tracer particles
+        
+        This x will need to be flattened into a N*D 1D array for use
+            in a scipy solver. A decorator is provided for this purpose.
+        
+        Returns: 
+            a NxD or 2NxD array that gives dxdt=v [then dvdt]
+        '''
+
+        if not incl_dvdt:
+            return swarm.get_fluid_drift(t,np.reshape(x,swarm.positions.shape)).flatten()
+        else:
+            N = round(x.shape[0]/2)
+            return np.concatenate((swarm.get_fluid_drift(t,x[:N]),np.zeros((N,x.shape[1]))))
+
+    # Return equations
+    return ODEs
+    
