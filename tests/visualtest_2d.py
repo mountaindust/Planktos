@@ -36,7 +36,7 @@ s.shared_props['cov'] *= 0.001
 #######
 
 ### Test for mesh_init ###
-# s = envir.add_swarm(init='grid', num=(30,40), testdir='x0')
+# s = envir.add_swarm(init='grid', grid_dim=(30,40), testdir='x0')
 #######
 
 # envir.plot_envir()

@@ -1624,7 +1624,7 @@ class environment:
 
 
     def calculate_FTLE(self, grid_dim, testdir=None, t0=None, T=1, dt=1, 
-                       ode=None, swarm=None):
+                       ode=None, swrm=None, **kwargs):
         '''Calculate the FTLE field at the given time(s) t0 with integration 
         length T on a discrete grid with given dimensions. The calculation will 
         be conducted with respect to the fluid velocity field loaded in this 
@@ -1638,6 +1638,10 @@ class environment:
         2) Immersed boundaries (if any are loaded into this environment) will be 
         treated as impassible to all particles and movement vectors crossing these 
         boundaries will be projected onto them.
+
+        If passing in a set of ode or finding the FTLE field for tracer particles, 
+        an RK45 solver will be used (scipy.integrate.RK45). Otherwise, integration 
+        will be via the swarm object's get_positions method.
 
         Arguments:
             grid_dim: tuple of integers denoting the size of the grid in each
@@ -1657,12 +1661,14 @@ class environment:
                 for time varying flows.
             T: integration time (float). Default is 1, but longer is better 
                 (up to a point).
-            dt: time step to use for numerical integration. This primarly matters for 
-                the following two reasons:
-                1) Boundary conditions (immersed or otherwise)
-                2) swarm object passed in which will take Euler steps
-                TODO: We're going to need an explicit RK45 solver so that we can 
-                treat boundary conditions (particularly going outside the environment)
+            dt: if solving ode or tracer particles, this is the maximum time 
+                step that the RK45 solver will use (all boundary conditions will 
+                be applied after each RK45 step). If None, it will be determined 
+                by the solver. If passing in a swarm object, this argument is 
+                required and represents the length of the Euler time steps.
+                NOTE: Fluid interpolation is set to automatically be extrapolated to 
+                regions outside the domain, so errors won't get thrown in the middle 
+                of an RK4 step.
             ode: [optional] function handle for an ode to be solved specifying 
                 deterministic equations of motion. Should have call signature 
                 ODEs(t,x), where t is the current time (float) and x is a 2*NxD 
@@ -1678,11 +1684,31 @@ class environment:
                 is reached. The swarm object itself will not be altered; a shallow 
                 copy will be created for the purpose of calculating the FTLE on 
                 a grid.
-
+            
         If both ode and swarm arguments are None, the default is to calculate the 
         FTLE based on massless tracer particles.
+
+        In the case of ode or tracer particles, additional keyword arguments 
+        will be passed to scipy.integrate.RK45.
         '''
 
+        ###### setup swarm object ######
+        if swrm is None:
+            swrm = swarm(envir=self, init='grid', grid_dim=grid_dim, testdir=testdir)
+            # NOTE: swarm has been appended to this environment!
+        else:
+            # Get a soft copy of the swarm passed in
+            swrm = copy.copy(swrm)
+            # Add swarm to environment and re-initialize swarm positions
+            self.add_swarm(swrm)
+            swrm.positions = swrm.grid_init(*grid_dim, testdir=testdir)
+            swrm.pos_history = []
+            swrm.velocities = ma.zeros((swrm.positions.shape[0], len(self.L)))
+            if self.flow is not None:
+                swrm.velocities = ma.array(swrm.get_fluid_drift())
+            swrm.accelerations = ma.zeros((swrm.positions.shape[0], len(self.L)))
+
+        ###### if applicable, set up solver ######
         pass
 
 
@@ -2061,7 +2087,7 @@ class swarm:
         ''' Initializes planktos swarm in an environment.
 
         Arguments:
-            swarm_size: Size of the swarm (int)
+            swarm_size: Size of the swarm (int). ignored for 'grid' init method.
             envir: environment for the swarm, defaults to the standard environment
             init: Method for initalizing positions. See below.
             seed: Seed for random number generator, int or None
@@ -2084,7 +2110,7 @@ class swarm:
                 to leave out closed immersed structures. In this case, swarm_size 
                 is ignored since it is determined by the grid dimensions.
                 Requires the additional keyword parameters:
-                num = tuple of number of grid points in x, y, [and z] directions
+                grid_dim = tuple of number of grid points in x, y, [and z] directions
                 testdir: (optional) two character string for testing if points 
                     are in the interior of an immersed structure and if so, masking
                     them. The first char is x,y, or z denoting the dimensional direction
@@ -2101,9 +2127,21 @@ class swarm:
         method get_positions (do not change the call signature).
         '''
 
-        # use a new, 3D default environment if one was not given
+        # use a new, 3D default environment if one was not given. Or infer
+        #   dimension from init if possible.
         if envir is None:
-            self.envir = environment(init_swarms=self, Lz=10)
+            if isinstance(init,str):
+                self.envir = environment(init_swarms=self, Lz=10)
+            elif isinstance(init,np.ndarray) and len(init.shape) == 2:
+                if init.shape[1] == 2:
+                    self.envir = environment(init_swarms=self)
+                else:
+                    self.envir = environment(init_swarms=self, Lz=10)
+            else:
+                if len(init) == 2:
+                    self.envir = environment(init_swarms=self)
+                else:
+                    self.envir = environment(init_swarms=self, Lz=10)
         else:
             try:
                 assert envir.__class__.__name__ == 'environment'
@@ -2125,10 +2163,10 @@ class swarm:
                     self.positions[:,ii] = self.rndState.uniform(0, 
                                         self.envir.L[ii], self.positions.shape[0])
             elif init == 'grid':
-                assert 'num' in kwargs, "Required key word argument num missing for grid init."
-                x_num = kwargs['num'][0]; y_num = kwargs['num'][1]
+                assert 'grid_dim' in kwargs, "Required key word argument grid_dim missing for grid init."
+                x_num = kwargs['grid_dim'][0]; y_num = kwargs['grid_dim'][1]
                 if len(self.envir.L) > 2:
-                    z_num = kwargs['num'][2]
+                    z_num = kwargs['grid_dim'][2]
                 else:
                     z_num = None
                 if 'testdir' in kwargs:
@@ -2152,17 +2190,16 @@ class swarm:
                 for ii in range(len(self.envir.L)):
                     self.positions[:,ii] = init[ii]
 
-        self.positions.harden_mask() # prevent writes to masked elements
+        # Due to overloading of the __setattr__ method below, positions, velocities, 
+        #   and accelerations should always have a hard mask automatically.
 
         # initialize agent velocities
         self.velocities = ma.zeros((swarm_size, len(self.envir.L)))
         if self.envir.flow is not None:
             self.velocities = ma.array(self.get_fluid_drift())
-        self.velocities.harden_mask()
 
         # initialize agent accelerations
         self.accelerations = ma.zeros((swarm_size, len(self.envir.L)))
-        self.accelerations.harden_mask()
 
         # Initialize position history
         self.pos_history = []
@@ -2212,6 +2249,17 @@ class swarm:
                 # Called len on something that wasn't iterable
                 self.shared_props[name] = obj
                     
+
+
+    # Make sure mask is always hardened for positions, velocities, and accelerations
+    def __setattr__(self, name, value):
+        if name in ['positions', 'velocities', 'accelerations']:
+            assert isinstance(value, np.ndarray), name+" must be an array or masked array."
+            if not isinstance(value, ma.masked_array):
+                value = ma.masked_array(value)
+            value.harden_mask()
+        super(swarm, self).__setattr__(name, value)
+
 
 
     def grid_init(self, x_num, y_num, z_num=None, testdir=None):
@@ -2443,6 +2491,7 @@ class swarm:
     def full_pos_history(self):
         '''History of self.positions, including present time.'''
         return [*self.pos_history, self.positions]
+
 
 
 
@@ -2743,7 +2792,10 @@ class swarm:
 
 
     def apply_boundary_conditions(self, no_ib=False):
-        '''Apply boundary conditions to self.positions'''
+        '''Apply boundary conditions to self.positions.
+        
+        For no flux, projections are really simple in this case (box), so we 
+        just do them directly/manually.'''
 
         # internal mesh boundaries go first
         if self.envir.ibmesh is not None and not no_ib:
