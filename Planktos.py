@@ -216,6 +216,13 @@ class environment:
         self.time = 0.0
         self.time_history = []
 
+        ##### FTLE fields #####
+        self.FTLE_largest = None
+        self.FTLE_smallest = None
+        self.FTLE_loc = None
+        self.FTLE_t0 = None
+        self.FTLE_T = None
+
 
 
     @property
@@ -1667,9 +1674,6 @@ class environment:
                 be applied after each RK45 step). If None, it will be determined 
                 by the solver. If passing in a swarm object, this argument is 
                 required and represents the length of the Euler time steps.
-                NOTE: Fluid interpolation is set to automatically be extrapolated to 
-                regions outside the domain, so errors won't get thrown in the middle 
-                of an RK4 step.
             ode: [optional] function handle for an ode to be solved specifying 
                 deterministic equations of motion. Should have call signature 
                 ODEs(t,x), where t is the current time (float) and x is a 2*NxD 
@@ -1715,15 +1719,17 @@ class environment:
             s.accelerations = ma.array(np.zeros((s.positions.shape[0], len(self.L))),
                                         mask=s.positions.mask)
 
-        # get an array to record the last position of all agents before domain exit
-        last_pos = s.positions.copy()
+        # get an array to record the corresponding last time for these positions
+        last_time = ma.masked_array(np.ones(s.positions.shape[0])*t0, mask=s.positions[:,0].mask)
+        last_time.harden_mask()
 
         ###### Solve ODEs if no swarm object was passed in ######
+        print("Solving for positions from time {} to time {}....".format(t0,T))
         # NOTE: the scipy.integrate solvers convert masked arrays into ndarrays, 
         #   removing the mask entirely. We want to integrate only over the non-masked
         #   components for efficiency.
         if swrm is None:
-            ### Setup solver ###
+            ### SETUP SOLVER ###
             if dt is None:
                 if 'max_step' in kwargs:
                     dt = kwargs.pop('max_step')
@@ -1748,7 +1754,10 @@ class environment:
 
             if 'first_step' in kwargs:
                 kwargs.pop('first_step')
-            ### Solve ###
+            # keep a list of all times solved for
+            time_list = [t0]
+
+            ### SOLVE ###
             while solver.status != 'finished':
                 if solver.status == 'failed':
                     print('RK45 solver failed at time {} with step_size {}.'.format(solver.t, solver.step_size))
@@ -1757,6 +1766,8 @@ class environment:
 
                 solver.step()
 
+                # Put current position in the history
+                s.pos_history.append(s.positions.copy())
                 # pull solution into swarm object's position/velocity attributes
                 if ode is None:
                     s.positions[~s.positions.mask] = solver.y
@@ -1767,8 +1778,9 @@ class environment:
                 # apply boundary conditions
                 old_mask = np.array(s.positions.mask)
                 s.apply_boundary_conditions()
-                # copy non-masked locations to last_pos
-                last_pos[~s.positions.mask] = s.positions[~s.positions.mask]
+                # copy time to non-masked locations
+                last_time[~s.positions[:,0].mask] = solver.t
+                time_list.append(solver.t)
 
                 # if all agents have left the domain, quit early
                 if np.all(s.positions.mask):
@@ -1814,11 +1826,11 @@ class environment:
                 s.velocities[:,:] = velocity
                 # Apply boundary conditions.
                 s.apply_boundary_conditions()
-                # copy non-masked locations to last_pos
-                last_pos[~s.positions.mask] = s.positions[~s.positions.mask]
                 # Update time
                 self.time_history.append(self.time)
                 self.time += dt
+                # copy time to non-masked locations
+                last_time[~s.positions[:,0].mask] = self.time
 
                 # if all agents have left the domain, quit early
                 if np.all(s.positions.mask):
@@ -1826,12 +1838,119 @@ class environment:
                     break
 
             # DONE SOLVING
-            # reset environment
+
+            # record and reset environment time
+            time_list = list(self.time_history)
+            time_list.append(self.time)
             self.time = envir_time
             self.time_history = envir_time_history
 
-        ###### Calculate FTLE field ######
-        pass
+        ###### Calculate FTLE at each point ######
+        # a list of times solved for is given by time_list
+        # all positions are recorded in s.pos_history with s.positions for last time
+        # last times before leaving the domain given by last_time
+        print('Calculating FTLE field...')
+
+        FTLE_largest = ma.masked_array(np.zeros_like(last_time), mask=last_time.mask)
+        FTLE_largest.harden_mask()
+        FTLE_smallest = ma.masked_array(np.zeros_like(last_time), mask=last_time.mask)
+        FTLE_smallest.harden_mask()
+
+        ### COLLECT FACTS ABOUT GRID GEOMETRY ###
+
+        dx = self.L[0]/(grid_dim[0]+1)
+        dy = self.L[1]/(grid_dim[1]+1)
+        if len(self.L) > 2:
+            dz = self.L[2]/(grid_dim[2]+1)
+            DIM = 3
+            neigh_calc = np.array([
+                [-1,0,0],
+                [1,0,0],
+                [0,-1,0],
+                [0,1,0],
+                [0,0,-1],
+                [0,0,1],
+                [0,0,0]
+            ])
+        else:
+            DIM = 2
+            neigh_calc = np.array([
+                [-1,0],
+                [1,0],
+                [0,-1],
+                [0,1],
+                [0,0]
+            ])
+        
+        # LOOP OVER ALL GRID POINTS
+        for flat_loc in range(s.positions.shape[0]):
+            # first, ignore any indices that are on the edge or have a neighbor 
+            #   (including self) that was masked in the original grid
+            if last_time[flat_loc].mask:
+                continue
+            grid_loc = np.array(np.unravel_index(flat_loc, grid_dim))
+            if np.any(grid_loc==0) or np.any(grid_loc==(np.array(grid_dim)-1)):
+                continue
+            grid_neigh = neigh_calc + grid_loc
+            if DIM==2:
+                flat_neigh = np.ravel_multi_index((grid_neigh[:,0],grid_neigh[:,1]),grid_dim)
+            else:
+                flat_neigh = np.ravel_multi_index((grid_neigh[:,0],grid_neigh[:,1],grid_neigh[:,2]),grid_dim)
+            if np.any(last_time[flat_neigh].mask):
+                continue
+            
+            # find the time before the first neighbor (or current loc) exited
+            t_calc = last_time[flat_neigh].min()
+            if t_calc == t0:
+                # Have no data to calculate this point (exited domain too fast)
+                FTLE_largest[flat_loc] = ma.masked
+                FTLE_largest[flat_loc] = ma.masked
+                continue
+            t_idx = time_list.index(t_calc)
+            # get rid of self from neighbor list since it won't be needed for
+            #   calculating central difference gradient
+            flat_neigh.pop()
+
+            # get relevant position list
+            if t_idx < len(s.pos_history):
+                pos = s.pos_history[t_idx]
+            else:
+                pos = s.positions
+
+            ### CENTRAL DIFFERENCE GRADIENT ###
+            dXdx = (pos[flat_neigh[1],0]-pos[flat_neigh[0],0])/(2*dx)
+            dXdy = (pos[flat_neigh[3],0]-pos[flat_neigh[2],0])/(2*dy)
+            dYdx = (pos[flat_neigh[1],1]-pos[flat_neigh[0],1])/(2*dx)
+            dYdy = (pos[flat_neigh[3],1]-pos[flat_neigh[2],1])/(2*dy)
+
+            if DIM == 3:
+                # calculate 3D central difference gradient
+                dXdz = (pos[flat_neigh[5],0]-pos[flat_neigh[4],0])/(2*dz)
+                dYdz = (pos[flat_neigh[5],1]-pos[flat_neigh[4],1])/(2*dz)
+                dZdx = (pos[flat_neigh[1],2]-pos[flat_neigh[0],2])/(2*dx)
+                dZdy = (pos[flat_neigh[3],2]-pos[flat_neigh[2],2])/(2*dy)
+                dZdz = (pos[flat_neigh[5],2]-pos[flat_neigh[4],2])/(2*dz)
+
+                phi = np.array([[dXdx, dXdy, dXdz],
+                                [dYdx, dYdy, dYdz],
+                                [dZdx, dZdy, dZdz]])
+            else:
+                # form up 2D central difference gradient
+                phi = np.array([[dXdx, dXdy],
+                                [dYdx, dYdy]])
+
+            ### CALCULATE FTLE ###
+            w,_ = np.linalg.eigh(phi.T@phi)
+            FTLE_largest[flat_loc] = np.log(np.sqrt(w[-1]))/(t_calc-t0)
+            FTLE_smallest[flat_loc] = np.log(np.sqrt(w[0]))/(t_calc-t0)
+
+        ###### Save and cleanup ######
+        self.FTLE_largest = FTLE_largest
+        self.FTLE_smallest = FTLE_smallest
+        self.FTLE_loc = s.pos_history[0]
+        self.FTLE_t0 = t0
+        self.FTLE_T = T
+        return self.swarms.pop()
 
 
     @property
