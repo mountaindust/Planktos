@@ -18,17 +18,17 @@ envir.read_stl_mesh_data('data/seafan/sea-fan-piece.stl')
 
 #envir.plot_envir()
 
-s = envir.add_swarm(seed=10)
-s.shared_props['cov'] *= 1
+# s = envir.add_swarm(seed=10)
+# s.shared_props['cov'] *= 1
 
 ### Test for mesh_init ###
-# s = envir.add_swarm(init='grid', grid_dim=(30,500,50), testdir='x0')
+s = envir.add_swarm(init='grid', grid_dim=(30,500,50), testdir='x0')
 #######
 
 s.plot()
 
-print('Moving swarm...')
-for ii in range(550):
-    s.move(1)
+# print('Moving swarm...')
+# for ii in range(550):
+#     s.move(1)
 
-s.plot_all(frames=range(0,551,5), dist='hist')    
+# s.plot_all(frames=range(0,551,5), dist='hist')    

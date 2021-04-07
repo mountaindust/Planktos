@@ -218,7 +218,7 @@ class environment:
 
         ##### FTLE fields #####
         self.FTLE_largest = None
-        self.FTLE_smallest = None
+        self.FTLE_smallest = None # take negative to get backward-time picture
         self.FTLE_loc = None
         self.FTLE_t0 = None
         self.FTLE_T = None
@@ -1858,10 +1858,10 @@ class environment:
 
         ### COLLECT FACTS ABOUT GRID GEOMETRY ###
 
-        dx = self.L[0]/(grid_dim[0]+1)
-        dy = self.L[1]/(grid_dim[1]+1)
+        dx = self.L[0]/(grid_dim[0]-1)
+        dy = self.L[1]/(grid_dim[1]-1)
         if len(self.L) > 2:
-            dz = self.L[2]/(grid_dim[2]+1)
+            dz = self.L[2]/(grid_dim[2]-1)
             DIM = 3
             neigh_calc = np.array([
                 [-1,0,0],
@@ -1951,6 +1951,7 @@ class environment:
         self.FTLE_t0 = t0
         self.FTLE_T = T
         return self.swarms.pop()
+
 
 
     @property
@@ -2508,7 +2509,8 @@ class swarm:
     def grid_init(self, x_num, y_num, z_num=None, testdir=None):
         '''Return a grid of initial positions, potentially masking any grid 
         points in the interior of a closed, immersed structure. The full, unmasked 
-        grid will be x_num by y_num [by z_num] in the interior of the domain.
+        grid will be x_num by y_num [by z_num] on the interior and boundaries of 
+        the domain.
         
         The output of this method is appropriate for finding FTLE.
 
@@ -2533,10 +2535,10 @@ class swarm:
         '''
 
         # Form initial grid
-        x_pts = np.linspace(0, self.envir.L[0], x_num+2)[1:-1]
-        y_pts = np.linspace(0, self.envir.L[1], y_num+2)[1:-1]
+        x_pts = np.linspace(0, self.envir.L[0], x_num)
+        y_pts = np.linspace(0, self.envir.L[1], y_num)
         if z_num is not None:
-            z_pts = np.linspace(0, self.envir.L[2], z_num+2)[1:-1]
+            z_pts = np.linspace(0, self.envir.L[2], z_num)
             X1, X2, X3 = np.meshgrid(x_pts, y_pts, z_pts, indexing='ij')
             xidx, yidx, zidx = np.meshgrid(np.arange(x_num), np.arange(y_num), 
                                            np.arange(z_num), indexing='ij')
@@ -2556,12 +2558,6 @@ class swarm:
                 return ma.array([X1.flatten(), X2.flatten(), X3.flatten]).T
         elif testdir[0] == 'z' and len(self.envir.L) < 3:
             raise RuntimeError("z-direction unavailable in 2D problems.")
-
-        # Convert X1, X2, X3 to masked arrays
-        X1 = ma.array(X1)
-        X2 = ma.array(X2)
-        if DIM == 3:
-            X3 = ma.array(X3)
 
         # Translate directional input
         startdim = [0,0]
@@ -2595,6 +2591,7 @@ class swarm:
 
         # startdim gives the dimension and index on which to place a grid
         
+        # Convert X1, X2, X3 to masked arrays
         X1 = ma.array(X1)
         X2 = ma.array(X2)
         if DIM == 3:
@@ -2734,7 +2731,6 @@ class swarm:
     def full_pos_history(self):
         '''History of self.positions, including present time.'''
         return [*self.pos_history, self.positions]
-
 
 
 
