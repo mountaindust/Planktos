@@ -1632,7 +1632,7 @@ class environment:
 
 
 
-    def calculate_FTLE(self, grid_dim, testdir=None, t0=None, T=1, dt=None, 
+    def calculate_FTLE(self, grid_dim=None, testdir=None, t0=None, T=1, dt=None, 
                        ode=None, swrm=None, **kwargs):
         '''Calculate the FTLE field at the given time(s) t0 with integration 
         length T on a discrete grid with given dimensions. The calculation will 
@@ -1654,7 +1654,10 @@ class environment:
 
         Arguments:
             grid_dim: tuple of integers denoting the size of the grid in each
-                dimension (x, y, [z]).
+                dimension (x, y, [z]). Default is to use fluid velocity mesh. 
+                In this case, testdir will be ignored (to accomodate irregular 
+                meshes - the point removal process assumes a very specific 
+                format for the grid for speed).
             testdir: grid points can heuristically be removed from the interior 
                 of immersed structures. To accomplish this, a line will be drawn 
                 from each point to a domain boundary. If the number of intersections
@@ -1663,11 +1666,12 @@ class environment:
                 will be drawn in (e.g. 'x1' for positive x-direction, 'y0' for 
                 negative y-direction). If None, do not perform this check and use 
                 all gridpoints.
-            t0: start time for calculating FTLE (float) or an iterable of start 
-                times to calculate the FTLE at many times. If None, default 
-                behavior is to set t0=0 for time invariant flows or to calculate 
-                FTLE at all times the flow field was specified at (self.flow_times) 
-                for time varying flows.
+            t0: start time for calculating FTLE (float). If None, default 
+                behavior is to set t0=0.
+                TODO: Interable to calculate at many times. Default then becomes 
+                t0=0 for time invariant flows and calculate FTLE at all times 
+                the flow field was specified at (self.flow_times) 
+                for time varying flows?
             T: integration time (float). Default is 1, but longer is better 
                 (up to a point).
             dt: if solving ode or tracer particles, this is the maximum time 
@@ -1705,7 +1709,10 @@ class environment:
 
         ###### setup swarm object ######
         if swrm is None:
-            s = swarm(envir=self, init='grid', grid_dim=grid_dim, testdir=testdir)
+            if grid_dim is not None:
+                s = swarm(envir=self, init=np.array(self.flow_points).T)
+            else:
+                s = swarm(envir=self, init='grid', grid_dim=grid_dim, testdir=testdir)
             # NOTE: swarm has been appended to this environment!
         else:
             assert dt is not None, "dt required with swarm object."
@@ -1713,7 +1720,10 @@ class environment:
             s = copy.copy(swrm)
             # Add swarm to environment and re-initialize swarm positions
             self.add_swarm(s)
-            s.positions = s.grid_init(*grid_dim, testdir=testdir)
+            if grid_dim is not None:
+                s.positions = ma.array(self.flow_points).T
+            else:
+                s.positions = s.grid_init(*grid_dim, testdir=testdir)
             s.pos_history = []
             if self.flow is not None:
                 s.velocities = ma.array(s.get_fluid_drift(), mask=s.positions.mask)
@@ -2334,6 +2344,8 @@ def plot_2D_FTLE(self, smallest=False):
     visualization, output the field as a vtk and visualize using VisIt, ParaView, 
     etc.
 
+    TODO: Show a video of 2D slices as a plot of 3D FTLE
+
     Arguments:
         backward: If true, plot the negative, smallest, forward-time FTLE as 
             a way of identifying attracting Lagrangian Coherent Structures (see 
@@ -2405,7 +2417,8 @@ class swarm:
                     direction (backward vs. forward) along that direction. See 
                     documentation of swarm.grid_init for more information.
             - 1D array-like: All positions set to a single point.
-            - 2D array: All positions as specified.
+            - 2D array: All positions as specified. Shape NxD, D=dim of space.
+                In this case, swarm_size is ignored.
         
         Initial agent velocities will be set as the local fluid velocity if present,
         otherwise zero. Assign to self.velocities to set your own.
@@ -2442,6 +2455,8 @@ class swarm:
         self.rndState = np.random.RandomState(seed=seed)
 
         # initialize agent locations
+        if isinstance(init,np.ndarray) and len(init.shape) == 2:
+            swarm_size = init.shape[0]
         self.positions = ma.zeros((swarm_size, len(self.envir.L)))
         if isinstance(init,str):
             if init == 'random':
@@ -2469,9 +2484,9 @@ class swarm:
                 raise NameError
         else:
             if isinstance(init,np.ndarray) and len(init.shape) == 2:
-                assert init.shape[0] == swarm_size and init.shape[1] == len(self.envir.L),\
-                    "Initial location data must be {}x{} to match number of agents.".format(
-                    swarm_size,len(self.envir.L))
+                assert init.shape[1] == len(self.envir.L),\
+                    "Initial location data must be Nx{} to match number of agents.".format(
+                    len(self.envir.L))
                 self.positions[:,:] = init[:,:]
             else:
                 for ii in range(len(self.envir.L)):
