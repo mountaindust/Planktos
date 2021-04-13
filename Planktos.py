@@ -1632,7 +1632,7 @@ class environment:
 
 
 
-    def calculate_FTLE(self, grid_dim=None, testdir=None, t0=None, T=1, dt=None, 
+    def calculate_FTLE(self, grid_dim, testdir=None, t0=None, T=1, dt=None, 
                        ode=None, swrm=None, **kwargs):
         '''Calculate the FTLE field at the given time(s) t0 with integration 
         length T on a discrete grid with given dimensions. The calculation will 
@@ -1654,10 +1654,7 @@ class environment:
 
         Arguments:
             grid_dim: tuple of integers denoting the size of the grid in each
-                dimension (x, y, [z]). Default is to use fluid velocity mesh. 
-                In this case, testdir will be ignored (to accomodate irregular 
-                meshes - the point removal process assumes a very specific 
-                format for the grid for speed).
+                dimension (x, y, [z]).
             testdir: grid points can heuristically be removed from the interior 
                 of immersed structures. To accomplish this, a line will be drawn 
                 from each point to a domain boundary. If the number of intersections
@@ -1709,10 +1706,7 @@ class environment:
 
         ###### setup swarm object ######
         if swrm is None:
-            if grid_dim is not None:
-                s = swarm(envir=self, init=np.array(self.flow_points).T)
-            else:
-                s = swarm(envir=self, init='grid', grid_dim=grid_dim, testdir=testdir)
+            s = swarm(envir=self, init='grid', grid_dim=grid_dim, testdir=testdir)
             # NOTE: swarm has been appended to this environment!
         else:
             assert dt is not None, "dt required with swarm object."
@@ -1720,10 +1714,7 @@ class environment:
             s = copy.copy(swrm)
             # Add swarm to environment and re-initialize swarm positions
             self.add_swarm(s)
-            if grid_dim is not None:
-                s.positions = ma.array(self.flow_points).T
-            else:
-                s.positions = s.grid_init(*grid_dim, testdir=testdir)
+            s.positions = s.grid_init(*grid_dim, testdir=testdir)
             s.pos_history = []
             if self.flow is not None:
                 s.velocities = ma.array(s.get_fluid_drift(), mask=s.positions.mask)
