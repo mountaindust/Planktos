@@ -382,11 +382,13 @@ def tracer_particles(swarm, incl_dvdt=True):
             in a scipy solver. A decorator is provided for this purpose.
         
         Returns: 
-            a NxD or 2NxD array that gives dxdt=v [then dvdt]
+            a length N*D or 2NxD array that gives dxdt=v [then dvdt]
         '''
 
         if not incl_dvdt:
-            return swarm.get_fluid_drift(t,np.reshape(x,swarm.positions.shape)).flatten()
+            dim = swarm.positions.shape[1]
+            positions = np.reshape(x,(round(len(x)/dim),dim))
+            return swarm.get_fluid_drift(t,positions).flatten()
         else:
             N = round(x.shape[0]/2)
             return np.concatenate((swarm.get_fluid_drift(t,x[:N]),np.zeros((N,x.shape[1]))))
