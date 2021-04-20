@@ -38,11 +38,22 @@ def flatten_ode(swarm):
             return result.flatten()
         return wrapper
     return decorator
+    
 
+#############################################################################
+#                                                                           #
+#                           ODE AND SDE SOLVERS!                            #
+#                                                                           #
+#############################################################################
+
+# TODO: diffusion in porous media https://en.wikipedia.org/wiki/Diffusion#Diffusion_in_porous_media
 
 
 def RK45(fun, t0, y0, t_bound, rtol=0.001, atol=1e-06, h=0.1):
-    '''Take one Runge-Kutta-Fehlberg (forward) step. fun should be (t,x).'''
+    '''Take one Runge-Kutta-Fehlberg (forward) step. fun should be (t,x).
+    
+    Assume y is 2D.
+    '''
 
     raise NotImplementedError("Still working on this!")
 
@@ -51,37 +62,29 @@ def RK45(fun, t0, y0, t_bound, rtol=0.001, atol=1e-06, h=0.1):
                   [3/32, 9/32, 0, 0, 0],
                   [1932/2197, -7200/2197, 7296/2197, 0, 0],
                   [439/216, -8, 3680/513, -845/4104, 0],
-                  [-8/27, 2, -3544/2565, 1859/4104, -11/40])
+                  [-8/27, 2, -3544/2565, 1859/4104, -11/40]])
     C = np.array([16/135, 0, 6656/12825, 28561/56430, -9/50, 2/55])
     T = np.array([-1/360, 0, 128/4275, 2187/75240, -1/50, -2/55])
 
     step_accepted = False
     eps = atol + rtol*np.max(np.abs(y0))
 
+    K = np.zeros((6,y0.shape[0],y0.shape[1]))
+
+    if t_bound-t0<h:
+        h = t_bound-t0
+
     while not step_accepted:
-        K = []
-        K.append(h*fun(t0+A[0]*h, y0))
-        K.append(h*fun(t0+A[1]*h, y0+B[0,0]*K[0]))
-        K.append(h*fun(t0+A[2]*h, y0+B[1,0]*K[0]+B[1,1]*K[1]))
-        K.append(h*fun(t0+A[3]*h, y0+B[2,0]*K[0]+B[2,1]*K[1]+B[2,2]*K[2]))
-        K.append(h*fun(t0+A[4]*h, y0+B[3,0]*K[0]+B[3,1]*K[1]+B[3,2]*K[2]+B[3,3]*K[3]))
-        K.append(h*fun(t0+A[5]*h, y0+B[4,0]*K[0]+B[4,1]*K[1]+B[4,2]*K[2]+B[4,3]*K[3]+B[4,4]*K[4]))
+        K[0] = h*fun(t0+A[0]*h, y0)
+        K[1] = h*fun(t0+A[1]*h, y0+B[0,0]*K[0])
+        K[2] = h*fun(t0+A[2]*h, y0+B[1,0]*K[0]+B[1,1]*K[1])
+        K[3] = h*fun(t0+A[3]*h, y0+B[2,0]*K[0]+B[2,1]*K[1]+B[2,2]*K[2])
+        K[4] = h*fun(t0+A[4]*h, y0+B[3,0]*K[0]+B[3,1]*K[1]+B[3,2]*K[2]+B[3,3]*K[3])
+        K[5] = h*fun(t0+A[5]*h, y0+B[4,0]*K[0]+B[4,1]*K[1]+B[4,2]*K[2]+B[4,3]*K[3]+B[4,4]*K[4])
 
-        K = np.array(K)
-
-        new_y = y0 + C@K
+        new_y = y0 + np.einsum('i,ijk->jk',C,K)
         # insert proper norm here.
 
-    
-
-#############################################################################
-#                                                                           #
-#           PREDEFINED SWARM MOVEMENT BEHAVIOR DEFINED BELOW!               #
-#      Each of these must be robust to fixed or varying parameters!         #
-#                                                                           #
-#############################################################################
-
-# TODO: diffusion in porous media https://en.wikipedia.org/wiki/Diffusion#Diffusion_in_porous_media
 
 
 def Euler_brownian_motion(swarm, dt, mu=None, ode=None, sigma=None):
@@ -405,8 +408,7 @@ def tracer_particles(swarm, incl_dvdt=True):
         swarm: swarm object
         incl_dvdt: whether or not to include equations for dvdt so that x has 
             shape 2NxD matching most other ODEs (dvdt will just be given as 0).
-            If False, will produce a pre-flattened version of the ODEs - that is, 
-            x will be assumed to be 1D of length N*D.
+            If False, will expect an NxD array for x, otherwise an 2NxD array.
     '''
 
     def ODEs(t,x):
@@ -420,9 +422,7 @@ def tracer_particles(swarm, incl_dvdt=True):
         '''
 
         if not incl_dvdt:
-            dim = swarm.positions.shape[1]
-            positions = np.reshape(x,(round(len(x)/dim),dim))
-            return swarm.get_fluid_drift(t,positions).flatten()
+            return swarm.get_fluid_drift(t,x)
         else:
             N = round(x.shape[0]/2)
             return np.concatenate((swarm.get_fluid_drift(t,x[:N]),np.zeros((N,x.shape[1]))))
