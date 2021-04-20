@@ -38,6 +38,40 @@ def flatten_ode(swarm):
             return result.flatten()
         return wrapper
     return decorator
+
+
+
+def RK45(fun, t0, y0, t_bound, rtol=0.001, atol=1e-06, h=0.1):
+    '''Take one Runge-Kutta-Fehlberg (forward) step. fun should be (t,x).'''
+
+    raise NotImplementedError("Still working on this!")
+
+    A = np.array([0,1/4,3/8,12/13,1,1/2])
+    B = np.array([[1/4, 0, 0, 0, 0],
+                  [3/32, 9/32, 0, 0, 0],
+                  [1932/2197, -7200/2197, 7296/2197, 0, 0],
+                  [439/216, -8, 3680/513, -845/4104, 0],
+                  [-8/27, 2, -3544/2565, 1859/4104, -11/40])
+    C = np.array([16/135, 0, 6656/12825, 28561/56430, -9/50, 2/55])
+    T = np.array([-1/360, 0, 128/4275, 2187/75240, -1/50, -2/55])
+
+    step_accepted = False
+    eps = atol + rtol*np.max(np.abs(y0))
+
+    while not step_accepted:
+        K = []
+        K.append(h*fun(t0+A[0]*h, y0))
+        K.append(h*fun(t0+A[1]*h, y0+B[0,0]*K[0]))
+        K.append(h*fun(t0+A[2]*h, y0+B[1,0]*K[0]+B[1,1]*K[1]))
+        K.append(h*fun(t0+A[3]*h, y0+B[2,0]*K[0]+B[2,1]*K[1]+B[2,2]*K[2]))
+        K.append(h*fun(t0+A[4]*h, y0+B[3,0]*K[0]+B[3,1]*K[1]+B[3,2]*K[2]+B[3,3]*K[3]))
+        K.append(h*fun(t0+A[5]*h, y0+B[4,0]*K[0]+B[4,1]*K[1]+B[4,2]*K[2]+B[4,3]*K[3]+B[4,4]*K[4]))
+
+        K = np.array(K)
+
+        new_y = y0 + C@K
+        # insert proper norm here.
+
     
 
 #############################################################################

@@ -1639,7 +1639,7 @@ class environment:
 
 
     def calculate_FTLE(self, grid_dim, testdir=None, t0=0, T=1, dt=None, 
-                       ode=None, swrm=None, **kwargs):
+                       ode=None, swrm=None, params=None):
         '''Calculate the FTLE field at the given time(s) t0 with integration 
         length T on a discrete grid with given dimensions. The calculation will 
         be conducted with respect to the fluid velocity field loaded in this 
@@ -1655,8 +1655,8 @@ class environment:
         boundaries will be projected onto them.
 
         If passing in a set of ode or finding the FTLE field for tracer particles, 
-        an RK45 solver will be used (scipy.integrate.RK45). Otherwise, integration 
-        will be via the swarm object's get_positions method.
+        an RK45 solver will be used. Otherwise, integration will be via the 
+        swarm object's get_positions method.
 
         Arguments:
             grid_dim: tuple of integers denoting the size of the grid in each
@@ -1697,18 +1697,17 @@ class environment:
                 is reached. The swarm object itself will not be altered; a shallow 
                 copy will be created for the purpose of calculating the FTLE on 
                 a grid.
+            params: [optional] params to be passed to supplied swarm object's
+                get_positions method.
             
         If both ode and swarm arguments are None, the default is to calculate the 
         FTLE based on massless tracer particles.
 
-        In the case of ode or tracer particles, additional keyword arguments 
-        will be passed to scipy.integrate.RK45. In the case of a supplied swarm 
-        object, a keyword argument 'params' may be given which will be passed to 
-        the get_positions method of the swarm.
-
         Returns:
             swarm object used to calculuate the FTLE
         '''
+
+        raise NotImplementedError("Still working on FTLE solver.")
 
         ###### setup swarm object ######
         if swrm is None:
@@ -1735,6 +1734,11 @@ class environment:
         last_time.harden_mask()
 
         ###### Solve ODEs if no swarm object was passed in ######
+
+        ###################################################################
+        ###### THIS IS SO VERY BROKEN UNTIL RK45 SOLVER IS COMPLETE! ######
+        ###################################################################
+
         print("Solving for positions from time {} to time {}....".format(t0,T))
         # NOTE: the scipy.integrate solvers convert masked arrays into ndarrays, 
         #   removing the mask entirely. We want to integrate only over the non-masked
@@ -1797,7 +1801,7 @@ class environment:
                 if np.all(s.positions.mask):
                     print('FTLE solver quit early at time {} after all agents left the domain.'.format(solver.t))
                     break
-
+                
                 # if there were any boundary interactions, reset the solver
                 nobndry = False
                 if np.all(old_mask==s.positions.mask):
@@ -1822,10 +1826,7 @@ class environment:
             # now track this swarm's time
             self.time = t0
             self.time_history = []
-            if 'params' in kwargs:
-                params = kwargs['params']
-            else:
-                params = None
+
             while self.time < T:
                 # Put current position in the history
                 s.pos_history.append(s.positions.copy())
