@@ -49,17 +49,33 @@ def flatten_ode(swarm):
 # TODO: diffusion in porous media https://en.wikipedia.org/wiki/Diffusion#Diffusion_in_porous_media
 
 
-def RK45(fun, t0, y0, t_bound, rtol=0.001, atol=1e-06, h=0.1):
-    '''Take one Runge-Kutta-Fehlberg (forward) step. fun should be (t,x).
-    
-    Assume y is 2D.
+def RK45(fun, t0, y0, t_bound, rtol=0.001, atol=1e-06, h_start=0.1):
+    '''Take one Runge-Kutta-Fehlberg (forward) step. fun should have call
+    signature (t,x) where x is 2-D with columns giving spatial dimension.
+    This solver is set up to just take one step so that boundary conditions 
+    can be checked within a swarm object before continuing on.
+
+    Arguments:
+        fun: callable. Right-hand side of the system. The calling signature is 
+            ``fun(t, y)``. Here ``t`` is a scalar and y is NxD where D is the 
+            dimension of the system.
+        t0: float. initial time.
+        y0: ndarray of shape (N,D). initial state.
+        t_bound: float. upper bound on integration time
+        rtol, atol: floats. relative and absolute tolerance. The solver keeps 
+            the local error estimates less than ``atol + rtol * abs(y)``.
+        h_start: float. time step-size to attempt first. Also the maximum step
+            size to use.
+
+    Returns:
+        t0+h: new time after integration
+        y: new state after integration
+        h_new: suggested next integration step size
 
     Erwin Fehlberg (1969). Low-order classical Runge-Kutta formulas with stepsize 
     control and their application to some heat transfer problems. NASA Technical 
     Report 315.
     '''
-
-    raise NotImplementedError("Still working on this!")
 
     A = np.array([0,1/4,3/8,12/13,1,1/2])
     B = np.array([[1/4, 0, 0, 0, 0],
@@ -72,6 +88,7 @@ def RK45(fun, t0, y0, t_bound, rtol=0.001, atol=1e-06, h=0.1):
 
     step_accepted = False
     h_last = None
+    h = h_start
     eps = atol + rtol*np.max(np.abs(y0))
 
     K = np.zeros((6,y0.shape[0],y0.shape[1]))
@@ -91,10 +108,16 @@ def RK45(fun, t0, y0, t_bound, rtol=0.001, atol=1e-06, h=0.1):
         TE = np.max(np.linalg.norm(np.einsum('i,ijk->jk',T,K),axis=1))
 
         h_last = h
-        h = 0.9*h*(eps/TE)**0.2
+        if TE == 0:
+            h = h_start
+        else:
+            h = min(h_start, 0.9*h*(eps/TE)**0.2)
 
         if TE <= eps:
             step_accepted = True
+
+    return (t0+h_last,y_new,h)
+
 
 
 

@@ -1638,7 +1638,7 @@ class environment:
 
 
 
-    def calculate_FTLE(self, grid_dim, testdir=None, t0=0, T=1, dt=None, 
+    def calculate_FTLE(self, grid_dim, testdir=None, t0=0, T=1, dt=0.1, 
                        ode=None, swrm=None, params=None):
         '''Calculate the FTLE field at the given time(s) t0 with integration 
         length T on a discrete grid with given dimensions. The calculation will 
@@ -1679,9 +1679,8 @@ class environment:
                 (up to a point).
             dt: if solving ode or tracer particles, this is the maximum time 
                 step that the RK45 solver will use (all boundary conditions will 
-                be applied after each RK45 step). If None, it will be determined 
-                by the solver. If passing in a swarm object, this argument is 
-                required and represents the length of the Euler time steps.
+                be applied after each RK45 step). If passing in a swarm object, 
+                this argument represents the length of the Euler time steps.
             ode: [optional] function handle for an ode to be solved specifying 
                 deterministic equations of motion. Should have call signature 
                 ODEs(t,x), where t is the current time (float) and x is a 2*NxD 
@@ -1707,14 +1706,11 @@ class environment:
             swarm object used to calculuate the FTLE
         '''
 
-        raise NotImplementedError("Still working on FTLE solver.")
-
         ###### setup swarm object ######
         if swrm is None:
             s = swarm(envir=self, init='grid', grid_dim=grid_dim, testdir=testdir)
             # NOTE: swarm has been appended to this environment!
         else:
-            assert dt is not None, "dt required with swarm object."
             # Get a soft copy of the swarm passed in
             s = copy.copy(swrm)
             # Add swarm to environment and re-initialize swarm positions
@@ -1745,77 +1741,67 @@ class environment:
         #   components for efficiency.
         if swrm is None:
             ### SETUP SOLVER ###
-            if dt is None:
-                if 'max_step' in kwargs:
-                    dt = kwargs.pop('max_step')
-                else:
-                    dt = np.inf
             if ode is None:
-                ode_flt = motion.tracer_particles(s, incl_dvdt=False)
-                # setup RK45 solver
-                # NOTE: For a masked 2D array M, M[~M.mask] returns the same result as
-                #   M.flatten() but without the masked elements.
-                solver = RK45(ode_flt, 0, s.positions[~s.positions.mask], 
-                              T, max_step=dt, **kwargs)
+                ode_fun = motion.tracer_particles(s, incl_dvdt=False)
             else:
-                # get a decorator to flatten ODEs
-                ode_dec = motion.flatten_ode(s)
-                ode_flt = ode_dec(ode)
-                # setup RK45 solver
-                solver = RK45(ode_flt, 0, 
-                              np.concatenate((s.positions[~s.positions.mask], 
-                              s.velocities[~s.velocities.mask])), 
-                              T, max_step=dt, **kwargs)
+                ode_fun = ode
 
-            if 'first_step' in kwargs:
-                kwargs.pop('first_step')
-            # keep a list of all times solved for
+            # keep a list of all times solved for 
+            #   (time history normally stored in environment class)
+            current_time = t0
+            h_start = dt
             time_list = [t0]
 
             ### SOLVE ###
-            while solver.status != 'finished':
-                if solver.status == 'failed':
-                    print('RK45 solver failed at time {} with step_size {}.'.format(solver.t, solver.step_size))
-                    self.swarms.pop()
-                    return
+            while current_time < T:
+                if ode is None:
+                    y = s.positions[~s.positions[:,0].mask,:]
+                else:
+                    y = np.concatenate((s.positions[~s.positions[:,0].mask,:], 
+                                        s.velocities[~s.velocities[:,0].mask,:]))
+                try:
+                    # solve
+                    new_time, y_new, dt = motion.RK45(ode_fun, current_time, y, T, h_start=dt)
+                except Exception as err:
+                    print('RK45 solver returned an error at time {} with step_size {}.'.format(
+                          current_time, dt))
+                    print(type(err))
+                    print(err)
+                    return err, self.swarms.pop()
 
-                solver.step()
-
-                # Put current position in the history
-                s.pos_history.append(s.positions.copy())
+                # Put current position in the history (maybe only do this if something exits??)
+                old_pos = s.positions.copy()
                 # pull solution into swarm object's position/velocity attributes
                 if ode is None:
-                    s.positions[~s.positions.mask] = solver.y
+                    s.positions[~s.positions[:,0].mask,:] = y_new
                 else:
-                    N = round(len(solver.y)/2)
-                    s.positions[~s.positions.mask] = solver.y[:N]
-                    s.velocities[~s.velocities.mask] = solver.y[N:]
+                    N = round(y_new.shape[0]/2)
+                    s.positions[~s.positions[:,0].mask,:] = y_new[:N,:]
+                    s.velocities[~s.velocities[:,0].mask,:] = y_new[N:,:]
                 # apply boundary conditions
                 old_mask = np.array(s.positions.mask)
                 s.apply_boundary_conditions()
                 # copy time to non-masked locations
-                last_time[~s.positions[:,0].mask] = solver.t
-                time_list.append(solver.t)
+                last_time[~s.positions[:,0].mask] = new_time
+                
+                # check if there were any boundary exits
+                if np.all(old_mask==s.positions.mask): # check for any leaving domain
+                    # if anybody left, record the previous time in the history
+                    #   as the last moment before disappearance.
+                    s.pos_history.append(old_pos)
+                    time_list.append(current_time)
 
                 # if all agents have left the domain, quit early
                 if np.all(s.positions.mask):
-                    print('FTLE solver quit early at time {} after all agents left the domain.'.format(solver.t))
+                    print('FTLE solver quit early at time {} after all agents left the domain.'.format(current_time))
                     break
-                
-                # if there were any boundary interactions, reset the solver
-                nobndry = False
-                if np.all(old_mask==s.positions.mask):
-                    if np.all(s.positions[~old_mask] == solver.y):
-                        nobndry = True
-                if not nobndry:
-                    if ode is None:
-                        solver = RK45(ode_flt, solver.t, s.positions[~s.positions.mask], 
-                              T, max_step=dt, first_step=solver.step_size, **kwargs)
-                    else:
-                        solver = RK45(ode_flt, solver.t, 
-                              np.concatenate((s.positions[~s.positions.mask], 
-                              s.velocities[~s.velocities.mask])), 
-                              T, max_step=dt, first_step=solver.step_size, **kwargs)
+
+                # pass forward new variables
+                current_time = new_time
+                if dt > h_start:
+                    dt = h_start
+                print('t={}'.format(current_time))
+
             # DONE SOLVING
 
         ###### Run get_positions on supplied swarm object ######
