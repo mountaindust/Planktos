@@ -53,6 +53,10 @@ def RK45(fun, t0, y0, t_bound, rtol=0.001, atol=1e-06, h=0.1):
     '''Take one Runge-Kutta-Fehlberg (forward) step. fun should be (t,x).
     
     Assume y is 2D.
+
+    Erwin Fehlberg (1969). Low-order classical Runge-Kutta formulas with stepsize 
+    control and their application to some heat transfer problems. NASA Technical 
+    Report 315.
     '''
 
     raise NotImplementedError("Still working on this!")
@@ -67,14 +71,14 @@ def RK45(fun, t0, y0, t_bound, rtol=0.001, atol=1e-06, h=0.1):
     T = np.array([-1/360, 0, 128/4275, 2187/75240, -1/50, -2/55])
 
     step_accepted = False
+    h_last = None
     eps = atol + rtol*np.max(np.abs(y0))
 
     K = np.zeros((6,y0.shape[0],y0.shape[1]))
 
-    if t_bound-t0<h:
-        h = t_bound-t0
-
     while not step_accepted:
+        if t_bound-t0<h:
+            h = t_bound-t0
         K[0] = h*fun(t0+A[0]*h, y0)
         K[1] = h*fun(t0+A[1]*h, y0+B[0,0]*K[0])
         K[2] = h*fun(t0+A[2]*h, y0+B[1,0]*K[0]+B[1,1]*K[1])
@@ -82,8 +86,15 @@ def RK45(fun, t0, y0, t_bound, rtol=0.001, atol=1e-06, h=0.1):
         K[4] = h*fun(t0+A[4]*h, y0+B[3,0]*K[0]+B[3,1]*K[1]+B[3,2]*K[2]+B[3,3]*K[3])
         K[5] = h*fun(t0+A[5]*h, y0+B[4,0]*K[0]+B[4,1]*K[1]+B[4,2]*K[2]+B[4,3]*K[3]+B[4,4]*K[4])
 
-        new_y = y0 + np.einsum('i,ijk->jk',C,K)
-        # insert proper norm here.
+        y_new = y0 + np.einsum('i,ijk->jk',C,K)
+        # Control on the maximum of the 2-norm of any particle's movement
+        TE = np.max(np.linalg.norm(np.einsum('i,ijk->jk',T,K),axis=1))
+
+        h_last = h
+        h = 0.9*h*(eps/TE)**0.2
+
+        if TE <= eps:
+            step_accepted = True
 
 
 
