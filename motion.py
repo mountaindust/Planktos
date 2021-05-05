@@ -95,6 +95,7 @@ def RK45(fun, t0, y0, t_bound, rtol=0.001, atol=1e-06, h_start=0.1):
 
     while not step_accepted:
         if t_bound-t0<h:
+            print("Lowering h to {}.".format(t_bound-t0))
             h = t_bound-t0
         K[0] = h*fun(t0+A[0]*h, y0)
         K[1] = h*fun(t0+A[1]*h, y0+B[0,0]*K[0])
@@ -106,6 +107,8 @@ def RK45(fun, t0, y0, t_bound, rtol=0.001, atol=1e-06, h_start=0.1):
         y_new = y0 + np.einsum('i,ijk->jk',C,K)
         # Control on the maximum of the 2-norm of any particle's movement
         TE = np.max(np.linalg.norm(np.einsum('i,ijk->jk',T,K),axis=1))
+        if np.isnan(TE):
+            import pdb; pdb.set_trace()
 
         h_last = h
         if TE == 0:
@@ -115,6 +118,9 @@ def RK45(fun, t0, y0, t_bound, rtol=0.001, atol=1e-06, h_start=0.1):
 
         if TE <= eps:
             step_accepted = True
+            print("RK45 done; t={} found.".format(t0+h_last))
+        else:
+            print("Restarting RK45 with h={} at t={}. Error={} versus eps={}.".format(h,t0,TE,eps))
 
     return (t0+h_last,y_new,h)
 

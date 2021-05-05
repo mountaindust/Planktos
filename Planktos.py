@@ -1602,13 +1602,15 @@ class environment:
                                ' a supported method in interpolate_flow.')
 
         x_vel = interpolate.interpn(self.flow_points, flow[0],
-                                    positions, method=method, bounds_error=False)
+                                    positions, method=method, 
+                                    bounds_error=False, fill_value=None)
         y_vel = interpolate.interpn(self.flow_points, flow[1],
-                                    positions, method=method, bounds_error=False)
+                                    positions, method=method, 
+                                    bounds_error=False, fill_value=None)
         if len(flow) == 3:
             z_vel = interpolate.interpn(self.flow_points, flow[2],
                                         positions, method=method, 
-                                        bounds_error=False)
+                                        bounds_error=False, fill_value=None)
             return np.array([x_vel, y_vel, z_vel]).T
         else:
             return np.array([x_vel, y_vel]).T
