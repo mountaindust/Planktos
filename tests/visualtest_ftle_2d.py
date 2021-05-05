@@ -19,4 +19,4 @@ envir.read_IB2d_vertex_data('data/channel_cyl/channel.vertex')
 # Test basic tracer particles on a masked mesh.
 envir.calculate_FTLE((30,30), testdir='x1')
 
-envir.plot_envir()
+envir.plot_2D_FTLE()

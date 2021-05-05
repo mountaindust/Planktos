@@ -1733,10 +1733,6 @@ class environment:
 
         ###### Solve ODEs if no swarm object was passed in ######
 
-        ###################################################################
-        ###### THIS IS SO VERY BROKEN UNTIL RK45 SOLVER IS COMPLETE! ######
-        ###################################################################
-
         print("Solving for positions from time {} to time {}....".format(t0,T))
         # NOTE: the scipy.integrate solvers convert masked arrays into ndarrays, 
         #   removing the mask entirely. We want to integrate only over the non-masked
@@ -1772,7 +1768,7 @@ class environment:
                     return err, self.swarms.pop()
 
                 # Put current position in the history (maybe only do this if something exits??)
-                old_pos = s.positions.copy()
+                s.pos_history.append(s.positions.copy())
                 # pull solution into swarm object's position/velocity attributes
                 if ode is None:
                     s.positions[~s.positions[:,0].mask,:] = y_new
@@ -1786,12 +1782,17 @@ class environment:
                 # copy time to non-masked locations
                 last_time[~s.positions[:,0].mask] = new_time
                 
-                # check if there were any boundary exits
-                if np.all(old_mask==s.positions.mask): # check for any leaving domain
+                # check if there were any boundary exits.
+                #   if so, save this state. Also, always keep the first state
+                #   with the grid information.
+                if np.all(old_mask==s.positions.mask) or current_time == t0:
                     # if anybody left, record the previous time in the history
                     #   as the last moment before disappearance.
-                    s.pos_history.append(old_pos)
                     time_list.append(current_time)
+                else:
+                    # if nobody left the domain, get rid of the state from the 
+                    #   position history to save space
+                    s.pos_history.pop()
 
                 # if all agents have left the domain, quit early
                 if np.all(s.positions.mask):
@@ -1802,6 +1803,8 @@ class environment:
                 current_time = new_time
                 if dt > h_start:
                     dt = h_start
+                if current_time == T:
+                    time_list.append(current_time)
                 print('t={}'.format(current_time))
 
             # DONE SOLVING
@@ -1888,7 +1891,7 @@ class environment:
         for flat_loc in range(s.positions.shape[0]):
             # first, ignore any indices that are on the edge or have a neighbor 
             #   (including self) that was masked in the original grid
-            if last_time[flat_loc].mask:
+            if last_time.mask[flat_loc]:
                 continue
             grid_loc = np.array(np.unravel_index(flat_loc, grid_dim))
             if np.any(grid_loc==0) or np.any(grid_loc==(np.array(grid_dim)-1)):
@@ -1898,7 +1901,7 @@ class environment:
                 flat_neigh = np.ravel_multi_index((grid_neigh[:,0],grid_neigh[:,1]),grid_dim)
             else:
                 flat_neigh = np.ravel_multi_index((grid_neigh[:,0],grid_neigh[:,1],grid_neigh[:,2]),grid_dim)
-            if np.any(last_time[flat_neigh].mask):
+            if np.any(last_time.mask[flat_neigh]):
                 continue
             
             # find the time before the first neighbor (or current loc) exited
@@ -1911,7 +1914,7 @@ class environment:
             t_idx = time_list.index(t_calc)
             # get rid of self from neighbor list since it won't be needed for
             #   calculating central difference gradient
-            flat_neigh.pop()
+            flat_neigh = flat_neigh[:-1]
 
             # get relevant position list
             if t_idx < len(s.pos_history):
@@ -2352,8 +2355,9 @@ class environment:
             FTLE = -np.reshape(self.FTLE_smallest,self.FTLE_grid_dim)
         else:
             FTLE = np.reshape(self.FTLE_largest,self.FTLE_grid_dim)
-        pcm = ax.pcolormesh(FTLE, self.FTLE_loc[:,0], self,FTLE_loc[:,1], 
-                            shading='gouraud', cmap='plasma')
+        grid_x = np.reshape(self.FTLE_loc[:,0].data,self.FTLE_grid_dim)
+        grid_y = np.reshape(self.FTLE_loc[:,1].data,self.FTLE_grid_dim)
+        pcm = ax.pcolormesh(grid_x, grid_y, FTLE, shading='gouraud', cmap='plasma')
         plt.colorbar(pcm, ax=ax)
         if smallest:
             plt.title('Negative smallest fwrd-time FTLE field, $t_0$={}, $\Delta t$={}.'.format(
@@ -2895,7 +2899,7 @@ class swarm:
             warned = False
             for s in self.envir.swarms:
                 if s is not self and len(s.pos_history) < len(self.pos_history):
-                    s.pos_history.append(s.positions)
+                    s.pos_history.append(s.positions.copy())
                     if not warned:
                         warnings.warn("Other swarms in the environment were not"+
                                       " moved during this environmental timestep.\n"+

@@ -118,7 +118,6 @@ def RK45(fun, t0, y0, t_bound, rtol=0.001, atol=1e-06, h_start=0.1):
 
         if TE <= eps:
             step_accepted = True
-            print("RK45 done; t={} found.".format(t0+h_last))
         else:
             print("Restarting RK45 with h={} at t={}. Error={} versus eps={}.".format(h,t0,TE,eps))
 
