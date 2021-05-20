@@ -3,10 +3,6 @@
 vtk vertex data, creating an ibmesh out of it using convex hull. Agents should
 not be able to move through the cylinder boundaries.'''
 
-from sys import platform
-if platform == 'darwin': # OSX backend does not support blitting
-    import matplotlib
-    matplotlib.use('Qt5Agg')
 import numpy as np
 import sys
 sys.path.append('..')

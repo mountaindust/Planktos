@@ -4,10 +4,6 @@ for flow field AND loads the .vertex data, creating an ibmesh out of it by
 attaching nearby points. Agents should not be able to move through the cylinder 
 or the channel boundaries.'''
 
-from sys import platform
-if platform == 'darwin': # OSX backend does not support blitting
-    import matplotlib
-    matplotlib.use('Qt5Agg')
 import numpy as np
 import sys
 sys.path.append('..')

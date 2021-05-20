@@ -1,10 +1,6 @@
 #! /usr/bin/env python3
 ''' Loads last file in IBAMR test data and moves a swarm in the flow'''
 
-from sys import platform
-if platform == 'darwin': # OSX backend does not support blitting
-    import matplotlib
-    matplotlib.use('Qt5Agg')
 import numpy as np
 import sys
 sys.path.append('..')

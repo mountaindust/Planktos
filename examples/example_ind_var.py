@@ -5,10 +5,6 @@ in a swarm. In this case, the covariance matrix for the brownian motion varies
 from agent to agent.
 '''
 
-from sys import platform
-if platform == 'darwin': # OSX backend does not support blitting
-    import matplotlib
-    matplotlib.use('Qt5Agg')
 import numpy as np
 import sys
 sys.path.append('..')
@@ -32,5 +28,5 @@ print('Moving swarm...')
 for ii in range(240):
     s.move(0.1)
 
-#s.plot_all('ex_2d.mp4', fps=20)
-s.plot_all()
+s.plot_all('ex_2d_ind_var.mp4', fps=20)
+#s.plot_all()
