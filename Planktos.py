@@ -1708,6 +1708,9 @@ class environment:
             swarm object used to calculuate the FTLE
         '''
 
+        raise NotImplementedError("This is seemingly broken and I know not why... "+
+            "It runs, but does not give results consistent with VisIt.")
+
         ###########################################################
         ######              Setup swarm object               ######
         ###########################################################
@@ -1876,30 +1879,20 @@ class environment:
         if len(self.L) > 2:
             dz = self.L[2]/(grid_dim[2]-1)
             DIM = 3
-            # neigh_calc = np.array([
-            #     [-1,0,0],
-            #     [1,0,0],
-            #     [0,-1,0],
-            #     [0,1,0],
-            #     [0,0,-1],
-            #     [0,0,1],
-            #     [0,0,0]
-            # ])
         else:
             DIM = 2
-            # neigh_calc = np.array([
-            #     [-1,0],
-            #     [1,0],
-            #     [0,-1],
-            #     [0,1],
-            #     [0,0]
-            # ])
         
         ### MASK ALL POINTS THAT EXITED IMMEDIATELY ###
 
         last_time[last_time==t0] = ma.masked
         # reshape for sanity's sake.
         last_time = np.reshape(last_time,grid_dim)
+
+        ### TODO: try masking all boundary points
+        # last_time[0,:] = ma.masked
+        # last_time[-1,:] = ma.masked
+        # last_time[:,0] = ma.masked
+        # last_time[:,-1] = ma.masked
 
         ### INITIALIZE SOLUTION STRUCTURES ###
 
@@ -1936,23 +1929,29 @@ class environment:
             
             # check for masked neighbors
             neigh_list = np.array(grid_loc, dtype=int) + diff_list
-            for n in range(0,neigh_list.shape[0],2):
+            cont = False # if non-repairable, make true and continue to next pt
+            for n in range(0,diff_list.shape[0],2):
                 mask_list = last_time.mask[tuple(neigh_list[n:n+2].T)]
                 # if both points are masked, mask this point and skip
                 if np.all(mask_list):
                     FTLE_largest[grid_loc] = ma.masked
                     FTLE_smallest[grid_loc] = ma.masked
-                    continue
+                    cont = True
+                    break
                 # if only one point is masked, switch difference calculation
                 #   unless the central point is already being used, in which case skip
                 if np.any(mask_list):
-                    if np.any(neigh_list[n:n+2].sum(axis=1) == 0):
+                    if np.any(diff_list[n:n+2].sum(axis=1) == 0):
                         FTLE_largest[grid_loc] = ma.masked
                         FTLE_smallest[grid_loc] = ma.masked
-                        continue
+                        cont = True
+                        break
                     else:
-                        neigh_list[n:n+2][mask_list] *= 0
                         diff_list[n:n+2][mask_list] *= 0
+            if cont:
+                continue
+            # reform neigh_list
+            neigh_list = np.array(grid_loc, dtype=int) + diff_list
 
             ### GET TIME AND POSITION INFO ###
 
@@ -2001,76 +2000,17 @@ class environment:
             ### CALCULATE FTLE ###
 
             w,_ = np.linalg.eigh(phi.T@phi)
-            FTLE_largest[grid_loc] = np.log(np.sqrt(w[-1]))/(t_calc-t0)
-            FTLE_smallest[grid_loc] = np.log(np.sqrt(w[0]))/(t_calc-t0)
+            if w[-1] == 0:
+                FTLE_largest[grid_loc] = ma.masked
+            else:
+                FTLE_largest[grid_loc] = np.log(np.sqrt(w[-1]))/(t_calc-t0)
+            if w[0] == 0:
+                FTLE_smallest[grid_loc] = ma.masked
+            else:
+                FTLE_smallest[grid_loc] = np.log(np.sqrt(w[0]))/(t_calc-t0)
 
-
-        # for flat_loc in range(s.positions.shape[0]):
-        #     # if the central point is masked, skip this calculation.
-        #     #   (it's inside a structure)
-        #     if last_time.mask[flat_loc]:
-        #         continue
-        #     grid_loc = np.array(np.unravel_index(flat_loc, grid_dim))
-        #     # if the central point is on the edge of the domain, skip it
-        #     # TODO: use non-central derivative!!
-        #     if np.any(grid_loc==0) or np.any(grid_loc==(np.array(grid_dim)-1)):
-        #         continue
-        #     grid_neigh = neigh_calc + grid_loc
-        #     if DIM==2:
-        #         flat_neigh = np.ravel_multi_index((grid_neigh[:,0],grid_neigh[:,1]),grid_dim)
-        #     else:
-        #         flat_neigh = np.ravel_multi_index((grid_neigh[:,0],grid_neigh[:,1],grid_neigh[:,2]),grid_dim)
-        #     # if any neighbors are masked, skip this point
-        #     # TODO: use non-central derivative
-        #     if np.any(last_time.mask[flat_neigh]):
-        #         continue
-        #     # TODO: if a neighbor is on the edge of the domain, use non-central derivative
-            
-            # # find the time before the first neighbor (or current loc) exited
-            # t_calc = last_time[flat_neigh].min()
-            # if t_calc == t0:
-            #     # Have no data to calculate this point (exited domain too fast)
-            #     FTLE_largest[flat_loc] = ma.masked
-            #     FTLE_largest[flat_loc] = ma.masked
-            #     continue
-            # t_idx = time_list.index(t_calc)
-            # # get rid of self from neighbor list since it won't be needed for
-            # #   calculating central difference gradient
-            # flat_neigh = flat_neigh[:-1]
-
-            # get relevant position list
-
-            # if t_idx < len(s.pos_history):
-            #     pos = s.pos_history[t_idx]
-            # else:
-            #     pos = s.positions
-
-            # ### CENTRAL DIFFERENCE GRADIENT ###
-            # dXdx = (pos[flat_neigh[1],0]-pos[flat_neigh[0],0])/(2*dx)
-            # dXdy = (pos[flat_neigh[3],0]-pos[flat_neigh[2],0])/(2*dy)
-            # dYdx = (pos[flat_neigh[1],1]-pos[flat_neigh[0],1])/(2*dx)
-            # dYdy = (pos[flat_neigh[3],1]-pos[flat_neigh[2],1])/(2*dy)
-
-            # if DIM == 3:
-            #     # calculate 3D central difference gradient
-            #     dXdz = (pos[flat_neigh[5],0]-pos[flat_neigh[4],0])/(2*dz)
-            #     dYdz = (pos[flat_neigh[5],1]-pos[flat_neigh[4],1])/(2*dz)
-            #     dZdx = (pos[flat_neigh[1],2]-pos[flat_neigh[0],2])/(2*dx)
-            #     dZdy = (pos[flat_neigh[3],2]-pos[flat_neigh[2],2])/(2*dy)
-            #     dZdz = (pos[flat_neigh[5],2]-pos[flat_neigh[4],2])/(2*dz)
-
-            #     phi = np.array([[dXdx, dXdy, dXdz],
-            #                     [dYdx, dYdy, dYdz],
-            #                     [dZdx, dZdy, dZdz]])
-            # else:
-            #     # form up 2D central difference gradient
-            #     phi = np.array([[dXdx, dXdy],
-            #                     [dYdx, dYdy]])
-
-            # ### CALCULATE FTLE ###
-            # w,_ = np.linalg.eigh(phi.T@phi)
-            # FTLE_largest[flat_loc] = np.log(np.sqrt(w[-1]))/(t_calc-t0)
-            # FTLE_smallest[flat_loc] = np.log(np.sqrt(w[0]))/(t_calc-t0)
+            # if FTLE_largest[grid_loc] < -10:
+            #     import pdb; pdb.set_trace()
 
         ###### Save and cleanup ######
         self.FTLE_largest = FTLE_largest.flatten()
@@ -2464,6 +2404,8 @@ class environment:
                 Haller and Sapsis 2011). Otherwise, plot the largest, forward-time 
                 FTLE as a way of identifying ridges (separatrix) of LCSs.
         '''
+
+        raise NotImplementedError("FTLE is currently broken.")
 
         if self.FTLE_loc is None:
             print("Error: must generate FTLE field first! Use the calculate_FTLE method of this class.")
