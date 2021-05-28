@@ -27,7 +27,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import NullFormatter, MaxNLocator
 from mpl_toolkits import mplot3d
 import matplotlib.cm as cm
-from matplotlib import animation
+from matplotlib import animation, colors
 from matplotlib.collections import LineCollection
 import motion
 import data_IO
@@ -1708,8 +1708,7 @@ class environment:
             swarm object used to calculuate the FTLE
         '''
 
-        raise NotImplementedError("This is seemingly broken and I know not why... "+
-            "It runs, but does not give results consistent with VisIt.")
+        warnings.warn("FTLE requires more testing before it should be trusted!")
 
         ###########################################################
         ######              Setup swarm object               ######
@@ -2271,7 +2270,7 @@ class environment:
 
 
 
-    def plot_flow(self, t=None, downsamp=None, interval=500, figsize=None, **kwargs):
+    def plot_flow(self, t=None, downsamp=5, interval=500, figsize=None, **kwargs):
         '''Plot the velocity field of the fluid at a given time t or at all
         times if t is None. If t is not in self.flow_times, the nearest time
         will be shown without interpolation.
@@ -2331,6 +2330,11 @@ class environment:
                 else:
                     x_length = 6
                     y_length = 6
+                # with no histogram plots, can adjust other length in edge cases
+                if x_length == 12:
+                    y_length = 12/aspectratio
+                elif y_length == 8:
+                    x_length = 8*aspectratio
                 fig = plt.figure(figsize=(x_length,y_length))
             else:
                 fig = plt.figure()
@@ -2404,12 +2408,12 @@ class environment:
 
 
 
-    def plot_2D_vort(self, t=None, eps=None, interval=500, figsize=None):
+    def plot_2D_vort(self, t=None, clip=None, interval=500, figsize=None):
         '''Plot the vorticity of a 2D fluid at the given time t or at all
         times if t is None. If t is not in self.flow_times, the nearest time
         will be shown without interpolation.
 
-        Vorticity values below eps will appear transparent.
+        Clip will limit the extents of the color scale.
 
         For time dependent velocity fields, interval is the delay between plotting
         of each time's flow data, in milliseconds. Defaults to 500.
@@ -2448,10 +2452,16 @@ class environment:
             else:
                 x_length = 6
                 y_length = 6
+            # with no histogram plots, can adjust other length in edge cases
+            if x_length == 12:
+                y_length = 12/aspectratio
+            elif y_length == 8:
+                x_length = 8*aspectratio
             fig = plt.figure(figsize=(x_length,y_length))
         else:
             fig = plt.figure(figsize=figsize)
         ax = self._plot_setup(fig, nohist=True)
+        ax.set_aspect('equal')
 
         def get_vort(t_n=None):
             if len(self.flow[0].shape) > len(self.L):
@@ -2491,31 +2501,38 @@ class environment:
                 # vorticity
                 vort[grid_loc] = dvydx - dvxdy
 
-            if eps is not None:
-                return ma.masked_where(np.abs(vort)<eps,vort)
-            else:
-                return vort
+            return vort
 
+        if clip is not None:
+            norm = colors.Normalize(-abs(clip),abs(clip),clip=True)
+        else:
+            norm = None
 
         if len(self.L) == len(self.flow[0].shape):
             # Single-time plot from single-time flow
             vort = get_vort()
             pc = ax.pcolormesh(self.flow_points[0], self.flow_points[1],
-                          vort.T, shading='gouraud', cmap='RdBu')
-            fig.colorbar(pc)
+                          vort.T, shading='gouraud', cmap='RdBu', norm=norm)
+            axbbox = ax.get_position().get_points()
+            cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])
+            fig.colorbar(pc, cax=cbaxes)
         elif t is not None:
             vort = get_vort(loc)
             pc = ax.pcolormesh(self.flow_points[0], self.flow_points[1],
-                          vort.T, shading='gouraud', cmap='RdBu')
+                          vort.T, shading='gouraud', cmap='RdBu', norm=norm)
             ax.text(0.02, 0.95, 'time = {:.2f}'.format(self.flow_times[loc]), transform=ax.transAxes, fontsize=12)
-            fig.colorbar(pc)
+            axbbox = ax.get_position().get_points()
+            cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])
+            fig.colorbar(pc, cax=cbaxes)
         else:
             # Animation plot
             # create quiver object
             vort = get_vort(0)
             pc = ax.pcolormesh(self.flow_points[0], self.flow_points[1], 
-                           vort.T, shading='gouraud', cmap='RdBu')
-            cbar = fig.colorbar(pc)
+                           vort.T, shading='gouraud', cmap='RdBu', norm=norm)
+            axbbox = ax.get_position().get_points()
+            cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])
+            cbar = fig.colorbar(pc, cax=cbaxes)
             # textual info
             time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
                                 fontsize=12)
@@ -2528,11 +2545,13 @@ class environment:
 
 
 
-    def plot_2D_FTLE(self, smallest=False):
+    def plot_2D_FTLE(self, smallest=False, clip=None, figsize=None):
         '''Plot the FTLE field as generated by the calculate_FTLE method. The field 
         will be hard to visualize in 3D, so only 2D is implemented here. For 3D 
         visualization, output the field as a vtk and visualize using VisIt, ParaView, 
         etc.
+
+        Clip will limit the extents of the color scale.
 
         TODO: Show a video of 2D slices as a plot of 3D FTLE
 
@@ -2543,7 +2562,7 @@ class environment:
                 FTLE as a way of identifying ridges (separatrix) of LCSs.
         '''
 
-        raise NotImplementedError("FTLE is currently broken.")
+        warnings.warn("FTLE requires more testing before it should be trusted!")
 
         if self.FTLE_loc is None:
             print("Error: must generate FTLE field first! Use the calculate_FTLE method of this class.")
@@ -2552,22 +2571,48 @@ class environment:
             print("This method is only valid for 2D environments.")
             return
 
-        fig = plt.figure()
+        if figsize is None:
+            aspectratio = self.L[0]/self.L[1]
+            if aspectratio > 1:
+                x_length = np.min((6*aspectratio,12))
+                y_length = 6
+            elif aspectratio < 1:
+                x_length = 6
+                y_length = np.min((6/aspectratio,8))
+            else:
+                x_length = 6
+                y_length = 6
+            # with no histogram plots, can adjust other length in edge cases
+            if x_length == 12:
+                y_length = 12/aspectratio
+            elif y_length == 8:
+                x_length = 8*aspectratio
+            fig = plt.figure(figsize=(x_length,y_length))
+        else:
+            fig = plt.figure(figsize=figsize)
         ax = self._plot_setup(fig, nohist=True)
+        ax.set_aspect('equal')
         if smallest:
             FTLE = -self.FTLE_smallest
         else:
             FTLE = self.FTLE_largest
+        if clip is not None:
+            norm = colors.Normalize(-abs(clip),abs(clip),clip=True)
+        else:
+            norm = None
         grid_x = np.reshape(self.FTLE_loc[:,0].data, self.FTLE_grid_dim)
         grid_y = np.reshape(self.FTLE_loc[:,1].data, self.FTLE_grid_dim)
-        pcm = ax.pcolormesh(grid_x, grid_y, FTLE, shading='gouraud', cmap='plasma')
-        plt.colorbar(pcm, ax=ax)
+        pcm = ax.pcolormesh(grid_x, grid_y, FTLE, shading='gouraud', 
+                            cmap='plasma', norm=norm)
         if smallest:
             plt.title('Negative smallest fwrd-time FTLE field, $t_0$={}, $\Delta t$={}.'.format(
                     self.FTLE_t0, self.FTLE_T))
         else:
             plt.title('Largest fwrd-time FTLE field, $t_0$={}, $\Delta t$={}.'.format(
                     self.FTLE_t0, self.FTLE_T))
+        axbbox = ax.get_position().get_points()
+        cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])
+        plt.colorbar(pcm, cax=cbaxes)
         plt.show()
 
 

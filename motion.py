@@ -84,31 +84,42 @@ def RK45(fun, t0, y0, t_bound, rtol=0.0001, atol=1e-06, h_start=0.1):
                   [439/216, -8, 3680/513, -845/4104, 0],
                   [-8/27, 2, -3544/2565, 1859/4104, -11/40]])
     C = np.array([16/135, 0, 6656/12825, 28561/56430, -9/50, 2/55])
-    T = np.array([-1/360, 0, 128/4275, 2187/75240, -1/50, -2/55])
+    T = np.array([-1/360, 0, 128/4275, 2197/75240, -1/50, -2/55])
 
     step_accepted = False
     h_last = None
     h = h_start
     eps = atol + rtol*np.max(np.abs(y0))
 
-    K = np.zeros((6,y0.shape[0],y0.shape[1]))
+    if isinstance(y0,np.ndarray):
+        K = np.zeros((6,y0.shape[0],y0.shape[1]))
+    else:
+        K = np.zeros(6)
 
     while not step_accepted:
+        trunc_h = None
         if t_bound-t0<h:
             print("Lowering h to {}.".format(t_bound-t0))
+            trunc_h = h
             h = t_bound-t0
         K[0] = h*fun(t0+A[0]*h, y0)
-        K[1] = h*fun(t0+A[1]*h, y0+B[0,0]*K[0])
-        K[2] = h*fun(t0+A[2]*h, y0+B[1,0]*K[0]+B[1,1]*K[1])
-        K[3] = h*fun(t0+A[3]*h, y0+B[2,0]*K[0]+B[2,1]*K[1]+B[2,2]*K[2])
-        K[4] = h*fun(t0+A[4]*h, y0+B[3,0]*K[0]+B[3,1]*K[1]+B[3,2]*K[2]+B[3,3]*K[3])
-        K[5] = h*fun(t0+A[5]*h, y0+B[4,0]*K[0]+B[4,1]*K[1]+B[4,2]*K[2]+B[4,3]*K[3]+B[4,4]*K[4])
+        K[1] = h*fun(t0+A[1]*h, y0+h*(B[0,0]*K[0]))
+        K[2] = h*fun(t0+A[2]*h, y0+h*(B[1,0]*K[0]+B[1,1]*K[1]))
+        K[3] = h*fun(t0+A[3]*h, y0+h*(B[2,0]*K[0]+B[2,1]*K[1]+B[2,2]*K[2]))
+        K[4] = h*fun(t0+A[4]*h, y0+h*(B[3,0]*K[0]+B[3,1]*K[1]+B[3,2]*K[2]+B[3,3]*K[3]))
+        K[5] = h*fun(t0+A[5]*h, y0+h*(B[4,0]*K[0]+B[4,1]*K[1]+B[4,2]*K[2]+B[4,3]*K[3]+B[4,4]*K[4]))
 
-        y_new = y0 + np.einsum('i,ijk->jk',C,K)
+        if isinstance(y0,np.ndarray):
+            y_new = y0 + np.einsum('i,ijk->jk',C,K) #TODO: check!
+        else:
+            y_new = y0 + np.dot(C,K)
         # Control on the maximum of the 2-norm of any particle's movement
-        TE = np.max(np.linalg.norm(np.einsum('i,ijk->jk',T,K),axis=1))
+        if isinstance(y0,np.ndarray):
+            TE = np.max(np.linalg.norm(np.einsum('i,ijk->jk',T,K),axis=1))
+        else:
+            TE = np.linalg.norm(np.dot(T,K))
         if np.isnan(TE):
-            import pdb; pdb.set_trace()
+            raise RuntimeError("nan error in RK45 solver.")
 
         h_last = h
         if TE == 0:
@@ -121,8 +132,13 @@ def RK45(fun, t0, y0, t_bound, rtol=0.0001, atol=1e-06, h_start=0.1):
         else:
             print("Restarting RK45 with h={} at t={}.".format(h,t0))
             print("(Error={} versus eps={}.)".format(TE,eps))
+            trunc_h = None
 
-    return (t0+h_last,y_new,h)
+    if trunc_h is None:
+        return (t0+h_last,y_new,h)
+    else:
+        return (t0+h_last,y_new,trunc_h)
+
 
 
 
