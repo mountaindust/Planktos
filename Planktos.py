@@ -2060,8 +2060,8 @@ class environment:
                 v_y = self.flow[1][t_n]
             else:
                 flow = self.interpolate_temporal_flow()
-                v_x = self.flow[0]
-                v_y = self.flow[1]
+                v_x = flow[0]
+                v_y = flow[1]
         else:
             v_x = self.flow[0]
             v_y = self.flow[1]
@@ -2546,7 +2546,7 @@ class environment:
 
         def animate(n, pc, time_text):
             vort = self.get_2D_vorticity(t_n=n)
-            time_text.set_text('time = {:.2f}'.format(self.flow_times[n]))
+            time_text.set_text('time = {:.3f}'.format(self.flow_times[n]))
             pc.set_array(vort.T)
             pc.changed()
             pc.autoscale()
@@ -2569,7 +2569,7 @@ class environment:
             if x_length == 12:
                 y_length = 12/aspectratio
             elif y_length == 8:
-                x_length = 8*aspectratio
+                x_length = 8*aspectratio + 0.75 # leave room for colorbar
             fig = plt.figure(figsize=(x_length,y_length))
         else:
             fig = plt.figure(figsize=figsize)
@@ -2593,16 +2593,17 @@ class environment:
             vort = self.get_2D_vorticity(time=t)
             pc = ax.pcolormesh(self.flow_points[0], self.flow_points[1],
                           vort.T, shading='gouraud', cmap='RdBu', norm=norm)
-            ax.text(0.02, 0.95, 'time = {:.2f}'.format(t), transform=ax.transAxes, fontsize=12)
+            ax.text(0.02, 0.95, 'time = {:.3f}'.format(t), transform=ax.transAxes, fontsize=12)
             axbbox = ax.get_position().get_points()
             cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])
             fig.colorbar(pc, cax=cbaxes)
         else:
             # Animation plot
-            # create quiver object
-            vort = self.get_2D_vorticity(t_n=0)
-            pc = ax.pcolormesh(self.flow_points[0], self.flow_points[1], 
-                           vort.T, shading='gouraud', cmap='RdBu', norm=norm)
+            # create pcolormesh object
+            # vort = self.get_2D_vorticity(t_n=0)
+            pc = ax.pcolormesh([self.flow_points[0]], self.flow_points[1], 
+                           np.zeros(self.flow[0].shape[1:]).T, shading='gouraud',
+                           cmap='RdBu', norm=norm)
             axbbox = ax.get_position().get_points()
             cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])
             cbar = fig.colorbar(pc, cax=cbaxes)
@@ -2659,7 +2660,7 @@ class environment:
             if x_length == 12:
                 y_length = 12/aspectratio
             elif y_length == 8:
-                x_length = 8*aspectratio
+                x_length = 8*aspectratio  + 0.75 # leave room for colorbar
             fig = plt.figure(figsize=(x_length,y_length))
         else:
             fig = plt.figure(figsize=figsize)
@@ -4185,7 +4186,7 @@ class swarm:
 
 
 
-    def plot(self, t=None, blocking=True, dist='density', figsize=None):
+    def plot(self, t=None, blocking=True, dist='density', fluid='vort', clip=None, figsize=None):
         '''Plot the position of the swarm at time t, or at the current time
         if no time is supplied. The actual time plotted will depend on the
         history of movement steps; the closest entry in
@@ -4200,6 +4201,10 @@ class swarm:
                 'cov': use the variance in each direction from self.shared_props['cov']
                 float: a bandwidth factor to multiply the KDE variance by
                 'hist': plot histogram
+            fluid: fluid plot in background. 2D only!
+                Options are:
+                'vort': plot vorticity in the background
+            clip: if plotting vorticity or FTLE, specifies the clip value for pseudocolor
             figsize: figure size. default is a heurstic that works... most of the time?
         '''
 
@@ -4260,8 +4265,19 @@ class swarm:
                                               axHy_pos[1,0]-axHy_pos[0,0],
                                               (axHy_pos[1,1]-axHy_pos[0,1])/prop_len])
 
+            # fluid visualization
+            if fluid == 'vort':
+                vort = self.envir.get_2D_vorticity(t_indx=loc)
+                if clip is not None:
+                    norm = colors.Normalize(-abs(clip),abs(clip),clip=True)
+                else:
+                    norm = None
+                ax.pcolormesh(self.envir.flow_points[0], self.envir.flow_points[1], 
+                              vort.T, shading='gouraud', cmap='RdBu',
+                              norm=norm, alpha=0.9)
+            
             # scatter plot and time text
-            ax.scatter(positions[:,0], positions[:,1], label='organism')
+            ax.scatter(positions[:,0], positions[:,1], label='organism', c='dimgrey', s=2)
             ax.text(0.02, 0.95, 'time = {:.2f}'.format(time),
                     transform=ax.transAxes, fontsize=12)
 
@@ -4398,7 +4414,7 @@ class swarm:
 
 
     def plot_all(self, movie_filename=None, frames=None, downsamp=None, fps=10, 
-                 dist='density', figsize=None):
+                 dist='density', fluid=None, clip=None, figsize=None):
         ''' Plot the history of the swarm's movement, incl. current.
         If movie_filename is specified, output a movie file instead.
         
@@ -4423,6 +4439,10 @@ class swarm:
                 'cov': use the variance in each direction from self.shared_props['cov']
                 float: a bandwidth factor to multiply the KDE variance by
                 'hist': plot histogram
+            fluid: fluid plot in background. 2D only!
+                Options are:
+                'vort': plot vorticity in the background
+            clip: if plotting vorticity or FTLE, specifies the clip value for pseudocolor
             figsize: figure size. default is a heurstic that works... most of the time?     
         '''
 
@@ -4432,7 +4452,7 @@ class swarm:
             return
 
         if movie_filename is not None:
-            print("Creating video...")
+            print("Creating video... this could take a long time!")
         
         DIM3 = (len(self.envir.L) == 3)
 
@@ -4480,7 +4500,18 @@ class swarm:
                                               axHy_pos[1,0]-axHy_pos[0,0],
                                               (axHy_pos[1,1]-axHy_pos[0,1])/prop_len])
 
-            scat = ax.scatter([], [], label='organism')
+            # fluid visualization
+            if fluid == 'vort':
+                if clip is not None:
+                    norm = colors.Normalize(-abs(clip),abs(clip),clip=True)
+                else:
+                    norm = None
+                pc = ax.pcolormesh([self.envir.flow_points[0]], self.envir.flow_points[1], 
+                           np.zeros(self.envir.flow[0].shape[1:]).T, shading='gouraud',
+                           cmap='RdBu', norm=norm, alpha=0.9)
+
+            # scatter plot
+            scat = ax.scatter([], [], label='organism', c='dimgrey', s=2)
 
             # textual info
             time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
@@ -4657,6 +4688,11 @@ class swarm:
                          r'Agent $\overline{v}_x$'+': {:.2g}'.format(avg_swrm_vel[0]))
                     y_text.set_text(r'Fluid $\overline{v}_y$'+': {:.2g} \n'.format(avg_spd_y)+
                          r'Agent $\overline{v}_y$'+': {:.2g}'.format(avg_swrm_vel[1]))
+                    if fluid == 'vort':
+                        vort = self.envir.get_2D_vorticity(t_indx=n)
+                        pc.set_array(vort.T)
+                        pc.changed()
+                        pc.autoscale()
                     if downsamp is None:
                         scat.set_offsets(self.pos_history[n])
                     else:
@@ -4668,7 +4704,10 @@ class swarm:
                             rect.set_height(h)
                         for rect, h in zip(patches_y, n_y):
                             rect.set_width(h)
-                        return [scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
+                        if fluid == 'vort':
+                            return [pc, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
+                        else:
+                            return [scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
                     else:
                         x_density = stats.gaussian_kde(self.pos_history[n][:,0].compressed(), fac_x)
                         y_density = stats.gaussian_kde(self.pos_history[n][:,1].compressed(), fac_y)
@@ -4676,7 +4715,10 @@ class swarm:
                         ydens_plt.set_xdata(y_density(ymesh))
                         axHistx.set_ylim(top=np.max(xdens_plt.get_ydata()))
                         axHisty.set_xlim(right=np.max(ydens_plt.get_xdata()))
-                        return [scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
+                        if fluid == 'vort':
+                            return [pc, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
+                        else:
+                            return [scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
                     
                 else:
                     # 3D
@@ -4751,6 +4793,11 @@ class swarm:
                          r'Agent $\overline{v}_x$'+': {:.2g}'.format(avg_swrm_vel[0]))
                     y_text.set_text(r'Fluid $\overline{v}_y$'+': {:.2g} \n'.format(avg_spd_y)+
                          r'Agent $\overline{v}_y$'+': {:.2g}'.format(avg_swrm_vel[1]))
+                    if fluid == 'vort':
+                        vort = self.envir.get_2D_vorticity()
+                        pc.set_array(vort.T)
+                        pc.changed()
+                        pc.autoscale()
                     if downsamp is None:
                         scat.set_offsets(self.positions)
                     else:
@@ -4762,13 +4809,19 @@ class swarm:
                             rect.set_height(h)
                         for rect, h in zip(patches_y, n_y):
                             rect.set_width(h)
-                        return [scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
+                        if fluid == 'vort':
+                            return [pc, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
+                        else:
+                            return [scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
                     else:
                         x_density = stats.gaussian_kde(self.positions[:,0].compressed(), fac_x)
                         y_density = stats.gaussian_kde(self.positions[:,1].compressed(), fac_y)
                         xdens_plt.set_ydata(x_density(xmesh))
                         ydens_plt.set_xdata(y_density(ymesh))
-                        return [scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
+                        if fluid == 'vort':
+                            return [pc, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
+                        else:
+                            return [scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
                     
                 else:
                     # 3D end
