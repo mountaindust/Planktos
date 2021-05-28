@@ -2214,6 +2214,33 @@ class environment:
                 axHistx.yaxis.set_major_locator(int_ticks)
                 axHisty.xaxis.set_major_locator(pruned_ticks)
 
+                # at this point we have a good looking image, but the aspect ratio
+                #   is wrong. Adjust to make it right:
+                old_ax_position = np.array(ax.get_position().get_points())
+                ax.set_aspect('equal') # this should only shrink the plot?
+                ax_position = ax.get_position().get_points()
+                if ax_position[0,0] != old_ax_position[0,0] or\
+                    ax_position[1,0] != old_ax_position[1,0]:
+                    # x extents have moved
+                    old_xhist_pos = axHistx.get_position().get_points()
+                    # specify new position in terms of [left, bottom, width, height]
+                    bottom = old_xhist_pos[0,1]
+                    height = old_xhist_pos[1,1] - old_xhist_pos[0,1]
+                    left = ax_position[0,0]
+                    width = ax_position[1,0] - ax_position[0,0]
+                    axHistx.set_position([left, bottom, width, height])
+                elif ax_position[0,1] != old_ax_position[0,1] or\
+                    ax_position[1,1] != old_ax_position[1,1]:
+                    # y extents have moved
+                    old_yhist_pos = axHisty.get_position().get_points()
+                    # specify new position in terms of [left, bottom, width, height]
+                    left = old_yhist_pos[0,0]
+                    width = old_yhist_pos[1,0] - old_yhist_pos[0,0]
+                    bottom = ax_position[0,1]
+                    height = ax_position[1,1] - ax_position[0,1]
+                    axHisty.set_position([left, bottom, width, height])
+
+
             # add a grassy porous layer background (if porous layer present)
             if self.h_p is not None:
                 grass = np.random.rand(80)*self.L[0]
@@ -4214,6 +4241,24 @@ class swarm:
             else:
                 fig = plt.figure(figsize=figsize)
             ax, axHistx, axHisty = self.envir._plot_setup(fig)
+            if figsize is None:
+                # some final adjustments in a particular case
+                if x_length == 12:
+                    ax_pos = ax.get_position().get_points()
+                    axHx_pos = np.array(axHistx.get_position().get_points())
+                    axHy_pos = np.array(axHisty.get_position().get_points())
+                    if ax_pos[0,1] > 0.1:
+                        extra = 2*(ax_pos[0,1] - 0.1)*y_length
+                        fig.set_size_inches(x_length,y_length-extra)
+                        prop = (y_length-extra/4)/y_length
+                        prop_wdth = (y_length-extra/2)/y_length
+                        prop_len = (y_length-extra)/y_length
+                        axHistx.set_position([axHx_pos[0,0],axHx_pos[0,1]*prop,
+                                              axHx_pos[1,0]-axHx_pos[0,0],
+                                              (axHx_pos[1,1]-axHx_pos[0,1])/prop_wdth])
+                        axHisty.set_position([axHy_pos[0,0],axHy_pos[0,1]*prop_len,
+                                              axHy_pos[1,0]-axHy_pos[0,0],
+                                              (axHy_pos[1,1]-axHy_pos[0,1])/prop_len])
 
             # scatter plot and time text
             ax.scatter(positions[:,0], positions[:,1], label='organism')
@@ -4416,6 +4461,24 @@ class swarm:
             else:
                 fig = plt.figure(figsize=figsize)
             ax, axHistx, axHisty = self.envir._plot_setup(fig)
+            if figsize is None:
+                # some final adjustments in a particular case
+                if x_length == 12:
+                    ax_pos = ax.get_position().get_points()
+                    axHx_pos = np.array(axHistx.get_position().get_points())
+                    axHy_pos = np.array(axHisty.get_position().get_points())
+                    if ax_pos[0,1] > 0.1:
+                        extra = 2*(ax_pos[0,1] - 0.1)*y_length
+                        fig.set_size_inches(x_length,y_length-extra)
+                        prop = (y_length-extra/4)/y_length
+                        prop_wdth = (y_length-extra/2)/y_length
+                        prop_len = (y_length-extra)/y_length
+                        axHistx.set_position([axHx_pos[0,0],axHx_pos[0,1]*prop,
+                                              axHx_pos[1,0]-axHx_pos[0,0],
+                                              (axHx_pos[1,1]-axHx_pos[0,1])/prop_wdth])
+                        axHisty.set_position([axHy_pos[0,0],axHy_pos[0,1]*prop_len,
+                                              axHy_pos[1,0]-axHy_pos[0,0],
+                                              (axHy_pos[1,1]-axHy_pos[0,1])/prop_len])
 
             scat = ax.scatter([], [], label='organism')
 
