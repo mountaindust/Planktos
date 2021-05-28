@@ -31,5 +31,5 @@ print('Moving swarm...')
 for ii in range(100):
     s.move(1)
 
-s.plot_all('sea_fan.mp4', fps=10)
+# s.plot_all('sea_fan.mp4', fps=10)
 # s.plot_all(frames=range(0,551,5), dist='hist')    

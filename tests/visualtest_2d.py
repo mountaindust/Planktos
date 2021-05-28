@@ -11,8 +11,8 @@ import Planktos
 envir = Planktos.environment()
 envir.read_IB2d_vtk_data('data/leaf_data', 1.0e-5, 100, d_start=1)
 ### Use to test for boundary crossings ###
-# envir.read_IB2d_vertex_data('data/leaf_data/leaf.vertex', 1.45)
-# envir.add_vertices_to_2D_ibmesh()
+envir.read_IB2d_vertex_data('data/leaf_data/leaf.vertex', 1.45)
+envir.add_vertices_to_2D_ibmesh()
 
 ### Test for boundary crossings ###
 envir.add_swarm(seed=10)
@@ -42,4 +42,4 @@ print('Moving swarm...')
 for ii in range(500):
     s.move(0.0005)
     
-s.plot_all(movie_filename='leaf_2d_vort.mp4', figsize=(6,9), fps=30, fluid='vort')
+# s.plot_all(movie_filename='leaf_2d_vort.mp4', figsize=(6,9), fps=30, fluid='vort')

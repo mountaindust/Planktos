@@ -2492,11 +2492,6 @@ class environment:
                                     fontsize=12)
         ########## 3D Plot #########        
         else:
-            # get worse case max velocity vector for scaling
-            max_u = self.flow[0].max()
-            max_v = self.flow[1].max()
-            max_w = self.flow[2].max()
-            max_mag = np.linalg.norm(np.array([max_u,max_v,max_w]))
             x, y, z = np.meshgrid(self.flow_points[0][::M], self.flow_points[1][::M], 
                                   self.flow_points[2][::M], indexing='ij')
             if len(self.L) == len(self.flow[0].shape) or t is not None:
@@ -2526,6 +2521,7 @@ class environment:
                                         fargs=(quiver,kwargs),
                                         interval=interval, repeat=False,
                                         blit=True, save_count=len(frames))
+
         plt.show()
 
 
@@ -4204,6 +4200,7 @@ class swarm:
             fluid: fluid plot in background. 2D only!
                 Options are:
                 'vort': plot vorticity in the background
+                'quiver': quiver plot of fluid velocity in the background
             clip: if plotting vorticity or FTLE, specifies the clip value for pseudocolor
             figsize: figure size. default is a heurstic that works... most of the time?
         '''
@@ -4275,9 +4272,28 @@ class swarm:
                 ax.pcolormesh(self.envir.flow_points[0], self.envir.flow_points[1], 
                               vort.T, shading='gouraud', cmap='RdBu',
                               norm=norm, alpha=0.9)
+            elif fluid == 'quiver':
+                # get dimensions of axis to estimate a decent quiver density
+                ax_pos = ax.get_position().get_points()
+                fig_size = fig.get_size_inches()
+                wdth_inch = fig_size[0]*(ax_pos[1,0]-ax_pos[0,0])
+                height_inch = fig_size[1]*(ax_pos[1,1]-ax_pos[0,1])
+                # use about 4.15/inch density of arrows
+                x_num = round(4.15*wdth_inch)
+                y_num = round(4.15*height_inch)
+                M = round(len(self.envir.flow_points[0])/x_num)
+                N = round(len(self.envir.flow_points[1])/y_num)
+                # get worse case max velocity vector for scaling
+                max_u = self.envir.flow[0].max(); max_v = self.envir.flow[1].max()
+                max_mag = np.linalg.norm(np.array([max_u,max_v]))
+                flow = self.envir.interpolate_temporal_flow(t_indx=loc)
+                ax.quiver(self.envir.flow_points[0][::M], self.envir.flow_points[1][::N],
+                          flow[0][::M,::N].T, flow[1][::M,::N].T, 
+                          scale=max_mag*5, alpha=0.2)
+
             
             # scatter plot and time text
-            ax.scatter(positions[:,0], positions[:,1], label='organism', c='dimgrey', s=2)
+            ax.scatter(positions[:,0], positions[:,1], label='organism', c='darkgreen', s=3)
             ax.text(0.02, 0.95, 'time = {:.2f}'.format(time),
                     transform=ax.transAxes, fontsize=12)
 
@@ -4442,6 +4458,7 @@ class swarm:
             fluid: fluid plot in background. 2D only!
                 Options are:
                 'vort': plot vorticity in the background
+                'quiver': quiver plot of fluid velocity in the background
             clip: if plotting vorticity or FTLE, specifies the clip value for pseudocolor
             figsize: figure size. default is a heurstic that works... most of the time?     
         '''
@@ -4506,12 +4523,31 @@ class swarm:
                     norm = colors.Normalize(-abs(clip),abs(clip),clip=True)
                 else:
                     norm = None
-                pc = ax.pcolormesh([self.envir.flow_points[0]], self.envir.flow_points[1], 
+                fld = ax.pcolormesh([self.envir.flow_points[0]], self.envir.flow_points[1], 
                            np.zeros(self.envir.flow[0].shape[1:]).T, shading='gouraud',
                            cmap='RdBu', norm=norm, alpha=0.9)
+            elif fluid == 'quiver':
+                # get dimensions of axis to estimate a decent quiver density
+                ax_pos = ax.get_position().get_points()
+                fig_size = fig.get_size_inches()
+                wdth_inch = fig_size[0]*(ax_pos[1,0]-ax_pos[0,0])
+                height_inch = fig_size[1]*(ax_pos[1,1]-ax_pos[0,1])
+                # use about 4.15/inch density of arrows
+                x_num = round(4.15*wdth_inch)
+                y_num = round(4.15*height_inch)
+                M = round(len(self.envir.flow_points[0])/x_num)
+                N = round(len(self.envir.flow_points[1])/y_num)
+                # get worse case max velocity vector for scaling
+                max_u = self.envir.flow[0].max(); max_v = self.envir.flow[1].max()
+                max_mag = np.linalg.norm(np.array([max_u,max_v]))
+                x_pts = self.envir.flow_points[0][::M]
+                y_pts = self.envir.flow_points[1][::N]
+                fld = ax.quiver(x_pts, y_pts, np.zeros((len(y_pts),len(x_pts))),
+                                np.zeros((len(y_pts),len(x_pts))), 
+                                scale=max_mag*5, alpha=0.2)
 
             # scatter plot
-            scat = ax.scatter([], [], label='organism', c='dimgrey', s=2)
+            scat = ax.scatter([], [], label='organism', c='darkgreen', s=3)
 
             # textual info
             time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
@@ -4690,9 +4726,12 @@ class swarm:
                          r'Agent $\overline{v}_y$'+': {:.2g}'.format(avg_swrm_vel[1]))
                     if fluid == 'vort':
                         vort = self.envir.get_2D_vorticity(t_indx=n)
-                        pc.set_array(vort.T)
-                        pc.changed()
-                        pc.autoscale()
+                        fld.set_array(vort.T)
+                        fld.changed()
+                        fld.autoscale()
+                    elif fluid == 'quiver':
+                        flow = self.envir.interpolate_temporal_flow(t_indx=n)
+                        fld.set_UVC(flow[0][::M,::N].T, flow[1][::M,::N].T)
                     if downsamp is None:
                         scat.set_offsets(self.pos_history[n])
                     else:
@@ -4705,7 +4744,7 @@ class swarm:
                         for rect, h in zip(patches_y, n_y):
                             rect.set_width(h)
                         if fluid == 'vort':
-                            return [pc, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
+                            return [fld, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
                         else:
                             return [scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
                     else:
@@ -4716,7 +4755,7 @@ class swarm:
                         axHistx.set_ylim(top=np.max(xdens_plt.get_ydata()))
                         axHisty.set_xlim(right=np.max(ydens_plt.get_xdata()))
                         if fluid == 'vort':
-                            return [pc, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
+                            return [fld, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
                         else:
                             return [scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
                     
@@ -4795,9 +4834,12 @@ class swarm:
                          r'Agent $\overline{v}_y$'+': {:.2g}'.format(avg_swrm_vel[1]))
                     if fluid == 'vort':
                         vort = self.envir.get_2D_vorticity()
-                        pc.set_array(vort.T)
-                        pc.changed()
-                        pc.autoscale()
+                        fld.set_array(vort.T)
+                        fld.changed()
+                        fld.autoscale()
+                    elif fluid == 'quiver':
+                        flow = self.envir.interpolate_temporal_flow()
+                        fld.set_UVC(flow[0][::M,::N].T, flow[1][::M,::N].T)
                     if downsamp is None:
                         scat.set_offsets(self.positions)
                     else:
@@ -4810,7 +4852,7 @@ class swarm:
                         for rect, h in zip(patches_y, n_y):
                             rect.set_width(h)
                         if fluid == 'vort':
-                            return [pc, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
+                            return [fld, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
                         else:
                             return [scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
                     else:
@@ -4819,7 +4861,7 @@ class swarm:
                         xdens_plt.set_ydata(x_density(xmesh))
                         ydens_plt.set_xdata(y_density(ymesh))
                         if fluid == 'vort':
-                            return [pc, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
+                            return [fld, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
                         else:
                             return [scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
                     
