@@ -1708,7 +1708,7 @@ class environment:
             swarm object used to calculuate the FTLE
         '''
 
-        warnings.warn("FTLE requires more testing before it should be trusted!")
+        warnings.warn("FTLE requires more testing before it should be trusted!", UserWarning)
 
         ###########################################################
         ######              Setup swarm object               ######
@@ -2020,6 +2020,80 @@ class environment:
 
 
 
+    def get_2D_vorticity(self, t_indx=None, time=None, t_n=None):
+        '''Calculuate the vorticity of the fluid velocity field at a given time.
+
+        Arguments:
+            t_indx: integer ime index into self.envir.time_history[t_indx]
+            time: time, float
+            t_n: integer time index into self.flow_times[t_n]
+
+        If all time arguments are None but the flow is time-varying, the vorticity
+        at the current time will be returned. If more than one time argument is
+        specified, only the first will be used.
+
+        Returns:
+            vorticity as an ndarray
+
+        '''
+        assert len(self.L) == 2, "Fluid velocity field must be 2D!"
+        if (t_indx is not None or time is not None or t_n is not None) and self.flow_times is None:
+            warnings.warn("Warning: flow is time invarient but time arg passed into get_2D_vorticity.",
+                          RuntimeWarning)
+
+        if len(self.flow[0].shape) > len(self.L):
+            grid_dim = self.flow[0].shape[1:]
+            grid_loc_iter = np.ndindex(grid_dim)
+            TIMEVAR = True
+        else:
+            grid_dim = self.flow[0].shape
+            grid_loc_iter = np.ndindex(grid_dim)
+            TIMEVAR = False
+
+        if TIMEVAR:
+            if t_indx is not None or time is not None:
+                flow = self.interpolate_temporal_flow(t_indx=t_indx, time=time)
+                v_x = flow[0]
+                v_y = flow[1]
+            elif t_n is not None:
+                v_x = self.flow[0][t_n]
+                v_y = self.flow[1][t_n]
+            else:
+                flow = self.interpolate_temporal_flow()
+                v_x = self.flow[0]
+                v_y = self.flow[1]
+        else:
+            v_x = self.flow[0]
+            v_y = self.flow[1]
+
+        dx = self.L[0]/(grid_dim[0]-1)
+        dy = self.L[1]/(grid_dim[1]-1)
+
+        vort = np.zeros_like(v_x)
+
+        ### LOOP OVER ALL GRID POINTS ###
+        for grid_loc in grid_loc_iter:
+            diff_list = np.array([[-1,0],[1,0],[0,-1],[0,1]], dtype=int)
+            # first, deal with edge of domain cases
+            for dim, loc in enumerate(grid_loc):
+                if loc == 0:
+                    diff_list[dim*2,:] *= 0
+                elif loc == grid_dim[dim]-1:
+                    diff_list[dim*2+1,:] *= 0
+            neigh_list = np.array(grid_loc, dtype=int) + diff_list
+            # get stencil spacing
+            x_mult = abs((neigh_list[1,:]-neigh_list[0,:]).sum())
+            y_mult = abs((neigh_list[3,:]-neigh_list[2,:]).sum())
+            # central differencing
+            dvydx = (v_y[tuple(neigh_list[1,:])]-v_y[tuple(neigh_list[0,:])])/(x_mult*dx)
+            dvxdy = (v_x[tuple(neigh_list[3,:])]-v_x[tuple(neigh_list[2,:])])/(y_mult*dy)
+            # vorticity
+            vort[grid_loc] = dvydx - dvxdy
+
+        return vort
+
+
+
     @property
     def Re(self):
         '''Return the Reynolds number at the current time based on mean fluid
@@ -2260,11 +2334,32 @@ class environment:
 
 
 
-    def plot_envir(self):
+    def plot_envir(self, figsize=None):
         '''Plot the environment without the flow, e.g. to verify ibmesh
         formed correctly, dimensions are correct, etc.'''
 
-        fig = plt.figure()
+        if figsize is None:
+            if len(self.L) == 2:
+                aspectratio = self.L[0]/self.L[1]
+                if aspectratio > 1:
+                    x_length = np.min((6*aspectratio,12))
+                    y_length = 6
+                elif aspectratio < 1:
+                    x_length = 6
+                    y_length = np.min((6/aspectratio,8))
+                else:
+                    x_length = 6
+                    y_length = 6
+                # with no histogram plots, can adjust other length in edge cases
+                if x_length == 12:
+                    y_length = 12/aspectratio
+                elif y_length == 8:
+                    x_length = 8*aspectratio
+                fig = plt.figure(figsize=(x_length,y_length))
+            else:
+                fig = plt.figure()
+        else:
+            fig = plt.figure(figsize=figsize)
         ax = self._plot_setup(fig, nohist=True)
         plt.show()
 
@@ -2410,8 +2505,7 @@ class environment:
 
     def plot_2D_vort(self, t=None, clip=None, interval=500, figsize=None):
         '''Plot the vorticity of a 2D fluid at the given time t or at all
-        times if t is None. If t is not in self.flow_times, the nearest time
-        will be shown without interpolation.
+        times if t is None. This method will calculate the vorticity on the fly.
 
         Clip will limit the extents of the color scale.
 
@@ -2423,16 +2517,8 @@ class environment:
         #   time-dependent or we are going to plot all of them.
         assert len(self.L) == 2, "Flow field must be 2D!"
 
-        if t is not None and self.flow_times is not None:
-            loc = np.searchsorted(self.flow_times, t)
-            if loc == len(self.flow_times):
-                loc = -1
-            elif t < self.flow_times[loc]:
-                if (self.flow_times[loc]-t) > (t-self.flow_times[loc-1]):
-                    loc -= 1
-
         def animate(n, pc, time_text):
-            vort = get_vort(n)
+            vort = self.get_2D_vorticity(t_n=n)
             time_text.set_text('time = {:.2f}'.format(self.flow_times[n]))
             pc.set_array(vort.T)
             pc.changed()
@@ -2463,46 +2549,6 @@ class environment:
         ax = self._plot_setup(fig, nohist=True)
         ax.set_aspect('equal')
 
-        def get_vort(t_n=None):
-            if len(self.flow[0].shape) > len(self.L):
-                grid_dim = self.flow[0].shape[1:]
-                grid_loc_iter = np.ndindex(grid_dim)
-            else:
-                grid_dim = self.flow[0].shape
-                grid_loc_iter = np.ndindex(grid_dim)
-            if t_n is not None:
-                v_x = self.flow[0][t_n]
-                v_y = self.flow[1][t_n]
-            else:
-                v_x = self.flow[0]
-                v_y = self.flow[1]
-
-            dx = self.L[0]/(grid_dim[0]-1)
-            dy = self.L[1]/(grid_dim[1]-1)
-
-            vort = np.zeros_like(v_x)
-
-            ### LOOP OVER ALL GRID POINTS ###
-            for grid_loc in grid_loc_iter:
-                diff_list = np.array([[-1,0],[1,0],[0,-1],[0,1]], dtype=int)
-                # first, deal with edge of domain cases
-                for dim, loc in enumerate(grid_loc):
-                    if loc == 0:
-                        diff_list[dim*2,:] *= 0
-                    elif loc == grid_dim[dim]-1:
-                        diff_list[dim*2+1,:] *= 0
-                neigh_list = np.array(grid_loc, dtype=int) + diff_list
-                # get stencil spacing
-                x_mult = abs((neigh_list[1,:]-neigh_list[0,:]).sum())
-                y_mult = abs((neigh_list[3,:]-neigh_list[2,:]).sum())
-                # central differencing
-                dvydx = (v_y[tuple(neigh_list[1,:])]-v_y[tuple(neigh_list[0,:])])/(x_mult*dx)
-                dvxdy = (v_x[tuple(neigh_list[3,:])]-v_x[tuple(neigh_list[2,:])])/(y_mult*dy)
-                # vorticity
-                vort[grid_loc] = dvydx - dvxdy
-
-            return vort
-
         if clip is not None:
             norm = colors.Normalize(-abs(clip),abs(clip),clip=True)
         else:
@@ -2510,24 +2556,24 @@ class environment:
 
         if len(self.L) == len(self.flow[0].shape):
             # Single-time plot from single-time flow
-            vort = get_vort()
+            vort = self.get_2D_vorticity()
             pc = ax.pcolormesh(self.flow_points[0], self.flow_points[1],
                           vort.T, shading='gouraud', cmap='RdBu', norm=norm)
             axbbox = ax.get_position().get_points()
             cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])
             fig.colorbar(pc, cax=cbaxes)
         elif t is not None:
-            vort = get_vort(loc)
+            vort = self.get_2D_vorticity(time=t)
             pc = ax.pcolormesh(self.flow_points[0], self.flow_points[1],
                           vort.T, shading='gouraud', cmap='RdBu', norm=norm)
-            ax.text(0.02, 0.95, 'time = {:.2f}'.format(self.flow_times[loc]), transform=ax.transAxes, fontsize=12)
+            ax.text(0.02, 0.95, 'time = {:.2f}'.format(t), transform=ax.transAxes, fontsize=12)
             axbbox = ax.get_position().get_points()
             cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])
             fig.colorbar(pc, cax=cbaxes)
         else:
             # Animation plot
             # create quiver object
-            vort = get_vort(0)
+            vort = self.get_2D_vorticity(t_n=0)
             pc = ax.pcolormesh(self.flow_points[0], self.flow_points[1], 
                            vort.T, shading='gouraud', cmap='RdBu', norm=norm)
             axbbox = ax.get_position().get_points()
@@ -2562,7 +2608,7 @@ class environment:
                 FTLE as a way of identifying ridges (separatrix) of LCSs.
         '''
 
-        warnings.warn("FTLE requires more testing before it should be trusted!")
+        warnings.warn("FTLE requires more testing before it should be trusted!", UserWarning)
 
         if self.FTLE_loc is None:
             print("Error: must generate FTLE field first! Use the calculate_FTLE method of this class.")
@@ -4086,7 +4132,7 @@ class swarm:
                 flow = self.envir.flow
             else:
                 # temporally changing flow
-                flow = self.envir.interpolate_temporal_flow(t_indx)
+                flow = self.envir.interpolate_temporal_flow(t_indx=t_indx)
             flow_spd = np.sqrt(flow[0]**2 + flow[1]**2)
             avg_spd_x = flow[0].mean()
             avg_spd_y = flow[1].mean()
