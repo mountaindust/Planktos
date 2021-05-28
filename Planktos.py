@@ -1919,13 +1919,11 @@ class environment:
                 diff_list = np.array([[-1,0,0],[1,0,0],[0,-1,0],[0,1,0],[0,0,-1],[0,0,1]], dtype=int)
 
             # first, deal with edge of domain cases
-            neigh_list = np.array(grid_loc, dtype=int) + diff_list
-            for n, row in enumerate(neigh_list):
-                if np.any(row < 0) or np.any(np.array(last_time.shape,dtype=int)-row==0):
-                    if DIM == 2:
-                        diff_list[n] = np.array([0,0], dtype=int)
-                    else:
-                        diff_list[n] = np.array([0,0,0], dtype=int)
+            for dim, loc in enumerate(grid_loc):
+                    if loc == 0:
+                        diff_list[dim*2,:] *= 0
+                    elif loc == grid_dim[dim]-1:
+                        diff_list[dim*2+1,:] *= 0
             
             # check for masked neighbors
             neigh_list = np.array(grid_loc, dtype=int) + diff_list
@@ -1965,7 +1963,7 @@ class environment:
             else:
                 pos = s.positions
 
-            # get flattened indices and stencil spacing
+            # get stencil spacing and flattened indices
             x_mult = abs((neigh_list[1,:]-neigh_list[0,:]).sum())
             y_mult = abs((neigh_list[3,:]-neigh_list[2,:]).sum())
             if DIM==2:
@@ -2013,8 +2011,8 @@ class environment:
             #     import pdb; pdb.set_trace()
 
         ###### Save and cleanup ######
-        self.FTLE_largest = FTLE_largest.flatten()
-        self.FTLE_smallest = FTLE_smallest.flatten()
+        self.FTLE_largest = FTLE_largest
+        self.FTLE_smallest = FTLE_smallest
         self.FTLE_loc = s.pos_history[0]
         self.FTLE_t0 = t0
         self.FTLE_T = T
@@ -2273,7 +2271,7 @@ class environment:
 
 
 
-    def plot_flow(self, t=None, downsamp=None, interval=None, **kwargs):
+    def plot_flow(self, t=None, downsamp=None, interval=500, figsize=None, **kwargs):
         '''Plot the velocity field of the fluid at a given time t or at all
         times if t is None. If t is not in self.flow_times, the nearest time
         will be shown without interpolation.
@@ -2306,13 +2304,14 @@ class environment:
             M = 1
         else:
             assert isinstance(downsamp, int), "downsamp must be int or None"
+            assert downsamp>0, "downsamp must be a positive int (min 1)"
             M = downsamp
 
         def animate(n, quiver, kwargs):
             time_text.set_text('time = {:.2f}'.format(self.flow_times[n]))
             if len(self.L) == 2:
-                quiver.set_UVC(np.flipud(self.flow[0][n][::M,::M].T),
-                               np.flipud(self.flow[1][n][::M,::M].T))
+                quiver.set_UVC(self.flow[0][n][::M,::M].T,
+                               self.flow[1][n][::M,::M].T)
             else:
                 quiver = ax.quiver(x,y,z,self.flow[0][n][::M,::M,::M],
                                          self.flow[1][n][::M,::M,::M],
@@ -2320,7 +2319,23 @@ class environment:
                 fig.canvas.draw()
             return [quiver, time_text]
 
-        fig = plt.figure()
+        if figsize is None:
+            if len(self.L) == 2:
+                aspectratio = self.L[0]/self.L[1]
+                if aspectratio > 1:
+                    x_length = np.min((6*aspectratio,12))
+                    y_length = 6
+                elif aspectratio < 1:
+                    x_length = 6
+                    y_length = np.min((6/aspectratio,8))
+                else:
+                    x_length = 6
+                    y_length = 6
+                fig = plt.figure(figsize=(x_length,y_length))
+            else:
+                fig = plt.figure()
+        else:
+            fig = plt.figure(figsize=figsize)
         ax = self._plot_setup(fig, nohist=True)
 
         ########## 2D Plot #########
@@ -2332,21 +2347,20 @@ class environment:
                 # Single-time plot.
                 if loc is None:
                     ax.quiver(self.flow_points[0][::M], self.flow_points[1][::M],
-                              np.flipud(self.flow[0][::M,::M].T),
-                              np.flipud(self.flow[1][::M,::M].T), 
+                              self.flow[0][::M,::M].T, self.flow[1][::M,::M].T, 
                               scale=max_mag*5, **kwargs)
                 else:
                     ax.quiver(self.flow_points[0][::M], self.flow_points[1][::M],
-                              np.flipud(self.flow[0][loc][::M,::M].T),
-                              np.flipud(self.flow[1][loc][::M,::M].T), 
+                              self.flow[0][loc][::M,::M].T,
+                              self.flow[1][loc][::M,::M].T, 
                               scale=max_mag*5, **kwargs)
             else:
                 # Animation plot
                 # create quiver object
                 quiver = ax.quiver(self.flow_points[0][::M], self.flow_points[1][::M], 
-                                np.flipud(self.flow[0][0][::M,::M].T),
-                                np.flipud(self.flow[1][0][::M,::M].T), 
-                                scale=max_mag*5, **kwargs)
+                                   self.flow[0][0][::M,::M].T,
+                                   self.flow[1][0][::M,::M].T, 
+                                   scale=max_mag*5, **kwargs)
                 # textual info
                 time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
                                     fontsize=12)
@@ -2384,8 +2398,132 @@ class environment:
             frames = range(len(self.flow_times))
             anim = animation.FuncAnimation(fig, animate, frames=frames,
                                         fargs=(quiver,kwargs),
-                                        interval=500, repeat=False,
+                                        interval=interval, repeat=False,
                                         blit=True, save_count=len(frames))
+        plt.show()
+
+
+
+    def plot_2D_vort(self, t=None, eps=None, interval=500, figsize=None):
+        '''Plot the vorticity of a 2D fluid at the given time t or at all
+        times if t is None. If t is not in self.flow_times, the nearest time
+        will be shown without interpolation.
+
+        Vorticity values below eps will appear transparent.
+
+        For time dependent velocity fields, interval is the delay between plotting
+        of each time's flow data, in milliseconds. Defaults to 500.
+        '''
+
+        # Locate the flow field that will need plotting, or None if not
+        #   time-dependent or we are going to plot all of them.
+        assert len(self.L) == 2, "Flow field must be 2D!"
+
+        if t is not None and self.flow_times is not None:
+            loc = np.searchsorted(self.flow_times, t)
+            if loc == len(self.flow_times):
+                loc = -1
+            elif t < self.flow_times[loc]:
+                if (self.flow_times[loc]-t) > (t-self.flow_times[loc-1]):
+                    loc -= 1
+
+        def animate(n, pc, time_text):
+            vort = get_vort(n)
+            time_text.set_text('time = {:.2f}'.format(self.flow_times[n]))
+            pc.set_array(vort.T)
+            pc.changed()
+            pc.autoscale()
+            cbar.update_normal(pc)
+            fig.canvas.draw()
+            return [pc, time_text]
+
+        if figsize is None:
+            aspectratio = self.L[0]/self.L[1]
+            if aspectratio > 1:
+                x_length = np.min((6*aspectratio,12))
+                y_length = 6
+            elif aspectratio < 1:
+                x_length = 6
+                y_length = np.min((6/aspectratio,8))
+            else:
+                x_length = 6
+                y_length = 6
+            fig = plt.figure(figsize=(x_length,y_length))
+        else:
+            fig = plt.figure(figsize=figsize)
+        ax = self._plot_setup(fig, nohist=True)
+
+        def get_vort(t_n=None):
+            if len(self.flow[0].shape) > len(self.L):
+                grid_dim = self.flow[0].shape[1:]
+                grid_loc_iter = np.ndindex(grid_dim)
+            else:
+                grid_dim = self.flow[0].shape
+                grid_loc_iter = np.ndindex(grid_dim)
+            if t_n is not None:
+                v_x = self.flow[0][t_n]
+                v_y = self.flow[1][t_n]
+            else:
+                v_x = self.flow[0]
+                v_y = self.flow[1]
+
+            dx = self.L[0]/(grid_dim[0]-1)
+            dy = self.L[1]/(grid_dim[1]-1)
+
+            vort = np.zeros_like(v_x)
+
+            ### LOOP OVER ALL GRID POINTS ###
+            for grid_loc in grid_loc_iter:
+                diff_list = np.array([[-1,0],[1,0],[0,-1],[0,1]], dtype=int)
+                # first, deal with edge of domain cases
+                for dim, loc in enumerate(grid_loc):
+                    if loc == 0:
+                        diff_list[dim*2,:] *= 0
+                    elif loc == grid_dim[dim]-1:
+                        diff_list[dim*2+1,:] *= 0
+                neigh_list = np.array(grid_loc, dtype=int) + diff_list
+                # get stencil spacing
+                x_mult = abs((neigh_list[1,:]-neigh_list[0,:]).sum())
+                y_mult = abs((neigh_list[3,:]-neigh_list[2,:]).sum())
+                # central differencing
+                dvydx = (v_y[tuple(neigh_list[1,:])]-v_y[tuple(neigh_list[0,:])])/(x_mult*dx)
+                dvxdy = (v_x[tuple(neigh_list[3,:])]-v_x[tuple(neigh_list[2,:])])/(y_mult*dy)
+                # vorticity
+                vort[grid_loc] = dvydx - dvxdy
+
+            if eps is not None:
+                return ma.masked_where(np.abs(vort)<eps,vort)
+            else:
+                return vort
+
+
+        if len(self.L) == len(self.flow[0].shape):
+            # Single-time plot from single-time flow
+            vort = get_vort()
+            pc = ax.pcolormesh(self.flow_points[0], self.flow_points[1],
+                          vort.T, shading='gouraud', cmap='RdBu')
+            fig.colorbar(pc)
+        elif t is not None:
+            vort = get_vort(loc)
+            pc = ax.pcolormesh(self.flow_points[0], self.flow_points[1],
+                          vort.T, shading='gouraud', cmap='RdBu')
+            ax.text(0.02, 0.95, 'time = {:.2f}'.format(self.flow_times[loc]), transform=ax.transAxes, fontsize=12)
+            fig.colorbar(pc)
+        else:
+            # Animation plot
+            # create quiver object
+            vort = get_vort(0)
+            pc = ax.pcolormesh(self.flow_points[0], self.flow_points[1], 
+                           vort.T, shading='gouraud', cmap='RdBu')
+            cbar = fig.colorbar(pc)
+            # textual info
+            time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
+                                fontsize=12)
+            frames = range(len(self.flow_times))
+            anim = animation.FuncAnimation(fig, animate, frames=frames,
+                                        fargs=(pc,time_text),
+                                        interval=interval, repeat=False,
+                                        blit=False, save_count=len(frames))
         plt.show()
 
 
@@ -2417,9 +2555,9 @@ class environment:
         fig = plt.figure()
         ax = self._plot_setup(fig, nohist=True)
         if smallest:
-            FTLE = -np.reshape(self.FTLE_smallest, self.FTLE_grid_dim)
+            FTLE = -self.FTLE_smallest
         else:
-            FTLE = np.reshape(self.FTLE_largest, self.FTLE_grid_dim)
+            FTLE = self.FTLE_largest
         grid_x = np.reshape(self.FTLE_loc[:,0].data, self.FTLE_grid_dim)
         grid_y = np.reshape(self.FTLE_loc[:,1].data, self.FTLE_grid_dim)
         pcm = ax.pcolormesh(grid_x, grid_y, FTLE, shading='gouraud', cmap='plasma')
@@ -3970,10 +4108,18 @@ class swarm:
 
         if len(self.envir.L) == 2:
             # 2D plot
-            aspectratio = self.envir.L[0]/self.envir.L[1]
-            x_length = np.min((5*aspectratio+1,12))
             if figsize is None:
-                fig = plt.figure(figsize=(x_length,6))
+                aspectratio = self.envir.L[0]/self.envir.L[1]
+                if aspectratio > 1:
+                    x_length = np.min((6*aspectratio,12))
+                    y_length = 6
+                elif aspectratio < 1:
+                    x_length = 6
+                    y_length = np.min((6/aspectratio,8))
+                else:
+                    x_length = 6
+                    y_length = 6
+                fig = plt.figure(figsize=(x_length,y_length))
             else:
                 fig = plt.figure(figsize=figsize)
             ax, axHistx, axHisty = self.envir._plot_setup(fig)
@@ -4164,10 +4310,18 @@ class swarm:
 
         if not DIM3:
             ### 2D setup ###
-            aspectratio = self.envir.L[0]/self.envir.L[1]
-            x_length = np.min((5*aspectratio+1,12))
             if figsize is None:
-                fig = plt.figure(figsize=(x_length,6))
+                aspectratio = self.envir.L[0]/self.envir.L[1]
+                if aspectratio > 1:
+                    x_length = np.min((6*aspectratio,12))
+                    y_length = 6
+                elif aspectratio < 1:
+                    x_length = 6
+                    y_length = np.min((6/aspectratio,8))
+                else:
+                    x_length = 6
+                    y_length = 6
+                fig = plt.figure(figsize=(x_length,y_length))
             else:
                 fig = plt.figure(figsize=figsize)
             ax, axHistx, axHisty = self.envir._plot_setup(fig)

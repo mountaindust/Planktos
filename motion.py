@@ -49,7 +49,7 @@ def flatten_ode(swarm):
 # TODO: diffusion in porous media https://en.wikipedia.org/wiki/Diffusion#Diffusion_in_porous_media
 
 
-def RK45(fun, t0, y0, t_bound, rtol=0.001, atol=1e-06, h_start=0.1):
+def RK45(fun, t0, y0, t_bound, rtol=0.0001, atol=1e-06, h_start=0.1):
     '''Take one Runge-Kutta-Fehlberg (forward) step. fun should have call
     signature (t,x) where x is 2-D with columns giving spatial dimension.
     This solver is set up to just take one step so that boundary conditions 
