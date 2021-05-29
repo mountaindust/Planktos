@@ -709,19 +709,20 @@ class environment:
         if not path.is_dir(): 
             raise FileNotFoundError("Directory {} not found!".format(str(path)))
 
-        if d_finish is None:
-            #infer d_finish
-            file_names = [x.name for x in path.iterdir() if x.is_file()]
-            if 'u.' in [x[:2] for x in file_names]:
-                u_nums = sorted([int(f[2:6]) for f in file_names if f[:2] == 'u.'])
+        #infer d_finish
+        file_names = [x.name for x in path.iterdir() if x.is_file()]
+        if 'u.' in [x[:2] for x in file_names]:
+            u_nums = sorted([int(f[2:6]) for f in file_names if f[:2] == 'u.'])
+            if d_finish is None:
                 d_finish = u_nums[-1]
-                vector_data = True
-            else:
-                assert 'uX.' in [x[:3] for x in file_names],\
-                    "Could not find u.####.vtk or uX.####.vtk files in {}.".format(str(path))
-                u_nums = sorted([int(f[3:7]) for f in file_names if f[:3] == 'uX.'])
+            vector_data = True
+        else:
+            assert 'uX.' in [x[:3] for x in file_names],\
+                "Could not find u.####.vtk or uX.####.vtk files in {}.".format(str(path))
+            u_nums = sorted([int(f[3:7]) for f in file_names if f[:3] == 'uX.'])
+            if d_finish is None:
                 d_finish = u_nums[-1]
-                vector_data = False
+            vector_data = False
 
         X_vel = []
         Y_vel = []
@@ -799,13 +800,14 @@ class environment:
         print('Done!')
 
         ### Save data ###
-        self.flow = [np.transpose(np.dstack(X_vel),(2,0,1)), 
-                     np.transpose(np.dstack(Y_vel),(2,0,1))] 
         if d_start != d_finish:
+            self.flow = [np.transpose(np.dstack(X_vel),(2,0,1)), 
+                         np.transpose(np.dstack(Y_vel),(2,0,1))] 
             self.flow_times = np.arange(d_start,d_finish+1)*print_dump*dt
             # shift time so that flow starts at t=0
             self.flow_times -= self.flow_times[0]
         else:
+            self.flow = [X_vel[0], Y_vel[0]]
             self.flow_times = None
         # shift domain to quadrant 1
         self.flow_points = (x-x[0], y-y[0])
@@ -1631,7 +1633,7 @@ class environment:
 
 
 
-    def calculate_FTLE(self, grid_dim, testdir=None, t0=0, T=1, dt=0.1, 
+    def calculate_FTLE(self, grid_dim=None, testdir=None, t0=0, T=1, dt=0.1, 
                        ode=None, swrm=None, params=None):
         '''Calculate the FTLE field at the given time(s) t0 with integration 
         length T on a discrete grid with given dimensions. The calculation will 
@@ -1653,7 +1655,7 @@ class environment:
 
         Arguments:
             grid_dim: tuple of integers denoting the size of the grid in each
-                dimension (x, y, [z]).
+                dimension (x, y, [z]). Defaults to the fluid grid.
             testdir: grid points can heuristically be removed from the interior 
                 of immersed structures. To accomplish this, a line will be drawn 
                 from each point to a domain boundary. If the number of intersections
@@ -1704,6 +1706,9 @@ class environment:
         ###########################################################
         ######              Setup swarm object               ######
         ###########################################################
+        if grid_dim is None:
+            grid_dim = tuple(len(pts) for pts in self.flow_points)
+
         if swrm is None:
             s = swarm(envir=self, init='grid', grid_dim=grid_dim, testdir=testdir)
             # NOTE: swarm has been appended to this environment!
