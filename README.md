@@ -177,6 +177,8 @@ Class: swarm
     instead.
 - Methods
     - `full_pos_history` return the full position history of the swarm, past and present
+    - `save_data` save position, velocity, and accel data to csv, save agent property
+    information to npz and json
     - `save_pos_to_csv` save all current and past agent positions to csv
     - `save_pos_to_vtk` save the positions at each time step to a vtk file. only the positions
     inside the domain are saved.

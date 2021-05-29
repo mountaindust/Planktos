@@ -9,7 +9,7 @@ Author: Christopher Strickland
 Email: cstric12@utk.edu
 '''
 
-import sys, warnings, copy
+import sys, os, warnings, copy
 from sys import platform
 if platform == 'darwin': # OSX backend does not support blitting
     import matplotlib
@@ -3094,8 +3094,37 @@ class swarm:
 
 
 
+    def save_data(self, path, name, pos_fmt='%.18e'):
+        '''Save the full position history (with mask and time stamps), current
+        velocity and acceleration to csv files. Save shared_props to a npz file 
+        (since it is likely to contain some mixture of scalars and arrays, but
+        does not vary between the agents so is less likely to be loaded outside
+        of Python) and save props to json (since it is likely to contain a 
+        variety of types of data, may need to be loaded outside of Python, 
+        and json will be human readable).
+
+        Arguments:
+            path: string, directory for storing data
+            name: string, prefix name for data files
+            pos_fmt: format for storing position, vel, and accel data
+        '''
+
+        path = Path(path)
+        if not path.is_dir():
+            os.mkdir(path)
+
+        self.save_pos_to_csv(str(path/name), pos_fmt, sv_vel=True, sv_accel=True)
+
+        props_file = path/(name+'_props.json')
+        self.props.to_json(str(props_file))
+        shared_props_file = path/(name+'_shared_props.npz')
+        np.savez(str(shared_props_file), **self.shared_props)
+
+
+
     def save_pos_to_csv(self, filename, fmt='%.18e', sv_vel=False, sv_accel=False):
-        '''Save the full position history, including present time, to a csv.
+        '''Save the full position history including present time, with mask and 
+        time stamps, to a csv.
         The format is as follows:
         The first row contains cycle and time information. The cycle is given, 
             and then each time stamp is repeated D times, where D is the spatial 
@@ -3141,14 +3170,14 @@ class swarm:
 
 
     
-    def save_pos_to_vtk(self, path, title, all=True):
+    def save_pos_to_vtk(self, path, name, all=True):
         '''Save position data to vtk as point data (PolyData).
         A different file will be created for each time step in the history, or
         just one file if all is False.
 
         Arguments:
             path: string, location to save the data
-            title: string, name of dataset
+            name: string, name of dataset
             all: bool. if True, save the entire history including the current
                 time. If false, save only the current time.
         '''
@@ -3161,28 +3190,28 @@ class swarm:
             if DIM2:
                 data = np.zeros((self.positions[~self.positions[:,0].mask,:].shape[0],3))
                 data[:,:2] = self.positions[~self.positions[:,0].mask,:]
-                data_IO.write_vtk_point_data(path, title, data)
+                data_IO.write_vtk_point_data(path, name, data)
             else:
-                data_IO.write_vtk_point_data(path, title, self.positions[~self.positions[:,0].mask,:])
+                data_IO.write_vtk_point_data(path, name, self.positions[~self.positions[:,0].mask,:])
         else:
             for cyc, time in enumerate(self.envir.time_history):
                 if DIM2:
                     data = np.zeros((self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:].shape[0],3))
                     data[:,:2] = self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:]
-                    data_IO.write_vtk_point_data(path, title, data, 
+                    data_IO.write_vtk_point_data(path, name, data, 
                                                  cycle=cyc, time=time)
                 else:
-                    data_IO.write_vtk_point_data(path, title, 
+                    data_IO.write_vtk_point_data(path, name, 
                         self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:], 
                         cycle=cyc, time=time)
             cyc = len(self.envir.time_history)
             if DIM2:
                 data = np.zeros((self.positions[~self.positions[:,0].mask,:].shape[0],3))
                 data[:,:2] = self.positions[~self.positions[:,0].mask,:]
-                data_IO.write_vtk_point_data(path, title, data, cycle=cyc,
+                data_IO.write_vtk_point_data(path, name, data, cycle=cyc,
                                              time=self.envir.time)
             else:
-                data_IO.write_vtk_point_data(path, title, 
+                data_IO.write_vtk_point_data(path, name, 
                     self.positions[~self.positions[:,0].mask,:],
                     cycle=cyc, time=self.envir.time)
 
@@ -4326,7 +4355,7 @@ class swarm:
                     norm = None
                 ax.pcolormesh(self.envir.flow_points[0], self.envir.flow_points[1], 
                               vort.T, shading='gouraud', cmap='RdBu',
-                              norm=norm, alpha=0.9)
+                              norm=norm, alpha=0.9, antialiased=True)
             elif fluid == 'quiver':
                 # get dimensions of axis to estimate a decent quiver density
                 ax_pos = ax.get_position().get_points()
