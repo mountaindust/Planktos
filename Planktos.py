@@ -3094,7 +3094,7 @@ class swarm:
 
 
 
-    def save_to_csv(self, filename, fmt='%.18e'):
+    def save_pos_to_csv(self, filename, fmt='%.18e'):
         '''Save the full position history, including present time, to a csv.
         The format is as follows:
         The first row contains cycle and time information. The cycle is given, 
@@ -3130,7 +3130,7 @@ class swarm:
 
 
     
-    def save_to_vtk(self, path, title, all=True):
+    def save_pos_to_vtk(self, path, title, all=True):
         '''Save position data to vtk as point data (PolyData).
         A different file will be created for each time step in the history, or
         just one file if all is False.

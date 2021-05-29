@@ -177,8 +177,8 @@ Class: swarm
     instead.
 - Methods
     - `full_pos_history` return the full position history of the swarm, past and present
-    - `save_to_csv` save all current and past agent positions to csv
-    - `save_to_vtk` save the positions at each time step to a vtk file. only the positions
+    - `save_pos_to_csv` save all current and past agent positions to csv
+    - `save_pos_to_vtk` save the positions at each time step to a vtk file. only the positions
     inside the domain are saved.
     - `calc_re` Calculate the Reynolds number based on environment variables.
     Requires rho and mu to be set in the environment, and diam to be set in swarm
