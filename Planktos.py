@@ -3094,33 +3094,39 @@ class swarm:
 
 
 
-    def save_positions_to_csv(self, filename, fmt='%.18e'):
+    def save_to_csv(self, filename, fmt='%.18e'):
         '''Save the full position history, including present time, to a csv.
         The format is as follows:
-        The first row contains time information. Each time stamp is repeated
-            D times, where D is the spatial dimension of the system.
+        The first row contains cycle and time information. The cycle is given, 
+            and then each time stamp is repeated D times, where D is the spatial 
+            dimension of the system.
         Each subsequent row corresponds to a different agent in the swarm.
-        Reading across the columns of an agent row, position vectors are given
-            in groups of D columns for the x, y, (and z) direction. Each set
-            of D columns corresponds to a different time, as labeled by the
-            values in the first row.
-        The result is a csv that is N+1 by D*T, where N is the number of agents,
-            D is the dimension of the system, and T is the number of times
-            recorded.
+        Reading across the columns of an agent row: first, a boolean is given
+            showing the state of the mask for that time step. Agents are masked
+            when they have exited the domain. Then, the position vector is given
+            as a group of D columns for the x, y, (and z) direction. Each set
+            of 1+D columns then corresponds to a different cycle/time, as 
+            labeled by the values in the first row.
+        The result is a csv that is N+1 by (1+D)*T, where N is the number of 
+            agents, D is the dimension of the system, and T is the number of 
+            times recorded.
 
         Arguments:
             filename: (string) path/name of the file to save the data to
-            fmt: fmt argument to be passed to numpy.savetxt
+            fmt: fmt argument to be passed to numpy.savetxt for position data
         '''
         if filename[-4:] != '.csv':
             filename = filename + '.csv'
 
         full_time = [*self.envir.time_history, self.envir.time]
-        tiled_time = np.repeat(full_time, self.positions.shape[1])
+        time_row = np.concatenate([[ii]+[jj]*self.positions.shape[1] 
+                   for ii,jj in zip(range(len(full_time)), full_time)])
 
-        np.savetxt(filename, np.vstack((tiled_time, 
-                                        np.hstack(self.full_pos_history))),
-                                        fmt=fmt, delimiter=',')
+        fmtlist = ['%u'] + [fmt]*self.positions.shape[1]
+
+        np.savetxt(filename, np.vstack((time_row, 
+                   np.column_stack([mat for pos in self.full_pos_history for mat in (pos[:,0].mask, pos.data)]))),
+                   fmt=fmtlist*len(full_time), delimiter=',')
 
 
     

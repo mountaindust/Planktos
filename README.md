@@ -14,7 +14,8 @@ A suggested BibTeX entry is included in the file Planktos.bib.
 - matplotlib 3.x
 - pandas
 - ffmpeg from conda-forge (not from default anaconda. Use `conda install -c conda-forge ffmpeg`.)
-- vtk (if loading vtk data)
+- vtk (if loading vtk data, get from conda-forge)
+- pyvista (if saving vtk data, get from conda-forge)
 - numpy-stl (if loading stl data)
 - pytest (if running tests)
 
@@ -176,7 +177,7 @@ Class: swarm
     instead.
 - Methods
     - `full_pos_history` return the full position history of the swarm, past and present
-    - `save_positions_to_csv` save all current and past agent positions to csv
+    - `save_to_csv` save all current and past agent positions to csv
     - `save_to_vtk` save the positions at each time step to a vtk file. only the positions
     inside the domain are saved.
     - `calc_re` Calculate the Reynolds number based on environment variables.
