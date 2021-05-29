@@ -2085,6 +2085,40 @@ class environment:
 
 
 
+    def save_2D_vorticity(self, path, name, time_history=True, flow_times=False):
+        '''Save the vorticity of a 2D fluid velocity field as one or more vtk 
+        files (one for each time point).
+
+        Arguments:
+            path: string, location to save file(s)
+            name: string, prefix name for file(s)
+            time_history: if True, save vorticity data for each time step in the
+                simulation history. Only for time-varying fluid.
+            flow_times: if True, save vorticity data for each time at which the
+                fluid velocity data is explicitly specified.
+        '''
+
+        if time_history:
+            for cyc, time in enumerate(self.time_history):
+                vort = self.get_2D_vorticity(t_n=cyc)
+                data_IO.write_vtk_2D_uniform_grid_scalars(path, name, vort, self.L, cyc, time)
+            cycle = len(self.time_history)
+        else:
+            cycle = None
+        if flow_times:
+            if time_history:
+                out_name = 'omega'
+            else:
+                out_name = name
+            for cyc, time in enumerate(self.flow_times):
+                vort = self.get_2D_vorticity(t_indx=cyc)
+                data_IO.write_vtk_2D_uniform_grid_scalars(path, out_name, vort, self.L, cyc, time)
+        if time_history or not flow_times:
+            vort = self.get_2D_vorticity(self.time)
+            data_IO.write_vtk_2D_uniform_grid_scalars(path, name, vort, self.L, cycle, self.time)
+
+
+
     @property
     def Re(self):
         '''Return the Reynolds number at the current time based on mean fluid

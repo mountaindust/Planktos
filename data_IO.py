@@ -423,3 +423,35 @@ def write_vtk_point_data(path, title, data, cycle=None, time=None):
     vtk_data.save(str(filepath), binary=False)
 
 
+
+@pyvista_dep
+def write_vtk_2D_uniform_grid_scalars(path, title, data, L, cycle=None, time=None):
+    '''Write scalar data on a 2D uniform grid (e.g. vorticity).
+    
+    Arguments:
+        path: string, path to where data should go
+        title: title to prepend to filename
+        data: ndarray of data, must be 2D
+        L: list (length 2), environment.L
+        cycle: int, dump number
+        time: float, simulation time
+    '''
+
+    path = Path(path)
+    if not path.is_dir():
+        os.mkdir(path)
+    if cycle is None:
+        filepath = path / (title + '.vtk')
+    else:
+        filepath = path / (title + '_{:04d}.vtk'.format(cycle))
+
+    grid = pv.UniformGrid()
+    grid.dimensions = (*data.shape, 1) # must be 3D
+    grid.origin = (0,0,0)
+    grid.spacing = L + [0]
+    grid.point_arrays["values"] = data.flatten(order="F")
+    if cycle is not None:
+        grid.field_arrays['CYCLE'] = cycle
+    if time is not None:
+        grid.field_arrays['TIME'] = time
+    grid.save(str(filepath), binary=False)
