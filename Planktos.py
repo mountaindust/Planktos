@@ -3094,7 +3094,7 @@ class swarm:
 
 
 
-    def save_pos_to_csv(self, filename, fmt='%.18e'):
+    def save_pos_to_csv(self, filename, fmt='%.18e', sv_vel=False, sv_accel=False):
         '''Save the full position history, including present time, to a csv.
         The format is as follows:
         The first row contains cycle and time information. The cycle is given, 
@@ -3127,6 +3127,17 @@ class swarm:
         np.savetxt(filename, np.vstack((time_row, 
                    np.column_stack([mat for pos in self.full_pos_history for mat in (pos[:,0].mask, pos.data)]))),
                    fmt=fmtlist*len(full_time), delimiter=',')
+
+        if sv_vel:
+            vel_filename = filename[:-4] + '_vel.csv'
+            np.savetxt(vel_filename, 
+                   np.column_stack((self.velocities[:,0].mask, self.velocities.data)),
+                   fmt=fmtlist, delimiter=',')
+        if sv_accel:
+            accel_filename = filename[:-4] + '_accel.csv'
+            np.savetxt(accel_filename, 
+                   np.column_stack((self.accelerations[:,0].mask, self.accelerations.data)),
+                   fmt=fmtlist, delimiter=',')
 
 
     
