@@ -3132,6 +3132,52 @@ class swarm:
                                         fmt=fmt, delimiter=',')
 
 
+    
+    def save_to_vtk(self, path, title, all=True):
+        '''Save position data to vtk as point data (PolyData).
+        A different file will be created for each time step in the history, or
+        just one file if all is False.
+
+        Arguments:
+            path: string, location to save the data
+            title: string, name of dataset
+            all: bool. if True, save the entire history including the current
+                time. If false, save only the current time.
+        '''
+        if len(self.envir.L) == 2:
+            DIM2 = True
+        else:
+            DIM2 = False
+
+        if not all or len(self.envir.time_history) == 0:
+            if DIM2:
+                data = np.zeros((self.positions[~self.positions[:,0].mask,:].shape[0],3))
+                data[:,:2] = self.positions[~self.positions[:,0].mask,:]
+                data_IO.write_vtk_point_data(path, title, data)
+            else:
+                data_IO.write_vtk_point_data(path, title, self.positions[~self.positions[:,0].mask,:])
+        else:
+            for cyc, time in enumerate(self.envir.time_history):
+                if DIM2:
+                    data = np.zeros((self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:].shape[0],3))
+                    data[:,:2] = self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:]
+                    data_IO.write_vtk_point_data(path, title, data, 
+                                                 cycle=cyc, time=time)
+                else:
+                    data_IO.write_vtk_point_data(path, title, 
+                        self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:], 
+                        cycle=cyc, time=time)
+            cyc = len(self.envir.time_history)
+            if DIM2:
+                data = np.zeros((self.positions[~self.positions[:,0].mask,:].shape[0],3))
+                data[:,:2] = self.positions[~self.positions[:,0].mask,:]
+                data_IO.write_vtk_point_data(path, title, data, cycle=cyc,
+                                             time=self.envir.time)
+            else:
+                data_IO.write_vtk_point_data(path, title, 
+                    self.positions[~self.positions[:,0].mask,:],
+                    cycle=cyc, time=self.envir.time)
+
 
     def _change_envir(self, envir):
         '''Manages a change from one environment to another'''

@@ -39,7 +39,7 @@ s.shared_props['cov'] *= 0.001
 s.plot()
 
 print('Moving swarm...')
-for ii in range(500):
+for ii in range(10):
     s.move(0.0005)
     
 # s.plot_all(movie_filename='leaf_2d_vort.mp4', figsize=(6,9), fps=30, fluid='vort')

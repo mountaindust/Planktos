@@ -32,6 +32,12 @@ try:
     STL = True
 except ModuleNotFoundError:
     STL = False
+try:
+    import pyvista as pv
+    PYVISTA = True
+except ModuleNotFoundError:
+    print("Could not import pyvista library. Writing of VTK files disabled.")
+    PYVISTA = False
 
 
 
@@ -41,6 +47,18 @@ def vtk_dep(func):
         if not VTK:
             print("Cannot read VTK file: VTK library not found.")
             raise RuntimeError("Cannot read VTK file: VTK library not found in data_IO.")
+        else:
+            return func(*args, **kwargs)
+    return wrapper
+
+
+
+def pyvista_dep(func):
+    '''Decorator for pyvista writers to check import.'''
+    def wrapper(*args, **kwargs):
+        if not PYVISTA:
+            print("Cannot write VTK files: pyvista library not found.")
+            raise RuntimeError("Cannot write VTK files: pyvista library not found.")
         else:
             return func(*args, **kwargs)
     return wrapper
@@ -375,5 +393,33 @@ def read_IB2d_vertices(filename):
 
     return vertices
 
+
+
+@pyvista_dep
+def write_vtk_point_data(path, title, data, cycle=None, time=None):
+    '''Write point data, such as agent positions.
+    
+    Arguments:
+        path: string, path to where data should go
+        title: title to prepend to filename
+        data: ndarray of data, must be Nx3
+        cycle: int, dump number
+        time: float, simulation time
+    '''
+
+    path = Path(path)
+    if not path.is_dir():
+        os.mkdir(path)
+    if cycle is None:
+        filepath = path / (title + '.vtk')
+    else:
+        filepath = path / (title + '_{:04d}.vtk'.format(cycle))
+
+    vtk_data = pv.PolyData(data)
+    if cycle is not None:
+        vtk_data.field_arrays['CYCLE'] = cycle
+    if time is not None:
+        vtk_data.field_arrays['TIME'] = time
+    vtk_data.save(str(filepath), binary=False)
 
 
