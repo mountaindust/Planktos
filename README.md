@@ -147,7 +147,9 @@ Class: environment
     - `dudt` Returns a temporally interpolated time-derivative of the flow field
     - `get_mean_fluid_speed` Return the mean fluid speed at the current time, interpolating if necessary
     - `reset` Resets environment to time=0. Swarm history will be lost, and all swarms will maintain their last position. This is typically called automatically if the fluid flow has been altered by another method. If rm_swarms=True, remove all swarms.
+    - `plot_envir` Just plots the bounding box and any ib meshes as a sanity check.
     - `plot_flow` Plot quiver velocity field in 2D or 3D, including time-varying flows. Probably not ever going to be pretty, but useful for a sanity check.
+    - `plot_2D_vort` Plot vorticity for 2D fluid velocity fields, including time-varying vorticity.
     
 Class: swarm
 
@@ -175,8 +177,12 @@ Class: swarm
 - Methods
     - `full_pos_history` return the full position history of the swarm, past and present
     - `save_positions_to_csv` save all current and past agent positions to csv
+    - `save_to_vtk` save the positions at each time step to a vtk file. only the positions
+    inside the domain are saved.
     - `calc_re` Calculate the Reynolds number based on environment variables.
     Requires rho and mu to be set in the environment, and diam to be set in swarm
+    - `grid_init` return a grid of initial positions based on a grid. does not set
+    the swarm to these positions.
     - `move` move each agent in the swarm. Do not override: see get_positions.
     - `get_positions` returns new physical locations for the agents. OVERRIDE THIS WHEN SUBCLASSING!
     - `get_prop` return the property requested as either a single value (if shared) or a numpy array (if varying by individual)
@@ -186,5 +192,6 @@ Class: swarm
     at each agent's position via interpolation
     - `apply_boundary_condition` method used to enforce the boundary conditions during a move
     - `plot` plot the swarm's current position or a previous position at the time provided
-    - `plot_all` plot all of the swarm's positions up to the current time
+    - `plot_all` plot all of the swarm's positions up to the current time. can also be 
+    used to save a video
 

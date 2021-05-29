@@ -9,7 +9,7 @@ Author: Christopher Strickland
 Email: cstric12@utk.edu
 '''
 
-import sys, warnings, pickle, copy
+import sys, warnings, copy
 from sys import platform
 if platform == 'darwin': # OSX backend does not support blitting
     import matplotlib
@@ -20,8 +20,7 @@ from itertools import combinations
 import numpy as np
 import numpy.ma as ma
 from scipy import interpolate, stats
-from scipy.spatial import distance, ConvexHull, Delaunay
-from scipy.integrate import RK45
+from scipy.spatial import distance, ConvexHull
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.ticker import NullFormatter, MaxNLocator
@@ -198,7 +197,6 @@ class environment:
         #   points and reconstruct.
         self.ibmesh = None # Nx2x2 or Nx3x3 (element, pt in element, (x,y,z))
         self.max_meshpt_dist = None # max length of a mesh segment
-        self.Dhull = None # Delaunay hull for debugging 2D/3D ibmeshes
 
         ##### Environment Structure Plotting #####
 
@@ -1072,10 +1070,6 @@ class environment:
                 self.ibmesh[:,:,ii] -= self.fluid_domain_LLC[ii]
         self.max_meshpt_dist = np.linalg.norm(self.ibmesh[:,0,:]-self.ibmesh[:,1,:],axis=1).max()
 
-        ### For debugging 2D channel flow ###
-        # circle_y = np.logical_and(vertices[:,1]>2.6e-02, vertices[:,1]<2.24e-01)
-        # self.Dhull = Delaunay(vertices[circle_y,:])
-
 
 
     def add_vertices_to_2D_ibmesh(self):
@@ -1192,9 +1186,6 @@ class environment:
                   for ii  in range(DIM)
                   )).max()
         self.max_meshpt_dist = max_len
-
-        ### For debugging ###
-        # self.Dhull = Delaunay(points)
 
 
 
@@ -3177,6 +3168,7 @@ class swarm:
                 data_IO.write_vtk_point_data(path, title, 
                     self.positions[~self.positions[:,0].mask,:],
                     cycle=cyc, time=self.envir.time)
+
 
 
     def _change_envir(self, envir):
