@@ -17,6 +17,6 @@ envir.read_IB2d_vtk_data('data/channel_cyl', 5.0e-5, 1000, d_start=20, d_finish=
 
 # Test basic tracer particles on a masked mesh.
 # envir.calculate_FTLE((30,30), testdir='x1')
-envir.calculate_FTLE((512,128),T=0.1)
+sf, time_list, last_time = envir.calculate_FTLE((512,128),T=0.1,dt=0.001)
 
 envir.plot_2D_FTLE()

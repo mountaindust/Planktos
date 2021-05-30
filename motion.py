@@ -49,11 +49,11 @@ def flatten_ode(swarm):
 # TODO: diffusion in porous media https://en.wikipedia.org/wiki/Diffusion#Diffusion_in_porous_media
 
 
-def RK45(fun, t0, y0, t_bound, rtol=0.0001, atol=1e-06, h_start=0.1):
-    '''Take one Runge-Kutta-Fehlberg (forward) step. fun should have call
+def RK45(fun, t0, y0, tf, rtol=0.0001, atol=1e-06, h_start=None):
+    '''Runge-Kutta Dormand-Prince solver. fun should have call
     signature (t,x) where x is 2-D with columns giving spatial dimension.
-    This solver is set up to just take one step so that boundary conditions 
-    can be checked within a swarm object before continuing on.
+    The solver will run to t_bound and then return, after which boundary conditions 
+    can be checked within a swarm object before restarting.
 
     Arguments:
         fun: callable. Right-hand side of the system. The calling signature is 
@@ -61,85 +61,77 @@ def RK45(fun, t0, y0, t_bound, rtol=0.0001, atol=1e-06, h_start=0.1):
             dimension of the system.
         t0: float. initial time.
         y0: ndarray of shape (N,D). initial state.
-        t_bound: float. upper bound on integration time
+        tf: float. final time, time to integrate to.
         rtol, atol: floats. relative and absolute tolerance. The solver keeps 
             the local error estimates less than ``atol + rtol * abs(y)``.
         h_start: float. time step-size to attempt first. Also the maximum step
-            size to use.
+            size to use. Defaults to (tf-t0)*0.5.
 
     Returns:
-        t0+h: new time after integration
-        y: new state after integration
-        h_new: suggested next integration step size
-
-    Erwin Fehlberg (1969). Low-order classical Runge-Kutta formulas with stepsize 
-    control and their application to some heat transfer problems. NASA Technical 
-    Report 315.
+        y: new state after integration to tf
     '''
 
-    A = np.array([0,1/4,3/8,12/13,1,1/2])
-    B = np.array([[1/4, 0, 0, 0, 0],
-                  [3/32, 9/32, 0, 0, 0],
-                  [1932/2197, -7200/2197, 7296/2197, 0, 0],
-                  [439/216, -8, 3680/513, -845/4104, 0],
-                  [-8/27, 2, -3544/2565, 1859/4104, -11/40]])
-    C = np.array([16/135, 0, 6656/12825, 28561/56430, -9/50, 2/55])
-    T = np.array([-1/360, 0, 128/4275, 2197/75240, -1/50, -2/55])
+    A = np.array([0, 1/5, 3/10, 4/5, 8/9, 1, 1])
+    B = np.array([[1/5, 0, 0, 0, 0, 0],
+                  [3/40, 9/40, 0, 0, 0, 0],
+                  [44/45, -56/15, 32/9, 0, 0, 0],
+                  [19372/6561, -25360/2187, 64448/6561, -212/729, 0, 0],
+                  [9017/3168, -355/33, 46732/5247, 49/176, -5103/18656, 0],
+                  [35/384, 0, 500/1113, 125/192, -2187/6784, 11/84]])
+    E = np.array([5179/57600, 0, 7571/16695, 393/640, -92097/339200, 187/2100, 1/40])
 
-    step_accepted = False
-    h_last = None
+    if h_start is None:
+        h_start = (tf-t0)*0.5
+
+    t = t0
     h = h_start
-    eps = atol + rtol*np.max(np.abs(y0))
 
     if isinstance(y0,np.ndarray):
-        K = np.zeros((6,y0.shape[0],y0.shape[1]))
+        K = np.zeros((7,y0.shape[0],y0.shape[1]))
+        y = np.array(y0)
     else:
-        K = np.zeros(6)
+        K = np.zeros(7)
+        y = y0
+    K[0] = fun(t0, y0)
 
-    while not step_accepted:
-        trunc_h = None
-        if t_bound-t0<h:
-            print("Lowering h to {}.".format(t_bound-t0))
-            trunc_h = h
-            h = t_bound-t0
-        K[0] = h*fun(t0+A[0]*h, y0)
-        K[1] = h*fun(t0+A[1]*h, y0+h*(B[0,0]*K[0]))
-        K[2] = h*fun(t0+A[2]*h, y0+h*(B[1,0]*K[0]+B[1,1]*K[1]))
-        K[3] = h*fun(t0+A[3]*h, y0+h*(B[2,0]*K[0]+B[2,1]*K[1]+B[2,2]*K[2]))
-        K[4] = h*fun(t0+A[4]*h, y0+h*(B[3,0]*K[0]+B[3,1]*K[1]+B[3,2]*K[2]+B[3,3]*K[3]))
-        K[5] = h*fun(t0+A[5]*h, y0+h*(B[4,0]*K[0]+B[4,1]*K[1]+B[4,2]*K[2]+B[4,3]*K[3]+B[4,4]*K[4]))
+    while t<tf:
+        K[1] = fun(t+A[1]*h, y+h*(B[0,0]*K[0]))
+        K[2] = fun(t+A[2]*h, y+h*(B[1,0]*K[0]+B[1,1]*K[1]))
+        K[3] = fun(t+A[3]*h, y+h*(B[2,0]*K[0]+B[2,1]*K[1]+B[2,2]*K[2]))
+        K[4] = fun(t+A[4]*h, y+h*(B[3,0]*K[0]+B[3,1]*K[1]+B[3,2]*K[2]+B[3,3]*K[3]))
+        K[5] = fun(t+A[5]*h, y+h*(B[4,0]*K[0]+B[4,1]*K[1]+B[4,2]*K[2]+B[4,3]*K[3]+B[4,4]*K[4]))
+        y_new = y+h*(B[5,0]*K[0]+B[5,1]*K[1]+B[5,2]*K[2]+B[5,3]*K[3]+B[5,4]*K[4]+B[5,5]*K[5])
+        t_new = t+h
+        K[6] = fun(t_new, y_new)
+        err = y_new - (y+h*(E[0]*K[0]+E[1]*K[1]+E[2]*K[2]+E[3]*K[3]+E[4]*K[4]+E[5]*K[5]+E[6]*K[6]))
 
-        if isinstance(y0,np.ndarray):
-            y_new = y0 + np.einsum('i,ijk->jk',C,K) #TODO: check!
-        else:
-            y_new = y0 + np.dot(C,K)
         # Control on the maximum of the 2-norm of any particle's movement
         if isinstance(y0,np.ndarray):
-            TE = np.max(np.linalg.norm(np.einsum('i,ijk->jk',T,K),axis=1))
+            TE = np.max(np.linalg.norm(err,axis=1))
         else:
-            TE = np.linalg.norm(np.dot(T,K))
+            TE = np.linalg.norm(err)
         if np.isnan(TE):
             raise RuntimeError("nan error in RK45 solver.")
 
+        eps = atol + rtol*np.max(np.abs(y))
         h_last = h
-        if TE == 0:
-            h = h_start
-        else:
+        # update stepsize h
+        if TE != 0:
             h = min(h_start, 0.9*h*(eps/TE)**0.2)
 
         if TE <= eps:
-            step_accepted = True
+            # accept step and continue
+            K[0] = K[6]
+            y = y_new
+            t = t_new
+            # adjust step size if necessary to not go past tf
+            if t+h > tf:
+                h = tf-t
         else:
-            print("Restarting RK45 with h={} at t={}.".format(h,t0))
+            print("Restarting RK45 with h={} at t={}.".format(h,t))
             print("(Error={} versus eps={}.)".format(TE,eps))
-            trunc_h = None
 
-    if trunc_h is None:
-        return (t0+h_last,y_new,h)
-    else:
-        return (t0+h_last,y_new,trunc_h)
-
-
+    return y
 
 
 

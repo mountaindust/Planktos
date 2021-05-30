@@ -1634,7 +1634,7 @@ class environment:
 
 
     def calculate_FTLE(self, grid_dim=None, testdir=None, t0=0, T=1, dt=0.1, 
-                       ode=None, swrm=None, params=None):
+                       ode=None, t_bound=None, swrm=None, params=None):
         '''Calculate the FTLE field at the given time(s) t0 with integration 
         length T on a discrete grid with given dimensions. The calculation will 
         be conducted with respect to the fluid velocity field loaded in this 
@@ -1672,10 +1672,11 @@ class environment:
                 for time varying flows?
             T: integration time (float). Default is 1, but longer is better 
                 (up to a point).
-            dt: if solving ode or tracer particles, this is the maximum time 
-                step that the RK45 solver will use (all boundary conditions will 
-                be applied after each RK45 step). If passing in a swarm object, 
+            dt: if solving ode or tracer particles, this is the time step for 
+                checking boundary conditions. If passing in a swarm object, 
                 this argument represents the length of the Euler time steps.
+            t_bound: if solving ode or tracer particles, this is the bound on
+                the RK45 integration step size. Defaults to dt/100.
             ode: [optional] function handle for an ode to be solved specifying 
                 deterministic equations of motion. Should have call signature 
                 ODEs(t,x), where t is the current time (float) and x is a 2*NxD 
@@ -1754,11 +1755,12 @@ class environment:
             # keep a list of all times solved for 
             #   (time history normally stored in environment class)
             current_time = t0
-            h_start = dt
             time_list = [] 
 
             ### SOLVE ###
             while current_time < T:
+                new_time = min(current_time + dt,T)
+                ### TODO: REDO THIS SOLVER!!!!!!!!
                 if ode is None:
                     y = s.positions[~s.positions[:,0].mask,:]
                 else:
@@ -1766,13 +1768,11 @@ class environment:
                                         s.velocities[~s.velocities[:,0].mask,:]))
                 try:
                     # solve
-                    new_time, y_new, dt = motion.RK45(ode_fun, current_time, y, T, h_start=dt)
+                    y_new = motion.RK45(ode_fun, current_time, y, new_time, h_start=t_bound)
                 except Exception as err:
                     print('RK45 solver returned an error at time {} with step_size {}.'.format(
                           current_time, dt))
-                    print(type(err))
-                    print(err)
-                    return err, self.swarms.pop()
+                    raise
 
                 # Put current position in the history (maybe only do this if something exits??)
                 s.pos_history.append(s.positions.copy())
@@ -1808,8 +1808,6 @@ class environment:
 
                 # pass forward new variables
                 current_time = new_time
-                if dt > h_start:
-                    dt = h_start
                 if current_time == T:
                     time_list.append(current_time)
                 print('t={}'.format(current_time))
@@ -1883,12 +1881,6 @@ class environment:
         # reshape for sanity's sake.
         last_time = np.reshape(last_time,grid_dim)
 
-        ### TODO: try masking all boundary points
-        # last_time[0,:] = ma.masked
-        # last_time[-1,:] = ma.masked
-        # last_time[:,0] = ma.masked
-        # last_time[:,-1] = ma.masked
-
         ### INITIALIZE SOLUTION STRUCTURES ###
 
         FTLE_largest = ma.masked_array(np.zeros_like(last_time), mask=last_time.mask.copy())
@@ -1902,6 +1894,12 @@ class environment:
 
         grid_loc_iter = np.ndindex(last_time.shape)
         for grid_loc in grid_loc_iter:
+
+            ### DEBUG ###
+            # flat_loc = np.ravel_multi_index((grid_loc[0],grid_loc[1]),grid_dim)
+            # start_pos = s.pos_history[0][flat_loc,:]
+            # if 0.96 < start_pos[0] < 0.98 and 0.15 < start_pos[1] < 0.18:
+            #     import pdb; pdb.set_trace()
             # if the central point is masked, skip this calculation.
             #  (inside a structure or non-repairable edge point)
             if last_time.mask[grid_loc]:
@@ -1996,14 +1994,13 @@ class environment:
             if w[-1] == 0:
                 FTLE_largest[grid_loc] = ma.masked
             else:
-                FTLE_largest[grid_loc] = np.log(np.sqrt(w[-1]))/(t_calc-t0)
+                FTLE_largest[grid_loc] = np.log(np.sqrt(w[-1]))/T
+                # FTLE_largest[grid_loc] = np.log(np.sqrt(w[-1]))/(t_calc-t0)
             if w[0] == 0:
                 FTLE_smallest[grid_loc] = ma.masked
             else:
-                FTLE_smallest[grid_loc] = np.log(np.sqrt(w[0]))/(t_calc-t0)
-
-            # if FTLE_largest[grid_loc] < -10:
-            #     import pdb; pdb.set_trace()
+                FTLE_smallest[grid_loc] = np.log(np.sqrt(w[0]))/T
+                # FTLE_smallest[grid_loc] = np.log(np.sqrt(w[0]))/(t_calc-t0)
 
         ###### Save and cleanup ######
         self.FTLE_largest = FTLE_largest
@@ -2012,7 +2009,7 @@ class environment:
         self.FTLE_t0 = t0
         self.FTLE_T = T
         self.FTLE_grid_dim = grid_dim
-        return self.swarms.pop()
+        return self.swarms.pop(), time_list, last_time
 
 
 
@@ -2504,19 +2501,19 @@ class environment:
                 if loc is None:
                     ax.quiver(self.flow_points[0][::M], self.flow_points[1][::M],
                               self.flow[0][::M,::M].T, self.flow[1][::M,::M].T, 
-                              scale=max_mag*5, **kwargs)
+                              scale=None, **kwargs)
                 else:
                     ax.quiver(self.flow_points[0][::M], self.flow_points[1][::M],
                               self.flow[0][loc][::M,::M].T,
                               self.flow[1][loc][::M,::M].T, 
-                              scale=max_mag*5, **kwargs)
+                              scale=None, **kwargs)
             else:
                 # Animation plot
                 # create quiver object
                 quiver = ax.quiver(self.flow_points[0][::M], self.flow_points[1][::M], 
                                    self.flow[0][0][::M,::M].T,
                                    self.flow[1][0][::M,::M].T, 
-                                   scale=max_mag*5, **kwargs)
+                                   scale=None, **kwargs)
                 # textual info
                 time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
                                     fontsize=12)
@@ -2645,21 +2642,21 @@ class environment:
 
 
 
-    def plot_2D_FTLE(self, smallest=False, clip=None, figsize=None):
+    def plot_2D_FTLE(self, smallest=False, clip_l=None, clip_h=None, figsize=None):
         '''Plot the FTLE field as generated by the calculate_FTLE method. The field 
         will be hard to visualize in 3D, so only 2D is implemented here. For 3D 
         visualization, output the field as a vtk and visualize using VisIt, ParaView, 
         etc.
 
-        Clip will limit the extents of the color scale.
-
         TODO: Show a video of 2D slices as a plot of 3D FTLE
 
         Arguments:
-            backward: If true, plot the negative, smallest, forward-time FTLE as 
+            smallest: If true, plot the negative, smallest, forward-time FTLE as 
                 a way of identifying attracting Lagrangian Coherent Structures (see 
                 Haller and Sapsis 2011). Otherwise, plot the largest, forward-time 
                 FTLE as a way of identifying ridges (separatrix) of LCSs.
+            clip_l: lower clip value
+            clip_h: upper clip value
         '''
 
         warnings.warn("FTLE requires more testing before it should be trusted!", UserWarning)
@@ -2696,8 +2693,8 @@ class environment:
             FTLE = -self.FTLE_smallest
         else:
             FTLE = self.FTLE_largest
-        if clip is not None:
-            norm = colors.Normalize(-abs(clip),abs(clip),clip=True)
+        if clip_l is not None or clip_h is not None:
+            norm = colors.Normalize(clip_l,clip_h,clip=True)
         else:
             norm = None
         grid_x = np.reshape(self.FTLE_loc[:,0].data, self.FTLE_grid_dim)
@@ -4853,8 +4850,11 @@ class swarm:
                         fld.changed()
                         fld.autoscale()
                     elif fluid == 'quiver':
-                        flow = self.envir.interpolate_temporal_flow(t_indx=n)
-                        fld.set_UVC(flow[0][::M,::N].T, flow[1][::M,::N].T)
+                        if self.envir.flow_times is not None:
+                            flow = self.envir.interpolate_temporal_flow(t_indx=n)
+                            fld.set_UVC(flow[0][::M,::N].T, flow[1][::M,::N].T)
+                        else:
+                            fld.set_UVC(self.envir.flow[0][::M,::N].T, self.envir.flow[1][::M,::N].T)
                     if downsamp is None:
                         scat.set_offsets(self.pos_history[n])
                     else:
@@ -4961,8 +4961,11 @@ class swarm:
                         fld.changed()
                         fld.autoscale()
                     elif fluid == 'quiver':
-                        flow = self.envir.interpolate_temporal_flow()
-                        fld.set_UVC(flow[0][::M,::N].T, flow[1][::M,::N].T)
+                        if self.envir.flow_times is not None:
+                            flow = self.envir.interpolate_temporal_flow()
+                            fld.set_UVC(flow[0][::M,::N].T, flow[1][::M,::N].T)
+                        else:
+                            fld.set_UVC(self.envir.flow[0][::M,::N].T, self.envir.flow[1][::M,::N].T)
                     if downsamp is None:
                         scat.set_offsets(self.positions)
                     else:
