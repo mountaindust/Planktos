@@ -1633,7 +1633,7 @@ class environment:
 
 
 
-    def calculate_FTLE(self, grid_dim=None, testdir=None, t0=0, T=1, dt=0.1, 
+    def calculate_FTLE(self, grid_dim=None, testdir=None, t0=0, T=0.1, dt=0.001, 
                        ode=None, t_bound=None, swrm=None, params=None):
         '''Calculate the FTLE field at the given time(s) t0 with integration 
         length T on a discrete grid with given dimensions. The calculation will 
@@ -1699,7 +1699,10 @@ class environment:
         FTLE based on massless tracer particles.
 
         Returns:
-            swarm object used to calculuate the FTLE
+            swarm object: used to calculuate the FTLE
+            list: list of dt integration steps
+            ndarray: array the same size as the point grid giving the last time
+                in the integration before each point exited the domain
         '''
 
         warnings.warn("FTLE requires more testing before it should be trusted!", UserWarning)
@@ -1991,12 +1994,12 @@ class environment:
             ### CALCULATE FTLE ###
 
             w,_ = np.linalg.eigh(phi.T@phi)
-            if w[-1] == 0:
+            if w[-1] <= 0:
                 FTLE_largest[grid_loc] = ma.masked
             else:
                 FTLE_largest[grid_loc] = np.log(np.sqrt(w[-1]))/T
                 # FTLE_largest[grid_loc] = np.log(np.sqrt(w[-1]))/(t_calc-t0)
-            if w[0] == 0:
+            if w[0] <= 0:
                 FTLE_smallest[grid_loc] = ma.masked
             else:
                 FTLE_smallest[grid_loc] = np.log(np.sqrt(w[0]))/T
@@ -2009,6 +2012,11 @@ class environment:
         self.FTLE_t0 = t0
         self.FTLE_T = T
         self.FTLE_grid_dim = grid_dim
+
+        ###### Print stats ######
+        print("Out of {} total points, {} exited the domain during integration.".format(
+              last_time.size, np.sum(last_time<T)))
+
         return self.swarms.pop(), time_list, last_time
 
 
@@ -2655,8 +2663,8 @@ class environment:
                 a way of identifying attracting Lagrangian Coherent Structures (see 
                 Haller and Sapsis 2011). Otherwise, plot the largest, forward-time 
                 FTLE as a way of identifying ridges (separatrix) of LCSs.
-            clip_l: lower clip value
-            clip_h: upper clip value
+            clip_l: lower clip value (below this value, mask points)
+            clip_h: upper clip value (above this value, mask points)
         '''
 
         warnings.warn("FTLE requires more testing before it should be trusted!", UserWarning)
@@ -2693,14 +2701,18 @@ class environment:
             FTLE = -self.FTLE_smallest
         else:
             FTLE = self.FTLE_largest
-        if clip_l is not None or clip_h is not None:
-            norm = colors.Normalize(clip_l,clip_h,clip=True)
-        else:
-            norm = None
+        if clip_l is not None:
+            FTLE = ma.masked_where(FTLE < clip_l, FTLE)
+        if clip_h is not None:
+            FTLE = ma.masked_where(FTLE > clip_h, FTLE)
+        # if clip_l is not None or clip_h is not None:
+        #     norm = colors.Normalize(clip_l,clip_h,clip=True)
+        # else:
+        #     norm = None
         grid_x = np.reshape(self.FTLE_loc[:,0].data, self.FTLE_grid_dim)
         grid_y = np.reshape(self.FTLE_loc[:,1].data, self.FTLE_grid_dim)
         pcm = ax.pcolormesh(grid_x, grid_y, FTLE, shading='gouraud', 
-                            cmap='plasma', norm=norm)
+                            cmap='plasma')
         if smallest:
             plt.title('Negative smallest fwrd-time FTLE field, $t_0$={}, $\Delta t$={}.'.format(
                     self.FTLE_t0, self.FTLE_T))
