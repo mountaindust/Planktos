@@ -347,11 +347,17 @@ def inertial_particles(swarm):
     try:
         R = swarm.get_prop('R')
     except KeyError:
-        rho_p = swarm.get_prop('rho')
-        rho_f = swarm.envir.rho
-        R = 2*rho_f/(rho_f+2*rho_p)
+        try:
+            rho_p = swarm.get_prop('rho')
+            rho_f = swarm.envir.rho
+            R = 2*rho_f/(rho_f+2*rho_p)
+        except KeyError:
+            raise KeyError("Could not find required physical property R or rho in swarm object.")
 
-    a = swarm.get_prop('diam')*0.5 # radius of particles
+    try:
+        a = swarm.get_prop('diam')*0.5 # radius of particles
+    except KeyError:
+        raise KeyError("Could not find required physical property 'diam' in swarm object.")
 
     assert swarm.envir.char_L is not None, "Characteristic length scale in envir not specified."
     L = swarm.envir.char_L

@@ -68,6 +68,7 @@ class environment:
             char_L: characteristic length scale. Used for calculating Reynolds
                 number, especially in the case of immersed structures (ibmesh)
                 and/or when simulating inertial particles
+            U: characteristic fluid speed. Used for some calculations.
             init_swarms: initial swarms in this environment
             units: length units to use, default is meters. Note that you will
                 manually need to change self.g (accel due to gravity) if using
@@ -815,7 +816,7 @@ class environment:
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(2)]
-        self.__reset_flow_variables(incl_rho_mu_U=True)
+        self.__reset_flow_variables()
         self.reset()
 
 
@@ -845,7 +846,7 @@ class environment:
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(3)]
-        self.__reset_flow_variables(incl_rho_mu_U=True)
+        self.__reset_flow_variables()
         # record the original lower left corner (can be useful for later imports)
         self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
         # reset time
@@ -923,7 +924,7 @@ class environment:
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(3)]
-        self.__reset_flow_variables(incl_rho_mu_U=True)
+        self.__reset_flow_variables()
         # record the original lower left corner (can be useful for later imports)
         self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
         # reset time
@@ -969,7 +970,7 @@ class environment:
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(len(self.flow))]
-        self.__reset_flow_variables(incl_rho_mu_U=True)
+        self.__reset_flow_variables()
         self.reset()
 
 
@@ -1013,7 +1014,7 @@ class environment:
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(3)]
-        self.__reset_flow_variables(incl_rho_mu_U=True)
+        self.__reset_flow_variables()
         # record the original lower left corner (can be useful for later imports)
         self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
         # reset time
@@ -1634,7 +1635,8 @@ class environment:
 
 
     def calculate_FTLE(self, grid_dim=None, testdir=None, t0=0, T=0.1, dt=0.001, 
-                       ode=None, t_bound=None, swrm=None, params=None):
+                       ode_gen=None, props=None, t_bound=None, swrm=None, 
+                       params=None):
         '''Calculate the FTLE field at the given time(s) t0 with integration 
         length T on a discrete grid with given dimensions. The calculation will 
         be conducted with respect to the fluid velocity field loaded in this 
@@ -1677,14 +1679,18 @@ class environment:
                 this argument represents the length of the Euler time steps.
             t_bound: if solving ode or tracer particles, this is the bound on
                 the RK45 integration step size. Defaults to dt/100.
-            ode: [optional] function handle for an ode to be solved specifying 
-                deterministic equations of motion. Should have call signature 
-                ODEs(t,x), where t is the current time (float) and x is a 2*NxD 
-                array with the first N rows giving v=dxdt and the second N rows 
-                giving dvdt. D is the spatial dimension of the problem. See the 
-                ODE generator functions in motion.py for examples of valid functions. 
-                The passed in ODEs will be solved using a grid of initial conditions 
-                with Runge-Kutta.
+            ode_gen: [optional] function handle for an ode generator that takes
+                in a swarm object and returns an ode function handle with
+                call signature ODEs(t,x), where t is the current time (float) 
+                and x is a 2*NxD array with the first N rows giving v=dxdt and 
+                the second N rows giving dvdt. D is the spatial dimension of 
+                the problem. See the ODE generator functions in motion.py for 
+                examples of format. 
+                The ODEs will be solved using RK45 with a newly created swarm 
+                specified on a grid throughout the domain.
+            props: [optional] dictionary of properties for the swarm that will 
+                be created to solve the odes. Effectively, this passes parameter 
+                values into the ode generator.
             swarm: [optional] swarm object with user-defined movement rules as 
                 specified by the get_positions method. This allows for arbitrary 
                 FTLE calculations through subclassing and overriding this method. 
@@ -1714,7 +1720,8 @@ class environment:
             grid_dim = tuple(len(pts) for pts in self.flow_points)
 
         if swrm is None:
-            s = swarm(envir=self, init='grid', grid_dim=grid_dim, testdir=testdir)
+            s = swarm(envir=self, shared_props=props, init='grid', 
+                      grid_dim=grid_dim, testdir=testdir)
             # NOTE: swarm has been appended to this environment!
         else:
             # Get a soft copy of the swarm passed in
@@ -1747,12 +1754,12 @@ class environment:
         #   components for efficiency.
         if swrm is None:
             ### SETUP SOLVER ###
-            if ode is None:
+            if ode_gen is None:
                 ode_fun = motion.tracer_particles(s, incl_dvdt=False)
                 print("Finding {}D FTLE based on tracer particles.".format(len(grid_dim)))
             else:
-                ode_fun = ode
-                print("Finding {}D FTLE based on supplied ODE.".format(len(grid_dim)))
+                ode_fun = ode_gen(s)
+                print("Finding {}D FTLE based on supplied ODE generator.".format(len(grid_dim)))
             print(prnt_str)
 
             # keep a list of all times solved for 
@@ -1764,7 +1771,7 @@ class environment:
             while current_time < T:
                 new_time = min(current_time + dt,T)
                 ### TODO: REDO THIS SOLVER!!!!!!!!
-                if ode is None:
+                if ode_gen is None:
                     y = s.positions[~s.positions[:,0].mask,:]
                 else:
                     y = np.concatenate((s.positions[~s.positions[:,0].mask,:], 
@@ -1780,7 +1787,7 @@ class environment:
                 # Put current position in the history (maybe only do this if something exits??)
                 s.pos_history.append(s.positions.copy())
                 # pull solution into swarm object's position/velocity attributes
-                if ode is None:
+                if ode_gen is None:
                     s.positions[~s.positions[:,0].mask,:] = y_new
                 else:
                     N = round(y_new.shape[0]/2)
