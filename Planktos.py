@@ -1711,13 +1711,14 @@ class environment:
                 in the integration before each point exited the domain
         '''
 
-        warnings.warn("FTLE requires more testing before it should be trusted!", UserWarning)
-
         ###########################################################
         ######              Setup swarm object               ######
         ###########################################################
         if grid_dim is None:
             grid_dim = tuple(len(pts) for pts in self.flow_points)
+
+        if len(grid_dim) == 3:
+            print("Warning: FTLE has not been well tested for 3D cases!")
 
         if swrm is None:
             s = swarm(envir=self, shared_props=props, init='grid', 
@@ -2674,8 +2675,6 @@ class environment:
             clip_h: upper clip value (above this value, mask points)
         '''
 
-        warnings.warn("FTLE requires more testing before it should be trusted!", UserWarning)
-
         if self.FTLE_loc is None:
             print("Error: must generate FTLE field first! Use the calculate_FTLE method of this class.")
             return
@@ -3556,18 +3555,6 @@ class swarm:
                         ):
                     new_loc = self._apply_internal_BC(startpt, endpt, 
                                 self.envir.ibmesh, self.envir.max_meshpt_dist)
-                    ### DEBUGGING: check the new location before assignment ###
-                    # this only works for the ib2d_ibmesh example for channel flow
-                    # if not 2.5e-02 <= new_loc[1] < 2.25e-01 and not\
-                    #     np.all(self.envir.Dhull.find_simplex(new_loc) < 0):
-                    #     import pdb; pdb.set_trace()
-                    #     new_loc = self._apply_internal_BC(startpt, endpt, 
-                    #             self.envir.ibmesh, self.envir.max_meshpt_dist)
-                    ### 3D DEBUGGING: check the new location before assignment ###
-                    # if not np.all(self.envir.Dhull.find_simplex(new_loc) < 0):
-                    #     import pdb; pdb.set_trace()
-                    #     new_loc = self._apply_internal_BC(startpt, endpt, 
-                    #             self.envir.ibmesh, self.envir.max_meshpt_dist)
                     self.positions[n] = new_loc
             else:
                 for n in range(self.positions.shape[0]):
@@ -3575,18 +3562,6 @@ class swarm:
                     endpt = self.positions[n,:]
                     new_loc = self._apply_internal_BC(startpt, endpt,
                                 self.envir.ibmesh, self.envir.max_meshpt_dist)
-                    ### DEBUGGING: check the new location before assignment ###
-                    # this only works for the ib2d_ibmesh example for channel flow
-                    # if not 2.5e-02 <= new_loc[1] < 2.25e-01 and not\
-                    #     np.all(self.envir.Dhull.find_simplex(new_loc) < 0):
-                    #     import pdb; pdb.set_trace()
-                    #     new_loc = self._apply_internal_BC(startpt, endpt, 
-                    #             self.envir.ibmesh, self.envir.max_meshpt_dist)
-                    ### 3D DEBUGGING: check the new location before assignment ###
-                    # if not np.all(self.envir.Dhull.find_simplex(new_loc) < 0):
-                    #     import pdb; pdb.set_trace()
-                    #     new_loc = self._apply_internal_BC(startpt, endpt, 
-                    #             self.envir.ibmesh, self.envir.max_meshpt_dist)
                     self.positions[n] = new_loc
 
         for dim, bndry in enumerate(self.envir.bndry):
@@ -4029,7 +4004,7 @@ class swarm:
 
         This works for both 2D problems and problems in which P is a 3D segment
         roughly on a plane. The plane is described by the first two vectors Q, so
-        in this case, Q0_list and Q1_list must have at two rows. The 3D problem
+        in this case, Q0_list and Q1_list must have at least two rows. The 3D problem
         is robust to cases where P is not exactly in the plane because the
         algorithm is actually checking to see if its projection onto the
         triangle crosses any of the lines in Q.
