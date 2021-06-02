@@ -148,9 +148,17 @@ Class: environment
     - `dudt` Returns a temporally interpolated time-derivative of the flow field
     - `get_mean_fluid_speed` Return the mean fluid speed at the current time, interpolating if necessary
     - `reset` Resets environment to time=0. Swarm history will be lost, and all swarms will maintain their last position. This is typically called automatically if the fluid flow has been altered by another method. If rm_swarms=True, remove all swarms.
+    - `get_2D_vorticity` Calculate and return the vorticity of a 2D flow field, 
+    potentially interpolated in time.
+    - `save_2D_vorticity` Calculate and save (as VTK) the vorticity of a flow field 
+    at one or more (possibly interpolated) points in time.
+    - `calculate_FTLE` Calculate an FTLE (finite-time Lagrangian exponent) field 
+    using tracer particles, user supplied equations of motion, or arbitrary agent 
+    behavior/motion.
     - `plot_envir` Just plots the bounding box and any ib meshes as a sanity check.
     - `plot_flow` Plot quiver velocity field in 2D or 3D, including time-varying flows. Probably not ever going to be pretty, but useful for a sanity check.
     - `plot_2D_vort` Plot vorticity for 2D fluid velocity fields, including time-varying vorticity.
+    - `plot_2D_FTLE` Plot a generated 2D FTLE field.
     
 Class: swarm
 
