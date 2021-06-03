@@ -7,7 +7,7 @@ Author: Christopher Strickland
 Email: cstric12@utk.edu
 '''
 
-import sys, warnings
+import sys
 sys.path.append('../')
 import numpy as np
 import planktos
