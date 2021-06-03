@@ -2,20 +2,19 @@
 
 import sys
 sys.path.append('../..') # location of Planktos
-sys.path.append('..') # location of plt_cyl
 from sys import platform
 if platform == 'darwin': # OSX backend does not support blitting
     import matplotlib
     matplotlib.use('Qt5Agg')
 import numpy as np
-import Planktos
-import plt_cyl
+import planktos
+from .. import plt_cyl
 
 # Whether or not to show the cylinders based on the mesh data
 PLOT_CYL = True
 
 # Intialize environment
-envir = Planktos.environment()
+envir = planktos.environment()
 
 # Import IBMAR data on flow
 envir.read_IBAMR3d_vtk_data('data/16towers_Re10_len10.vtk')
