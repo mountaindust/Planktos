@@ -15,7 +15,6 @@ import pickle
 import numpy as np
 from . import shrimp_funcs
 import planktos
-from planktos import data_IO
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-N", type=int, default=1000,

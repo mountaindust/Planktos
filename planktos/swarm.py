@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 from matplotlib import animation, colors
 
 from .environment import environment
-from . import data_IO
+from . import dataio
 from . import motion
 
 __author__ = "Christopher Strickland"
@@ -540,28 +540,28 @@ class swarm:
             if DIM2:
                 data = np.zeros((self.positions[~self.positions[:,0].mask,:].shape[0],3))
                 data[:,:2] = self.positions[~self.positions[:,0].mask,:]
-                data_IO.write_vtk_point_data(path, name, data)
+                dataio.write_vtk_point_data(path, name, data)
             else:
-                data_IO.write_vtk_point_data(path, name, self.positions[~self.positions[:,0].mask,:])
+                dataio.write_vtk_point_data(path, name, self.positions[~self.positions[:,0].mask,:])
         else:
             for cyc, time in enumerate(self.envir.time_history):
                 if DIM2:
                     data = np.zeros((self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:].shape[0],3))
                     data[:,:2] = self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:]
-                    data_IO.write_vtk_point_data(path, name, data, 
+                    dataio.write_vtk_point_data(path, name, data, 
                                                  cycle=cyc, time=time)
                 else:
-                    data_IO.write_vtk_point_data(path, name, 
+                    dataio.write_vtk_point_data(path, name, 
                         self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:], 
                         cycle=cyc, time=time)
             cyc = len(self.envir.time_history)
             if DIM2:
                 data = np.zeros((self.positions[~self.positions[:,0].mask,:].shape[0],3))
                 data[:,:2] = self.positions[~self.positions[:,0].mask,:]
-                data_IO.write_vtk_point_data(path, name, data, cycle=cyc,
+                dataio.write_vtk_point_data(path, name, data, cycle=cyc,
                                              time=self.envir.time)
             else:
-                data_IO.write_vtk_point_data(path, name, 
+                dataio.write_vtk_point_data(path, name, 
                     self.positions[~self.positions[:,0].mask,:],
                     cycle=cyc, time=self.envir.time)
 

@@ -10,14 +10,14 @@ Email: cstric12@utk.edu
 '''
 
 import numpy as np
-from ..planktos import data_IO
+from ..planktos import dataio
 
 def add_cylinders_toplot(envir, filename):
     '''Load unstructred grid points (vtk data) for a cylinder and add it to
     the envir object to be plotted as a surface. If the environment has been
     tiled, automatically tile the cylinder too.'''
 
-    points, bounds = data_IO.read_vtk_Unstructured_Grid_Points(filename)
+    points, bounds = dataio.read_vtk_Unstructured_Grid_Points(filename)
     # shift to first quadrant
     for dim in range(3):
         bounds[dim*2:dim*2+2] -= envir.fluid_domain_LLC[dim]

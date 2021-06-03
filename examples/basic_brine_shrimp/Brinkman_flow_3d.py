@@ -6,9 +6,7 @@ from sys import platform
 if platform == 'darwin': # OSX backend does not support blitting
     import matplotlib
     matplotlib.use('Qt5Agg')
-import numpy as np
 import planktos
-from planktos import data_IO
 
 # High-viscous enviornment (Re=10)
 envir = planktos.environment(Lx=.5,Ly=.5,Lz=1, rho=1000, mu=10)

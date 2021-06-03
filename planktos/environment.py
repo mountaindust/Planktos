@@ -26,7 +26,7 @@ from mpl_toolkits import mplot3d
 from matplotlib.collections import LineCollection
 
 import planktos
-from . import data_IO
+from . import dataio
 from . import motion
 
 __author__ = "Christopher Strickland"
@@ -754,20 +754,20 @@ class environment:
             if vector_data:
                 # read in vector velocity data
                 strChoice = 'u'; xy = True
-                uX, uY, x, y = data_IO.read_2DEulerian_Data_From_vtk(path, numSim,
+                uX, uY, x, y = dataio.read_2DEulerian_Data_From_vtk(path, numSim,
                                                                      strChoice,xy)
                 X_vel.append(uX.T) # (y,x) -> (x,y) coordinates
                 Y_vel.append(uY.T) # (y,x) -> (x,y) coordinates
             else:
                 # read in x-directed Velocity Magnitude #
                 strChoice = 'uX'; xy = True
-                uX,x,y = data_IO.read_2DEulerian_Data_From_vtk(path,numSim,
+                uX,x,y = dataio.read_2DEulerian_Data_From_vtk(path,numSim,
                                                                strChoice,xy)
                 X_vel.append(uX.T) # (y,x) -> (x,y) coordinates
 
                 # read in y-directed Velocity Magnitude #
                 strChoice = 'uY'
-                uY = data_IO.read_2DEulerian_Data_From_vtk(path,numSim,
+                uY = dataio.read_2DEulerian_Data_From_vtk(path,numSim,
                                                            strChoice)
                 Y_vel.append(uY.T) # (y,x) -> (x,y) coordinates
 
@@ -775,23 +775,23 @@ class environment:
 
             # read in Vorticity #
             # strChoice = 'Omega'; first = 0
-            # Omega = data_IO.read_2DEulerian_Data_From_vtk(pathViz,numSim,
+            # Omega = dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
             #                                               strChoice,first)
             # read in Pressure #
             # strChoice = 'P'; first = 0
-            # P = data_IO.read_2DEulerian_Data_From_vtk(pathViz,numSim,
+            # P = dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
             #                                           strChoice,first)
             # read in Velocity Magnitude #
             # strChoice = 'uMag'; first = 0
-            # uMag = data_IO.read_2DEulerian_Data_From_vtk(pathViz,numSim,
+            # uMag = dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
             #                                              strChoice,first)
             # read in x-directed Forces #
             # strChoice = 'Fx'; first = 0
-            # Fx = data_IO.read_2DEulerian_Data_From_vtk(pathViz,numSim,
+            # Fx = dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
             #                                            strChoice,first)
             # read in y-directed Forces #
             # strChoice = 'Fy'; first = 0
-            # Fy = data_IO.read_2DEulerian_Data_From_vtk(pathViz,numSim,
+            # Fy = dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
             #                                            strChoice,first)
 
             ###################################################
@@ -833,7 +833,7 @@ class environment:
         if not path.is_file(): 
             raise FileNotFoundError("File {} not found!".format(filename))
 
-        data, mesh, time = data_IO.read_vtk_Rectilinear_Grid_Vector(filename)
+        data, mesh, time = dataio.read_vtk_Rectilinear_Grid_Vector(filename)
 
         self.flow = list(data)
         self.flow_times = None
@@ -897,7 +897,7 @@ class environment:
             else:
                 num = str(n)
             this_file = path / ('IBAMR_db_'+num+'.vtk')
-            data, mesh, time = data_IO.read_vtk_Rectilinear_Grid_Vector(str(this_file))
+            data, mesh, time = dataio.read_vtk_Rectilinear_Grid_Vector(str(this_file))
             for dim in range(3):
                 flow[dim].append(data[dim])
             flow_times.append(time)
@@ -949,7 +949,7 @@ class environment:
         if not path.is_file(): 
             raise FileNotFoundError("File {} not found!".format(str(filename)))
 
-        data, mesh = data_IO.read_vtu_mesh_velocity(filename)
+        data, mesh = dataio.read_vtu_mesh_velocity(filename)
 
         if vel_conv is not None:
             print("Converting vel units by a factor of {}.".format(vel_conv))
@@ -987,7 +987,7 @@ class environment:
         if not path.is_file(): 
             raise FileNotFoundError("File {} not found!".format(filename))
 
-        ibmesh, self.max_meshpt_dist = data_IO.read_stl_mesh(filename)
+        ibmesh, self.max_meshpt_dist = dataio.read_stl_mesh(filename)
 
         # shift coordinates to match any shift that happened in flow data
         if self.fluid_domain_LLC is not None:
@@ -1013,7 +1013,7 @@ class environment:
                                 for ii in range(2)])
         Eulerian_res = dists.min()
 
-        vertices = data_IO.read_IB2d_vertices(filename)
+        vertices = dataio.read_IB2d_vertices(filename)
         print("Processing vertex file for point-wise connections within {}.".format(
             res_factor*Eulerian_res))
         dist_mat_test = distance.pdist(vertices)<=res_factor*Eulerian_res
@@ -1123,9 +1123,9 @@ class environment:
             raise FileNotFoundError("File {} not found!".format(filename))
 
         if filename.strip()[-4:] == '.vtk':
-            points, bounds = data_IO.read_vtk_Unstructured_Grid_Points(filename)
+            points, bounds = dataio.read_vtk_Unstructured_Grid_Points(filename)
         elif filename.strip()[-7:] == '.vertex':
-            points = data_IO.read_IB2d_vertices(filename)
+            points = dataio.read_IB2d_vertices(filename)
         else:
             raise RuntimeError("File extension for {} not recognized.".format(filename))
 
@@ -2072,7 +2072,7 @@ class environment:
         if time_history:
             for cyc, time in enumerate(self.time_history):
                 vort = self.get_2D_vorticity(t_n=cyc)
-                data_IO.write_vtk_2D_uniform_grid_scalars(path, name, vort, self.L, cyc, time)
+                dataio.write_vtk_2D_uniform_grid_scalars(path, name, vort, self.L, cyc, time)
             cycle = len(self.time_history)
         else:
             cycle = None
@@ -2083,10 +2083,10 @@ class environment:
                 out_name = name
             for cyc, time in enumerate(self.flow_times):
                 vort = self.get_2D_vorticity(t_indx=cyc)
-                data_IO.write_vtk_2D_uniform_grid_scalars(path, out_name, vort, self.L, cyc, time)
+                dataio.write_vtk_2D_uniform_grid_scalars(path, out_name, vort, self.L, cyc, time)
         if time_history or not flow_times:
             vort = self.get_2D_vorticity(self.time)
-            data_IO.write_vtk_2D_uniform_grid_scalars(path, name, vort, self.L, cycle, self.time)
+            dataio.write_vtk_2D_uniform_grid_scalars(path, name, vort, self.L, cycle, self.time)
 
 
 
