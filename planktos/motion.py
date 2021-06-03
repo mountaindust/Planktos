@@ -1,9 +1,9 @@
 '''
-Library for different sorts of particle motion, including implementations or
-interfaces to various numerical methods for relevant equations of motion. Most
-of these will take in a swarm object from which information about the particles
-and their environment can be accessed, along with parameters. They will then
-return the new particle positions after a time dt, or Delta x depending on
+Library for different sorts of particle motion, including implementations of
+various numerical methods for relevant equations of motion. Most of these will 
+take in a swarm object from which information about the particles
+and their environment can be accessed along with relevant parameters. They will 
+then return the new particle positions or Delta x after a time dt, depending on
 implementation.
 
 Created on Tues Jan 24 2017
@@ -22,7 +22,9 @@ import numpy.ma as ma
 
 
 # Decorator to convert an ODE function expecting a 2NxD shaped x into a flattened
-#   version that can be read into scipy.integrate.ode
+#   version that can be read into scipy.integrate.ode. All the ODE generators
+#   in this module work with 2NxD (or in one special case, NxD) matrices, which
+#   is fine for our built-in solvers.
 def flatten_ode(swarm):
     '''Get a decorator capable of converting a flattened, passed in x into a 
     2NxD shape for the ODE functions, and then take the result of the ODE
@@ -398,7 +400,6 @@ def inertial_particles(swarm):
 
     # Return equations
     return ODEs
-
 
                                                    
 
