@@ -12,8 +12,9 @@ if platform == 'darwin': # OSX backend does not support blitting
     matplotlib.use('Qt5Agg')
 import argparse
 import numpy as np
-import shrimp_funcs
-import Planktos, data_IO, motion
+from . import shrimp_funcs
+import planktos
+from planktos import data_IO, motion
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-N", type=int, default=1000,
@@ -29,7 +30,7 @@ parser.add_argument("-t", "--time", type=int, default=55,
                     help="time in sec to run the simulation")
 
 # Intialize environment
-envir = Planktos.environment(x_bndry=['noflux', 'noflux'])
+envir = planktos.environment(x_bndry=['noflux', 'noflux'])
 
 ############     Import IBMAR data on flow and extend domain     ############
 
@@ -59,7 +60,7 @@ print('-------------------------------------------')
 ############                  SPECIFY BEHAVIOR                  ############
 ############################################################################
 
-class Bshrimp(Planktos.swarm):
+class Bshrimp(planktos.swarm):
 
     def __init__(self, *args, **kwargs):
         super(Bshrimp, self).__init__(*args, **kwargs)

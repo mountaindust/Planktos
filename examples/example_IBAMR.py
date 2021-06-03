@@ -1,14 +1,13 @@
 #! /usr/bin/env python3
 ''' Loads last file in IBAMR test data and moves a swarm in the flow'''
 
-import numpy as np
 import sys
 sys.path.append('..')
-import Planktos
-import plt_cyl
+import planktos
+from . import plt_cyl
 
 
-envir = Planktos.environment()
+envir = planktos.environment()
 envir.read_IBAMR3d_vtk_dataset('../tests/IBAMR_test_data', start=5, finish=None)
 # tile flow in a 3,3 grid
 envir.tile_flow(3,3)

@@ -2,11 +2,8 @@
 
 import pytest
 from pathlib import Path
-try:
-    import data_IO
-    NO_VTK = False
-except ModuleNotFoundError:
-    NO_VTK = True
+from planktos import data_IO
+VTK = data_IO.VTK
 
 def pytest_addoption(parser):
     '''Adds parser options'''
@@ -23,7 +20,7 @@ def pytest_collection_modifyitems(config, items):
             if "slow" in item.keywords:
                 item.add_marker(skip_slow)
     # skip vtk tests if unable to import vtk
-    if NO_VTK:
+    if not VTK:
         skip_vtk = pytest.mark.skip(reason="could not load VTK")
         for item in items:
             if "vtk" in item.keywords:

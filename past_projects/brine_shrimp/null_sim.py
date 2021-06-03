@@ -12,8 +12,9 @@ if platform == 'darwin': # OSX backend does not support blitting
     matplotlib.use('Qt5Agg')
 import argparse
 import numpy as np
-import shrimp_funcs
-import Planktos, data_IO
+from . import shrimp_funcs
+import planktos
+from planktos import data_IO
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-N", type=int, default=1000,
@@ -42,7 +43,7 @@ for y in range(1024):
     flow_z[:,y,:] = npzfile['z_flow']
 
 # Intialize environment with this flow and the original length
-envir = Planktos.environment(Lx=80, Ly=320, Lz=80, x_bndry=['noflux', 'noflux'],
+envir = planktos.environment(Lx=80, Ly=320, Lz=80, x_bndry=['noflux', 'noflux'],
                              flow = [flow_x, flow_y, flow_z])
 
 print('Domain set to {} mm.'.format(envir.L))

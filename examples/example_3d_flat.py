@@ -5,9 +5,9 @@
 import numpy as np
 import sys
 sys.path.append('..')
-import Planktos
+import planktos
 
-envir = Planktos.environment(Lx=20, Ly=10, Lz=4, rho=1000, mu=1000)
+envir = planktos.environment(Lx=20, Ly=10, Lz=4, rho=1000, mu=1000)
 U=0.3*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-5,8,3)))
 
 envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(20)*0.22306, 

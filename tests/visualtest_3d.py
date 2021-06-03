@@ -3,12 +3,11 @@
 Simulates agents for the purpose of making sure that the boundary is respected.
 '''
 
-import numpy as np
 import sys
 sys.path.append('..')
-import Planktos
+import planktos
 
-envir = Planktos.environment()
+envir = planktos.environment()
 envir.read_comsol_vtu_data('data/seafan/sea_fan_data.vtu')
 envir.read_stl_mesh_data('data/seafan/sea-fan-piece.stl')
 

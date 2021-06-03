@@ -13,8 +13,9 @@ if platform == 'darwin': # OSX backend does not support blitting
 import argparse
 import pickle
 import numpy as np
-import shrimp_funcs
-import Planktos, data_IO
+from . import shrimp_funcs
+import planktos
+from planktos import data_IO
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-N", type=int, default=1000,
@@ -47,7 +48,7 @@ def main(swarm_size=1000, time=600, data='', D=None, seed=1, create_movie=False,
     '''
 
     # Intialize environment
-    envir = Planktos.environment(x_bndry=['noflux', 'noflux'])
+    envir = planktos.environment(x_bndry=['noflux', 'noflux'])
 
     ############     Import COMSOL data on flow     ############
 

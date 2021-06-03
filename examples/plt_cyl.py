@@ -8,10 +8,9 @@ Created on Tues Apr 12 2019
 Author: Christopher Strickland
 Email: cstric12@utk.edu
 '''
-import sys
-sys.path.append('..')
+
 import numpy as np
-import data_IO
+from ..planktos import data_IO
 
 def add_cylinders_toplot(envir, filename):
     '''Load unstructred grid points (vtk data) for a cylinder and add it to
@@ -36,9 +35,6 @@ def add_cylinders_toplot(envir, filename):
         # add a cylinder to be plotted
         envir.plot_structs.append(_plot_cylinders)
         envir.plot_structs_args.append((bounds,))
-
-
-
 
 def _plot_cylinders(ax3d, bounds):
     '''Plot a vertical cylinder on a matplotlib Axes3D object.

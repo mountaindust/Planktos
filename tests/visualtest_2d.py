@@ -6,9 +6,9 @@ Simulates agents for the purpose of making sure that the boundary is respected.
 import numpy as np
 import sys
 sys.path.append('..')
-import Planktos
+import planktos
 
-envir = Planktos.environment()
+envir = planktos.environment()
 envir.read_IB2d_vtk_data('data/leaf_data', 1.0e-5, 100, d_start=1)
 ### Use to test for boundary crossings ###
 envir.read_IB2d_vertex_data('data/leaf_data/leaf.vertex', 1.45)

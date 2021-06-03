@@ -10,15 +10,10 @@ __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
-import os, sys
-if (sys.version_info[0] >= 3):
-    # Python 3 being used
-    PY3 = True
-    from pathlib import Path
-else:
-    # Python 2
-    PY3 = False
+import os
+from pathlib import Path
 import numpy as np
+
 try:
     import vtk
     from vtk.util import numpy_support # Converts vtkarray to/from numpy array
@@ -31,6 +26,7 @@ try:
     from stl import mesh as stlmesh
     STL = True
 except ModuleNotFoundError:
+    print("Could not import numpy-stl. Reading of stl files disabled.")
     STL = False
 try:
     import pyvista as pv
@@ -40,6 +36,12 @@ except ModuleNotFoundError:
     PYVISTA = False
 
 
+
+#############################################################################
+#                                                                           #
+#                          DEPENCENCY DECORATORS                            #
+#                                                                           #
+#############################################################################
 
 def vtk_dep(func):
     '''Decorator for VTK readers to check import.'''
@@ -77,6 +79,12 @@ def stl_dep(func):
     return wrapper
 
 
+
+#############################################################################
+#                                                                           #
+#                               DATA READERS                                #
+#                                                                           #
+#############################################################################
 
 @vtk_dep
 def read_vtk_Structured_Points(filename):
@@ -247,12 +255,8 @@ def read_2DEulerian_Data_From_vtk(path, simNum, strChoice, xy=False):
         xy: if true, also return mesh data
     '''
 
-    if PY3:
-        filename = Path(path) / (strChoice + '.' + str(simNum) + '.vtk')
-        data = read_vtk_Structured_Points(str(filename))
-    else:
-        filename = os.path.normpath(path)+strChoice+'.'+str(simNum)+'.vtk'
-        data = read_vtk_Structured_Points(filename)
+    filename = Path(path) / (strChoice + '.' + str(simNum) + '.vtk')
+    data = read_vtk_Structured_Points(str(filename))
 
     if xy:
         # reconstruct mesh
@@ -394,6 +398,12 @@ def read_IB2d_vertices(filename):
     return vertices
 
 
+
+#############################################################################
+#                                                                           #
+#                               DATA WRITERS                                #
+#                                                                           #
+#############################################################################
 
 @pyvista_dep
 def write_vtk_point_data(path, title, data, cycle=None, time=None):

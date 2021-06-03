@@ -5,13 +5,13 @@ Requires npy/npz data to already be generated and present in IBAMR_test_data.'''
 
 import numpy as np
 import numpy.ma as ma
-import Planktos
+import planktos
 
 def test_IBAMR_npy_load():
     '''Test loading npy/npz IBAMR fluid data into the environment'''
     pathname = 'tests/IBAMR_test_data'
     prefix = 'IBAMR_end_'
-    envir = Planktos.environment() # default environment, 2D.
+    envir = planktos.environment() # default environment, 2D.
 
     ##### Load the npz flow for the final recorded time #####
     envir.read_npy_vtk_data(pathname, prefix)

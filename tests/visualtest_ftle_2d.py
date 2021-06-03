@@ -2,12 +2,12 @@
 Script for visual-inspection tests of 2D FTLE
 '''
 
-import numpy as np
 import sys
 sys.path.append('..')
-import Planktos, motion
+import planktos
+from planktos import motion
 
-envir = Planktos.environment(char_L=0.1, rho=1, mu=0.001, U=15)
+envir = planktos.environment(char_L=0.1, rho=1, mu=0.001, U=15)
 envir.read_IB2d_vtk_data('data/channel_cyl', 5.0e-5, 1000, d_start=1)
 # envir.read_IB2d_vtk_data('data/channel_cyl', 5.0e-5, 1000, d_start=20, d_finish=20)
 # envir.read_IB2d_vertex_data('data/channel_cyl/channel.vertex')
@@ -16,7 +16,7 @@ envir.read_IB2d_vtk_data('data/channel_cyl', 5.0e-5, 1000, d_start=1)
 # s = envir.add_swarm(900, init='grid', grid_dim=(30,30), testdir='x1')
 
 #### for use when testing FTLE with passed in swarm ####
-class ftle_swrm(Planktos.swarm):
+class ftle_swrm(planktos.swarm):
     
     def get_positions(self, dt, params=None):
        return self.positions + self.get_fluid_drift()*dt

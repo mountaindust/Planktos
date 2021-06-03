@@ -3,13 +3,12 @@
 vtk vertex data, creating an ibmesh out of it using convex hull. Agents should
 not be able to move through the cylinder boundaries.'''
 
-import numpy as np
 import sys
 sys.path.append('..')
-import Planktos
+import planktos
 
 
-envir = Planktos.environment()
+envir = planktos.environment()
 envir.read_IBAMR3d_vtk_dataset('../tests/IBAMR_test_data', start=5, finish=None)
 envir.read_vertex_data_to_convex_hull('../tests/IBAMR_test_data/mesh_db.vtk')
 

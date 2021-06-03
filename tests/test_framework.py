@@ -1,5 +1,5 @@
 """
-Test suite for Planktos: environment and swarm classes.
+Test suite for planktos: environment and swarm classes.
 For use with py.test package.
 
 Created on April 04 2017
@@ -11,7 +11,8 @@ Email: cstric12@utk.edu
 import pytest
 import numpy as np
 import numpy.ma as ma
-import Planktos, motion
+import planktos
+from planktos import motion
 
 ############                    Decorators                ############
 
@@ -20,7 +21,7 @@ import Planktos, motion
 
 ############   Basic Overrides to test different physics  ############
 
-class highRe_massive_swarm(Planktos.swarm):
+class highRe_massive_swarm(planktos.swarm):
 
     def get_positions(self, dt, params=None):
         '''Uses projectile motion'''
@@ -35,7 +36,7 @@ class highRe_massive_swarm(Planktos.swarm):
 
 
 
-class lowRe_massive_swarm(Planktos.swarm):
+class lowRe_massive_swarm(planktos.swarm):
 
     def get_positions(self, dt, params=None):
         '''Uses Haller and Sapsis'''
@@ -58,19 +59,19 @@ class lowRe_massive_swarm(Planktos.swarm):
 
 def test_basic():
     '''Test no-flow, basic stuff'''
-    envir = Planktos.environment()
+    envir = planktos.environment()
     sw = envir.add_swarm()
     for ii in range(10):
         sw.move(0.25)
     assert envir.time == 2.5
 
-    sw = Planktos.swarm()
+    sw = planktos.swarm()
     for ii in range(10):
         sw.move(0.25)
     assert sw.envir.time == 2.5
 
-    envir2 = Planktos.environment()
-    sw = Planktos.swarm()
+    envir2 = planktos.environment()
+    sw = planktos.swarm()
     envir2.add_swarm(sw)
     assert envir2.swarms[0] is sw, "pre-existing swarm not added"
     for ii in range(10):
@@ -83,7 +84,7 @@ def test_indiv_variation():
     This mainly just checks that there are no syntax errors.'''
     swarm_size = 30
     # 2D
-    envir = Planktos.environment()
+    envir = planktos.environment()
     sw = envir.add_swarm(swarm_s=swarm_size)
     sw.add_prop('mu', [np.random.randn(2) for ii in range(swarm_size)])
     assert 'mu' not in sw.shared_props
@@ -100,7 +101,7 @@ def test_indiv_variation():
     for ii in range(10):
         sw.move(0.01)
     # 3D
-    envir = Planktos.environment(Lz=10)
+    envir = planktos.environment(Lz=10)
     sw = envir.add_swarm(swarm_s=swarm_size)
     sw.add_prop('mu', [np.random.randn(3) for ii in range(swarm_size)])
     for ii in range(10):
@@ -117,7 +118,7 @@ def test_indiv_variation():
 def test_brinkman_2D():
     '''Test several 2D dynamics using brinkman flow'''
     ########## Single swarm, time-independent flow ##########
-    envir = Planktos.environment(Lx=10, Ly=10, x_bndry=('zero','zero'), 
+    envir = planktos.environment(Lx=10, Ly=10, x_bndry=('zero','zero'), 
                                y_bndry=('noflux','zero'), rho=1000, mu=5000)
     assert len(envir.L) == 2, "default dim is not 2"
     envir.set_brinkman_flow(alpha=66, h_p=1.5, U=.5, dpdx=0.22306, res=101)
@@ -202,7 +203,7 @@ def test_brinkman_2D():
                    "zero bndry not respected"
 
     ########## Single swarm, time-dependent flow ##########
-    envir = Planktos.environment(rho=1000, mu=20000)
+    envir = planktos.environment(rho=1000, mu=20000)
     envir.set_brinkman_flow(alpha=66, h_p=1.5, U=0.1*np.arange(-2,6),
                             dpdx=np.ones(8)*0.22306, res=101, tspan=[0, 10])
     assert envir.flow_times is not None, "flow_times unset"
@@ -220,7 +221,7 @@ def test_brinkman_2D():
     assert len(envir.flow_times) == 8, "flow_times don't match data"
     assert len(envir.flow_points[0]) > len(envir.flow_points[1])
     assert len(envir.flow_points[0]) == envir.flow[0].shape[1]
-    sw = Planktos.swarm(swarm_size=70, envir=envir, init=(5,5))
+    sw = planktos.swarm(swarm_size=70, envir=envir, init=(5,5))
     assert sw is envir.swarms[0], "swarm not in envir list"
     assert len(envir.swarms) == 1, "too many swarms in envir"
 
@@ -248,7 +249,7 @@ def test_brinkman_2D():
 
     
 def test_multiple_2D_swarms():
-    envir = Planktos.environment(rho=1000, mu=5000)
+    envir = planktos.environment(rho=1000, mu=5000)
     envir.set_brinkman_flow(alpha=66, h_p=1.5, U=.5, dpdx=0.22306, res=50)
     envir.add_swarm()
     s2 = envir.add_swarm()
@@ -273,7 +274,7 @@ def test_multiple_2D_swarms():
 def test_brinkman_3D():
     '''Test 3D dynamics using Brinkman flow'''
     ########## Single swarm, time-independent flow ##########
-    envir = Planktos.environment(Lx=50, Ly=50, Lz=50, x_bndry=('zero','zero'), 
+    envir = planktos.environment(Lx=50, Ly=50, Lz=50, x_bndry=('zero','zero'), 
                                y_bndry=('zero','zero'),
                                z_bndry=('noflux','noflux'), rho=1000, mu=250000)
     envir.set_brinkman_flow(alpha=66, h_p=15, U=5, dpdx=0.22306, res=50)
@@ -326,7 +327,7 @@ def test_brinkman_3D():
                    "zero bndry not respected"
 
     ########## Single swarm, time-dependent flow ##########
-    envir = Planktos.environment(Lz=10, rho=1000, mu=1000)
+    envir = planktos.environment(Lz=10, rho=1000, mu=1000)
     U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-3,6,2)))
     envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(20)*0.22306,
                             tspan=[0, 40], res=50)
@@ -351,7 +352,7 @@ def test_brinkman_3D():
     assert envir.flow[1].shape[3] == flow_shape_old[3]
 
     # replace original flow for speed
-    envir = Planktos.environment(Lz=10, rho=1000, mu=1000)
+    envir = planktos.environment(Lz=10, rho=1000, mu=1000)
     envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(20)*0.22306,
                             res=50, tspan=[0, 40])
     envir.add_swarm()
@@ -369,7 +370,7 @@ def test_brinkman_3D():
 
 def test_massive_physics():
     ### Get a 3D, time-dependent flow environment ###
-    envir = Planktos.environment(Lz=10, rho=1000, mu=1000, char_L=10)
+    envir = planktos.environment(Lz=10, rho=1000, mu=1000, char_L=10)
     # kinematic viscosity nu should be calculated automatically from rho and mu
     U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-3,6,2)))
     envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(20)*0.22306, 
@@ -399,7 +400,7 @@ def test_massive_physics():
 def test_channel_flow():
     '''Test specification of channel flow in the environment'''
     ### 2D, time-independent flow ###
-    envir = Planktos.environment(Lx=20, Ly=10, x_bndry=('zero','zero'), 
+    envir = planktos.environment(Lx=20, Ly=10, x_bndry=('zero','zero'), 
                                y_bndry=('noflux','zero'), rho=1000, mu=5000)
     envir.set_two_layer_channel_flow(a=1, h_p=1, Cd=0.25, S=0.1, res=51)
     assert envir.flow_times is None, "flow_times should be None for stationary flow"
@@ -416,7 +417,7 @@ def test_channel_flow():
     assert len(envir.time_history) == 20, "all times not recorded"
 
     ### 3D, time-independent flow ###
-    envir = Planktos.environment(Lx=20, Ly=30, Lz=10, x_bndry=('zero','zero'), 
+    envir = planktos.environment(Lx=20, Ly=30, Lz=10, x_bndry=('zero','zero'), 
                                y_bndry=('zero','zero'),
                                z_bndry=('noflux','noflux'), rho=1000, mu=5000)
     envir.set_two_layer_channel_flow(a=1, h_p=1, Cd=0.25, S=0.1, res=51)
@@ -438,7 +439,7 @@ def test_channel_flow():
 def test_canopy_flow():
     '''Test specificiation of canopy flow in the enviornment'''
     ### 2D, time-independent flow ###
-    envir = Planktos.environment(Lx=40, Ly=40, x_bndry=('zero','zero'), 
+    envir = planktos.environment(Lx=40, Ly=40, x_bndry=('zero','zero'), 
                                y_bndry=('noflux','zero'), rho=1000, mu=5000)
     envir.set_canopy_flow(h=15, a=1, U_h=1, res=51)
     assert envir.flow_times is None, "flow_times should be None for stationary flow"
@@ -455,7 +456,7 @@ def test_canopy_flow():
     assert len(envir.time_history) == 20, "all times not recorded"
 
     ### 3D, time-independent flow ###
-    envir = Planktos.environment(Lx=20, Ly=30, Lz=10, x_bndry=('zero','zero'), 
+    envir = planktos.environment(Lx=20, Ly=30, Lz=10, x_bndry=('zero','zero'), 
                                y_bndry=('zero','zero'),
                                z_bndry=('noflux','noflux'), rho=1000, mu=5000)
     envir.set_canopy_flow(h=15, a=1, U_h=1, res=51)
@@ -473,7 +474,7 @@ def test_canopy_flow():
     assert len(envir.time_history) == 20, "all times not recorded"
 
     ### 2D, time dependent flow ###
-    envir = Planktos.environment(Lx=50, Ly=40, rho=1000, mu=1000)
+    envir = planktos.environment(Lx=50, Ly=40, rho=1000, mu=1000)
     U_h = np.arange(-0.5,1.2,0.1)
     U_h[5] = 0
     envir.set_canopy_flow(h=15, a=1, U_h=U_h, tspan=[0,20], res=51)
@@ -485,7 +486,7 @@ def test_canopy_flow():
     assert np.all(envir.flow[0][0,0,-1] == envir.flow[0][0,-1,-1]), "flow is constant w.r.t x"
 
     ### 3D, time dependent flow ###
-    envir = Planktos.environment(Lx=50, Ly=30, Lz=40, rho=1000, mu=1000)
+    envir = planktos.environment(Lx=50, Ly=30, Lz=40, rho=1000, mu=1000)
     U_h = np.arange(-0.5,1.2,0.1)
     U_h[5] = 0
     envir.set_canopy_flow(h=15, a=1, U_h=U_h, tspan=[0,20], res=51)
@@ -507,35 +508,35 @@ def test_intersection_methods():
     # Two segments, parallel
     p0 = np.array([0.0, 0.0]); p1 = np.array([0.0, 1.])
     p2 = np.array([1., 0.]); p3 = np.array([1., 0.5])
-    assert Planktos.swarm._seg_intersect_2D(p0, p1, p2, p3) is None
+    assert planktos.swarm._seg_intersect_2D(p0, p1, p2, p3) is None
 
     # Two segments, no intersection
     p0 = np.array([0.0, 0.0]); p1 = np.array([0.0, 1.])
     p2 = np.array([1., 0.]); p3 = np.array([0.5, 0.5])
-    assert Planktos.swarm._seg_intersect_2D(p0, p1, p2, p3) is None
+    assert planktos.swarm._seg_intersect_2D(p0, p1, p2, p3) is None
 
     # Two segments, intersection
     p0 = np.array([1.0, 0.0]); p1 = np.array([1.0, 1.])
     p2 = np.array([2., 0.]); p3 = np.array([0., 0.5])
-    assert Planktos.swarm._seg_intersect_2D(p0, p1, p2, p3) is not None
+    assert planktos.swarm._seg_intersect_2D(p0, p1, p2, p3) is not None
 
     # Many segments, no intersection
     p0 = np.array([0.0, 0.0]); p1 = np.array([1., 1.])
     Q0_list = np.array([[0., 1.],[0., 1.],[2.35, 3.001]])
     Q1_list = np.array([[0., 2.],[1., 2.],[34.957, 11.3239]])
-    assert Planktos.swarm._seg_intersect_2D(p0, p1, Q0_list, Q1_list) is None
+    assert planktos.swarm._seg_intersect_2D(p0, p1, Q0_list, Q1_list) is None
     
     # Many segments, one intersection
     p0 = np.array([0.0, 0.0]); p1 = np.array([1., 1.])
     Q0_list = np.array([[0., 1.],[0., 1.],[0.25, 0.75]])
     Q1_list = np.array([[0., 2.],[1., 2.],[0.75, 0.25]])
-    assert Planktos.swarm._seg_intersect_2D(p0, p1, Q0_list, Q1_list) is not None
+    assert planktos.swarm._seg_intersect_2D(p0, p1, Q0_list, Q1_list) is not None
 
     # Many segments, two intersections
     p0 = np.array([1.0, 0.0]); p1 = np.array([1., 5.])
     Q0_list = np.array([[0., 4.],[0., 1.],[0., 2.],[10., 10.]])
     Q1_list = np.array([[5., 4.],[0.5, 2.],[3., 2.],[11., 11.]])
-    intersection = Planktos.swarm._seg_intersect_2D(p0, p1, Q0_list, Q1_list)
+    intersection = planktos.swarm._seg_intersect_2D(p0, p1, Q0_list, Q1_list)
     assert np.all(intersection[0] == np.array([1.,2.]))
     assert intersection[1] == 2./5.
     intsec = np.array([3.,0.])
@@ -548,23 +549,23 @@ def test_intersection_methods():
     tri2 = np.array([1., 2., 1.])
     Q0_list = np.array([tri0, tri1, tri2])
     Q1_list = np.array([tri1, tri2, tri0])
-    intersection = Planktos.swarm._seg_intersect_2D(seg0, seg1, Q0_list, Q1_list)
+    intersection = planktos.swarm._seg_intersect_2D(seg0, seg1, Q0_list, Q1_list)
     assert intersection is None
 
     # On a boundary, no interesection
     seg0 = np.array([1.1, 1., 1.]); seg1 = np.array([1.5, 1., 1.])
-    intersection = Planktos.swarm._seg_intersect_2D(seg0, seg1, Q0_list, Q1_list)
+    intersection = planktos.swarm._seg_intersect_2D(seg0, seg1, Q0_list, Q1_list)
     assert intersection is None
 
     # On a boundary, with interesection
     seg0 = np.array([1.1, 1., 1.]); seg1 = np.array([2.1, 1., 1.])
-    intersection = Planktos.swarm._seg_intersect_2D(seg0, seg1, Q0_list, Q1_list)
+    intersection = planktos.swarm._seg_intersect_2D(seg0, seg1, Q0_list, Q1_list)
     assert np.all(intersection[0] == tri1)
     assert np.isclose(intersection[1],0.9)
 
     # Off boundary, with interesection
     seg0 = np.array([1.1, 1.1, 1.]); seg1 = np.array([2.1, 2.1, 1.])
-    intersection = Planktos.swarm._seg_intersect_2D(seg0, seg1, Q0_list, Q1_list)
+    intersection = planktos.swarm._seg_intersect_2D(seg0, seg1, Q0_list, Q1_list)
     assert np.all(intersection[0] == np.array([1.5, 1.5, 1.]))
     assert np.isclose(intersection[1],0.4)
 
@@ -574,26 +575,26 @@ def test_intersection_methods():
     seg0 = np.array([0.5, 0.5, 2.]); seg1 = np.array([2.5, 2.5, 2.])
     tri0 = np.array([1., 1., 1.]); tri1 = np.array([2., 1., 1.])
     tri2 = np.array([1., 2., 1.])
-    assert Planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2) is None
+    assert planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2) is None
 
     # Parallel case, intersection
     seg0 = np.array([0.5, 0.5, 1.]); seg1 = np.array([2.5, 2.5, 1.])
     tri0 = np.array([1., 1., 1.]); tri1 = np.array([2., 1., 1.])
     tri2 = np.array([1., 2., 1.])
-    assert Planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2) is None,\
+    assert planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2) is None,\
         "Parallel should return None in all cases."
 
     # One non-parallel segment and triangle, no intersection
     seg0 = np.array([0.5, 0.5, 2.]); seg1 = np.array([2.5, 2.5, 1.5])
     tri0 = np.array([1., 1., 1.]); tri1 = np.array([2., 1., 1.])
     tri2 = np.array([1., 2., 1.])
-    assert Planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2) is None
+    assert planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2) is None
 
     # One non-parallel segment and triangle with intersection
     seg0 = np.array([0.5, 0.5, 0.5]); seg1 = np.array([2., 2., 1.5])
     tri0 = np.array([1., 1., 1.]); tri1 = np.array([4., 1., 1.])
     tri2 = np.array([1., 4., 1.])
-    intersection = Planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2)
+    intersection = planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2)
     assert intersection is not None
     assert np.all(np.isclose(intersection[0], np.array([1.25, 1.25, 1.])))
     assert np.isclose(intersection[1], 0.5)
@@ -605,14 +606,14 @@ def test_intersection_methods():
     tri0 = np.array([[1., 1., 1.], [1., 1., 2.], [20.5, 0.5, 0.5]])
     tri1 = np.array([[2., 1., 1.], [2., 1., 2.], [0.5, 20.5, 0.5]])
     tri2 = np.array([[1., 2., 1.], [1., 2., 1.], [10.5, 10.5, 20.5]])
-    assert Planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2) is None
+    assert planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2) is None
 
     # Many triangles, one intersection
     seg0 = np.array([0.5, 0.5, 0.5]); seg1 = np.array([2., 2., 1.5])
     tri0 = np.array([[1., 1., 1.],[2.5, 2.5, 20.],[6., 1., 10.]])
     tri1 = np.array([[4., 1., 1.],[4., 1., 1.],[4., 1., 1.]])
     tri2 = np.array([[1., 4., 1.],[1., 4., 1.],[8., 1., 1.]])
-    intersection = Planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2)
+    intersection = planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2)
     assert intersection is not None
     assert np.all(np.isclose(intersection[0], np.array([1.25, 1.25, 1.])))
     assert np.isclose(intersection[1], 0.5)
@@ -627,7 +628,7 @@ def test_intersection_methods():
                      [4., 1., 1.],[4., 1., 1.1]])
     tri2 = np.array([[1., 4., 1.2],[1., 4., 1.],[1., 4., 1.],
                      [8., 1., 1.],[1., 4., 1.1]])
-    intersection = Planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2)
+    intersection = planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2)
     assert intersection is not None
     assert np.all(np.isclose(intersection[0], np.array([1.25, 1.25, 1.])))
     assert np.isclose(intersection[1], 0.5)

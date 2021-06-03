@@ -10,9 +10,10 @@ Email: cstric12@utk.edu
 import sys, warnings
 sys.path.append('../')
 import numpy as np
-import Planktos, motion
+import planktos
+from planktos import motion
 
-class plankton(Planktos.swarm):
+class plankton(planktos.swarm):
 
     def __init__(self, swarm_size=100, envir=None, init='random', **kwargs):
         ''' Initalizes plankton in an environment.
@@ -27,7 +28,7 @@ class plankton(Planktos.swarm):
         '''
         # Create a suitable environment with no flow for plankton
         if envir is None:
-            envir = Planktos.environment(Lx=10, Ly=10, x_bndry=['zero','zero'],
+            envir = planktos.environment(Lx=10, Ly=10, x_bndry=['zero','zero'],
                                        y_bndry=['noflux','zero'],
                                        mu=1000, rho=1000)
         super(plankton, self).__init__(swarm_size, envir, init, **kwargs)
@@ -52,7 +53,7 @@ class plankton(Planktos.swarm):
         # We want to respond to flow somehow. Here is a brief example.
         if self.envir.flow is None:
             # Just do the default thing
-            Planktos.swarm.get_positions(self, dt, params)
+            planktos.swarm.get_positions(self, dt, params)
         else:
             ### Fight against the current to some degree? ###
             fluid_drift = self.get_fluid_drift()

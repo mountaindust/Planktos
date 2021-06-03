@@ -4,13 +4,12 @@ for flow field AND loads the .vertex data, creating an ibmesh out of it by
 attaching nearby points. Agents should not be able to move through the cylinder 
 or the channel boundaries.'''
 
-import numpy as np
 import sys
 sys.path.append('..')
-import Planktos
+import planktos
 
 
-envir = Planktos.environment()
+envir = planktos.environment()
 # read in vtk data with dt=5.0e-5, print_dump=1000. Start on dump 1.
 envir.read_IB2d_vtk_data('ib2d_data', 5.0e-5, 1000, d_start=1)
 # read in vertex data, attaching nearby points

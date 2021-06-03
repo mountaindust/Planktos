@@ -2,7 +2,6 @@
 Batch script for running multiple simulations across diffusivity
 '''
 
-from pathlib import Path
 import os
 
 def main():

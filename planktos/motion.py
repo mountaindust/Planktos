@@ -21,6 +21,8 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 import numpy as np
 import numpy.ma as ma
 
+
+
 # Decorator to convert an ODE function expecting a 2NxD shaped x into a flattened
 #   version that can be read into scipy.integrate.ode
 def flatten_ode(swarm):
