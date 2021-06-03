@@ -7,7 +7,7 @@ Created on April 13 2017
 Author: Christopher Strickland
 Email: cstric12@utk.edu
 """
-import sys
+
 from pathlib import Path
 import pytest
 import numpy as np
