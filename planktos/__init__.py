@@ -1,5 +1,11 @@
 '''
-Introduction to Planktos here.
+Planktos
+======
+
+Provides
+  1. An environment class for agent swarms to move around in
+  2. A swarm class for agents
+  3. Supporting functions to handle data I/O, solving eqns of motion, etc.
 '''
 
 __author__ = "Christopher Strickland"

@@ -1,5 +1,3 @@
-#! /usr/bin/env python3
-
 '''
 Library for different sorts of particle motion, including implementations or
 interfaces to various numerical methods for relevant equations of motion. Most

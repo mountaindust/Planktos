@@ -5,7 +5,7 @@ as an example of non-trivial agent behavior specification and implementation.
 '''
 
 import numpy as np
-from plankton_agent import plankton
+from .plankton_agent import plankton
 
 p = plankton(swarm_size=100, init='random')
 U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-5,8,3)))
