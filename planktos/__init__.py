@@ -1,6 +1,7 @@
 '''
+========
 Planktos
-======
+========
 
 Provides
   1. An environment class for agent swarms to move around in
