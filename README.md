@@ -9,7 +9,11 @@ Strickland, C. (2018), *Planktos agent-based modeling framework*. https://github
 A suggested BibTeX entry is included in the file Planktos.bib.
 
 ### Dependencies
-- Python 3.5+
+- Python 3.5+ (However, vtk and pyvista don't want to install on Python 3.8 on a 
+Windows machine. So if you are going to be working with VTK files, you will need 
+to downgrade your Anaconda distribution to Python 3.7 to install these dependencies. 
+The command is `conda install python=3.7`. OSX, Linux, and Python 3.9 are currently 
+untested with respect to this problem.)
 - numpy/scipy
 - matplotlib 3.x
 - pandas
