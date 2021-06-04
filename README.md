@@ -8,19 +8,28 @@ If you use this software in your project, please cite it as:
 Strickland, C. (2018), *Planktos agent-based modeling framework*. https://github.com/mountaindust/Planktos.  
 A suggested BibTeX entry is included in the file Planktos.bib.
 
-### Dependencies
-- Python 3.5+ (However, vtk and pyvista don't want to install on Python 3.8 on a 
-Windows machine. So if you are going to be working with VTK files, you will need 
-to downgrade your Anaconda distribution to Python 3.7 to install these dependencies. 
-The command is `conda install python=3.7`. OSX, Linux, and Python 3.9 are currently 
-untested with respect to this problem.)
+## Installation & Dependencies
+I'm assuming you're using Anaconda, and if so, I ***strongly*** suggest that you ditch 
+the default package manager conda (which is essentially broken at this point - 
+particularly if you need packages from conda-forge, and we do) for mamba. 
+The commands are the same (it's a drop-in replacement for conda) but it is a C++ 
+solver based on libsolv which manages dependencies for RedHat, Debian, etc. Also, 
+it has multi-threaded downloads and doesn't break when trying to obtain vtk 
+and/or pyvista. Install with the following command:  
+`conda install -c conda-forge mamba`  
+Having done that, the dependencies are as follows:
+
+- Python 3.5+ 
 - numpy/scipy
 - matplotlib 3.x
 - pandas
-- ffmpeg from conda-forge (not from default anaconda. Use `conda install -c conda-forge ffmpeg`.)
-- vtk (if loading vtk data, get from conda-forge)
-- pyvista (if saving vtk data, get from conda-forge)
-- numpy-stl (if loading stl data)
+- ffmpeg from conda-forge (not from default anaconda. Use `mamba install -c conda-forge ffmpeg`.)
+- vtk (if loading vtk data, get from conda-forge and use mamba. conda seems to 
+break itself trying to install vtk for some reason, and takes an hour to try and 
+solve the dependencies in the process.)
+- pyvista (if saving vtk data, get from conda-forge and use mamba. same problem 
+as for vtk.)
+- numpy-stl (if loading stl data, get from conda-forge)
 - pytest (if running tests)
 
 If you need to convert data from IBAMR into vtk, you will also need a Python 2.7 environment with numpy and VisIt installed (VisIt's Python API is written in
