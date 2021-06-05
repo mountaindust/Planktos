@@ -783,9 +783,7 @@ class swarm:
     def get_fluid_gradient(self, positions=None):
         '''Return the gradient of the magnitude of the fluid velocity at all
         agent positions (or at provided positions) via linear interpolation of 
-        the gradient. Gradient is calculated via second order accurate central 
-        differences with second order accuracy at the boundaries and saved in 
-        case it is needed again.
+        the gradient. 
         The gradient is linearly interpolated from the fluid grid to the
         agent locations.
         '''
@@ -805,19 +803,7 @@ class swarm:
 
         # Otherwise, calculate the gradient
         if flow_grad is None:
-            if not TIME_DEP:
-                flow_grad = np.gradient(np.sqrt(
-                                np.sum(np.array(self.envir.flow)**2, axis=0)
-                                ), *self.envir.flow_points, edge_order=2)
-            else:
-                # first, interpolate flow in time. Then calculate gradient.
-                flow_grad = np.gradient(
-                                np.sqrt(np.sum(
-                                np.array(self.envir.interpolate_temporal_flow())**2,
-                                axis=0)), *self.envir.flow_points, edge_order=2)
-            # save the newly calculuate gradient
-            self.envir.grad = flow_grad
-            self.envir.grad_time = self.envir.time
+            self.envir.calculate_mag_gradient()
 
         # Interpolate the gradient at agent positions and return
         x_grad = interpolate.interpn(self.envir.flow_points, flow_grad[0],

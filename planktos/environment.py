@@ -1589,6 +1589,30 @@ class environment:
 
 
 
+    def calculate_mag_gradient(self):
+        '''Calculate and store the gradient of the magnitude of the fluid velocity 
+        at the current time, along with the time at which it was calculated. 
+        Gradient is calculated via second order accurate central differences 
+        (using numpy) with second order accuracy at the boundaries and saved in 
+        case it is needed again.'''
+
+        TIME_DEP = len(self.flow[0].shape) != len(self.L)
+        if not TIME_DEP:
+            flow_grad = np.gradient(np.sqrt(
+                            np.sum(np.array(self.flow)**2, axis=0)
+                            ), *self.flow_points, edge_order=2)
+        else:
+            # first, interpolate flow in time. Then calculate gradient.
+            flow_grad = np.gradient(
+                            np.sqrt(np.sum(
+                            np.array(self.interpolate_temporal_flow())**2,
+                            axis=0)), *self.flow_points, edge_order=2)
+        # save the newly calculuate gradient
+        self.grad = flow_grad
+        self.grad_time = self.time
+
+
+
     def calculate_FTLE(self, grid_dim=None, testdir=None, t0=0, T=0.1, dt=0.001, 
                        ode_gen=None, props=None, t_bound=None, swrm=None, 
                        params=None):
@@ -2092,8 +2116,8 @@ class environment:
 
     @property
     def Re(self):
-        '''Return the Reynolds number at the current time based on mean fluid
-        speed. Must have set self.char_L and self.nu'''
+        '''Return the Reynolds number at the current time. Must have set 
+        self.U, self.char_L and self.nu'''
 
         return self.U*self.char_L/self.nu
 
