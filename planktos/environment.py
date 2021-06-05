@@ -144,6 +144,15 @@ class environment:
 
     Examples
     --------
+    Create a 3D environment that is 10x10x10 meters with fluid density and 
+    dynamic viscosity recorded. The fluid velocity is zero everywhere, but can
+    be set to something different later.
+
+    >>> envir = planktos.environment(Lz=10, rho=1000, mu=1000)
+
+    Create a 2D 5x3 meter environment with zero fluid velocity.
+
+    >>> envir = planktos.environment(Lx=5, Ly=3)
     '''
 
     def __init__(self, Lx=10, Ly=10, Lz=None,
@@ -300,28 +309,52 @@ class environment:
 
 
     def set_brinkman_flow(self, alpha, h_p, U, dpdx, res=101, tspan=None):
-        '''Specify fully developed 2D or 3D flow with a porous region.
-        Velocity gradient is zero in the x-direction; all flow moves parallel to
-        the x-axis. Porous region is the lower part of the y-domain (2D) or
-        z-domain (3D) with width=a and an empty region above. For 3D flow, the
+        '''Get a fully developed Brinkman flow with a porous region.
+
+        This method sets the environment fluid velocity as a 1D Brinkman flow 
+        based on a porous layer of hight h_p in the bottom of the domain.
+        Velocity gradient is zero in the x-direction and all flow moves parallel 
+        to the x-axis. Porous region is the lower part of the y-domain (2D) or
+        z-domain (3D) with width h_p and an empty region above. For 3D flow, the
         velocity profile is the same on all slices y=c. The decision to set
-        2D vs. 3D flow is based on the dimension of the current domain.
+        2D vs. 3D flow is based on the current dimension of the environment.
 
-        Arguments:
-            alpha: equal to 1/(hydraulic permeability). alpha=0 implies free flow (infinitely permeable)
-            h_p: height of porous region
-            U: velocity at top of domain (v in input3d). scalar or list-like.
-            dpdx: dp/dx change in momentum constant. scalar or list-like.
-            res: number of points at which to resolve the flow (int), including boundaries
-            tspan: [tstart, tend] or iterable of times at which flow is specified
-                if None and U/dpdx are iterable, dt=1 will be used.
+        After this method is successfully called, the flow property of the 
+        environment class will be set to the resulting Brinkman flow, and h_p 
+        will be set in the environment's properties.
 
-        Sets:
-            self.flow: [U.size by] res by res ndarray of flow velocity
-            self.h_p = h_p
+        Paramters
+        ---------
+        alpha : float
+            equal to 1/(hydraulic permeability). alpha=0 implies free flow 
+            (infinitely permeable)
+        h_p : float
+            height of porous region
+        U : float or list of floats
+            velocity at top of domain (v in input3d of IB2d). If a list of 
+            floats, will create a time varying fluid velocity field with 
+            Brinkman flow matching each U at a series of time points. The time 
+            points are determined by tspan.
+        dpdx : float or list of floats
+            dp/dx change in momentum constant. if a list, will correspond to 
+            a time varying flow field with those values of dp/dx.
+        res : int
+            resolution of the flow; that is, number of points at which to 
+            resolve the flow, including boundaries
+        tspan : [float, float] or iterable of floats, optional
+            corresponds to [tstart, tend] (start time and end time with an 
+            evenly spaced time mesh) or an iterable of times at which flow is 
+            specified in the case of a time-varying flow field. if not specified 
+            and U/dpdx are iterable, dt=1 will be used with a start time of zero.
 
-        Calls:
-            self.__set_flow_variables
+        Examples
+        --------
+
+        Create a 3D environment with time varying Brinkman flow
+        >>> envir = planktos.environment(Lz=10, rho=1000, mu=1000)
+        >>> U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-5,8,3)))
+        >>> envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(20)*0.22306, 
+            res=101, tspan=[0, 20])
         '''
 
         ##### Parse parameters #####
@@ -441,10 +474,12 @@ class environment:
     def __set_flow_variables(self, tspan=None):
         '''Store points at which flow is specified, and time information.
 
-        Arguments:
-            tspan: [tstart, tend] or iterable of times at which flow is specified
-                    or scalar dt. Required if flow is time-dependent; None will
-                    be interpreted as non time-dependent flow.
+        Parameters
+        ----------
+            tspan : float, floats [tstart, tend], or iterable, optional
+                times at which flow is specified or scalar dt. Required if flow 
+                is time-dependent; None will be interpreted as non time-dependent 
+                flow.
         '''
 
         # Get points defining the spatial grid for flow data
