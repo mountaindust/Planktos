@@ -113,6 +113,7 @@ class environment:
 
     Attributes
     ----------
+    TODO: Include the attributes set via the parameters above!
     time : float
         current environment time
     time_history : list of floats

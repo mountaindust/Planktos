@@ -29,52 +29,106 @@ __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
 class swarm:
+    '''
+    Fundamental Planktos object describing a group of similar agents.
+
+    The swarm class (alongside the environment class) provides the main agent 
+    functionality of Planktos. Each swarm object should be thought of as a group 
+    of similar (though not necessarily identical) agents. Planktos implements 
+    agents in this way rather than as individual objects for speed purposes; it 
+    is easier to vectorize a swarm of agents than individual agent objects, and 
+    also much easier to plot them all, get data on them all, etc.
+
+    The swarm object contains all information on the agents' positions, 
+    properties, and movement algorithm. It also handles plotting of the agents 
+    and saving of agent data to file for further analysis.
+
+    Initial agent velocities will be set as the local fluid velocity if present,
+    otherwise zero. Assignment to the velocities attribute can be made directly 
+    for other initial conditions.
+
+    NOTE: To customize agent behavior, subclass this class and re-implement the
+    method get_positions (do not change the call signature).
+
+    Parameters
+    ----------
+    swarm_size : int, default=100
+        Number of agents in the swarm. ignored when using the 'grid' init method. 
+    envir : environment object, optional
+        Environment for the swarm to exist in. Defaults to a newly initialized 
+        environment with all of the defaults.
+    init : {'random', 'grid', ndarray}, default='random'
+        Method for initalizing agent positions.
+        - 'random': Uniform random distribution throughout the domain
+        - 'grid': Uniform grid on interior of the domain, including capability
+            to leave out closed immersed structures. In this case, swarm_size 
+            is ignored since it is determined by the grid dimensions.
+            Requires the additional keyword parameters grid_dim and testdir.
+        - 1D array: All positions set to a single point given by the x,y,[z] 
+            coordinates of this array
+        - 2D array: All positions as specified. Shape of array should be NxD, 
+            where N is the number of agents and D is spatial dimension. In this 
+            case, swarm_size is ignored.
+    seed : int, optional
+        Seed for random number generator
+    shared_props : dictionary, optional
+        dictionary of properties shared by all agents as name-value pairs. If 
+        none are provided, two default properties will be created, 'mu' and 'cov', 
+        corresponding to intrinsic mean drift and a covariance matrix for 
+        brownian motion respectively. 'mu' will be set to an array of zeros with 
+        length matching the spatial dimension, and 'cov' will be set to an 
+        identity matrix of appropriate size according to the spatial dimension. 
+        This allows the default agent behavior to be unbiased brownian motion.  
+        Examples:  
+        - diam: diameter of the particles
+        - m: mass of the particles
+        - Cd: drag coefficient of the particles
+        - cross_sec: cross-sectional area of the particles
+        - R: density ratio
+    props : Pandas dataframe of individual agent properties, optional
+        Pandas dataframe of individual agent properties that vary between agents. 
+        This is the method by which individual variation among the agents should 
+        be specified. The number of rows in the dataframe should match the 
+        number of agents. If no dataframe is supplied, a default one is created 
+        which contains only the agent starting positions in a column entitled
+        'start_pos'. This is to aid in creating more properties later, if 
+        desired, as it is only necessary to add columns to the existing dataframe. 
+    **kwargs : dict, optional
+        keyword arguments to be used in the 'grid' initialization method or
+        values to be set as a swarm object property. In the latter case, these 
+        values can be floats, ndarrays, or iterables, but keep in mind that
+        problems will result with parsing if the number of agents is
+        equal to the spatial dimension - this is to be avoided. This method of 
+        specifying agent properties is depreciated: use the shared_props 
+        dictionary instead.
+
+    Other Parameters
+    ----------------
+    grid_dim : tuple of int 
+        number of grid points in x, y, [and z] directions for 'grid' initialization
+    testdir : {'x0', 'x1', 'y0', 'y1', ['z0'], ['z1']}, optional
+        two character string for testing if grid points are in the interior of 
+        an immersed structure and if so, masking them in the grid initialization. 
+        The first char is x,y, or z denoting the dimensional direction of the 
+        search ray, the second is either 0 or 1 denoting the direction 
+        (backward vs. forward) along that direction. See documentation of 
+        swarm.grid_init for more information.
+
+    Attributes
+    ----------
+    TODO
+
+    Notes
+    -----
+    Information and example of subclassing.
+
+    Examples
+    --------
+    Examples of how to set up a swarm alongside an environment.
+    '''
 
     def __init__(self, swarm_size=100, envir=None, init='random', seed=None, 
                  shared_props=None, props=None, **kwargs):
-        ''' Initializes planktos swarm in an environment.
-
-        Arguments:
-            swarm_size: Size of the swarm (int). ignored for 'grid' init method.
-            envir: environment for the swarm, defaults to the standard environment
-            init: Method for initalizing positions. See below.
-            seed: Seed for random number generator, int or None
-            shared_props: dictionary of properties shared by all agents
-            props: Pandas dataframe of individual agent properties
-            kwargs: keyword arguments to be set as a swarm property. They can
-                be floats, ndarrays, or iterables, but keep in mind that
-                problems will result with parsing if the number of agents is
-                equal to the spatial dimension - this is to be avoided.
-                Example key word arguments to include are:  
-                diam -- diameter of the particles
-                m -- mass of the particles
-                Cd -- drag coefficient of the particles
-                cross_sec -- cross-sectional area of the particles
-                R -- density ratio
-
-        Methods for initializing the swarm positions:
-            - 'random': Uniform random distribution throughout the domain
-            - 'grid': Uniform grid on interior of the domain, including capability
-                to leave out closed immersed structures. In this case, swarm_size 
-                is ignored since it is determined by the grid dimensions.
-                Requires the additional keyword parameters:
-                grid_dim = tuple of number of grid points in x, y, [and z] directions
-                testdir: (optional) two character string for testing if points 
-                    are in the interior of an immersed structure and if so, masking
-                    them. The first char is x,y, or z denoting the dimensional direction
-                    of the search ray, the second is either 0 or 1 denoting the 
-                    direction (backward vs. forward) along that direction. See 
-                    documentation of swarm.grid_init for more information.
-            - 1D array-like: All positions set to a single point.
-            - 2D array: All positions as specified. Shape NxD, D=dim of space.
-                In this case, swarm_size is ignored.
-        
-        Initial agent velocities will be set as the local fluid velocity if present,
-        otherwise zero. Assign to self.velocities to set your own.
-
-        To customize agent behavior, subclass this class and re-implement the
-        method get_positions (do not change the call signature).
-        '''
 
         # use a new, 3D default environment if one was not given. Or infer
         #   dimension from init if possible.
