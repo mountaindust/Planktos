@@ -34,60 +34,122 @@ __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
 class environment:
+    '''
+    Rectangular environment containing fluid info, immersed meshs, and swarms.
+
+    The environment class does much of the heavy lifting of Planktos. It loads 
+    and contains information about the fluid velocity field, the dimensions of 
+    the physical environment being simulated, boundary conditions for the agents, 
+    the agent swarms that are in the environment, any immersed meshes, and all 
+    simulation time information. Additionally, it provides functions for 
+    manipulating the fluid velocity field in certain ways (e.g. extending,  
+    tiling, and interpolating), calculating vorticity and FTLE, viewing info 
+    about the fluid itself, and calling the move function on all swarms 
+    contained in the environment. It is essential to any Planktos simulation 
+    and typically the first Planktos object you create.
+
+    Parameters
+    ----------
+    Lx, Ly : float, default=10
+        Length of domain in x and y direction, meters
+    Lz : float, optional
+        Length of domain in z direction
+    x_bndry : {'zero', 'noflux'} as str or [str, str], default='zero'
+        agent boundary condition in the x-axis (if the same on both sides), or 
+        [left bndry condition, right bndry condition]. Choices are 'zero' and 
+        'noflux'. Agents leaving a zero boundary condition will be marked as 
+        masked and cease to be updated or plotted afterward. In the noflux case, 
+        agents will undergo an inelastic collision with the boundary. Movement 
+        that would have occurred through the boundary will be projected onto 
+        the boundary instead.
+    y_bndry : str or [str, str], default='zero'
+        agent boundary condition in the y-axis (if the same on both sides), or 
+        [left bndry condition, right bndry condition].
+    z_bndry : str or [str, str], default='noflux'
+        agent boundary condition in the z-axis (if the same top and bottom), or 
+        [low bndry condition, high bndry condition].
+    flow : list of ndarrays, optional
+        This only needs to be specified if you already have a fluid velocity field 
+        loaded as a list of numpy arrays and wish to add it to the environment 
+        directly. Otherwise, the fluid velocity field will be assumed to be zero 
+        everywhere until something is loaded or created via a method of this class. 
+        If you specify a fluid velocity field here, it should be of the following 
+        format:  
+        [x-vel field ndarray ([t],i,j,[k]), y-vel field ndarray ([t],i,j,[k]),
+            z-vel field ndarray if 3D]
+        Note! i is x index, j is y index, with the value of x and y increasing
+        as the index increases. It is assumed that the flow mesh is equally 
+        spaced and includes values on the domain boundary. A keyword argument 
+        'flow_points' must also be specified as a tuple (len==dimension) of 1D 
+        arrays specifying the mesh points along each direction. If the velocity 
+        field is time varying, the argument 'flow_points' must also be 
+        given, which should in this case be an interable of times at which the 
+        fluid velocity is specified (as indexed by t in the first dimension of 
+        each of the fluid ndarrays).
+    flow_times : [float, float] or increasing iterable of floats, optional
+        [tstart, tend] or iterable of times at which the fluid velocity 
+        is specified or scalar dt; required if flow is time-dependent.
+    rho : float, optional
+        fluid density of environment, kg/m**3 (optional, m here meaning length units).
+        Auto-calculated if mu and nu are provided.
+    mu : float, optional 
+        dynamic viscosity, kg/(m*s), Pa*s, N*s/m**2 (optional, m here meaning length units).
+        Auto-calculated if rho and nu are provided.
+    nu : float, optional 
+        kinematic viscosity, m**2/s (optional, m here meaning length units).
+        Auto-calculated if rho and mu are provided.
+    char_L : float, optional 
+        characteristic length scale. Used for calculating Reynolds
+        number, especially in the case of immersed structures (ibmesh)
+        and/or when simulating inertial particles
+    U : float, optional
+        characteristic fluid speed. Used for some calculations.
+    init_swarms : swarm object or list of swarm objects, optional
+        initial swarms in this environment. Can be added later.
+    units : string, default='m'
+        length units to use, default is meters. Note that you will
+        manually need to change self.g (accel due to gravity) if using
+        something else.
+
+    Attributes
+    ----------
+    time : float
+        current environment time
+    time_history : list of floats
+        list of past time states
+    flow_points : tuple (len==dimension) of 1D ndarrays
+        points defining the spatial grid for the fluid velocity data
+    fluid_domain_LLC : tuple (len==dimension) of floats
+        original lower-left corner of domain (if from data)
+    tiling : tuple (x,y) of floats 
+        how much tiling was done in the x and y direction
+    orig_L : tuple (Lx,Ly) of floats
+        length of the domain in x and y direction (Lx,Ly) before tiling occured
+    h_p : float
+        height of porous region
+    g : float
+        accel due to gravity (length units/s**2). Only active for models of 
+        motion that include gravity (this is not the default)
+    Re : float (read-only)
+        Reynolds number, U*char_L/nu
+    struct_plots : list of function handles
+        List of functions that plot additional environment structures
+    struct_plot_args : List of tuples
+        List of argument tuples to be passed to struct_plots functions, after 
+        ax (the plot axis object) is passed
+    grad : ndarray
+        acts as a cache for the gradient of magnitude of the fluid velocity
+    grad_time : float
+        simulation time at which gradient above was calculated
+
+    Examples
+    --------
+    '''
 
     def __init__(self, Lx=10, Ly=10, Lz=None,
                  x_bndry='zero', y_bndry='zero', z_bndry='noflux', flow=None,
                  flow_times=None, rho=None, mu=None, nu=None, char_L=None, 
                  U=None, init_swarms=None, units='m'):
-        ''' Initialize environmental variables.
-
-        Arguments:
-            Lx: Length of domain in x direction, m
-            Ly: Length of domain in y direction, m
-            Lz: Length of domain in z direction, or None
-            x_bndry: [left bndry condition, right bndry condition] (default: zero)
-            y_bndry: [low bndry condition, high bndry condition] (default: zero)
-            z_bndry: [low bndry condition, high bndry condition] (default: noflux)
-            flow: [x-vel field ndarray ([t],i,j,[k]), y-vel field ndarray ([t],i,j,[k]),
-                   z-vel field ndarray if 3D]
-                Note! i is x index, j is y index, with the value of x/y increasing
-                as the index increases. It is assumed that the flow mesh is equally 
-                spaced and includes values on the domain bndry
-                self.flow = None is a valid flow, recognized to have fluid
-                velocity of zero everywhere.
-            flow_times: [tstart, tend] or iterable of times at which flow is specified
-                     or scalar dt; required if flow is time-dependent.
-            rho: fluid density of environment, kg/m**3 (optional, m here meaning length units).
-                Auto-calculated if mu and nu are provided.
-            mu: dynamic viscosity, kg/(m*s), Pa*s, N*s/m**2 (optional, m here meaning length units).
-                Auto-calculated if rho and nu are provided.
-            nu: kinematic viscosity, m**2/s (optional, m here meaning length units).
-                Auto-calculated if rho and mu are provided.
-            char_L: characteristic length scale. Used for calculating Reynolds
-                number, especially in the case of immersed structures (ibmesh)
-                and/or when simulating inertial particles
-            U: characteristic fluid speed. Used for some calculations.
-            init_swarms: initial swarms in this environment
-            units: length units to use, default is meters. Note that you will
-                manually need to change self.g (accel due to gravity) if using
-                something else.
-
-        Other properties:
-            flow_points: points defining the spatial grid for flow data
-            fluid_domain_LLC: original lower-left corner of domain (if from data)
-            tiling: (x,y) how much tiling was done in the x and y direction
-            orig_L: length of the domain in x and y direction (Lx,Ly) before tiling occured
-            h_p: height of porous region
-            g: accel due to gravity (length units/s**2)
-            struct_plots: List of functions that plot additional environment structures
-            struct_plot_args: List of argument tuples to be passed to these functions, after ax
-            time: current time
-            time_history: list of past time states
-            grad: gradient of flow magnitude
-            grad_time: sim time at which gradient was calculated
-
-        Right now, supported agent boundary conditions are 'zero' (default) and 'noflux'.
-        '''
 
         # Save domain size, units
         if Lz is None:
@@ -2092,8 +2154,8 @@ class environment:
 
     @property
     def Re(self):
-        '''Return the Reynolds number at the current time based on mean fluid
-        speed. Must have set self.char_L and self.nu'''
+        '''Return the Reynolds number at the current time. Must have set 
+        self.U, self.char_L and self.nu'''
 
         return self.U*self.char_L/self.nu
 
