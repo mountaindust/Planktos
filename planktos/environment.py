@@ -109,15 +109,32 @@ class environment:
     units : string, default='m'
         length units to use, default is meters. Note that you will
         manually need to change self.g (accel due to gravity) if using
-        something else.
+        something else. Also, none of the methods of this class use this 
+        attribute in any way, so it's probably best to work in meters.
 
     Attributes
     ----------
-    TODO: Include the attributes set via the parameters above!
+    L : list of floats
+        length of the domain [x, y, [z]] in the stated units
+    units : str
+        A place to remind yourself of the spatial units you are working in. Note 
+        that none of the methods of this class use this attribute in any way, 
+        so it's probably best to work in meters.
+    bndry :  list of lists, each with two of {'zero', 'noflux'}
+        Boundary conditions in each direction [x, y, [z]] for agents
+    swarms : list of swarm objects
+        The swarms that belong to this environment
     time : float
         current environment time
     time_history : list of floats
         list of past time states
+    flow : list of ndarrays
+        [x-vel field ndarray ([t],i,j,[k]), y-vel field ndarray ([t],i,j,[k]),
+            z-vel field ndarray (if 3D)]. i is x index, j is y index, with the 
+            value of x and y increasing as the index increases.
+    flow_times : ndarray of floats or None
+        if specified, the time stamp for each index t in the flow arrays (time 
+        varying fluid velocity fields only)
     flow_points : tuple (len==dimension) of 1D ndarrays
         points defining the spatial grid for the fluid velocity data
     fluid_domain_LLC : tuple (len==dimension) of floats
@@ -127,21 +144,59 @@ class environment:
     orig_L : tuple (Lx,Ly) of floats
         length of the domain in x and y direction (Lx,Ly) before tiling occured
     h_p : float
-        height of porous region
+        height of porous region in analytic flows, e.g. Brinkman
     g : float
         accel due to gravity (length units/s**2). Only active for models of 
         motion that include gravity (this is not the default)
+    rho : float
+        fluid density, kg/m**3
+    mu : float
+        dynamic viscosity, kg/(m*s)
+    nu : float
+        kinematic viscosity, m**2/s
+    char_L : float
+        characteristic length, m
+    U : float
+        characteristic fluid speed, m/s
     Re : float (read-only)
         Reynolds number, U*char_L/nu
+    ibmesh : ndarray
+        This is either an Nx2x2 array (2D, line mesh) or an Nx3x3 array (3D, 
+        triangular mesh) specifying internal mesh structures that agents will 
+        treat as solid barriers. Each value of the first index into the array 
+        specifies a mesh element, and each 1x2 or 1x3 contained in that index 
+        is a point in space (so, two for a line, three for a triangle).
+    max_meshpt_dist : float
+        maximum length of a mesh segment in ibmesh, typically determined 
+        automatically. This is used in search algorithms to winnow down the 
+        number of mesh elements to search for intersections of movement.
     struct_plots : list of function handles
-        List of functions that plot additional environment structures
+        List of functions that plot additional environment structures which the 
+        agents are unaware of. E.g., for visual purposes only.
     struct_plot_args : List of tuples
         List of argument tuples to be passed to struct_plots functions, after 
         ax (the plot axis object) is passed
+    FTLE_largest : ndarray
+        FTLE field calculated using the largest eigenvalue
+    FTLE_smallest : ndarray
+        FTLE field calculated using the smallest eigenvalue. take the negative 
+        of this to get backward-time information
+    FTLE_loc : ndarray
+        spatial points on which the FTLE mesh was calculated
+    FTLE_t0 : float
+        start-time for the FTLE calculation
+    FTLE_T : float
+        integration time for FTLE
+    FTLE_grid_dim : tuple of int
+        grid dimension for the FTLE calculation (x,y,[z])
     grad : ndarray
         acts as a cache for the gradient of magnitude of the fluid velocity
     grad_time : float
         simulation time at which gradient above was calculated
+    t_interp : list of PPoly objects
+        Used for temporal CubicSpline interpolation. Set by interpolater method.
+    dt_interp : list of PPoly objects
+        Used for temporal derivative interpolation. Set by interpolater method.
 
     Examples
     --------

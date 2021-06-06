@@ -104,7 +104,7 @@ class swarm:
 
     Other Parameters
     ----------------
-    grid_dim : tuple of int 
+    grid_dim : tuple of int (x, y, [z])
         number of grid points in x, y, [and z] directions for 'grid' initialization
     testdir : {'x0', 'x1', 'y0', 'y1', ['z0'], ['z1']}, optional
         two character string for testing if grid points are in the interior of 
