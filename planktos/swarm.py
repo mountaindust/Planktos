@@ -116,7 +116,31 @@ class swarm:
 
     Attributes
     ----------
-    TODO
+    envir : environment object
+        environment that this swarm belongs to
+    positions : masked array, shape Nx2 (2D) or Nx3 (3D)
+        spatial location of all the agents in the swarm. the mask is False for 
+        any row corresponding to an agent that is within the spatial boundaries 
+        of the environment, otherwise the mask for the row is set to True and 
+        the position of that agent is no longer updated
+    pos_history : list of masked arrays
+        all previous position arrays are stored here. to get their corresponding 
+        times, check the time_history attribute of the swarm's environment.
+    velocities : masked array, shape Nx2 (2D) or Nx3 (3D)
+        velocity of all the agents in the swarm. same masking properties as 
+        positions
+    accelerations : masked array, shape Nx2 (2D) or Nx3 (3D)
+        accelerations of all the agents in the swarm. same masking properties as 
+        positions
+    props : pandas DataFrame
+        Pandas dataframe of individual agent properties that vary between agents. 
+        This is the method by which individual variation among the agents should 
+        be specified.
+    shared_props : dictionary
+        dictionary of properties shared by all agents as name-value pairs
+    rndState : numpy RandomState object
+        random number generator for this swarm, seeded by the "seed" parameter
+
 
     Notes
     -----
