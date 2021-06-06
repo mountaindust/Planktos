@@ -141,14 +141,65 @@ class swarm:
     rndState : numpy RandomState object
         random number generator for this swarm, seeded by the "seed" parameter
 
-
     Notes
     -----
-    Information and example of subclassing.
+    If the agent behavior you are looking for is simply brownian motion with 
+    fluid advection, all you need to do is change the 'cov' entry in the 
+    shared_props dictionary to a covariance matrix that matches the amount of 
+    jitter you are looking for. You can also add fixed directional bias by 
+    editing the 'mu' shared_props entry. This default behavior is then 
+    accomplished by solving the relevant SDE using Euler steps, where the step 
+    size is the dt argument of the move method which you call in a loop, e.g.::
+    
+        for ii in range(50):
+            swm.move(0.1)
+
+    In order to accomodate general, user-defined behavior algorithms, all other 
+    agent behaviors should be explicitly specified by subclassing this swarm 
+    class and overriding the get_positions method. This is easy, and takes the 
+    following form: ::
+
+        class myagents(planktos.swarm):
+            
+            def get_positions(self, dt, params=None):
+                #
+                # Put any calculations here that are necessary to determine
+                #   where the agents should end up after a time step of length 
+                #   dt assuming they don't run into a boundary of any sort. 
+                #   Boundary conditions, mesh crossings, etc. will be handled 
+                #   automatically by Planktos after this function returns. The
+                #   new positions you return should be an ndarray of shape NxD
+                #   where N is the number of agents in the swarm and D is the 
+                #   spatial dimension of the system. The params argument is 
+                #   there in case you want this method to take in any external 
+                #   info (e.g. time-varying forcing functions, user-controlled 
+                #   behavior switching, etc.). Note that this method has full 
+                #   access to all of the swarm attributes via the "self" 
+                #   argument. For example, self.positions will return an NxD 
+                #   masked array of current agent positions. The one thing this 
+                #   method SHOULD NOT do is set the positions, velocities, or 
+                #   accelerations attributes of the swarm. This will be handled 
+                #   automatically after this method returns, and after boundary 
+                #   conditions have been checked.
+
+                return newpositions
+
+    Then, when you create a swarm object, create it using::
+    
+        swrm = myagents() # add swarm parameters as necessary, as documented above
+
+    This will create a swarm object, but with your my_positions method instead 
+    of the default one!
 
     Examples
     --------
-    Examples of how to set up a swarm alongside an environment.
+    Create a default swarm in an environment with some fluid data loaded and tiled.
+
+    >>> envir = planktos.environment()
+    >>> envir.read_IBAMR3d_vtk_dataset('../tests/IBAMR_test_data', start=5, finish=None)
+    >>> envir.tile_flow(3,3)
+    >>> swrm = swarm(envir=envir)
+
     '''
 
     def __init__(self, swarm_size=100, envir=None, init='random', seed=None, 
