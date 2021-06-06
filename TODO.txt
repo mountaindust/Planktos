@@ -1,6 +1,0 @@
-- FTLE
-- Reorganize code, package
-- Walk through and document steps in ibmesh - agent interaction for publication
-- sphinx documentation (/doc)
-
---> Code release paper. Target: Mathematical Models and Methods in Applied Sciences
