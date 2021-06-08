@@ -126,6 +126,9 @@ class swarm:
     pos_history : list of masked arrays
         all previous position arrays are stored here. to get their corresponding 
         times, check the time_history attribute of the swarm's environment.
+    full_pos_history : list of masked arrays
+        same as pos_history, but also includes the positions attribute as the 
+        last entry in the list
     velocities : masked array, shape Nx2 (2D) or Nx3 (3D)
         velocity of all the agents in the swarm. same masking properties as 
         positions
@@ -346,31 +349,41 @@ class swarm:
 
 
     def grid_init(self, x_num, y_num, z_num=None, testdir=None):
-        '''Return a grid of initial positions, potentially masking any grid 
-        points in the interior of a closed, immersed structure. The full, unmasked 
-        grid will be x_num by y_num [by z_num] on the interior and boundaries of 
-        the domain.
+        '''Return a flattened array which describes a regular grid of locations, 
+        except potentially masking any grid points in the interior of a closed, 
+        immersed structure. 
         
-        The output of this method is appropriate for finding FTLE.
+        The full, unmasked grid will be x_num by y_num [by z_num] on the 
+        interior and boundaries of the domain. The output of this method is 
+        appropriate for finding FTLE, and that is its main purpose. It will 
+        automatically be called by the environment class's calculate_FTLE method, 
+        and if you want to initialize a swarm with a grid this is possible by 
+        passing the init='grid' keyword argument when the swarm is created. 
+        So there is probably no reason to use this method directly.
 
         Grid list moves in the [Z direction], Y direction, then X direction.
 
-        Arguments:
-            x_num, y_num, [z_num]: number of grid points in each direction
-            testdir: to check if a point is an interior to an immersed structure, 
-                a line will be drawn from the point to a domain boundary. If the number 
-                of immersed boundary intersections is odd, the point will be 
-                considered interior and masked. This check will not be run at all 
-                if testdir is None. Otherwise, specify a direction with one of 
-                the following: 'x0','x1','y0','y1','z0','z1' (the last two for 
-                3D problems only) denoting the dimension (x,y, or z) and the 
-                direction (0 for negative, 1 for positive).
+        Parameters
+        ----------
+        x_num, y_num, [z_num] : int
+            number of grid points in each direction
+        testdir : {'x0', 'x1', 'y0', 'y1', ['z0'], ['z1']}, optional
+            to check if a point is an interior to an immersed structure, a line 
+            will be drawn from the point to a domain boundary. If the number 
+            of immersed boundary intersections is odd, the point will be 
+            considered interior and masked. This check will not be run at all 
+            if testdir is None. Otherwise, specify a direction with one of the 
+            following: 'x0','x1','y0','y1','z0','z1' (the last two for 
+            3D problems only) denoting the dimension (x,y, or z) and the 
+            direction (0 for negative, 1 for positive).
 
-        NOTE: This algorithm is meant as a huristic only! It is not guaranteed 
-        to mask all interior grid points, and will mask non-interior points if 
-        there is not a clear line from the point to one of the boundaries of the 
-        domain. If this method fails for your geometry and better accuracy is 
-        needed, use this method as a starting point and mask/unmask as necessary.
+        Notes
+        -----
+        This algorithm is meant as a huristic only! It is not guaranteed to mask 
+        all interior grid points, and will mask non-interior points if there is 
+        not a clear line from the point to one of the boundaries of the domain. 
+        If this method fails for your geometry and better accuracy is needed, 
+        use this method as a starting point and mask/unmask as necessary.
         '''
 
         # Form initial grid
@@ -574,18 +587,32 @@ class swarm:
 
 
     def save_data(self, path, name, pos_fmt='%.18e'):
-        '''Save the full position history (with mask and time stamps), current
-        velocity and acceleration to csv files. Save shared_props to a npz file 
-        (since it is likely to contain some mixture of scalars and arrays, but
-        does not vary between the agents so is less likely to be loaded outside
-        of Python) and save props to json (since it is likely to contain a 
-        variety of types of data, may need to be loaded outside of Python, 
-        and json will be human readable).
+        '''Save the full position history (with mask and time stamps) along with 
+        current velocity and acceleration to csv files. Save shared_props to a 
+        npz file and save props to json.
 
-        Arguments:
-            path: string, directory for storing data
-            name: string, prefix name for data files
-            pos_fmt: format for storing position, vel, and accel data
+        The output format for the position csv is the same as for the 
+        save_pos_to_csv method.
+        
+        shared_props is saved as an npz file since it is likely to contain some 
+        mixture of scalars and arrays, but does not vary between the agents so 
+        is less likely to be loaded outside of Python. props is saved to json 
+        since it is likely to contain a variety of types of data, may need to be 
+        loaded outside of Python, and json will be human readable.
+
+        Parameters
+        ----------
+        path : str
+            directory for storing data
+        name : str 
+            prefix name for data files
+        pos_fmt : str format
+            format and precision for storing position, vel, and accel data
+
+        See Also
+        --------
+        save_pos_to_csv
+        save_pos_to_vtk
         '''
 
         path = Path(path)
@@ -604,24 +631,38 @@ class swarm:
     def save_pos_to_csv(self, filename, fmt='%.18e', sv_vel=False, sv_accel=False):
         '''Save the full position history including present time, with mask and 
         time stamps, to a csv.
-        The format is as follows:
-        The first row contains cycle and time information. The cycle is given, 
-            and then each time stamp is repeated D times, where D is the spatial 
-            dimension of the system.
-        Each subsequent row corresponds to a different agent in the swarm.
-        Reading across the columns of an agent row: first, a boolean is given
-            showing the state of the mask for that time step. Agents are masked
-            when they have exited the domain. Then, the position vector is given
-            as a group of D columns for the x, y, (and z) direction. Each set
-            of 1+D columns then corresponds to a different cycle/time, as 
-            labeled by the values in the first row.
-        The result is a csv that is N+1 by (1+D)*T, where N is the number of 
-            agents, D is the dimension of the system, and T is the number of 
-            times recorded.
 
-        Arguments:
-            filename: (string) path/name of the file to save the data to
-            fmt: fmt argument to be passed to numpy.savetxt for position data
+        The output format for the position csv will be as follows:
+
+        - The first row contains cycle and time information. The cycle is given, 
+        and then each time stamp is repeated D times, where D is the spatial 
+        dimension of the system.
+
+        - Each subsequent row corresponds to a different agent in the swarm.
+
+        - Reading across the columns of an agent row: first, a boolean is given
+        showing the state of the mask for that time step. Agents are masked
+        when they have exited the domain. Then, the position vector is given
+        as a group of D columns for the x, y, (and z) direction. Each set
+        of 1+D columns then corresponds to a different cycle/time, as 
+        labeled by the values in the first row.
+
+        The result is a csv that is N+1 by (1+D)*T, where N is the number of 
+        agents, D is the dimension of the system, and T is the number of 
+        times recorded.
+
+        Parameters
+        ----------
+        filename : str 
+            path/name of the file to save the data to
+        fmt : str format
+            fmt argument to be passed to numpy.savetxt for format and precision 
+            of numerical data
+
+        See Also
+        --------
+        save_data
+        save_pos_to_vtk
         '''
         if filename[-4:] != '.csv':
             filename = filename + '.csv'
@@ -652,13 +693,23 @@ class swarm:
     def save_pos_to_vtk(self, path, name, all=True):
         '''Save position data to vtk as point data (PolyData).
         A different file will be created for each time step in the history, or
-        just one file if all is False.
+        just one file of the current positions will be created if the all 
+        argument is False.
 
-        Arguments:
-            path: string, location to save the data
-            name: string, name of dataset
-            all: bool. if True, save the entire history including the current
-                time. If false, save only the current time.
+        Parameters
+        ----------
+        path : str 
+            location to save the data
+        name : str 
+            name of dataset
+        all : bool 
+            if True, save the entire history including the current time. 
+            If false, save only the current time.
+
+        See Also
+        --------
+        save_data
+        save_pos_to_csv
         '''
         if len(self.envir.L) == 2:
             DIM2 = True
