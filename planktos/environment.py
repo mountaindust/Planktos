@@ -437,6 +437,11 @@ class environment:
            N.A. Battista, V. Pasour (2017). "Three-dimensional low Reynolds 
            number flows near biological filtering and protective layers," Fluids, 
            2(62).
+
+        See Also
+        --------
+        set_two_layer_channel_flow
+        set_canopy_flow
         '''
 
         ##### Parse parameters #####
@@ -613,6 +618,11 @@ class environment:
 
         Calls:
             self.__set_flow_variables
+
+        See Also
+        --------
+        set_brinkman_flow
+        set_canopy_flow
         '''
         # Get channel height
         H = self.L[-1]
@@ -702,6 +712,11 @@ class environment:
 
         Calls:
             self.__set_flow_variables
+
+        See Also
+        --------
+        set_brinkman_flow
+        set_two_layer_channel_flow
         '''
 
         ##### Parse parameters #####
