@@ -784,27 +784,66 @@ class swarm:
 
 
 
-    def calc_re(self, u):
-        '''Calculate Reynolds number as experienced by the swarm based on 
-        environment variables and given flow speed, u, and diam (in shared_props)'''
+    def calc_re(self, u, diam=None):
+        '''Calculate and return the Reynolds number as experienced by a swarm 
+        with characteristic length 'diam' in a fluid moving with velocity u. All 
+        other parameters will be pulled from the environment's attributes. 
+        
+        If diam is not specified, this method will look for it in the 
+        shared_props dictionary of this swarm.
+        
+        Parameters
+        ----------
+        u : float
+            characteristic fluid speed, m/s
+        diam : float, optional
+            characteristic length scale of a single agent, m
 
+        Returns
+        -------
+        float
+            Reynolds number
+        '''
+
+        if diam is None:
+            diam = self.shared_props['diam']
+        else:
+            diam = diam
         if self.envir.rho is not None and self.envir.mu is not None and\
             'diam' in self.shared_props:
-            return self.envir.rho*u*self.shared_props['diam']/self.envir.mu
+            return self.envir.rho*u*diam/self.envir.mu
         else:
-            raise RuntimeError("Parameters necessary for Re calculation are undefined.")
+            raise RuntimeError("Parameters necessary for Re calculation in environment are undefined.")
 
 
 
     def move(self, dt=1.0, params=None, update_time=True):
-        '''Move all organisms in the swarm over an amount of time dt.
-        Do not override this method when subclassing - override get_positions
-        instead!
+        '''Move all organisms in the swarm over one time step of length dt.
+        DO NOT override this method when subclassing; override get_positions
+        instead!!!
 
-        Arguments:
-            dt: time-step for move
-            params: parameters to pass along to get_positions, if necessary
-            update_time: whether or not to update the environment's time by dt
+        Performs a lot of utility tasks such as updating the positions and 
+        pos_history attributes, checking boundary conditions, and recalculating 
+        the current velocities and accelerations attributes.
+
+        Parameters
+        ----------
+            dt : float
+                length of time step to move all agents
+            params : any, optional
+                parameters to pass along to get_positions, if necessary
+            update_time : bool, default=True
+                whether or not to update the environment's time by dt. Probably 
+                The only reason to change this to False is if there are multiple 
+                swarm objects in the same environment - then you want to update 
+                each before incrementing the time in the environment.
+
+        See Also
+        --------
+        get_positions : 
+            method that returns (but does not assign) the new positions of the 
+            swarm after the time step dt, which Planktos users override in order 
+            to specify their own, custom agent behavior.
         '''
 
         # Put current position in the history
