@@ -2303,7 +2303,7 @@ class environment:
                 vort = self.get_2D_vorticity(t_indx=cyc)
                 dataio.write_vtk_2D_uniform_grid_scalars(path, out_name, vort, self.L, cyc, time)
         if time_history or not flow_times:
-            vort = self.get_2D_vorticity(self.time)
+            vort = self.get_2D_vorticity(time=self.time)
             dataio.write_vtk_2D_uniform_grid_scalars(path, name, vort, self.L, cycle, self.time)
 
 
