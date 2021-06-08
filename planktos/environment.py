@@ -365,7 +365,7 @@ class environment:
 
 
     def set_brinkman_flow(self, alpha, h_p, U, dpdx, res=101, tspan=None):
-        '''Get a fully developed Brinkman flow with a porous region.
+        r'''Get a fully developed Brinkman flow with a porous region.
 
         This method sets the environment fluid velocity as a 1D Brinkman flow 
         based on a porous layer of hight h_p in the bottom of the domain.
