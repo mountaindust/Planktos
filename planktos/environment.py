@@ -411,6 +411,32 @@ class environment:
         >>> U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-5,8,3)))
         >>> envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(20)*0.22306, 
             res=101, tspan=[0, 20])
+
+        Notes
+        -----
+        Brinkman's equation [1]_ is written as
+        
+        .. math::
+            \rho(\U_{t}(\mathbf{x},t) +\U(\mathbf{x},t)\cdot\nabla \U(\mathbf{x},t)) =
+            -\nabla p(\mathbf{x},t) + \mu \Lap \U(\mathbf{x},t) - \alpha \mu \U(\mathbf{x},t)
+
+        where is :math:`\alpha` is the inverse of the hydraulic permeability. 
+        We take a region of height h_p where :math:`\alpha>0` with parallel shear 
+        flow above it, and we assume that the flow is steady 
+        (:math:`\partial u/\partial t=0`), fully developed 
+        (:math:`\partial u/\partial x=0`), and zero in all cross-stream directions. 
+        In this case, the equations can be reduced to an analytical solution, 
+        which is what we evaluate here. See [2]_ for more information.
+
+        References
+        ----------
+        .. [1] H.C. Brinkman, (1949). "A calculation of the viscous force exerted 
+           by a flowing fluid on a dense swarm of particles," Applied Scientific 
+           Research 1, 27(34).
+        .. [2] C. Strickland, L.A. Miller, A. Santhanakrishnan, C. Hamlet, 
+           N.A. Battista, V. Pasour (2017). "Three-dimensional low Reynolds 
+           number flows near biological filtering and protective layers," Fluids, 
+           2(62).
         '''
 
         ##### Parse parameters #####
