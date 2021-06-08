@@ -883,28 +883,67 @@ class swarm:
 
 
     def get_positions(self, dt, params=None):
-        '''Returns all agent positions after a time step of dt.
+        '''Returns the new agent positions after a time step of dt.
 
-        THIS IS THE METHOD TO OVERRIDE IF YOU WANT DIFFERENT MOVEMENT!
-        NOTE: Do not change the call signature.
+        THIS IS THE METHOD TO OVERRIDE IF YOU WANT DIFFERENT MOVEMENT! Do not 
+        change the call signature.
 
-        This method must return the new positions of all agents following a time 
-        step of length dt, whether due to behavior, drift, or anything else. 
+        This method returns the new positions of all agents following a time 
+        step of length dt, whether due to behavior, drift, or anything else. It 
+        should not set the self.positions attribute. Similarly, self.velocities 
+        and self.accelerations will automatically be updated outside of this 
+        method using finite differences. The only attributes it should change is 
+        if there are any user-defined, time-varying agent properties that should 
+        be different after the time step (whether shared among all agents, and 
+        thus in self.shared_props, or individual to each agent, and thus in 
+        self.props). These can be altered directly or by using the add_prop 
+        method of this class.
 
         In this default implementation, movement is a random walk with drift
         as given by an Euler step solver of the appropriate SDE for this process.
-        Drift is the local fluid velocity plus self.get_prop('mu'), and the
-        stochasticity is determined by the covariance matrix self.get_prop('cov').
+        Drift is the local fluid velocity plus self.get_prop('mu') ('mu' is a 
+        shared_prop attribute), and the stochasticity is determined by the 
+        covariance matrix self.get_prop('cov') ('cov' is also a shared_prop 
+        attribute).
 
-        NOTE: self.velocities and self.accelerations will automatically be updated
-        outside of this method using finite differences.
+        Parameters
+        ----------
+        dt : float
+            length of time step
+        params : any, optional
+            any other parameters necessary
 
-        Arguments:
-            dt: length of time step
-            params: any other parameters necessary (optional)
+        Returns
+        -------
+        ndarray :
+            NxD array of new agent positions after a time step of dt given that 
+            the agents started at self.positions. N is the number of agents and 
+            D is the spatial dimension of the system.
 
-        Returns:
-            new agent positions
+        Notes
+        -----
+        When writing code for this method, it can be helpful to make use of the 
+        ode generators and solvers in the planktos.motion module. Please see the 
+        documentation for the functions of this module for options. To access the 
+        current positions of each agent, use self.positions which is a masked, 
+        NxD array of agent positions where the mask refers to whether or not the 
+        agent has exited the domain. self.velocities and self.accelerations will 
+        provide initial velocities and accelerations for the time step for each 
+        agent respectively. The get_fluid_drift method will return the fluid 
+        velocity at each agent location. The get_dudt method will return the 
+        time derivative of the fluid velocity at the location of each agent. The 
+        get_fluid_gradient method will return the gradient of the magnitude of 
+        the fluid velocity at the location of each agent.
+
+        See Also
+        --------
+        get_prop : given an agent/swarm property name, return the value(s)
+        add_prop : add a new agent/swarm property or overwrite an old one
+        get_fluid_drift : return the fluid velocity at each agent location
+        get_dudt : return time derivative of fluid velocity at each agent
+        get_fluid_gradient : 
+            return the gradient of the magnitude of the fluid velocity at each 
+            agent
         '''
 
         # default behavior for Euler_brownian_motion is dift due to mu property
