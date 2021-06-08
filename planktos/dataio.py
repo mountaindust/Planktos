@@ -458,10 +458,37 @@ def write_vtk_2D_uniform_grid_scalars(path, title, data, L, cycle=None, time=Non
     grid = pv.UniformGrid()
     grid.dimensions = (*data.shape, 1) # must be 3D
     grid.origin = (0,0,0)
-    grid.spacing = L + [0]
+    dx = [L[ii]/data.shape[ii] for ii in range(len(data.shape))]
+    grid.spacing = dx + [0]
     grid.point_arrays["values"] = data.flatten(order="F")
     if cycle is not None:
         grid.field_arrays['CYCLE'] = cycle
     if time is not None:
         grid.field_arrays['TIME'] = time
     grid.save(str(filepath), binary=False)
+
+
+
+@pyvista_dep
+def write_vtk_uniform_grid_vectors(path, title, data, L, cycle=None, time=None):
+    '''Write vector data on a 2D or 3D uniform grid (e.g. fluid velocity).
+
+    Parameters
+    ----------
+    path : str
+        path to a directory where the data should go. If the directory does not 
+        exist, it will be created.
+    title : str
+        title to prepend to filenames
+    data : list of ndarrays
+        list of numpy array of regular grid data. The ndarrays must not include 
+        a time component (e.g., the dimension of the array should match the 
+        length of the list which should match the length of parameter L)
+    L : list
+        domain length in each direction. environment.L
+    cycle : int, optional
+        dump number, which will also be included in the filename
+    time : float, optional
+        time stamp
+    '''
+    pass
