@@ -361,7 +361,8 @@ class swarm:
         passing the init='grid' keyword argument when the swarm is created. 
         So there is probably no reason to use this method directly.
 
-        Grid list moves in the [Z direction], Y direction, then X direction.
+        Grid list moves in the [Z direction], Y direction, then X direction (due 
+        to C order of memory layout).
 
         Parameters
         ----------
