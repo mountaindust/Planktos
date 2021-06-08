@@ -937,7 +937,12 @@ class swarm:
 
         See Also
         --------
-        get_prop : given an agent/swarm property name, return the value(s)
+        get_prop : 
+            given an agent/swarm property name, return the value(s). When 
+            accessing a property in swarm.props, this can be preferred over 
+            accessing the property directly through the because instead of 
+            returning a pandas Series object (for a column in the DataFrame), it 
+            automatically converts to a numpy array first.
         add_prop : add a new agent/swarm property or overwrite an old one
         get_fluid_drift : return the fluid velocity at each agent location
         get_dudt : return time derivative of fluid velocity at each agent
@@ -958,8 +963,14 @@ class swarm:
         numpy array, ready for use in vectorized operations (left-most index
         specifies the agent).
         
-        Arguments:
-            prop_name: name of the property to return
+        Parameters
+        ----------
+        prop_name : str
+            name of the property to return
+
+        Returns
+        -------
+        property : float or ndarray
         '''
 
         if prop_name in self.props:
@@ -976,7 +987,20 @@ class swarm:
 
     def add_prop(self, prop_name, value, shared=False):
         '''Method that will automatically delete any conflicting properties
-        when adding a new one.'''
+        when adding a new one.
+        
+        Parameters
+        ----------
+        prop_name : str
+            name of the property to add
+        value : any
+            value to set the property at
+        shared : bool
+            if False, set as a property that applies to all agents in the swarm. 
+            if True, value should be an ndarray with a number of rows equal to 
+            the number of agents in the swarm, and the property will be set as 
+            a column in the swarm.props DataFrame.
+        '''
         if shared:
             self.shared_props[prop_name] = value
             if prop_name in self.props:
@@ -997,6 +1021,19 @@ class swarm:
         
         In the returned 2D ndarray, each row corresponds to an agent (in the
         same order as listed in self.positions) and each column is a dimension.
+
+        Parameters
+        ----------
+        time : float, optional
+            time at which to return the fluid drift. defaults to the current 
+            environment time
+        positions : ndarray, optional
+            positions at which to return the fluid drift. defaults to the 
+            locations of the swarm agents, self.positions
+
+        Returns
+        -------
+        ndarray with shape NxD
         '''
 
         # 3D?
@@ -1028,6 +1065,19 @@ class swarm:
         
         In the returned 2D ndarray, each row corresponds to an agent (in the
         same order as listed in self.positions) and each column is a dimension.
+
+        Parameters
+        ----------
+        time : float, optional
+            time at which to return the data. defaults to the current 
+            environment time
+        positions : ndarray, optional
+            positions at which to return the data. defaults to the locations of 
+            the swarm agents, self.positions
+
+        Returns
+        -------
+        ndarray with shape NxD
         '''
 
         if positions is None:
@@ -1041,9 +1091,21 @@ class swarm:
     def get_fluid_gradient(self, positions=None):
         '''Return the gradient of the magnitude of the fluid velocity at all
         agent positions (or at provided positions) via linear interpolation of 
-        the gradient. 
+        the gradient.
+
         The gradient is linearly interpolated from the fluid grid to the
-        agent locations.
+        agent locations. The current environment time is always used, 
+        interpolated from data if necessary
+
+        Parameters
+        ----------
+        positions : ndarray, optional
+            positions at which to return the data. defaults to the locations of 
+            the swarm agents, self.positions
+
+        Returns
+        -------
+        ndarray with shape NxD
         '''
 
         if positions is None:
