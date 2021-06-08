@@ -599,30 +599,39 @@ class environment:
     def set_two_layer_channel_flow(self, a, h_p, Cd, S, res=101):
         '''Apply wide-channel flow with vegetation layer according to the
         two-layer model described in Defina and Bixio (2005), 
-        "Vegetated Open Channel Flow". The decision to set 2D vs. 3D flow is 
-        based on the dimension of the domain and this flow is always
-        time-independent by nature. The following parameters must be given:
+        "Vegetated Open Channel Flow" [1]_. 
+        
+        The decision to set 2D vs. 3D flow is based on the current dimension of
+        the environment and the fluid velocity is always time-independent.
 
-        Arguments:
-            a: vegetation density, given by Az*m, where Az is the frontal area
-                of vegetation per unit depth and m the number of stems per unit area (1/m)
-                (assumed constant)
-            h_p: plant height (m)
-            Cd: drag coefficient (assumed uniform) (unitless)
-            S: bottom slope (unitless, 0-1 with 0 being no slope, resulting in no flow)
-            res: number of points at which to resolve the flow (int), including boundaries
-
-        Sets:
-            self.flow: [U.size by] res by res ndarray of flow velocity
-            self.h_p = a
-
-        Calls:
-            self.__set_flow_variables
+        Parameters
+        ----------
+        a : float
+            vegetation density, given by Az*m, where Az is the frontal area of 
+            vegetation per unit depth and m the number of stems per unit area 
+            (1/m), assumed constant
+        h_p : float
+            plant height (m)
+        Cd : float
+            drag coefficient, assumed uniform (unitless)
+        S : float 
+            bottom slope (unitless, 0-1 with 0 being no slope, resulting in no flow)
+        res : int 
+            number of points at which to resolve the flow, including boundaries
 
         See Also
         --------
         set_brinkman_flow
         set_canopy_flow
+
+        Notes
+        -----
+        In addition to self.flow, this will set self.h_p = a
+
+        References
+        ----------
+        .. [1] A. Defina and A.C. Bixio, (2005). "Mean flow and turbulence in 
+           vegetated open channel flow," Water Resources Research, 41(7).
         '''
         # Get channel height
         H = self.L[-1]
@@ -686,37 +695,51 @@ class environment:
 
     def set_canopy_flow(self, h, a, u_star=None, U_h=None, beta=0.3, C=0.25,
                         res=101, tspan=None):
-        '''Apply flow within and above a uniform homogenous canopy according to the
-        model described in Finnigan and Belcher (2004), 
-        "Flow over a hill covered with a plant canopy". The decision to set 2D vs. 3D flow is 
-        based on the dimension of the domain. Default values for beta and C are
-        based on Finnigan & Belcher. Must specify two of u_star, U_h, and beta, 
-        though beta has a default value of 0.3 so just giving u_star or U_h will also work. 
-        If one of u_star, U_h, or beta is given as a list-like object, the flow will vary in time.
+        '''Apply flow within and above a uniform homogenous canopy according to 
+        the model described in Finnigan and Belcher (2004), "Flow over a hill 
+        covered with a plant canopy" [1]_. 
+        
+        The decision to set 2D vs. 3D flow is based on the current dimension of
+        the environment. Default values for beta and C are based on Finnigan & 
+        Belcher [1]_. Must specify two of u_star, U_h, and beta, though beta has 
+        a default value of 0.3 so just giving u_star or U_h will also work. 
+        If one of u_star, U_h, or beta is given as a list-like object, the flow 
+        will vary in time.
 
         Arguments:
-            h: height of canopy (m)
-            a: leaf area per unit volume of space m^{-1}. Typical values are
-                a=1.0 for dense spruce to a=0.1 for open woodland
-            u_star: canopy friction velocity. u_star = U_h*beta OR
-            U_h: wind speed at top of canopy. U_h = u_star/beta
-            beta: mass flux through the canopy (u_star/U_h)
-            C: drag coefficient of indivudal canopy elements
-            res: number of points at which to resolve the flow (int), including boundaries
-            tspan: [tstart, tend] or iterable of times at which flow is specified
-                if None and u_star, U_h, and/or beta are iterable, dt=1 will be used.
-
-        Sets:
-            self.flow: [U.size by] res by res ndarray of flow velocity
-            self.h_p = h
-
-        Calls:
-            self.__set_flow_variables
+        h : float
+            height of canopy (m)
+        a : float
+            leaf area per unit volume of space m^{-1}. Typical values are a=1.0 
+            for dense spruce to a=0.1 for open woodland
+        u_star : float, optional (may set U_h instead)
+            canopy friction velocity. u_star = U_h*beta if not set
+        U_h : float, optional (may set u_star instead) 
+            wind speed at top of canopy. U_h = u_star/beta if not set
+        beta : float, default=0.3
+            mass flux through the canopy (u_star/U_h)
+        C : float, default=0.25
+            drag coefficient of indivudal canopy elements
+        res : int
+            number of points at which to resolve the flow, including boundaries
+        tspan : [float, float] or iterable of floats, optional
+            [tstart, tend] or iterable of times at which flow is specified
+            if None and u_star, U_h, and/or beta are iterable, dt=1 will be used.
 
         See Also
         --------
         set_brinkman_flow
         set_two_layer_channel_flow
+
+        Notes
+        -----
+        In addition to self.flow, this will set self.h_p = h
+
+        References
+        ----------
+        .. [1] J.J. Finnigan and S.E. Belcher, (2004). "Flow over a hill covered 
+        with a plant canopy," Quarterly Journal of the Royal Meteorological 
+        Society, 130(596), 1-29.
         '''
 
         ##### Parse parameters #####
