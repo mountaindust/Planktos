@@ -460,6 +460,9 @@ def write_vtk_2D_uniform_grid_scalars(path, title, data, L, cycle=None, time=Non
     grid.origin = (0,0,0)
     dx = [L[ii]/data.shape[ii] for ii in range(len(data.shape))]
     grid.spacing = dx + [0]
+    # we have to flatten the scalar point data, and we have to do it in Fortran 
+    #   order because VTK moves in the x, then y, then z direction but with C
+    #   memory layout, our arrays move in the z, then y, then x directions
     grid.point_arrays["values"] = data.flatten(order="F")
     if cycle is not None:
         grid.field_arrays['CYCLE'] = cycle
@@ -491,4 +494,34 @@ def write_vtk_uniform_grid_vectors(path, title, data, L, cycle=None, time=None):
     time : float, optional
         time stamp
     '''
-    pass
+
+    path = Path(path)
+    if not path.is_dir():
+        os.mkdir(path)
+    if cycle is None:
+        filepath = path / (title + '.vtk')
+    else:
+        filepath = path / (title + '_{:04d}.vtk'.format(cycle))
+
+    grid = pv.UniformGrid()
+    grid.origin = (0,0,0)
+    dx = [L[ii]/data[0].shape[ii] for ii in range(len(data[0].shape))]
+    if len(data[0].shape) == 2:
+        # VTK data must be 3D
+        grid.dimensions = (*data[0].shape, 1)
+        grid.spacing = dx + [0]
+    else:
+        grid.dimensions = data[0].shape
+        grid.spacing = dx
+
+    fdata = [data[ii].flatten(order='F') for ii in range(len(data))]
+    if len(fdata) == 2:
+        fdata += [np.zeros(fdata[0].size)]
+    grid["vectors"] = np.array(fdata).T
+    if cycle is not None:
+        grid.field_arrays['CYCLE'] = cycle
+    if time is not None:
+        grid.field_arrays['TIME'] = time
+    grid.save(str(filepath), binary=False)
+    
+
