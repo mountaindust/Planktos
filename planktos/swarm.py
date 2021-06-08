@@ -126,6 +126,9 @@ class swarm:
     pos_history : list of masked arrays
         all previous position arrays are stored here. to get their corresponding 
         times, check the time_history attribute of the swarm's environment.
+    full_pos_history : list of masked arrays
+        same as pos_history, but also includes the positions attribute as the 
+        last entry in the list
     velocities : masked array, shape Nx2 (2D) or Nx3 (3D)
         velocity of all the agents in the swarm. same masking properties as 
         positions
@@ -346,31 +349,41 @@ class swarm:
 
 
     def grid_init(self, x_num, y_num, z_num=None, testdir=None):
-        '''Return a grid of initial positions, potentially masking any grid 
-        points in the interior of a closed, immersed structure. The full, unmasked 
-        grid will be x_num by y_num [by z_num] on the interior and boundaries of 
-        the domain.
+        '''Return a flattened array which describes a regular grid of locations, 
+        except potentially masking any grid points in the interior of a closed, 
+        immersed structure. 
         
-        The output of this method is appropriate for finding FTLE.
+        The full, unmasked grid will be x_num by y_num [by z_num] on the 
+        interior and boundaries of the domain. The output of this method is 
+        appropriate for finding FTLE, and that is its main purpose. It will 
+        automatically be called by the environment class's calculate_FTLE method, 
+        and if you want to initialize a swarm with a grid this is possible by 
+        passing the init='grid' keyword argument when the swarm is created. 
+        So there is probably no reason to use this method directly.
 
         Grid list moves in the [Z direction], Y direction, then X direction.
 
-        Arguments:
-            x_num, y_num, [z_num]: number of grid points in each direction
-            testdir: to check if a point is an interior to an immersed structure, 
-                a line will be drawn from the point to a domain boundary. If the number 
-                of immersed boundary intersections is odd, the point will be 
-                considered interior and masked. This check will not be run at all 
-                if testdir is None. Otherwise, specify a direction with one of 
-                the following: 'x0','x1','y0','y1','z0','z1' (the last two for 
-                3D problems only) denoting the dimension (x,y, or z) and the 
-                direction (0 for negative, 1 for positive).
+        Parameters
+        ----------
+        x_num, y_num, [z_num] : int
+            number of grid points in each direction
+        testdir : {'x0', 'x1', 'y0', 'y1', ['z0'], ['z1']}, optional
+            to check if a point is an interior to an immersed structure, a line 
+            will be drawn from the point to a domain boundary. If the number 
+            of immersed boundary intersections is odd, the point will be 
+            considered interior and masked. This check will not be run at all 
+            if testdir is None. Otherwise, specify a direction with one of the 
+            following: 'x0','x1','y0','y1','z0','z1' (the last two for 
+            3D problems only) denoting the dimension (x,y, or z) and the 
+            direction (0 for negative, 1 for positive).
 
-        NOTE: This algorithm is meant as a huristic only! It is not guaranteed 
-        to mask all interior grid points, and will mask non-interior points if 
-        there is not a clear line from the point to one of the boundaries of the 
-        domain. If this method fails for your geometry and better accuracy is 
-        needed, use this method as a starting point and mask/unmask as necessary.
+        Notes
+        -----
+        This algorithm is meant as a huristic only! It is not guaranteed to mask 
+        all interior grid points, and will mask non-interior points if there is 
+        not a clear line from the point to one of the boundaries of the domain. 
+        If this method fails for your geometry and better accuracy is needed, 
+        use this method as a starting point and mask/unmask as necessary.
         '''
 
         # Form initial grid
@@ -574,18 +587,32 @@ class swarm:
 
 
     def save_data(self, path, name, pos_fmt='%.18e'):
-        '''Save the full position history (with mask and time stamps), current
-        velocity and acceleration to csv files. Save shared_props to a npz file 
-        (since it is likely to contain some mixture of scalars and arrays, but
-        does not vary between the agents so is less likely to be loaded outside
-        of Python) and save props to json (since it is likely to contain a 
-        variety of types of data, may need to be loaded outside of Python, 
-        and json will be human readable).
+        '''Save the full position history (with mask and time stamps) along with 
+        current velocity and acceleration to csv files. Save shared_props to a 
+        npz file and save props to json.
 
-        Arguments:
-            path: string, directory for storing data
-            name: string, prefix name for data files
-            pos_fmt: format for storing position, vel, and accel data
+        The output format for the position csv is the same as for the 
+        save_pos_to_csv method.
+        
+        shared_props is saved as an npz file since it is likely to contain some 
+        mixture of scalars and arrays, but does not vary between the agents so 
+        is less likely to be loaded outside of Python. props is saved to json 
+        since it is likely to contain a variety of types of data, may need to be 
+        loaded outside of Python, and json will be human readable.
+
+        Parameters
+        ----------
+        path : str
+            directory for storing data
+        name : str 
+            prefix name for data files
+        pos_fmt : str format
+            format and precision for storing position, vel, and accel data
+
+        See Also
+        --------
+        save_pos_to_csv
+        save_pos_to_vtk
         '''
 
         path = Path(path)
@@ -604,24 +631,38 @@ class swarm:
     def save_pos_to_csv(self, filename, fmt='%.18e', sv_vel=False, sv_accel=False):
         '''Save the full position history including present time, with mask and 
         time stamps, to a csv.
-        The format is as follows:
-        The first row contains cycle and time information. The cycle is given, 
-            and then each time stamp is repeated D times, where D is the spatial 
-            dimension of the system.
-        Each subsequent row corresponds to a different agent in the swarm.
-        Reading across the columns of an agent row: first, a boolean is given
-            showing the state of the mask for that time step. Agents are masked
-            when they have exited the domain. Then, the position vector is given
-            as a group of D columns for the x, y, (and z) direction. Each set
-            of 1+D columns then corresponds to a different cycle/time, as 
-            labeled by the values in the first row.
-        The result is a csv that is N+1 by (1+D)*T, where N is the number of 
-            agents, D is the dimension of the system, and T is the number of 
-            times recorded.
 
-        Arguments:
-            filename: (string) path/name of the file to save the data to
-            fmt: fmt argument to be passed to numpy.savetxt for position data
+        The output format for the position csv will be as follows:
+
+        - The first row contains cycle and time information. The cycle is given, 
+        and then each time stamp is repeated D times, where D is the spatial 
+        dimension of the system.
+
+        - Each subsequent row corresponds to a different agent in the swarm.
+
+        - Reading across the columns of an agent row: first, a boolean is given
+        showing the state of the mask for that time step. Agents are masked
+        when they have exited the domain. Then, the position vector is given
+        as a group of D columns for the x, y, (and z) direction. Each set
+        of 1+D columns then corresponds to a different cycle/time, as 
+        labeled by the values in the first row.
+
+        The result is a csv that is N+1 by (1+D)*T, where N is the number of 
+        agents, D is the dimension of the system, and T is the number of 
+        times recorded.
+
+        Parameters
+        ----------
+        filename : str 
+            path/name of the file to save the data to
+        fmt : str format
+            fmt argument to be passed to numpy.savetxt for format and precision 
+            of numerical data
+
+        See Also
+        --------
+        save_data
+        save_pos_to_vtk
         '''
         if filename[-4:] != '.csv':
             filename = filename + '.csv'
@@ -652,13 +693,23 @@ class swarm:
     def save_pos_to_vtk(self, path, name, all=True):
         '''Save position data to vtk as point data (PolyData).
         A different file will be created for each time step in the history, or
-        just one file if all is False.
+        just one file of the current positions will be created if the all 
+        argument is False.
 
-        Arguments:
-            path: string, location to save the data
-            name: string, name of dataset
-            all: bool. if True, save the entire history including the current
-                time. If false, save only the current time.
+        Parameters
+        ----------
+        path : str 
+            location to save the data
+        name : str 
+            name of dataset
+        all : bool 
+            if True, save the entire history including the current time. 
+            If false, save only the current time.
+
+        See Also
+        --------
+        save_data
+        save_pos_to_csv
         '''
         if len(self.envir.L) == 2:
             DIM2 = True
@@ -733,27 +784,66 @@ class swarm:
 
 
 
-    def calc_re(self, u):
-        '''Calculate Reynolds number as experienced by the swarm based on 
-        environment variables and given flow speed, u, and diam (in shared_props)'''
+    def calc_re(self, u, diam=None):
+        '''Calculate and return the Reynolds number as experienced by a swarm 
+        with characteristic length 'diam' in a fluid moving with velocity u. All 
+        other parameters will be pulled from the environment's attributes. 
+        
+        If diam is not specified, this method will look for it in the 
+        shared_props dictionary of this swarm.
+        
+        Parameters
+        ----------
+        u : float
+            characteristic fluid speed, m/s
+        diam : float, optional
+            characteristic length scale of a single agent, m
 
+        Returns
+        -------
+        float
+            Reynolds number
+        '''
+
+        if diam is None:
+            diam = self.shared_props['diam']
+        else:
+            diam = diam
         if self.envir.rho is not None and self.envir.mu is not None and\
             'diam' in self.shared_props:
-            return self.envir.rho*u*self.shared_props['diam']/self.envir.mu
+            return self.envir.rho*u*diam/self.envir.mu
         else:
-            raise RuntimeError("Parameters necessary for Re calculation are undefined.")
+            raise RuntimeError("Parameters necessary for Re calculation in environment are undefined.")
 
 
 
     def move(self, dt=1.0, params=None, update_time=True):
-        '''Move all organisms in the swarm over an amount of time dt.
-        Do not override this method when subclassing - override get_positions
-        instead!
+        '''Move all organisms in the swarm over one time step of length dt.
+        DO NOT override this method when subclassing; override get_positions
+        instead!!!
 
-        Arguments:
-            dt: time-step for move
-            params: parameters to pass along to get_positions, if necessary
-            update_time: whether or not to update the environment's time by dt
+        Performs a lot of utility tasks such as updating the positions and 
+        pos_history attributes, checking boundary conditions, and recalculating 
+        the current velocities and accelerations attributes.
+
+        Parameters
+        ----------
+            dt : float
+                length of time step to move all agents
+            params : any, optional
+                parameters to pass along to get_positions, if necessary
+            update_time : bool, default=True
+                whether or not to update the environment's time by dt. Probably 
+                The only reason to change this to False is if there are multiple 
+                swarm objects in the same environment - then you want to update 
+                each before incrementing the time in the environment.
+
+        See Also
+        --------
+        get_positions : 
+            method that returns (but does not assign) the new positions of the 
+            swarm after the time step dt, which Planktos users override in order 
+            to specify their own, custom agent behavior.
         '''
 
         # Put current position in the history
@@ -793,28 +883,72 @@ class swarm:
 
 
     def get_positions(self, dt, params=None):
-        '''Returns all agent positions after a time step of dt.
+        '''Returns the new agent positions after a time step of dt.
 
-        THIS IS THE METHOD TO OVERRIDE IF YOU WANT DIFFERENT MOVEMENT!
-        NOTE: Do not change the call signature.
+        THIS IS THE METHOD TO OVERRIDE IF YOU WANT DIFFERENT MOVEMENT! Do not 
+        change the call signature.
 
-        This method must return the new positions of all agents following a time 
-        step of length dt, whether due to behavior, drift, or anything else. 
+        This method returns the new positions of all agents following a time 
+        step of length dt, whether due to behavior, drift, or anything else. It 
+        should not set the self.positions attribute. Similarly, self.velocities 
+        and self.accelerations will automatically be updated outside of this 
+        method using finite differences. The only attributes it should change is 
+        if there are any user-defined, time-varying agent properties that should 
+        be different after the time step (whether shared among all agents, and 
+        thus in self.shared_props, or individual to each agent, and thus in 
+        self.props). These can be altered directly or by using the add_prop 
+        method of this class.
 
         In this default implementation, movement is a random walk with drift
         as given by an Euler step solver of the appropriate SDE for this process.
-        Drift is the local fluid velocity plus self.get_prop('mu'), and the
-        stochasticity is determined by the covariance matrix self.get_prop('cov').
+        Drift is the local fluid velocity plus self.get_prop('mu') ('mu' is a 
+        shared_prop attribute), and the stochasticity is determined by the 
+        covariance matrix self.get_prop('cov') ('cov' is also a shared_prop 
+        attribute).
 
-        NOTE: self.velocities and self.accelerations will automatically be updated
-        outside of this method using finite differences.
+        Parameters
+        ----------
+        dt : float
+            length of time step
+        params : any, optional
+            any other parameters necessary
 
-        Arguments:
-            dt: length of time step
-            params: any other parameters necessary (optional)
+        Returns
+        -------
+        ndarray :
+            NxD array of new agent positions after a time step of dt given that 
+            the agents started at self.positions. N is the number of agents and 
+            D is the spatial dimension of the system.
 
-        Returns:
-            new agent positions
+        Notes
+        -----
+        When writing code for this method, it can be helpful to make use of the 
+        ode generators and solvers in the planktos.motion module. Please see the 
+        documentation for the functions of this module for options. To access the 
+        current positions of each agent, use self.positions which is a masked, 
+        NxD array of agent positions where the mask refers to whether or not the 
+        agent has exited the domain. self.velocities and self.accelerations will 
+        provide initial velocities and accelerations for the time step for each 
+        agent respectively. The get_fluid_drift method will return the fluid 
+        velocity at each agent location. The get_dudt method will return the 
+        time derivative of the fluid velocity at the location of each agent. The 
+        get_fluid_gradient method will return the gradient of the magnitude of 
+        the fluid velocity at the location of each agent.
+
+        See Also
+        --------
+        get_prop : 
+            given an agent/swarm property name, return the value(s). When 
+            accessing a property in swarm.props, this can be preferred over 
+            accessing the property directly through the because instead of 
+            returning a pandas Series object (for a column in the DataFrame), it 
+            automatically converts to a numpy array first.
+        add_prop : add a new agent/swarm property or overwrite an old one
+        get_fluid_drift : return the fluid velocity at each agent location
+        get_dudt : return time derivative of fluid velocity at each agent
+        get_fluid_gradient : 
+            return the gradient of the magnitude of the fluid velocity at each 
+            agent
         '''
 
         # default behavior for Euler_brownian_motion is dift due to mu property
@@ -829,8 +963,14 @@ class swarm:
         numpy array, ready for use in vectorized operations (left-most index
         specifies the agent).
         
-        Arguments:
-            prop_name: name of the property to return
+        Parameters
+        ----------
+        prop_name : str
+            name of the property to return
+
+        Returns
+        -------
+        property : float or ndarray
         '''
 
         if prop_name in self.props:
@@ -847,7 +987,20 @@ class swarm:
 
     def add_prop(self, prop_name, value, shared=False):
         '''Method that will automatically delete any conflicting properties
-        when adding a new one.'''
+        when adding a new one.
+        
+        Parameters
+        ----------
+        prop_name : str
+            name of the property to add
+        value : any
+            value to set the property at
+        shared : bool
+            if False, set as a property that applies to all agents in the swarm. 
+            if True, value should be an ndarray with a number of rows equal to 
+            the number of agents in the swarm, and the property will be set as 
+            a column in the swarm.props DataFrame.
+        '''
         if shared:
             self.shared_props[prop_name] = value
             if prop_name in self.props:
@@ -868,6 +1021,19 @@ class swarm:
         
         In the returned 2D ndarray, each row corresponds to an agent (in the
         same order as listed in self.positions) and each column is a dimension.
+
+        Parameters
+        ----------
+        time : float, optional
+            time at which to return the fluid drift. defaults to the current 
+            environment time
+        positions : ndarray, optional
+            positions at which to return the fluid drift. defaults to the 
+            locations of the swarm agents, self.positions
+
+        Returns
+        -------
+        ndarray with shape NxD
         '''
 
         # 3D?
@@ -899,6 +1065,19 @@ class swarm:
         
         In the returned 2D ndarray, each row corresponds to an agent (in the
         same order as listed in self.positions) and each column is a dimension.
+
+        Parameters
+        ----------
+        time : float, optional
+            time at which to return the data. defaults to the current 
+            environment time
+        positions : ndarray, optional
+            positions at which to return the data. defaults to the locations of 
+            the swarm agents, self.positions
+
+        Returns
+        -------
+        ndarray with shape NxD
         '''
 
         if positions is None:
@@ -912,9 +1091,21 @@ class swarm:
     def get_fluid_gradient(self, positions=None):
         '''Return the gradient of the magnitude of the fluid velocity at all
         agent positions (or at provided positions) via linear interpolation of 
-        the gradient. 
+        the gradient.
+
         The gradient is linearly interpolated from the fluid grid to the
-        agent locations.
+        agent locations. The current environment time is always used, 
+        interpolated from data if necessary
+
+        Parameters
+        ----------
+        positions : ndarray, optional
+            positions at which to return the data. defaults to the locations of 
+            the swarm agents, self.positions
+
+        Returns
+        -------
+        ndarray with shape NxD
         '''
 
         if positions is None:
