@@ -517,7 +517,12 @@ def write_vtk_uniform_grid_vectors(path, title, data, L, cycle=None, time=None):
     fdata = [data[ii].flatten(order='F') for ii in range(len(data))]
     if len(fdata) == 2:
         fdata += [np.zeros(fdata[0].size)]
-    grid["vectors"] = np.array(fdata).T
+    # something weird is going on with pyvista's support of vector data. So we 
+    #   will be going a bit lower-level here.
+    fdata_vtk = numpy_support.numpy_to_vtk(np.array(fdata).T)
+    fdata_vtk.SetName(title)
+    grid_pt_data = grid.GetPointData()
+    grid_pt_data.SetVectors(fdata_vtk)
     if cycle is not None:
         grid.field_arrays['CYCLE'] = cycle
     if time is not None:

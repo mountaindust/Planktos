@@ -2336,7 +2336,7 @@ class environment:
             cycle = None
         if flow_times:
             if time_history:
-                out_name = 'u'
+                out_name = 'U'
             else:
                 out_name = name
             for cyc, time in enumerate(self.flow_times):
