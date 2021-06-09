@@ -10,7 +10,7 @@ Email: cstric12@utk.edu
 '''
 
 import numpy as np
-from ..planktos import dataio
+from planktos import dataio
 
 def add_cylinders_toplot(envir, filename):
     '''Load unstructred grid points (vtk data) for a cylinder and add it to

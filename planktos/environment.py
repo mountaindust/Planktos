@@ -365,7 +365,7 @@ class environment:
 
 
     def set_brinkman_flow(self, alpha, h_p, U, dpdx, res=101, tspan=None):
-        '''Get a fully developed Brinkman flow with a porous region.
+        r'''Get a fully developed Brinkman flow with a porous region.
 
         This method sets the environment fluid velocity as a 1D Brinkman flow 
         based on a porous layer of hight h_p in the bottom of the domain.
@@ -2227,7 +2227,7 @@ class environment:
         '''Calculuate the vorticity of the fluid velocity field at a given time.
 
         Arguments:
-            t_indx: integer ime index into self.envir.time_history[t_indx]
+            t_indx: integer time index into self.envir.time_history[t_indx]
             time: time, float
             t_n: integer time index into self.flow_times[t_n]
 
@@ -2312,7 +2312,7 @@ class environment:
 
         if time_history:
             for cyc, time in enumerate(self.time_history):
-                vort = self.get_2D_vorticity(t_n=cyc)
+                vort = self.get_2D_vorticity(t_indx=cyc)
                 dataio.write_vtk_2D_uniform_grid_scalars(path, name, vort, self.L, cyc, time)
             cycle = len(self.time_history)
         else:
@@ -2323,11 +2323,51 @@ class environment:
             else:
                 out_name = name
             for cyc, time in enumerate(self.flow_times):
-                vort = self.get_2D_vorticity(t_indx=cyc)
+                vort = self.get_2D_vorticity(t_n=cyc)
                 dataio.write_vtk_2D_uniform_grid_scalars(path, out_name, vort, self.L, cyc, time)
         if time_history or not flow_times:
-            vort = self.get_2D_vorticity(self.time)
+            vort = self.get_2D_vorticity(time=self.time)
             dataio.write_vtk_2D_uniform_grid_scalars(path, name, vort, self.L, cycle, self.time)
+
+
+
+    def save_fluid(self, path, name, time_history=True, flow_times=False):
+        '''Save the fluid velocity field as one or more vtk files (one for each 
+        time point).
+
+        Parameters
+        ----------
+        path : str
+            directory in which to store the files. if it does not exist, it will 
+            be created
+        name : str
+            prefix to put on filenames
+        time_history : bool
+            if True, save for each time step in the simulation history, 
+            interpolating as needed. Only for time-varying fluid.
+        flow_times : bool
+            if True, save at each time for which the fluid velocity data is 
+            explicitly specified.
+        '''
+
+        if time_history:
+            for cyc, time in enumerate(self.time_history):
+                flow = self.interpolate_temporal_flow(t_indx=cyc)
+                dataio.write_vtk_uniform_grid_vectors(path, name, flow, self.L, cyc, time)
+            cycle = len(self.time_history)
+        else:
+            cycle = None
+        if flow_times:
+            if time_history:
+                out_name = 'u'
+            else:
+                out_name = name
+            for cyc, time in enumerate(self.flow_times):
+                flow = self.interpolate_temporal_flow(time=time)
+                dataio.write_vtk_uniform_grid_vectors(path, out_name, flow, self.L, cyc, time)
+        if time_history or not flow_times:
+            flow = self.interpolate_temporal_flow(time=self.time)
+            dataio.write_vtk_uniform_grid_vectors(path, name, flow, self.L, cycle, self.time)
 
 
 
