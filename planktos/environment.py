@@ -290,21 +290,21 @@ class environment:
         if rho == 0 or mu == 0 or nu == 0:
             raise RuntimeError("Viscosity and density of fluid cannot be zero.")
         if rho is not None and mu is not None:
-            self.rho = rho
-            self.mu = mu
-            self.nu = mu/rho
+            self._rho = rho
+            self._mu = mu
+            self._nu = mu/rho
         elif rho is not None and nu is not None:
-            self.rho = rho
-            self.mu = nu*rho
-            self.nu = nu
+            self._rho = rho
+            self._mu = nu*rho
+            self._nu = nu
         elif mu is not None and nu is not None:
-            self.rho = mu/nu
-            self.mu = mu
-            self.nu = nu
+            self._rho = mu/nu
+            self._mu = mu
+            self._nu = nu
         else:
-            self.rho = rho
-            self.mu = mu
-            self.nu = nu
+            self._rho = rho
+            self._mu = mu
+            self._nu = nu
 
         # characteristic length
         self.char_L = char_L
@@ -361,6 +361,57 @@ class environment:
             for ii in range(len(LLC)):
                 self.ibmesh[:,:,ii] -= LLC[ii]
         self._fluid_domain_LLC = LLC
+
+
+
+    @property
+    def mu(self):
+        return self._mu
+
+    @mu.setter
+    def mu(self, m):
+        self._mu = m
+        if self.rho is not None and self.nu is None:
+            self._nu = self.mu/self.rho
+        elif self.rho is None and self.nu is not None:
+            self._rho = self.mu/self.nu
+        elif self.rho is not None and self.nu is not None:
+            warnings.warn("Both nu and rho are already set. "+
+                "Skipping auto-update, please verify all values for consistency!")
+
+        
+
+    @property
+    def nu(self):
+        return self._nu
+
+    @nu.setter
+    def nu(self, n):
+        self._nu = n
+        if self.rho is not None and self.mu is None:
+            self._mu = self.nu/self.rho
+        elif self.rho is None and self.mu is not None:
+            self._rho = self.mu/self.nu
+        elif self.rho is not None and self.mu is not None:
+            warnings.warn("Both mu and rho are already set. "+
+                "Skipping auto-update, please verify all values for consistency!")
+
+
+
+    @property
+    def rho(self):
+        return self._rho
+
+    @rho.setter
+    def rho(self, r):
+        self._rho = r
+        if self.mu is not None and self.nu is None:
+            self._nu = self.mu/self.rho
+        elif self.mu is None and self.nu is not None:
+            self._mu = self.nu/self.rho
+        elif self.mu is not None and self.nu is not None:
+            warnings.warn("Both mu and nu are already set. "+
+                "Skipping auto-update, please verify all values for consistency!")
 
 
 

@@ -9,6 +9,8 @@ Author: Christopher Strickland
 Email: cstric12@utk.edu
 '''
 
+import sys
+sys.path.append('..')
 import numpy as np
 from planktos import dataio
 
