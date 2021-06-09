@@ -4,7 +4,7 @@
 import sys
 sys.path.append('..')
 import planktos
-from . import plt_cyl
+import plt_cyl
 
 
 envir = planktos.environment()
