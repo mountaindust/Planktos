@@ -1,6 +1,0 @@
-Data comes from one of the Examples in ib2d with all parameters as default:
-Example_Channel_Flow -> Example_Flow_Around_Cylinder
-
-To run the Planktos example using this data, you need:
-- channel.vertex
-- the u-vector data at all timepoints (files u.00##.vtk)
