@@ -18,7 +18,8 @@ envir = planktos.environment()
 # Now, load the VTK data. This is just an excerpt from the larger data set, and
 #   only file dumps 3-5 are included. So we will start at 3 and go until there
 #   are none left. This is just a bit of data which originally came from IBAMR 
-#   that we use for testing purposes, thus it's location in the tests folder.
+#   that we use for testing purposes, thus it's location in the tests folder. 
+#   All other information is pulled from the VTK headers!
 envir.read_IBAMR3d_vtk_dataset('../tests/IBAMR_test_data', start=3, finish=None)
 
 # Now we read in the vertex data. Unlike the ib2d_ibmesh example, here we will
@@ -53,4 +54,10 @@ print('Moving swarm...')
 for ii in range(40):
     swrm.move(0.1)
 
-swrm.plot_all()
+# In previous examples, our swarm plots always came with plotted estimates for 
+#   the probability distribution of agents in each cardinal direction. This is 
+#   done via something called Gaussian kernel density estimation (KDE), in which 
+#   we center a Gaussian around each agent and then add them all up to get the 
+#   curves you see. However, we can also view histograms in Planktos. Just for 
+#   fun, let's do that for a change.
+swrm.plot_all(dist='hist')
