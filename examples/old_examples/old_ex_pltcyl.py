@@ -1,25 +1,23 @@
 #! /usr/bin/env python3
-
 '''
-Module for plotting cylinders from IBAMR data
-
-Created on Tues Apr 12 2019
-
-Author: Christopher Strickland
-Email: cstric12@utk.edu
+This is a rather complicated example which shows how we can add objects to 
+the swarm plots which aren't really there, at least in the sense that agents 
+don't interact with them as they do loaded vertex meshes. It's mostly here for
+record-keeping purposes and you should skip it unless this is something you
+very specifically want to do for some reason.
 '''
 
 import sys
 sys.path.append('..')
 import numpy as np
-from planktos import dataio
+import planktos
 
 def add_cylinders_toplot(envir, filename):
     '''Load unstructred grid points (vtk data) for a cylinder and add it to
     the envir object to be plotted as a surface. If the environment has been
     tiled, automatically tile the cylinder too.'''
 
-    points, bounds = dataio.read_vtk_Unstructured_Grid_Points(filename)
+    points, bounds = planktos.dataio.read_vtk_Unstructured_Grid_Points(filename)
     # shift to first quadrant
     for dim in range(3):
         bounds[dim*2:dim*2+2] -= envir.fluid_domain_LLC[dim]
@@ -56,3 +54,22 @@ def _plot_cylinders(ax3d, bounds):
     z = np.outer(np.ones(np.size(theta)), height)
 
     ax3d.plot_surface(x, y, z, color='g')
+
+envir = planktos.environment()
+envir.read_IBAMR3d_vtk_dataset('../tests/IBAMR_test_data', start=5, finish=None)
+# tile flow in a 3,3 grid
+envir.tile_flow(3,3)
+
+# plot cylinder in each tile
+add_cylinders_toplot(envir, '../tests/IBAMR_test_data/mesh_db.vtk')
+
+envir.add_swarm()
+s = envir.swarms[0]
+# amount of jitter (variance)
+s.shared_props['cov'] *= 0.0001
+
+print('Moving swarm...')
+for ii in range(50):
+    s.move(0.1)
+
+s.plot_all()
