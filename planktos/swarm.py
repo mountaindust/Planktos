@@ -1115,7 +1115,8 @@ class swarm:
         TIME_DEP = len(self.envir.flow[0].shape) != len(self.envir.L)
         flow_grad = None
 
-        # If available, use the already calculuated gradient
+        # If available, use the already calculuated gradient (if it's at the
+        #   correct time)
         if self.envir.grad is not None:
             if not TIME_DEP:
                 flow_grad = self.envir.grad
@@ -1125,6 +1126,7 @@ class swarm:
         # Otherwise, calculate the gradient
         if flow_grad is None:
             self.envir.calculate_mag_gradient()
+            flow_grad = self.envir.grad
 
         # Interpolate the gradient at agent positions and return
         x_grad = interpolate.interpn(self.envir.flow_points, flow_grad[0],
