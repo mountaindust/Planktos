@@ -19,17 +19,17 @@ from planktos import motion
 
 envir = planktos.environment(char_L=0.1, rho=1, mu=0.001, U=15)
 
-envir.read_IB2d_vtk_data('data/channel_cyl', 5.0e-5, 1000)
+envir.read_IB2d_vtk_data('ib2d_data', 5.0e-5, 1000)
 # Another option is to try a static flow field, for example by just using 
 #   cycle number 20 (in which vortices have formed). Just uncomment one or the
 #   other depending on what you want to calculate over!
-# envir.read_IB2d_vtk_data('data/channel_cyl', 5.0e-5, 1000, d_start=20, d_finish=20)
+# envir.read_IB2d_vtk_data('ib2d_data', 5.0e-5, 1000, d_start=20, d_finish=20)
 
 # Recall that there are vertex data associated the fluid velocity data. We can
 #   optionally load these here. Note that things will be a lot slower, and in 
 #   our tests of this particular example, it doesn't make much difference whether 
 #   the agents know about the mesh structures or not:
-# envir.read_IB2d_vertex_data('data/channel_cyl/channel.vertex')
+# envir.read_IB2d_vertex_data('ib2d_data/channel.vertex')
 
 # If you want a gut-check of what you have at this point, you can always plot it:
 # envir.plot_flow()
@@ -71,7 +71,7 @@ envir.plot_2D_FTLE()
 envir = planktos.environment(char_L=0.1, rho=1, mu=0.001, U=15)
 # NOTE: we'll use just the cycle 20 data here. It produces something of a more
 #   exciting result!
-envir.read_IB2d_vtk_data('data/channel_cyl', 5.0e-5, 1000, d_start=20, d_finish=20)
+envir.read_IB2d_vtk_data('ib2d_data', 5.0e-5, 1000, d_start=20, d_finish=20)
 
 ##############     Use a Passed in ODE Generator    ##############
 # Note: intertial particles requires certain parameters to be present in the 
@@ -91,10 +91,11 @@ envir.plot_2D_FTLE()
 #   in swarm object subclass. All this example does is reproduce the tracer
 #   particle result using a swarm and Euler steps (we can't solve arbitrary 
 #   sub-class motion using anything except Euler steps), but even so, being able 
-#   to do so is impressive!
+#   to do so is impressive! Note that the passed-in swarm is not used or changed
+#   itself in any way - a copy is made, and then that is operated on.
 
 envir = planktos.environment(char_L=0.1, rho=1, mu=0.001, U=15)
-envir.read_IB2d_vtk_data('data/channel_cyl', 5.0e-5, 1000, d_start=20, d_finish=20)
+envir.read_IB2d_vtk_data('ib2d_data', 5.0e-5, 1000, d_start=20, d_finish=20)
 
 ##############     FTLE with passed in swarm     ##############
 class ftle_swrm(planktos.swarm):
