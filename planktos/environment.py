@@ -1601,7 +1601,7 @@ class environment:
 
 
 
-    def add_swarm(self, swarm_s=100, init='random', seed=None, **kwargs):
+    def add_swarm(self, swarm_size=100, **kwargs):
         ''' Adds a swarm into this environment.
 
         Arguments:
@@ -1616,10 +1616,10 @@ class environment:
                 (see swarm class for details)
         '''
 
-        if isinstance(swarm_s, planktos.swarm):
-            swarm_s._change_envir(self)
+        if isinstance(swarm_size, planktos.swarm):
+            swarm_size._change_envir(self)
         else:
-            return planktos.swarm(swarm_s, self, init=init, seed=seed, **kwargs)
+            return planktos.swarm(swarm_size, self, **kwargs)
             
 
 
