@@ -159,6 +159,7 @@ Class: environment
     - `dudt` Returns a temporally interpolated time-derivative of the flow field
     - `get_mean_fluid_speed` Return the mean fluid speed at the current time, interpolating if necessary
     - `reset` Resets environment to time=0. Swarm history will be lost, and all swarms will maintain their last position. This is typically called automatically if the fluid flow has been altered by another method. If rm_swarms=True, remove all swarms.
+    - `save_fluid` Save the fluid velocity field as one or more vtk files (one for each time point).
     - `get_2D_vorticity` Calculate and return the vorticity of a 2D flow field, 
     potentially interpolated in time.
     - `save_2D_vorticity` Calculate and save (as VTK) the vorticity of a flow field 

@@ -1115,7 +1115,8 @@ class swarm:
         TIME_DEP = len(self.envir.flow[0].shape) != len(self.envir.L)
         flow_grad = None
 
-        # If available, use the already calculuated gradient
+        # If available, use the already calculuated gradient (if it's at the
+        #   correct time)
         if self.envir.grad is not None:
             if not TIME_DEP:
                 flow_grad = self.envir.grad
@@ -1125,6 +1126,7 @@ class swarm:
         # Otherwise, calculate the gradient
         if flow_grad is None:
             self.envir.calculate_mag_gradient()
+            flow_grad = self.envir.grad
 
         # Interpolate the gradient at agent positions and return
         x_grad = interpolate.interpn(self.envir.flow_points, flow_grad[0],
@@ -1899,7 +1901,7 @@ class swarm:
 
 
 
-    def plot(self, t=None, blocking=True, dist='density', fluid='vort', clip=None, figsize=None):
+    def plot(self, t=None, blocking=True, dist='density', fluid=None, clip=None, figsize=None):
         '''Plot the position of the swarm at time t, or at the current time
         if no time is supplied. The actual time plotted will depend on the
         history of movement steps; the closest entry in
@@ -2003,7 +2005,10 @@ class swarm:
                 # get worse case max velocity vector for scaling
                 max_u = self.envir.flow[0].max(); max_v = self.envir.flow[1].max()
                 max_mag = np.linalg.norm(np.array([max_u,max_v]))
-                flow = self.envir.interpolate_temporal_flow(t_indx=loc)
+                if len(self.envir.flow[0].shape) > 2:
+                    flow = self.envir.interpolate_temporal_flow(t_indx=loc)
+                else:
+                    flow = self.envir.flow
                 ax.quiver(self.envir.flow_points[0][::M], self.envir.flow_points[1][::N],
                           flow[0][::M,::N].T, flow[1][::M,::N].T, 
                           scale=max_mag*5, alpha=0.2)
