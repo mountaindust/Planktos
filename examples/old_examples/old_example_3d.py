@@ -2,7 +2,7 @@
 
 import numpy as np
 import sys
-sys.path.append('..')
+sys.path.append('../..')
 import planktos
 
 envir = planktos.environment(Lz=10, rho=1000, mu=1000)

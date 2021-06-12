@@ -8,7 +8,7 @@ very specifically want to do for some reason.
 '''
 
 import sys
-sys.path.append('..')
+sys.path.append('../..')
 import numpy as np
 import planktos
 
