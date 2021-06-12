@@ -91,8 +91,9 @@ envir.plot_2D_FTLE()
 #   in swarm object subclass. All this example does is reproduce the tracer
 #   particle result using a swarm and Euler steps (we can't solve arbitrary 
 #   sub-class motion using anything except Euler steps), but even so, being able 
-#   to do so is impressive! Note that the passed-in swarm is not used or changed
-#   itself in any way - a copy is made, and then that is operated on.
+#   to do so gives us a lot of freedom for analysis! Note that the passed-in 
+#   swarm is not used or changed itself in any way - a copy is made, and then 
+#   that is operated on.
 
 envir = planktos.environment(char_L=0.1, rho=1, mu=0.001, U=15)
 envir.read_IB2d_vtk_data('ib2d_data', 5.0e-5, 1000, d_start=20, d_finish=20)
