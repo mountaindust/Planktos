@@ -1034,7 +1034,8 @@ class swarm:
 
         Returns
         -------
-        ndarray with shape NxD
+        ndarray with shape NxD, where N is the number of agents and D the 
+            spatial dimension
         '''
 
         # 3D?
@@ -1078,7 +1079,8 @@ class swarm:
 
         Returns
         -------
-        ndarray with shape NxD
+        ndarray with shape NxD, where N is the number of agents and D the 
+            spatial dimension
         '''
 
         if positions is None:
@@ -1106,7 +1108,8 @@ class swarm:
 
         Returns
         -------
-        ndarray with shape NxD
+        ndarray with shape NxD, where N is the number of agents and D the 
+            spatial dimension
         '''
 
         if positions is None:
@@ -1145,8 +1148,29 @@ class swarm:
     def apply_boundary_conditions(self, no_ib=False):
         '''Apply boundary conditions to self.positions.
         
-        For no flux, projections are really simple in this case (box), so we 
-        just do them directly/manually.'''
+        There should be no reason to call this method directly; it is 
+        automatically called by self.move after updating agent positions 
+        according to the algorithm found in self.get_positions.
+
+        This method compares current agent positions (self.positions) to the
+        previous agent positions (last entry in self.pos_history) in order to
+        first: determine if the agent collided with any immersed structures and
+        if so, to update self.positions using an inelastic collision algorithm 
+        based on vector projection and second: assess whether or not any agents 
+        exited the domain and if so, update their positions based on the 
+        boundary conditions as specified in the enviornment class (self.envir).
+
+        For no flux boundary conditions, inelastic projections are really simple 
+        (since the domain is just a box), so we just do them directly/manually
+        instead of folding them into the far more complex, recursive algorithm 
+        used for internal mesh structures.
+        
+        Parameters
+        ----------
+        no_ib : bool
+            If true, turn off all interaction with immersed boundaries.
+        
+        '''
 
         # internal mesh boundaries go first
         if self.envir.ibmesh is not None and not no_ib:
@@ -1217,23 +1241,33 @@ class swarm:
         startpt and endpt, returning a new endpt (or the original one) as
         appropriate.
 
-        Arguments:
-            startpt: start location for agent trajectory (len 2 or 3 ndarray)
-            endpt: end location for agent trajectory (len 2 or 3 ndarray)
-            mesh: Nx2x2 or Nx3x3 array of eligible mesh elements
-            max_meshpt_dist: max distance between two points on a mesh element
-                (used to determine how far away from startpt to search for
-                mesh elements)
-            old_intersection: for internal use only, to check if we are
-                bouncing back and forth between two boundaries as a result of
-                a concave angle and the right kind of trajectory vector.
-            kill: set to True in 3D case if we have previously slid along the
-                boundary line between two mesh elements. This prevents such
-                a thing from happening more than once, in case of pathological
-                cases.
+        Parameters
+        ----------
+        startpt : length 2 or 3 array
+            start location for agent trajectory
+        endpt : length 2 or 3 array
+            end location for agent trajectory
+        mesh : Nx2x2 or Nx3x3 array 
+            eligible mesh elements to check for intersection
+        max_meshpt_dist : float
+            max distance between two points on a mesh element
+            (used to determine how far away from startpt to search for
+            mesh elements)
+        old_intersection : length 2 or 3 array
+            (for internal use only) records the last intersection in the 
+            recursion to check if we are bouncing back and forth between two 
+            boundaries as a result of a concave angle and the right kind of 
+            trajectory vector.
+        kill : bool
+            (for internal use only) set to True in 3D case if we have previously 
+            slid along the boundary line between two mesh elements. This 
+            prevents such a thing from happening more than once, in case of 
+            pathological cases.
 
-        Returns:
-            newendpt: new end location for agent trajectory
+        Returns
+        -------
+        newendpt : length 2 or 3 array
+            new end location for agent trajectory
         '''
 
         if len(startpt) == 2:
@@ -1281,29 +1315,47 @@ class swarm:
     @staticmethod
     def _project_and_slide(startpt, endpt, intersection, mesh, max_meshpt_dist,
                            DIM, old_intersection=None, kill=False):
-        '''Once we have an intersection, project and slide the remaining movement,
-        and determine what happens if we fall off the edge of the simplex in
-        all angle cases.
+        '''Once we have an intersection point with an immersed mesh, project and 
+        slide the agent along the mesh for its remaining movement, and determine 
+        what happens if we fall off the edge of the element in all angle cases 
+        (e.g. some kind of recursion of detecting further intersections and 
+        resulting in additional vector projection)
 
-        Arguments:
-            startpt: original start point of movement, before intersection
-            endpt: original end point of movement, after intersection
-            intersection: result of _seg_intersect_2D or _seg_intersect_3D_triangles
-            mesh: Nx2x2 or Nx3x3 array of eligible mesh elements
-            max_meshpt_dist: max distance between two points on a mesh element
-                (used to determine how far away from startpt to search for
-                mesh elements) - for passthrough to possible recursion
-            DIM: dimension of system, either 2 or 3
-            old_intersection: for internal use only, to check if we are
-                bouncing back and forth between two boundaries as a result of
-                a concave angle and the right kind of trajectory vector.
-            kill: set to True in 3D case if we have previously slid along the
-                boundary line between two mesh elements. This prevents such
-                a thing from happening more than once, in case of pathological
-                cases.
+        This, along with the intersection detection routines, is the real 
+        workhorse of immersed mesh interaction!
 
-        Returns:
-            newendpt: new endpoint for movement
+        Parameters
+        ----------
+        startpt : length 2 or 3 array
+            original start point of movement, before intersection
+        endpt : length 2 or 3 array
+            original end point of movement, w/o intersection
+        intersection : length 2 or 3 array
+            result of _seg_intersect_2D or _seg_intersect_3D_triangles. point of 
+            intersection with immersed mesh element
+        mesh : Nx2x2 or Nx3x3 array 
+            eligible (nearby) mesh elements for interaction
+        max_meshpt_dist : float
+            max distance between two points on a mesh element (used to determine 
+            how far away from startpt to search for mesh elements). Used here 
+            for passthrough to possible recursion
+        DIM : int
+            dimension of system, either 2 or 3
+        old_intersection : length 2 or 3 array
+            (for internal use only) records the last intersection in the 
+            recursion to check if we are bouncing back and forth between two 
+            boundaries as a result of a concave angle and the right kind of 
+            trajectory vector.
+        kill : bool
+            (for internal use only) set to True in 3D case if we have previously 
+            slid along the boundary line between two mesh elements. This 
+            prevents such a thing from happening more than once, in case of 
+            pathological cases.
+
+        Returns
+        -------
+        newendpt : length 2 or 3 array
+            new endpoint for movement after projection
         '''
 
         # small number to perturb off of the actual boundary in order to avoid
@@ -1601,38 +1653,53 @@ class swarm:
 
     @staticmethod
     def _seg_intersect_2D(P0, P1, Q0_list, Q1_list, get_all=False):
-        '''Find the intersection between two line segments, P and Q, returning
-        None if there isn't one or if they are parallel.
+        '''Find the intersection between two line segments (2D objects), P and Q, 
+        returning None if there isn't one or if they are parallel.
+
         If Q is a 2D array, loop over the rows of Q finding all intersections
         between P and each row of Q, but only return the closest intersection
         to P0 (if there is one, otherwise None)
 
-        This works for both 2D problems and problems in which P is a 3D segment
-        roughly on a plane. The plane is described by the first two vectors Q, so
-        in this case, Q0_list and Q1_list must have at least two rows. The 3D problem
-        is robust to cases where P is not exactly in the plane because the
-        algorithm is actually checking to see if its projection onto the
-        triangle crosses any of the lines in Q.
+        This works for both 2D problems and problems in which P is a 3D line 
+        segment roughly lying on a plane (e.g., in cases of projection along a 
+        3D triangular mesh element). The plane is described by the first two 
+        vectors Q, so in this case, Q0_list and Q1_list must have at least two 
+        rows. The 3D problem is robust to cases where P is not exactly in the 
+        plane because the algorithm is actually checking to see if its 
+        projection onto the triangle crosses any of the lines in Q. This is 
+        important to deal with roundoff error.
 
         This algorithm uses a parameteric equation approach for speed, based on
         http://geomalgorithms.com/a05-_intersect-1.html
         
-        Arguments:
-            P0: length 2 (or 3) array, first point in line segment P
-            P1: length 2 (or 3) array, second point in line segment P 
-            Q0_list: Nx2 (Nx3) ndarray of first points in a list of line segments.
-            Q1_list: Nx2 (Nx3) ndarray of second points in a list of line segments.
-            get_all: Return all intersections instead of just the first one.
+        Parameters
+        ----------
+        P0 : length 2 (or 3) array
+            first point in line segment P
+        P1 : length 2 (or 3) array
+            second point in line segment P 
+        Q0_list : Nx2 (Nx3) ndarray 
+            first points in a list of line segments.
+        Q1_list : Nx2 (Nx3) ndarray 
+            second points in a list of line segments.
+        get_all : bool
+            Return all intersections instead of just the first one encountered 
+            as one travels from P0 to P1.
 
-        Returns:
-            None if there is no intersection. Otherwise:
-            x: length 2 (or 3) array giving the coordinates of the point of first 
-               intersection
-            s_I: the fraction of the line segment traveled from P0 before
-                intersection occurred
-            vec: directional unit vector of boundary (Q) intersected
-            Q0: first endpoint of mesh segment intersected
-            Q1: second endpoint of mesh segment intersected
+        Returns
+        -------
+        None if there is no intersection. Otherwise:
+        x : length 2 (or 3) array 
+            the coordinates of the point of first intersection
+        s_I : float between 0 and 1
+            the fraction of the line segment traveled from P0 to P1 before
+            intersection occurred
+        vec : length 2 (or 3) array
+            directional unit vector along the boundary (Q) intersected
+        Q0 : length 2 (or 3) array
+            first endpoint of mesh segment intersected
+        Q1 : length 2 (or 3) array
+            second endpoint of mesh segment intersected
         '''
 
         u = P1 - P0
@@ -1723,28 +1790,44 @@ class swarm:
     @staticmethod
     def _seg_intersect_3D_triangles(P0, P1, Q0_list, Q1_list, Q2_list, get_all=False):
         '''Find the intersection between a line segment P0 to P1 and any of the
-        triangles given by Q0, Q1, Q2 where each row is a different triangle.
+        triangles given by Q0, Q1, Q2 where each row across the three arrays is 
+        a different triangle (three points).
         Returns None if there is no intersection.
 
         This algorithm uses a parameteric equation approach for speed, based on
         http://geomalgorithms.com/a05-_intersect-1.html
 
-        Arguments:
-            P0: length 3 array, first point in line segment P
-            P1: length 3 array, second point in line segment P 
-            Q0: Nx3 ndarray of first points in a list of triangles.
-            Q1: Nx3 ndarray of second points in a list of triangles.
-            Q2: Nx3 ndarray of third points in a list of triangles.
-            get_all: Return all intersections instead of just the first one.
+        Parameters
+        ----------
+        P0 : length 3 array
+            first point in line segment P
+        P1 : length 3 array
+            second point in line segment P 
+        Q0 : Nx3 ndarray 
+            first points in a list of triangles.
+        Q1 : Nx3 ndarray 
+            second points in a list of triangles.
+        Q2 : Nx3 ndarray 
+            third points in a list of triangles.
+        get_all : bool
+            Return all intersections instead of just the first one encountered 
+            as you travel from P0 to P1.
 
-        Returns:
-            x: length 3 array giving the coordinates of the first point of intersection
-            s_I: the fraction of the line segment traveled from P0 before
-                intersection occurred (only if intersection occurred)
-            normal: normal unit vector to plane of intersection
-            Q0: first vertex of triangle intersected
-            Q1: second vertex of triangle intersected
-            Q2: third vertex of triangle intersected
+        Returns
+        -------
+        x : length 3 array 
+            the coordinates of the first point of intersection
+        s_I : float between 0 and 1
+            the fraction of the line segment traveled from P0 before 
+            intersection occurred (only if intersection occurred)
+        normal : length 3 array
+            normal unit vector to plane of intersection
+        Q0 : length 3 array
+            first vertex of triangle intersected
+        Q1 : length 3 array
+            second vertex of triangle intersected
+        Q2 : length 3 array
+            third vertex of triangle intersected
         '''
 
         # First, determine the intersection between the line and the plane
@@ -1907,21 +1990,33 @@ class swarm:
         history of movement steps; the closest entry in
         environment.time_history will be shown without interpolation.
         
-        Arguments:
-            t: time to plot. if None, the current time.
-            blocking: whether the plot should block execution or not
-            dist: whether to plot Gaussian kernel density estimation or histogram.
-                Options are:
-                'density': plot Gaussian KDE using Scotts Factor from scipy.stats.gaussian_kde
-                'cov': use the variance in each direction from self.shared_props['cov']
-                float: a bandwidth factor to multiply the KDE variance by
-                'hist': plot histogram
-            fluid: fluid plot in background. 2D only!
-                Options are:
-                'vort': plot vorticity in the background
-                'quiver': quiver plot of fluid velocity in the background
-            clip: if plotting vorticity or FTLE, specifies the clip value for pseudocolor
-            figsize: figure size. default is a heurstic that works... most of the time?
+        Parameters
+        ----------
+        t : float, optional
+            time to plot. if None (default), the current time.
+        blocking : bool, default True
+            whether the plot should block execution or not
+        dist : {'density' (default), 'cov', float, 'hist'}
+            whether to plot Gaussian kernel density estimation or histogram.
+            Options are:
+            - 'density': plot Gaussian KDE using Scotts Factor from scipy.stats.gaussian_kde
+            - 'cov': use the variance in each direction from self.shared_props['cov']
+                to plot Gaussian KDE
+            - float: plot Gaussian KDE using the given bandwidth factor to 
+                multiply the KDE variance by
+            - 'hist': plot histogram
+        fluid : {'vort', 'quiver'}, optional
+            Plot info on the fluid in the background. 2D only! If None, don't
+            plot anything related to the fluid.
+            Options are:
+            - 'vort': plot vorticity in the background
+            - 'quiver': quiver plot of fluid velocity in the background
+        clip : float, optional
+            if plotting vorticity, specifies the clip value for pseudocolor.
+            this value is used for both negative and positive vorticity.
+        figsize : tuple of length 2, optional
+            figure size in inches, (width, height). default is a heurstic that 
+            works... most of the time?
         '''
 
         if t is not None and len(self.envir.time_history) != 0:
@@ -2180,36 +2275,52 @@ class swarm:
 
     def plot_all(self, movie_filename=None, frames=None, downsamp=None, fps=10, 
                  dist='density', fluid=None, clip=None, figsize=None):
-        ''' Plot the history of the swarm's movement, incl. current.
-        If movie_filename is specified, output a movie file instead.
+        ''' Plot the history of the swarm's movement, incl. current time in 
+        successively updating plots or saved as a movie file. A movie file is
+        created if movie_filename is specified.
         
-        Arguments:
-            movie_filename: file name to save movie as
-            frames: iterable of integers or None. If None, plot the entire
-                history of the swarm's movement including the present. If an
-                iterable, plot only the time steps of the swarm as indexed by
-                the iterable.
-            downsamp: iterable of integers, integer, or None. If None, do not
-                downsample the agents. If an integer, plot only the first n 
-                agents (equivalent to range(downsamp)). If an iterable, plot 
-                only the agents specified. In all cases, statistics are reported
-                for the TOTAL population, both shown and unshown. This includes
-                the histograms.
-            fps: frames per second, only used if saving a movie to file. Make
-                sure this is at least a big as 1/dt, where dt is the time interval
-                between frames!
-            dist: whether to plot Gaussian kernel density estimation or histogram.
-                Options are:
-                'density': plot Gaussian KDE using Scotts Factor from scipy.stats.gaussian_kde
-                'cov': use the variance in each direction from self.shared_props['cov']
-                float: a bandwidth factor to multiply the KDE variance by
-                'hist': plot histogram
-            fluid: fluid plot in background. 2D only!
-                Options are:
-                'vort': plot vorticity in the background
-                'quiver': quiver plot of fluid velocity in the background
-            clip: if plotting vorticity or FTLE, specifies the clip value for pseudocolor
-            figsize: figure size. default is a heurstic that works... most of the time?     
+        Parameters
+        ----------
+        movie_filename : string, optional
+            file name to save movie as. file extension will determine the type
+            of file saved.
+        frames : iterable of integers, optional. 
+            If None, plot the entire history of the swarm's movement including 
+            the present time, with each step being a frame in the animation. If 
+            an iterable, plot only the time steps of the swarm as indexed by
+            the iterable (note, this is an interable of the time step indices, 
+            not the time in seconds at those time steps!).
+        downsamp : iterable of int or int. optional 
+            If None, do not downsample the agents - plot them all. If an integer, 
+            plot only the first n agents (equivalent to range(downsamp)). 
+            If an iterable, plot only the agents specified. In all cases, 
+            statistics are reported for the TOTAL population, both shown and 
+            unshown. This includes the histograms/KDE plots.
+        fps : int, default=10
+            Frames per second, only used if saving a movie to file. Make
+            sure this is at least as big as 1/dt, where dt is the time interval
+            between frames!
+        dist : {'density' (default), 'cov', float, 'hist'}
+            whether to plot Gaussian kernel density estimation or histogram.
+            Options are:
+            - 'density': plot Gaussian KDE using Scotts Factor from scipy.stats.gaussian_kde
+            - 'cov': use the variance in each direction from self.shared_props['cov']
+                to plot Gaussian KDE
+            - float: plot Gaussian KDE using the given bandwidth factor to 
+                multiply the KDE variance by
+            - 'hist': plot histogram
+        fluid : {'vort', 'quiver'}, optional
+            Plot info on the fluid in the background. 2D only! If None, don't
+            plot anything related to the fluid.
+            Options are:
+            - 'vort': plot vorticity in the background
+            - 'quiver': quiver plot of fluid velocity in the background
+        clip : float, optional
+            if plotting vorticity, specifies the clip value for pseudocolor.
+            this value is used for both negative and positive vorticity.
+        figsize : tuple of length 2, optional
+            figure size in inches, (width, height). default is a heurstic that 
+            works... most of the time? 
         '''
 
         if len(self.envir.time_history) == 0:
