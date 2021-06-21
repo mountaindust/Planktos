@@ -21,14 +21,17 @@ import numpy.ma as ma
 
 
 
-# Decorator to convert an ODE function expecting a 2NxD shaped x into a flattened
-#   version that can be read into scipy.integrate.ode. All the ODE generators
-#   in this module work with 2NxD (or in one special case, NxD) matrices, which
-#   is fine for our built-in solvers.
+# Decorator to convert an ODE function expecting a 2NxD shaped x-variable array 
+#   into a flattened version that can be read into scipy.integrate.ode. All the 
+#   ODE generators in this module create 2NxD (or in one special case, NxD) 
+#   functions, which is what our built-in solvers expect.
+# This decorator should be completely unnecessary unless you really want to use 
+#   scipy's integrator.
 def flatten_ode(swarm):
-    '''Get a decorator capable of converting a flattened, passed in x into a 
-    2NxD shape for the ODE functions, and then take the result of the ODE
-    functions and reflatten. Need knowledge of the dimension of swarm for this.
+    '''Defines a decorator capable of converting a flattened, passed in 
+    x-variable array into a 2NxD shape for generated ODE functions, and then 
+    take the result of the ODE functions and reflatten. Need knowledge of the 
+    dimension of swarm for this, so the swarm must be passed to the decorator.
     2N accounts for N equations giving the derivative of position w.r.t time and
     N equations giving the derivative of velocity. D is the dimension of the
     problem (2D or 3D).'''
@@ -50,27 +53,37 @@ def flatten_ode(swarm):
 
 # TODO: diffusion in porous media https://en.wikipedia.org/wiki/Diffusion#Diffusion_in_porous_media
 
-
 def RK45(fun, t0, y0, tf, rtol=0.0001, atol=1e-06, h_start=None):
-    '''Runge-Kutta Dormand-Prince solver. fun should have call
-    signature (t,x) where x is 2-D with columns giving spatial dimension.
-    The solver will run to t_bound and then return, after which boundary conditions 
-    can be checked within a swarm object before restarting.
+    '''Runge-Kutta Dormand-Prince solver (variable time-step solver). 
+    
+    The passed in ode function (fun) must have call signature (t,x) where x is 
+    a 2-D array with a number of columns equal to the spatial dimension.
+    The solver will run to tf and then return, after which boundary conditions 
+    can be checked within a swarm object before restarting at the next time step.
 
-    Arguments:
-        fun: callable. Right-hand side of the system. The calling signature is 
-            ``fun(t, y)``. Here ``t`` is a scalar and y is NxD where D is the 
-            dimension of the system.
-        t0: float. initial time.
-        y0: ndarray of shape (N,D). initial state.
-        tf: float. final time, time to integrate to.
-        rtol, atol: floats. relative and absolute tolerance. The solver keeps 
-            the local error estimates less than ``atol + rtol * abs(y)``.
-        h_start: float. time step-size to attempt first. Also the maximum step
-            size to use. Defaults to (tf-t0)*0.5.
+    Parameters
+    ----------
+    fun : callable
+        Right-hand side of the ODE system. The call signature must be fun(t, y), 
+        where t is a scalar (time) and y is an NxD array where D is the 
+        dimension of the system.
+    t0 : float
+        initial time.
+    y0 : ndarray of shape (N,D)
+        initial state.
+    tf : float
+        final time, e.g. time to integrate to.
+    rtol, atol : float, defaults=0.0001, 1e-06
+        relative and absolute tolerance. The solver keeps the local error 
+        estimates less than ``atol + rtol * abs(y)``.
+    h_start : float, optional
+        time step-size to attempt first. Also the maximum step size to use. 
+        Defaults to (tf-t0)*0.5.
 
-    Returns:
-        y: new state after integration to tf
+    Returns
+    -------
+        y : ndarray with shape matching y0
+            new state at time tf
     '''
 
     A = np.array([0, 1/5, 3/10, 4/5, 8/9, 1, 1])
@@ -138,55 +151,58 @@ def RK45(fun, t0, y0, tf, rtol=0.0001, atol=1e-06, h_start=None):
 
 
 def Euler_brownian_motion(swarm, dt, mu=None, ode=None, sigma=None):
-    '''Uses the Euler-Maruyama method to solve the Ito SDE:
+    '''Uses the Euler-Maruyama method to solve the Ito SDE
     
         :math:`dX_t = \mu dt + \sigma dW_t`
 
     where :math:`\mu` is the drift and :math:`\sigma` is the diffusion.
     :math:`\mu` can be specified directly as a constant or via an ode, or both.
-    If both are left as None, the default is to use the mu property of the swarm
+    If both are ommited, the default is to use the mu property of the swarm
     object plus the local fluid drift. If an ode is given but mu is not, the
     the mu property of the swarm will be added to the ode velocity term before
     solving (however, the swarm mu is zero by default).
     
     :math:`\sigma` can be provided a number of ways (see below), and can be 
-    dependent on time and/or position (in addition to agent) if passed in directly.
-    However, this solver is only order 0.5 if :math:`\sigma` is dependent on
-    spatial position.
+    dependent on time or agent if passed in directly. This solver is only order 
+    0.5 if :math:`\sigma` is dependent on spatial position, so this is not 
+    directly supported.
 
-    Arguments:
-        swarm: swarm object
-        dt: time interval
-        mu: drift velocity as a 1D array of length D, an array of shape N x D, 
-            or as an array of shape 2N x D, where N is the number of agents and 
-            D is the spatial dimension. In the last case, the first N rows give 
-            the velocity and the second N rows are the acceleration. In this 
-            case, a Taylor series method Euler step will be used. If no mu and 
-            no ode is given, a default brownian drift of swarm.get_prop('mu') + 
-            the local fluid drift will be used. If mu=None but an ode is 
-            given, the default for mu will be swarm.get_prop('mu') alone, as 
-            fluid interaction is assumed to be handled by the ode. Note that the 
-            default swarm value for mu is zeros, in which case the ode will 
-            specify the entire drift term.
-        ode: (optional) an ODE function for mu with call signature func(t,x),
-            where t is the current time and x is a 2N x D array of positions/velocities.
-            It must return a 2N x D array of velocities/accelerations.
-        sigma: (optional) brownian diffusion coefficient. If None, use the
-            'cov' property of the swarm object, or lacking that, the 'D' property.
-            See below.
-
-    Returns:
-        New agent positions after Euler step.
-    
-    For convienence, :math:`\sigma` can be provided in several ways:
-        - As a covariance matrix, swarm.get_prop('cov'). This matrix is assumed
-            to be given by :math:`\sigma\sigma^T` and independent of time or
-            spatial location. The result is that the integrated Wiener process
-            over an interval dt has covariance swarm.get_prop('cov')*dt, and this
-            will be fed directly into the random number generator to produce
-            motion with these characteristics.
-            The covariance matrix should have shape n x n, where n is the spatial
-            dimension, and be symmetric.
+    Parameters
+    ----------
+    swarm : swarm object
+    dt : float
+        time step to take
+    mu : 1D array of length D, array of shape NxD, or array of shape 2NxD, optional
+        drift velocity as a 1D array of length D (spatial dimension), an array 
+        of shape NxD (where N is the number of agents), or as an array of shape 
+        2NxD, where N is the number of agents and D is the spatial dimension. 
+        In the last case, the first N rows give the velocity and the second N 
+        rows are the acceleration. In this case, a Taylor series method Euler 
+        step will be used. If no mu and no ode is given, a default brownian 
+        drift of swarm.get_prop('mu') + the local fluid drift will be used. 
+        If mu=None but an ode is given, the default for mu will be 
+        swarm.get_prop('mu') alone, as fluid interaction is assumed to be 
+        handled by the ode. Note that the default swarm value for mu is zeros, 
+        so the ode will specify the entire drift term unless mu is set to 
+        something else.
+    ode : callable, optional
+        an ODE function for mu with call signature func(t,x), where t is the 
+        current time and x is a 2NxD array of positions/velocities.
+        It must return a 2NxD array of velocities/accelerations. See mu for
+        information on default behavior if this is not specified.
+    sigma : array, optional
+        Brownian diffusion coefficient matrix. If None, use the 'cov' property 
+        of the swarm object, or lacking that, the 'D' property. For convienence, 
+        :math:`\sigma` can be provided in several ways:
+        - As a covariance matrix stored in swarm.get_prop('cov'). This is the 
+            default. The matrix given by this swarm property is assumed
+            to be defined by :math:`\sigma\sigma^T` and independent of time or
+            spatial location. The result of using this matrix is that the 
+            integrated Wiener process over an interval dt has covariance 
+            swarm.get_prop('cov')*dt, and this will be fed directly into the 
+            random number generator to produce motion with these characteristics.
+            It should be a square matrix with the length of each side equal to 
+            the spatial dimension, and be symmetric.
         - As a diffusion tensor (matrix). The diffusion tensor is given by
             :math:`D = 0.5*\sigma\sigma^T`, so it is really just half the
             covariance matrix. This is the diffusion tensor as given in the
@@ -194,21 +210,30 @@ def Euler_brownian_motion(swarm, dt, mu=None, ode=None, sigma=None):
             covariance matrix, it is assumed constant in time and space, and
             should be specified as a swarm property with the name 'D'. Again,
             it will be fed directly into the random number generator. 
-            D should be a matrix with shape n x n, where n is the spatial 
-            dimension, and it should be symmetric.
+            It should be a square matrix with the length of each side equal to 
+            the spatial dimension, and be symmetric.
         - Given directly as an argument to this function. In this case, it should
-            be an n x n array, or an N x n x n array where N is the number of
-            agents. Since this is an Euler step solver, sigma is assumed constant
-            across dt.
+            be an DxD array, or an NxDxD array where N is the number of
+            agents and D the spatial dimension. Since this is an Euler step 
+            solver, sigma is assumed constant across dt.
 
-    Note that if sigma is spatially dependent, in order to maintain strong order
-    1 convergence we need the method due to Milstein (1974) (see Kloeden and Platen). 
+    Returns
+    -------
+    NxD array (N number of agents, D spatial dimension)
+        New agent positions after the Euler step.
+    
+    Notes
+    -----
+    TODO: If sigma is spatially dependent, in order to maintain strong order 1 
+    convergence we need the method due to Milstein (1974) (see Kloeden and Platen). 
     This might be useful for turbulant models, or models where the energy of the 
-    random walk is dependent upon local fluid properties. Since these are more 
-    niche scenarios, implementing this here is currently left as a TODO. We
-    should implement a Stratonovich function call at that time too, because
-    with a spatially dependent sigma, Ito and Stratonovich are no longer
-    equivalent.
+    random walk is dependent upon local fluid properties. This would be 
+    particularly useful in the case of media with different densities or in 
+    the case of a chemical concentration that excites or depresses behavior. 
+    When implementing, the details of this function will need to be changed to
+    directly accept a spatially varying sigma. We should implement a 
+    Stratonovich function call at that time too, because with a spatially 
+    dependent sigma, Ito and Stratonovich are no longer equivalent.
     '''
     
     # get critical info about number of agents and dimension of domain
@@ -312,37 +337,43 @@ def Euler_brownian_motion(swarm, dt, mu=None, ode=None, sigma=None):
 #                                                                           #
 #############################################################################
 
-
-
 def inertial_particles(swarm):
     '''Function generator for ODEs governing small, rigid, spherical particles 
-    whose dynamics can be described by the linearized Maxey-Riley equation 
-    described in Haller and Sapsis (2008). Critically, it is assumed that 
+    whose dynamics can be described by the linearized Maxey-Riley equation [1]_
+    described in Haller and Sapsis (2008) [2]_. Critically, it is assumed that 
     mu = R/St, where R is the density ratio 2*rho_f/(rho_f+2*rho_p) and St is 
     the Stokes number, is much greater than 1.
 
-    Arguments:
-        swarm: swarm object
+    Parameters
+    ----------
+    swarm : swarm object
 
+    Returns
+    -------
+    callable, func(t,x)
+
+    Notes
+    -----
     Requires that the following are specified in either swarm.shared_props
     (if uniform across agents) or swarm.props (for individual variation):
-        rho or R: particle density or density ratio, respectively.
+        - rho or R: particle density or density ratio, respectively.
             if supplying R, 0<R<2/3 corresponds to aerosols, R=2/3 is
             neutrally buoyant, and 2/3<R<2 corresponds to bubbles.
-        diam: diameter of particle
+        - diam: diameter of particle
 
     Requires that the following are specified in the fluid environment:
-        char_L: characteristic length scale for Reynolds number calculation
-        nu: kinematic viscosity
-        U: characteristic fluid speed
-        g: acceleration due to gravity (set by default to 9.80665)
-        rho: fluid density (unless R is specified in swarm)
+        - char_L: characteristic length scale for Reynolds number calculation
+        - nu: kinematic viscosity
+        - U: characteristic fluid speed
+        - g: acceleration due to gravity (set by default to 9.80665)
+        - rho: fluid density (unless R is specified in swarm)
 
-    References:
-        Maxey, M.R. and Riley, J.J. (1983). Equation of motion for a small rigid
-            sphere in a nonuniform flow. Phys. Fluids, 26(4), 883-889.
-        Haller, G. and Sapsis, T. (2008). Where do inertial particles go in
-            fluid flows? Physica D: Nonlinear Phenomena, 237(5), 573-583.
+    References
+    ----------
+    ..[1] Maxey, M.R. and Riley, J.J. (1983). Equation of motion for a small rigid
+      sphere in a nonuniform flow. Phys. Fluids, 26(4), 883-889.
+    ..[2] Haller, G. and Sapsis, T. (2008). Where do inertial particles go in
+      fluid flows? Physica D: Nonlinear Phenomena, 237(5), 573-583.
     '''
     
     ##### Check for presence of required physical parameters #####
@@ -373,19 +404,28 @@ def inertial_particles(swarm):
         are the particle positions and the second N entries are the particle
         velocities and D is the dimension, return a 2NxD array representing the
         derivatives of position and velocity as given by the linearized
-        Maxey-Riley equation described in Haller and Sapsis (2008).
+        Maxey-Riley equation [1]_ described in Haller and Sapsis (2008) [2]_.
         
         This x will need to be flattened into a 2*N*D 1D array for use
             in a scipy solver. A decorator is provided for this purpose.
         
-        Returns: 
-            a 2NxD array that gives dxdt=v then dvdt
+        Parameters
+        ----------
+        t : float
+            current time
+        x : 2NxD array (N number of agents, D spatial dimension)
+            particle positions and velocities at time t
 
-        References:
-        Maxey, M.R. and Riley, J.J. (1983). Equation of motion for a small rigid
-            sphere in a nonuniform flow. Phys. Fluids, 26(4), 883-889.
-        Haller, G. and Sapsis, T. (2008). Where do inertial particles go in
-            fluid flows? Physica D: Nonlinear Phenomena, 237(5), 573-583.
+        Returns
+        ------- 
+        a 2NxD array that gives dxdt=v then dvdt
+
+        References
+        ----------
+        ..[1] Maxey, M.R. and Riley, J.J. (1983). Equation of motion for a small rigid
+        sphere in a nonuniform flow. Phys. Fluids, 26(4), 883-889.
+        ..[2] Haller, G. and Sapsis, T. (2008). Where do inertial particles go in
+        fluid flows? Physica D: Nonlinear Phenomena, 237(5), 573-583.
         '''
 
         N = round(x.shape[0]/2)
@@ -409,17 +449,24 @@ def highRe_massive_drift(swarm):
     possessing mass and a known cross-sectional area given by the property
     cross_sec.
 
-    Arguments:
-        swarm: swarm object
+    Parameters
+    ----------
+    swarm : swarm object
 
+    Returns
+    -------
+    callable, func(t,x)
+
+    Notes
+    -----
     Requires that the following are specified in either swarm.shared_props
     (if uniform across agents) or swarm.props (for individual variation):
-        m: mass of each agent
-        Cd: Drag coefficient
-        cross_sec: cross-sectional area of each agent
+        - m: mass of each agent
+        - Cd: Drag coefficient
+        - cross_sec: cross-sectional area of each agent
 
     Requires that the following are specified in the fluid environment:
-        rho: fluid density
+        - rho: fluid density
     '''
 
     ##### Get required physical parameters #####
@@ -439,8 +486,16 @@ def highRe_massive_drift(swarm):
         This x will need to be flattened into a 2*N*D 1D array for use
             in a scipy solver. A decorator is provided for this purpose.
         
-        Returns: 
-            a 2NxD array that gives dxdt=v then dvdt
+        Parameters
+        ----------
+        t : float
+            current time
+        x : 2NxD array (N number of agents, D spatial dimension)
+            particle positions and velocities at time t
+
+        Returns
+        ------- 
+        a 2NxD array that gives dxdt=v then dvdt
         '''
 
         N = round(x.shape[0]/2)
@@ -459,11 +514,17 @@ def highRe_massive_drift(swarm):
 def tracer_particles(swarm, incl_dvdt=True):
     '''Function generator for ODEs describing tracer particles.
 
-    Arguments:
-        swarm: swarm object
-        incl_dvdt: whether or not to include equations for dvdt so that x has 
-            shape 2NxD matching most other ODEs (dvdt will just be given as 0).
-            If False, will expect an NxD array for x, otherwise an 2NxD array.
+    Parameters
+    ----------
+    swarm : swarm object
+    incl_dvdt : bool, default=True
+        Whether or not to include equations for dvdt so that x has shape 2NxD 
+        matching most other ODEs (dvdt will just be given as 0).
+        If False, will expect an NxD array for x instead of a 2NxD array.
+
+    Returns
+    -------
+    callable, func(t,x)
     '''
 
     def ODEs(t,x):
@@ -472,8 +533,16 @@ def tracer_particles(swarm, incl_dvdt=True):
         This x will need to be flattened into a N*D 1D array for use
             in a scipy solver. A decorator is provided for this purpose.
         
-        Returns: 
-            a length N*D or 2NxD array that gives dxdt=v [then dvdt]
+        Parameters
+        ----------
+        t : float
+            current time
+        x : 2NxD array (N number of agents, D spatial dimension)
+            particle positions and velocities at time t
+
+        Returns
+        ------- 
+        a 2NxD array that gives dxdt=v then dvdt
         '''
 
         if not incl_dvdt:
