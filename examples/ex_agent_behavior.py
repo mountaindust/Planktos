@@ -39,7 +39,8 @@ import planktos
 #        agent locations
 
 # The subclassing and overriding itself is easy. Here we'll provide an example
-#   where agents move toward slower fluid velocities.
+#   where 80% of the agents move toward the mean position of the swarm (biased
+#   random walk), while 20% do not (unbiased random walk).
 
 # First, we create a new swarm class which inherits everything from the original
 
@@ -55,46 +56,71 @@ class myswarm(planktos.swarm):
     #   much here; the swrm.move method is how we update swarms, and it will do
     #   the business of calling get_positions for us. The main thing to remember
     #   is that if you need any swarm attributes or methods, you should access
-    #   them via "self.<method or attribute here>". You'll see this below!
+    #   them via "self.<method or attribute here>". For example, you can get 
+    #   the gradient of the fluid speed (magnitude of velocity) using 
+    #   self.get_fluid_gradient().
     def get_positions(self, dt, params=None):
         '''New get_positions method that advects agents in the direction of
         slower flow'''
 
-        # First, get the gradient of the fluid velocity magnitude at each agent
-        #   location.
-        grad = self.get_fluid_gradient()
-        # This isn't a unit vector, so let's get something we could divide by to
-        #   make it a unit vector.
-        denom = np.tile(
-                        np.linalg.norm(grad, axis=1),
-                        (len(self.envir.L),1)).T
+        # First, get the mean position of the swarm. 
 
-        # If the fluid velocity isn't too fast, let's reduce the drift behavior
-        #   toward even slower flows by defining a scaling parameter based on
-        #   a threshold.
-        thres = 0.1
-        scale = np.ones_like(grad)
-        scale[denom<1] = (denom[denom<1]-0.1)/0.9
-        scale[scale<0] = 0
+        mean_pos = self.positions.mean(axis=0)
 
-        # if the norm of the gradient is below a certain amount, call it
-        #   undetectable and return zero
-        grad_low_idx = denom < thres # mm
-        grad[grad_low_idx] = 0
-        # catch places where grad == 0 so we don't divide by zero!
-        denom[grad_low_idx] = 1
+        # Let's assume that which agents move toward the mean is constant and
+        #   determined ahead of time. Since it is an agent property and differs
+        #   across different agents, it should be stored in the self.props
+        #   DataFrame. This gets set when the swarm is created. We'll assume
+        #   it's formatted as a boolean: True means moving toward the mean,
+        #   False means you don't. We'll also assume the property is called
+        #   'bias'.
 
-        mvdir = -grad/denom
+        # There are two ways of accessing the property. One is by getting it
+        #   from the self.props DataFrame directly. However, more convienent
+        #   is by using the built-in method self.get_prop, since it automatically
+        #   converts DataFrame columns to numpy arrays.
+
+        bias_bool = self.get_prop('bias')
+
+        # Recall that if you multiply a boolean array times a numerical array,
+        #   it's like multiply times ones and zeros. So we just need to convert
+        #   our 1D bias array (a row vector) into a column vector with a number
+        #   of columns matching the spatial dimension. Then it will match our
+        #   NxD array of agent positions.
+
+        bias_bool_tile = np.tile(bias_bool, (len(mean_pos), 1)).T
+
+        # Get the direction of bias for each agent as a unit vector
+
+        bias_dir = (mean_pos - self.positions)
+        # divide out by norm, dealing with shape broadcasting issues
+        bias_dir /= np.expand_dims(np.linalg.norm(bias_dir, axis=1),1)
+
+        # Let's assume that if you move toward the mean, you do so by one std
+        #   of your jitter (specified by the 'cov' property which is shared 
+        #   among agents, assumed to be the idenity matrix times a constant).
+
+        bias = bias_dir*bias_bool_tile*np.sqrt(self.get_prop('cov')[0,0])
+
+        # Since this should take energy, let's also assume that the agents with
+        #   bias only have half the jitter.
+
+        jitter_coeff = np.ones_like(bias_bool) - 0.5*bias_bool
 
         # OK! So we have all the information about the movement behavior we 
-        #   want. Let's add this to fluid-based advection to get a final drift
-        #   vector for each agent, mu.
-        mu = self.get_fluid_drift() + mvdir*np.sqrt(25)*scale
+        #   want. Let's add the bias to fluid-based advection to get a final 
+        #   drift vector for each agent, mu.
+        mu = self.get_fluid_drift() + bias
 
-        # Finally, we will toss this into the SDE solver to get the resulting
-        #   positions, which we return. Jitter will still be based off of the
-        #   swarm's covariance matrix, as before.
-        return planktos.motion.Euler_brownian_motion(self, dt, mu)
+        # Now let's get sigma as an NxDxD array. Remember that sigma in the SDE
+        #   is the square root of the covariance matrix, assuming that the
+        #   covariance matrix is diagonal.
+        sigma = np.array([np.sqrt(self.get_prop('cov'))*jitter_coeff[ii] 
+                         for ii in range(len(jitter_coeff))])
+
+        # Finally, we will toss all this into the SDE solver to get the resulting
+        #   positions, which we return.
+        return planktos.motion.Euler_brownian_motion(self, dt, mu=mu, sigma=sigma)
 
 
 
@@ -115,6 +141,16 @@ envir.set_brinkman_flow(alpha=66, h_p=1.5, U=1, dpdx=1, res=101)
 #   the default here.
 swrm = myswarm(envir=envir)
 swrm.shared_props['cov'] = swrm.shared_props['cov'] * 0.01
+
+# Remember that we also need a 'bias' property! Let's randomly select 20% of 
+#   the swarm to not be biased. We'll do this so that the same number are
+#   selected each time based off the size of the swarm (for consistency), but 
+#   the acutal agents selected are random.
+num_agents = swrm.positions.shape[0]
+num_not_biased = round(num_agents*.2)
+idx_not_biased = np.random.choice(np.arange(num_agents), num_not_biased)
+bias_bool = [False if n in idx_not_biased else True for n in range(num_agents)]
+swrm.props['bias'] = bias_bool
 
 print('Moving swarm...')
 for ii in range(240):
