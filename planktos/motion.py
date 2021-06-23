@@ -315,7 +315,7 @@ def Euler_brownian_motion(swarm, dt, mu=None, ode=None, sigma=None):
         if sigma.ndim == 2: # Single sigma for all agents
             # mu already multiplied by dt
             return swarm.positions + mu +\
-                sigma @ swarm.rndState.multivariate_normal(np.zeros(n_dim), np.eye(n_dim))
+                sigma @ swarm.rndState.multivariate_normal(np.zeros(n_dim), dt*np.eye(n_dim))
         else: # Different sigma for each agent
             move = np.zeros_like(swarm.positions)
             for ii in range(n_agents):
@@ -324,7 +324,7 @@ def Euler_brownian_motion(swarm, dt, mu=None, ode=None, sigma=None):
                 else:
                     this_mu = mu
                 move[ii,:] = this_mu +\
-                    sigma[ii,...] @ swarm.rndState.multivariate_normal(np.zeros(n_dim), np.eye(n_dim))
+                    sigma[ii,...] @ swarm.rndState.multivariate_normal(np.zeros(n_dim), dt*np.eye(n_dim))
             return swarm.positions + move
 
 
