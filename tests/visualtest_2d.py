@@ -17,7 +17,7 @@ envir.add_vertices_to_2D_ibmesh()
 
 class permstick(planktos.swarm):
     def get_positions(self, dt, params):
-        stick = s.get_prop('stick')
+        stick = self.get_prop('stick')
         return np.expand_dims(~stick,1)*super().get_positions(dt, params=params) +\
                np.expand_dims(stick,1)*self.positions
 
