@@ -60,8 +60,8 @@ class myswarm(planktos.swarm):
     #   the gradient of the fluid speed (magnitude of velocity) using 
     #   self.get_fluid_gradient().
     def get_positions(self, dt, params=None):
-        '''New get_positions method that advects agents in the direction of
-        slower flow'''
+        '''New get_positions method that moves 80% of the agents toward the
+        mean position of the swarm.'''
 
         # First, get the mean position of the swarm. 
 
