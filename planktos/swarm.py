@@ -291,7 +291,7 @@ class swarm:
         self.pos_history = []
 
         # Apply boundary conditions in case of domain mismatch
-        self.apply_boundary_conditions(no_ib=True)
+        self.apply_boundary_conditions(ib_collisions=None)
 
         # initialize Dataframe of non-shared properties
         if props is None:
@@ -818,7 +818,7 @@ class swarm:
 
 
 
-    def move(self, dt=1.0, params=None, update_time=True):
+    def move(self, dt=1.0, params=None, ib_collisions='inelastic', update_time=True):
         '''Move all organisms in the swarm over one time step of length dt.
         DO NOT override this method when subclassing; override get_positions
         instead!!!
@@ -829,15 +829,17 @@ class swarm:
 
         Parameters
         ----------
-            dt : float
-                length of time step to move all agents
-            params : any, optional
-                parameters to pass along to get_positions, if necessary
-            update_time : bool, default=True
-                whether or not to update the environment's time by dt. Probably 
-                The only reason to change this to False is if there are multiple 
-                swarm objects in the same environment - then you want to update 
-                each before incrementing the time in the environment.
+        dt : float
+            length of time step to move all agents
+        params : any, optional
+            parameters to pass along to get_positions, if necessary
+        ib_collisions : {None, 'inelastic' (default)}
+            If None, turn off all interaction with immersed boundaries.
+        update_time : bool, default=True
+            whether or not to update the environment's time by dt. Probably 
+            The only reason to change this to False is if there are multiple 
+            swarm objects in the same environment - then you want to update 
+            each before incrementing the time in the environment.
 
         See Also
         --------
@@ -859,7 +861,7 @@ class swarm:
             self.accelerations[:,:] = (velocity - self.velocities)/dt
             self.velocities[:,:] = velocity
             # Apply boundary conditions.
-            self.apply_boundary_conditions()
+            self.apply_boundary_conditions(ib_collisions=ib_collisions)
 
         # Record new time
         if update_time:
@@ -1145,7 +1147,7 @@ class swarm:
 
 
 
-    def apply_boundary_conditions(self, no_ib=False):
+    def apply_boundary_conditions(self, ib_collisions='inelastic'):
         '''Apply boundary conditions to self.positions.
         
         There should be no reason to call this method directly; it is 
@@ -1167,13 +1169,13 @@ class swarm:
         
         Parameters
         ----------
-        no_ib : bool
-            If true, turn off all interaction with immersed boundaries.
+        ib_collisions : {None, 'inelastic' (default)}
+            If None, turn off all interaction with immersed boundaries.
         
         '''
 
         # internal mesh boundaries go first
-        if self.envir.ibmesh is not None and not no_ib:
+        if self.envir.ibmesh is not None and ib_collisions is not None:
             # if there is no mask, loop over all agents, appyling internal BC
             # loop over (non-masked) agents, applying internal BC
             if np.any(self.positions.mask):
