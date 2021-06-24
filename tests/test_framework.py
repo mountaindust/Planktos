@@ -85,7 +85,7 @@ def test_indiv_variation():
     swarm_size = 30
     # 2D
     envir = planktos.environment()
-    sw = envir.add_swarm(swarm_s=swarm_size)
+    sw = envir.add_swarm(swarm_size=swarm_size)
     sw.add_prop('mu', [np.random.randn(2) for ii in range(swarm_size)])
     assert 'mu' not in sw.shared_props
     assert sw.get_prop('mu').ndim == 2
@@ -102,7 +102,7 @@ def test_indiv_variation():
         sw.move(0.01)
     # 3D
     envir = planktos.environment(Lz=10)
-    sw = envir.add_swarm(swarm_s=swarm_size)
+    sw = envir.add_swarm(swarm_size=swarm_size)
     sw.add_prop('mu', [np.random.randn(3) for ii in range(swarm_size)])
     for ii in range(10):
         sw.move(0.01)
@@ -125,7 +125,7 @@ def test_brinkman_2D():
     assert envir.flow_times is None, "flow_times should be None for stationary flow"
     assert len(envir.flow[0].shape) == 2, "Flow vector should be 2D"
     assert np.isclose(envir.flow[0][50,-1],.5), "top of the domain should match U"
-    envir.add_swarm(swarm_s=110, init='random')
+    envir.add_swarm(swarm_size=110, init='random')
     assert len(envir.swarms) == 1, "too many swarms in envir"
     sw = envir.swarms[0]
 
@@ -183,7 +183,7 @@ def test_brinkman_2D():
     assert len(envir.flow_points[1]) == envir.flow[0].shape[1]
     
 
-    envir.add_swarm(swarm_s=110, init='random')
+    envir.add_swarm(swarm_size=110, init='random')
     sw = envir.swarms[0]
     for ii in range(20):
         envir.move_swarms(0.5)
@@ -408,7 +408,7 @@ def test_channel_flow():
     # tests to make sure you are getting what you think you are
     #
     #
-    envir.add_swarm(swarm_s=55, init='random')
+    envir.add_swarm(swarm_size=55, init='random')
     sw = envir.swarms[0]
     for ii in range(20):
         sw.move(0.5)
@@ -426,7 +426,7 @@ def test_channel_flow():
     # tests to make sure you are getting what you think you are
     #
     #
-    envir.add_swarm(swarm_s=55, init='random')
+    envir.add_swarm(swarm_size=55, init='random')
     sw = envir.swarms[0]
     for ii in range(20):
         sw.move(0.5)
@@ -447,7 +447,7 @@ def test_canopy_flow():
     # tests to make sure you are getting what you think you are
     #
     #
-    envir.add_swarm(swarm_s=55, init='random')
+    envir.add_swarm(swarm_size=55, init='random')
     sw = envir.swarms[0]
     for ii in range(20):
         sw.move(0.5)
@@ -465,7 +465,7 @@ def test_canopy_flow():
     # tests to make sure you are getting what you think you are
     #
     #
-    envir.add_swarm(swarm_s=55, init='random')
+    envir.add_swarm(swarm_size=55, init='random')
     sw = envir.swarms[0]
     for ii in range(20):
         sw.move(0.5)

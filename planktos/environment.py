@@ -1628,7 +1628,7 @@ class environment:
         ''' Adds a swarm into this environment.
 
         Arguments:
-            swarm_s: swarm object or size of the swarm (int). If a swarm object
+            swarm_size: swarm object or size of the swarm (int). If a swarm object
                 is given, the following arguments will be ignored (since the 
                 object is already initialized)
             init: Method for initializing positions.
