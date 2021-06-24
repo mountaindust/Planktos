@@ -833,8 +833,12 @@ class swarm:
             length of time step to move all agents
         params : any, optional
             parameters to pass along to get_positions, if necessary
-        ib_collisions : {None, 'inelastic' (default)}
-            If None, turn off all interaction with immersed boundaries.
+        ib_collisions : {None, 'inelastic' (default), 'sticky'}
+            Type of interaction with immersed boundaries. If None, turn off all 
+            interaction with immersed boundaries. In inelastic collisions, 
+            conduct recursive vector projection until the length of the original 
+            vector is exhausted. In sticky collisions, just return the point of 
+            intersection.
         update_time : bool, default=True
             whether or not to update the environment's time by dt. Probably 
             The only reason to change this to False is if there are multiple 
@@ -1169,9 +1173,12 @@ class swarm:
         
         Parameters
         ----------
-        ib_collisions : {None, 'inelastic' (default)}
-            If None, turn off all interaction with immersed boundaries.
-        
+        ib_collisions : {None, 'inelastic' (default), 'sticky'}
+            Type of interaction with immersed boundaries. If None, turn off all 
+            interaction with immersed boundaries. In inelastic collisions, 
+            conduct recursive vector projection until the length of the original 
+            vector is exhausted. In sticky collisions, just return the point of 
+            intersection.
         '''
 
         # internal mesh boundaries go first
@@ -1185,14 +1192,16 @@ class swarm:
                         self.positions[~self.positions.mask[:,0],:]
                         ):
                     new_loc = self._apply_internal_BC(startpt, endpt, 
-                                self.envir.ibmesh, self.envir.max_meshpt_dist)
+                                self.envir.ibmesh, self.envir.max_meshpt_dist,
+                                ib_collisions=ib_collisions)
                     self.positions[n] = new_loc
             else:
                 for n in range(self.positions.shape[0]):
                     startpt = self.pos_history[-1][n,:]
                     endpt = self.positions[n,:]
                     new_loc = self._apply_internal_BC(startpt, endpt,
-                                self.envir.ibmesh, self.envir.max_meshpt_dist)
+                                self.envir.ibmesh, self.envir.max_meshpt_dist,
+                                ib_collisions=ib_collisions)
                     self.positions[n] = new_loc
 
         for dim, bndry in enumerate(self.envir.bndry):
@@ -1238,7 +1247,8 @@ class swarm:
     
     @staticmethod
     def _apply_internal_BC(startpt, endpt, mesh, max_meshpt_dist, 
-                           old_intersection=None, kill=False):
+                           old_intersection=None, kill=False, 
+                           ib_collisions='inelastic'):
         '''Apply internal boundaries to a trajectory starting and ending at
         startpt and endpt, returning a new endpt (or the original one) as
         appropriate.
@@ -1265,6 +1275,11 @@ class swarm:
             slid along the boundary line between two mesh elements. This 
             prevents such a thing from happening more than once, in case of 
             pathological cases.
+        ib_collisions : {'inelastic' (default), 'sticky'}
+            Type of interaction with immersed boundaries. In inelastic 
+            collisions, conduct recursive vector projection until the length of
+            the original vector is exhausted. In sticky collisions, just return 
+            the point of intersection.
 
         Returns
         -------
@@ -1305,12 +1320,22 @@ class swarm:
         if intersection is None:
             return endpt
         
-        # If we do have an intersection, project remaining piece of vector
-        #   onto mesh and repeat processes as necessary until we have a final
-        #   result.
-        return swarm._project_and_slide(startpt, endpt, intersection,
-                                        close_mesh, max_meshpt_dist, DIM,
-                                        old_intersection, kill)
+        # If we do have an intersection:
+        if ib_collisions == 'inelastic':
+            # Project remaining piece of vector onto mesh and repeat processes 
+            #   as necessary until we have a final result.
+            return swarm._project_and_slide(startpt, endpt, intersection,
+                                            close_mesh, max_meshpt_dist, DIM,
+                                            old_intersection, kill)
+        elif ib_collisions == 'sticky':
+            # Return the point of intersection
+            
+            # small number to perturb off of the actual boundary in order to avoid
+            #   roundoff errors that would allow penetration
+            EPS = 1e-7
+
+            back_vec = (startpt-endpt)/np.linalg.norm(endpt-startpt)
+            return intersection[0] + back_vec*EPS
 
 
 
