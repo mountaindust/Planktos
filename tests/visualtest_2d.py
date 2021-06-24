@@ -3,6 +3,7 @@
 Simulates agents for the purpose of making sure that the boundary is respected.
 '''
 
+from math import perm
 import numpy as np
 import sys
 sys.path.append('..')
@@ -14,12 +15,20 @@ envir.read_IB2d_vtk_data('data/leaf_data', 1.0e-5, 100, d_start=1)
 envir.read_IB2d_vertex_data('data/leaf_data/leaf.vertex', 1.45)
 envir.add_vertices_to_2D_ibmesh()
 
+class permstick(planktos.swarm):
+    def get_positions(self, dt, params):
+        stick = s.get_prop('stick')
+        return np.expand_dims(~stick,1)*super().get_positions(dt, params=params) +\
+               np.expand_dims(stick,1)*self.positions
+
 ### Test for boundary crossings ###
-envir.add_swarm(seed=10)
-s = envir.swarms[0]
+s = permstick(seed=10, envir=envir)
+# envir.add_swarm(seed=10)
+# s = envir.swarms[0]
 s.positions[89,:] = (0.05, 0.075)
 s.positions[95,:] = (0.17, 0.1)
 s.shared_props['cov'] *= 0.001
+s.props['stick'] = s.ib_collision.copy()
 #######
 
 ### This is the incorrect mesh for the fluid. Use only for init_grid testing ###
@@ -41,5 +50,6 @@ s.shared_props['cov'] *= 0.001
 print('Moving swarm...')
 for ii in range(300): # 500
     s.move(0.0005, ib_collisions='sticky')
+    s.props['stick'] = np.logical_or(s.props['stick'],s.ib_collision)
     
 s.plot_all(movie_filename='leaf_2d_vort_sticky.mp4', figsize=(6,9), fps=30, fluid='vort')

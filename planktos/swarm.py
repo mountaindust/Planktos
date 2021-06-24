@@ -135,6 +135,9 @@ class swarm:
     accelerations : masked array, shape Nx2 (2D) or Nx3 (3D)
         accelerations of all the agents in the swarm. same masking properties as 
         positions
+    ib_collision : 1D array of bool with length equal to the swarm size
+        For each agent, True if the agent collided with an immersed boundary in
+        the most recent time it moved. False otherwise.
     props : pandas DataFrame
         Pandas dataframe of individual agent properties that vary between agents. 
         This is the method by which individual variation among the agents should 
@@ -292,6 +295,9 @@ class swarm:
 
         # Apply boundary conditions in case of domain mismatch
         self.apply_boundary_conditions(ib_collisions=None)
+
+        # Initialize IB collision detection
+        self.ib_collision = np.full(swarm_size, False)
 
         # initialize Dataframe of non-shared properties
         if props is None:
@@ -1195,6 +1201,10 @@ class swarm:
                                 self.envir.ibmesh, self.envir.max_meshpt_dist,
                                 ib_collisions=ib_collisions)
                     self.positions[n] = new_loc
+                    if np.any(new_loc != endpt):
+                        self.ib_collision[n] = True
+                    else:
+                        self.ib_collision[n] = False
             else:
                 for n in range(self.positions.shape[0]):
                     startpt = self.pos_history[-1][n,:]
@@ -1203,6 +1213,10 @@ class swarm:
                                 self.envir.ibmesh, self.envir.max_meshpt_dist,
                                 ib_collisions=ib_collisions)
                     self.positions[n] = new_loc
+                    if np.any(new_loc != endpt):
+                        self.ib_collision[n] = True
+                    else:
+                        self.ib_collision[n] = False
 
         for dim, bndry in enumerate(self.envir.bndry):
 
