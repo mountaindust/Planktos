@@ -613,7 +613,7 @@ class swarm:
             directory for storing data
         name : str 
             prefix name for data files
-        pos_fmt : str format
+        pos_fmt : str format, default='%.18e'
             format and precision for storing position, vel, and accel data
 
         See Also
@@ -662,9 +662,13 @@ class swarm:
         ----------
         filename : str 
             path/name of the file to save the data to
-        fmt : str format
+        fmt : str format, default='%.18e'
             fmt argument to be passed to numpy.savetxt for format and precision 
             of numerical data
+        sv_vel : bool, default=False
+            whether or not to save the current time velocity data
+        sv_accel : book, default=False
+            whether or not to save the current time acceleration data
 
         See Also
         --------
@@ -1966,8 +1970,30 @@ class swarm:
     def _calc_basic_stats(self, DIM3, t_indx=None):
         ''' Return basic stats about % agents remaining, fluid velocity, and 
         agent velocity for plot printing.
-        DIM3 indicates the dimension of the domain, bool
-        t_indx is the time index for pos_history or None for current time
+
+        Parameters
+        ----------
+        DIM3 : bool
+            indicates the dimension of the domain (True for 3D)
+        t_indx : int, optional
+            The time index for pos_history or None for current time
+
+        Returns
+        -------
+        perc_left : float
+            percentage of agents left within the domain
+        avg_spd : float
+            average fluid speed
+        max_spd : float
+            maximum fluid speed
+        avg_spd_x : float
+            average x-component of fluid velocity
+        avg_spd_y : float
+            average y-component of fluid velocity
+        avg_spd_z : float, 3D only
+            average z-component of fluid velocity
+        avg_swrm_vel : array
+            average agent velocity
         '''
 
         # get % of agents left in domain
@@ -2332,7 +2358,7 @@ class swarm:
             an iterable, plot only the time steps of the swarm as indexed by
             the iterable (note, this is an interable of the time step indices, 
             not the time in seconds at those time steps!).
-        downsamp : iterable of int or int. optional 
+        downsamp : iterable of int or int, optional 
             If None, do not downsample the agents - plot them all. If an integer, 
             plot only the first n agents (equivalent to range(downsamp)). 
             If an iterable, plot only the agents specified. In all cases, 
