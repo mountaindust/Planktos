@@ -1279,7 +1279,7 @@ class swarm:
             max distance between two points on a mesh element
             (used to determine how far away from startpt to search for
             mesh elements)
-        old_intersection : length 2 or 3 array
+        old_intersection : list-like of data
             (for internal use only) records the last intersection in the 
             recursion to check if we are bouncing back and forth between two 
             boundaries as a result of a concave angle and the right kind of 
@@ -1371,9 +1371,9 @@ class swarm:
             original start point of movement, before intersection
         endpt : length 2 or 3 array
             original end point of movement, w/o intersection
-        intersection : length 2 or 3 array
-            result of _seg_intersect_2D or _seg_intersect_3D_triangles. point of 
-            intersection with immersed mesh element
+        intersection : list-like of data
+            result of _seg_intersect_2D or _seg_intersect_3D_triangles. various 
+            information about the intersection with the immersed mesh element
         mesh : Nx2x2 or Nx3x3 array 
             eligible (nearby) mesh elements for interaction
         max_meshpt_dist : float
@@ -1382,7 +1382,7 @@ class swarm:
             for passthrough to possible recursion
         DIM : int
             dimension of system, either 2 or 3
-        old_intersection : length 2 or 3 array
+        old_intersection : list-like of data
             (for internal use only) records the last intersection in the 
             recursion to check if we are bouncing back and forth between two 
             boundaries as a result of a concave angle and the right kind of 
@@ -1856,6 +1856,7 @@ class swarm:
 
         Returns
         -------
+        None if there is no intersection. Otherwise: 
         x : length 3 array 
             the coordinates of the first point of intersection
         s_I : float between 0 and 1
@@ -1955,7 +1956,7 @@ class swarm:
     @staticmethod
     def _dist_point_to_plane(P0, normal, Q0):
         '''Return the distance from the point P0 to the plane given by a
-        normal vector and a point on the plane, Q0. For debugging'''
+        normal vector and a point on the plane, Q0. For debugging.'''
 
         d = np.dot(normal, Q0)
         return np.abs(np.dot(normal,P0)-d)/np.linalg.norm(normal)
