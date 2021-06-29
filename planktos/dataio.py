@@ -44,7 +44,7 @@ except ModuleNotFoundError:
 #############################################################################
 
 def vtk_dep(func):
-    '''Decorator for VTK readers to check import.'''
+    '''Decorator for VTK readers to check package import.'''
     def wrapper(*args, **kwargs):
         if not VTK:
             print("Cannot read VTK file: VTK library not found.")
@@ -56,7 +56,7 @@ def vtk_dep(func):
 
 
 def pyvista_dep(func):
-    '''Decorator for pyvista writers to check import.'''
+    '''Decorator for pyvista writers to check package import.'''
     def wrapper(*args, **kwargs):
         if not PYVISTA:
             print("Cannot write VTK files: pyvista library not found.")
@@ -68,7 +68,7 @@ def pyvista_dep(func):
 
 
 def stl_dep(func):
-    '''Decorator for STL readers to check import.'''
+    '''Decorator for STL readers to check package import.'''
     def wrapper(*args, **kwargs):
         if not STL:
             print("Cannot read STL file: numpy-stl library not found.")
@@ -88,7 +88,29 @@ def stl_dep(func):
 
 @vtk_dep
 def read_vtk_Structured_Points(filename):
-    '''This will read in either Scalar or Vector data!'''
+    '''Read in either Scalar or Vector data from an ascii VTK Structured Points 
+    file using the VTK Python library.
+
+    Used by read_2DEulerian_Data_From_vtk.
+
+    Note: if the file has both scalar and vector data, only the scalar data
+    will be returned.
+    
+    Parameters
+    ----------
+    filename : string
+        path and filename of the VTK file
+
+    Returns
+    -------
+    e_data : array, indexed [z,y,x] (scalar data only)
+    e_data_X, e_data_Y, e_data_Z : arrays, indexed [z,y,x] (vector data only)
+        one array for each component of the vector field: X, Y, and Z respectively
+    origin : tuple
+        origin field of VTK
+    spacing : tuple
+        spacing of grid
+    '''
 
     # Load data
     reader = vtk.vtkStructuredPointsReader()
@@ -122,7 +144,23 @@ def read_vtk_Structured_Points(filename):
 
 @vtk_dep
 def read_vtk_Rectilinear_Grid_Vector(filename):
-    '''Reads a vtk file with Rectilinear Grid Vector data and TIME info'''
+    '''Reads an ascii VTK file with Rectilinear Grid Vector data and TIME info
+    using the VTK Python library.
+
+    Parameters
+    ----------
+    filename : string
+        path and filename of the VTK file
+
+    Returns
+    -------
+    tuple of arrays
+        vector data as numpy arrays, one array for each dimension of the vector
+        in order of x, y, z. Each array is indexed as [x,y,z]
+    tuple of arrays
+        1D arrays of grid points in the x, y, and z directions
+    time : float
+    '''
 
     reader = vtk.vtkRectilinearGridReader()
     reader.SetFileName(filename)
@@ -186,8 +224,22 @@ def read_vtk_Rectilinear_Grid_Vector(filename):
 
 @vtk_dep
 def read_vtk_Unstructured_Grid_Points(filename):
-    '''This is meant to read mesh data exported from VisIt, where the mesh
-    contains only singleton points.'''
+    '''Read immersed mesh data from an ascii Unstructured Grid VTK file, such as
+    those exported from VisIt. Uses the VTK Python library. The mesh should 
+    contain only singleton points (vertices).
+    
+    Parameters
+    ----------
+    filename : string
+        path and filename of the VTK file
+
+    Returns
+    -------
+    points : array
+        each row is a vertex
+    bounds : array
+        bounds field data
+    '''
 
     reader = vtk.vtkUnstructuredGridReader()
     reader.SetFileName(filename)
@@ -245,14 +297,30 @@ def read_vtk_Unstructured_Grid_Points(filename):
 
 @vtk_dep
 def read_2DEulerian_Data_From_vtk(path, simNum, strChoice, xy=False):
-    '''This is to read IB2d data, either scalar or vector.
+    '''Reads ascii Structured Points VTK files using the Python VTK library,
+    where the file contains 2D IB2d data, either scalar or vector. 
     
-    Arguments:
-        path: path (str) to the directory containing the vtk files
-        simNum: sim number as a string, as given in the filename
-            (with leading zeros)
-        strChoice: prefix on the filenames. typically 'u' or 'uX' or 'uY'
-        xy: if true, also return mesh data
+    The call signature is set up for easy looping over the sort of file name 
+    sturcture used by IB2d.
+    
+    Parameters
+    ----------
+    path : string
+        directory containing the vtk files
+    simNum : string
+        sim number as a string, as given in the filename (with leading zeros)
+    strChoice : string
+        prefix on the filenames. typically 'u' or 'uX' or 'uY' in IB2d
+    xy : bool, default=False
+        if True, also return mesh data
+
+    Returns
+    -------
+    data : one or two arrays
+        one array if scalar data, two arrays (x,y) if vector data. NOTE: the
+        data is indexed [y,x] so will need to be transposed.
+    x, y : mesh data as 1D arrays, only if xy=True
+        contains the spatial mesh points in the x and y directions respectively
     '''
 
     filename = Path(path) / (strChoice + '.' + str(simNum) + '.vtk')
@@ -283,12 +351,24 @@ def read_2DEulerian_Data_From_vtk(path, simNum, strChoice, xy=False):
 
 
 def read_vtu_mesh_velocity(filename):
-    '''This method reads ascii COMSOL velocity data in a vtu or equivalent 
-    txt file. It is assumed that the data is on a regular grid.
+    '''Reads ascii COMSOL velocity data in a vtu or equivalent text file. It is 
+    assumed that the data is on a regular grid. Currently, there is no support 
+    for multiple time points, so the file must contain data from only a single 
+    time.
 
-    Currently, no support for multiple time points!
+    Parameters
+    ----------
+    filename : string
+        path and filename of the VTU file
     
-    Returns velocity data and grid as lists.'''
+    Returns
+    -------
+    data : list of arrays
+        one array for each spatial component of velocity, where each element of
+        an array is a gridpoint. arrays are indexed [x,y,z]
+    grid : list of arrays
+        spatial grid in each direction (1D arrays)
+    '''
 
     with open(filename) as f:
         dimension = None
@@ -375,7 +455,23 @@ def read_vtu_mesh_velocity(filename):
 @stl_dep
 def read_stl_mesh(filename):
     '''Import a mesh from an stl file and return the vertex information as
-    an Nx3x3 array along with the maximum vector length.'''
+    an Nx3x3 array along with the maximum vector length. Uses the numpy-stl 
+    library.
+    
+    Parameters
+    ----------
+    filename : string
+        path and filename of the STL file
+
+    Returns
+    -------
+    array of shape Nx3x3
+        Each row is a mesh element consisting of three 3D points. For a given
+        row n, this is represented as a 3x3 matrix where each row is a point 
+        and each column is a spatial dimension.
+    float
+        Length of the longest side of any triangle
+    '''
     mesh = stlmesh.Mesh.from_file(filename)
     # find maximum segment length
     max_len = np.concatenate((np.linalg.norm(mesh.v1 - mesh.v0, axis=1),
@@ -386,7 +482,18 @@ def read_stl_mesh(filename):
 
 
 def read_IB2d_vertices(filename):
-    '''Import Lagrangian mesh from IB2d vertex file.'''
+    '''Import a Lagrangian mesh from an IB2d ascii vertex file.
+    
+    Parameters
+    ----------
+    filename : string
+        path and filename of the vertex file
+
+    Returns
+    -------
+    array
+        Nx2 array of 2D vertices
+    '''
     with open(filename) as f:
         number_of_vertices = int(f.readline())
         vertices = np.zeros((number_of_vertices,2))
@@ -407,14 +514,27 @@ def read_IB2d_vertices(filename):
 
 @pyvista_dep
 def write_vtk_point_data(path, title, data, cycle=None, time=None):
-    '''Write point data, such as agent positions.
+    '''Write point data to an ascii VTK file, such as agent positions. 
     
-    Arguments:
-        path: string, path to where data should go
-        title: title to prepend to filename
-        data: ndarray of data, must be Nx3
-        cycle: int, dump number
-        time: float, simulation time
+    The call 
+    signature is formated for easy looping over many time points, resulting in 
+    one VTK file per time. The filename will be based on the title string and 
+    the cycle number. The VTK file will be formatted as PolyData and will 
+    contain field data on both CYCLE (integer time step number) and TIME (float 
+    time in seconds). 
+    
+    Parameters
+    ----------
+    path : string
+        directory where data should go
+    title : string
+        title to prepend to filename
+    data : ndarray 
+        position data, must be of shape Nx3
+    cycle : int, optional
+        dump number, e.g. integer time step in the simulation
+    time : float, optional
+        simulation time (generally understood to be in seconds)
     '''
 
     path = Path(path)
@@ -436,15 +556,28 @@ def write_vtk_point_data(path, title, data, cycle=None, time=None):
 
 @pyvista_dep
 def write_vtk_2D_uniform_grid_scalars(path, title, data, L, cycle=None, time=None):
-    '''Write scalar data on a 2D uniform grid (e.g. vorticity).
+    '''Write scalar data to an ascii VTK Uniform Grid file (e.g. vorticity). 
+    Expects data to be on a 2D uniform grid. Uses the pyvista library. 
     
-    Arguments:
-        path: string, path to where data should go
-        title: title to prepend to filename
-        data: ndarray of data, must be 2D
-        L: list (length 2), environment.L
-        cycle: int, dump number
-        time: float, simulation time
+    The call signature is formated for easy looping over many time points, 
+    resulting in one VTK file per time. The filename will be based on the title 
+    string and the cycle number. The VTK file will contain field data on both 
+    CYCLE (integer time step number) and TIME (float time in seconds). 
+    
+    Parameters
+    ----------
+    path : string
+        directory where data should go
+    title : string
+        title to prepend to filename
+    data : ndarray 
+        scalar data, must be 2D
+    L : list of floats (length 2)
+        environment.L
+    cycle : int
+        dump number, e.g. integer time step in the simulation
+    time : float
+        simulation time (generally understood to be in seconds)
     '''
 
     path = Path(path)
@@ -474,7 +607,13 @@ def write_vtk_2D_uniform_grid_scalars(path, title, data, L, cycle=None, time=Non
 
 @pyvista_dep
 def write_vtk_uniform_grid_vectors(path, title, data, L, cycle=None, time=None):
-    '''Write vector data on a 2D or 3D uniform grid (e.g. fluid velocity).
+    '''Write vector data on a 2D or 3D uniform grid (e.g. fluid velocity). Uses 
+    the pyvista library. 
+
+    The call signature is formated for easy looping over many time points, 
+    resulting in one VTK file per time. The filename will be based on the title 
+    string and the cycle number. The VTK file will contain field data on both 
+    CYCLE (integer time step number) and TIME (float time in seconds).
 
     Parameters
     ----------
