@@ -416,7 +416,8 @@ class environment:
 
 
     def set_brinkman_flow(self, alpha, h_p, U, dpdx, res=101, tspan=None):
-        r'''Get a fully developed Brinkman flow with a porous region.
+        r'''
+        Get a fully developed Brinkman flow with a porous region.
 
         This method sets the environment fluid velocity as a 1D Brinkman flow 
         based on a porous layer of hight h_p in the bottom of the domain.
@@ -456,8 +457,8 @@ class environment:
 
         Examples
         --------
-
         Create a 3D environment with time varying Brinkman flow
+
         >>> envir = planktos.environment(Lz=10, rho=1000, mu=1000)
         >>> U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-5,8,3)))
         >>> envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(20)*0.22306, 
@@ -746,7 +747,8 @@ class environment:
 
     def set_canopy_flow(self, h, a, u_star=None, U_h=None, beta=0.3, C=0.25,
                         res=101, tspan=None):
-        '''Apply flow within and above a uniform homogenous canopy according to 
+        '''
+        Apply flow within and above a uniform homogenous canopy according to 
         the model described in Finnigan and Belcher (2004), "Flow over a hill 
         covered with a plant canopy" [1]_. 
         
@@ -757,11 +759,12 @@ class environment:
         If one of u_star, U_h, or beta is given as a list-like object, the flow 
         will vary in time.
 
-        Arguments:
+        Parameters
+        ----------
         h : float
             height of canopy (m)
         a : float
-            leaf area per unit volume of space m^{-1}. Typical values are a=1.0 
+            leaf area per unit volume of space $m^{-1}$. Typical values are a=1.0 
             for dense spruce to a=0.1 for open woodland
         u_star : float, optional (may set U_h instead)
             canopy friction velocity. u_star = U_h*beta if not set
@@ -791,6 +794,7 @@ class environment:
         .. [1] J.J. Finnigan and S.E. Belcher, (2004). "Flow over a hill covered 
         with a plant canopy," Quarterly Journal of the Royal Meteorological 
         Society, 130(596), 1-29.
+
         '''
 
         ##### Parse parameters #####
@@ -961,12 +965,18 @@ class environment:
         fluid-structure interaction models in Python and MATLAB. The code is 
         hosted at https://github.com/nickabattista/IB2d
 
-        Arguments:
-            - path: path to folder with vtk data
-            - dt: dt in input2d
-            - print_dump: print_dump in input2d
-            - d_start: number of first vtk dump to read in
-            - d_finish: number of last vtk dump to read in, or None to read to end
+        Parameters
+        ----------
+        path : str
+            path to folder with vtk data
+        dt : float
+            dt in input2d
+        print_dump : int
+            print_dump in input2d
+        d_start : int, default=0
+            number of first vtk dump to read in
+        d_finish : int, optional
+            number of last vtk dump to read in, or None to read to end
         '''
 
         ##### Parse parameters and read in data #####
@@ -1093,8 +1103,10 @@ class environment:
 
         All environment variables will be reset.
 
-        Arguments:
-            filename: filename of data to read
+        Parameters
+        ----------
+        filename : string
+            filename of data to read
         '''
         path = Path(filename)
         if not path.is_file(): 
@@ -1129,10 +1141,14 @@ class environment:
         Imported times will be translated backward so that the first time loaded
         corresponds to an agent environment time of 0.0.
 
-        Arguments:
-            path: path to vtk data
-            start: vtk file number to start with. If None, start at first one.
-            finish: vtk file number to end with. If None, end with last one.
+        Parameters
+        ----------
+        path : string
+            path to vtk data
+        start : int, optional
+            vtk file number to start with. If None, start at first one.
+        finish : int, optional
+            vtk file number to end with. If None, end with last one.
         '''
 
         path = Path(path)
@@ -1207,10 +1223,14 @@ class environment:
 
         All environment variables will be reset.
 
-        Arguments:
-            filename: filename of data to read, incl. file extension
-            vel_conv: scalar to multiply the velocity by in order to convert units
-            grid_conv: scalar to multiply the grid by in order to convert units
+        Parameters
+        ----------
+        filename : string
+            filename of data to read, incl. file extension
+        vel_conv : float, optional
+            scalar to multiply the velocity by in order to convert units
+        grid_conv : float, optional
+            scalar to multiply the grid by in order to convert units
         '''
         path = Path(filename)
         if not path.is_file(): 
@@ -1421,9 +1441,12 @@ class environment:
         just be assumed that the domain edges are equivalent, and only the
         right/upper domain edge will be used in tiling.
 
-        Arguments:
-            x: number of tiles in the x direction (counting the one already there)
-            y: number of tiles in the y direction (counting the one already there)
+        Parameters
+        ----------
+        x : int, default=2
+            number of tiles in the x direction (counting the one already there)
+        y : int, default=1
+            number of tiles in the y direction (counting the one already there)
         '''
 
         DIM3 = len(self.L) == 3
@@ -1521,11 +1544,16 @@ class environment:
         with constant fluid velocity. Good for extending domains with resolved
         fluid flow before/after and on the sides of a structure.
 
-        Arguments:
-            x_minus: number of times to duplicate bndry in the x- direction
-            x_plus: number of times to duplicate bndry in the x+ direction
-            y_minus: number of times to duplicate bndry in the y- direction
-            y_plus: number of times to duplicate bndry in the y+ direction
+        Parameters
+        ----------
+        x_minus : int
+            number of times to duplicate bndry in the x- direction
+        x_plus : int
+            number of times to duplicate bndry in the x+ direction
+        y_minus : int
+            number of times to duplicate bndry in the y- direction
+        y_plus : int
+            number of times to duplicate bndry in the y+ direction
         '''
 
         DIM3 = len(self.L) == 3
@@ -1627,16 +1655,18 @@ class environment:
     def add_swarm(self, swarm_size=100, **kwargs):
         ''' Adds a swarm into this environment.
 
-        Arguments:
-            swarm_size: swarm object or size of the swarm (int). If a swarm object
-                is given, the following arguments will be ignored (since the 
-                object is already initialized)
-            init: Method for initializing positions.
-                Accepts 'random', 1D array for a single point, or a 2D array 
-                to specify all points
-            seed: Seed for random number generator
-            kwargs: keyword arguments to be set as swarm properties
-                (see swarm class for details)
+        Parameters
+        ----------
+        swarm_size : swarm object or int (size of swarm), default=100
+            If a swarm object is given, all following parameters will be ignored 
+            (since the object is already initialized)
+        init : string
+            Method for initializing positions. See swarm class for options.
+        seed : int
+            Seed for random number generator
+        kwargs
+            keyword arguments to be set as swarm properties (see swarm class for 
+            details)
         '''
 
         if isinstance(swarm_size, planktos.swarm):
@@ -1744,12 +1774,15 @@ class environment:
         '''Interpolate flow in time using a cubic spline. Defaults to 
         interpolating at the current time, given by self.time.
 
-        Arguments:
-            t_indx: Interpolate at a time referred to by
-                self.envir.time_history[t_indx]
-            time: Interpolate at a specific time
+        Parameters
+        ----------
+        t_indx : int
+            Interpolate at a time referred to by self.envir.time_history[t_indx]
+        time : float
+            Interpolate at a specific time
 
-        Returns:
+        Returns
+        -------
             interpolated flow field as a list of ndarrays
         '''
 
@@ -1795,15 +1828,22 @@ class environment:
         the flow field will be interpolated in time first, using the current 
         environmental time, or a different time if provided.
 
-        Arguments:
-            positions: NxD locations at which to interpolate the flow field,
-                where D is the dimension of the system.
-            flow: if None, the environmental flow field. interpolated in time
-                if necessary.
-            time: if None, the present time. Otherwise, the flow field will be
-                interpolated to the time given.
-            method: spatial interpolation method to be passed to 
-                scipy.interpolate.interpn. Anything but splinef2d is supported.'''
+        Parameters
+        ----------
+        positions : array
+            NxD locations at which to interpolate the flow field, where D is the 
+            dimension of the system.
+        flow : list of arrays, optional
+            if None, the environmental flow field. interpolated in time if 
+            necessary.
+        time : float, optional
+            if None, the present time. Otherwise, the flow field will be
+            interpolated to the time given.
+        method : string, default='linear'
+            spatial interpolation method to be passed to 
+            scipy.interpolate.interpn. Anything but splinef2d is supported.
+
+        '''
 
         if flow is None:
             if len(self.flow[0].shape) == len(self.L):
@@ -1892,69 +1932,83 @@ class environment:
         discrete time intervals of length dt.
 
         All FTLE calculations will be done using a swarm object. This means that:
+        
         1) The boundary conditions specified by this environment will be respected.
         2) Immersed boundaries (if any are loaded into this environment) will be 
-        treated as impassible to all particles and movement vectors crossing these 
-        boundaries will be projected onto them.
+           treated as impassible to all particles and movement vectors crossing these 
+           boundaries will be projected onto them.
 
         If passing in a set of ode or finding the FTLE field for tracer particles, 
         an RK45 solver will be used. Otherwise, integration will be via the 
         swarm object's get_positions method.
 
-        Arguments:
-            grid_dim: tuple of integers denoting the size of the grid in each
-                dimension (x, y, [z]). Defaults to the fluid grid.
-            testdir: grid points can heuristically be removed from the interior 
-                of immersed structures. To accomplish this, a line will be drawn 
-                from each point to a domain boundary. If the number of intersections
-                is odd, the point is considered interior and masked. See grid_init 
-                for details - this argument sets the direction that the line 
-                will be drawn in (e.g. 'x1' for positive x-direction, 'y0' for 
-                negative y-direction). If None, do not perform this check and use 
-                all gridpoints.
-            t0: start time for calculating FTLE (float). If None, default 
-                behavior is to set t0=0.
-                TODO: Interable to calculate at many times. Default then becomes 
-                t0=0 for time invariant flows and calculate FTLE at all times 
-                the flow field was specified at (self.flow_times) 
-                for time varying flows?
-            T: integration time (float). Default is 1, but longer is better 
-                (up to a point).
-            dt: if solving ode or tracer particles, this is the time step for 
-                checking boundary conditions. If passing in a swarm object, 
-                this argument represents the length of the Euler time steps.
-            t_bound: if solving ode or tracer particles, this is the bound on
-                the RK45 integration step size. Defaults to dt/100.
-            ode_gen: [optional] function handle for an ode generator that takes
-                in a swarm object and returns an ode function handle with
-                call signature ODEs(t,x), where t is the current time (float) 
-                and x is a 2*NxD array with the first N rows giving v=dxdt and 
-                the second N rows giving dvdt. D is the spatial dimension of 
-                the problem. See the ODE generator functions in motion.py for 
-                examples of format. 
-                The ODEs will be solved using RK45 with a newly created swarm 
-                specified on a grid throughout the domain.
-            props: [optional] dictionary of properties for the swarm that will 
-                be created to solve the odes. Effectively, this passes parameter 
-                values into the ode generator.
-            swarm: [optional] swarm object with user-defined movement rules as 
-                specified by the get_positions method. This allows for arbitrary 
-                FTLE calculations through subclassing and overriding this method. 
-                Steps of length dt will be taken until the integration length T 
-                is reached. The swarm object itself will not be altered; a shallow 
-                copy will be created for the purpose of calculating the FTLE on 
-                a grid.
-            params: [optional] params to be passed to supplied swarm object's
-                get_positions method.
+        Parameters
+        ----------
+        grid_dim : tuple of int 
+            size of the grid in each dimension (x, y, [z]). Defaults to the 
+            fluid grid.
+        testdir : str
+            grid points can heuristically be removed from the interior of 
+            immersed structures. To accomplish this, a line will be drawn from 
+            each point to a domain boundary. If the number of intersections
+            is odd, the point is considered interior and masked. See grid_init 
+            for details - this argument sets the direction that the line 
+            will be drawn in (e.g. 'x1' for positive x-direction, 'y0' for 
+            negative y-direction). If None, do not perform this check and use 
+            all gridpoints.
+        t0 : float, optional
+            start time for calculating FTLE. If None, default 
+            behavior is to set t0=0.
+            TODO: Interable to calculate at many times. Default then becomes 
+            t0=0 for time invariant flows and calculate FTLE at all times 
+            the flow field was specified at (self.flow_times) 
+            for time varying flows?
+        T : float, default=0.1
+            integration time. Default is 1, but longer is better (up to a point).
+        dt : float, default=0.001
+            if solving ode or tracer particles, this is the time step for 
+            checking boundary conditions. If passing in a swarm object, 
+            this argument represents the length of the Euler time steps.
+        ode_gen : function handle, optional
+            functional handle for an ode generator that takes
+            in a swarm object and returns an ode function handle with
+            call signature ODEs(t,x), where t is the current time (float) 
+            and x is a 2*NxD array with the first N rows giving v=dxdt and 
+            the second N rows giving dvdt. D is the spatial dimension of 
+            the problem. See the ODE generator functions in motion.py for 
+            examples of format. 
+            The ODEs will be solved using RK45 with a newly created swarm 
+            specified on a grid throughout the domain.
+        props : dict, optional 
+            dictionary of properties for the swarm that will be created to solve 
+            the odes. Effectively, this passes parameter values into the ode 
+            generator.
+        t_bound : float, optional
+            if solving ode or tracer particles, this is the bound on
+            the RK45 integration step size. Defaults to dt/100.
+        swarm : swarm object, optional 
+            swarm object with user-defined movement rules as 
+            specified by the get_positions method. This allows for arbitrary 
+            FTLE calculations through subclassing and overriding this method. 
+            Steps of length dt will be taken until the integration length T 
+            is reached. The swarm object itself will not be altered; a shallow 
+            copy will be created for the purpose of calculating the FTLE on 
+            a grid.
+        params : dict, optional 
+            params to be passed to supplied swarm object's get_positions method.
             
         If both ode and swarm arguments are None, the default is to calculate the 
         FTLE based on massless tracer particles.
 
-        Returns:
-            swarm object: used to calculuate the FTLE
-            list: list of dt integration steps
-            ndarray: array the same size as the point grid giving the last time
-                in the integration before each point exited the domain
+        Returns
+        -------
+        swarm object
+            used to calculuate the FTLE
+        list
+            list of dt integration steps
+        ndarray
+            array the same size as the point grid giving the last time
+            in the integration before each point exited the domain
         '''
 
         ###########################################################
@@ -2276,17 +2330,22 @@ class environment:
     def get_2D_vorticity(self, t_indx=None, time=None, t_n=None):
         '''Calculuate the vorticity of the fluid velocity field at a given time.
 
-        Arguments:
-            t_indx: integer time index into self.envir.time_history[t_indx]
-            time: time, float
-            t_n: integer time index into self.flow_times[t_n]
+        Parameters
+        ----------
+        t_indx : int
+            integer time index into self.envir.time_history[t_indx]
+        time : float
+            time
+        t_n : int
+            integer time index into self.flow_times[t_n]
 
         If all time arguments are None but the flow is time-varying, the vorticity
         at the current time will be returned. If more than one time argument is
         specified, only the first will be used.
 
-        Returns:
-            vorticity as an ndarray
+        Returns
+        -------
+        vorticity as an ndarray
 
         '''
         assert len(self.L) == 2, "Fluid velocity field must be 2D!"
@@ -2351,13 +2410,18 @@ class environment:
         '''Save the vorticity of a 2D fluid velocity field as one or more vtk 
         files (one for each time point).
 
-        Arguments:
-            path: string, location to save file(s)
-            name: string, prefix name for file(s)
-            time_history: if True, save vorticity data for each time step in the
-                simulation history. Only for time-varying fluid.
-            flow_times: if True, save vorticity data for each time at which the
-                fluid velocity data is explicitly specified.
+        Parameters
+        ----------
+        path : string
+            location to save file(s)
+        name : string
+            prefix name for file(s)
+        time_history : bool
+            if True, save vorticity data for each time step in the simulation 
+            history. Only for time-varying fluid.
+        flow_times : bool
+            if True, save vorticity data for each time at which the fluid 
+            velocity data is explicitly specified.
         '''
 
         if time_history:
@@ -2434,13 +2498,16 @@ class environment:
         '''Return the derivative of the fluid velocity with respect to time.
         Defaults to interpolating at the current time, given by self.time.
 
-        Arguments:
-            t_indx: Interpolate at a time referred to by
-                self.envir.time_history[t_indx]
-            time: Interpolate at a specific time. default is current time.
+        Parameters
+        ----------
+        t_indx : int, optional
+            Interpolate at a time referred to by self.envir.time_history[t_indx]
+        time : float, optional
+            Interpolate at a specific time. default is current time.
 
-        Returns:
-            interpolated flow field as a list of ndarrays
+        Returns
+        -------
+        interpolated flow field as a list of ndarrays
         '''
 
         DIM3 = (len(self.L) == 3)
@@ -2950,13 +3017,19 @@ class environment:
 
         TODO: Show a video of 2D slices as a plot of 3D FTLE
 
-        Arguments:
-            smallest: If true, plot the negative, smallest, forward-time FTLE as 
-                a way of identifying attracting Lagrangian Coherent Structures (see 
-                Haller and Sapsis 2011). Otherwise, plot the largest, forward-time 
-                FTLE as a way of identifying ridges (separatrix) of LCSs.
-            clip_l: lower clip value (below this value, mask points)
-            clip_h: upper clip value (above this value, mask points)
+        Parameters
+        ----------
+        smallest : bool, default=False
+            If true, plot the negative, smallest, forward-time FTLE as 
+            a way of identifying attracting Lagrangian Coherent Structures (see 
+            Haller and Sapsis 2011). Otherwise, plot the largest, forward-time 
+            FTLE as a way of identifying ridges (separatrix) of LCSs.
+        clip_l : float, optional
+            lower clip value (below this value, mask points)
+        clip_h : float, optional
+            upper clip value (above this value, mask points)
+        figsize : tuple, optional
+            matplotlib figsize
         '''
 
         if self.FTLE_loc is None:
