@@ -759,8 +759,8 @@ class environment:
         If one of u_star, U_h, or beta is given as a list-like object, the flow 
         will vary in time.
 
-        Arguments
-        ---------
+        Parameters
+        ----------
         h : float
             height of canopy (m)
         a : float
@@ -965,12 +965,18 @@ class environment:
         fluid-structure interaction models in Python and MATLAB. The code is 
         hosted at https://github.com/nickabattista/IB2d
 
-        Arguments:
-            - path: path to folder with vtk data
-            - dt: dt in input2d
-            - print_dump: print_dump in input2d
-            - d_start: number of first vtk dump to read in
-            - d_finish: number of last vtk dump to read in, or None to read to end
+        Parameters
+        ----------
+        path : str
+            path to folder with vtk data
+        dt : float
+            dt in input2d
+        print_dump : int
+            print_dump in input2d
+        d_start : int, default=0
+            number of first vtk dump to read in
+        d_finish : int, optional
+            number of last vtk dump to read in, or None to read to end
         '''
 
         ##### Parse parameters and read in data #####
@@ -1097,8 +1103,10 @@ class environment:
 
         All environment variables will be reset.
 
-        Arguments:
-            filename: filename of data to read
+        Parameters
+        ----------
+        filename : string
+            filename of data to read
         '''
         path = Path(filename)
         if not path.is_file(): 
@@ -1133,10 +1141,14 @@ class environment:
         Imported times will be translated backward so that the first time loaded
         corresponds to an agent environment time of 0.0.
 
-        Arguments:
-            path: path to vtk data
-            start: vtk file number to start with. If None, start at first one.
-            finish: vtk file number to end with. If None, end with last one.
+        Parameters
+        ----------
+        path : string
+            path to vtk data
+        start : int, optional
+            vtk file number to start with. If None, start at first one.
+        finish : int, optional
+            vtk file number to end with. If None, end with last one.
         '''
 
         path = Path(path)
@@ -1211,10 +1223,14 @@ class environment:
 
         All environment variables will be reset.
 
-        Arguments:
-            filename: filename of data to read, incl. file extension
-            vel_conv: scalar to multiply the velocity by in order to convert units
-            grid_conv: scalar to multiply the grid by in order to convert units
+        Parameters
+        ----------
+        filename : string
+            filename of data to read, incl. file extension
+        vel_conv : float, optional
+            scalar to multiply the velocity by in order to convert units
+        grid_conv : float, optional
+            scalar to multiply the grid by in order to convert units
         '''
         path = Path(filename)
         if not path.is_file(): 
@@ -1425,9 +1441,12 @@ class environment:
         just be assumed that the domain edges are equivalent, and only the
         right/upper domain edge will be used in tiling.
 
-        Arguments:
-            x: number of tiles in the x direction (counting the one already there)
-            y: number of tiles in the y direction (counting the one already there)
+        Parameters
+        ----------
+        x : int, default=2
+            number of tiles in the x direction (counting the one already there)
+        y : int, default=1
+            number of tiles in the y direction (counting the one already there)
         '''
 
         DIM3 = len(self.L) == 3
@@ -1525,11 +1544,16 @@ class environment:
         with constant fluid velocity. Good for extending domains with resolved
         fluid flow before/after and on the sides of a structure.
 
-        Arguments:
-            x_minus: number of times to duplicate bndry in the x- direction
-            x_plus: number of times to duplicate bndry in the x+ direction
-            y_minus: number of times to duplicate bndry in the y- direction
-            y_plus: number of times to duplicate bndry in the y+ direction
+        Parameters
+        ----------
+        x_minus : int
+            number of times to duplicate bndry in the x- direction
+        x_plus : int
+            number of times to duplicate bndry in the x+ direction
+        y_minus : int
+            number of times to duplicate bndry in the y- direction
+        y_plus : int
+            number of times to duplicate bndry in the y+ direction
         '''
 
         DIM3 = len(self.L) == 3
@@ -2306,17 +2330,22 @@ class environment:
     def get_2D_vorticity(self, t_indx=None, time=None, t_n=None):
         '''Calculuate the vorticity of the fluid velocity field at a given time.
 
-        Arguments:
-            t_indx: integer time index into self.envir.time_history[t_indx]
-            time: time, float
-            t_n: integer time index into self.flow_times[t_n]
+        Parameters
+        ----------
+        t_indx : int
+            integer time index into self.envir.time_history[t_indx]
+        time : float
+            time
+        t_n : int
+            integer time index into self.flow_times[t_n]
 
         If all time arguments are None but the flow is time-varying, the vorticity
         at the current time will be returned. If more than one time argument is
         specified, only the first will be used.
 
-        Returns:
-            vorticity as an ndarray
+        Returns
+        -------
+        vorticity as an ndarray
 
         '''
         assert len(self.L) == 2, "Fluid velocity field must be 2D!"
