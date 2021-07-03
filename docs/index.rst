@@ -23,10 +23,11 @@ Functionality includes:
 * Velocity field analysis with respect to deterministic agent behavior via the 
   finite-time Lagrangian exponent.
 
-
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
+   
+   api/index
 
 
 
