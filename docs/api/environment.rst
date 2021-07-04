@@ -1,6 +1,6 @@
 Environment class
 =================
 
-.. automodule:: planktos.environment
+.. autoclass:: planktos.environment.environment
     :members:
 

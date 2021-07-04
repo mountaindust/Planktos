@@ -76,7 +76,7 @@ class environment:
         If you specify a fluid velocity field here, it should be of the following 
         format:  
         [x-vel field ndarray ([t],i,j,[k]), y-vel field ndarray ([t],i,j,[k]),
-            z-vel field ndarray if 3D]
+        z-vel field ndarray if 3D].
         Note! i is x index, j is y index, with the value of x and y increasing
         as the index increases. It is assumed that the flow mesh is equally 
         spaced and includes values on the domain boundary. A keyword argument 
@@ -792,8 +792,8 @@ class environment:
         References
         ----------
         .. [1] J.J. Finnigan and S.E. Belcher, (2004). "Flow over a hill covered 
-        with a plant canopy," Quarterly Journal of the Royal Meteorological 
-        Society, 130(596), 1-29.
+            with a plant canopy," Quarterly Journal of the Royal Meteorological 
+            Society, 130(596), 1-29.
 
         '''
 
