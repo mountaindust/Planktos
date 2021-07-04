@@ -4,6 +4,7 @@ Swarm class of Planktos.
 Created on Tues Jan 24 2017
 
 Author: Christopher Strickland
+
 Email: cstric12@utk.edu
 '''
 
