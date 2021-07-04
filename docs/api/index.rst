@@ -15,3 +15,6 @@ Planktos provides:
     :caption: Contents:
     
     environment
+    swarm
+    motion
+    dataio

@@ -59,16 +59,17 @@ class swarm:
         environment with all of the defaults.
     init : {'random', 'grid', ndarray}, default='random'
         Method for initalizing agent positions.
-        - 'random': Uniform random distribution throughout the domain
-        - 'grid': Uniform grid on interior of the domain, including capability
-            to leave out closed immersed structures. In this case, swarm_size 
-            is ignored since it is determined by the grid dimensions.
-            Requires the additional keyword parameters grid_dim and testdir.
-        - 1D array: All positions set to a single point given by the x,y,[z] 
-            coordinates of this array
-        - 2D array: All positions as specified. Shape of array should be NxD, 
-            where N is the number of agents and D is spatial dimension. In this 
-            case, swarm_size is ignored.
+        
+        * 'random': Uniform random distribution throughout the domain
+        * 'grid': Uniform grid on interior of the domain, including capability
+          to leave out closed immersed structures. In this case, swarm_size 
+          is ignored since it is determined by the grid dimensions.
+          Requires the additional keyword parameters grid_dim and testdir.
+        * 1D array: All positions set to a single point given by the x,y,[z] 
+          coordinates of this array
+        * 2D array: All positions as specified. Shape of array should be NxD, 
+          where N is the number of agents and D is spatial dimension. In this 
+          case, swarm_size is ignored.
     seed : int, optional
         Seed for random number generator
     shared_props : dictionary, optional
@@ -80,11 +81,11 @@ class swarm:
         identity matrix of appropriate size according to the spatial dimension. 
         This allows the default agent behavior to be unbiased brownian motion.  
         Examples:  
-        - diam: diameter of the particles
-        - m: mass of the particles
-        - Cd: drag coefficient of the particles
-        - cross_sec: cross-sectional area of the particles
-        - R: density ratio
+        * diam: diameter of the particles
+        * m: mass of the particles
+        * Cd: drag coefficient of the particles
+        * cross_sec: cross-sectional area of the particles
+        * R: density ratio
     props : Pandas dataframe of individual agent properties, optional
         Pandas dataframe of individual agent properties that vary between agents. 
         This is the method by which individual variation among the agents should 
@@ -641,18 +642,16 @@ class swarm:
 
         The output format for the position csv will be as follows:
 
-        - The first row contains cycle and time information. The cycle is given, 
-        and then each time stamp is repeated D times, where D is the spatial 
-        dimension of the system.
-
-        - Each subsequent row corresponds to a different agent in the swarm.
-
-        - Reading across the columns of an agent row: first, a boolean is given
-        showing the state of the mask for that time step. Agents are masked
-        when they have exited the domain. Then, the position vector is given
-        as a group of D columns for the x, y, (and z) direction. Each set
-        of 1+D columns then corresponds to a different cycle/time, as 
-        labeled by the values in the first row.
+        * The first row contains cycle and time information. The cycle is given, 
+          and then each time stamp is repeated D times, where D is the spatial 
+          dimension of the system.
+        * Each subsequent row corresponds to a different agent in the swarm.
+        * Reading across the columns of an agent row: first, a boolean is given
+          showing the state of the mask for that time step. Agents are masked
+          when they have exited the domain. Then, the position vector is given
+          as a group of D columns for the x, y, (and z) direction. Each set
+          of 1+D columns then corresponds to a different cycle/time, as 
+          labeled by the values in the first row.
 
         The result is a csv that is N+1 by (1+D)*T, where N is the number of 
         agents, D is the dimension of the system, and T is the number of 
@@ -2067,18 +2066,20 @@ class swarm:
         dist : {'density' (default), 'cov', float, 'hist'}
             whether to plot Gaussian kernel density estimation or histogram.
             Options are:
-            - 'density': plot Gaussian KDE using Scotts Factor from scipy.stats.gaussian_kde
-            - 'cov': use the variance in each direction from self.shared_props['cov']
-                to plot Gaussian KDE
-            - float: plot Gaussian KDE using the given bandwidth factor to 
-                multiply the KDE variance by
-            - 'hist': plot histogram
+
+            * 'density': plot Gaussian KDE using Scotts Factor from scipy.stats.gaussian_kde
+            * 'cov': use the variance in each direction from self.shared_props['cov']
+              to plot Gaussian KDE
+            * float: plot Gaussian KDE using the given bandwidth factor to 
+              multiply the KDE variance by
+            * 'hist': plot histogram
         fluid : {'vort', 'quiver'}, optional
             Plot info on the fluid in the background. 2D only! If None, don't
             plot anything related to the fluid.
             Options are:
-            - 'vort': plot vorticity in the background
-            - 'quiver': quiver plot of fluid velocity in the background
+
+            * 'vort': plot vorticity in the background
+            * 'quiver': quiver plot of fluid velocity in the background
         clip : float, optional
             if plotting vorticity, specifies the clip value for pseudocolor.
             this value is used for both negative and positive vorticity.
@@ -2371,18 +2372,20 @@ class swarm:
         dist : {'density' (default), 'cov', float, 'hist'}
             whether to plot Gaussian kernel density estimation or histogram.
             Options are:
-            - 'density': plot Gaussian KDE using Scotts Factor from scipy.stats.gaussian_kde
-            - 'cov': use the variance in each direction from self.shared_props['cov']
-                to plot Gaussian KDE
-            - float: plot Gaussian KDE using the given bandwidth factor to 
-                multiply the KDE variance by
-            - 'hist': plot histogram
+
+            * 'density': plot Gaussian KDE using Scotts Factor from scipy.stats.gaussian_kde
+            * 'cov': use the variance in each direction from self.shared_props['cov']
+              to plot Gaussian KDE
+            * float: plot Gaussian KDE using the given bandwidth factor to 
+              multiply the KDE variance by
+            * 'hist': plot histogram
         fluid : {'vort', 'quiver'}, optional
             Plot info on the fluid in the background. 2D only! If None, don't
             plot anything related to the fluid.
             Options are:
-            - 'vort': plot vorticity in the background
-            - 'quiver': quiver plot of fluid velocity in the background
+
+            * 'vort': plot vorticity in the background
+            * 'quiver': quiver plot of fluid velocity in the background
         clip : float, optional
             if plotting vorticity, specifies the clip value for pseudocolor.
             this value is used for both negative and positive vorticity.

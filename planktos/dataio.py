@@ -47,11 +47,13 @@ except ModuleNotFoundError:
 def vtk_dep(func):
     '''Decorator for VTK readers to check package import.'''
     def wrapper(*args, **kwargs):
+        __doc__ = func.__doc__
         if not VTK:
             print("Cannot read VTK file: VTK library not found.")
             raise RuntimeError("Cannot read VTK file: VTK library not found in data_IO.")
         else:
             return func(*args, **kwargs)
+    wrapper.__doc__ = func.__doc__
     return wrapper
 
 
@@ -64,6 +66,7 @@ def pyvista_dep(func):
             raise RuntimeError("Cannot write VTK files: pyvista library not found.")
         else:
             return func(*args, **kwargs)
+    wrapper.__doc__ = func.__doc__
     return wrapper
 
 
@@ -71,12 +74,14 @@ def pyvista_dep(func):
 def stl_dep(func):
     '''Decorator for STL readers to check package import.'''
     def wrapper(*args, **kwargs):
+        __doc__ = func.__doc__
         if not STL:
             print("Cannot read STL file: numpy-stl library not found.")
             raise RuntimeError("Cannot read STL file: numpy-stl library not found in data_IO. "+
                                "Please install numpy-stl with conda -c conda-forge or using pip.")
         else:
             return func(*args, **kwargs)
+    wrapper.__doc__ = func.__doc__
     return wrapper
 
 
