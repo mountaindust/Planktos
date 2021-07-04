@@ -1,9 +1,10 @@
 '''Functions for reading and writing data from vtk, vtu, vertex files, and stl.
 
-.. Created:: Wed April 05 2017
+Created: Wed April 05 2017
 
-.. Author:: Christopher Strickland
-.. Email:: cstric12@utk.edu
+Author: Christopher Strickland
+
+Email: cstric12@utk.edu
 '''
 
 __author__ = "Christopher Strickland"

@@ -1,6 +1,5 @@
 Environment class
 =================
 
-.. autoclass:: planktos.environment.environment
+.. autoclass:: planktos.environment
     :members:
-

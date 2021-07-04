@@ -4,6 +4,7 @@ Environment class of Planktos.
 Created on Tues Jan 24 2017
 
 Author: Christopher Strickland
+
 Email: cstric12@utk.edu
 '''
 
@@ -158,8 +159,6 @@ class environment:
         characteristic length, m
     U : float
         characteristic fluid speed, m/s
-    Re : float (read-only)
-        Reynolds number, U*char_L/nu
     ibmesh : ndarray
         This is either an Nx2x2 array (2D, line mesh) or an Nx3x3 array (3D, 
         triangular mesh) specifying internal mesh structures that agents will 
@@ -416,8 +415,7 @@ class environment:
 
 
     def set_brinkman_flow(self, alpha, h_p, U, dpdx, res=101, tspan=None):
-        r'''
-        Get a fully developed Brinkman flow with a porous region.
+        r'''Get a fully developed Brinkman flow with a porous region.
 
         This method sets the environment fluid velocity as a 1D Brinkman flow 
         based on a porous layer of hight h_p in the bottom of the domain.
@@ -431,8 +429,8 @@ class environment:
         environment class will be set to the resulting Brinkman flow, and h_p 
         will be set in the environment's properties.
 
-        Paramters
-        ---------
+        Parameters
+        ----------
         alpha : float
             equal to 1/(hydraulic permeability). alpha=0 implies free flow 
             (infinitely permeable)
@@ -469,8 +467,9 @@ class environment:
         Brinkman's equation [1]_ is written as
         
         .. math::
-            \rho(\U_{t}(\mathbf{x},t) +\U(\mathbf{x},t)\cdot\nabla \U(\mathbf{x},t)) =
-            -\nabla p(\mathbf{x},t) + \mu \Lap \U(\mathbf{x},t) - \alpha \mu \U(\mathbf{x},t)
+            \rho(\mathbf{u}_{t}(\mathbf{x},t) +\mathbf{u}(\mathbf{x},t)\cdot\nabla 
+            \mathbf{u}(\mathbf{x},t)) = -\nabla p(\mathbf{x},t) + \mu \nabla^2 
+            \mathbf{u}(\mathbf{x},t) - \alpha \mu \mathbf{u}(\mathbf{x},t)
 
         where is :math:`\alpha` is the inverse of the hydraulic permeability. 
         We take a region of height h_p where :math:`\alpha>0` with parallel shear 
@@ -651,7 +650,7 @@ class environment:
     def set_two_layer_channel_flow(self, a, h_p, Cd, S, res=101):
         '''Apply wide-channel flow with vegetation layer according to the
         two-layer model described in Defina and Bixio (2005), 
-        "Vegetated Open Channel Flow" [1]_. 
+        "Vegetated Open Channel Flow" [3]_. 
         
         The decision to set 2D vs. 3D flow is based on the current dimension of
         the environment and the fluid velocity is always time-independent.
@@ -682,7 +681,7 @@ class environment:
 
         References
         ----------
-        .. [1] A. Defina and A.C. Bixio, (2005). "Mean flow and turbulence in 
+        .. [3] A. Defina and A.C. Bixio, (2005). "Mean flow and turbulence in 
            vegetated open channel flow," Water Resources Research, 41(7).
         '''
         # Get channel height
@@ -750,11 +749,11 @@ class environment:
         '''
         Apply flow within and above a uniform homogenous canopy according to 
         the model described in Finnigan and Belcher (2004), "Flow over a hill 
-        covered with a plant canopy" [1]_. 
+        covered with a plant canopy" [4]_. 
         
         The decision to set 2D vs. 3D flow is based on the current dimension of
         the environment. Default values for beta and C are based on Finnigan & 
-        Belcher [1]_. Must specify two of u_star, U_h, and beta, though beta has 
+        Belcher [4]_. Must specify two of u_star, U_h, and beta, though beta has 
         a default value of 0.3 so just giving u_star or U_h will also work. 
         If one of u_star, U_h, or beta is given as a list-like object, the flow 
         will vary in time.
@@ -791,7 +790,7 @@ class environment:
 
         References
         ----------
-        .. [1] J.J. Finnigan and S.E. Belcher, (2004). "Flow over a hill covered 
+        .. [4] J.J. Finnigan and S.E. Belcher, (2004). "Flow over a hill covered 
             with a plant canopy," Quarterly Journal of the Royal Meteorological 
             Society, 130(596), 1-29.
 
@@ -1942,6 +1941,9 @@ class environment:
         an RK45 solver will be used. Otherwise, integration will be via the 
         swarm object's get_positions method.
 
+        If both ode and swarm arguments are None, the default is to calculate the 
+        FTLE based on massless tracer particles.
+
         Parameters
         ----------
         grid_dim : tuple of int 
@@ -1996,9 +1998,6 @@ class environment:
             a grid.
         params : dict, optional 
             params to be passed to supplied swarm object's get_positions method.
-            
-        If both ode and swarm arguments are None, the default is to calculate the 
-        FTLE based on massless tracer particles.
 
         Returns
         -------
@@ -2330,6 +2329,10 @@ class environment:
     def get_2D_vorticity(self, t_indx=None, time=None, t_n=None):
         '''Calculuate the vorticity of the fluid velocity field at a given time.
 
+        If all time arguments are None but the flow is time-varying, the vorticity
+        at the current time will be returned. If more than one time argument is
+        specified, only the first will be used.
+
         Parameters
         ----------
         t_indx : int
@@ -2338,10 +2341,6 @@ class environment:
             time
         t_n : int
             integer time index into self.flow_times[t_n]
-
-        If all time arguments are None but the flow is time-varying, the vorticity
-        at the current time will be returned. If more than one time argument is
-        specified, only the first will be used.
 
         Returns
         -------
@@ -2488,7 +2487,7 @@ class environment:
     @property
     def Re(self):
         '''Return the Reynolds number at the current time. Must have set 
-        self.U, self.char_L and self.nu'''
+        self.U, self.char_L and self.nu. Reynolds number is U*char_L/nu.'''
 
         return self.U*self.char_L/self.nu
 

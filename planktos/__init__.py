@@ -15,5 +15,9 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 
 from .environment import environment
 from .swarm import swarm
-from . import motion
-from . import dataio
+# from . import motion
+# from . import dataio
+
+__all__ = ["environment", "swarm", "motion", "dataio"]
+environment.__module__ = "environment"
+swarm.__module__ = "swarm"
