@@ -69,9 +69,9 @@ envir.plot_2D_FTLE()
 #   let's use that.
 
 envir = planktos.environment(char_L=0.1, rho=1, mu=0.001, U=15)
-# NOTE: we'll use just the cycle 20 data here. It produces something of a more
-#   exciting result!
-envir.read_IB2d_vtk_data('ib2d_data', 5.0e-5, 1000, d_start=20, d_finish=20)
+# NOTE: We'll start with cycle 20 in the VTK data here, instead of from the 
+# beginning. It produces a more exciting result!
+envir.read_IB2d_vtk_data('ib2d_data', 5.0e-5, 1000, d_start=20, d_finish=None)
 
 ##############     Use a Passed in ODE Generator    ##############
 # Note: intertial particles requires certain parameters to be present in the 
@@ -96,7 +96,7 @@ envir.plot_2D_FTLE()
 #   that is operated on.
 
 envir = planktos.environment(char_L=0.1, rho=1, mu=0.001, U=15)
-envir.read_IB2d_vtk_data('ib2d_data', 5.0e-5, 1000, d_start=20, d_finish=20)
+envir.read_IB2d_vtk_data('ib2d_data', 5.0e-5, 1000, d_start=20, d_finish=None)
 
 ##############     FTLE with passed in swarm     ##############
 class ftle_swrm(planktos.swarm):
