@@ -32,7 +32,8 @@ If you use this software in your project, please cite it as:
   Strickland, WC. (2018), *Planktos agent-based modeling framework*. 
   https://github.com/mountaindust/Planktos.  
 
-A suggested BibTeX entry is included in the file Planktos.bib.
+A suggested BibTeX entry is included in the file 
+:download:`Planktos.bib <../Planktos.bib>`.
 
 .. toctree::
    :maxdepth: 2
