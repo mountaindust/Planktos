@@ -13,3 +13,4 @@ started.
     Basic 3D example <basic_3d>
     Specifying agent behavior <agent_behavior>
     Importing VTK and vertex data <ib2d_ibmesh>
+    Importing 3D data and tiling <IBAMR_ibmesh>
