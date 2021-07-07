@@ -12,3 +12,4 @@ started.
     Basic 2D example <basic_2d>
     Basic 3D example <basic_3d>
     Specifying agent behavior <agent_behavior>
+    Importing VTK and vertex data <ib2d_ibmesh>
