@@ -1198,8 +1198,8 @@ class swarm:
             if np.any(self.positions.mask):
                 for n, startpt, endpt in \
                     zip(np.arange(self.positions.shape[0])[~self.positions.mask[:,0]],
-                        self.pos_history[-1][~self.positions.mask[:,0],:],
-                        self.positions[~self.positions.mask[:,0],:]
+                        self.pos_history[-1][~self.positions.mask[:,0],:].copy(),
+                        self.positions[~self.positions.mask[:,0],:].copy()
                         ):
                     new_loc = self._apply_internal_BC(startpt, endpt, 
                                 self.envir.ibmesh, self.envir.max_meshpt_dist,
@@ -1211,8 +1211,8 @@ class swarm:
                         self.ib_collision[n] = False
             else:
                 for n in range(self.positions.shape[0]):
-                    startpt = self.pos_history[-1][n,:]
-                    endpt = self.positions[n,:]
+                    startpt = self.pos_history[-1][n,:].copy()
+                    endpt = self.positions[n,:].copy()
                     new_loc = self._apply_internal_BC(startpt, endpt,
                                 self.envir.ibmesh, self.envir.max_meshpt_dist,
                                 ib_collisions=ib_collisions)
