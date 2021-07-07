@@ -2153,6 +2153,8 @@ class environment:
                 # copy time to non-masked locations
                 last_time[~s.positions[:,0].mask] = self.time
 
+                print('t={}'.format(self.time))
+
                 # if all agents have left the domain, quit early
                 if np.all(s.positions.mask):
                     print('FTLE solver quit early at time {} after all agents left the domain.'.format(self.time))
