@@ -7,6 +7,9 @@
   :description: Planktos agent-based modeling framework documentation
   :keywords: Planktos, documentation, agent-based, modeling, fluid
 
+.. image:: _static/logo.png
+
+===================================
 Welcome to Planktos' documentation!
 ===================================
 
@@ -42,8 +45,6 @@ A suggested BibTeX entry is included in the file
    quickstart
    examples/index
    api/index
-
-
 
 Indices and tables
 ==================
