@@ -1,4 +1,4 @@
-Swarm class
+swarm class
 ===========
 
 The swarm class acts as a collection of agents that share a similar motion model. 

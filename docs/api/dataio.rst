@@ -1,4 +1,4 @@
-Dataio module
+dataio module
 =============
 
 .. automodule:: planktos.dataio

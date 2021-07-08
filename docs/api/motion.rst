@@ -1,4 +1,4 @@
-Motion module
+motion module
 =============
 
 .. automodule:: planktos.motion

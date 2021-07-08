@@ -1,4 +1,4 @@
-Environment class
+environment class
 =================
 
 Every instance of the environment class is functionally a rectangular spatial 
