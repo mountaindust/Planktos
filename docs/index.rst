@@ -16,7 +16,7 @@ Welcome to Planktos' documentation!
 Planktos is an agent-based modeling framework targeted at 2D or 3D fluid 
 environments. Agents in this framework are relatively tiny organisms (e.g., 
 plankton or small insects) whose effect on the surrounding fluid can be 
-considered negligable.
+considered negligible.
 
 This library can be used for scientific exploration and quantification of 
 collective and emergent behavior, including interaction with immersed structures. 
