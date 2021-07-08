@@ -1,0 +1,14 @@
+# Configuration file for readthedocs
+
+# Configuration version
+version: 2
+
+# Build documentation in the docs/ directory with Sphinx
+sphinx:
+  configuration: docs/conf.py
+
+# Set the version of Python and requirements required to build docs
+python:
+  version: 3.8
+  install:
+  - requirements: docs/requirements.txt
