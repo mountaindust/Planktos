@@ -8,6 +8,8 @@ If you use this software in your project, please cite it as:
 Strickland, C. (2018), *Planktos agent-based modeling framework*. https://github.com/mountaindust/Planktos.  
 A suggested BibTeX entry is included in the file Planktos.bib.
 
+Also, check out the online documentation at https://planktos.readthedocs.io.
+
 ## Installation & Dependencies
 I'm assuming you're using Anaconda, and if so, I ***strongly*** suggest that you ditch 
 the default package manager conda (which is essentially broken at this point - 

@@ -55,7 +55,7 @@ def flatten_ode(swarm):
 # TODO: diffusion in porous media https://en.wikipedia.org/wiki/Diffusion#Diffusion_in_porous_media
 
 def RK45(fun, t0, y0, tf, rtol=0.0001, atol=1e-06, h_start=None):
-    '''Runge-Kutta Dormand-Prince solver (variable time-step solver). 
+    '''Runge-Kutta Dormand-Prince [1]_ solver (variable time-step solver). 
     
     The passed in ode function (fun) must have call signature (t,x) where x is 
     a 2-D array with a number of columns equal to the spatial dimension.
@@ -85,6 +85,11 @@ def RK45(fun, t0, y0, tf, rtol=0.0001, atol=1e-06, h_start=None):
     -------
         y : ndarray with shape matching y0
             new state at time tf
+
+    References
+    ----------
+    .. [1] Dormand, J.R., Prince, P.J. (1980). A family of embeded Runge-Kutta 
+       formulae, *Journal of Computational and Applied Mathematics*, 6(1), 19-26.
     '''
 
     A = np.array([0, 1/5, 3/10, 4/5, 8/9, 1, 1])
@@ -154,7 +159,7 @@ def RK45(fun, t0, y0, tf, rtol=0.0001, atol=1e-06, h_start=None):
 def Euler_brownian_motion(swarm, dt, mu=None, ode=None, sigma=None):
     '''Uses the Euler-Maruyama method to solve the Ito SDE
     
-        :math:`dX_t = \mu dt + \sigma dW_t`
+        :math:`dX_t = \mu(X_t,t) dt + \sigma(t) dW_t`
 
     where :math:`\mu` is the drift and :math:`\sigma` is the diffusion.
     :math:`\mu` can be specified directly as a constant or via an ode, or both.
@@ -341,8 +346,8 @@ def Euler_brownian_motion(swarm, dt, mu=None, ode=None, sigma=None):
 
 def inertial_particles(swarm):
     '''Function generator for ODEs governing small, rigid, spherical particles 
-    whose dynamics can be described by the linearized Maxey-Riley equation [1]_
-    described in Haller and Sapsis (2008) [2]_. Critically, it is assumed that 
+    whose dynamics can be described by the linearized Maxey-Riley equation [2]_
+    described in Haller and Sapsis (2008) [3]_. Critically, it is assumed that 
     mu = R/St, where R is the density ratio 2*rho_f/(rho_f+2*rho_p) and St is 
     the Stokes number, is much greater than 1.
 
@@ -374,9 +379,9 @@ def inertial_particles(swarm):
 
     References
     ----------
-    .. [1] Maxey, M.R. and Riley, J.J. (1983). Equation of motion for a small rigid
+    .. [2] Maxey, M.R. and Riley, J.J. (1983). Equation of motion for a small rigid
       sphere in a nonuniform flow. Phys. Fluids, 26(4), 883-889.
-    .. [2] Haller, G. and Sapsis, T. (2008). Where do inertial particles go in
+    .. [3] Haller, G. and Sapsis, T. (2008). Where do inertial particles go in
       fluid flows? Physica D: Nonlinear Phenomena, 237(5), 573-583.
     '''
     
