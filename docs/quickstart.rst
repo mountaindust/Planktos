@@ -98,8 +98,8 @@ cubic spline in time with linear interpolation in space
 (future: tricubic spline in space). In addition to more custom behavior, 
 included in Planktos is an Ito SDE solver (Euler-Maruyama method) for movement 
 specified as an SDE of the type 
-.. math::
 
+.. math::
     dX_t = \mu dt + \sigma dW_t 
 
 and an inertial particle behavior for dynamics described by the linearized 
