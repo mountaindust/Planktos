@@ -32,7 +32,7 @@ Functionality includes:
 
 If you use this software in your project, please cite it as:  
 
-  Strickland, WC. (2018), *Planktos agent-based modeling framework*. 
+  Strickland, WC. (2017), *Planktos agent-based modeling framework*. 
   https://github.com/mountaindust/Planktos.  
 
 A suggested BibTeX entry is included in the file 

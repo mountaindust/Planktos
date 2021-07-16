@@ -5,7 +5,7 @@ insects, or other small entities whose effect on the surrounding flow can be
 considered negligable. Work is ongoing.
 
 If you use this software in your project, please cite it as:  
-Strickland, C. (2018), *Planktos agent-based modeling framework*. https://github.com/mountaindust/Planktos.  
+Strickland, C. (2017), *Planktos agent-based modeling framework*. https://github.com/mountaindust/Planktos.  
 A suggested BibTeX entry is included in the file Planktos.bib.
 
 Also, check out the online documentation at https://planktos.readthedocs.io.
