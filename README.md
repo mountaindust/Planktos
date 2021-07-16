@@ -166,7 +166,7 @@ Class: environment
     potentially interpolated in time.
     - `save_2D_vorticity` Calculate and save (as VTK) the vorticity of a flow field 
     at one or more (possibly interpolated) points in time.
-    - `calculate_FTLE` Calculate an FTLE (finite-time Lagrangian exponent) field 
+    - `calculate_FTLE` Calculate an FTLE (finite-time Lyapunov exponent) field 
     using tracer particles, user supplied equations of motion, or arbitrary agent 
     behavior/motion.
     - `plot_envir` Just plots the bounding box and any ib meshes as a sanity check.
