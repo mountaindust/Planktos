@@ -1715,7 +1715,7 @@ class swarm:
         important to deal with roundoff error.
 
         This algorithm uses a parameteric equation approach for speed, based on
-        http://geomalgorithms.com/a05-_intersect-1.html
+        [1]_
         
         Parameters
         ----------
@@ -1745,6 +1745,11 @@ class swarm:
             first endpoint of mesh segment intersected
         Q1 : length 2 (or 3) array
             second endpoint of mesh segment intersected
+
+        References
+        ----------
+        .. [1] Sunday, Daniel, (2021). Practial Geometry Algorithms with C++ 
+           Code, self-published: Amazon KDP.
         '''
 
         u = P1 - P0
@@ -1840,7 +1845,7 @@ class swarm:
         Returns None if there is no intersection.
 
         This algorithm uses a parameteric equation approach for speed, based on
-        http://geomalgorithms.com/a05-_intersect-1.html
+        [2]_
 
         Parameters
         ----------
@@ -1874,6 +1879,11 @@ class swarm:
             second vertex of triangle intersected
         Q2 : length 3 array
             third vertex of triangle intersected
+        
+        References
+        ----------
+        .. [1] Sunday, Daniel, (2021). Practial Geometry Algorithms with C++ 
+           Code, self-published: Amazon KDP.
         '''
 
         # First, determine the intersection between the line and the plane
