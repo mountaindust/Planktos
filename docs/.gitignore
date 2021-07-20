@@ -1,3 +1,6 @@
 _build
 _templates
 _static/logo_large.png
+# Code screen-grab for publication
+pub_example.py
+code_example.png
