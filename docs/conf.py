@@ -21,7 +21,7 @@ copyright = '2021, W. Christopher Strickland'
 author = 'W. Christopher Strickland'
 
 # The full version, including alpha/beta/rc tags
-release = '0.4'
+release = '0.4.1'
 
 
 # -- General configuration ---------------------------------------------------
