@@ -43,7 +43,7 @@ original size. ::
 
 Let's add a swarm with 100 agents all positioned somewhat behind the 
 center left-most cylinder with respect to the flow (which is in the 
-y-direction in this example). Remember that we can do this by specifying a 
+x-direction in this example). Remember that we can do this by specifying a 
 point to the init argument of the swarm class, and that we can get the 
 length of the domain in each direction with the envir.L attribute.
 
