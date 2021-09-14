@@ -68,10 +68,11 @@ gradient of the fluid speed (magnitude of velocity) using self.get_fluid_gradien
 
             mean_pos = self.positions.mean(axis=0)
 
-            # Let's assume that which agents move toward the mean is constant and
-            #   determined ahead of time. Since it is an agent property and 
-            #   differs across different agents, it should be stored in the 
-            #   self.props DataFrame. This gets set when the swarm is created. 
+            # Let's assume that which agents move toward the mean and which 
+            #   don't is constant throughout the simulation and determined ahead 
+            #   of time. Since it is an agent property and differs across 
+            #   different agents, it should be stored in the self.props 
+            #   DataFrame. This will get set when the swarm is created. 
             #   We'll assume it's formatted as a boolean: True means moving 
             #   toward the mean, False means you don't. We'll also assume the 
             #   property is called 'bias'.
