@@ -22,13 +22,13 @@ class permstick(planktos.swarm):
                np.expand_dims(stick,1)*self.positions
 
 ### Test for boundary crossings ###
-s = permstick(seed=10, envir=envir)
-# envir.add_swarm(seed=10)
-# s = envir.swarms[0]
+# s = permstick(seed=10, envir=envir)
+envir.add_swarm(seed=10)
+s = envir.swarms[0]
 s.positions[89,:] = (0.05, 0.075)
 s.positions[95,:] = (0.17, 0.1)
 s.shared_props['cov'] *= 0.001
-s.props['stick'] = s.ib_collision.copy()
+# s.props['stick'] = s.ib_collision.copy()
 #######
 
 ### This is the incorrect mesh for the fluid. Use only for init_grid testing ###
@@ -45,11 +45,15 @@ s.props['stick'] = s.ib_collision.copy()
 #######
 
 # envir.plot_envir()
-# s.plot()
+s.plot()
+
+# print('Moving swarm...')
+# for ii in range(300): # 500
+#     s.move(0.0005, ib_collisions='sticky')
+#     s.props['stick'] = np.logical_or(s.props['stick'],s.ib_collision)
+    
+# s.plot_all(movie_filename='leaf_2d_vort_sticky.mp4', figsize=(6,9), fps=30, fluid='vort')
 
 print('Moving swarm...')
 for ii in range(300): # 500
-    s.move(0.0005, ib_collisions='sticky')
-    s.props['stick'] = np.logical_or(s.props['stick'],s.ib_collision)
-    
-s.plot_all(movie_filename='leaf_2d_vort_sticky.mp4', figsize=(6,9), fps=30, fluid='vort')
+    s.move(0.0005)

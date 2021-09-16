@@ -6,9 +6,9 @@ triangles_X = [29.277224, 29.277224;
                29.018223, 29.277224;
                29.277224, 27.927223];
 
-triangles_Y = [159.05, 159.05;
-               159.95, 159.95;
-               159.95, 159.95];
+triangles_Y = [159.45, 159.45;
+               159.75, 159.75;
+               159.75, 159.75];
            
 triangles_Z = [56.443504, 56.443504;
                56.9905,   56.443504;
@@ -31,14 +31,31 @@ orig_x = [29.065876, 29.833577];
 orig_y = [159.603829, 159.661421];
 orig_z = [56.475598, 55.695334];
 
-figure
+f = figure('Position',[100,100,1680,1260]);
 hold on
 fill3(triangles_X, triangles_Y, triangles_Z, 1, 'facealpha', 0.5)
-sld1 = plot3(line_segments_x, line_segments_y, line_segments_z,...
-             'linewidth', 2);
+stpt = plot3(orig_x(1), orig_y(1), orig_z(1), 'k.','MarkerSize',32);
+sld1pt = quiver3(line_segments_x(2), line_segments_y(2), line_segments_z(2),...
+             line_segments_x(3)-line_segments_x(2),...
+             line_segments_y(3)-line_segments_y(2),...
+             line_segments_z(3)-line_segments_z(2),...
+             'linewidth', 6);
 sld2 = plot3(bnc_segments_x, bnc_segments_y, bnc_segments_z,...
-             'linewidth', 2);
+             'linewidth', 6);
 orig = quiver3(orig_x(1), orig_y(1), orig_z(1),...
         orig_x(2)-orig_x(1), orig_y(2)-orig_y(1), orig_z(2)-orig_z(1),...
-        'linewidth', 2);
-legend([orig, sld1, sld2], 'original heading', 'new path', 'solution path')
+        'linewidth', 6);
+sld1_clr = get(sld1pt,'Color');
+stop_pt = plot3(bnc_segments_x(2), bnc_segments_y(2), bnc_segments_z(2),...
+                'kp','MarkerSize',32,'MarkerFaceColor','k');
+sld1 = plot3(line_segments_x(1:2), line_segments_y(1:2), line_segments_z(1:2),...
+             'linewidth', 6, 'Color', sld1_clr);
+leg = legend([stpt, orig, sld1pt, sld2, stop_pt], 'start point', 'original heading',...
+       'new path', 'solution path', 'end point');
+set(gca,'fontsize',32)
+xlabel('x')
+ylabel('y')
+zlabel('z')
+campos([12.6553  160.2790   61.0441])
+set(leg, 'Position', [0.6, 0.2713, 0.23, 0.1952])
+exportgraphics(gca, 'proj_3d.pdf', 'ContentType', 'vector')
