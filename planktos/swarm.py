@@ -303,9 +303,7 @@ class swarm:
 
         # initialize Dataframe of non-shared properties
         if props is None:
-            self.props = pd.DataFrame(
-                {'start_pos': [tuple(self.positions[ii,:]) for ii in range(swarm_size)]}
-            )
+            self.props = pd.DataFrame()
             # with random cov
             # self.props = pd.DataFrame(
             #     {'start_pos': [tuple(self.positions[ii,:]) for ii in range(swarm_size)],
