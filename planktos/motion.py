@@ -88,7 +88,7 @@ def RK45(fun, t0, y0, tf, rtol=0.0001, atol=1e-06, h_start=None):
 
     References
     ----------
-    .. [1] Dormand, J.R., Prince, P.J. (1980). A family of embeded Runge-Kutta 
+    .. [1] Dormand, J.R., Prince, P.J. (1980). A family of embedded Runge-Kutta 
        formulae, *Journal of Computational and Applied Mathematics*, 6(1), 19-26.
     '''
 
