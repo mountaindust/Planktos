@@ -17,6 +17,7 @@ import numpy.ma as ma
 from itertools import combinations
 from scipy import interpolate, stats
 from scipy.spatial import distance, ConvexHull
+import pandas as pd
 if sys.platform == 'darwin': # OSX backend does not support blitting
     import matplotlib
     matplotlib.use('Qt5Agg')
@@ -1984,11 +1985,12 @@ class environment:
         props : dict, optional 
             dictionary of properties for the swarm that will be created to solve 
             the odes. Effectively, this passes parameter values into the ode 
-            generator.
+            generator. If unspecified, will default to the values for the first 
+            agent in the props of the swarm provided.
         t_bound : float, optional
             if solving ode or tracer particles, this is the bound on
             the RK45 integration step size. Defaults to dt/100.
-        swarm : swarm object, optional 
+        swrm : swarm object, optional 
             swarm object with user-defined movement rules as 
             specified by the get_positions method. This allows for arbitrary 
             FTLE calculations through subclassing and overriding this method. 
@@ -2037,6 +2039,13 @@ class environment:
                                         mask=s.positions.mask.copy()) 
             s.accelerations = ma.array(np.zeros((s.positions.shape[0], len(self.L))),
                                         mask=s.positions.mask.copy())
+            # Re-initialize props based off of the first agent
+            new_props = pd.DataFrame()
+            for prop in s.props:
+                new_props[prop] = [s.props[prop][0] for ii in range(s.positions.shape[0])]
+            s.props = new_props
+            # Re-initialize ib_collision
+            s.ib_collision = np.full(s.positions.shape[0], False)
 
         # get an array to record the corresponding last time for these positions
         last_time = ma.masked_array(np.ones(s.positions.shape[0])*t0, mask=s.positions[:,0].mask.copy())

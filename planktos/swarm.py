@@ -303,9 +303,7 @@ class swarm:
 
         # initialize Dataframe of non-shared properties
         if props is None:
-            self.props = pd.DataFrame(
-                {'start_pos': [tuple(self.positions[ii,:]) for ii in range(swarm_size)]}
-            )
+            self.props = pd.DataFrame()
             # with random cov
             # self.props = pd.DataFrame(
             #     {'start_pos': [tuple(self.positions[ii,:]) for ii in range(swarm_size)],
@@ -1423,18 +1421,24 @@ class swarm:
             proj = np.dot(vec,intersection[2])*intersection[2]
             # vec - proj is a normal that points from outside bndry inside
             #   reverse direction and normalize to get unit vector pointing out
-            norm_out = (proj-vec)/np.linalg.norm(proj-vec)
+            norm_out_u = (proj-vec)/np.linalg.norm(proj-vec)
         if DIM == 3:
             # get a unit normal vector pointing back the way we came
-            norm_out = -np.sign(np.dot(vec,intersection[2]))*intersection[2]
+            norm_out_u = -np.sign(np.dot(vec,intersection[2]))*intersection[2]
             # Get the component of vec that lies in the plane. We do this by
             #   subtracting off the component which is in the normal direction
-            proj = vec - np.dot(vec,norm_out)*norm_out
+            proj = vec - np.dot(vec,norm_out_u)*norm_out_u
+
+        # get a unit vector of proj for adding EPS in proj direction
+        if np.linalg.norm(proj) > 0:
+            proj_u = proj/np.linalg.norm(proj)
+        else:
+            proj_u = 0
             
         # IMPORTANT: there can be roundoff error, so proj should be considered
         #   an approximation to an in-boundary slide.
         # For this reason, pull newendpt back a bit for numerical stability
-        newendpt = intersection[0] + proj + EPS*norm_out
+        newendpt = intersection[0] + proj + EPS*norm_out_u
 
         ################################
         ###########    2D    ###########
@@ -1443,13 +1447,13 @@ class swarm:
             # Detect sliding off 1D edge
             # Equivalent to going past the endpoints
             mesh_el_len = np.linalg.norm(intersection[4] - intersection[3])
-            Q0_dist = np.linalg.norm(newendpt-EPS*norm_out - intersection[3])
-            Q1_dist = np.linalg.norm(newendpt-EPS*norm_out - intersection[4])
+            Q0_dist = np.linalg.norm(newendpt-EPS*norm_out_u - intersection[3])
+            Q1_dist = np.linalg.norm(newendpt-EPS*norm_out_u - intersection[4])
             # Since we are sliding on the mesh element, if the distance from
             #   our new location to either of the mesh endpoints is greater
             #   than the length of the mesh element, we must have gone beyond
             #   the segment.
-            if Q0_dist*(1+EPS) > mesh_el_len or Q1_dist*(1+EPS) > mesh_el_len:
+            if Q0_dist > mesh_el_len+EPS or Q1_dist > mesh_el_len+EPS:
                 ##########      Went past either Q0 or Q1      ##########
 
                 # We check assuming the agent slid an additional EPS, because
@@ -1484,8 +1488,8 @@ class swarm:
                 # This has already been done for newendpt
                 # Also go EPS further than newendpt for stability for what follows
                 if len(adj_mesh) > 0:
-                    adj_intersect = swarm._seg_intersect_2D(intersection[0]+EPS*norm_out,
-                        newendpt+EPS*proj, adj_mesh[:,0,:], adj_mesh[:,1,:])
+                    adj_intersect = swarm._seg_intersect_2D(intersection[0]+EPS*norm_out_u,
+                        newendpt+EPS*proj_u, adj_mesh[:,0,:], adj_mesh[:,1,:])
                 else:
                     adj_intersect = None
                 if adj_intersect is not None:
@@ -1503,9 +1507,9 @@ class swarm:
                         #   intersected in (1). 
                         # Back away from the intersection point slightly for
                         #   numerical stability and stay put.
-                        return adj_intersect[0] - EPS*proj
+                        return adj_intersect[0] - EPS*proj_u
                     # Otherwise:
-                    if Q0_dist*(1+EPS) > mesh_el_len and Q0_dist*(1+EPS) > Q1_dist*(1+EPS):
+                    if Q0_dist > Q1_dist:
                         # went past Q1; base vectors off Q1 vertex
                         idx = 4
                         nidx = 3
@@ -1523,13 +1527,13 @@ class swarm:
                         # Acute. Movement stops here.
                         # Back away from the intersection point slightly for
                         #   numerical stability and stay put
-                        return adj_intersect[0] - EPS*proj
+                        return adj_intersect[0] - EPS*proj_u
                     else:
                         # Obtuse. Repeat project_and_slide on new segment,
                         #   but send along info about old segment so we don't
                         #   get in an infinite loop.
-                        return swarm._project_and_slide(intersection[0]+EPS*norm_out, 
-                                                        newendpt+EPS*proj, 
+                        return swarm._project_and_slide(intersection[0]+EPS*norm_out_u, 
+                                                        newendpt+EPS*proj_u, 
                                                         adj_intersect, mesh, 
                                                         max_meshpt_dist, DIM,
                                                         intersection)
@@ -1541,14 +1545,14 @@ class swarm:
                 #   and subsequently detect any intersections.
                 # DIM == 2, adj_intersect is None
                 
-                if Q0_dist >= mesh_el_len and Q0_dist >= Q1_dist:
+                if Q0_dist > Q1_dist:
                     ##### went past Q1 #####
                     # put a new start point at the point crossing+EPS and bring out
-                    #   EPS*norm_out
-                    newstartpt = intersection[4] + EPS*proj + EPS*norm_out
-                elif Q1_dist >= mesh_el_len:
+                    #   EPS*norm_out_u
+                    newstartpt = intersection[4] + EPS*proj_u + EPS*norm_out_u
+                elif Q0_dist < Q1_dist:
                     ##### went past Q0 #####
-                    newstartpt = intersection[3] + EPS*proj + EPS*norm_out
+                    newstartpt = intersection[3] + EPS*proj_u + EPS*norm_out_u
                 else:
                     raise RuntimeError("Impossible case??")
                 
@@ -1575,8 +1579,8 @@ class swarm:
             Q0_list = np.array(intersection[3:])
             Q1_list = Q0_list[(1,2,0),:]
             # go a little further along trajectory to treat acute case
-            tri_intersect = swarm._seg_intersect_2D(intersection[0] + EPS*norm_out,
-                                                    newendpt + EPS*proj,
+            tri_intersect = swarm._seg_intersect_2D(intersection[0] + EPS*norm_out_u,
+                                                    newendpt + EPS*proj_u,
                                                     Q0_list, Q1_list)
             # if we reach the triangle boundary, check for a acute crossing
             #   then project overshoot onto original heading and add to 
@@ -1608,8 +1612,8 @@ class swarm:
                 # also go EPS further than newendpt for stability for what follows
                 if len(adj_mesh) > 0:
                     adj_intersect = swarm._seg_intersect_3D_triangles(
-                        intersection[0]+EPS*norm_out,
-                        newendpt+EPS*proj, adj_mesh[:,0,:],
+                        intersection[0]+EPS*norm_out_u,
+                        newendpt+EPS*proj_u, adj_mesh[:,0,:],
                         adj_mesh[:,1,:], adj_mesh[:,2,:])
                 else:
                     adj_intersect = None
@@ -1636,7 +1640,7 @@ class swarm:
                         #   a tetrahedron. This is what the kill switch is for.
                         if kill:
                             # End here to prevent possible bad behavior.
-                            return adj_intersect[0] - EPS*proj
+                            return adj_intersect[0] - EPS*proj_u
 
                         kill = True
                         # Find the points in common between adj_intersect and
@@ -1655,7 +1659,7 @@ class swarm:
                         vec_intersect /= np.linalg.norm(vec_intersect)
                         # Back up a tad from the intersection point, and project
                         #   leftover movement in the direction of intersection vector
-                        newstartpt = adj_intersect[0] - EPS*proj
+                        newstartpt = adj_intersect[0] - EPS*proj_u
                         # Get leftover portion of the travel vector
                         vec_to_project = (1-adj_intersect[1])*proj
                         # project vec onto the line
@@ -1669,8 +1673,8 @@ class swarm:
 
                     # Not an already discovered mesh element.
                     # We slide. Pass along info about the old element.
-                    return swarm._project_and_slide(intersection[0]+EPS*norm_out, 
-                                                    newendpt+EPS*proj+EPS*norm_out, 
+                    return swarm._project_and_slide(intersection[0]+EPS*norm_out_u, 
+                                                    newendpt+EPS*proj_u+EPS*norm_out_u, 
                                                     adj_intersect, mesh, 
                                                     max_meshpt_dist, DIM,
                                                     intersection, kill)
@@ -1682,7 +1686,7 @@ class swarm:
                 # DIM == 3, adj_intersect is None
                 # put the new start point on the edge of the simplex (+EPS) and
                 #   continue full amount of remaining movement along original heading
-                newstartpt = tri_intersect[0] + EPS*proj + EPS*norm_out
+                newstartpt = tri_intersect[0] + EPS*proj_u + EPS*norm_out_u
                 orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
                 # norm(newendpt - tri_intersect[0]) is the length of the overshoot.
                 newendpt = newstartpt + np.linalg.norm(newendpt-tri_intersect[0])*orig_unit_vec
