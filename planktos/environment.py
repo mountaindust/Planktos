@@ -160,6 +160,8 @@ class environment:
         characteristic length, m
     U : float
         characteristic fluid speed, m/s
+    netcdf : netCDF4 Dataset object
+        only present if a netCDF file has been loaded for reading
     ibmesh : ndarray
         This is either an Nx2x2 array (2D, line mesh) or an Nx3x3 array (3D, 
         triangular mesh) specifying internal mesh structures that agents will 
@@ -1261,6 +1263,30 @@ class environment:
         self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
         # reset time
         self.reset()
+
+
+
+    def load_NetCDF(self, filename):
+        '''Load a NetCDF file into the netcdf attribute of the environment. 
+        Does not automatically read in any data.
+
+        Because NetCDF files can contain multiple data sets with different 
+        dimension names and associated metadata, and because it may be desirable to 
+        explore the data set first and/or load only a subset of the data, this 
+        method just loads the Dataset into the environment object.
+
+        *******SEE METHOD AND METHOD TO READ IN DATA FROM THE NETCDF FILE.
+
+        Parameters
+        ----------
+        filename : string
+            path and filename of the NetCDF file, including extension
+        '''
+        path = Path(filename)
+        if not path.is_file(): 
+            raise FileNotFoundError("File {} not found!".format(str(filename)))
+
+        self.netcdf = dataio.load_netcdf(filename)
 
 
 

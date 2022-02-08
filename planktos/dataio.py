@@ -35,7 +35,12 @@ try:
 except ModuleNotFoundError:
     print("Could not import pyvista library. Writing of VTK files disabled.")
     PYVISTA = False
-
+try:
+    import netCDF4 as nc
+    NETCDF = True
+except ModuleNotFoundError:
+    print("Could not import netCDF4 library. Reading of netCDF files disabled.")
+    NETCDF = False
 
 
 #############################################################################
@@ -79,6 +84,21 @@ def stl_dep(func):
             print("Cannot read STL file: numpy-stl library not found.")
             raise RuntimeError("Cannot read STL file: numpy-stl library not found in data_IO. "+
                                "Please install numpy-stl with conda -c conda-forge or using pip.")
+        else:
+            return func(*args, **kwargs)
+    wrapper.__doc__ = func.__doc__
+    return wrapper
+
+
+
+def netcdf_dep(func):
+    '''Decorator for NetCDF readers to check package import.'''
+    def wrapper(*args, **kwargs):
+        __doc__ = func.__doc__
+        if not NETCDF:
+            print("Cannot read NetCDF file: NetCDF4 library not found.")
+            raise RuntimeError("Cannot read NetCDF file: NetCDF4 library not found in data_IO. "+
+                               "Please install NetCDF4 with conda or using pip.")
         else:
             return func(*args, **kwargs)
     wrapper.__doc__ = func.__doc__
@@ -509,6 +529,23 @@ def read_IB2d_vertices(filename):
     assert number_of_vertices == n+1, "Mismatch btwn stated and actual number of vertices in file."
 
     return vertices
+
+
+
+@netcdf_dep
+def load_netcdf(filename):
+    '''Load a NetCDF file. Does not automatically read in any data.
+    
+    Parameters
+    ----------
+    filename : string
+        path and filename of the NetCDF file
+
+    Returns
+    -------
+    NetCDF4 Dataset object
+    '''
+    return nc.Dataset(filename)
 
 
 
