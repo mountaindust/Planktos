@@ -31,6 +31,9 @@ import planktos
 from . import dataio
 from . import motion
 
+if dataio.NETCDF:
+    from cftime import date2num
+
 __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
@@ -1271,22 +1274,233 @@ class environment:
         Does not automatically read in any data.
 
         Because NetCDF files can contain multiple data sets with different 
-        dimension names and associated metadata, and because it may be desirable to 
-        explore the data set first and/or load only a subset of the data, this 
-        method just loads the Dataset into the environment object.
-
-        *******SEE METHOD AND METHOD TO READ IN DATA FROM THE NETCDF FILE.
+        dimension names and associated metadata, and because it may be desirable 
+        to explore the data set first and/or load only a subset of the data, 
+        this method just loads the Dataset into the environment object.
+        See the documentation/tutorial for netCDF4 on ways to read the metadata
+        for the loaded Dataset. See read_NetCDF_flow for reading in data from a 
+        loaded NetCDF dataset.
 
         Parameters
         ----------
         filename : string
             path and filename of the NetCDF file, including extension
+
+        See Also
+        --------
+        read_NetCDF_flow : read in data from a loaded NetCDF dataset
         '''
         path = Path(filename)
         if not path.is_file(): 
             raise FileNotFoundError("File {} not found!".format(str(filename)))
 
         self.netcdf = dataio.load_netcdf(filename)
+
+
+
+    def read_NetCDF_flow(self, flow_x, flow_y=None, flow_z=None, vec_idx=None, 
+                         dim_reorder=None, x_name=None, y_name=None, z_name=None, 
+                         time_name=None, conv_time=False):
+        '''Read NetCDF fluid data into the environment. Must first have loaded a 
+        NetCDF dataset with load_NetCDF.
+
+        Remember that Planktos expects fluid data to be specified on a 
+        regular grid!
+
+        The default expectation is that the x, y, and z components of the fluid 
+        velocity data are specified in separate Variables. If that is not the 
+        case, then the index of the Variable dimension which specifies the 
+        component of the vector must be supplied in the parameter vec_idx 
+        (base 0). It will be assumed that the ordering in this Dimension is x, 
+        y, then z components.
+
+        This method assumes that mesh point values in the x, y, and z directions 
+        are given by Variables which have the same name as the Dimensions of the 
+        fluid flow Variables. If so, the method will automatically find and load 
+        them. Otherwise, strings must be specified for x_name, y_name, and 
+        z_name giving the Variable names. The same goes for the time mesh data.
+
+        **Blurb about time conversion**
+
+        If the coordinate variables have a Unit attribute, this will be loaded 
+        as the environment's units.
+
+        Parameters
+        ----------
+        flow_x : string
+            Variable name (or path, if the variable is inside group) to the 
+            fluid velocity data for the x-direction, or for all directions.
+        flow_y : string, optional
+            Variable name (or path, if the variable is inside group) to the 
+            fluid velocity data for the y-direction. If all directions are in 
+            the same variable, this does not need to be supplied, but vec_idx 
+            must be supplied instead.
+        flow_z : string, optional
+            Similar to flow_y.
+        vec_idx : int, optional
+            Index of the variable dimension along which the different components 
+            of the velocity are given. Leave as None if the components are given 
+            in separate variables.
+        dim_reorder : tuple or list of ints, optional
+            Fluid velocity data is stored within this class in the dimensional 
+            ordering ([time], x, y, [z]). If this matches the NetCDF ordering, 
+            then no adjustment is necessary. Otherwise, this must be specified 
+            as a tuple or list which contains a permutation of [0,1,..,N-1] 
+            where N is the number of spatial-temporal dimensions and the numbers 
+            correspond to where each dimension of the NetCDF variable should go 
+            in the Planktos ordering. If the NetCDF variable has a dimension 
+            specifying the component of the fluid velocity, ignore it and do not 
+            include it in the permutation list.
+        x_name : string, optional
+            Variable name (or path, if the variable is inside a group) for the 
+            coordinate variable corresponding with the x spatial direction. Only 
+            necessary if different from the NetCDF Dimension name.
+        y_name : string, optional
+            Similar to x_name.
+        z_name : string, optional
+            Similar to x_name.
+        time_name : string, optional
+            Variable name (or path, if the variable is inside a group) for the 
+            coordinate variable corresponding with the time dimension. Only 
+            necessary if different from the NetCDF Dimension name.
+        conv_time : bool, default=False
+            If the time variable is not numerical, set this to True in order to 
+            convert from a time format relative to a fixed date using a certain 
+            calendar to floating point numerical values. In this case, it will 
+            be expected that the time variable is a sequence of datetime 
+            objects, so conversion of this variable from a string to the python 
+            datetime object may be required first.
+            Uses the date2num function provided by cftime. See Notes below for 
+            expected formatting in this case.
+
+        See Also
+        --------
+        load_NetCDF : Load a NetCDF file into the netcdf environment attribute.
+
+        Notes
+        -----
+        In order for the date2num conversion to work, units and a calendar must 
+        be specified in the coordinate variable for time. Specifically, the 
+        attribute of the time variable named "units" must be a string of the 
+        form "<time units> since <reference time>". <time units> can be days, 
+        hours, minutes, seconds, milliseconds or microseconds. <reference time> 
+        is the time origin. months since is allowed only for the 360_day calendar 
+        and common_years since is allowed only for the 365_day calendar. The 
+        attribute of the time variable named "calendar" must be a string 
+        descrbing the calendar to be used in the time calculations. All values 
+        in the CF metadata convention are supported. Valid calendars ‘standard’, 
+        ‘gregorian’, ‘proleptic_gregorian’ ‘noleap’, ‘365_day’, ‘360_day’, 
+        ‘julian’, ‘all_leap’, ‘366_day’. Default is None which means the 
+        calendar associated with the first input datetime instance will be used.
+        '''
+        
+        if flow_y is None:
+            assert vec_idx is not None, "vec_idx must be specified if there is only one fluid variable"
+
+        # Get the flow data, permuting the axes as necessary
+        flow = []
+        if vec_idx is None:
+            if dim_reorder is None:
+                flow.append(self.netcdf[flow_x][:])
+                flow.append(self.netcdf[flow_y][:])
+                if flow_z is not None:
+                    flow.append(self.netcdf[flow_z][:])
+            else:
+                flow.append(np.transpose(self.netcdf[flow_x][:], dim_reorder))
+                flow.append(np.transpose(self.netcdf[flow_y][:], dim_reorder))
+                if flow_z is not None:
+                    flow.append(np.transpose(self.netcdf[flow_z][:], dim_reorder))
+        else:
+            dim = self.netcdf[flow_x].shape[vec_idx]
+            full_flow = np.moveaxis(self.netcdf[flow_x][:], vec_idx, 0)
+            if dim_reorder is None:
+                for d in range(dim):
+                    flow.append(full_flow[d,...])
+            else:
+                for d in range(dim):
+                    flow.append(np.transpose(full_flow[d,...], dim_reorder))
+
+        # Detect time dependence and spatial dimension
+        ts_dim = len(flow[0].shape)
+        if vec_idx is None:
+            if flow_z is None:
+                time_dep = ts_dim == 3
+            else:
+                time_dep = ts_dim == 4
+        else:
+            time_dep = dim != ts_dim
+        if time_dep:
+            s_dim = ts_dim-1
+        else:
+            s_dim = ts_dim
+
+        # Get dimension ordering inside NetCDF
+        if vec_idx is None and dim_reorder is None:
+            dim_order = np.arange(ts_dim)
+        elif dim_reorder is None:
+            dim_order = np.arange(ts_dim)
+            dim_order[vec_idx:] += 1
+        else:
+            if vec_idx is None:
+                dim_idx_reorder = dim_reorder
+            else:
+                dim_idx_reorder = list(dim_reorder).insert(vec_idx, 99)
+            dim_order = []
+            for d in range(len(dim_reorder)):
+                for idx, val in enumerate(dim_idx_reorder):
+                    if d == val:
+                        dim_order.append(idx)
+                        break
+
+        # Get spatial mesh data
+        if time_dep:
+            t = 1
+        else:
+            t = 0
+        if x_name is None:
+            x_name = self.netcdf[flow_x].dimensions[dim_order[0+t]]
+        flow_points_x = self.netcdf[x_name][:]
+        s_units = self.netcdf[x_name].units
+        if y_name is None:
+            y_name = self.netcdf[flow_x].dimensions[dim_order[1+t]]
+        flow_points_y = self.netcdf[y_name][:]
+        if s_dim > 2:
+            if z_name is None:
+                z_name = self.netcdf[flow_x].dimensions[dim_order[2+t]]
+            flow_points_z = self.netcdf[z_name][:]
+
+        # Get time data, converting if necessary
+        if time_dep:
+            if time_name is None:
+                time_name = self.netcdf[flow_x].dimensions[dim_order[0]]
+            if conv_time:
+                flow_times = date2num(self.netcdf[time_name][:], 
+                                      units=self.netcdf[time_name].units, 
+                                      calendar=self.netcdf[time_name].calendar)
+            else:
+                flow_times = self.netcdf[time_name][:]
+        
+        # Set environment variables and reset LLC to origin
+        self.flow = flow
+        self.units = s_units
+        if s_dim == 2:
+            self.flow_points = (flow_points_x-flow_points_x[0], 
+                                flow_points_y-flow_points_y[0])
+        else:
+            self.flow_points = (flow_points_x-flow_points_x[0], 
+                                flow_points_y-flow_points_y[0],
+                                flow_points_z-flow_points_z[0])
+        self.L = [self.flow_points[dim][-1] for dim in range(s_dim)]
+        if time_dep:
+            self.flow_times = flow_times
+        self.__reset_flow_variables()
+        if s_dim == 2:
+            self.fluid_domain_LLC = (flow_points_x[0], flow_points_y[0])
+        else:
+            self.fluid_domain_LLC = (flow_points_x[0], flow_points_y[0], flow_points_z[0])
+
+        # reset time
+        self.reset()
 
 
 
