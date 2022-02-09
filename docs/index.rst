@@ -23,8 +23,8 @@ collective and emergent behavior, including interaction with immersed structures
 Functionality includes:  
 
 * Arbitrary agent behavior utilizing ODE, SDE, or just a coded algorithm
-* Loading time dependent CFD-generated velocity fields from VTK formatted data 
-  files
+* Loading time dependent CFD-generated velocity fields from VTK or NetCDF 
+  formatted data files
 * Loading immersed STL-formatted mesh structures and vertex points
 * Data visualization as images or animations with kernel density estimation
 * Velocity field analysis with respect to deterministic agent behavior via the 

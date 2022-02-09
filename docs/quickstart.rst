@@ -36,6 +36,7 @@ Having done that, the dependencies are as follows:
 - pyvista (if saving vtk data) from conda-forge. Use mamba!! Same problem 
   as for vtk.
 - numpy-stl (if loading stl data). Again, get it from conda-forge.
+- netCDF4 (if loading netCDF data, comes standard with an Anaconda installation)
 - pytest (if running tests)
 
 Getting started
@@ -80,8 +81,8 @@ Overview
 Currently, Planktos has built-in capabilities to load either time-independent or 
 time-dependent 2D or 3D fluid velocity data specified on a regular mesh. ASCII 
 vtk format is supported, as well as ASCII vtu files from COMSOL (single-time vtu
-data only). More regular grid formats, especially if part of the open-source 
-VTK format, may be supported in the future; please contact the author 
+data only) and NetCDF. More regular grid formats, especially if part of  
+open-source formats, may be supported in the future; please contact the author 
 (cstric12@utk.edu) if you have a format you would like to see supported. A few 
 analytical, 1D flow fields are also available and can be generated in either 2D 
 or 3D environments; these include Brinkman flow, two layer channel flow, and 

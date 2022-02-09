@@ -32,6 +32,7 @@ solve the dependencies in the process.)
 - pyvista (if saving vtk data, get from conda-forge and use mamba. same problem 
 as for vtk.)
 - numpy-stl (if loading stl data, get from conda-forge)
+- netCDF4 (if loading netCDF data, comes standard with an Anaconda installation)
 - pytest (if running tests)
 
 If you need to convert data from IBAMR into vtk, you will also need a Python 2.7 environment with numpy and VisIt installed (VisIt's Python API is written in
@@ -44,8 +45,8 @@ All tests can be run by typing `pytest` into a terminal in the base directory.
 Currently, Planktos has built-in capabilities to load either time-independent or 
 time-dependent 2D or 3D fluid velocity data specified on a regular mesh. ASCII 
 vtk format is supported, as well as ASCII vtu files from COMSOL (single-time 
-data only). More regular grid formats, especially if part of the open-source 
-VTK format, may be supported in the future; please contact the author (cstric12@utk.edu) 
+data only) and NetCDF. More regular grid formats, especially if part of open-source 
+formats, may be supported in the future; please contact the author (cstric12@utk.edu) 
 if you have a format you would like to see supported. A few analytical, 1D flow 
 fields are also available and can be generated in either 2D or 3D environments; 
 these include Brinkman flow, two layer channel flow, and canopy flow. Flow fields 
@@ -145,6 +146,8 @@ Class: environment
     IBAMR_db_###.vtk where ### is the dump number (automatic format when using
     read_IBAMR3d_py27.py) for time varying flow.
     - `read_comsol_vtu_data` Read in 2D or 3D fluid velocity data from vtu files (either .vtu or .txt) obtained from COMSOL. This data must be on a regular grid and include a Grid specification at the top.
+    - `load_NetCDF` Load a NetCDF file with fluid velocity data in it. Does not read in the data in case inspection is necessary; see read_NetCDF_flow.
+    - `read_NetCDF_flow` Read in fluid velocity data from a loaded NetCDF file.
     - `read_stl_mesh_data` Reads in 3D immersed boundary data from an ascii or binary stl file. Only static meshes are supported.
     - `read_IB2d_vertex_data` Read in 2D immersed boundary data from a .vertex file used in IB2d. Will assume that vertices closer than half (+ epsilon) the Eulerian mesh resolution are connected linearly. Only static meshes are supported.
     - `read_vertex_data_to_convex_hull` Read in 2D or 3D vertex data from a vtk file or a .vertex file and create a structure by computing the convex hull. Only static meshes are supported.
