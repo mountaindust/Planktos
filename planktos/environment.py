@@ -1460,7 +1460,10 @@ class environment:
         if x_name is None:
             x_name = self.netcdf[flow_x].dimensions[dim_order[0+t]]
         flow_points_x = self.netcdf[x_name][:]
-        s_units = self.netcdf[x_name].units
+        try:
+            s_units = self.netcdf[x_name].units
+        except AttributeError:
+            s_units = None
         if y_name is None:
             y_name = self.netcdf[flow_x].dimensions[dim_order[1+t]]
         flow_points_y = self.netcdf[y_name][:]
@@ -1482,7 +1485,8 @@ class environment:
         
         # Set environment variables and reset LLC to origin
         self.flow = flow
-        self.units = s_units
+        if s_units is not None:
+            self.units = s_units
         if s_dim == 2:
             self.flow_points = (flow_points_x-flow_points_x[0], 
                                 flow_points_y-flow_points_y[0])
