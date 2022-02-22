@@ -76,7 +76,7 @@ for trial in range(100):
                                                 swrm.props['stick'].sum()/SWARM_SIZE*100))
 
     # print result to file
-    with open('seafan_sticky_1000dist_stuckfrac.txt', 'a') as f:
+    with open('results/seafan_sticky_1000dist_stuckfrac.txt', 'a') as f:
         print(swrm.props['stick'].sum()/SWARM_SIZE, file=f)
 
 
