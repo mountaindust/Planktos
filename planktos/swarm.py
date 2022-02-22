@@ -1191,7 +1191,6 @@ class swarm:
 
         # internal mesh boundaries go first
         if self.envir.ibmesh is not None and ib_collisions is not None:
-            # if there is no mask, loop over all agents, appyling internal BC
             # loop over (non-masked) agents, applying internal BC
             if np.any(self.positions.mask):
                 for n, startpt, endpt in \
@@ -1207,6 +1206,7 @@ class swarm:
                         self.ib_collision[n] = True
                     else:
                         self.ib_collision[n] = False
+            # if there is no mask, loop over all agents, appyling internal BC
             else:
                 for n in range(self.positions.shape[0]):
                     startpt = self.pos_history[-1][n,:].copy()
@@ -1220,6 +1220,9 @@ class swarm:
                     else:
                         self.ib_collision[n] = False
 
+        ### Environment Boundary Conditions ###
+        wraprow_l = np.zeros_like(np.positions, dtype=bool)
+        wraprow_r = np.zeros_like(np.positions, dtype=bool)
         for dim, bndry in enumerate(self.envir.bndry):
 
             # Check for 3D
@@ -1240,6 +1243,10 @@ class swarm:
                 self.positions[zerorow, dim] = 0
                 self.velocities[zerorow, dim] = 0
                 self.accelerations[zerorow, dim] = 0
+            elif bndry[0] == 'periodic':
+                # wrap everything exiting on the left to the right
+                wraprow_l[:,dim] = self.positions[:,dim] < 0
+                self.positions[wraprow_l[:,dim], dim] += self.envir.L[dim]
             else:
                 raise NameError
 
@@ -1256,9 +1263,39 @@ class swarm:
                 self.positions[zerorow, dim] = self.envir.L[dim]
                 self.velocities[zerorow, dim] = 0
                 self.accelerations[zerorow, dim] = 0
+            elif bndry[1] == 'periodic':
+                # wrap everything exiting on the right to the left
+                wraprow_r[:,dim] = self.positions[:,dim] > self.envir.L[dim]
+                self.positions[wraprow_r[:,dim], dim] -= self.envir.L[dim]
             else:
                 raise NameError
 
+        ### Check IB crossings if boundary conditions were periodic
+        if np.any(wraprow_l) or np.any(wraprow_r):
+            idx_array = np.arange(self.positions.shape[0])[
+                np.any(np.logical_or(wraprow_l,wraprow_r), axis=1)]
+            for n in idx_array:
+                # we're going to assume on an Euler step you don't go so fast
+                #   that you wrap around the entire domain!
+                if np.logical_or(wraprow_l[n,:],wraprow_r[n,:]).sum() == 1 and\
+                    ~self.positions.mask[n,0]:
+                    if np.any(wraprow_r[n,:]):
+                        s = (self.positions[n,wraprow_r[n,:]]-0)\
+                            /self.velocities[n,wraprow_r[n,:]]
+                    else:
+                        s = (self.positions[n,wraprow_l[n,:]]-
+                             self.envir.L[wraprow_l[n,:]])\
+                            /self.velocities[n,wraprow_l[n,:]]
+                    startpt = self.positions[n,:] - s*self.velocities[n,:]
+                    endpt = self.positions[n,:].copy()
+                    new_loc = self._apply_internal_BC(startpt, endpt,
+                            self.envir.ibmesh, self.envir.max_meshpt_dist,
+                            ib_collisions=ib_collisions)
+                    self.positions[n] = new_loc
+                    if np.any(new_loc != endpt):
+                        self.ib_collision[n] = True
+                    else:
+                        self.ib_collision[n] = False
 
     
     @staticmethod
