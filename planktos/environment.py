@@ -1679,10 +1679,10 @@ class environment:
 
 
     def tile_flow(self, x=2, y=1):
-        '''Tile fluid flow a number of times in the x and/or y directions.
-        While obviously this works best if the fluid is periodic in the
-        direction(s) being tiled, this will not be enforced. Instead, it will
-        just be assumed that the domain edges are equivalent, and only the
+        '''Tile fluid flow and immersed meshes a number of times in the x and/or 
+        y directions. While obviously this works best if the fluid is periodic 
+        in the direction(s) being tiled, this will not be enforced. Instead, it 
+        will just be assumed that the domain edges are equivalent, and only the
         right/upper domain edge will be used in tiling.
 
         Parameters

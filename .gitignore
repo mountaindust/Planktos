@@ -12,6 +12,8 @@ data/
 *.vtk
 input2d
 *.vertex
+*.vtu
+*.stl
 
 # Autobackup files
 ~*
