@@ -59,7 +59,7 @@ swrm.props['stick'] = np.full(100, False) # creates a length 100 array of False
 
 
 # Now we move the swarm. We'll use the 'sticky' option for immersed boundary
-#   collisions instead of the default inelastic option. This means that 
+#   collisions instead of the default sliding option. This means that 
 #   whenever an agent runs into an immersed structure, it will stop its movement 
 #   for that time step at the point of intersection. It's free to move in the 
 #   next time step however, so how do we make it stick permanently? There's an 

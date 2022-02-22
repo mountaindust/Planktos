@@ -100,7 +100,7 @@ though we can reduce the number of mesh elements we check per agent given
 how far the agent travelled in a given time step, this is still an expensive 
 search-and-check, and if there is a boundary crossing, we have to 
 recursively check for further crossings of different sorts after the 
-vector projection of the inelastic collision. For now, these are just things 
+vector projection of the sliding collision. For now, these are just things 
 to keep in mind... in the future, we may parallelize this part of the code
 in one way or another, or rewrite all the vector algebra in C.
 

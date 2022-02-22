@@ -826,7 +826,7 @@ class swarm:
 
 
 
-    def move(self, dt=1.0, params=None, ib_collisions='inelastic', update_time=True):
+    def move(self, dt=1.0, params=None, ib_collisions='sliding', update_time=True):
         '''Move all organisms in the swarm over one time step of length dt.
         DO NOT override this method when subclassing; override get_positions
         instead!!!
@@ -841,9 +841,9 @@ class swarm:
             length of time step to move all agents
         params : any, optional
             parameters to pass along to get_positions, if necessary
-        ib_collisions : {None, 'inelastic' (default), 'sticky'}
+        ib_collisions : {None, 'sliding' (default), 'sticky'}
             Type of interaction with immersed boundaries. If None, turn off all 
-            interaction with immersed boundaries. In inelastic collisions, 
+            interaction with immersed boundaries. In sliding collisions, 
             conduct recursive vector projection until the length of the original 
             vector is exhausted. In sticky collisions, just return the point of 
             intersection.
@@ -1159,7 +1159,7 @@ class swarm:
 
 
 
-    def apply_boundary_conditions(self, ib_collisions='inelastic'):
+    def apply_boundary_conditions(self, ib_collisions='sliding'):
         '''Apply boundary conditions to self.positions.
         
         There should be no reason to call this method directly; it is 
@@ -1169,21 +1169,21 @@ class swarm:
         This method compares current agent positions (self.positions) to the
         previous agent positions (last entry in self.pos_history) in order to
         first: determine if the agent collided with any immersed structures and
-        if so, to update self.positions using an inelastic collision algorithm 
+        if so, to update self.positions using a sliding collision algorithm 
         based on vector projection and second: assess whether or not any agents 
         exited the domain and if so, update their positions based on the 
         boundary conditions as specified in the enviornment class (self.envir).
 
-        For no flux boundary conditions, inelastic projections are really simple 
+        For no flux boundary conditions such sliding projections are really simple 
         (since the domain is just a box), so we just do them directly/manually
         instead of folding them into the far more complex, recursive algorithm 
         used for internal mesh structures.
         
         Parameters
         ----------
-        ib_collisions : {None, 'inelastic' (default), 'sticky'}
+        ib_collisions : {None, 'sliding' (default), 'sticky'}
             Type of interaction with immersed boundaries. If None, turn off all 
-            interaction with immersed boundaries. In inelastic collisions, 
+            interaction with immersed boundaries. In sliding collisions, 
             conduct recursive vector projection until the length of the original 
             vector is exhausted. In sticky collisions, just return the point of 
             intersection.
@@ -1264,7 +1264,7 @@ class swarm:
     @staticmethod
     def _apply_internal_BC(startpt, endpt, mesh, max_meshpt_dist, 
                            old_intersection=None, kill=False, 
-                           ib_collisions='inelastic'):
+                           ib_collisions='sliding'):
         '''Apply internal boundaries to a trajectory starting and ending at
         startpt and endpt, returning a new endpt (or the original one) as
         appropriate.
@@ -1291,8 +1291,8 @@ class swarm:
             slid along the boundary line between two mesh elements. This 
             prevents such a thing from happening more than once, in case of 
             pathological cases.
-        ib_collisions : {'inelastic' (default), 'sticky'}
-            Type of interaction with immersed boundaries. In inelastic 
+        ib_collisions : {'sliding' (default), 'sticky'}
+            Type of interaction with immersed boundaries. In sliding 
             collisions, conduct recursive vector projection until the length of
             the original vector is exhausted. In sticky collisions, just return 
             the point of intersection.
@@ -1337,7 +1337,7 @@ class swarm:
             return endpt
         
         # If we do have an intersection:
-        if ib_collisions == 'inelastic':
+        if ib_collisions == 'sliding':
             # Project remaining piece of vector onto mesh and repeat processes 
             #   as necessary until we have a final result.
             return swarm._project_and_slide(startpt, endpt, intersection,

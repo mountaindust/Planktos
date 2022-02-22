@@ -64,7 +64,7 @@ class environment:
         [left bndry condition, right bndry condition]. Choices are 'zero' and 
         'noflux'. Agents leaving a zero boundary condition will be marked as 
         masked and cease to be updated or plotted afterward. In the noflux case, 
-        agents will undergo an inelastic collision with the boundary. Movement 
+        agents will undergo a sliding collision with the boundary. Movement 
         that would have occurred through the boundary will be projected onto 
         the boundary instead.
     y_bndry : str or [str, str], default='zero'
