@@ -26,7 +26,7 @@ envir.read_comsol_vtu_data('comsol_data/cylinder_2to1_v0p008mps.vtu', vel_conv=1
 envir.units = 'mm'
 envir.read_stl_mesh_data('comsol_data/seafan_cylinder.stl')
 
-# NOTE: Fluid data is 2.8 x 99.8 x 39.8 mm. This will get fixed later.
+# NOTE: Fluid data is 2.8 x 99.8 x 39.8 mm.
 
 # Tile the fluid and cylinder in the x-direction so that the length of the x- 
 #   and z-dimensions are roughly the same.
