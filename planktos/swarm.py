@@ -10,6 +10,7 @@ Email: cstric12@utk.edu
 
 import sys, os, warnings
 from pathlib import Path
+from attr import ib
 import numpy as np
 import numpy.ma as ma
 from scipy import interpolate, stats
@@ -1191,34 +1192,7 @@ class swarm:
 
         # internal mesh boundaries go first
         if self.envir.ibmesh is not None and ib_collisions is not None:
-            # loop over (non-masked) agents, applying internal BC
-            if np.any(self.positions.mask):
-                for n, startpt, endpt in \
-                    zip(np.arange(self.positions.shape[0])[~self.positions.mask[:,0]],
-                        self.pos_history[-1][~self.positions.mask[:,0],:].copy(),
-                        self.positions[~self.positions.mask[:,0],:].copy()
-                        ):
-                    new_loc = self._apply_internal_BC(startpt, endpt, 
-                                self.envir.ibmesh, self.envir.max_meshpt_dist,
-                                ib_collisions=ib_collisions)
-                    self.positions[n] = new_loc
-                    if np.any(new_loc != endpt):
-                        self.ib_collision[n] = True
-                    else:
-                        self.ib_collision[n] = False
-            # if there is no mask, loop over all agents, appyling internal BC
-            else:
-                for n in range(self.positions.shape[0]):
-                    startpt = self.pos_history[-1][n,:].copy()
-                    endpt = self.positions[n,:].copy()
-                    new_loc = self._apply_internal_BC(startpt, endpt,
-                                self.envir.ibmesh, self.envir.max_meshpt_dist,
-                                ib_collisions=ib_collisions)
-                    self.positions[n] = new_loc
-                    if np.any(new_loc != endpt):
-                        self.ib_collision[n] = True
-                    else:
-                        self.ib_collision[n] = False
+            self._check_immersed_BC(ib_collisions)
 
         ### Environment Boundary Conditions ###
         wraprow_l = np.zeros_like(np.positions, dtype=bool)
@@ -1296,6 +1270,44 @@ class swarm:
                         self.ib_collision[n] = True
                     else:
                         self.ib_collision[n] = False
+
+
+
+    def _check_immersed_BC(self, ib_collisions, idx_array=None):
+        '''Loop over all unmasked agents or the agents whose indices are given 
+        in idx_array checking for immersed boundary crossings and applying the 
+        relevant boundary conditions.
+        '''
+
+        def IBC_routine(self, startpt, endpt, ib_collisions):
+            new_loc = self._apply_internal_BC(startpt, endpt, 
+                        self.envir.ibmesh, self.envir.max_meshpt_dist,
+                        ib_collisions=ib_collisions)
+            self.positions[n] = new_loc
+            if np.any(new_loc != endpt):
+                self.ib_collision[n] = True
+            else:
+                self.ib_collision[n] = False
+
+        if idx_array is None:
+            # if there are any masked agents, skip them in the loop
+            if np.any(self.positions.mask):
+                for n, startpt, endpt in \
+                    zip(np.arange(self.positions.shape[0])[~self.positions.mask[:,0]],
+                        self.pos_history[-1][~self.positions.mask[:,0],:].copy(),
+                        self.positions[~self.positions.mask[:,0],:].copy()
+                        ):
+                    IBC_routine(self, startpt, endpt, ib_collisions)
+            # no masked agents: go through all of them
+            else:
+                for n in range(self.positions.shape[0]):
+                    startpt = self.pos_history[-1][n,:].copy()
+                    endpt = self.positions[n,:].copy()
+                    IBC_routine(self, startpt, endpt, ib_collisions)
+        else:
+            ### override mask???
+            pass
+
 
     
     @staticmethod
