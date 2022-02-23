@@ -175,11 +175,11 @@ class environment:
         maximum length of a mesh segment in ibmesh, typically determined 
         automatically. This is used in search algorithms to winnow down the 
         number of mesh elements to search for intersections of movement.
-    struct_plots : list of function handles
+    plot_structs : list of function handles
         List of functions that plot additional environment structures which the 
         agents are unaware of. E.g., for visual purposes only.
-    struct_plot_args : List of tuples
-        List of argument tuples to be passed to struct_plots functions, after 
+    plot_structs_args : List of tuples
+        List of argument tuples to be passed to plot_structs functions, after 
         ax (the plot axis object) is passed
     FTLE_largest : ndarray
         FTLE field calculated using the largest eigenvalue
@@ -334,9 +334,9 @@ class environment:
         # NOTE: the agents do not interact with these structures; for plotting only!
 
         # List of functions that plot additional environment structures
-        self.struct_plots = []
+        self.plot_structs = []
         # List of arguments tuples to be passed to these functions, after ax
-        self.struct_plot_args = []
+        self.plot_structs_args = []
 
         ##### Initalize Time #####
 
@@ -3056,6 +3056,10 @@ class environment:
         2D arrow lengths are scaled based on the maximum of all the data over 
         all times.
         '''
+
+        if self.flow is None:
+            self.plot_envir(figsize=figsize)
+            return
 
         # Locate the flow field that will need plotting, or None if not
         #   time-dependent or we are going to plot all of them.
