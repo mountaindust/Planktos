@@ -148,6 +148,7 @@ Class: environment
     - `read_comsol_vtu_data` Read in 2D or 3D fluid velocity data from vtu files (either .vtu or .txt) obtained from COMSOL. This data must be on a regular grid and include a Grid specification at the top.
     - `load_NetCDF` Load a NetCDF file with fluid velocity data in it. Does not read in the data in case inspection is necessary; see read_NetCDF_flow.
     - `read_NetCDF_flow` Read in fluid velocity data from a loaded NetCDF file.
+    - `wrap_flow` Wrap fluid velocity in periodic dimensions.
     - `read_stl_mesh_data` Reads in 3D immersed boundary data from an ascii or binary stl file. Only static meshes are supported.
     - `read_IB2d_vertex_data` Read in 2D immersed boundary data from a .vertex file used in IB2d. Will assume that vertices closer than half (+ epsilon) the Eulerian mesh resolution are connected linearly. Only static meshes are supported.
     - `read_vertex_data_to_convex_hull` Read in 2D or 3D vertex data from a vtk file or a .vertex file and create a structure by computing the convex hull. Only static meshes are supported.

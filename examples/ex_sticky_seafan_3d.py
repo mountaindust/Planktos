@@ -25,8 +25,10 @@ envir = planktos.environment()
 envir.read_comsol_vtu_data('comsol_data/Velocity2to1_8mmps.vtu', vel_conv=1000)
 envir.units = 'mm'
 envir.read_stl_mesh_data('comsol_data/seafan_cylinder.stl')
-
-# NOTE: Fluid data is 2.9 x 99.9 x 39.9 mm.
+# NOTE: This fluid data is 2.9 x 99.9 x 39.9 mm because it is periodic in all 
+#   spatial dimensions and the periodic boundary is not repeated. To fix this, 
+#   we use the wrap_flow function
+envir.wrap_flow(periodic_dim=[True, True, True])
 
 # Tile the fluid and cylinder in the x-direction so that the length of the x- 
 #   and z-dimensions are roughly the same.

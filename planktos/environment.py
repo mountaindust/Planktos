@@ -1498,6 +1498,74 @@ class environment:
 
 
 
+    def wrap_flow(self, periodic_dim=[True, True, False]):
+        '''In some cases, software may print out fluid velocity data that omits 
+        the velocities at the right boundaries in spatial dimensions that are 
+        meant to be periodic. This helper function restores that data by copying 
+        everything over. 3rd dimension will automatically be ignored if 2D.
+
+        Parameters
+        ----------
+        periodic_dim : list of 3 bool, default=[True, True, False]
+            True if that spatial dimension is periodic, otherwise False
+        '''
+
+        dim = len(self.flow_points)
+        if dim == len(self.flow[0].shape):
+            TIME_DEP = False
+        else:
+            TIME_DEP = True
+                
+        dx = np.array([self.flow_points[d][-1]-self.flow_points[d][-2] 
+                       for d in range(dim)])
+        
+        # find new flow field shape
+        new_flow_shape = np.array(self.flow[0].shape)
+        if not TIME_DEP:
+            new_flow_shape += 1*np.array(periodic_dim)
+        else:
+            new_flow_shape[1:] += 1*np.array(periodic_dim)
+
+        # create new flow field, putting old data in lower left corner
+        new_flow = [np.zeros(new_flow_shape) for d in range(dim)]
+        old_shape = self.flow[0].shape
+        for d in range(dim):
+            if dim == 2:
+                new_flow[d][:old_shape[0],:old_shape[1]] = self.flow[d]
+            else:
+                new_flow[d][:old_shape[0],:old_shape[1],:old_shape[2]] = self.flow[d]
+        # replace old flow field
+        self.flow = new_flow
+
+        # fill in the new edges and update flow points
+        flow_points = []
+        for d in range(dim):
+            if periodic_dim[d]:
+                flow_points.append(np.append(self.flow_points[d], 
+                                   self.flow_points[d][-1]+dx[d]))
+                for dd in range(dim):
+                    if d == 0 and not TIME_DEP:
+                        self.flow[dd][-1,...] = self.flow[dd][0,...]
+                    elif d == 0 and TIME_DEP:
+                        self.flow[dd][:,-1,...] = self.flow[dd][:,0,...]
+                    elif d == 1 and not TIME_DEP:
+                        self.flow[dd][:,-1,...] = self.flow[dd][:,0,...]
+                    elif d == 1 and TIME_DEP:
+                        self.flow[dd][:,:,-1,...] = self.flow[dd][:,:,0,...]
+                    else:
+                        self.flow[dd][...,-1] = self.flow[dd][...,0]
+            else:
+                flow_points.append(self.flow_points[d])
+        
+        # replace old flow points
+        self.flow_points = tuple(flow_points)
+
+        # replace domain length
+        self.L = [self.flow_points[dim][-1] for dim in range(3)]
+        print("Fluid updated. Planktos domain size is now {}.".format(self.L))
+
+
+
     def read_stl_mesh_data(self, filename):
         '''Reads in 3D mesh data from an ascii or binary stl file. Must have
         the numpy-stl library installed. It is assumed that the coordinate
