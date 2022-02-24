@@ -9,7 +9,7 @@ about sea fans.
 
 NOTE: IN ORDER TO RUN THIS EXAMPLE, YOU MUST HAVE THE REQUIRED DATA!
 It can be downloaded from: 
-https://drive.google.com/drive/folders/1etoBspZ76mwFZ63V0NdqdeVNNKlPYUxu?usp=sharing
+https://drive.google.com/drive/folders/1jbsOUQ37UWJenWQTGNZkWfVyI83QOXN6?usp=sharing
 Put it into a comsol_data folder in this example directory, and you should be 
 good to go!
 '''
@@ -22,11 +22,11 @@ import planktos
 # Begin by loading the fluid and mesh.
 envir = planktos.environment()
 # In this data, space is in mm but velocity is in m/s. Convert velocity to mm/s.
-envir.read_comsol_vtu_data('comsol_data/cylinder_2to1_v0p008mps.vtu', vel_conv=1000)
+envir.read_comsol_vtu_data('comsol_data/Velocity2to1_8mmps.vtu', vel_conv=1000)
 envir.units = 'mm'
 envir.read_stl_mesh_data('comsol_data/seafan_cylinder.stl')
 
-# NOTE: Fluid data is 2.8 x 99.8 x 39.8 mm.
+# NOTE: Fluid data is 2.9 x 99.9 x 39.9 mm.
 
 # Tile the fluid and cylinder in the x-direction so that the length of the x- 
 #   and z-dimensions are roughly the same.
@@ -76,10 +76,10 @@ for trial in range(100):
                                                 swrm.props['stick'].sum()/SWARM_SIZE*100))
 
     # print result to file
-    with open('results/seafan_sticky_1000dist_stuckfrac.txt', 'a') as f:
+    with open('results/seafan2to1_8mmps_sticky_1000dist_stuckfrac.txt', 'a') as f:
         print(swrm.props['stick'].sum()/SWARM_SIZE, file=f)
 
 
-# swrm.plot_all(movie_filename='sea_fan_sticky_dist.mp4', fps=4) # double-time movie
+swrm.plot_all(movie_filename='results/seafan2to1_8mmps_sticky_1000dist.mp4', fps=4) # double-time movie
 
 
