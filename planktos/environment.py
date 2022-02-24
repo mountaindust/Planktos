@@ -1094,10 +1094,9 @@ class environment:
         self.flow_points = (x-x[0], y-y[0])
         self.fluid_domain_LLC = (x[0], y[0])
 
-        ### Convert environment dimensions and reset simulation time ###
+        ### Convert environment dimensions ###
         self.L = [self.flow_points[dim][-1] for dim in range(2)]
         self.__reset_flow_variables()
-        self.reset()
 
 
 
@@ -1131,8 +1130,6 @@ class environment:
         self.__reset_flow_variables()
         # record the original lower left corner (can be useful for later imports)
         self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
-        # reset time
-        self.reset()
 
 
 
@@ -1213,8 +1210,6 @@ class environment:
         self.__reset_flow_variables()
         # record the original lower left corner (can be useful for later imports)
         self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
-        # reset time
-        self.reset()
 
 
 
@@ -1264,8 +1259,6 @@ class environment:
         self.__reset_flow_variables()
         # record the original lower left corner (can be useful for later imports)
         self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
-        # reset time
-        self.reset()
 
 
 
@@ -1502,9 +1495,6 @@ class environment:
             self.fluid_domain_LLC = (flow_points_x[0], flow_points_y[0])
         else:
             self.fluid_domain_LLC = (flow_points_x[0], flow_points_y[0], flow_points_z[0])
-
-        # reset time
-        self.reset()
 
 
 
