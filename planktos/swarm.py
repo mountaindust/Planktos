@@ -1273,10 +1273,13 @@ class swarm:
         status_BC = np.zeros_like(len(idx_array),len(self.envir.L))
 
         ##### Mark all domain exits! -1 for left, 1 for right #####
+        # skip masked entries
         for dim in range(len(self.envir.L)):
-            leftrow = self.positions[idx_array,dim] < 0
+            leftrow = np.logical_and(self.positions[idx_array,dim] < 0,
+                                     ~self.positions.mask[idx_array,dim])
             status_BC[leftrow,dim] = -1
-            rightrow = self.positions[idx_array,dim] > self.envir.L[dim]
+            rightrow = np.logical_and(self.positions[idx_array,dim] > self.envir.L[dim],
+                                      ~self.positions.mask[idx_array,dim])
             status_BC[rightrow,dim] = 1
 
         ##### In cases where there are multiple exits, find the first #####
@@ -1306,9 +1309,11 @@ class swarm:
         else:
             mult_idx = None
             BC_bool = np.sum(np.abs(status_BC), axis=1) == 1
+
+        if not np.any(BC_bool):
+            return
         
         ##### Routine for checking IB in periodic case #####
-
         def IBC_routine(idx, self, startpt, endpt, ib_collisions):
             new_loc = self._apply_internal_BC(startpt, endpt, 
                         self.envir.ibmesh, self.envir.max_meshpt_dist,
@@ -1319,13 +1324,7 @@ class swarm:
             else:
                 self.ib_collision[idx] = False   
 
-        ##########################################################
-        #TODO: Using mult_idx is None check, add recursion for multi crossings
-        #   and verify that everything will work correctly for both cases.
-        #   E.g., what happens when only the first crossing is considered in the 
-        #   algorithm below?
-        ##########################################################
-
+        ##### Now apply BC to the first/only boundary crossing #####
         for dim, bndry in enumerate(self.envir.bndry):
             # Check for 3D
             if dim == 2 and len(self.envir.L) == 2:
@@ -1337,14 +1336,19 @@ class swarm:
             left_idx = idx_array[left_bool]
             if len(left_idx) > 0:
                 if bndry[0] == 'zero':
-                    # mask anything that exited on the left
+                    # mask anything that exited on the left.
                     self.positions[left_idx, :] = ma.masked
                     self.velocities[left_idx, :] = ma.masked
                     self.accelerations[left_idx, :] = ma.masked
+                    # no further BC checks are made: masked entries are skipped
                 elif bndry[0] == 'noflux':
+                    # agent slides along flat boundary. pos/vel/accel in dir of 
+                    #   boundary is zero.
                     self.positions[left_idx, dim] = 0
                     self.velocities[left_idx, dim] = 0
                     self.accelerations[left_idx, dim] = 0
+                    # we assume no immersed boundary on domain boundary. 
+                    #   but further domain crossings are possible.
                 elif bndry[0] == 'periodic':
                     # wrap everything exiting on the left to the right
                     self.positions[left_idx, dim] =\
@@ -1358,6 +1362,10 @@ class swarm:
                             s_array[n]*self.velocities[idx,:]
                         endpt = self.positions[idx,:].copy()
                         IBC_routine(idx, self, startpt, endpt, ib_collisions)
+                    # further domain crossings are possible. if this happens, 
+                    #   velocity should be the same as original velocity b/c 
+                    #   immersed boundaries do not intersect with domain bndry,
+                    #   so agent has slid off with original velocity heading.
                 else:
                     raise NameError
 
@@ -1370,11 +1378,15 @@ class swarm:
                     self.positions[right_idx, :] = ma.masked
                     self.velocities[right_idx, :] = ma.masked
                     self.accelerations[right_idx, :] = ma.masked
+                    # no further BC checks are made: masked entries are skipped
                 elif bndry[1] == 'noflux':
-                    # pull everything exiting on the right to 0
+                    # agent slides along flat boundary. pos/vel/accel in dir of 
+                    #   boundary is zero.
                     self.positions[right_idx, dim] = self.envir.L[dim]
                     self.velocities[right_idx, dim] = 0
                     self.accelerations[right_idx, dim] = 0
+                    # we assume no immersed boundary on domain boundary. 
+                    #   but further domain crossings are possible.
                 elif bndry[1] == 'periodic':
                     # wrap everything exiting on the right to the left
                     self.positions[right_idx, dim] =\
@@ -1388,8 +1400,16 @@ class swarm:
                             s_array[n]*self.velocities[idx,:]
                         endpt = self.positions[idx,:].copy()
                         IBC_routine(idx, self, startpt, endpt, ib_collisions)
+                    # further domain crossings are possible. if this happens, 
+                    #   velocity should be the same as original velocity b/c 
+                    #   immersed boundaries do not intersect with domain bndry,
+                    #   so agent has slid off with original velocity heading.
                 else:
                     raise NameError
+
+        ##### All BC applied to first exit. Conduct recursion if necessary #####
+        if mult_idx is not None:
+            self._domain_BC_loop(ib_collisions, idx_array=mult_idx)
 
 
     

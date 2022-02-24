@@ -89,7 +89,8 @@ or 3D environments; these include Brinkman flow, two layer channel flow, and
 canopy flow. Flow fields can also be extended and tiled in simple ways as 
 appropriate. Mesh data must be time-invariant and loaded via IB2d/IBAMR-style 
 vertex data (2D) or via stl file in 3D. Again, more (open source) formats may be 
-considered if requested.
+considered if requested. Mesh data should never intersect any of the domain 
+boundaries. This will not be checked, but is essential for correct preformance.
 
 For agents, there is support for multiple species (swarms) along with individual 
 variation though a pandas Dataframe property of the swarm class (swarm.props). 

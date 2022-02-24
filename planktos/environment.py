@@ -170,7 +170,8 @@ class environment:
         triangular mesh) specifying internal mesh structures that agents will 
         treat as solid barriers. Each value of the first index into the array 
         specifies a mesh element, and each 1x2 or 1x3 contained in that index 
-        is a point in space (so, two for a line, three for a triangle).
+        is a point in space (so, two for a line, three for a triangle). Mesh 
+        structures are not allowed to intersect with any domain boundary.
     max_meshpt_dist : float
         maximum length of a mesh segment in ibmesh, typically determined 
         automatically. This is used in search algorithms to winnow down the 
@@ -1512,7 +1513,10 @@ class environment:
         '''Reads in 3D mesh data from an ascii or binary stl file. Must have
         the numpy-stl library installed. It is assumed that the coordinate
         system of the stl mesh matches the coordinate system of the flow field.
-        Thus, the mesh will be translated using the flow LLC if necessary.'''
+        Thus, the mesh will be translated using the flow LLC if necessary.
+        
+        Mesh data should never intersect any of the domain boundaries!
+        '''
 
         path = Path(filename)
         if not path.is_file(): 
@@ -1534,6 +1538,8 @@ class environment:
         vertices closer than res_factor (default is half + a bit for numerical 
         stability) times the Eulerian mesh resolution are connected linearly. 
         Thus, the flow data must be imported first!
+
+        Mesh data should never intersect any of the domain boundaries!
         '''
 
         path = Path(filename)
