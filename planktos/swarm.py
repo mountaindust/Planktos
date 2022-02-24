@@ -2179,8 +2179,8 @@ class swarm:
                 # use about 4.15/inch density of arrows
                 x_num = round(4.15*wdth_inch)
                 y_num = round(4.15*height_inch)
-                M = round(len(self.envir.flow_points[0])/x_num)
-                N = round(len(self.envir.flow_points[1])/y_num)
+                M = int(round(len(self.envir.flow_points[0])/x_num))
+                N = int(round(len(self.envir.flow_points[1])/y_num))
                 # get worse case max velocity vector for scaling
                 max_u = self.envir.flow[0].max(); max_v = self.envir.flow[1].max()
                 max_mag = np.linalg.norm(np.array([max_u,max_v]))
