@@ -2791,7 +2791,7 @@ class environment:
 
     def __reset_flow_variables(self, incl_rho_mu_U=False):
         '''To be used when the fluid flow changes. Resets all the helper
-        parameters.'''
+        parameters and reports new domain.'''
 
         self.h_p = None
         self.tiling = None
@@ -2803,6 +2803,7 @@ class environment:
             self.mu = None
             self.rho = None
             self.U = None
+        print("Fluid updated. Planktos domain size is now {}.".format(self.L))
 
 
 
