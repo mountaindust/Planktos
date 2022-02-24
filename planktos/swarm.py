@@ -1190,13 +1190,36 @@ class swarm:
             intersection.
         '''
 
-        # internal mesh boundaries go first
+        ##### Immersed mesh boundaries go first #####
         if self.envir.ibmesh is not None and ib_collisions is not None:
-            self._check_immersed_BC(ib_collisions)
 
-        ### Environment Boundary Conditions ###
-        wraprow_l = np.zeros_like(np.positions, dtype=bool)
-        wraprow_r = np.zeros_like(np.positions, dtype=bool)
+            # Routine for checking IB
+            def IBC_routine(n, self, startpt, endpt, ib_collisions):
+                new_loc = self._apply_internal_BC(startpt, endpt, 
+                            self.envir.ibmesh, self.envir.max_meshpt_dist,
+                            ib_collisions=ib_collisions)
+                self.positions[n] = new_loc
+                if np.any(new_loc != endpt):
+                    self.ib_collision[n] = True
+                else:
+                    self.ib_collision[n] = False
+
+            # if there are any masked agents, skip them in the loop
+            if np.any(self.positions.mask):
+                for n, startpt, endpt in \
+                    zip(np.arange(self.positions.shape[0])[~self.positions.mask[:,0]],
+                        self.pos_history[-1][~self.positions.mask[:,0],:].copy(),
+                        self.positions[~self.positions.mask[:,0],:].copy()
+                        ):
+                    IBC_routine(n, self, startpt, endpt, ib_collisions)
+            # no masked agents: go through all of them
+            else:
+                for n in range(self.positions.shape[0]):
+                    startpt = self.pos_history[-1][n,:].copy()
+                    endpt = self.positions[n,:].copy()
+                    IBC_routine(n, self, startpt, endpt, ib_collisions)
+
+        ##### Environment Boundary Conditions #####
         for dim, bndry in enumerate(self.envir.bndry):
 
             # Check for 3D
@@ -1217,10 +1240,6 @@ class swarm:
                 self.positions[zerorow, dim] = 0
                 self.velocities[zerorow, dim] = 0
                 self.accelerations[zerorow, dim] = 0
-            elif bndry[0] == 'periodic':
-                # wrap everything exiting on the left to the right
-                wraprow_l[:,dim] = self.positions[:,dim] < 0
-                self.positions[wraprow_l[:,dim], dim] += self.envir.L[dim]
             else:
                 raise NameError
 
@@ -1237,76 +1256,140 @@ class swarm:
                 self.positions[zerorow, dim] = self.envir.L[dim]
                 self.velocities[zerorow, dim] = 0
                 self.accelerations[zerorow, dim] = 0
-            elif bndry[1] == 'periodic':
-                # wrap everything exiting on the right to the left
-                wraprow_r[:,dim] = self.positions[:,dim] > self.envir.L[dim]
-                self.positions[wraprow_r[:,dim], dim] -= self.envir.L[dim]
             else:
                 raise NameError
 
-        ### Check IB crossings if boundary conditions were periodic
-        if np.any(wraprow_l) or np.any(wraprow_r):
-            idx_array = np.arange(self.positions.shape[0])[
-                np.any(np.logical_or(wraprow_l,wraprow_r), axis=1)]
-            for n in idx_array:
-                # we're going to assume on an Euler step you don't go so fast
-                #   that you wrap around the entire domain!
-                if np.logical_or(wraprow_l[n,:],wraprow_r[n,:]).sum() == 1 and\
-                    ~self.positions.mask[n,0]:
-                    if np.any(wraprow_r[n,:]):
-                        s = (self.positions[n,wraprow_r[n,:]]-0)\
-                            /self.velocities[n,wraprow_r[n,:]]
-                    else:
-                        s = (self.positions[n,wraprow_l[n,:]]-
-                             self.envir.L[wraprow_l[n,:]])\
-                            /self.velocities[n,wraprow_l[n,:]]
-                    startpt = self.positions[n,:] - s*self.velocities[n,:]
-                    endpt = self.positions[n,:].copy()
-                    new_loc = self._apply_internal_BC(startpt, endpt,
-                            self.envir.ibmesh, self.envir.max_meshpt_dist,
-                            ib_collisions=ib_collisions)
-                    self.positions[n] = new_loc
-                    if np.any(new_loc != endpt):
-                        self.ib_collision[n] = True
-                    else:
-                        self.ib_collision[n] = False
 
 
-
-    def _check_immersed_BC(self, ib_collisions, idx_array=None):
-        '''Loop over all unmasked agents or the agents whose indices are given 
-        in idx_array checking for immersed boundary crossings and applying the 
-        relevant boundary conditions.
+    def _domain_BC_loop(self, ib_collisions, idx_array=None):
+        '''Loop over domain boundaries enforcing boundary conditions. Only 
+        agents in idx_array will be checked, or all agents if idx_array is not 
+        given.
         '''
 
-        def IBC_routine(self, startpt, endpt, ib_collisions):
+        if idx_array is None:
+            idx_array = np.arange(self.positions.shape[0])
+
+        status_BC = np.zeros_like(len(idx_array),len(self.envir.L))
+
+        ##### Mark all domain exits! -1 for left, 1 for right #####
+        for dim in range(len(self.envir.L)):
+            leftrow = self.positions[idx_array,dim] < 0
+            status_BC[leftrow,dim] = -1
+            rightrow = self.positions[idx_array,dim] > self.envir.L[dim]
+            status_BC[rightrow,dim] = 1
+
+        ##### In cases where there are multiple exits, find the first #####
+        BC_mult_bool = np.sum(np.abs(status_BC), axis=1) > 1
+        if np.any(BC_mult_bool):
+            # mark these for recursion
+            mult_idx = idx_array[BC_mult_bool]
+            # figure out which exit crossing occured first and treat that as the 
+            #   only one. Use the velocity to parameterize the movement.
+            s_array = np.zeros(len(mult_idx),len(self.envir.L))
+            for dim in range(len(self.envir.L)):
+                dim_bool = np.logical_and(BC_mult_bool, status_BC[:,dim] != 0)
+                dim_idx = idx_array[dim_bool]
+                right_1 = 1*(status_BC[dim_bool,dim] == 1)
+                s_array[dim_bool,dim] = (self.positions[dim_idx,dim]-right_1*
+                        self.envir.L[dim])/self.velocities[dim_idx,dim]
+            # for each row in s_array, the dimension with the largest value is
+            #   now the one crossed first.
+            first_dim = np.argmax(s_array, axis=1)
+            # remove the other crossings from the status_BC array
+            status_vals = status_BC[BC_mult_bool, first_dim]
+            status_BC[BC_mult_bool,:] = 0
+            status_BC[BC_mult_bool, first_dim] = status_vals
+            BC_bool = np.sum(np.abs(status_BC), axis=1) != 0
+            BC_bool_check = np.sum(np.abs(status_BC), axis=1) == 1
+            assert np.all(BC_bool == BC_bool_check), "Some multi crossings left over...?"
+        else:
+            mult_idx = None
+            BC_bool = np.sum(np.abs(status_BC), axis=1) == 1
+        
+        ##### Routine for checking IB in periodic case #####
+
+        def IBC_routine(idx, self, startpt, endpt, ib_collisions):
             new_loc = self._apply_internal_BC(startpt, endpt, 
                         self.envir.ibmesh, self.envir.max_meshpt_dist,
                         ib_collisions=ib_collisions)
-            self.positions[n] = new_loc
+            self.positions[idx] = new_loc
             if np.any(new_loc != endpt):
-                self.ib_collision[n] = True
+                self.ib_collision[idx] = True
             else:
-                self.ib_collision[n] = False
+                self.ib_collision[idx] = False   
 
-        if idx_array is None:
-            # if there are any masked agents, skip them in the loop
-            if np.any(self.positions.mask):
-                for n, startpt, endpt in \
-                    zip(np.arange(self.positions.shape[0])[~self.positions.mask[:,0]],
-                        self.pos_history[-1][~self.positions.mask[:,0],:].copy(),
-                        self.positions[~self.positions.mask[:,0],:].copy()
-                        ):
-                    IBC_routine(self, startpt, endpt, ib_collisions)
-            # no masked agents: go through all of them
-            else:
-                for n in range(self.positions.shape[0]):
-                    startpt = self.pos_history[-1][n,:].copy()
-                    endpt = self.positions[n,:].copy()
-                    IBC_routine(self, startpt, endpt, ib_collisions)
-        else:
-            ### override mask???
-            pass
+        ##########################################################
+        #TODO: Using mult_idx is None check, add recursion for multi crossings
+        #   and verify that everything will work correctly for both cases.
+        #   E.g., what happens when only the first crossing is considered in the 
+        #   algorithm below?
+        ##########################################################
+
+        for dim, bndry in enumerate(self.envir.bndry):
+            # Check for 3D
+            if dim == 2 and len(self.envir.L) == 2:
+                # Ignore last bndry condition; 2D environment.
+                break
+
+            ### Left boundary ###
+            left_bool = np.logical_and(BC_bool, status_BC[:,dim]<0)
+            left_idx = idx_array[left_bool]
+            if len(left_idx) > 0:
+                if bndry[0] == 'zero':
+                    # mask anything that exited on the left
+                    self.positions[left_idx, :] = ma.masked
+                    self.velocities[left_idx, :] = ma.masked
+                    self.accelerations[left_idx, :] = ma.masked
+                elif bndry[0] == 'noflux':
+                    self.positions[left_idx, dim] = 0
+                    self.velocities[left_idx, dim] = 0
+                    self.accelerations[left_idx, dim] = 0
+                elif bndry[0] == 'periodic':
+                    # wrap everything exiting on the left to the right
+                    self.positions[left_idx, dim] =\
+                        np.mod(self.positions[left_idx, dim],self.envir.L[dim])
+                    # check for IB crossings. first, get the point of re-entry
+                    #   using the velocity.
+                    s_array = (self.positions[left_idx,dim]-
+                        self.envir.L[dim])/self.velocities[left_idx,dim]
+                    for n, idx in enumerate(left_idx):
+                        startpt = self.positions[idx,:] - \
+                            s_array[n]*self.velocities[idx,:]
+                        endpt = self.positions[idx,:].copy()
+                        IBC_routine(idx, self, startpt, endpt, ib_collisions)
+                else:
+                    raise NameError
+
+            ### Right boundary ###
+            right_bool = np.logical_and(BC_bool, status_BC[:,dim]>0)
+            right_idx = idx_array[right_bool]
+            if len(right_idx) > 0:
+                if bndry[1] == 'zero':
+                    # mask everything exiting on the right
+                    self.positions[right_idx, :] = ma.masked
+                    self.velocities[right_idx, :] = ma.masked
+                    self.accelerations[right_idx, :] = ma.masked
+                elif bndry[1] == 'noflux':
+                    # pull everything exiting on the right to 0
+                    self.positions[right_idx, dim] = self.envir.L[dim]
+                    self.velocities[right_idx, dim] = 0
+                    self.accelerations[right_idx, dim] = 0
+                elif bndry[1] == 'periodic':
+                    # wrap everything exiting on the right to the left
+                    self.positions[right_idx, dim] =\
+                        np.mod(self.positions[right_idx, dim],self.envir.L[dim])
+                    # check for IB crossings. first, get the point of re-entry
+                    #   using the velocity.
+                    s_array = (self.positions[right_idx,dim]-0)/ \
+                        self.velocities[right_idx,dim]
+                    for n, idx in enumerate(right_idx):
+                        startpt = self.positions[idx,:] - \
+                            s_array[n]*self.velocities[idx,:]
+                        endpt = self.positions[idx,:].copy()
+                        IBC_routine(idx, self, startpt, endpt, ib_collisions)
+                else:
+                    raise NameError
 
 
     
