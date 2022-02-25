@@ -1095,10 +1095,9 @@ class environment:
         self.flow_points = (x-x[0], y-y[0])
         self.fluid_domain_LLC = (x[0], y[0])
 
-        ### Convert environment dimensions and reset simulation time ###
+        ### Convert environment dimensions ###
         self.L = [self.flow_points[dim][-1] for dim in range(2)]
         self.__reset_flow_variables()
-        self.reset()
 
 
 
@@ -1132,8 +1131,6 @@ class environment:
         self.__reset_flow_variables()
         # record the original lower left corner (can be useful for later imports)
         self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
-        # reset time
-        self.reset()
 
 
 
@@ -1214,8 +1211,6 @@ class environment:
         self.__reset_flow_variables()
         # record the original lower left corner (can be useful for later imports)
         self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
-        # reset time
-        self.reset()
 
 
 
@@ -1265,8 +1260,6 @@ class environment:
         self.__reset_flow_variables()
         # record the original lower left corner (can be useful for later imports)
         self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
-        # reset time
-        self.reset()
 
 
 
@@ -1504,8 +1497,73 @@ class environment:
         else:
             self.fluid_domain_LLC = (flow_points_x[0], flow_points_y[0], flow_points_z[0])
 
-        # reset time
-        self.reset()
+
+
+    def wrap_flow(self, periodic_dim=[True, True, False]):
+        '''In some cases, software may print out fluid velocity data that omits 
+        the velocities at the right boundaries in spatial dimensions that are 
+        meant to be periodic. This helper function restores that data by copying 
+        everything over. 3rd dimension will automatically be ignored if 2D.
+
+        Parameters
+        ----------
+        periodic_dim : list of 3 bool, default=[True, True, False]
+            True if that spatial dimension is periodic, otherwise False
+        '''
+
+        dim = len(self.flow_points)
+        if dim == len(self.flow[0].shape):
+            TIME_DEP = False
+        else:
+            TIME_DEP = True
+                
+        dx = np.array([self.flow_points[d][-1]-self.flow_points[d][-2] 
+                       for d in range(dim)])
+        
+        # find new flow field shape
+        new_flow_shape = np.array(self.flow[0].shape)
+        if not TIME_DEP:
+            new_flow_shape += 1*np.array(periodic_dim)
+        else:
+            new_flow_shape[1:] += 1*np.array(periodic_dim)
+
+        # create new flow field, putting old data in lower left corner
+        new_flow = [np.zeros(new_flow_shape) for d in range(dim)]
+        old_shape = self.flow[0].shape
+        for d in range(dim):
+            if dim == 2:
+                new_flow[d][:old_shape[0],:old_shape[1]] = self.flow[d]
+            else:
+                new_flow[d][:old_shape[0],:old_shape[1],:old_shape[2]] = self.flow[d]
+        # replace old flow field
+        self.flow = new_flow
+
+        # fill in the new edges and update flow points
+        flow_points = []
+        for d in range(dim):
+            if periodic_dim[d]:
+                flow_points.append(np.append(self.flow_points[d], 
+                                   self.flow_points[d][-1]+dx[d]))
+                for dd in range(dim):
+                    if d == 0 and not TIME_DEP:
+                        self.flow[dd][-1,...] = self.flow[dd][0,...]
+                    elif d == 0 and TIME_DEP:
+                        self.flow[dd][:,-1,...] = self.flow[dd][:,0,...]
+                    elif d == 1 and not TIME_DEP:
+                        self.flow[dd][:,-1,...] = self.flow[dd][:,0,...]
+                    elif d == 1 and TIME_DEP:
+                        self.flow[dd][:,:,-1,...] = self.flow[dd][:,:,0,...]
+                    else:
+                        self.flow[dd][...,-1] = self.flow[dd][...,0]
+            else:
+                flow_points.append(self.flow_points[d])
+        
+        # replace old flow points
+        self.flow_points = tuple(flow_points)
+
+        # replace domain length
+        self.L = [self.flow_points[dim][-1] for dim in range(3)]
+        print("Fluid updated. Planktos domain size is now {}.".format(self.L))
 
 
 
@@ -2807,7 +2865,7 @@ class environment:
 
     def __reset_flow_variables(self, incl_rho_mu_U=False):
         '''To be used when the fluid flow changes. Resets all the helper
-        parameters.'''
+        parameters and reports new domain.'''
 
         self.h_p = None
         self.tiling = None
@@ -2819,6 +2877,7 @@ class environment:
             self.mu = None
             self.rho = None
             self.U = None
+        print("Fluid updated. Planktos domain size is now {}.".format(self.L))
 
 
 

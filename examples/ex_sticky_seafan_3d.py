@@ -22,11 +22,13 @@ import planktos
 # Begin by loading the fluid and mesh.
 envir = planktos.environment()
 # In this data, space is in mm but velocity is in m/s. Convert velocity to mm/s.
-envir.read_comsol_vtu_data('comsol_data/cylinder_2to1_v0p008mps.vtu', vel_conv=1000)
+envir.read_comsol_vtu_data('comsol_data/Velocity2to1_8mmps.vtu', vel_conv=1000)
 envir.units = 'mm'
 envir.read_stl_mesh_data('comsol_data/seafan_cylinder.stl')
-
-# NOTE: Fluid data is 2.8 x 99.8 x 39.8 mm.
+# NOTE: This fluid data is 2.9 x 99.9 x 39.9 mm because it is periodic in all 
+#   spatial dimensions and the periodic boundary is not repeated. To fix this, 
+#   we use the wrap_flow function
+envir.wrap_flow(periodic_dim=[True, True, True])
 
 # Tile the fluid and cylinder in the x-direction so that the length of the x- 
 #   and z-dimensions are roughly the same.
@@ -76,10 +78,10 @@ for trial in range(100):
                                                 swrm.props['stick'].sum()/SWARM_SIZE*100))
 
     # print result to file
-    with open('results/seafan_sticky_1000dist_stuckfrac.txt', 'a') as f:
+    with open('results/seafan2to1_8mmps_sticky_1000dist_stuckfrac.txt', 'a') as f:
         print(swrm.props['stick'].sum()/SWARM_SIZE, file=f)
 
 
-# swrm.plot_all(movie_filename='sea_fan_sticky_dist.mp4', fps=4) # double-time movie
+swrm.plot_all(movie_filename='results/seafan2to1_8mmps_sticky_1000dist.mp4', fps=4) # double-time movie
 
 
