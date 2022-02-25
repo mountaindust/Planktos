@@ -9,7 +9,7 @@ about sea fans.
 
 NOTE: IN ORDER TO RUN THIS EXAMPLE, YOU MUST HAVE THE REQUIRED DATA!
 It can be downloaded from: 
-https://drive.google.com/drive/folders/1jbsOUQ37UWJenWQTGNZkWfVyI83QOXN6?usp=sharing
+https://drive.google.com/drive/folders/1etoBspZ76mwFZ63V0NdqdeVNNKlPYUxu?usp=sharing
 Put it into a comsol_data folder in this example directory, and you should be 
 good to go!
 '''
