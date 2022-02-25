@@ -40,8 +40,10 @@ envir.plot_flow()
 #   the default agent behavior: fluid advection with brownian motion, or "jitter".
 #   By default, the swarm class creates a swarm with 100 agents initialized to
 #   random positions throughout the environment. We just need to tell it what 
-#   environment it should go in by passing in our environment object:
-swrm = planktos.swarm(envir=envir)
+#   environment it should go in by passing in our environment object.
+#   Let's also specify a seed for the random number generator, so that our 
+#   results will be reproducable.
+swrm = planktos.swarm(envir=envir, seed=1)
 
 # Let's plot our new agents to see what we have so far:
 swrm.plot()
