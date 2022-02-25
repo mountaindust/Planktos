@@ -3,7 +3,6 @@
 Simulates agents for the purpose of making sure that the boundary is respected.
 '''
 
-from math import perm
 import numpy as np
 import sys
 sys.path.append('..')
@@ -57,3 +56,5 @@ s.plot()
 print('Moving swarm...')
 for ii in range(300): # 500
     s.move(0.0005)
+
+s.plot()
