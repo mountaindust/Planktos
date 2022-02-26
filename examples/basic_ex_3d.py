@@ -41,7 +41,7 @@ envir.plot_flow()
 # Now let's repeat the steps from basic_ex_2d.py, creating a default swarm,
 #   changing the covariance, running the simulation, and plotting.
 
-swrm = planktos.swarm(envir=envir)
+swrm = planktos.swarm(envir=envir, seed=1)
 swrm.shared_props['cov'] = swrm.shared_props['cov'] * 0.01
 
 print('Moving swarm...')

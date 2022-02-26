@@ -70,7 +70,7 @@ envir.plot_envir()
 #   constructor as an init parameter. This tells the constructor to put all the
 #   agents at that one point. You can also pass in a list of points to 
 #   explicitly specify where all agents should begin individually.
-swrm = planktos.swarm(envir=envir, init=(envir.L[0]*0.1,envir.L[1]*0.5))
+swrm = planktos.swarm(envir=envir, init=(envir.L[0]*0.1,envir.L[1]*0.5), seed=1)
 
 # Once again, let's reduce the amount of jitter (variance). Remember that 
 #   variance is standard deviation squared, so for a standard deviation of 0.01
