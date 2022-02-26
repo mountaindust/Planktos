@@ -1212,6 +1212,9 @@ class swarm:
                         self.positions[~self.positions.mask[:,0],:].copy()
                         ):
                     IBC_routine(n, self, startpt, endpt, ib_collisions)
+            # if all are masked, skip all boundary checks
+            elif np.all(self.positions.mask):
+                return
             # no masked agents: go through all of them
             else:
                 for n in range(self.positions.shape[0]):
@@ -1220,66 +1223,31 @@ class swarm:
                     IBC_routine(n, self, startpt, endpt, ib_collisions)
 
         ##### Environment Boundary Conditions #####
-        for dim, bndry in enumerate(self.envir.bndry):
-
-            # Check for 3D
-            if dim == 2 and len(self.envir.L) == 2:
-                # Ignore last bndry condition; 2D environment.
-                break
-
-            ### Left boundary ###
-            if bndry[0] == 'zero':
-                # mask everything exiting on the left
-                maskrow = self.positions[:,dim] < 0
-                self.positions[maskrow, :] = ma.masked
-                self.velocities[maskrow, :] = ma.masked
-                self.accelerations[maskrow, :] = ma.masked
-            elif bndry[0] == 'noflux':
-                # pull everything exiting on the left to 0
-                zerorow = self.positions[:,dim] < 0
-                self.positions[zerorow, dim] = 0
-                self.velocities[zerorow, dim] = 0
-                self.accelerations[zerorow, dim] = 0
-            else:
-                raise NameError
-
-            ### Right boundary ###
-            if bndry[1] == 'zero':
-                # mask everything exiting on the right
-                maskrow = self.positions[:,dim] > self.envir.L[dim]
-                self.positions[maskrow, :] = ma.masked
-                self.velocities[maskrow, :] = ma.masked
-                self.accelerations[maskrow, :] = ma.masked
-            elif bndry[1] == 'noflux':
-                # pull everything exiting on the left to 0
-                zerorow = self.positions[:,dim] > self.envir.L[dim]
-                self.positions[zerorow, dim] = self.envir.L[dim]
-                self.velocities[zerorow, dim] = 0
-                self.accelerations[zerorow, dim] = 0
-            else:
-                raise NameError
+        self._domain_BC_loop(ib_collisions=ib_collisions)
 
 
 
     def _domain_BC_loop(self, ib_collisions, idx_array=None):
         '''Loop over domain boundaries enforcing boundary conditions. Only 
-        agents in idx_array will be checked, or all agents if idx_array is not 
-        given.
+        agents in idx_array will be checked, or all unmasked agents if idx_array 
+        is not given.
         '''
 
         if idx_array is None:
             idx_array = np.arange(self.positions.shape[0])
 
-        status_BC = np.zeros_like(len(idx_array),len(self.envir.L))
+        status_BC = np.zeros((len(idx_array),len(self.envir.L)))
 
         ##### Mark all domain exits! -1 for left, 1 for right #####
         # skip masked entries
+        if np.all(self.positions[idx_array].mask):
+            return
         for dim in range(len(self.envir.L)):
             leftrow = np.logical_and(self.positions[idx_array,dim] < 0,
-                                     ~self.positions.mask[idx_array,dim])
-            status_BC[leftrow,dim] = -1
+                                    ~self.positions[idx_array,dim].mask)
             rightrow = np.logical_and(self.positions[idx_array,dim] > self.envir.L[dim],
-                                      ~self.positions.mask[idx_array,dim])
+                                    ~self.positions[idx_array,dim].mask)
+            status_BC[leftrow,dim] = -1
             status_BC[rightrow,dim] = 1
 
         ##### In cases where there are multiple exits, find the first #####
@@ -1289,16 +1257,17 @@ class swarm:
             mult_idx = idx_array[BC_mult_bool]
             # figure out which exit crossing occured first and treat that as the 
             #   only one. Use the velocity to parameterize the movement.
-            s_array = np.zeros(len(mult_idx),len(self.envir.L))
+            s_array = np.zeros((len(BC_mult_bool),len(self.envir.L)))
             for dim in range(len(self.envir.L)):
-                dim_bool = np.logical_and(BC_mult_bool, status_BC[:,dim] != 0)
-                dim_idx = idx_array[dim_bool]
-                right_1 = 1*(status_BC[dim_bool,dim] == 1)
+                # get multiple crossing entries that have crossing in this dim
+                dim_bool = np.logical_and(BC_mult_bool, status_BC[:,dim] != 0) #full length
+                dim_idx = idx_array[dim_bool] #reduced length
+                right_1 = 1*(status_BC[dim_bool,dim] == 1) #reduced length
                 s_array[dim_bool,dim] = (self.positions[dim_idx,dim]-right_1*
                         self.envir.L[dim])/self.velocities[dim_idx,dim]
             # for each row in s_array, the dimension with the largest value is
             #   now the one crossed first.
-            first_dim = np.argmax(s_array, axis=1)
+            first_dim = np.argmax(s_array[BC_mult_bool,:], axis=1)
             # remove the other crossings from the status_BC array
             status_vals = status_BC[BC_mult_bool, first_dim]
             status_BC[BC_mult_bool,:] = 0
@@ -2175,7 +2144,12 @@ class swarm:
 
         # get average swarm velocity
         if t_indx is None:
-            vel_data = self.velocities[~self.velocities.mask.any(axis=1)]
+            if np.all(self.velocities.mask):
+                vel_data = np.zeros(self.velocities.shape)
+            elif np.any(self.velocities.mask):
+                vel_data = self.velocities[~self.velocities.mask.any(axis=1)]
+            else:
+                vel_data = self.velocities
             avg_swrm_vel = vel_data.mean(axis=0)
         elif t_indx == 0:
             avg_swrm_vel = np.zeros(len(self.envir.L))

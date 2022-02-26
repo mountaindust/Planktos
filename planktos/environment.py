@@ -2958,7 +2958,7 @@ class environment:
             if self.h_p is not None:
                 grass = np.random.rand(80)*self.L[0]
                 for g in grass:
-                    ax.axvline(x=g, ymax=self.h_p/self.L[1], color='.5')
+                    ax.axvline(x=g, ymax=self.h_p/self.L[1], color='.5', zorder=0.5)
 
             # plot any ghost structures
             for plot_func, args in zip(self.plot_structs, 
