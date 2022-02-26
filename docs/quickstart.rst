@@ -67,7 +67,8 @@ attach more than two mesh segments and leftover segments that do not contribute
 to the dynamics at all. Do not expect meshes resulting from this method to have 
 undergone rigorous testing, and running the method will add significant 
 computational overhead due to the need to search for collisions with each 
-additional line segment.
+additional line segment. Finally, avoid mesh structures that intersect with a 
+periodic boundary (w.r.t. agents); behavior related to this is not implemented.
 
 Research that utilizes this framework can be seen in:  
 

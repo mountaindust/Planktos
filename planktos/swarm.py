@@ -1175,10 +1175,12 @@ class swarm:
         exited the domain and if so, update their positions based on the 
         boundary conditions as specified in the enviornment class (self.envir).
 
-        For no flux boundary conditions such sliding projections are really simple 
+        For noflux boundary conditions such sliding projections are really simple 
         (since the domain is just a box), so we just do them directly/manually
         instead of folding them into the far more complex, recursive algorithm 
-        used for internal mesh structures.
+        used for internal mesh structures. Periodic boundary conditions will 
+        recursively check for immersed boundary crossings after each crossing
+        of the domain boundary.
         
         Parameters
         ----------
@@ -1312,25 +1314,43 @@ class swarm:
                     # no further BC checks are made: masked entries are skipped
                 elif bndry[0] == 'noflux':
                     # agent slides along flat boundary. pos/vel/accel in dir of 
-                    #   boundary is zero.
+                    #   boundary will be zero.
+                    # additional IB crossings are possible, so first find 
+                    #   point of intersection with the boundary to enable this 
+                    #   check.
+                    if self.envir.ibmesh is not None and ib_collisions is not None:
+                        s_array = (self.positions[left_idx,dim]-0)/ \
+                            self.velocities[left_idx,dim]
+                        startpts = self.positions[left_idx,:] - (np.tile(s_array, 
+                                   (self.velocities.shape[1],1)).T* 
+                                    self.velocities[left_idx,:])
+                    # now update pos/vel/accel
                     self.positions[left_idx, dim] = 0
                     self.velocities[left_idx, dim] = 0
                     self.accelerations[left_idx, dim] = 0
-                    # we assume no immersed boundary on domain boundary. 
-                    #   but further domain crossings are possible.
+                    # now check for IB crossings. However, due to potential 
+                    #   complex interactions with the noflux boundary, enforce 
+                    #   sticky ib collisions in all cases.
+                    if self.envir.ibmesh is not None and ib_collisions is not None:
+                        for n, idx in enumerate(left_idx):
+                            startpt = startpts[n]
+                            endpt = self.positions[idx,:].copy()
+                            IBC_routine(idx, self, startpt, endpt, 'sticky')
+                    # further domain crossings remain possible
                 elif bndry[0] == 'periodic':
                     # wrap everything exiting on the left to the right
                     self.positions[left_idx, dim] =\
                         np.mod(self.positions[left_idx, dim],self.envir.L[dim])
                     # check for IB crossings. first, get the point of re-entry
                     #   using the velocity.
-                    s_array = (self.positions[left_idx,dim]-
-                        self.envir.L[dim])/self.velocities[left_idx,dim]
-                    for n, idx in enumerate(left_idx):
-                        startpt = self.positions[idx,:] - \
-                            s_array[n]*self.velocities[idx,:]
-                        endpt = self.positions[idx,:].copy()
-                        IBC_routine(idx, self, startpt, endpt, ib_collisions)
+                    if self.envir.ibmesh is not None and ib_collisions is not None:
+                        s_array = (self.positions[left_idx,dim]-
+                            self.envir.L[dim])/self.velocities[left_idx,dim]
+                        for n, idx in enumerate(left_idx):
+                            startpt = self.positions[idx,:] - \
+                                s_array[n]*self.velocities[idx,:]
+                            endpt = self.positions[idx,:].copy()
+                            IBC_routine(idx, self, startpt, endpt, ib_collisions)
                     # further domain crossings are possible. if this happens, 
                     #   velocity should be the same as original velocity b/c 
                     #   immersed boundaries do not intersect with domain bndry,
@@ -1351,24 +1371,42 @@ class swarm:
                 elif bndry[1] == 'noflux':
                     # agent slides along flat boundary. pos/vel/accel in dir of 
                     #   boundary is zero.
+                    # additional IB crossings are possible, so first find 
+                    #   point of intersection with the boundary to enable this 
+                    #   check.
+                    if self.envir.ibmesh is not None and ib_collisions is not None:
+                        s_array = (self.positions[right_idx,dim]-
+                                   self.envir.L[dim])/self.velocities[right_idx,dim]
+                        startpts = self.positions[right_idx,:] - (np.tile(s_array, 
+                                   (self.velocities.shape[1],1)).T* 
+                                    self.velocities[right_idx,:])
+                    # now update pos/vel/accel
                     self.positions[right_idx, dim] = self.envir.L[dim]
                     self.velocities[right_idx, dim] = 0
                     self.accelerations[right_idx, dim] = 0
-                    # we assume no immersed boundary on domain boundary. 
-                    #   but further domain crossings are possible.
+                    # now check for IB crossings. However, due to potential 
+                    #   complex interactions with the noflux boundary, enforce 
+                    #   sticky ib collisions in all cases.
+                    if self.envir.ibmesh is not None and ib_collisions is not None:
+                        for n, idx in enumerate(left_idx):
+                            startpt = startpts[n]
+                            endpt = self.positions[idx,:].copy()
+                            IBC_routine(idx, self, startpt, endpt, 'sticky')
+                    # further domain crossings remain possible
                 elif bndry[1] == 'periodic':
                     # wrap everything exiting on the right to the left
                     self.positions[right_idx, dim] =\
                         np.mod(self.positions[right_idx, dim],self.envir.L[dim])
                     # check for IB crossings. first, get the point of re-entry
                     #   using the velocity.
-                    s_array = (self.positions[right_idx,dim]-0)/ \
-                        self.velocities[right_idx,dim]
-                    for n, idx in enumerate(right_idx):
-                        startpt = self.positions[idx,:] - \
-                            s_array[n]*self.velocities[idx,:]
-                        endpt = self.positions[idx,:].copy()
-                        IBC_routine(idx, self, startpt, endpt, ib_collisions)
+                    if self.envir.ibmesh is not None and ib_collisions is not None:
+                        s_array = (self.positions[right_idx,dim]-0)/ \
+                            self.velocities[right_idx,dim]
+                        for n, idx in enumerate(right_idx):
+                            startpt = self.positions[idx,:] - \
+                                s_array[n]*self.velocities[idx,:]
+                            endpt = self.positions[idx,:].copy()
+                            IBC_routine(idx, self, startpt, endpt, ib_collisions)
                     # further domain crossings are possible. if this happens, 
                     #   velocity should be the same as original velocity b/c 
                     #   immersed boundaries do not intersect with domain bndry,
