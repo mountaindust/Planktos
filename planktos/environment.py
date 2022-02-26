@@ -59,7 +59,7 @@ class environment:
         Length of domain in x and y direction, meters
     Lz : float, optional
         Length of domain in z direction
-    x_bndry : {'zero', 'noflux'} as str or [str, str], default='zero'
+    x_bndry : {'zero', 'noflux', 'periodic'} as str or [str, str], default='zero'
         agent boundary condition in the x-axis (if the same on both sides), or 
         [left bndry condition, right bndry condition]. Choices are 'zero' and 
         'noflux'. Agents leaving a zero boundary condition will be marked as 
@@ -125,7 +125,7 @@ class environment:
         A place to remind yourself of the spatial units you are working in. Note 
         that none of the methods of this class use this attribute in any way, 
         so it's probably best to work in meters.
-    bndry :  list of lists, each with two of {'zero', 'noflux'}
+    bndry :  list of lists, each with two of {'zero', 'noflux', 'periodic'}
         Boundary conditions in each direction [x, y, [z]] for agents
     swarms : list of swarm objects
         The swarms that belong to this environment
@@ -170,7 +170,9 @@ class environment:
         triangular mesh) specifying internal mesh structures that agents will 
         treat as solid barriers. Each value of the first index into the array 
         specifies a mesh element, and each 1x2 or 1x3 contained in that index 
-        is a point in space (so, two for a line, three for a triangle).
+        is a point in space (so, two for a line, three for a triangle). Avoid 
+        mesh structures that intersect with a periodic boundary - behavior 
+        related to this is not implemented.
     max_meshpt_dist : float
         maximum length of a mesh segment in ibmesh, typically determined 
         automatically. This is used in search algorithms to winnow down the 
@@ -1570,7 +1572,11 @@ class environment:
         '''Reads in 3D mesh data from an ascii or binary stl file. Must have
         the numpy-stl library installed. It is assumed that the coordinate
         system of the stl mesh matches the coordinate system of the flow field.
-        Thus, the mesh will be translated using the flow LLC if necessary.'''
+        Thus, the mesh will be translated using the flow LLC if necessary.
+        
+        Avoid mesh structures that intersect with a periodic boundary; behavior 
+        related to this is not implemented.
+        '''
 
         path = Path(filename)
         if not path.is_file(): 
@@ -1592,6 +1598,9 @@ class environment:
         vertices closer than res_factor (default is half + a bit for numerical 
         stability) times the Eulerian mesh resolution are connected linearly. 
         Thus, the flow data must be imported first!
+
+        Avoid mesh structures that intersect with a periodic boundary; behavior 
+        related to this is not implemented.
         '''
 
         path = Path(filename)
@@ -1997,7 +2006,7 @@ class environment:
         iterable of length 2.
         '''
 
-        supprted_conds = ['zero', 'noflux']
+        supprted_conds = ['zero', 'noflux', 'periodic']
         default_conds_x = ('zero', 'zero')
         default_conds_y = ('zero', 'zero')
         default_conds_z = ('noflux', 'noflux')
@@ -2952,7 +2961,7 @@ class environment:
             if self.h_p is not None:
                 grass = np.random.rand(80)*self.L[0]
                 for g in grass:
-                    ax.axvline(x=g, ymax=self.h_p/self.L[1], color='.5')
+                    ax.axvline(x=g, ymax=self.h_p/self.L[1], color='.5', zorder=0.5)
 
             # plot any ghost structures
             for plot_func, args in zip(self.plot_structs, 

@@ -67,7 +67,8 @@ attach more than two mesh segments and leftover segments that do not contribute
 to the dynamics at all. Do not expect meshes resulting from this method to have 
 undergone rigorous testing, and running the method will add significant 
 computational overhead due to the need to search for collisions with each 
-additional line segment.
+additional line segment. Finally, avoid mesh structures that intersect with a 
+periodic boundary (w.r.t. agents); behavior related to this is not implemented.
 
 Research that utilizes this framework can be seen in:  
 
@@ -89,7 +90,8 @@ or 3D environments; these include Brinkman flow, two layer channel flow, and
 canopy flow. Flow fields can also be extended and tiled in simple ways as 
 appropriate. Mesh data must be time-invariant and loaded via IB2d/IBAMR-style 
 vertex data (2D) or via stl file in 3D. Again, more (open source) formats may be 
-considered if requested.
+considered if requested. Mesh data should never intersect any of the domain 
+boundaries. This will not be checked, but is essential for correct preformance.
 
 For agents, there is support for multiple species (swarms) along with individual 
 variation though a pandas Dataframe property of the swarm class (swarm.props). 
