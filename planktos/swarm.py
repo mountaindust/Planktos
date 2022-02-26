@@ -2230,7 +2230,8 @@ class swarm:
 
 
 
-    def plot(self, t=None, blocking=True, dist='density', fluid=None, clip=None, figsize=None):
+    def plot(self, t=None, filename=None, blocking=True, dist='density', 
+             fluid=None, clip=None, figsize=None, save_kwargs=None):
         '''Plot the position of the swarm at time t, or at the current time
         if no time is supplied. The actual time plotted will depend on the
         history of movement steps; the closest entry in
@@ -2240,6 +2241,8 @@ class swarm:
         ----------
         t : float, optional
             time to plot. if None (default), the current time.
+        filename : str, optional
+            file name to save image as. Image will not be shown, only saved.
         blocking : bool, default True
             whether the plot should block execution or not
         dist : {'density' (default), 'cov', float, 'hist'}
@@ -2265,6 +2268,10 @@ class swarm:
         figsize : tuple of length 2, optional
             figure size in inches, (width, height). default is a heurstic that 
             works... most of the time?
+        save_kwargs : dict of keyword arguments, optional
+            keys must be valid strings that match keyword arguments for the 
+            matplotlib savefig function. These arguments will be passed to 
+            savefig assuming that a filename has been specified.
         '''
 
         if t is not None and len(self.envir.time_history) != 0:
@@ -2517,12 +2524,19 @@ class swarm:
                 axHistz.get_yaxis().set_ticks([])
 
         # show the plot
-        plt.show(block=blocking)
+        if filename is None:
+            plt.show(block=blocking)
+        else:
+            if save_kwargs is not None:
+                plt.savefig(filename, **save_kwargs)
+            else:
+                plt.savefig(filename)
 
 
 
     def plot_all(self, movie_filename=None, frames=None, downsamp=None, fps=10, 
-                 dist='density', fluid=None, clip=None, figsize=None):
+                 dist='density', fluid=None, clip=None, figsize=None, 
+                 save_kwargs=None, writer_kwargs=None):
         ''' Plot the history of the swarm's movement, incl. current time in 
         successively updating plots or saved as a movie file. A movie file is
         created if movie_filename is specified.
@@ -2570,7 +2584,16 @@ class swarm:
             this value is used for both negative and positive vorticity.
         figsize : tuple of length 2, optional
             figure size in inches, (width, height). default is a heurstic that 
-            works... most of the time? 
+            works... most of the time?
+        writer_kwargs : dict of keyword arguments, optional
+            keys must be valid strings that match keyword arguments for a  
+            matplotlib 
+        save_kwargs : dict of keyword arguments, optional
+            keys must be valid strings that match keyword arguments for the 
+            matplotlib animation.FFMpegWriter object. These arguments will be 
+            used in the writer object initiation save assuming that a 
+            movie_filename has been specified. Otherwise, defaults are the 
+            passed in fps and metadata=dict(artist='Christopher Strickland')).
         '''
 
         if len(self.envir.time_history) == 0:
@@ -3130,9 +3153,15 @@ class swarm:
 
         if movie_filename is not None:
             try:
-                writer = animation.FFMpegWriter(fps=fps, 
-                    metadata=dict(artist='Christopher Strickland'))#, bitrate=1800)
-                anim.save(movie_filename, writer=writer,dpi=150)
+                if writer_kwargs is None:
+                    writer = animation.FFMpegWriter(fps=fps, 
+                        metadata=dict(artist='Christopher Strickland'))#, bitrate=1800)
+                else:
+                    writer = animation.FFMpegWriter(**writer_kwargs)
+                if save_kwargs is None:
+                    anim.save(movie_filename, writer=writer, dpi=150)
+                else:
+                    anim.save(movie_filename, writer=writer, **save_kwargs)
                 plt.close()
                 print('Video saved to {}.'.format(movie_filename))
             except:
