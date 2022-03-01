@@ -27,6 +27,7 @@ import planktos
 ##### Begin by loading the fluid and mesh. #####
 envir = planktos.environment(x_bndry='periodic', y_bndry='periodic')
 envir.read_IB2d_vtk_data('ib2d_data', 5.0e-5, 1000)
+envir.wrap_flow(periodic_dim=[True, True])
 # domain is 1 x 0.25 m
 envir.read_IB2d_vertex_data('ib2d_data/channel.vertex')
 

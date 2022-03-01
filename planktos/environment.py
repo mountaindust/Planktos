@@ -1530,12 +1530,15 @@ class environment:
 
         # create new flow field, putting old data in lower left corner
         new_flow = [np.zeros(new_flow_shape) for d in range(dim)]
-        old_shape = self.flow[0].shape
+        if TIME_DEP:
+            old_shape = self.flow[0].shape[1:]
+        else:
+            old_shape = self.flow[0].shape
         for d in range(dim):
             if dim == 2:
-                new_flow[d][:old_shape[0],:old_shape[1]] = self.flow[d]
+                new_flow[d][...,:old_shape[0],:old_shape[1]] = self.flow[d]
             else:
-                new_flow[d][:old_shape[0],:old_shape[1],:old_shape[2]] = self.flow[d]
+                new_flow[d][...,:old_shape[0],:old_shape[1],:old_shape[2]] = self.flow[d]
         # replace old flow field
         self.flow = new_flow
 
@@ -1563,7 +1566,7 @@ class environment:
         self.flow_points = tuple(flow_points)
 
         # replace domain length
-        self.L = [self.flow_points[dim][-1] for dim in range(3)]
+        self.L = [self.flow_points[d][-1] for d in range(dim)]
         print("Fluid updated. Planktos domain size is now {}.".format(self.L))
 
 

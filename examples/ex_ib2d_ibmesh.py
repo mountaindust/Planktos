@@ -40,7 +40,14 @@ envir = planktos.environment()
 # Read in ib2d vtk data with dt=5.0e-5, print_dump=1000.
 envir.read_IB2d_vtk_data('ib2d_data', 5.0e-5, 1000)
 
-# Now we reas in the vertex data to get an immersed mesh. These data include 
+# This data is periodic in both directions, and the boundary is not repeated on 
+#   both sides in the vtk output. This results in the length of the two spatial 
+#   dimensions a bit short of the original 1 x 0.25 m, and the boundary data is 
+#   not necessarily the same on the matching boundaries of the spatial doman.
+#   Fix this by using the wrap_flow function.
+envir.wrap_flow(periodic_dim=[True, True])
+
+# Now we read in the vertex data to get an immersed mesh. These data include 
 #   points for two lines (the sides of the channel) and a circle representing 
 #   the cylinder. Since the geometry is fairly simple, we should be able to 
 #   create mesh structures out of these points by associating nearby points 
