@@ -2196,6 +2196,9 @@ class swarm:
                         self.envir.time_history[t_indx]-self.envir.time_history[t_indx-1])
             avg_swrm_vel = vel_data.mean(axis=0)
 
+        if self.envir.flow is None:
+            return perc_left, 0, 0, 0, 0, avg_swrm_vel
+
         if not DIM3:
             # 2D flow
             # get current fluid flow info
