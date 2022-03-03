@@ -10,7 +10,6 @@ Email: cstric12@utk.edu
 
 import sys, os, warnings
 from pathlib import Path
-from attr import ib
 import numpy as np
 import numpy.ma as ma
 from scipy import interpolate, stats
