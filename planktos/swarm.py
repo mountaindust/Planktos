@@ -2196,7 +2196,7 @@ class swarm:
             avg_swrm_vel = vel_data.mean(axis=0)
 
         if self.envir.flow is None:
-            return perc_left, 0, 0, 0, 0, avg_swrm_vel
+            return perc_left, 0, 0, 0, 0, 0, avg_swrm_vel
 
         if not DIM3:
             # 2D flow
