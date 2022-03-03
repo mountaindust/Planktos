@@ -36,7 +36,7 @@ Having done that, the dependencies are as follows:
 - pyvista (if saving vtk data) from conda-forge. Use mamba!! Same problem 
   as for vtk.
 - numpy-stl (if loading stl data). Again, get it from conda-forge.
-- netCDF4 (if loading netCDF data, comes standard with an Anaconda installation)
+- netCDF4 (if loading netCDF data)
 - pytest (if running tests)
 
 Getting started
