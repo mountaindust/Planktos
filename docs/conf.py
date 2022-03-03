@@ -13,6 +13,7 @@
 import os
 import sys
 sys.path.insert(0, os.path.abspath('../'))
+from planktos import __version__
 
 # -- Project information -----------------------------------------------------
 
@@ -20,8 +21,9 @@ project = 'Planktos'
 copyright = '2021, W. Christopher Strickland'
 author = 'W. Christopher Strickland'
 
+version = __version__
 # The full version, including alpha/beta/rc tags
-release = '0.4.2'
+release = version
 
 
 # -- General configuration ---------------------------------------------------
