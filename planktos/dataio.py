@@ -21,25 +21,21 @@ try:
     from vtk.numpy_interface import dataset_adapter as dsa
     VTK = True
 except ModuleNotFoundError:
-    print("Could not import vtk libraries. Reading of VTK files disabled.")
     VTK = False
 try:
     from stl import mesh as stlmesh
     STL = True
 except ModuleNotFoundError:
-    print("Could not import numpy-stl. Reading of stl files disabled.")
     STL = False
 try:
     import pyvista as pv
     PYVISTA = True
 except ModuleNotFoundError:
-    print("Could not import pyvista library. Writing of VTK files disabled.")
     PYVISTA = False
 try:
     import netCDF4 as nc
     NETCDF = True
 except ModuleNotFoundError:
-    print("Could not import netCDF4 library. Reading of netCDF files disabled.")
     NETCDF = False
 
 
@@ -54,7 +50,7 @@ def vtk_dep(func):
     def wrapper(*args, **kwargs):
         __doc__ = func.__doc__
         if not VTK:
-            print("Cannot read VTK file: VTK library not found.")
+            print("Cannot read VTK file: VTK library not installed.")
             raise RuntimeError("Cannot read VTK file: VTK library not found in data_IO.")
         else:
             return func(*args, **kwargs)
@@ -67,7 +63,7 @@ def pyvista_dep(func):
     '''Decorator for pyvista writers to check package import.'''
     def wrapper(*args, **kwargs):
         if not PYVISTA:
-            print("Cannot write VTK files: pyvista library not found.")
+            print("Cannot write VTK files: pyvista library not installed.")
             raise RuntimeError("Cannot write VTK files: pyvista library not found.")
         else:
             return func(*args, **kwargs)
@@ -81,7 +77,7 @@ def stl_dep(func):
     def wrapper(*args, **kwargs):
         __doc__ = func.__doc__
         if not STL:
-            print("Cannot read STL file: numpy-stl library not found.")
+            print("Cannot read STL file: numpy-stl library not installed.")
             raise RuntimeError("Cannot read STL file: numpy-stl library not found in data_IO. "+
                                "Please install numpy-stl with conda -c conda-forge or using pip.")
         else:
@@ -96,7 +92,7 @@ def netcdf_dep(func):
     def wrapper(*args, **kwargs):
         __doc__ = func.__doc__
         if not NETCDF:
-            print("Cannot read NetCDF file: NetCDF4 library not found.")
+            print("Cannot read NetCDF file: NetCDF4 library not installed.")
             raise RuntimeError("Cannot read NetCDF file: NetCDF4 library not found in data_IO. "+
                                "Please install NetCDF4 with conda or using pip.")
         else:
