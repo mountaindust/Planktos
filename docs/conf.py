@@ -13,13 +13,13 @@
 import os
 import sys
 sys.path.insert(0, os.path.abspath('../'))
-from planktos import __version__
+from planktos import __version__, __copyright__, __author__
 
 # -- Project information -----------------------------------------------------
 
 project = 'Planktos'
-copyright = '2021, W. Christopher Strickland'
-author = 'W. Christopher Strickland'
+copyright = __copyright__
+author = __author__
 
 version = __version__
 # The full version, including alpha/beta/rc tags

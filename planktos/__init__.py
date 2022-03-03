@@ -9,7 +9,7 @@ Provides
   3. Supporting functions to handle data I/O, solving eqns of motion, etc.
 '''
 
-__author__ = "Christopher Strickland"
+__author__ = "W. Christopher Strickland"
 __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 __version__ = '0.4.2'
