@@ -1060,10 +1060,7 @@ class swarm:
 
         # Interpolate fluid flow
         if self.envir.flow is None:
-            if not DIM3:
-                return np.array([0, 0])
-            else:
-                return np.array([0, 0, 0])
+            return np.zeros(self.positions.shape)
         else:
             if time is None:
                 return self.envir.interpolate_flow(positions, method='linear')
