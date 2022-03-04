@@ -2192,7 +2192,9 @@ class swarm:
                         self.envir.time_history[t_indx]-self.envir.time_history[t_indx-1])
             avg_swrm_vel = vel_data.mean(axis=0)
 
-        if self.envir.flow is None:
+        if self.envir.flow is None and not DIM3:
+            return perc_left, 0, 0, 0, 0, avg_swrm_vel
+        elif self.envir.flow is None and DIM3:
             return perc_left, 0, 0, 0, 0, 0, avg_swrm_vel
 
         if not DIM3:
@@ -2331,7 +2333,7 @@ class swarm:
                                               (axHy_pos[1,1]-axHy_pos[0,1])/prop_len])
 
             # fluid visualization
-            if fluid == 'vort':
+            if fluid == 'vort' and self.envir.flow is not None:
                 vort = self.envir.get_2D_vorticity(t_indx=loc)
                 if clip is not None:
                     norm = colors.Normalize(-abs(clip),abs(clip),clip=True)
@@ -2340,7 +2342,7 @@ class swarm:
                 ax.pcolormesh(self.envir.flow_points[0], self.envir.flow_points[1], 
                               vort.T, shading='gouraud', cmap='RdBu',
                               norm=norm, alpha=0.9, antialiased=True)
-            elif fluid == 'quiver':
+            elif fluid == 'quiver' and self.envir.flow is not None:
                 # get dimensions of axis to estimate a decent quiver density
                 ax_pos = ax.get_position().get_points()
                 fig_size = fig.get_size_inches()
@@ -2650,7 +2652,7 @@ class swarm:
                                               (axHy_pos[1,1]-axHy_pos[0,1])/prop_len])
 
             # fluid visualization
-            if fluid == 'vort':
+            if fluid == 'vort' and self.envir.flow is not None:
                 if clip is not None:
                     norm = colors.Normalize(-abs(clip),abs(clip),clip=True)
                 else:
@@ -2658,7 +2660,7 @@ class swarm:
                 fld = ax.pcolormesh([self.envir.flow_points[0]], self.envir.flow_points[1], 
                            np.zeros(self.envir.flow[0].shape[1:]).T, shading='gouraud',
                            cmap='RdBu', norm=norm, alpha=0.9)
-            elif fluid == 'quiver':
+            elif fluid == 'quiver' and self.envir.flow is not None:
                 # get dimensions of axis to estimate a decent quiver density
                 ax_pos = ax.get_position().get_points()
                 fig_size = fig.get_size_inches()
@@ -2888,12 +2890,12 @@ class swarm:
                          r'Agent $\overline{v}_x$'+': {:.2g}'.format(avg_swrm_vel[0]))
                     y_text.set_text(r'Fluid $\overline{v}_y$'+': {:.2g} \n'.format(avg_spd_y)+
                          r'Agent $\overline{v}_y$'+': {:.2g}'.format(avg_swrm_vel[1]))
-                    if fluid == 'vort':
+                    if fluid == 'vort' and self.envir.flow is not None:
                         vort = self.envir.get_2D_vorticity(t_indx=n)
                         fld.set_array(vort.T)
                         fld.changed()
                         fld.autoscale()
-                    elif fluid == 'quiver':
+                    elif fluid == 'quiver' and self.envir.flow is not None:
                         if self.envir.flow_times is not None:
                             flow = self.envir.interpolate_temporal_flow(t_indx=n)
                             fld.set_UVC(flow[0][::M,::N].T, flow[1][::M,::N].T)
@@ -2910,7 +2912,7 @@ class swarm:
                             rect.set_height(h)
                         for rect, h in zip(patches_y, n_y):
                             rect.set_width(h)
-                        if fluid == 'vort':
+                        if fluid == 'vort' and self.envir.flow is not None:
                             return [fld, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
                         else:
                             return [scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
@@ -2931,7 +2933,7 @@ class swarm:
                             ydens_plt.set_xdata(y_density(ymesh))
                         axHistx.set_ylim(top=np.max(xdens_plt.get_ydata()))
                         axHisty.set_xlim(right=np.max(ydens_plt.get_xdata()))
-                        if fluid == 'vort':
+                        if fluid == 'vort' and self.envir.flow is not None:
                             return [fld, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
                         else:
                             return [scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
@@ -3025,12 +3027,12 @@ class swarm:
                          r'Agent $\overline{v}_x$'+': {:.2g}'.format(avg_swrm_vel[0]))
                     y_text.set_text(r'Fluid $\overline{v}_y$'+': {:.2g} \n'.format(avg_spd_y)+
                          r'Agent $\overline{v}_y$'+': {:.2g}'.format(avg_swrm_vel[1]))
-                    if fluid == 'vort':
+                    if fluid == 'vort' and self.envir.flow is not None:
                         vort = self.envir.get_2D_vorticity()
                         fld.set_array(vort.T)
                         fld.changed()
                         fld.autoscale()
-                    elif fluid == 'quiver':
+                    elif fluid == 'quiver' and self.envir.flow is not None:
                         if self.envir.flow_times is not None:
                             flow = self.envir.interpolate_temporal_flow()
                             fld.set_UVC(flow[0][::M,::N].T, flow[1][::M,::N].T)
@@ -3047,7 +3049,7 @@ class swarm:
                             rect.set_height(h)
                         for rect, h in zip(patches_y, n_y):
                             rect.set_width(h)
-                        if fluid == 'vort':
+                        if fluid == 'vort' and self.envir.flow is not None:
                             return [fld, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
                         else:
                             return [scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
@@ -3066,7 +3068,7 @@ class swarm:
                         else:
                             y_density = stats.gaussian_kde(self.positions[:,1].compressed(), fac_y)
                             ydens_plt.set_xdata(y_density(ymesh))
-                        if fluid == 'vort':
+                        if fluid == 'vort' and self.envir.flow is not None:
                             return [fld, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
                         else:
                             return [scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
