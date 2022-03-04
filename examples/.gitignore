@@ -1,0 +1,4 @@
+air_cylinder/
+air_cylinder_slow/
+water_cylinder/
+!vicsek_mesh/*.vertex
