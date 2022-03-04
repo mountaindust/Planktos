@@ -1596,23 +1596,44 @@ class environment:
 
 
 
-    def read_IB2d_vertex_data(self, filename, res_factor=0.501):
+    def read_IB2d_vertex_data(self, filename, res_factor=0.501, res=None):
         '''Reads in 2D vertex data from a .vertex file (IB2d). Assumes that any 
         vertices closer than res_factor (default is half + a bit for numerical 
         stability) times the Eulerian mesh resolution are connected linearly. 
-        Thus, the flow data must be imported first!
+        This method gets the Eulerian mesh resolution from the fluid velocity 
+        data, so the flow data must be imported first. 
+        
+        Alternatively, you can pass in the Eulerian mesh resolution directly to 
+        the res parameter to get the mesh in absence of any fluid velocity 
+        field. Calculate it from the IB2d input file by taking the domain length 
+        and dividing by the number of Eulerian grid points: Lx/Nx and Ly/Ny. The 
+        smaller of the two numbers should be used.
 
         Avoid mesh structures that intersect with a periodic boundary; behavior 
         related to this is not implemented.
+
+        Parameters
+        ----------
+        filename : string
+            vertex file to load
+        res_factor : float, default=0.501
+            this times the Eulerian mesh resolution is the radius that will be
+            used.
+        res : float, optional
+            pass the Eulerian mesh resolution in directly, instead of 
+            calculating it from a loaded fluid velocity field
         '''
 
         path = Path(filename)
         if not path.is_file(): 
             raise FileNotFoundError("File {} not found!".format(filename))
-        assert self.flow_points is not None, "Must import flow data first!"
-        dists = np.concatenate([self.flow_points[ii][1:]-self.flow_points[ii][0:-1]
-                                for ii in range(2)])
-        Eulerian_res = dists.min()
+        if res is None:
+            assert self.flow_points is not None, "Must import flow data first!"
+            dists = np.concatenate([self.flow_points[ii][1:]-self.flow_points[ii][0:-1]
+                                    for ii in range(2)])
+            Eulerian_res = dists.min()
+        else:
+            Eulerian_res = res
 
         vertices = dataio.read_IB2d_vertices(filename)
         print("Processing vertex file for point-wise connections within {}.".format(
