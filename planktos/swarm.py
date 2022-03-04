@@ -2922,7 +2922,7 @@ class swarm:
                             x_density = np.zeros_like(xmesh); x_density[idx] = 1
                             xdens_plt.set_ydata(x_density)
                         # check to see if everything has left
-                        elif self.pos_history[n][:,0].all():
+                        elif self.pos_history[n][:,0].all() is ma.masked:
                             x_density = np.zeros_like(xmesh)
                             xdens_plt.set_ydata(x_density)
                         else:
@@ -2932,7 +2932,7 @@ class swarm:
                             idx = (np.abs(ymesh - self.pos_history[n][0,1])).argmin()
                             y_density = np.zeros_like(ymesh); y_density[idx] = 1
                             ydens_plt.set_xdata(y_density)
-                        elif self.pos_history[n][:,1].all():
+                        elif self.pos_history[n][:,1].all() is ma.masked:
                             y_density = np.zeros_like(ymesh)
                             ydens_plt.set_xdata(y_density)
                         else:
@@ -2996,7 +2996,7 @@ class swarm:
                             x_density = np.zeros_like(xmesh); x_density[idx] = 1
                             xdens_plt.set_ydata(x_density)
                         # check to see if everything has left
-                        elif self.pos_history[n][:,0].all():
+                        elif self.pos_history[n][:,0].all() is ma.masked:
                             x_density = np.zeros_like(xmesh)
                             xdens_plt.set_ydata(x_density)
                         else:
@@ -3006,7 +3006,7 @@ class swarm:
                             idx = (np.abs(ymesh - self.pos_history[n][0,1])).argmin()
                             y_density = np.zeros_like(ymesh); y_density[idx] = 1
                             ydens_plt.set_ydata(y_density)
-                        elif self.pos_history[n][:,1].all():
+                        elif self.pos_history[n][:,1].all() is ma.masked:
                             y_density = np.zeros_like(ymesh)
                             ydens_plt.set_ydata(y_density)
                         else:
@@ -3016,7 +3016,7 @@ class swarm:
                             idx = (np.abs(zmesh - self.pos_history[n][0,2])).argmin()
                             z_density = np.zeros_like(zmesh); z_density[idx] = 1
                             zdens_plt.set_ydata(z_density)
-                        elif self.pos_history[n][:,2].all():
+                        elif self.pos_history[n][:,2].all() is ma.masked:
                             z_density = np.zeros_like(zmesh)
                             zdens_plt.set_ydata(z_density)
                         else:
