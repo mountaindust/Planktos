@@ -30,10 +30,10 @@ envir = planktos.environment(Lx=0.21, Ly=2.5, Lz=0.2, x_bndry='noflux',
 #         y_bndry='zero', z_bndry='noflux')
 
 ##### Load fluid data #####
-envir.read_comsol_vtu_data('comsol_data/WindTunnel-p22mps.vtu')
+# envir.read_comsol_vtu_data('comsol_data/WindTunnel-p22mps.vtu')
 
 ##### Load mesh data #####
-envir.read_stl_mesh_data('comsol_data/seafan_cylinder.stl')
+# envir.read_stl_mesh_data('comsol_data/seafan_cylinder.stl')
 
 ##### Set the swarm size #####
 SWARM_SIZE = 500
@@ -72,10 +72,10 @@ class vicsek3d(planktos.swarm):
         ### Bias initial vel toward the right to move toward cylinder ###
         # Add a random perturbation with theta angle between [-nu/2, nu/2] and
         #   phi angle between pi/2 + [-nu/4, nu/4]
-        rnd_angles_theta = self.get_prop('nu')*(
-            self.rndState.rand(self.positions.shape[0]) - 0.5)
-        rnd_angles_phi = np.pi/2 + 0.5*self.get_prop('nu')*(
-            self.rndState.rand(self.positions.shape[0]) - 0.5)
+        # rnd_angles_theta = self.get_prop('nu')*(
+        #     self.rndState.rand(self.positions.shape[0]) - 0.5)
+        # rnd_angles_phi = np.pi/2 + 0.5*self.get_prop('nu')*(
+        #     self.rndState.rand(self.positions.shape[0]) - 0.5)
 
         # Set IC
         self.velocities += self.get_prop('v')*np.array([
@@ -127,14 +127,15 @@ class vicsek3d(planktos.swarm):
 ############## TODO #################
 
 # create a swarm with initial conditions behind the cylinder
-x_center = 0.1 # +/- 0.025
-y_center = 0.125 # +/- 0.75
-IC_pos = np.zeros((SWARM_SIZE,2))
+x_center = 0.105 # +/- 0.025
+z_center = 0.1 # +/- 0.075
+IC_pos = np.zeros((SWARM_SIZE,3))
 IC_pos[:,0] = (np.random.rand(SWARM_SIZE)-0.5)*0.05 + x_center
-IC_pos[:,1] = (np.random.rand(SWARM_SIZE)-0.5)*0.15 + y_center
+IC_pos[:,1] = 0.1
+IC_pos[:,2] = (np.random.rand(SWARM_SIZE)-0.5)*0.15 + z_center
 
 # create Vicsek swarm
-swrm = vicsek(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
+swrm = vicsek3d(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
 
 # passive particles for comparsion
 # swrm = planktos.swarm(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
@@ -144,4 +145,4 @@ swrm = vicsek(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
 for ii in range(72): # 18 seconds w/ quarter second timesteps
     swrm.move(0.25)
 
-swrm.plot_all(movie_filename='vicsek_null.mp4', fps=4, fluid='vort') # realtime
+swrm.plot_all(movie_filename='vicsek3d_null.mp4', fps=4) # realtime

@@ -108,7 +108,7 @@ class vicsek(planktos.swarm):
 
 # create a swarm with initial conditions behind the cylinder
 x_center = 0.1 # +/- 0.025
-y_center = 0.125 # +/- 0.75
+y_center = 0.125 # +/- 0.075
 IC_pos = np.zeros((SWARM_SIZE,2))
 IC_pos[:,0] = (np.random.rand(SWARM_SIZE)-0.5)*0.05 + x_center
 IC_pos[:,1] = (np.random.rand(SWARM_SIZE)-0.5)*0.15 + y_center
