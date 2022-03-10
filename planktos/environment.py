@@ -1571,7 +1571,7 @@ class environment:
 
 
 
-    def read_stl_mesh_data(self, filename):
+    def read_stl_mesh_data(self, filename, unit_conv=None):
         '''Reads in 3D mesh data from an ascii or binary stl file. Must have
         the numpy-stl library installed. It is assumed that the coordinate
         system of the stl mesh matches the coordinate system of the flow field.
@@ -1579,13 +1579,20 @@ class environment:
         
         Avoid mesh structures that intersect with a periodic boundary; behavior 
         related to this is not implemented.
+
+        Parameters
+        ----------
+        filename : string
+            filename of data to read, incl. file extension
+        unit_conv : float, optional
+            scalar to multiply the mesh by in order to convert units
         '''
 
         path = Path(filename)
         if not path.is_file(): 
             raise FileNotFoundError("File {} not found!".format(filename))
 
-        ibmesh, self.max_meshpt_dist = dataio.read_stl_mesh(filename)
+        ibmesh, self.max_meshpt_dist = dataio.read_stl_mesh(filename, unit_conv)
 
         # shift coordinates to match any shift that happened in flow data
         if self.fluid_domain_LLC is not None:

@@ -30,10 +30,11 @@ envir = planktos.environment(Lx=0.21, Ly=2.5, Lz=0.2, x_bndry='noflux',
 #         y_bndry='zero', z_bndry='noflux')
 
 ##### Load fluid data #####
-# envir.read_comsol_vtu_data('comsol_data/WindTunnel-p22mps.vtu')
+#envir.read_comsol_vtu_data('comsol_data/WindTunnel-p22mps.vtu')
 
 ##### Load mesh data #####
-# envir.read_stl_mesh_data('comsol_data/seafan_cylinder.stl')
+# this was in mm...
+envir.read_stl_mesh_data('comsol_data/Windtunnel_cylinder.stl', 0.001)
 
 ##### Set the swarm size #####
 SWARM_SIZE = 500
@@ -54,9 +55,10 @@ class vicsek3d(planktos.swarm):
         # set particle speed (abs of velocity) in absence of fluid here
         self.shared_props['v'] = 0.02
 
-        # angle noise will be between [-nu/2, nu/2] for theta and 
-        #   between [-nu/4, nu/4] for phi
-        self.shared_props['nu'] = 0.5 # 0.1 used by Vicsek et al.
+        # angle noise will be between [-nu_theta/2, nu_theta/2] for theta and 
+        #   between [-nu_phi/4, nu_phi/4] for phi
+        self.shared_props['nu_theta'] = 0.5 # 0.1 used by Vicsek et al.
+        self.shared_props['nu_phi'] = 0
 
         # particles will pay attention to other particles within a radius r
         self.shared_props['r'] = 0.1 # constant in Vicsek et al. (r=1)
@@ -66,15 +68,16 @@ class vicsek3d(planktos.swarm):
         #   initial position or zero if there is no flow.
 
         ### Uniform random angle IC, just to verify things are working ###
-        rnd_angles_theta = self.rndState.rand(self.positions.shape[0])*2*np.pi
-        rnd_angles_phi = self.rndState.rand(self.positions.shape[0])*np.pi
+        # rnd_angles_theta = self.rndState.rand(self.positions.shape[0])*2*np.pi
+        # rnd_angles_phi = self.rndState.rand(self.positions.shape[0])*np.pi
 
-        ### Bias initial vel toward the right to move toward cylinder ###
+        ### Bias initial vel toward y+ to move toward cylinder ###
         # Add a random perturbation with theta angle between [-nu/2, nu/2] and
         #   phi angle between pi/2 + [-nu/4, nu/4]
-        # rnd_angles_theta = self.get_prop('nu')*(
-        #     self.rndState.rand(self.positions.shape[0]) - 0.5)
-        # rnd_angles_phi = np.pi/2 + 0.5*self.get_prop('nu')*(
+        rnd_angles_theta = np.pi/2 + self.get_prop('nu_theta')*(
+            self.rndState.rand(self.positions.shape[0]) - 0.5)
+        rnd_angles_phi = np.ones(self.positions.shape[0])*np.pi/2
+        # rnd_angles_phi = np.pi/2 + 0.5*self.get_prop('nu_phi')*(
         #     self.rndState.rand(self.positions.shape[0]) - 0.5)
 
         # Set IC
@@ -107,9 +110,9 @@ class vicsek3d(planktos.swarm):
                 avg_angles_phi[n] = np.pi*0.5
 
         # find new angles according to the Vicsek model
-        angle_noise_theta = self.get_prop('nu')*(
+        angle_noise_theta = self.get_prop('nu_theta')*(
             self.rndState.rand(self.positions.shape[0]) - 0.5)
-        angle_noise_phi = np.pi/2 + 0.5*self.get_prop('nu')*(
+        angle_noise_phi = np.pi/2 + 0.5*self.get_prop('nu_phi')*(
             self.rndState.rand(self.positions.shape[0]) - 0.5)
         new_angles_theta = avg_angles_theta + angle_noise_theta
         new_angles_phi = avg_angles_phi + angle_noise_phi
@@ -122,7 +125,7 @@ class vicsek3d(planktos.swarm):
         
         # return new positions
         return self.positions + new_vel*dt
-        
+
 
 # create a swarm with initial conditions behind the cylinder
 x_center = 0.105 # +/- 0.025

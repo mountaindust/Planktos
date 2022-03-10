@@ -475,7 +475,7 @@ def read_vtu_mesh_velocity(filename):
 
 
 @stl_dep
-def read_stl_mesh(filename):
+def read_stl_mesh(filename, unit_conv=None):
     '''Import a mesh from an stl file and return the vertex information as
     an Nx3x3 array along with the maximum vector length. Uses the numpy-stl 
     library.
@@ -484,6 +484,8 @@ def read_stl_mesh(filename):
     ----------
     filename : string
         path and filename of the STL file
+    unit_conv : float, optional
+            scalar to multiply the mesh by in order to convert units
 
     Returns
     -------
@@ -499,7 +501,14 @@ def read_stl_mesh(filename):
     max_len = np.concatenate((np.linalg.norm(mesh.v1 - mesh.v0, axis=1),
                              np.linalg.norm(mesh.v2 - mesh.v1, axis=1),
                              np.linalg.norm(mesh.v0 - mesh.v2, axis=1))).max()
-    return mesh.vectors, max_len
+
+    # possible unit conversion
+    if unit_conv is not None:
+        max_len *= unit_conv
+        vec = mesh.vectors * unit_conv
+    else:
+        vec = mesh.vectors
+    return vec, max_len
 
 
 
