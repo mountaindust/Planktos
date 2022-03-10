@@ -122,9 +122,7 @@ class vicsek3d(planktos.swarm):
         
         # return new positions
         return self.positions + new_vel*dt
-
-
-############## TODO #################
+        
 
 # create a swarm with initial conditions behind the cylinder
 x_center = 0.105 # +/- 0.025
