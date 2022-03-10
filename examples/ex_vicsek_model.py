@@ -55,6 +55,8 @@ SWARM_SIZE = 500
 class vicsek(planktos.swarm):
     def __init__(self, *args, **kwargs):
         super(vicsek, self).__init__(*args, **kwargs)
+
+        ##### Parameter choices #####
         # set particle speed (abs of velocity) in absence of fluid here
         self.shared_props['v'] = 0.02
 
@@ -63,7 +65,8 @@ class vicsek(planktos.swarm):
 
         # particles will pay attention to other particles within a radius r
         self.shared_props['r'] = 0.1 # constant in Vicsek et al. (r=1)
-        
+
+        ##### Initial conditions #####
         # by default, initial velocities are set to the background flow at the 
         #   initial position or zero if there is no flow.
 
@@ -72,8 +75,8 @@ class vicsek(planktos.swarm):
 
         ### Bias initial vel toward the right to move toward cylinder ###
         # Add a random perturbation with angle between [-nu/2, nu/2]
-        rnd_angles = self.get_prop('nu')*\
-            self.rndState.rand(self.positions.shape[0]) - self.get_prop('nu')/2
+        rnd_angles = self.get_prop('nu')*(
+            self.rndState.rand(self.positions.shape[0]) - 0.5)
         self.velocities += self.get_prop('v')*np.array([
             np.cos(rnd_angles), np.sin(rnd_angles)]).T
 
@@ -93,8 +96,8 @@ class vicsek(planktos.swarm):
                 np.mean(self.velocities[dist<self.get_prop('r'),0]))
 
         # find new angles according to the Vicsek model
-        angle_noise = self.get_prop('nu')*\
-            self.rndState.rand(self.positions.shape[0]) - self.get_prop('nu')/2
+        angle_noise = self.get_prop('nu')*(
+            self.rndState.rand(self.positions.shape[0]) - 0.5)
         new_angles = avg_angles + angle_noise
 
         # convert to velocities and add the fluid velocity
