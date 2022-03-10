@@ -939,16 +939,28 @@ class swarm:
         -----
         When writing code for this method, it can be helpful to make use of the 
         ode generators and solvers in the planktos.motion module. Please see the 
-        documentation for the functions of this module for options. To access the 
-        current positions of each agent, use self.positions which is a masked, 
-        NxD array of agent positions where the mask refers to whether or not the 
-        agent has exited the domain. self.velocities and self.accelerations will 
-        provide initial velocities and accelerations for the time step for each 
-        agent respectively. The get_fluid_drift method will return the fluid 
-        velocity at each agent location. The get_dudt method will return the 
-        time derivative of the fluid velocity at the location of each agent. The 
-        get_fluid_gradient method will return the gradient of the magnitude of 
-        the fluid velocity at the location of each agent.
+        documentation for the functions of this module for options. 
+        
+        To access the current positions of each agent, use self.positions. 
+        self.positions is a masked, NxD array of agent positions where the mask 
+        refers to whether or not the agent has exited the domain. You do not 
+        want to accidently edit self.positions directly, so make sure that you 
+        get a value copy of self.positions using self.positions.copy() whenever 
+        that copy will be modified. Direct assignment of self.positions is by 
+        reference.
+
+        Similarly,self.velocities and self.accelerations will provide initial 
+        velocities and accelerations for the time step for each agent 
+        respectively. Use .copy() as necessary and do not directly assign to 
+        these variables; they will be automatically updated later in the 
+        movement process. 
+        
+        The get_fluid_drift method will return the fluid velocity at each agent 
+        location using interpolation. Call it once outside of a loop for speed. 
+        Similarly, the get_dudt method will return the time derivative of the 
+        fluid velocity at the location of each agent. The get_fluid_gradient 
+        method will return the gradient of the magnitude of the fluid velocity 
+        at the location of each agent.
 
         See Also
         --------

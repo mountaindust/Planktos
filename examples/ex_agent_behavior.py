@@ -63,7 +63,16 @@ class myswarm(planktos.swarm):
         '''New get_positions method that moves 80% of the agents toward the
         mean position of the swarm.'''
 
-        # First, get the mean position of the swarm. 
+        # When accessing swarm information, be careful that you do not 
+        #   accidently overwrite the object properties. Most assignments in 
+        #   Python are by reference, meaning that the new variable is just an 
+        #   alias for the data in the old variable. This is done for speed. So 
+        #   if there is any chance that you will be changing the values in your 
+        #   new variable, use .copy(), e.g. self.positions.copy() to get a 
+        #   hard copy of all current agent positions. 
+
+        # First, get the mean position of the swarm. This returns a new value 
+        #   (not the original data in self.positions), so no .copy() is needed.
 
         mean_pos = self.positions.mean(axis=0)
 
@@ -90,10 +99,15 @@ class myswarm(planktos.swarm):
 
         bias_bool_tile = np.tile(bias_bool, (len(mean_pos), 1)).T
 
-        # Get the direction of bias for each agent as a unit vector
+        # Get the direction of bias for each agent as a unit vector. Again, the 
+        #   result of the right hand side is new data, and not the data in 
+        #   self.positions. So a reference to self.positions can be used for 
+        #   speed rather than first getting a hard copy with self.positions.copy()
 
         bias_dir = (mean_pos - self.positions)
+
         # divide out by norm, dealing with shape broadcasting issues
+
         bias_dir /= np.expand_dims(np.linalg.norm(bias_dir, axis=1),1)
 
         # Let's assume that if you move toward the mean, you do so by one std
