@@ -10,9 +10,9 @@ environment without structures the particles have to navigate. Planktos is well
 positioned to aid in research targeted at how flocks and schools persist and 
 react to environmental conditions.
 
-The fluid velocity data for this example is large and several instances of fluid 
-velocity fields were tested. Rather than trying to include all this data for 
-download somehow (GBs), it will be available on request. Running this example 
+The 2D fluid velocity data for this example is large and several instances of 
+fluid velocity fields were tested. Rather than trying to include all this data 
+for download somehow (GBs), it will be available on request. Running this example 
 will result in a null model simulation that includes the mesh data but does not 
 include the fluid velocity data. 
 
@@ -57,10 +57,13 @@ class vicsek(planktos.swarm):
         super(vicsek, self).__init__(*args, **kwargs)
         # set particle speed (abs of velocity) in absence of fluid here
         self.shared_props['v'] = 0.02
+
         # angle noise will be between [-nu/2, nu/2]
         self.shared_props['nu'] = 0.5 # 0.1 used by Vicsek et al.
+
         # particles will pay attention to other particles within a radius r
         self.shared_props['r'] = 0.1 # constant in Vicsek et al. (r=1)
+        
         # by default, initial velocities are set to the background flow at the 
         #   initial position or zero if there is no flow.
 
