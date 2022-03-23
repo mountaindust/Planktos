@@ -30,7 +30,7 @@ envir = planktos.environment(Lx=0.21, Ly=2.5, Lz=0.2, x_bndry='noflux',
 #         y_bndry='zero', z_bndry='noflux')
 
 ##### Load fluid data #####
-#envir.read_comsol_vtu_data('comsol_data/WindTunnel-p22mps.vtu')
+envir.read_comsol_vtu_data('comsol_data/WindTunnel-p22mps.vtu')
 
 ##### Load mesh data #####
 # this was in mm...
@@ -58,7 +58,7 @@ class vicsek3d(planktos.swarm):
         # angle noise will be between [-nu_theta/2, nu_theta/2] for theta and 
         #   between [-nu_phi/4, nu_phi/4] for phi
         self.shared_props['nu_theta'] = 0.5 # 0.1 used by Vicsek et al.
-        self.shared_props['nu_phi'] = 0
+        self.shared_props['nu_phi'] = 0.25
 
         # particles will pay attention to other particles within a radius r
         self.shared_props['r'] = 0.1 # constant in Vicsek et al. (r=1)
@@ -112,7 +112,7 @@ class vicsek3d(planktos.swarm):
         # find new angles according to the Vicsek model
         angle_noise_theta = self.get_prop('nu_theta')*(
             self.rndState.rand(self.positions.shape[0]) - 0.5)
-        angle_noise_phi = np.pi/2 + 0.5*self.get_prop('nu_phi')*(
+        angle_noise_phi = 0.5*self.get_prop('nu_phi')*(
             self.rndState.rand(self.positions.shape[0]) - 0.5)
         new_angles_theta = avg_angles_theta + angle_noise_theta
         new_angles_phi = avg_angles_phi + angle_noise_phi
@@ -128,12 +128,12 @@ class vicsek3d(planktos.swarm):
 
 
 # create a swarm with initial conditions behind the cylinder
-x_center = 0.105 # +/- 0.025
-z_center = 0.1 # +/- 0.075
+x_center = 0.105 # +/- 0.05
+z_center = 0.1 # +/- 0.05
 IC_pos = np.zeros((SWARM_SIZE,3))
-IC_pos[:,0] = (np.random.rand(SWARM_SIZE)-0.5)*0.05 + x_center
-IC_pos[:,1] = 0.1
-IC_pos[:,2] = (np.random.rand(SWARM_SIZE)-0.5)*0.15 + z_center
+IC_pos[:,0] = (np.random.rand(SWARM_SIZE)-0.5)*0.1 + x_center
+IC_pos[:,1] = 0.9
+IC_pos[:,2] = (np.random.rand(SWARM_SIZE)-0.5)*0.1 + z_center
 
 # create Vicsek swarm
 swrm = vicsek3d(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
@@ -143,7 +143,7 @@ swrm = vicsek3d(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
 # swrm.shared_props['cov'] *= 0.02**2
 
 # conduct simulation
-for ii in range(72): # 18 seconds w/ quarter second timesteps
+for ii in range(160): # 40 sec. old: 18 seconds w/ quarter second timesteps - 72
     swrm.move(0.25)
 
-swrm.plot_all(movie_filename='vicsek3d_null.mp4', fps=4) # realtime
+swrm.plot_all(movie_filename='vicsek3d_WindTunnel.mp4', fps=4) # realtime
