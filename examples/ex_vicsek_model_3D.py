@@ -136,14 +136,15 @@ IC_pos[:,1] = 0.9
 IC_pos[:,2] = (np.random.rand(SWARM_SIZE)-0.5)*0.1 + z_center
 
 # create Vicsek swarm
-swrm = vicsek3d(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
+# swrm = vicsek3d(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
 
 # passive particles for comparsion
-# swrm = planktos.swarm(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
-# swrm.shared_props['cov'] *= 0.02**2
+swrm = planktos.swarm(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
+swrm.shared_props['cov'] *= 0.02**2
+# swrm.shared_props['cov'] *= 0
 
 # conduct simulation
 for ii in range(80): # 20 seconds w/ quarter second timesteps (null was 40 sec.)
     swrm.move(0.25)
 
-swrm.plot_all(movie_filename='vicsek3d_WindTunnel.mp4', fps=4) # realtime
+swrm.plot_all(movie_filename='vicsek3d_passive.mp4', fps=4) # realtime
