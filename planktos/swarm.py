@@ -2423,15 +2423,24 @@ class swarm:
                 xmesh = np.linspace(0, self.envir.L[0])
                 ymesh = np.linspace(0, self.envir.L[1])
                 # deal with point sources
-                if np.all(self.positions[:,0] == self.positions[0,0]) and fac_x is None:
-                    idx = (np.abs(xmesh - self.positions[0,0])).argmin()
+                if np.all(positions[:,0] == positions[0,0]) and fac_x is None:
+                    idx = (np.abs(xmesh - positions[0,0])).argmin()
+                    x_density = np.zeros_like(xmesh); x_density[idx] = 1
+                    axHistx.plot(xmesh, x_density)
+                # deal with singleton agent
+                elif len(positions[:,0].compressed()) == 1:
+                    idx = (np.abs(xmesh - positions[:,0].compressed())).argmin()
                     x_density = np.zeros_like(xmesh); x_density[idx] = 1
                     axHistx.plot(xmesh, x_density)
                 else:
                     x_density = stats.gaussian_kde(positions[:,0].compressed(), fac_x)
                     axHistx.plot(xmesh, x_density(xmesh))
-                if np.all(self.positions[:,1] == self.positions[0,1]) and fac_y is None:
-                    idx = (np.abs(ymesh - self.positions[0,1])).argmin()
+                if np.all(positions[:,1] == positions[0,1]) and fac_y is None:
+                    idx = (np.abs(ymesh - positions[0,1])).argmin()
+                    y_density = np.zeros_like(ymesh); y_density[idx] = 1
+                    axHisty.plot(y_density, ymesh)
+                elif len(positions[:,1].compressed()) == 1:
+                    idx = (np.abs(ymesh - positions[:,1].compressed())).argmin()
                     y_density = np.zeros_like(ymesh); y_density[idx] = 1
                     axHisty.plot(y_density, ymesh)
                 else:
@@ -2511,22 +2520,35 @@ class swarm:
                 ymesh = np.linspace(0, self.envir.L[1])
                 zmesh = np.linspace(0, self.envir.L[2])
                 # deal with point sources
-                if np.all(self.positions[:,0] == self.positions[0,0]) and fac_x is None:
-                    idx = (np.abs(xmesh - self.positions[0,0])).argmin()
+                if np.all(positions[:,0] == positions[0,0]) and fac_x is None:
+                    idx = (np.abs(xmesh - positions[0,0])).argmin()
+                    x_density = np.zeros_like(xmesh); x_density[idx] = 1
+                    axHistx.plot(xmesh, x_density)
+                # deal with singleton agent
+                elif len(positions[:,0].compressed()) == 1:
+                    idx = (np.abs(xmesh - positions[:,0].compressed())).argmin()
                     x_density = np.zeros_like(xmesh); x_density[idx] = 1
                     axHistx.plot(xmesh, x_density)
                 else:
                     x_density = stats.gaussian_kde(positions[:,0].compressed(), fac_x)
                     axHistx.plot(xmesh, x_density(xmesh))
-                if np.all(self.positions[:,1] == self.positions[0,1]) and fac_y is None:
-                    idx = (np.abs(ymesh - self.positions[0,1])).argmin()
+                if np.all(positions[:,1] == positions[0,1]) and fac_y is None:
+                    idx = (np.abs(ymesh[0,1])).argmin()
+                    y_density = np.zeros_like(ymesh); y_density[idx] = 1
+                    axHisty.plot(ymesh, y_density)
+                elif len(positions[:,1].compressed()) == 1:
+                    idx = (np.abs(ymesh - positions[:,1].compressed())).argmin()
                     y_density = np.zeros_like(ymesh); y_density[idx] = 1
                     axHisty.plot(ymesh, y_density)
                 else:
                     y_density = stats.gaussian_kde(positions[:,1].compressed(), fac_y)
                     axHisty.plot(ymesh, y_density(ymesh))
-                if np.all(self.positions[:,2] == self.positions[0,2]) and fac_z is None:
-                    idx = (np.abs(zmesh - self.positions[0,2])).argmin()
+                if np.all(positions[:,2] == positions[0,2]) and fac_z is None:
+                    idx = (np.abs(zmesh - positions[0,2])).argmin()
+                    z_density = np.zeros_like(zmesh); z_density[idx] = 1
+                    axHistz.plot(zmesh, z_density)
+                elif len(positions[:,2].compressed()) == 1:
+                    idx = (np.abs(zmesh - positions[:,2].compressed())).argmin()
                     z_density = np.zeros_like(zmesh); z_density[idx] = 1
                     axHistz.plot(zmesh, z_density)
                 else:
@@ -2749,11 +2771,20 @@ class swarm:
                     idx = (np.abs(xmesh - self.pos_history[n0][0,0])).argmin()
                     x_density = np.zeros_like(xmesh); x_density[idx] = 1
                     xdens_plt, = axHistx.plot(xmesh, x_density)
+                # check for singleton agent
+                elif len(self.pos_history[n0][:,0].compressed()) == 1:
+                    idx = (np.abs(xmesh - self.pos_history[n0][:,0].compressed())).argmin()
+                    x_density = np.zeros_like(xmesh); x_density[idx] = 1
+                    xdens_plt, = axHistx.plot(xmesh, x_density)
                 else:
                     x_density = stats.gaussian_kde(self.pos_history[n0][:,0].compressed(), fac_x)
                     xdens_plt, = axHistx.plot(xmesh, x_density(xmesh))
                 if np.all(self.pos_history[n0][:,1] == self.pos_history[n0][0,1]) and fac_y is None:
                     idx = (np.abs(ymesh - self.pos_history[n0][0,1])).argmin()
+                    y_density = np.zeros_like(ymesh); y_density[idx] = 1
+                    ydens_plt, = axHisty.plot(y_density, ymesh)
+                elif len(self.pos_history[n0][:,1].compressed()) == 1:
+                    idx = (np.abs(ymesh - self.pos_history[n0][:,1].compressed())).argmin()
                     y_density = np.zeros_like(ymesh); y_density[idx] = 1
                     ydens_plt, = axHisty.plot(y_density, ymesh)
                 else:
@@ -2861,6 +2892,11 @@ class swarm:
                     idx = (np.abs(xmesh - self.pos_history[n0][0,0])).argmin()
                     x_density = np.zeros_like(xmesh); x_density[idx] = 1
                     xdens_plt, = axHistx.plot(xmesh, x_density)
+                # check for singleton agent
+                elif len(self.pos_history[n0][:,0].compressed()) == 1:
+                    idx = (np.abs(xmesh - self.pos_history[n0][:,0].compressed())).argmin()
+                    x_density = np.zeros_like(xmesh); x_density[idx] = 1
+                    xdens_plt, = axHistx.plot(xmesh, x_density)
                 else:
                     x_density = stats.gaussian_kde(self.pos_history[n0][:,0].compressed(), fac_x)
                     xdens_plt, = axHistx.plot(xmesh, x_density(xmesh))
@@ -2868,11 +2904,19 @@ class swarm:
                     idx = (np.abs(ymesh - self.pos_history[n0][0,1])).argmin()
                     y_density = np.zeros_like(ymesh); y_density[idx] = 1
                     ydens_plt, = axHisty.plot(ymesh, y_density)
+                elif len(self.pos_history[n0][:,1].compressed()) == 1:
+                    idx = (np.abs(ymesh - self.pos_history[n0][:,1].compressed())).argmin()
+                    y_density = np.zeros_like(ymesh); y_density[idx] = 1
+                    ydens_plt, = axHisty.plot(ymesh, y_density)
                 else:
                     y_density = stats.gaussian_kde(self.pos_history[n0][:,1].compressed(), fac_y)
                     ydens_plt, = axHisty.plot(ymesh, y_density(ymesh))
                 if np.all(self.pos_history[n0][:,2] == self.pos_history[n0][0,2]) and fac_z is None:
                     idx = (np.abs(zmesh - self.pos_history[n0][0,2])).argmin()
+                    z_density = np.zeros_like(zmesh); z_density[idx] = 1
+                    zdens_plt, = axHistz.plot(zmesh, z_density)
+                elif len(self.pos_history[n0][:,2].compressed()) == 1:
+                    idx = (np.abs(zmesh - self.pos_history[n0][:,2].compressed())).argmin()
                     z_density = np.zeros_like(zmesh); z_density[idx] = 1
                     zdens_plt, = axHistz.plot(zmesh, z_density)
                 else:
@@ -2937,6 +2981,11 @@ class swarm:
                         elif self.pos_history[n][:,0].all() is ma.masked:
                             x_density = np.zeros_like(xmesh)
                             xdens_plt.set_ydata(x_density)
+                        # check to see if only one thing is left
+                        elif len(self.pos_history[n][:,0].compressed()) == 1:
+                            idx = (np.abs(xmesh - self.pos_history[n][:,0].compressed())).argmin()
+                            x_density = np.zeros_like(xmesh); x_density[idx] = 1
+                            xdens_plt.set_ydata(x_density)
                         else:
                             x_density = stats.gaussian_kde(self.pos_history[n][:,0].compressed(), fac_x)
                             xdens_plt.set_ydata(x_density(xmesh))
@@ -2946,6 +2995,10 @@ class swarm:
                             ydens_plt.set_xdata(y_density)
                         elif self.pos_history[n][:,1].all() is ma.masked:
                             y_density = np.zeros_like(ymesh)
+                            ydens_plt.set_xdata(y_density)
+                        elif len(self.pos_history[n][:,1].compressed()) == 1:
+                            idx = (np.abs(ymesh - self.pos_history[n][:,1].compressed())).argmin()
+                            y_density = np.zeros_like(ymesh); y_density[idx] = 1
                             ydens_plt.set_xdata(y_density)
                         else:
                             y_density = stats.gaussian_kde(self.pos_history[n][:,1].compressed(), fac_y)
@@ -3013,6 +3066,11 @@ class swarm:
                         elif self.pos_history[n][:,0].all() is ma.masked:
                             x_density = np.zeros_like(xmesh)
                             xdens_plt.set_ydata(x_density)
+                        # check to see if only one thing is left
+                        elif len(self.pos_history[n][:,0].compressed()) == 1:
+                            idx = (np.abs(xmesh - self.pos_history[n][:,0].compressed())).argmin()
+                            x_density = np.zeros_like(xmesh); x_density[idx] = 1
+                            xdens_plt.set_ydata(x_density)
                         else:
                             x_density = stats.gaussian_kde(self.pos_history[n][:,0].compressed(), fac_x)
                             xdens_plt.set_ydata(x_density(xmesh))
@@ -3023,6 +3081,10 @@ class swarm:
                         elif self.pos_history[n][:,1].all() is ma.masked:
                             y_density = np.zeros_like(ymesh)
                             ydens_plt.set_ydata(y_density)
+                        elif len(self.pos_history[n][:,1].compressed()) == 1:
+                            idx = (np.abs(ymesh - self.pos_history[n][:,1].compressed())).argmin()
+                            y_density = np.zeros_like(ymesh); y_density[idx] = 1
+                            ydens_plt.set_ydata(y_density)
                         else:
                             y_density = stats.gaussian_kde(self.pos_history[n][:,1].compressed(), fac_y)
                             ydens_plt.set_ydata(y_density(ymesh))
@@ -3032,6 +3094,10 @@ class swarm:
                             zdens_plt.set_ydata(z_density)
                         elif self.pos_history[n][:,2].all() is ma.masked:
                             z_density = np.zeros_like(zmesh)
+                            zdens_plt.set_ydata(z_density)
+                        elif len(self.pos_history[n][:,2].compressed()) == 1:
+                            idx = (np.abs(zmesh - self.pos_history[n][:,2].compressed())).argmin()
+                            z_density = np.zeros_like(zmesh); z_density[idx] = 1
                             zdens_plt.set_ydata(z_density)
                         else:
                             z_density = stats.gaussian_kde(self.pos_history[n][:,2].compressed(), fac_z)
@@ -3092,6 +3158,10 @@ class swarm:
                         elif self.positions[:,0].all() is ma.masked:
                             x_density = np.zeros_like(xmesh)
                             xdens_plt.set_ydata(x_density)
+                        elif len(self.positions[n][:,0].compressed()) == 1:
+                            idx = (np.abs(xmesh - self.positions[:,0].compressed())).argmin()
+                            x_density = np.zeros_like(xmesh); x_density[idx] = 1
+                            xdens_plt.set_ydata(x_density)
                         else:
                             x_density = stats.gaussian_kde(self.positions[:,0].compressed(), fac_x)
                             xdens_plt.set_ydata(x_density(xmesh))
@@ -3101,6 +3171,10 @@ class swarm:
                             ydens_plt.set_xdata(y_density)
                         elif self.positions[:,1].all() is ma.masked:
                             y_density = np.zeros_like(ymesh)
+                            ydens_plt.set_xdata(y_density)
+                        elif len(self.positions[:,1].compressed()) == 1:
+                            idx = (np.abs(ymesh - self.positions[:,1].compressed())).argmin()
+                            y_density = np.zeros_like(ymesh); y_density[idx] = 1
                             ydens_plt.set_xdata(y_density)
                         else:
                             y_density = stats.gaussian_kde(self.positions[:,1].compressed(), fac_y)
@@ -3162,6 +3236,10 @@ class swarm:
                         elif self.positions[:,0].all() is ma.masked:
                             x_density = np.zeros_like(xmesh)
                             xdens_plt.set_ydata(x_density)
+                        elif len(self.positions[:,0].compressed()) == 1:
+                            idx = (np.abs(xmesh - self.positions[:,0].compressed())).argmin()
+                            x_density = np.zeros_like(xmesh); x_density[idx] = 1
+                            xdens_plt.set_ydata(x_density)
                         else:
                             x_density = stats.gaussian_kde(self.positions[:,0].compressed(), fac_x)
                             xdens_plt.set_ydata(x_density(xmesh))
@@ -3172,6 +3250,10 @@ class swarm:
                         elif self.positions[:,1].all() is ma.masked:
                             y_density = np.zeros_like(ymesh)
                             ydens_plt.set_ydata(y_density)
+                        elif len(self.positions[:,1].compressed()) == 1:
+                            idx = (np.abs(ymesh - self.positions[:,1].compressed())).argmin()
+                            y_density = np.zeros_like(ymesh); y_density[idx] = 1
+                            ydens_plt.set_ydata(y_density)
                         else:
                             y_density = stats.gaussian_kde(self.positions[:,1].compressed(), fac_y)
                             ydens_plt.set_ydata(y_density(ymesh))
@@ -3181,6 +3263,10 @@ class swarm:
                             zdens_plt.set_ydata(z_density)
                         elif self.positions[:,2].all() is ma.masked:
                             z_density = np.zeros_like(zmesh)
+                            zdens_plt.set_ydata(z_density)
+                        elif len(self.positions[:,2].compressed()) == 1:
+                            idx = (np.abs(zmesh - self.positions[:,2].compressed())).argmin()
+                            z_density = np.zeros_like(zmesh); z_density[idx] = 1
                             zdens_plt.set_ydata(z_density)
                         else:
                             z_density = stats.gaussian_kde(self.positions[:,2].compressed(), fac_z)
