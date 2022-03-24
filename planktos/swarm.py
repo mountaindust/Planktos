@@ -2448,8 +2448,14 @@ class swarm:
                     axHisty.plot(y_density(ymesh),ymesh)
                 axHistx.get_yaxis().set_ticks([])
                 axHisty.get_xaxis().set_ticks([])
-                axHistx.set_ylim(bottom=0)
-                axHisty.set_xlim(left=0)
+                if np.max(x_density(xmesh)) != 0:
+                    axHistx.set_ylim(bottom=0, top=np.max(x_density(xmesh)))
+                else:
+                    axHistx.set_ylim(bottom=0)
+                if np.max(y_density(ymesh)) != 0:
+                    axHisty.set_xlim(left=0, right=np.max(y_density(ymesh)))
+                else:
+                    axHisty.set_xlim(left=0)
 
         else:
             # 3D plot
@@ -2559,9 +2565,18 @@ class swarm:
                 axHistx.get_yaxis().set_ticks([])
                 axHisty.get_yaxis().set_ticks([])
                 axHistz.get_yaxis().set_ticks([])
-                axHistx.set_ylim(bottom=0)
-                axHisty.set_ylim(bottom=0)
-                axHistz.set_ylim(bottom=0)
+                if np.max(x_density(xmesh)) != 0:
+                    axHistx.set_ylim(bottom=0, top=np.max(x_density(xmesh)))
+                else:
+                    axHistx.set_ylim(bottom=0)
+                if np.max(y_density(ymesh)) != 0:
+                    axHisty.set_ylim(bottom=0, top=np.max(y_density(ymesh)))
+                else:
+                    axHisty.set_ylim(bottom=0)
+                if np.max(z_density(zmesh)) != 0:
+                    axHistz.set_ylim(bottom=0, top=np.max(z_density(zmesh)))
+                else:
+                    axHistz.set_ylim(bottom=0)
 
         # show the plot
         if filename is None:
