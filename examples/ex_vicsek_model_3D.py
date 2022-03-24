@@ -143,7 +143,7 @@ swrm = vicsek3d(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
 # swrm.shared_props['cov'] *= 0.02**2
 
 # conduct simulation
-for ii in range(160): # 40 sec. old: 18 seconds w/ quarter second timesteps - 72
+for ii in range(80): # 20 seconds w/ quarter second timesteps (null was 40 sec.)
     swrm.move(0.25)
 
 swrm.plot_all(movie_filename='vicsek3d_WindTunnel.mp4', fps=4) # realtime
