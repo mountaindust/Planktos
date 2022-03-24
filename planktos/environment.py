@@ -2954,7 +2954,9 @@ class environment:
 
                 # set histogram limits/ticks
                 axHistx.set_xlim(ax.get_xlim())
+                axHistx.set_ylim(bottom=0)
                 axHisty.set_ylim(ax.get_ylim())
+                axHisty.set_xlim(left=0)
                 int_ticks = MaxNLocator(nbins='auto', integer=True)
                 pruned_ticks = MaxNLocator(prune='lower', nbins='auto',
                                         integer=True, min_n_ticks=3)
@@ -3047,14 +3049,17 @@ class environment:
                 int_ticks = MaxNLocator(nbins='auto', integer=True)
                 axHistx = plt.axes(rect_histx)
                 axHistx.set_xlim((0, self.L[0]))
+                axHistx.set_ylim(bottom=0)
                 axHistx.yaxis.set_major_locator(int_ticks)
                 axHistx.set_ylabel('X    ', rotation=0)
                 axHisty = plt.axes(rect_histy)
                 axHisty.set_xlim((0, self.L[1]))
+                axHisty.set_ylim(bottom=0)
                 axHisty.yaxis.set_major_locator(int_ticks)
                 axHisty.set_ylabel('Y    ', rotation=0)
                 axHistz = plt.axes(rect_histz)
                 axHistz.set_xlim((0, self.L[2]))
+                axHistz.set_ylim(bottom=0)
                 axHistz.yaxis.set_major_locator(int_ticks)
                 axHistz.set_ylabel('Z    ', rotation=0)
 
