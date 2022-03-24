@@ -1396,7 +1396,7 @@ class swarm:
                     #   complex interactions with the noflux boundary, enforce 
                     #   sticky ib collisions in all cases.
                     if self.envir.ibmesh is not None and ib_collisions is not None:
-                        for n, idx in enumerate(left_idx):
+                        for n, idx in enumerate(right_idx):
                             startpt = startpts[n]
                             endpt = self.positions[idx,:].copy()
                             IBC_routine(idx, self, startpt, endpt, 'sticky')
