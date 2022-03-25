@@ -22,15 +22,18 @@ import planktos
 
 ##### Begin by loading the fluid and mesh. #####
 # setup an empty domain representing one of the two cases
+
 # Wind Tunnel:
-envir = planktos.environment(Lx=0.21, Ly=2.5, Lz=0.2, x_bndry='noflux', 
-        y_bndry='zero', z_bndry='noflux')
-# Periodic Wind Tunnel:
-# envir = planktos.environment(Lx=0.21, Ly=2.5, Lz=0.2, x_bndry='periodic', 
+# envir = planktos.environment(Lx=0.21, Ly=2.5, Lz=0.2, x_bndry='noflux', 
 #         y_bndry='zero', z_bndry='noflux')
 
+# Periodic Wind Tunnel:
+envir = planktos.environment(Lx=0.21, Ly=2.5, Lz=0.2, x_bndry='noflux', 
+        y_bndry='periodic', z_bndry='noflux')
+
 ##### Load fluid data #####
-envir.read_comsol_vtu_data('comsol_data/WindTunnel-p22mps.vtu')
+# envir.read_comsol_vtu_data('comsol_data/WindTunnel-p22mps.vtu')
+envir.read_comsol_vtu_data('comsol_data/PeriodicWindTunnel-p22mps.vtu')
 
 ##### Load mesh data #####
 # this was in mm...
@@ -140,11 +143,11 @@ IC_pos[:,2] = (np.random.rand(SWARM_SIZE)-0.5)*0.1 + z_center
 
 # passive particles for comparsion
 swrm = planktos.swarm(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
-swrm.shared_props['cov'] *= 0.02**2
-# swrm.shared_props['cov'] *= 0
+# swrm.shared_props['cov'] *= 0.02**2 # with jitter
+swrm.shared_props['cov'] *= 0 # without jitter
 
 # conduct simulation
 for ii in range(80): # 20 seconds w/ quarter second timesteps (null was 40 sec.)
     swrm.move(0.25)
 
-swrm.plot_all(movie_filename='vicsek3d_passive.mp4', fps=4) # realtime
+swrm.plot_all(movie_filename='vicsek3d_PeriodicPassive.mp4', fps=4) # realtime
