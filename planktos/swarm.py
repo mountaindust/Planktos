@@ -736,12 +736,12 @@ class swarm:
             for cyc, time in enumerate(self.envir.time_history):
                 if DIM2:
                     data = np.zeros((self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:].shape[0],3))
-                    data[:,:2] = self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:]
+                    data[:,:2] = self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:].squeeze()
                     dataio.write_vtk_point_data(path, name, data, 
                                                  cycle=cyc, time=time)
                 else:
                     dataio.write_vtk_point_data(path, name, 
-                        self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:], 
+                        self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:].squeeze(), 
                         cycle=cyc, time=time)
             cyc = len(self.envir.time_history)
             if DIM2:
