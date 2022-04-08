@@ -11,6 +11,25 @@ A suggested BibTeX entry is included in the file Planktos.bib.
 Also, check out the online documentation at https://planktos.readthedocs.io.
 
 ## Installation & Dependencies
+
+### Installing FFmpeg
+
+Before using Planktos, FFmpeg must be installed and accessible via the `$PATH` environment variable.
+
+There are a variety of ways to install FFmpeg, such as the [official download links](https://ffmpeg.org/download.html), or using your package manager of choice (e.g. `sudo apt install ffmpeg` on Debian/Ubuntu, `brew install ffmpeg` on OS X, etc.).
+
+Regardless of how FFmpeg is installed, you can check if your environment path is set correctly by running the `ffmpeg` command from the terminal, in which case the version information should appear, as in the following example (truncated for brevity):
+
+```
+$ ffmpeg
+ffmpeg version 4.3.1 Copyright (c) 2000-2020 the FFmpeg developers
+  built with gcc 10.2.1 (GCC) 20200726
+```
+
+> **Note**: The actual version information displayed here may vary from one system to another; but if a message such as `ffmpeg: command not found` appears instead of the version information, FFmpeg is not properly installed.
+
+### Running From Source
+
 I'm assuming you're using Anaconda, and if so, I ***strongly*** suggest that you ditch 
 the default package manager conda (which is essentially broken at this point - 
 particularly if you need packages from conda-forge, and we do) for mamba. 
@@ -18,14 +37,15 @@ The commands are the same (it's a drop-in replacement for conda) but it is a C++
 solver based on libsolv which manages dependencies for RedHat, Debian, etc. Also, 
 it has multi-threaded downloads and doesn't break when trying to obtain vtk 
 and/or pyvista. Install with the following command:  
-`conda install -c conda-forge mamba`  
+```
+$ conda install -c conda-forge mamba
+```
 Having done that, the dependencies are as follows:
 
 - Python 3.5+ 
 - numpy/scipy
 - matplotlib 3.x
 - pandas
-- ffmpeg from conda-forge (not from default anaconda. Use `mamba install -c conda-forge ffmpeg`.)
 - vtk (if loading vtk data, get from conda-forge and use mamba. conda seems to 
 break itself trying to install vtk for some reason, and takes an hour to try and 
 solve the dependencies in the process.)
@@ -35,7 +55,7 @@ as for vtk.)
 - netCDF4 (if loading netCDF data, comes standard with an Anaconda installation)
 - pytest (if running tests)
 
-If you need to convert data from IBAMR into vtk, you will also need a Python 2.7 environment with numpy and VisIt installed (VisIt's Python API is written in
+If you want to use the supplied script to convert data from IBAMR into vtk, you will also need a Python 2.7 environment with numpy and VisIt installed (VisIt's Python API is written in
 Python 2.7).
 
 ### Tests

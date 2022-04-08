@@ -4,6 +4,33 @@ Quickstart
 Dependencies and installation
 -----------------------------
 
+Installing FFmpeg
+~~~~~~~~~~~~~~~~~
+
+Before using Planktos, FFmpeg must be installed and accessible via the `$PATH` 
+environment variable.
+
+There are a variety of ways to install FFmpeg, such as the 
+`official download links <https://ffmpeg.org/download.html>`_, or using your 
+package manager of choice (e.g. "sudo apt install ffmpeg" on Debian/Ubuntu, 
+"brew install ffmpeg" on OS X, etc.).
+
+Regardless of how FFmpeg is installed, you can check if your environment path is 
+set correctly by running the "ffmpeg" command from the terminal, in which case 
+the version information should appear, as in the following example (truncated 
+for brevity): ::
+
+    $ ffmpeg
+    ffmpeg version 4.3.1 Copyright (c) 2000-2020 the FFmpeg developers
+      built with gcc 10.2.1 (GCC) 20200726
+
+**Note**: The actual version information displayed here may vary from one 
+system to another; but if a message such as "ffmpeg: command not found" appears 
+instead of the version information, FFmpeg is not properly installed.
+
+Running From Source
+~~~~~~~~~~~~~~~~~~~
+
 Installing dependencies using Anaconda Python is highly recommended.
 However, the default package manager, conda, appears unable to handle the 
 Planktos dependencies. The performance of conda has been degrading with time 
@@ -26,14 +53,13 @@ Having done that, the dependencies are as follows:
 - numpy/scipy
 - matplotlib 3.x
 - pandas
-- ffmpeg from conda-forge (not from default anaconda). Use ::
+- vtk (if loading vtk data). Use mamba and conda-forge, not conda!! conda seems 
+  to break itself trying to install vtk for some reason, and takes an hour to try 
+  and solve the dependencies in the process. ::
 
     mamba install -c conda-forge ffmpeg
-
-- vtk (if loading vtk data) from conda-forge. Use mamba!! conda seems to 
-  break itself trying to install vtk for some reason, and takes an hour to try 
-  and solve the dependencies in the process.
-- pyvista (if saving vtk data) from conda-forge. Use mamba!! Same problem 
+    
+- pyvista (if saving vtk data). Again, mamba not conda. Same problem 
   as for vtk.
 - numpy-stl (if loading stl data). Again, get it from conda-forge.
 - netCDF4 (if loading netCDF data)
