@@ -736,12 +736,12 @@ class swarm:
             for cyc, time in enumerate(self.envir.time_history):
                 if DIM2:
                     data = np.zeros((self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:].shape[0],3))
-                    data[:,:2] = self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:]
+                    data[:,:2] = self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:].squeeze()
                     dataio.write_vtk_point_data(path, name, data, 
                                                  cycle=cyc, time=time)
                 else:
                     dataio.write_vtk_point_data(path, name, 
-                        self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:], 
+                        self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:].squeeze(), 
                         cycle=cyc, time=time)
             cyc = len(self.envir.time_history)
             if DIM2:
@@ -2244,7 +2244,8 @@ class swarm:
 
 
     def plot(self, t=None, filename=None, blocking=True, dist='density', 
-             fluid=None, clip=None, figsize=None, save_kwargs=None):
+             fluid=None, clip=None, figsize=None, save_kwargs=None, azim=None, 
+             elev=None):
         '''Plot the position of the swarm at time t, or at the current time
         if no time is supplied. The actual time plotted will depend on the
         history of movement steps; the closest entry in
@@ -2285,6 +2286,10 @@ class swarm:
             keys must be valid strings that match keyword arguments for the 
             matplotlib savefig function. These arguments will be passed to 
             savefig assuming that a filename has been specified.
+        azim : float, optional
+            In 3D plots, the azimuthal viewing angle. Defaults to -60.
+        elev : float, optional
+            In 3D plots, the elevation viewing angle. Defaults to 30.
         '''
 
         if t is not None and len(self.envir.time_history) != 0:
@@ -2464,6 +2469,8 @@ class swarm:
             else:
                 fig = plt.figure(figsize=figsize)
             ax, axHistx, axHisty, axHistz = self.envir._plot_setup(fig)
+            if azim is not None or elev is not None:
+                ax.view_init(elev, azim)
 
             # scatter plot and time text
             ax.scatter(positions[:,0], positions[:,1], positions[:,2],
@@ -2591,7 +2598,7 @@ class swarm:
 
     def plot_all(self, movie_filename=None, frames=None, downsamp=None, fps=10, 
                  dist='density', fluid=None, clip=None, figsize=None, 
-                 save_kwargs=None, writer_kwargs=None):
+                 save_kwargs=None, writer_kwargs=None, azim=None, elev=None):
         ''' Plot the history of the swarm's movement, incl. current time in 
         successively updating plots or saved as a movie file. A movie file is
         created if movie_filename is specified.
@@ -2649,6 +2656,10 @@ class swarm:
             used in the writer object initiation save assuming that a 
             movie_filename has been specified. Otherwise, defaults are the 
             passed in fps and metadata=dict(artist='Christopher Strickland')).
+        azim : float, optional
+            In 3D plots, the azimuthal viewing angle. Defaults to -60.
+        elev : float, optional
+            In 3D plots, the elevation viewing angle. Defaults to 30.
         '''
 
         if len(self.envir.time_history) == 0:
@@ -2828,6 +2839,8 @@ class swarm:
             else:
                 fig = plt.figure(figsize=figsize)
             ax, axHistx, axHisty, axHistz = self.envir._plot_setup(fig)
+            if azim is not None or elev is not None:
+                ax.view_init(elev, azim)
 
             if downsamp is None:
                 scat = ax.scatter(self.pos_history[n0][:,0], self.pos_history[n0][:,1],
