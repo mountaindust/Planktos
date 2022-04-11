@@ -28,7 +28,35 @@ ffmpeg version 4.3.1 Copyright (c) 2000-2020 the FFmpeg developers
 
 > **Note**: The actual version information displayed here may vary from one system to another; but if a message such as `ffmpeg: command not found` appears instead of the version information, FFmpeg is not properly installed.
 
-### Running From Source
+### Installing Planktos
+
+Once FFmpeg is installed, Planktos can be installed from source using `pip` on 
+Python >= 3.7 from the Planktos directory. Navigate to the Planktos directory in 
+a terminal and use the command:
+
+```
+pip install .
+```
+Non-optional depdencencies (other than FFmpeg) should automatically be installed.
+
+Planktos is still in active development and updates occur often. You should 
+therefore pull the source repo often and then reinstall using the same command. 
+To avoid needing to reinstall each time you pull the repo, you can instead 
+install Planktos in "editable" mode:
+
+```
+pip install -e .
+```
+
+Planktos can then be imported like any other Python package from any directory. 
+Either approach also allows you to uninstall with the same command (from the 
+Planktos directory):
+
+```
+pip uninstall .
+```
+
+### Running Directly From Source (no install)
 
 I'm assuming you're using Anaconda, and if so, I ***strongly*** suggest that you ditch 
 the default package manager conda (which is essentially broken at this point - 
@@ -42,7 +70,7 @@ $ conda install -c conda-forge mamba
 ```
 Having done that, the dependencies are as follows:
 
-- Python 3.5+ 
+- Python 3.7+ 
 - numpy/scipy
 - matplotlib 3.x
 - pandas
@@ -59,7 +87,8 @@ If you want to use the supplied script to convert data from IBAMR into vtk, you 
 Python 2.7).
 
 ### Tests
-All tests can be run by typing `pytest` into a terminal in the base directory.
+All tests can be run by typing `pytest` into a terminal in the base directory. 
+This requires installation of the optional pytest package.
 
 ## Overview
 Currently, Planktos has built-in capabilities to load either time-independent or 
