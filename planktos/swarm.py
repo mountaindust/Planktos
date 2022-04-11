@@ -3382,10 +3382,10 @@ class swarm:
                 print('Video saved to {}.'.format(movie_filename))
             except:
                 print('Failed to save animation.')
-                print('Check that you have ffmpeg or mencoder installed.')
-                print('If you are using Anaconda ffmpeg, check that it comes from')
-                print('  the conda-forge channel, as the default channel does not')
-                print('  include the H.264 encoder and is thus somewhat useless.')
+                print('Check that you have ffmpeg or mencoder installed; these')
+                print("aren't Python packages, but stand-alone applications.")
+                print("An H.264 encoder is needed on the system's path in order")
+                print('to save to that video format.')
                 raise
         else:
             plt.show()
