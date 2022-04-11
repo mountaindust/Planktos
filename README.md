@@ -14,7 +14,7 @@ Also, check out the online documentation at https://planktos.readthedocs.io.
 
 ### Installing FFmpeg
 
-Before using Planktos, FFmpeg must be installed and accessible via the `$PATH` environment variable.
+Before using Planktos, FFmpeg must be installed and accessible via the `$PATH` environment variable in order to save video files of simulation results.
 
 There are a variety of ways to install FFmpeg, such as the [official download links](https://ffmpeg.org/download.html), or using your package manager of choice (e.g. `sudo apt install ffmpeg` on Debian/Ubuntu, `brew install ffmpeg` on OS X, etc.).
 
