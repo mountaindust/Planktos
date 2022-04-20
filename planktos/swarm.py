@@ -146,7 +146,7 @@ class swarm:
         be specified.
     shared_props : dictionary
         dictionary of properties shared by all agents as name-value pairs
-    rndState : numpy RandomState object
+    rndState : numpy Generator object
         random number generator for this swarm, seeded by the "seed" parameter
 
     Notes
@@ -238,7 +238,7 @@ class swarm:
                 raise ae
 
         # initialize random number generator
-        self.rndState = np.random.RandomState(seed=seed)
+        self.rndState = np.random.default_rng(seed=seed)
 
         # initialize agent locations
         if isinstance(init,np.ndarray) and len(init.shape) == 2:
