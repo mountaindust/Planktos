@@ -683,7 +683,7 @@ class swarm:
         fmtlist = ['%u'] + [fmt]*self.positions.shape[1]
 
         np.savetxt(filename, np.vstack((time_row, 
-                   np.column_stack([mat for pos in self.full_pos_history for mat in (pos[:,0].mask, pos.data)]))),
+                   np.column_stack([mat for pos in self.full_pos_history for mat in (ma.getmaskarray(pos[:,0]), pos.data)]))),
                    fmt=fmtlist*len(full_time), delimiter=',')
 
         if sv_vel:
