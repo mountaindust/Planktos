@@ -624,7 +624,7 @@ class swarm:
 
         path = Path(path)
         if not path.is_dir():
-            os.mkdir(path)
+            os.mkdirs(path)
 
         self.save_pos_to_csv(str(path/name), pos_fmt, sv_vel=True, sv_accel=True)
 
