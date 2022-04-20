@@ -595,9 +595,9 @@ def write_vtk_point_data(path, title, data, cycle=None, time=None):
 
     vtk_data = pv.PolyData(data)
     if cycle is not None:
-        vtk_data.field_arrays['CYCLE'] = cycle
+        vtk_data.field_data['CYCLE'] = cycle
     if time is not None:
-        vtk_data.field_arrays['TIME'] = time
+        vtk_data.field_data['TIME'] = time
     vtk_data.save(str(filepath), binary=False)
 
 
@@ -646,9 +646,9 @@ def write_vtk_2D_uniform_grid_scalars(path, title, data, L, cycle=None, time=Non
     #   memory layout, our arrays move in the z, then y, then x directions
     grid.point_arrays["values"] = data.flatten(order="F")
     if cycle is not None:
-        grid.field_arrays['CYCLE'] = cycle
+        grid.field_data['CYCLE'] = cycle
     if time is not None:
-        grid.field_arrays['TIME'] = time
+        grid.field_data['TIME'] = time
     grid.save(str(filepath), binary=False)
 
 
@@ -711,9 +711,9 @@ def write_vtk_uniform_grid_vectors(path, title, data, L, cycle=None, time=None):
     grid_pt_data = grid.GetPointData()
     grid_pt_data.SetVectors(fdata_vtk)
     if cycle is not None:
-        grid.field_arrays['CYCLE'] = cycle
+        grid.field_data['CYCLE'] = cycle
     if time is not None:
-        grid.field_arrays['TIME'] = time
+        grid.field_data['TIME'] = time
     grid.save(str(filepath), binary=False)
     
 
