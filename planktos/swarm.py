@@ -2566,7 +2566,7 @@ class swarm:
                 try:
                     if len(pos_z) > 1:
                         z_density = stats.gaussian_kde(pos_z, fac_z)
-                        z_density = y_density(zmesh)
+                        z_density = z_density(zmesh)
                     elif len(pos_z) == 1:
                         raise np.linalg.LinAlgError
                     else:
@@ -2966,7 +2966,7 @@ class swarm:
                 try:
                     if len(pos_z) > 1:
                         z_density = stats.gaussian_kde(pos_z, fac_z)
-                        z_density = y_density(zmesh)
+                        z_density = z_density(zmesh)
                     elif len(pos_z) == 1:
                         raise np.linalg.LinAlgError
                     else:
@@ -3151,7 +3151,7 @@ class swarm:
                         try:
                             if len(pos_z) > 1:
                                 z_density = stats.gaussian_kde(pos_z, fac_z)
-                                z_density = y_density(zmesh)
+                                z_density = z_density(zmesh)
                             elif len(pos_z) == 1:
                                 raise np.linalg.LinAlgError
                             else:
@@ -3332,7 +3332,7 @@ class swarm:
                         try:
                             if len(pos_z) > 1:
                                 z_density = stats.gaussian_kde(pos_z, fac_z)
-                                z_density = y_density(zmesh)
+                                z_density = z_density(zmesh)
                             elif len(pos_z) == 1:
                                 raise np.linalg.LinAlgError
                             else:
