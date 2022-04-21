@@ -2801,7 +2801,7 @@ class environment:
         if time_history:
             for cyc, time in enumerate(self.time_history):
                 vort = self.get_2D_vorticity(t_indx=cyc)
-                dataio.write_vtk_2D_uniform_grid_scalars(path, name, vort, self.L, cyc, time)
+                dataio.write_vtk_2D_rectilinear_grid_scalars(path, name, vort, self.L, cyc, time)
             cycle = len(self.time_history)
         else:
             cycle = None
@@ -2812,10 +2812,10 @@ class environment:
                 out_name = name
             for cyc, time in enumerate(self.flow_times):
                 vort = self.get_2D_vorticity(t_n=cyc)
-                dataio.write_vtk_2D_uniform_grid_scalars(path, out_name, vort, self.L, cyc, time)
+                dataio.write_vtk_2D_rectilinear_grid_scalars(path, out_name, vort, self.L, cyc, time)
         if time_history or not flow_times:
             vort = self.get_2D_vorticity(time=self.time)
-            dataio.write_vtk_2D_uniform_grid_scalars(path, name, vort, self.L, cycle, self.time)
+            dataio.write_vtk_2D_rectilinear_grid_scalars(path, name, vort, self.L, cycle, self.time)
 
 
 
@@ -2841,7 +2841,7 @@ class environment:
         if time_history:
             for cyc, time in enumerate(self.time_history):
                 flow = self.interpolate_temporal_flow(t_indx=cyc)
-                dataio.write_vtk_uniform_grid_vectors(path, name, flow, self.L, cyc, time)
+                dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, self.L, cyc, time)
             cycle = len(self.time_history)
         else:
             cycle = None
@@ -2852,10 +2852,10 @@ class environment:
                 out_name = name
             for cyc, time in enumerate(self.flow_times):
                 flow = self.interpolate_temporal_flow(time=time)
-                dataio.write_vtk_uniform_grid_vectors(path, out_name, flow, self.L, cyc, time)
+                dataio.write_vtk_rectilinear_grid_vectors(path, out_name, flow, self.L, cyc, time)
         if time_history or not flow_times:
             flow = self.interpolate_temporal_flow(time=self.time)
-            dataio.write_vtk_uniform_grid_vectors(path, name, flow, self.L, cycle, self.time)
+            dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, self.L, cycle, self.time)
 
 
 

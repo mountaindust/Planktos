@@ -603,9 +603,10 @@ def write_vtk_point_data(path, title, data, cycle=None, time=None):
 
 
 @pyvista_dep
-def write_vtk_2D_uniform_grid_scalars(path, title, data, L, cycle=None, time=None):
-    '''Write scalar data to an ascii VTK Uniform Grid file (e.g. vorticity). 
-    Expects data to be on a 2D uniform grid. Uses the pyvista library. 
+def write_vtk_2D_rectilinear_grid_scalars(path, title, data, grid_points, 
+                                          cycle=None, time=None, binary=True):
+    '''Write scalar data to an ascii VTK Rectilinear Grid file (e.g. vorticity). 
+    Expects data to be on a 2D rectilinear grid. Uses the pyvista library. 
     
     The call signature is formated for easy looping over many time points, 
     resulting in one VTK file per time. The filename will be based on the title 
@@ -620,12 +621,14 @@ def write_vtk_2D_uniform_grid_scalars(path, title, data, L, cycle=None, time=Non
         title to prepend to filename
     data : ndarray 
         scalar data, must be 2D
-    L : list of floats (length 2)
-        environment.L
+    grid_points : tuple (length 2) 
+        grid points in each direction; environment.flow_points
     cycle : int
         dump number, e.g. integer time step in the simulation
     time : float
         simulation time (generally understood to be in seconds)
+    binary : bool
+        whether or not the VTK should be binary (vs. ascii for, e.g., debugging)
     '''
 
     path = Path(path)
@@ -636,25 +639,24 @@ def write_vtk_2D_uniform_grid_scalars(path, title, data, L, cycle=None, time=Non
     else:
         filepath = path / (title + '_{:04d}.vtk'.format(cycle))
 
-    grid = pv.UniformGrid()
+    grid = pv.RectilinearGrid(grid_points[0], grid_points[1], 0)
     grid.dimensions = (*data.shape, 1) # must be 3D
     grid.origin = (0,0,0)
-    dx = [L[ii]/data.shape[ii] for ii in range(len(data.shape))]
-    grid.spacing = dx + [0]
     # we have to flatten the scalar point data, and we have to do it in Fortran 
     #   order because VTK moves in the x, then y, then z direction but with C
     #   memory layout, our arrays move in the z, then y, then x directions
-    grid.point_arrays["values"] = data.flatten(order="F")
+    grid.point_data["values"] = data.flatten(order="F")
     if cycle is not None:
         grid.field_data['CYCLE'] = cycle
     if time is not None:
         grid.field_data['TIME'] = time
-    grid.save(str(filepath), binary=False)
+    grid.save(str(filepath), binary=binary)
 
 
 
 @pyvista_dep
-def write_vtk_uniform_grid_vectors(path, title, data, L, cycle=None, time=None):
+def write_vtk_rectilinear_grid_vectors(path, title, data, grid_points, 
+                                       cycle=None, time=None, binary=True):
     '''Write vector data on a 2D or 3D uniform grid (e.g. fluid velocity). Uses 
     the pyvista library. 
 
@@ -674,12 +676,14 @@ def write_vtk_uniform_grid_vectors(path, title, data, L, cycle=None, time=None):
         list of numpy array of regular grid data. The ndarrays must not include 
         a time component (e.g., the dimension of the array should match the 
         length of the list which should match the length of parameter L)
-    L : list
-        domain length in each direction. environment.L
+    grid_points : tuple
+        grid points in each direction; environment.flow_points
     cycle : int, optional
         dump number, which will also be included in the filename
     time : float, optional
         time stamp
+    binary : bool
+        whether or not the VTK should be binary (vs. ascii for, e.g., debugging)
     '''
 
     path = Path(path)
@@ -690,16 +694,16 @@ def write_vtk_uniform_grid_vectors(path, title, data, L, cycle=None, time=None):
     else:
         filepath = path / (title + '_{:04d}.vtk'.format(cycle))
 
-    grid = pv.UniformGrid()
+    if len(grid_points) == 2:
+        # VTK data must be 3D
+        grid_points = (grid_points[0], grid_points[1], 0)
+    grid = pv.RectilinearGrid(grid_points[0], grid_points[1], grid_points[2])
     grid.origin = (0,0,0)
-    dx = [L[ii]/data[0].shape[ii] for ii in range(len(data[0].shape))]
     if len(data[0].shape) == 2:
         # VTK data must be 3D
         grid.dimensions = (*data[0].shape, 1)
-        grid.spacing = dx + [0]
     else:
         grid.dimensions = data[0].shape
-        grid.spacing = dx
 
     fdata = [data[ii].flatten(order='F') for ii in range(len(data))]
     if len(fdata) == 2:
@@ -714,6 +718,6 @@ def write_vtk_uniform_grid_vectors(path, title, data, L, cycle=None, time=None):
         grid.field_data['CYCLE'] = cycle
     if time is not None:
         grid.field_data['TIME'] = time
-    grid.save(str(filepath), binary=False)
+    grid.save(str(filepath), binary=binary)
     
 
