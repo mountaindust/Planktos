@@ -1568,7 +1568,7 @@ class environment:
 
 
 
-    def center_cell_regrid(self, periodic_dim=[False, False, False]):
+    def center_cell_regrid(self, periodic_dim=(False, False, False)):
         '''Re-grids data that was specified at the center of cells instead of
         at the corners.
         
@@ -1577,12 +1577,171 @@ class environment:
         be readily apparent if Planktos loads your fluid velocity data and 
         reports spacial dimensions one dx, dy, and dz smaller than you were 
         expecting. To fix this, Planktos will interpolate/extrapolate the fluid 
-        velocity mesh using the default method, resulting in a number of grid 
-        points that is 2x + 1 the amount in the data file (this is necessary 
-        because the fluid grid is assumed to be regular).
+        velocity mesh using the default method to get additional grid points on 
+        the edge of the domain.
 
-        Periodicity can be enforced in certain dimensions.
+        Periodicity can be enforced in specified dimensions.
+
+        Parameters
+        ----------
+        periodic_dim : list-like of 2 or 3 bool, default=(True, True, False)
+            True if that spatial dimension is periodic, otherwise False.
+            The 3rd entry will be ignored in the 2D case.
         '''
+        
+        # Detect cell width in each dimension based on the first two coordinates 
+        #   in each spatial dimension
+        dx = self.flow_points[0][1] - self.flow_points[0][0]
+        dy = self.flow_points[1][1] - self.flow_points[1][0]
+        if len(self.L) > 2:
+            dz = self.flow_points[2][1] - self.flow_points[2][0]
+            DIM3 = True
+        else:
+            DIM3 = False
+
+        ### Create a list of positions at which we need to extrapolate the ###
+        ###   velocity field                                               ###
+        x_ends = [-dx/2, self.flow_points[0][-1]+dx/2]
+        y_ends = [-dy/2, self.flow_points[1][-1]+dy/2]
+        bndry_list = []
+        if not DIM3:
+            # edges
+            bndry_list += [[x, y_ends[0]] for x in self.flow_points[0]]
+            bndry_list += [[x, y_ends[1]] for x in self.flow_points[0]]
+            bndry_list += [[x_ends[0], y] for y in self.flow_points[1]]
+            bndry_list += [[x_ends[1], y] for y in self.flow_points[1]]
+            # points
+            bndry_list += [[x_ends[0],y_ends[0]],[x_ends[0],y_ends[1]],
+                           [x_ends[1],y_ends[0]],[x_ends[1],y_ends[1]]]
+        else:
+            z_ends = [-dz/2, self.flow_points[2][-1]+dz/2]
+            # sides
+            bndry_list += [[x,y,z_ends[0]] for x in self.flow_points[0] for y in self.flow_points[1]]
+            bndry_list += [[x,y,z_ends[1]] for x in self.flow_points[0] for y in self.flow_points[1]]
+            bndry_list += [[x,y_ends[0],z] for x in self.flow_points[0] for z in self.flow_points[2]]
+            bndry_list += [[x,y_ends[1],z] for x in self.flow_points[0] for z in self.flow_points[2]]
+            bndry_list += [[x_ends[0],y,z] for y in self.flow_points[1] for z in self.flow_points[2]]
+            bndry_list += [[x_ends[1],y,z] for y in self.flow_points[1] for z in self.flow_points[2]]
+            # edges
+            bndry_list += [[x, y_ends[0], z_ends[0]] for x in self.flow_points[0]]
+            bndry_list += [[x, y_ends[0], z_ends[1]] for x in self.flow_points[0]]
+            bndry_list += [[x, y_ends[1], z_ends[0]] for x in self.flow_points[0]]
+            bndry_list += [[x, y_ends[1], z_ends[1]] for x in self.flow_points[0]]
+            bndry_list += [[x_ends[0], y, z_ends[0]] for y in self.flow_points[1]]
+            bndry_list += [[x_ends[0], y, z_ends[1]] for y in self.flow_points[1]]
+            bndry_list += [[x_ends[1], y, z_ends[0]] for y in self.flow_points[1]]
+            bndry_list += [[x_ends[1], y, z_ends[1]] for y in self.flow_points[1]]
+            bndry_list += [[x_ends[0], y_ends[0], z] for z in self.flow_points[2]]
+            bndry_list += [[x_ends[0], y_ends[1], z] for z in self.flow_points[2]]
+            bndry_list += [[x_ends[1], y_ends[0], z] for z in self.flow_points[2]]
+            bndry_list += [[x_ends[1], y_ends[1], z] for z in self.flow_points[2]]
+            # points
+            bndry_list += [[x_ends[0],y_ends[0]],[x_ends[0],y_ends[1]],
+                           [x_ends[1],y_ends[0]],[x_ends[1],y_ends[1]]]
+
+        ### Include periodicity, if applicable ###
+        flowshape = np.array(self.flow[0].shape)
+        idx = []
+        if len(self.flow[0].shape) == len(self.L):
+            # non time-varying flow
+            startdim = 0
+        else:
+            startdim = 1
+        for ii in range(2):
+            if periodic_dim[ii]:
+                flowshape[startdim+ii] += 2
+                idx.append([1,flowshape[startdim+ii]-1])
+            else:
+                idx.append([0,flowshape[startdim+ii]])
+        if DIM3:
+            if periodic_dim[2]:
+                flowshape[startdim+2] += 2
+                idx.append([1,flowshape[startdim+2]-1])
+            else:
+                idx.append([0,flowshape[startdim+2]])
+        
+        if DIM3:
+            flow = [np.zeros(flowshape) for ii in range(3)]
+            flow_points = [0,0,0]
+            for ii in range(3):
+                flow[ii][...,idx[0][0]:idx[0][1],idx[1][0]:idx[1][1],idx[2][0]:idx[2][1]] = self.flow[ii]
+            if periodic_dim[0]:
+                for ii in range(3):
+                    flow[ii][...,0,:,:] = flow[ii][...,-2,:,:]
+                    flow[ii][...,-1,:,:] = flow[ii][...,1,:,:]
+                flow_points[0] = np.insert(self.flow_points[0], # what
+                                           [0,len(self.flow_points[0])], # loc
+                                           [-dx,self.flow_points[0]+dx]) # vals
+            else:
+                flow_points[0] = self.flow_points[0]
+            if periodic_dim[1]:
+                for ii in range(3):
+                    flow[ii][...,0,:] = flow[ii][...,-2,:]
+                    flow[ii][...,-1,:] = flow[ii][...,1,:]
+                flow_points[1] = np.insert(self.flow_points[1],
+                                           [0,len(self.flow_points[1])],
+                                           [-dy,self.flow_points[1]+dy])
+            else:
+                flow_points[1] = self.flow_points[1]
+            if periodic_dim[2]:
+                for ii in range(3):
+                    flow[ii][...,0] = flow[ii][...,-2]
+                    flow[ii][...,-1] = flow[ii][...,1]
+                flow_points[2] = np.insert(self.flow_points[2],
+                                           [0,len(self.flow_points[2])],
+                                           [-dz,self.flow_points[2]+dz])
+            else:
+                flow_points[2] = self.flow_points[2]
+        else:
+            flow = [np.zeros(flowshape) for ii in range(2)]
+            flow_points = [0,0]
+            for ii in range(2):
+                flow[ii][...,idx[0][0]:idx[0][1],idx[1][0]:idx[1][1]] = self.flow[ii]
+            if periodic_dim[0]:
+                for ii in range(2):
+                    flow[ii][...,0,:] = flow[ii][...,-2,:]
+                    flow[ii][...,-1,:] = flow[ii][...,1,:]
+                flow_points[0] = np.insert(self.flow_points[0], # what
+                                           [0,len(self.flow_points[0])], # loc
+                                           [-dx,self.flow_points[0]+dx]) # vals
+            else:
+                flow_points[0] = self.flow_points[0]
+            if periodic_dim[1]:
+                for ii in range(2):
+                    flow[ii][...,0] = flow[ii][...,-2]
+                    flow[ii][...,-1] = flow[ii][...,1]
+                flow_points[1] = np.insert(self.flow_points[1],
+                                           [0,len(self.flow_points[1])],
+                                           [-dy,self.flow_points[1]+dy])
+            else:
+                flow_points[1] = self.flow_points[1]
+
+        ### Interpolate the new points ###
+        if startdim == 0:
+            # non time-varying flow
+            new_vecs = self.interpolate_flow(bndry_list, flow, flow_points)
+        else:
+            new_vecs = []
+            for t_idx in range(self.flow[0].shape[0]):
+                this_flow = [flow[ii][t_idx,...] for ii in range(len(flow))]
+                new_vecs.append(self.interpolate_flow(bndry_list, this_flow, flow_points))
+
+        ### Incorporate the new points into the fluid field and mesh ###
+        if DIM3:
+            intervals = [dx,dy,dz]
+        else:
+            intervals = [dx,dy]
+        flow_points = [np.insert(self.flow_points[ii],
+                                 [0,len(self.flow_points[ii])],
+                                 [-interval/2,self.flow_points[ii]+interval/2]) 
+                                 for ii,interval in enumerate(intervals)]
+        flowshape = np.array(self.flow[0].shape)
+        if startdim == 0:
+            flowshape += 2
+        else:
+            flowshape[1:] += 2
+        flow = [np.zeros(flowshape) for ii in range(len(self.flow))]
+        # fill the flow fields
         pass
 
 
@@ -2187,7 +2346,8 @@ class environment:
 
 
 
-    def interpolate_flow(self, positions, flow=None, time=None, method='linear'):
+    def interpolate_flow(self, positions, flow=None, flow_points=None, 
+                         time=None, method='linear'):
         '''Spatially interpolate the fluid velocity field (or another flow field) 
         at the supplied positions. If flow is None and self.flow is time-varying,
         the flow field will be interpolated in time first, using the current 
@@ -2198,12 +2358,20 @@ class environment:
         positions : array
             NxD locations at which to interpolate the flow field, where D is the 
             dimension of the system.
-        flow : list of arrays, optional
-            if None, the environmental flow field. interpolated in time if 
-            necessary.
+        flow : list-like of arrays, optional
+            The fluid velocity data, with each array representing one spatial 
+            component of the velocity vector. The first dimension of each array 
+            is time if the fluid velocity field is time varying. If None, the 
+            environmental flow field is used. Interpolated in time if necessary.
+        flow_points : list-like of 1-D arrays, optional
+            The set of coordinates along each dimension that defines the mesh 
+            grid for the fluid velocity field. If None, the environmental flow 
+            points is used.
         time : float, optional
             if None, the present time. Otherwise, the flow field will be
-            interpolated to the time given.
+            interpolated to the time given based on the environment flow_times.
+            This is only supported for environmental flow fields (not ones 
+            passed in as an argument).
         method : string, default='linear'
             spatial interpolation method to be passed to 
             scipy.interpolate.interpn. Anything but splinef2d is supported.
@@ -2216,20 +2384,23 @@ class environment:
                 flow = self.flow
             else:
                 flow = self.interpolate_temporal_flow(time=time)
+
+        if flow_points is None:
+            flow_points = self.flow_points
         
         if method == 'splinef2d':
             raise RuntimeError('Extrapolation is not supported in splinef2d.'+
                                ' This is needed for RK4 solvers, and so is not'+
                                ' a supported method in interpolate_flow.')
 
-        x_vel = interpolate.interpn(self.flow_points, flow[0],
+        x_vel = interpolate.interpn(flow_points, flow[0],
                                     positions, method=method, 
                                     bounds_error=False, fill_value=None)
-        y_vel = interpolate.interpn(self.flow_points, flow[1],
+        y_vel = interpolate.interpn(flow_points, flow[1],
                                     positions, method=method, 
                                     bounds_error=False, fill_value=None)
         if len(flow) == 3:
-            z_vel = interpolate.interpn(self.flow_points, flow[2],
+            z_vel = interpolate.interpn(flow_points, flow[2],
                                         positions, method=method, 
                                         bounds_error=False, fill_value=None)
             return np.array([x_vel, y_vel, z_vel]).T
@@ -2391,7 +2562,7 @@ class environment:
                       grid_dim=grid_dim, testdir=testdir)
             # NOTE: swarm has been appended to this environment!
         else:
-            # Get a soft copy of the swarm passed in
+            # Get a shallow copy of the swarm passed in
             s = copy.copy(swrm)
             # Add swarm to environment and re-initialize swarm positions
             self.add_swarm(s)
