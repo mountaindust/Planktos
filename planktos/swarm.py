@@ -2428,37 +2428,40 @@ class swarm:
                 xmesh = np.linspace(0, self.envir.L[0], 1000)
                 ymesh = np.linspace(0, self.envir.L[1], 1000)
                 # deal with point sources
-                if np.all(positions[:,0] == positions[0,0]) and fac_x is None:
-                    idx = (np.abs(xmesh - positions[0,0])).argmin()
+                pos_x = positions[:,0].compressed()
+                pos_y = positions[:,1].compressed()
+                try:
+                    if len(pos_x) > 1:
+                        x_density = stats.gaussian_kde(pos_x, fac_x)
+                        x_density = x_density(xmesh)
+                    elif len(pos_x) == 1:
+                        raise np.linalg.LinAlgError
+                    else:
+                        x_density = np.zeros_like(xmesh)
+                except np.linalg.LinAlgError:
+                    idx = (np.abs(xmesh - pos_x[0])).argmin()
                     x_density = np.zeros_like(xmesh); x_density[idx] = 1
-                    axHistx.plot(xmesh, x_density)
-                # deal with singleton agent
-                elif len(positions[:,0].compressed()) == 1:
-                    idx = (np.abs(xmesh - positions[:,0].compressed())).argmin()
-                    x_density = np.zeros_like(xmesh); x_density[idx] = 1
-                    axHistx.plot(xmesh, x_density)
-                else:
-                    x_density = stats.gaussian_kde(positions[:,0].compressed(), fac_x)
-                    axHistx.plot(xmesh, x_density(xmesh))
-                if np.all(positions[:,1] == positions[0,1]) and fac_y is None:
-                    idx = (np.abs(ymesh - positions[0,1])).argmin()
-                    y_density = np.zeros_like(ymesh); y_density[idx] = 1
-                    axHisty.plot(y_density, ymesh)
-                elif len(positions[:,1].compressed()) == 1:
-                    idx = (np.abs(ymesh - positions[:,1].compressed())).argmin()
-                    y_density = np.zeros_like(ymesh); y_density[idx] = 1
-                    axHisty.plot(y_density, ymesh)
-                else:
-                    y_density = stats.gaussian_kde(positions[:,1].compressed(), fac_y)
-                    axHisty.plot(y_density(ymesh),ymesh)
+                try:
+                    if len(pos_y) > 1:
+                        y_density = stats.gaussian_kde(pos_y, fac_y)
+                        y_density = y_density(ymesh)
+                    elif len(pos_y) == 1:
+                        raise np.linalg.LinAlgError
+                    else:
+                        y_density = np.zeros_like(ymesh)
+                except np.linalg.LinAlgError:
+                    idy = (np.abs(ymesh - pos_y[0])).argmin()
+                    y_density = np.zeros_like(ymesh); y_density[idy] = 1
+                axHistx.plot(xmesh, x_density)
+                axHisty.plot(y_density, ymesh)
                 axHistx.get_yaxis().set_ticks([])
                 axHisty.get_xaxis().set_ticks([])
-                if np.max(x_density(xmesh)) != 0:
-                    axHistx.set_ylim(bottom=0, top=np.max(x_density(xmesh)))
+                if np.max(x_density) != 0:
+                    axHistx.set_ylim(bottom=0, top=np.max(x_density))
                 else:
                     axHistx.set_ylim(bottom=0)
-                if np.max(y_density(ymesh)) != 0:
-                    axHisty.set_xlim(left=0, right=np.max(y_density(ymesh)))
+                if np.max(y_density) != 0:
+                    axHisty.set_xlim(left=0, right=np.max(y_density))
                 else:
                     axHisty.set_xlim(left=0)
 
@@ -2535,40 +2538,45 @@ class swarm:
                 ymesh = np.linspace(0, self.envir.L[1], 1000)
                 zmesh = np.linspace(0, self.envir.L[2], 1000)
                 # deal with point sources
-                if np.all(positions[:,0] == positions[0,0]) and fac_x is None:
-                    idx = (np.abs(xmesh - positions[0,0])).argmin()
+                pos_x = positions[:,0].compressed()
+                pos_y = positions[:,1].compressed()
+                pos_z = positions[:,2].compressed()
+                try:
+                    if len(pos_x) > 1:
+                        x_density = stats.gaussian_kde(pos_x, fac_x)
+                        x_density = x_density(xmesh)
+                    elif len(pos_x) == 1:
+                        raise np.linalg.LinAlgError
+                    else:
+                        x_density = np.zeros_like(xmesh)
+                except np.linalg.LinAlgError:
+                    idx = (np.abs(xmesh - pos_x[0])).argmin()
                     x_density = np.zeros_like(xmesh); x_density[idx] = 1
-                    axHistx.plot(xmesh, x_density)
-                # deal with singleton agent
-                elif len(positions[:,0].compressed()) == 1:
-                    idx = (np.abs(xmesh - positions[:,0].compressed())).argmin()
-                    x_density = np.zeros_like(xmesh); x_density[idx] = 1
-                    axHistx.plot(xmesh, x_density)
-                else:
-                    x_density = stats.gaussian_kde(positions[:,0].compressed(), fac_x)
-                    axHistx.plot(xmesh, x_density(xmesh))
-                if np.all(positions[:,1] == positions[0,1]) and fac_y is None:
-                    idx = (np.abs(ymesh[0,1])).argmin()
-                    y_density = np.zeros_like(ymesh); y_density[idx] = 1
-                    axHisty.plot(ymesh, y_density)
-                elif len(positions[:,1].compressed()) == 1:
-                    idx = (np.abs(ymesh - positions[:,1].compressed())).argmin()
-                    y_density = np.zeros_like(ymesh); y_density[idx] = 1
-                    axHisty.plot(ymesh, y_density)
-                else:
-                    y_density = stats.gaussian_kde(positions[:,1].compressed(), fac_y)
-                    axHisty.plot(ymesh, y_density(ymesh))
-                if np.all(positions[:,2] == positions[0,2]) and fac_z is None:
-                    idx = (np.abs(zmesh - positions[0,2])).argmin()
-                    z_density = np.zeros_like(zmesh); z_density[idx] = 1
-                    axHistz.plot(zmesh, z_density)
-                elif len(positions[:,2].compressed()) == 1:
-                    idx = (np.abs(zmesh - positions[:,2].compressed())).argmin()
-                    z_density = np.zeros_like(zmesh); z_density[idx] = 1
-                    axHistz.plot(zmesh, z_density)
-                else:
-                    z_density = stats.gaussian_kde(positions[:,2].compressed(), fac_z)        
-                    axHistz.plot(zmesh, z_density(zmesh))
+                try:
+                    if len(pos_y) > 1:
+                        y_density = stats.gaussian_kde(pos_y, fac_y)
+                        y_density = y_density(ymesh)
+                    elif len(pos_y) == 1:
+                        raise np.linalg.LinAlgError
+                    else:
+                        y_density = np.zeros_like(ymesh)
+                except np.linalg.LinAlgError:
+                    idy = (np.abs(ymesh - pos_y[0])).argmin()
+                    y_density = np.zeros_like(ymesh); y_density[idy] = 1
+                try:
+                    if len(pos_z) > 1:
+                        z_density = stats.gaussian_kde(pos_z, fac_z)
+                        z_density = y_density(zmesh)
+                    elif len(pos_z) == 1:
+                        raise np.linalg.LinAlgError
+                    else:
+                        z_density = np.zeros_like(zmesh)
+                except np.linalg.LinAlgError:
+                    idz = (np.abs(zmesh - pos_z[0])).argmin()
+                    z_density = np.zeros_like(zmesh); z_density[idz] = 1
+                axHistx.plot(xmesh, x_density)
+                axHisty.plot(ymesh, y_density)
+                axHistz.plot(zmesh, z_density)
                 axHistx.get_yaxis().set_ticks([])
                 axHisty.get_yaxis().set_ticks([])
                 axHistz.get_yaxis().set_ticks([])
@@ -2797,30 +2805,35 @@ class swarm:
                         fac_y = None
                 xmesh = np.linspace(0, self.envir.L[0], 1000)
                 ymesh = np.linspace(0, self.envir.L[1], 1000)
-                # check and deal with point solution
-                if np.all(self.pos_history[n0][:,0] == self.pos_history[n0][0,0]) and fac_x is None:
-                    idx = (np.abs(xmesh - self.pos_history[n0][0,0])).argmin()
+                # deal with point sources
+                pos_x = self.pos_history[n0][:,0].compressed()
+                pos_y = self.pos_history[n0][:,1].compressed()
+                try:
+                    if len(pos_x) > 1:
+                        x_density = stats.gaussian_kde(pos_x, fac_x)
+                        x_density = x_density(xmesh)
+                    elif len(pos_x) == 1:
+                        raise np.linalg.LinAlgError
+                    else:
+                        x_density = np.zeros_like(xmesh)
+                except np.linalg.LinAlgError:
+                    idx = (np.abs(xmesh - pos_x[0])).argmin()
                     x_density = np.zeros_like(xmesh); x_density[idx] = 1
-                    xdens_plt, = axHistx.plot(xmesh, x_density)
-                # check for singleton agent
-                elif len(self.pos_history[n0][:,0].compressed()) == 1:
-                    idx = (np.abs(xmesh - self.pos_history[n0][:,0].compressed())).argmin()
-                    x_density = np.zeros_like(xmesh); x_density[idx] = 1
-                    xdens_plt, = axHistx.plot(xmesh, x_density)
-                else:
-                    x_density = stats.gaussian_kde(self.pos_history[n0][:,0].compressed(), fac_x)
-                    xdens_plt, = axHistx.plot(xmesh, x_density(xmesh))
-                if np.all(self.pos_history[n0][:,1] == self.pos_history[n0][0,1]) and fac_y is None:
-                    idx = (np.abs(ymesh - self.pos_history[n0][0,1])).argmin()
-                    y_density = np.zeros_like(ymesh); y_density[idx] = 1
-                    ydens_plt, = axHisty.plot(y_density, ymesh)
-                elif len(self.pos_history[n0][:,1].compressed()) == 1:
-                    idx = (np.abs(ymesh - self.pos_history[n0][:,1].compressed())).argmin()
-                    y_density = np.zeros_like(ymesh); y_density[idx] = 1
-                    ydens_plt, = axHisty.plot(y_density, ymesh)
-                else:
-                    y_density = stats.gaussian_kde(self.pos_history[n0][:,1].compressed(), fac_y)
-                    ydens_plt, = axHisty.plot(y_density(ymesh), ymesh)
+                try:
+                    if len(pos_y) > 1:
+                        y_density = stats.gaussian_kde(pos_y, fac_y)
+                        y_density = y_density(ymesh)
+                    elif len(pos_y) == 1:
+                        raise np.linalg.LinAlgError
+                    else:
+                        y_density = np.zeros_like(ymesh)
+                except np.linalg.LinAlgError:
+                    idy = (np.abs(ymesh - pos_y[0])).argmin()
+                    y_density = np.zeros_like(ymesh); y_density[idy] = 1
+                xdens_plt, = axHistx.plot(xmesh, x_density)
+                ydens_plt, = axHisty.plot(y_density, ymesh)
+                axHistx.get_yaxis().set_ticks([])
+                axHisty.get_xaxis().set_ticks([])
                 if np.max(xdens_plt.get_ydata()) != 0:
                     axHistx.set_ylim(bottom=0, top=np.max(xdens_plt.get_ydata()))
                 else:
@@ -2829,8 +2842,6 @@ class swarm:
                     axHisty.set_xlim(left=0, right=np.max(ydens_plt.get_xdata()))
                 else:
                     axHisty.set_xlim(left=0)
-                axHistx.get_yaxis().set_ticks([])
-                axHisty.get_xaxis().set_ticks([])
             
         else:
             ### 3D setup ###
@@ -2926,56 +2937,61 @@ class swarm:
                 xmesh = np.linspace(0, self.envir.L[0], 1000)
                 ymesh = np.linspace(0, self.envir.L[1], 1000)
                 zmesh = np.linspace(0, self.envir.L[2], 1000)
-                # check and deal with point solution
-                if np.all(self.pos_history[n0][:,0] == self.pos_history[n0][0,0]) and fac_x is None:
-                    idx = (np.abs(xmesh - self.pos_history[n0][0,0])).argmin()
+                # deal with point sources
+                pos_x = self.pos_history[n0][:,0].compressed()
+                pos_y = self.pos_history[n0][:,1].compressed()
+                pos_z = self.pos_history[n0][:,2].compressed()
+                try:
+                    if len(pos_x) > 1:
+                        x_density = stats.gaussian_kde(pos_x, fac_x)
+                        x_density = x_density(xmesh)
+                    elif len(pos_x) == 1:
+                        raise np.linalg.LinAlgError
+                    else:
+                        x_density = np.zeros_like(xmesh)
+                except np.linalg.LinAlgError:
+                    idx = (np.abs(xmesh - pos_x[0])).argmin()
                     x_density = np.zeros_like(xmesh); x_density[idx] = 1
-                    xdens_plt, = axHistx.plot(xmesh, x_density)
-                # check for singleton agent
-                elif len(self.pos_history[n0][:,0].compressed()) == 1:
-                    idx = (np.abs(xmesh - self.pos_history[n0][:,0].compressed())).argmin()
-                    x_density = np.zeros_like(xmesh); x_density[idx] = 1
-                    xdens_plt, = axHistx.plot(xmesh, x_density)
-                else:
-                    x_density = stats.gaussian_kde(self.pos_history[n0][:,0].compressed(), fac_x)
-                    xdens_plt, = axHistx.plot(xmesh, x_density(xmesh))
-                if np.all(self.pos_history[n0][:,1] == self.pos_history[n0][0,1]) and fac_y is None:
-                    idx = (np.abs(ymesh - self.pos_history[n0][0,1])).argmin()
-                    y_density = np.zeros_like(ymesh); y_density[idx] = 1
-                    ydens_plt, = axHisty.plot(ymesh, y_density)
-                elif len(self.pos_history[n0][:,1].compressed()) == 1:
-                    idx = (np.abs(ymesh - self.pos_history[n0][:,1].compressed())).argmin()
-                    y_density = np.zeros_like(ymesh); y_density[idx] = 1
-                    ydens_plt, = axHisty.plot(ymesh, y_density)
-                else:
-                    y_density = stats.gaussian_kde(self.pos_history[n0][:,1].compressed(), fac_y)
-                    ydens_plt, = axHisty.plot(ymesh, y_density(ymesh))
-                if np.all(self.pos_history[n0][:,2] == self.pos_history[n0][0,2]) and fac_z is None:
-                    idx = (np.abs(zmesh - self.pos_history[n0][0,2])).argmin()
-                    z_density = np.zeros_like(zmesh); z_density[idx] = 1
-                    zdens_plt, = axHistz.plot(zmesh, z_density)
-                elif len(self.pos_history[n0][:,2].compressed()) == 1:
-                    idx = (np.abs(zmesh - self.pos_history[n0][:,2].compressed())).argmin()
-                    z_density = np.zeros_like(zmesh); z_density[idx] = 1
-                    zdens_plt, = axHistz.plot(zmesh, z_density)
-                else:
-                    z_density = stats.gaussian_kde(self.pos_history[n0][:,2].compressed(), fac_z)
-                    zdens_plt, = axHistz.plot(zmesh, z_density(zmesh))
+                try:
+                    if len(pos_y) > 1:
+                        y_density = stats.gaussian_kde(pos_y, fac_y)
+                        y_density = y_density(ymesh)
+                    elif len(pos_y) == 1:
+                        raise np.linalg.LinAlgError
+                    else:
+                        y_density = np.zeros_like(ymesh)
+                except np.linalg.LinAlgError:
+                    idy = (np.abs(ymesh - pos_y[0])).argmin()
+                    y_density = np.zeros_like(ymesh); y_density[idy] = 1
+                try:
+                    if len(pos_z) > 1:
+                        z_density = stats.gaussian_kde(pos_z, fac_z)
+                        z_density = y_density(zmesh)
+                    elif len(pos_z) == 1:
+                        raise np.linalg.LinAlgError
+                    else:
+                        z_density = np.zeros_like(zmesh)
+                except np.linalg.LinAlgError:
+                    idz = (np.abs(zmesh - pos_z[0])).argmin()
+                    z_density = np.zeros_like(zmesh); z_density[idz] = 1
+                xdens_plt, = axHistx.plot(xmesh, x_density)
+                ydens_plt, = axHisty.plot(ymesh, y_density)
+                zdens_plt, = axHistz.plot(zmesh, z_density)
+                axHistx.get_yaxis().set_ticks([])
+                axHisty.get_yaxis().set_ticks([])
+                axHistz.get_yaxis().set_ticks([])
                 if np.max(xdens_plt.get_ydata()) != 0:
                     axHistx.set_ylim(bottom=0, top=np.max(xdens_plt.get_ydata()))
                 else:
                     axHistx.set_ylim(bottom=0)
                 if np.max(ydens_plt.get_ydata()) != 0:
-                    axHisty.set_ylim(top=np.max(ydens_plt.get_ydata()))
+                    axHisty.set_ylim(bottom=0, top=np.max(ydens_plt.get_ydata()))
                 else:
                     axHisty.set_ylim(bottom=0)
                 if np.max(zdens_plt.get_ydata()) != 0:
-                    axHistz.set_ylim(top=np.max(zdens_plt.get_ydata()))
+                    axHistz.set_ylim(bottom=0, top=np.max(zdens_plt.get_ydata()))
                 else:
                     axHistz.set_ylim(bottom=0)
-                axHistx.get_yaxis().set_ticks([])
-                axHisty.get_yaxis().set_ticks([])
-                axHistz.get_yaxis().set_ticks([])
 
         # animation function. Called sequentially
         def animate(n):
@@ -3021,36 +3037,32 @@ class swarm:
                         else:
                             return [scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
                     else:
-                        if np.all(self.pos_history[n][:,0] == self.pos_history[n][0,0]) and fac_x is None:
-                            idx = (np.abs(xmesh - self.pos_history[n][0,0])).argmin()
+                        pos_x = self.pos_history[n][:,0].compressed()
+                        pos_y = self.pos_history[n][:,1].compressed()
+                        try:
+                            if len(pos_x) > 1:
+                                x_density = stats.gaussian_kde(pos_x, fac_x)
+                                x_density = x_density(xmesh)
+                            elif len(pos_x) == 1:
+                                raise np.linalg.LinAlgError
+                            else:
+                                x_density = np.zeros_like(xmesh)
+                        except np.linalg.LinAlgError:
+                            idx = (np.abs(xmesh - pos_x[0])).argmin()
                             x_density = np.zeros_like(xmesh); x_density[idx] = 1
-                            xdens_plt.set_ydata(x_density)
-                        # check to see if everything has left
-                        elif self.pos_history[n][:,0].all() is ma.masked:
-                            x_density = np.zeros_like(xmesh)
-                            xdens_plt.set_ydata(x_density)
-                        # check to see if only one thing is left
-                        elif len(self.pos_history[n][:,0].compressed()) == 1:
-                            idx = (np.abs(xmesh - self.pos_history[n][:,0].compressed())).argmin()
-                            x_density = np.zeros_like(xmesh); x_density[idx] = 1
-                            xdens_plt.set_ydata(x_density)
-                        else:
-                            x_density = stats.gaussian_kde(self.pos_history[n][:,0].compressed(), fac_x)
-                            xdens_plt.set_ydata(x_density(xmesh))
-                        if np.all(self.pos_history[n][:,1] == self.pos_history[n][0,1]) and fac_y is None:
-                            idx = (np.abs(ymesh - self.pos_history[n][0,1])).argmin()
-                            y_density = np.zeros_like(ymesh); y_density[idx] = 1
-                            ydens_plt.set_xdata(y_density)
-                        elif self.pos_history[n][:,1].all() is ma.masked:
-                            y_density = np.zeros_like(ymesh)
-                            ydens_plt.set_xdata(y_density)
-                        elif len(self.pos_history[n][:,1].compressed()) == 1:
-                            idx = (np.abs(ymesh - self.pos_history[n][:,1].compressed())).argmin()
-                            y_density = np.zeros_like(ymesh); y_density[idx] = 1
-                            ydens_plt.set_xdata(y_density)
-                        else:
-                            y_density = stats.gaussian_kde(self.pos_history[n][:,1].compressed(), fac_y)
-                            ydens_plt.set_xdata(y_density(ymesh))
+                        try:
+                            if len(pos_y) > 1:
+                                y_density = stats.gaussian_kde(pos_y, fac_y)
+                                y_density = y_density(ymesh)
+                            elif len(pos_y) == 1:
+                                raise np.linalg.LinAlgError
+                            else:
+                                y_density = np.zeros_like(ymesh)
+                        except np.linalg.LinAlgError:
+                            idy = (np.abs(ymesh - pos_y[0])).argmin()
+                            y_density = np.zeros_like(ymesh); y_density[idy] = 1
+                        xdens_plt.set_ydata(x_density)
+                        ydens_plt.set_xdata(y_density)
                         if np.max(xdens_plt.get_ydata()) != 0:
                             axHistx.set_ylim(bottom=0, top=np.max(xdens_plt.get_ydata()))
                         else:
@@ -3111,61 +3123,55 @@ class swarm:
                         return [scat, time_text, flow_text, perc_text, x_text, 
                             y_text, z_text] + list(patches_x) + list(patches_y) + list(patches_z)
                     else:
-                        # check and deal with point solution
-                        if np.all(self.pos_history[n][:,0] == self.pos_history[n][0,0]) and fac_x is None:
-                            idx = (np.abs(xmesh - self.pos_history[n][0,0])).argmin()
+                        pos_x = self.pos_history[n][:,0].compressed()
+                        pos_y = self.pos_history[n][:,1].compressed()
+                        pos_z = self.pos_history[n][:,2].compressed()
+                        try:
+                            if len(pos_x) > 1:
+                                x_density = stats.gaussian_kde(pos_x, fac_x)
+                                x_density = x_density(xmesh)
+                            elif len(pos_x) == 1:
+                                raise np.linalg.LinAlgError
+                            else:
+                                x_density = np.zeros_like(xmesh)
+                        except np.linalg.LinAlgError:
+                            idx = (np.abs(xmesh - pos_x[0])).argmin()
                             x_density = np.zeros_like(xmesh); x_density[idx] = 1
-                            xdens_plt.set_ydata(x_density)
-                        # check to see if everything has left
-                        elif self.pos_history[n][:,0].all() is ma.masked:
-                            x_density = np.zeros_like(xmesh)
-                            xdens_plt.set_ydata(x_density)
-                        # check to see if only one thing is left
-                        elif len(self.pos_history[n][:,0].compressed()) == 1:
-                            idx = (np.abs(xmesh - self.pos_history[n][:,0].compressed())).argmin()
-                            x_density = np.zeros_like(xmesh); x_density[idx] = 1
-                            xdens_plt.set_ydata(x_density)
-                        else:
-                            x_density = stats.gaussian_kde(self.pos_history[n][:,0].compressed(), fac_x)
-                            xdens_plt.set_ydata(x_density(xmesh))
-                        if np.all(self.pos_history[n][:,1] == self.pos_history[n][0,1]) and fac_y is None:
-                            idx = (np.abs(ymesh - self.pos_history[n][0,1])).argmin()
-                            y_density = np.zeros_like(ymesh); y_density[idx] = 1
-                            ydens_plt.set_ydata(y_density)
-                        elif self.pos_history[n][:,1].all() is ma.masked:
-                            y_density = np.zeros_like(ymesh)
-                            ydens_plt.set_ydata(y_density)
-                        elif len(self.pos_history[n][:,1].compressed()) == 1:
-                            idx = (np.abs(ymesh - self.pos_history[n][:,1].compressed())).argmin()
-                            y_density = np.zeros_like(ymesh); y_density[idx] = 1
-                            ydens_plt.set_ydata(y_density)
-                        else:
-                            y_density = stats.gaussian_kde(self.pos_history[n][:,1].compressed(), fac_y)
-                            ydens_plt.set_ydata(y_density(ymesh))
-                        if np.all(self.pos_history[n][:,2] == self.pos_history[n][0,2]) and fac_z is None:
-                            idx = (np.abs(zmesh - self.pos_history[n][0,2])).argmin()
-                            z_density = np.zeros_like(zmesh); z_density[idx] = 1
-                            zdens_plt.set_ydata(z_density)
-                        elif self.pos_history[n][:,2].all() is ma.masked:
-                            z_density = np.zeros_like(zmesh)
-                            zdens_plt.set_ydata(z_density)
-                        elif len(self.pos_history[n][:,2].compressed()) == 1:
-                            idx = (np.abs(zmesh - self.pos_history[n][:,2].compressed())).argmin()
-                            z_density = np.zeros_like(zmesh); z_density[idx] = 1
-                            zdens_plt.set_ydata(z_density)
-                        else:
-                            z_density = stats.gaussian_kde(self.pos_history[n][:,2].compressed(), fac_z)
-                            zdens_plt.set_ydata(z_density(zmesh))
+                        try:
+                            if len(pos_y) > 1:
+                                y_density = stats.gaussian_kde(pos_y, fac_y)
+                                y_density = y_density(ymesh)
+                            elif len(pos_y) == 1:
+                                raise np.linalg.LinAlgError
+                            else:
+                                y_density = np.zeros_like(ymesh)
+                        except np.linalg.LinAlgError:
+                            idy = (np.abs(ymesh - pos_y[0])).argmin()
+                            y_density = np.zeros_like(ymesh); y_density[idy] = 1
+                        try:
+                            if len(pos_z) > 1:
+                                z_density = stats.gaussian_kde(pos_z, fac_z)
+                                z_density = y_density(zmesh)
+                            elif len(pos_z) == 1:
+                                raise np.linalg.LinAlgError
+                            else:
+                                z_density = np.zeros_like(zmesh)
+                        except np.linalg.LinAlgError:
+                            idz = (np.abs(zmesh - pos_z[0])).argmin()
+                            z_density = np.zeros_like(zmesh); z_density[idz] = 1
+                        xdens_plt.set_ydata(x_density)
+                        ydens_plt.set_ydata(y_density)
+                        zdens_plt.set_ydata(z_density)
                         if np.max(xdens_plt.get_ydata()) != 0:
                             axHistx.set_ylim(bottom=0, top=np.max(xdens_plt.get_ydata()))
                         else:
                             axHistx.set_ylim(bottom=0)
                         if np.max(ydens_plt.get_ydata()) != 0:
-                            axHisty.set_ylim(top=np.max(ydens_plt.get_ydata()))
+                            axHisty.set_ylim(bottom=0, top=np.max(ydens_plt.get_ydata()))
                         else:
                             axHisty.set_ylim(bottom=0)
                         if np.max(zdens_plt.get_ydata()) != 0:
-                            axHistz.set_ylim(top=np.max(zdens_plt.get_ydata()))
+                            axHistz.set_ylim(bottom=0, top=np.max(zdens_plt.get_ydata()))
                         else:
                             axHistz.set_ylim(bottom=0)
                         fig.canvas.draw()
@@ -3214,34 +3220,32 @@ class swarm:
                         else:
                             return [scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
                     else:
-                        if np.all(self.positions[:,0] == self.positions[0,0]) and fac_x is None:
-                            idx = (np.abs(xmesh - self.positions[0,0])).argmin()
+                        pos_x = self.positions[:,0].compressed()
+                        pos_y = self.positions[:,1].compressed()
+                        try:
+                            if len(pos_x) > 1:
+                                x_density = stats.gaussian_kde(pos_x, fac_x)
+                                x_density = x_density(xmesh)
+                            elif len(pos_x) == 1:
+                                raise np.linalg.LinAlgError
+                            else:
+                                x_density = np.zeros_like(xmesh)
+                        except np.linalg.LinAlgError:
+                            idx = (np.abs(xmesh - pos_x[0])).argmin()
                             x_density = np.zeros_like(xmesh); x_density[idx] = 1
-                            xdens_plt.set_ydata(x_density)
-                        elif self.positions[:,0].all() is ma.masked:
-                            x_density = np.zeros_like(xmesh)
-                            xdens_plt.set_ydata(x_density)
-                        elif len(self.positions[n][:,0].compressed()) == 1:
-                            idx = (np.abs(xmesh - self.positions[:,0].compressed())).argmin()
-                            x_density = np.zeros_like(xmesh); x_density[idx] = 1
-                            xdens_plt.set_ydata(x_density)
-                        else:
-                            x_density = stats.gaussian_kde(self.positions[:,0].compressed(), fac_x)
-                            xdens_plt.set_ydata(x_density(xmesh))
-                        if np.all(self.positions[:,1] == self.positions[0,1]) and fac_y is None:
-                            idx = (np.abs(ymesh - self.positions[0,1])).argmin()
-                            y_density = np.zeros_like(ymesh); y_density[idx] = 1
-                            ydens_plt.set_xdata(y_density)
-                        elif self.positions[:,1].all() is ma.masked:
-                            y_density = np.zeros_like(ymesh)
-                            ydens_plt.set_xdata(y_density)
-                        elif len(self.positions[:,1].compressed()) == 1:
-                            idx = (np.abs(ymesh - self.positions[:,1].compressed())).argmin()
-                            y_density = np.zeros_like(ymesh); y_density[idx] = 1
-                            ydens_plt.set_xdata(y_density)
-                        else:
-                            y_density = stats.gaussian_kde(self.positions[:,1].compressed(), fac_y)
-                            ydens_plt.set_xdata(y_density(ymesh))
+                        try:
+                            if len(pos_y) > 1:
+                                y_density = stats.gaussian_kde(pos_y, fac_y)
+                                y_density = y_density(ymesh)
+                            elif len(pos_y) == 1:
+                                raise np.linalg.LinAlgError
+                            else:
+                                y_density = np.zeros_like(ymesh)
+                        except np.linalg.LinAlgError:
+                            idy = (np.abs(ymesh - pos_y[0])).argmin()
+                            y_density = np.zeros_like(ymesh); y_density[idy] = 1
+                        xdens_plt.set_ydata(x_density)
+                        ydens_plt.set_xdata(y_density)
                         if np.max(xdens_plt.get_ydata()) != 0:
                             axHistx.set_ylim(bottom=0, top=np.max(xdens_plt.get_ydata()))
                         else:
@@ -3300,58 +3304,55 @@ class swarm:
                         return [scat, time_text, flow_text, perc_text, x_text, 
                             y_text, z_text] + list(patches_x) + list(patches_y) + list(patches_z)
                     else:
-                        if np.all(self.positions[:,0] == self.positions[0,0]) and fac_x is None:
-                            idx = (np.abs(xmesh - self.positions[0,0])).argmin()
+                        pos_x = self.positions[:,0].compressed()
+                        pos_y = self.positions[:,1].compressed()
+                        pos_z = self.positions[:,2].compressed()
+                        try:
+                            if len(pos_x) > 1:
+                                x_density = stats.gaussian_kde(pos_x, fac_x)
+                                x_density = x_density(xmesh)
+                            elif len(pos_x) == 1:
+                                raise np.linalg.LinAlgError
+                            else:
+                                x_density = np.zeros_like(xmesh)
+                        except np.linalg.LinAlgError:
+                            idx = (np.abs(xmesh - pos_x[0])).argmin()
                             x_density = np.zeros_like(xmesh); x_density[idx] = 1
-                            xdens_plt.set_ydata(x_density)
-                        elif self.positions[:,0].all() is ma.masked:
-                            x_density = np.zeros_like(xmesh)
-                            xdens_plt.set_ydata(x_density)
-                        elif len(self.positions[:,0].compressed()) == 1:
-                            idx = (np.abs(xmesh - self.positions[:,0].compressed())).argmin()
-                            x_density = np.zeros_like(xmesh); x_density[idx] = 1
-                            xdens_plt.set_ydata(x_density)
-                        else:
-                            x_density = stats.gaussian_kde(self.positions[:,0].compressed(), fac_x)
-                            xdens_plt.set_ydata(x_density(xmesh))
-                        if np.all(self.positions[:,1] == self.positions[0,1]) and fac_y is None:
-                            idx = (np.abs(ymesh - self.positions[0,1])).argmin()
-                            y_density = np.zeros_like(ymesh); y_density[idx] = 1
-                            ydens_plt.set_ydata(y_density)
-                        elif self.positions[:,1].all() is ma.masked:
-                            y_density = np.zeros_like(ymesh)
-                            ydens_plt.set_ydata(y_density)
-                        elif len(self.positions[:,1].compressed()) == 1:
-                            idx = (np.abs(ymesh - self.positions[:,1].compressed())).argmin()
-                            y_density = np.zeros_like(ymesh); y_density[idx] = 1
-                            ydens_plt.set_ydata(y_density)
-                        else:
-                            y_density = stats.gaussian_kde(self.positions[:,1].compressed(), fac_y)
-                            ydens_plt.set_ydata(y_density(ymesh))
-                        if np.all(self.positions[:,2] == self.positions[0,2]) and fac_z is None:
-                            idx = (np.abs(zmesh - self.positions[0,2])).argmin()
-                            z_density = np.zeros_like(zmesh); z_density[idx] = 1
-                            zdens_plt.set_ydata(z_density)
-                        elif self.positions[:,2].all() is ma.masked:
-                            z_density = np.zeros_like(zmesh)
-                            zdens_plt.set_ydata(z_density)
-                        elif len(self.positions[:,2].compressed()) == 1:
-                            idx = (np.abs(zmesh - self.positions[:,2].compressed())).argmin()
-                            z_density = np.zeros_like(zmesh); z_density[idx] = 1
-                            zdens_plt.set_ydata(z_density)
-                        else:
-                            z_density = stats.gaussian_kde(self.positions[:,2].compressed(), fac_z)
-                            zdens_plt.set_ydata(z_density(zmesh))
+                        try:
+                            if len(pos_y) > 1:
+                                y_density = stats.gaussian_kde(pos_y, fac_y)
+                                y_density = y_density(ymesh)
+                            elif len(pos_y) == 1:
+                                raise np.linalg.LinAlgError
+                            else:
+                                y_density = np.zeros_like(ymesh)
+                        except np.linalg.LinAlgError:
+                            idy = (np.abs(ymesh - pos_y[0])).argmin()
+                            y_density = np.zeros_like(ymesh); y_density[idy] = 1
+                        try:
+                            if len(pos_z) > 1:
+                                z_density = stats.gaussian_kde(pos_z, fac_z)
+                                z_density = y_density(zmesh)
+                            elif len(pos_z) == 1:
+                                raise np.linalg.LinAlgError
+                            else:
+                                z_density = np.zeros_like(zmesh)
+                        except np.linalg.LinAlgError:
+                            idz = (np.abs(zmesh - pos_z[0])).argmin()
+                            z_density = np.zeros_like(zmesh); z_density[idz] = 1
+                        xdens_plt.set_ydata(x_density)
+                        ydens_plt.set_ydata(y_density)
+                        zdens_plt.set_ydata(z_density)
                         if np.max(xdens_plt.get_ydata()) != 0:
                             axHistx.set_ylim(bottom=0, top=np.max(xdens_plt.get_ydata()))
                         else:
                             axHistx.set_ylim(bottom=0)
                         if np.max(ydens_plt.get_ydata()) != 0:
-                            axHisty.set_ylim(top=np.max(ydens_plt.get_ydata()))
+                            axHisty.set_ylim(bottom=0, top=np.max(ydens_plt.get_ydata()))
                         else:
                             axHisty.set_ylim(bottom=0)
                         if np.max(zdens_plt.get_ydata()) != 0:
-                            axHistz.set_ylim(top=np.max(zdens_plt.get_ydata()))
+                            axHistz.set_ylim(bottom=0, top=np.max(zdens_plt.get_ydata()))
                         else:
                             axHistz.set_ylim(bottom=0)
                         fig.canvas.draw()
