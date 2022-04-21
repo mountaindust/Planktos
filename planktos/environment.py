@@ -1299,9 +1299,6 @@ class environment:
         '''Read NetCDF fluid data into the environment. Must first have loaded a 
         NetCDF dataset with load_NetCDF.
 
-        Remember that Planktos expects fluid data to be specified on a 
-        regular grid!
-
         The default expectation is that the x, y, and z components of the fluid 
         velocity data are specified in separate Variables. If that is not the 
         case, then the index of the Variable dimension which specifies the 
@@ -1568,6 +1565,25 @@ class environment:
         # replace domain length
         self.L = [self.flow_points[d][-1] for d in range(dim)]
         print("Fluid updated. Planktos domain size is now {}.".format(self.L))
+
+
+
+    def center_cell_regrid(self, periodic_dim=[False, False, False]):
+        '''Re-grids data that was specified at the center of cells instead of
+        at the corners.
+        
+        Software has a tendency to output data files where the fluid mesh is 
+        specified at the center of cells rather than at the corners. This will 
+        be readily apparent if Planktos loads your fluid velocity data and 
+        reports spacial dimensions one dx, dy, and dz smaller than you were 
+        expecting. To fix this, Planktos will interpolate/extrapolate the fluid 
+        velocity mesh using the default method, resulting in a number of grid 
+        points that is 2x + 1 the amount in the data file (this is necessary 
+        because the fluid grid is assumed to be regular).
+
+        Periodicity can be enforced in certain dimensions.
+        '''
+        pass
 
 
 
@@ -1904,9 +1920,9 @@ class environment:
         assert x_minus>=0 and x_plus>=0 and y_minus>=0 and y_plus>=0,\
             "arguments must be nonnegative"
 
+        res_x = np.max(self.flow_points[0][1:]-self.flow_points[0][:-1])
+        res_y = np.max(self.flow_points[1][1:]-self.flow_points[1][:-1])
         if not TIME_DEP:
-            res_x = self.L[0]/(self.flow[0].shape[0]-1)
-            res_y = self.L[1]/(self.flow[0].shape[1]-1)
             for dim in range(len(self.L)):
                 # first, extend in x direction
                 self.flow[dim] = np.concatenate(tuple(
@@ -1934,8 +1950,6 @@ class environment:
                         ), axis=1)
 
         else:
-            res_x = self.L[0]/(self.flow[0].shape[1]-1)
-            res_y = self.L[1]/(self.flow[0].shape[2]-1)
             for dim in range(len(self.L)):
                 if DIM3:
                     # first, extend in x direction
@@ -1978,18 +1992,27 @@ class environment:
         self.L[0] += res_x*(x_minus+x_plus)
         self.L[1] += res_y*(y_minus+y_plus)
         if x_minus+x_plus > 0:
-            new_points.append(np.concatenate([self.flow_points[0]]+
-                [self.flow_points[0][-1]+res_x*np.arange(1,x_minus+x_plus+1)]))
+            new_points.append(np.concatenate(
+                [self.flow_points[0][0]-res_x*np.arange(1,x_minus+1)]+
+                [self.flow_points[0]]+
+                [self.flow_points[0][-1]+res_x*np.arange(1,x_plus+1)]))
         else:
             new_points.append(self.flow_points[0])
         if y_minus+y_plus > 0:
-            new_points.append(np.concatenate([self.flow_points[1]]+
-                [self.flow_points[1][-1]+res_y*np.arange(1,y_minus+y_plus+1)]))
+            new_points.append(np.concatenate(
+                [self.flow_points[1][0]-res_y*np.arange(1,y_minus+1)]+
+                [self.flow_points[1]]+
+                [self.flow_points[1][-1]+res_y*np.arange(1,y_plus+1)]))
         else:
             new_points.append(self.flow_points[1])
         if DIM3:
             new_points.append(self.flow_points[2])
+        # shift domain to quadrant 1
+        self.flow_points = (new_points[0]-new_points[0][0], new_points[1]-new_points[1][0],
+                            new_points[2]-new_points[2][0])
         self.flow_points = tuple(new_points)
+        # update environment dimensions
+        self.L = [self.flow_points[dim][-1] for dim in range(3)]
         self.__reset_flow_deriv()
 
 
@@ -2730,9 +2753,6 @@ class environment:
             v_x = self.flow[0]
             v_y = self.flow[1]
 
-        dx = self.L[0]/(grid_dim[0]-1)
-        dy = self.L[1]/(grid_dim[1]-1)
-
         vort = np.zeros_like(v_x)
 
         ### LOOP OVER ALL GRID POINTS ###
@@ -2746,11 +2766,13 @@ class environment:
                     diff_list[dim*2+1,:] *= 0
             neigh_list = np.array(grid_loc, dtype=int) + diff_list
             # get stencil spacing
-            x_mult = abs((neigh_list[1,:]-neigh_list[0,:]).sum())
-            y_mult = abs((neigh_list[3,:]-neigh_list[2,:]).sum())
+            dx1 = self.flow_points[0][grid_loc[0]] - self.flow_points[0][neigh_list[0,0]]
+            dx2 = self.flow_points[0][neigh_list[1,0]] - self.flow_points[0][grid_loc[0]]
+            dy1 = self.flow_points[1][grid_loc[1]] - self.flow_points[1][neigh_list[2,1]]
+            dy2 = self.flow_points[1][neigh_list[3,1]] - self.flow_points[1][grid_loc[1]]
             # central differencing
-            dvydx = (v_y[tuple(neigh_list[1,:])]-v_y[tuple(neigh_list[0,:])])/(x_mult*dx)
-            dvxdy = (v_x[tuple(neigh_list[3,:])]-v_x[tuple(neigh_list[2,:])])/(y_mult*dy)
+            dvydx = (v_y[tuple(neigh_list[1,:])]-v_y[tuple(neigh_list[0,:])])/(dx1+dx2)
+            dvxdy = (v_x[tuple(neigh_list[3,:])]-v_x[tuple(neigh_list[2,:])])/(dy1+dy2)
             # vorticity
             vort[grid_loc] = dvydx - dvxdy
 
