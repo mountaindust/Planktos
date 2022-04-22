@@ -2584,16 +2584,16 @@ class swarm:
                 axHistx.get_yaxis().set_ticks([])
                 axHisty.get_yaxis().set_ticks([])
                 axHistz.get_yaxis().set_ticks([])
-                if np.max(x_density(xmesh)) != 0:
-                    axHistx.set_ylim(bottom=0, top=np.max(x_density(xmesh)))
+                if np.max(x_density) != 0:
+                    axHistx.set_ylim(bottom=0, top=np.max(x_density))
                 else:
                     axHistx.set_ylim(bottom=0)
-                if np.max(y_density(ymesh)) != 0:
-                    axHisty.set_ylim(bottom=0, top=np.max(y_density(ymesh)))
+                if np.max(y_density) != 0:
+                    axHisty.set_ylim(bottom=0, top=np.max(y_density))
                 else:
                     axHisty.set_ylim(bottom=0)
-                if np.max(z_density(zmesh)) != 0:
-                    axHistz.set_ylim(bottom=0, top=np.max(z_density(zmesh)))
+                if np.max(z_density) != 0:
+                    axHistz.set_ylim(bottom=0, top=np.max(z_density))
                 else:
                     axHistz.set_ylim(bottom=0)
 
