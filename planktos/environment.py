@@ -1703,7 +1703,7 @@ class environment:
                 flow_points.append(self.flow_points[2])
         else:
             flow = [np.zeros(flowshape) for ii in range(2)]
-            flow_points = [0,0]
+            flow_points = []
             for ii in range(2):
                 flow[ii][...,idx[0][0]:idx[0][1],idx[1][0]:idx[1][1]] = self.flow[ii]
             if periodic_dim[0]:
@@ -1751,8 +1751,8 @@ class environment:
             flowshape[1:] += 2
         shp = [len(points) for points in self.flow_points]
 
-        def bndry_add3d(flowshape, shp, this_vecs):
-            f = [np.zeros(flowshape) for ii in range(3)]
+        def bndry_add3d(fshape, shp, this_vecs):
+            f = [np.zeros(fshape) for ii in range(3)]
             for dim in range(3):
                 # sides
                 f[dim][1:-1,1:-1,0] = np.reshape(this_vecs[:shp[0]*shp[1],dim],(shp[0],shp[1]))
@@ -1764,9 +1764,9 @@ class environment:
                 f[dim][1:-1,-1,1:-1] = np.reshape(this_vecs[s:s+shp[0]*shp[2],dim],(shp[0],shp[2]))
                 s += shp[0]*shp[2]
                 f[dim][0,1:-1,1:-1] = np.reshape(this_vecs[s:s+shp[1]*shp[2],dim],(shp[1],shp[2]))
-                s += shp[0]*shp[2]
+                s += shp[1]*shp[2]
                 f[dim][-1,1:-1,1:-1] = np.reshape(this_vecs[s:s+shp[1]*shp[2],dim],(shp[1],shp[2]))
-                s += shp[0]*shp[2]
+                s += shp[1]*shp[2]
                 # edges
                 f[dim][1:-1,0,0] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
                 f[dim][1:-1,0,-1] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
@@ -1791,8 +1791,8 @@ class environment:
                 f[dim][-1,-1,-1] = this_vecs[s+7,dim]
             return f
 
-        def bndry_add2d(flowshape, shp, this_vecs):
-            f = [np.zeros(flowshape) for ii in range(2)]
+        def bndry_add2d(fshape, shp, this_vecs):
+            f = [np.zeros(fshape) for ii in range(2)]
             for dim in range(2):
                 s=0
                 # edges
@@ -1811,16 +1811,16 @@ class environment:
             # time invariant, 3D
             flow = bndry_add3d(flowshape, shp, new_vecs)
         elif DIM3 and startdim == 1:
-            flow = [np.zeros(flowshape+1) for ii in range(3)]
+            flow = [np.zeros(flowshape) for ii in range(3)]
             for n, this_vecs in enumerate(new_vecs):
-                f = bndry_add3d(flowshape, shp, this_vecs)
+                f = bndry_add3d(flowshape[1:], shp, this_vecs)
                 flow[0][n,...]=f[0]; flow[1][n,...]=f[1]; flow[2][n,...]=f[2]
         elif not DIM3 and startdim == 0:
             flow = bndry_add2d(flowshape, shp, new_vecs)
         else:
-            flow = [np.zeros(flowshape+1) for ii in range(2)]
+            flow = [np.zeros(flowshape) for ii in range(2)]
             for n, this_vecs in enumerate(new_vecs):
-                f = bndry_add2d(flowshape, shp, this_vecs)
+                f = bndry_add2d(flowshape[1:], shp, this_vecs)
                 flow[0][n,...]=f[0]; flow[1][n,...]=f[1]
 
         ### Replace fluid and update domain ###
