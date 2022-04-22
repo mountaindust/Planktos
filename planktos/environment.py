@@ -1571,6 +1571,9 @@ class environment:
     def center_cell_regrid(self, periodic_dim=(False, False, False)):
         '''Re-grids data that was specified at the center of cells instead of
         at the corners.
+
+        NOTE! This needs to be called *before* any immersed meshes are loaded.
+        It will NOT look for and properly shift these meshes.
         
         Software has a tendency to output data files where the fluid mesh is 
         specified at the center of cells rather than at the corners. This will 
@@ -1636,8 +1639,14 @@ class environment:
             bndry_list += [[x_ends[1], y_ends[0], z] for z in self.flow_points[2]]
             bndry_list += [[x_ends[1], y_ends[1], z] for z in self.flow_points[2]]
             # points
-            bndry_list += [[x_ends[0],y_ends[0]],[x_ends[0],y_ends[1]],
-                           [x_ends[1],y_ends[0]],[x_ends[1],y_ends[1]]]
+            bndry_list += [[x_ends[0],y_ends[0],z_ends[0]],
+                           [x_ends[0],y_ends[0],z_ends[1]],
+                           [x_ends[0],y_ends[1],z_ends[0]],
+                           [x_ends[1],y_ends[0],z_ends[1]],
+                           [x_ends[0],y_ends[1],z_ends[1]],
+                           [x_ends[1],y_ends[0],z_ends[1]],
+                           [x_ends[1],y_ends[1],z_ends[0]],
+                           [x_ends[1],y_ends[1],z_ends[1]]]
 
         ### Include periodicity, if applicable ###
         flowshape = np.array(self.flow[0].shape)
@@ -1662,36 +1671,36 @@ class environment:
         
         if DIM3:
             flow = [np.zeros(flowshape) for ii in range(3)]
-            flow_points = [0,0,0]
+            flow_points = []
             for ii in range(3):
                 flow[ii][...,idx[0][0]:idx[0][1],idx[1][0]:idx[1][1],idx[2][0]:idx[2][1]] = self.flow[ii]
             if periodic_dim[0]:
                 for ii in range(3):
                     flow[ii][...,0,:,:] = flow[ii][...,-2,:,:]
                     flow[ii][...,-1,:,:] = flow[ii][...,1,:,:]
-                flow_points[0] = np.insert(self.flow_points[0], # what
-                                           [0,len(self.flow_points[0])], # loc
-                                           [-dx,self.flow_points[0]+dx]) # vals
+                flow_points.append(np.insert(self.flow_points[0], # what
+                                             [0,len(self.flow_points[0])], # loc
+                                             [-dx,self.flow_points[0][-1]+dx])) # vals
             else:
-                flow_points[0] = self.flow_points[0]
+                flow_points.append(self.flow_points[0])
             if periodic_dim[1]:
                 for ii in range(3):
                     flow[ii][...,0,:] = flow[ii][...,-2,:]
                     flow[ii][...,-1,:] = flow[ii][...,1,:]
-                flow_points[1] = np.insert(self.flow_points[1],
-                                           [0,len(self.flow_points[1])],
-                                           [-dy,self.flow_points[1]+dy])
+                flow_points.append(np.insert(self.flow_points[1],
+                                             [0,len(self.flow_points[1])],
+                                             [-dy,self.flow_points[1][-1]+dy]))
             else:
-                flow_points[1] = self.flow_points[1]
+                flow_points.append(self.flow_points[1])
             if periodic_dim[2]:
                 for ii in range(3):
                     flow[ii][...,0] = flow[ii][...,-2]
                     flow[ii][...,-1] = flow[ii][...,1]
-                flow_points[2] = np.insert(self.flow_points[2],
-                                           [0,len(self.flow_points[2])],
-                                           [-dz,self.flow_points[2]+dz])
+                flow_points.append(np.insert(self.flow_points[2],
+                                             [0,len(self.flow_points[2])],
+                                             [-dz,self.flow_points[2][-1]+dz]))
             else:
-                flow_points[2] = self.flow_points[2]
+                flow_points.append(self.flow_points[2])
         else:
             flow = [np.zeros(flowshape) for ii in range(2)]
             flow_points = [0,0]
@@ -1701,20 +1710,20 @@ class environment:
                 for ii in range(2):
                     flow[ii][...,0,:] = flow[ii][...,-2,:]
                     flow[ii][...,-1,:] = flow[ii][...,1,:]
-                flow_points[0] = np.insert(self.flow_points[0], # what
-                                           [0,len(self.flow_points[0])], # loc
-                                           [-dx,self.flow_points[0]+dx]) # vals
+                flow_points.append(np.insert(self.flow_points[0], # what
+                                             [0,len(self.flow_points[0])], # loc
+                                             [-dx,self.flow_points[0][-1]+dx])) # vals
             else:
-                flow_points[0] = self.flow_points[0]
+                flow_points.append(self.flow_points[0])
             if periodic_dim[1]:
                 for ii in range(2):
                     flow[ii][...,0] = flow[ii][...,-2]
                     flow[ii][...,-1] = flow[ii][...,1]
-                flow_points[1] = np.insert(self.flow_points[1],
-                                           [0,len(self.flow_points[1])],
-                                           [-dy,self.flow_points[1]+dy])
+                flow_points.append(np.insert(self.flow_points[1],
+                                             [0,len(self.flow_points[1])],
+                                             [-dy,self.flow_points[1][-1]+dy]))
             else:
-                flow_points[1] = self.flow_points[1]
+                flow_points.append(self.flow_points[1])
 
         ### Interpolate the new points ###
         if startdim == 0:
@@ -1731,18 +1740,95 @@ class environment:
             intervals = [dx,dy,dz]
         else:
             intervals = [dx,dy]
-        flow_points = [np.insert(self.flow_points[ii],
+        flow_points = [np.insert(self.flow_points[ii]+interval/2,
                                  [0,len(self.flow_points[ii])],
-                                 [-interval/2,self.flow_points[ii]+interval/2]) 
+                                 [0,self.flow_points[ii][-1]+interval])
                                  for ii,interval in enumerate(intervals)]
         flowshape = np.array(self.flow[0].shape)
         if startdim == 0:
             flowshape += 2
         else:
             flowshape[1:] += 2
-        flow = [np.zeros(flowshape) for ii in range(len(self.flow))]
-        # fill the flow fields
-        pass
+        shp = [len(points) for points in self.flow_points]
+
+        def bndry_add3d(flowshape, shp, this_vecs):
+            f = [np.zeros(flowshape) for ii in range(3)]
+            for dim in range(3):
+                # sides
+                f[dim][1:-1,1:-1,0] = np.reshape(this_vecs[:shp[0]*shp[1],dim],(shp[0],shp[1]))
+                s = shp[0]*shp[1]
+                f[dim][1:-1,1:-1,-1] = np.reshape(this_vecs[s:s+shp[0]*shp[1],dim],(shp[0],shp[1]))
+                s += shp[0]*shp[1]
+                f[dim][1:-1,0,1:-1] = np.reshape(this_vecs[s:s+shp[0]*shp[2],dim],(shp[0],shp[2]))
+                s += shp[0]*shp[2]
+                f[dim][1:-1,-1,1:-1] = np.reshape(this_vecs[s:s+shp[0]*shp[2],dim],(shp[0],shp[2]))
+                s += shp[0]*shp[2]
+                f[dim][0,1:-1,1:-1] = np.reshape(this_vecs[s:s+shp[1]*shp[2],dim],(shp[1],shp[2]))
+                s += shp[0]*shp[2]
+                f[dim][-1,1:-1,1:-1] = np.reshape(this_vecs[s:s+shp[1]*shp[2],dim],(shp[1],shp[2]))
+                s += shp[0]*shp[2]
+                # edges
+                f[dim][1:-1,0,0] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
+                f[dim][1:-1,0,-1] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
+                f[dim][1:-1,-1,0] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
+                f[dim][1:-1,-1,-1] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
+                f[dim][0,1:-1,0] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
+                f[dim][0,1:-1,-1] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
+                f[dim][-1,1:-1,0] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
+                f[dim][-1,1:-1,-1] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
+                f[dim][0,0,1:-1] = this_vecs[s:s+shp[2],dim]; s+=shp[2]
+                f[dim][0,-1,1:-1] = this_vecs[s:s+shp[2],dim]; s+=shp[2]
+                f[dim][-1,0,1:-1] = this_vecs[s:s+shp[2],dim]; s+=shp[2]
+                f[dim][-1,-1,1:-1] = this_vecs[s:s+shp[2],dim]; s+=shp[2]
+                # points
+                f[dim][0,0,0] = this_vecs[s,dim]
+                f[dim][0,0,-1] = this_vecs[s+1,dim]
+                f[dim][0,-1,0] = this_vecs[s+2,dim]
+                f[dim][-1,0,0] = this_vecs[s+3,dim]
+                f[dim][0,-1,-1] = this_vecs[s+4,dim]
+                f[dim][-1,0,-1] = this_vecs[s+5,dim]
+                f[dim][-1,-1,0] = this_vecs[s+6,dim]
+                f[dim][-1,-1,-1] = this_vecs[s+7,dim]
+            return f
+
+        def bndry_add2d(flowshape, shp, this_vecs):
+            f = [np.zeros(flowshape) for ii in range(2)]
+            for dim in range(2):
+                s=0
+                # edges
+                f[dim][1:-1,0] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
+                f[dim][1:-1,-1] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
+                f[dim][0,1:-1] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
+                f[dim][-1,1:-1] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
+                # points
+                f[dim][0,0] = this_vecs[s,dim]
+                f[dim][0,-1] = this_vecs[s+1,dim]
+                f[dim][-1,0] = this_vecs[s+2,dim]
+                f[dim][-1,-1] = this_vecs[s+3,dim]
+            return f
+
+        if DIM3 and startdim == 0:
+            # time invariant, 3D
+            flow = bndry_add3d(flowshape, shp, new_vecs)
+        elif DIM3 and startdim == 1:
+            flow = [np.zeros(flowshape+1) for ii in range(3)]
+            for n, this_vecs in enumerate(new_vecs):
+                f = bndry_add3d(flowshape, shp, this_vecs)
+                flow[0][n,...]=f[0]; flow[1][n,...]=f[1]; flow[2][n,...]=f[2]
+        elif not DIM3 and startdim == 0:
+            flow = bndry_add2d(flowshape, shp, new_vecs)
+        else:
+            flow = [np.zeros(flowshape+1) for ii in range(2)]
+            for n, this_vecs in enumerate(new_vecs):
+                f = bndry_add2d(flowshape, shp, this_vecs)
+                flow[0][n,...]=f[0]; flow[1][n,...]=f[1]
+
+        ### Replace fluid and update domain ###
+        self.flow_points = tuple(flow_points)
+        self.flow = flow
+        self.L = [self.flow_points[d][-1] for d in range(len(flow_points))]
+        self.__reset_flow_variables()
+        self.fluid_domain_LLC = tuple(np.array(self.fluid_domain_LLC)+np.array(intervals)*0.5)
 
 
 
