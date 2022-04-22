@@ -826,7 +826,8 @@ class swarm:
 
 
 
-    def move(self, dt=1.0, params=None, ib_collisions='sliding', update_time=True):
+    def move(self, dt=1.0, params=None, ib_collisions='sliding', 
+             update_time=True, silent=False):
         '''Move all organisms in the swarm over one time step of length dt.
         DO NOT override this method when subclassing; override get_positions
         instead!!!
@@ -852,6 +853,8 @@ class swarm:
             The only reason to change this to False is if there are multiple 
             swarm objects in the same environment - then you want to update 
             each before incrementing the time in the environment.
+        silent : bool, default=False
+            If True, suppress printing the updated time.
 
         See Also
         --------
@@ -879,7 +882,8 @@ class swarm:
         if update_time:
             self.envir.time_history.append(self.envir.time)
             self.envir.time += dt
-            print('time = {}'.format(np.round(self.envir.time,11)))
+            if not silent:
+                print('time = {}'.format(np.round(self.envir.time,11)))
 
             # Check for other swarms in environment and freeze them
             warned = False

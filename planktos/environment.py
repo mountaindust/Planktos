@@ -2297,16 +2297,34 @@ class environment:
             
 
 
-    def move_swarms(self, dt=1.0, params=None):
-        '''Move all swarms in the environment'''
+    def move_swarms(self, dt=1.0, params=None, ib_collisions='sliding', 
+                    silent=False):
+        '''Move all swarms in the environment.
+
+        Parameters
+        ----------
+        dt : float
+            length of time step to move all agents
+        params : any, optional
+            parameters to pass along to get_positions, if necessary
+        ib_collisions : {None, 'sliding' (default), 'sticky'}
+            Type of interaction with immersed boundaries. If None, turn off all 
+            interaction with immersed boundaries. In sliding collisions, 
+            conduct recursive vector projection until the length of the original 
+            vector is exhausted. In sticky collisions, just return the point of 
+            intersection.
+        silent : bool, default=False
+            If True, suppress printing the updated time.
+        '''
 
         for s in self.swarms:
-            s.move(dt, params, update_time=False)
+            s.move(dt, params, ib_collisions, update_time=False)
 
         # update time
         self.time_history.append(self.time)
         self.time += dt
-        print('time = {}'.format(np.round(self.time,11)))
+        if not silent:
+            print('time = {}'.format(np.round(self.time,11)))
 
 
 
