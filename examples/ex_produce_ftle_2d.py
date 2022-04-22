@@ -20,7 +20,6 @@ from planktos import motion
 envir = planktos.environment(char_L=0.1, rho=1, mu=0.001, U=15)
 
 envir.read_IB2d_vtk_data('ib2d_data', 5.0e-5, 1000)
-envir.wrap_flow(periodic_dim=[True, True])
 # Another option is to try a static flow field, for example by just using 
 #   cycle number 20 (in which vortices have formed). Just uncomment one or the
 #   other depending on what you want to calculate over!

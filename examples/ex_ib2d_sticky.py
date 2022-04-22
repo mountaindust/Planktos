@@ -20,7 +20,6 @@ import planktos
 # Let's begin by loading the same fluid and mesh as used in ex_ib2d_ibmesh.py
 envir = planktos.environment()
 envir.read_IB2d_vtk_data('ib2d_data', 5.0e-5, 1000)
-envir.wrap_flow(periodic_dim=[True, True])
 envir.read_IB2d_vertex_data('ib2d_data/channel.vertex')
 
 # In this example, we are going to create agents that stick to immersed
@@ -72,22 +71,16 @@ swrm.props['stick'] = np.full(100, False) # creates a length 100 array of False
 
 for ii in range(50):
     swrm.move(0.025, ib_collisions='sticky')
-    if np.any(swrm.ib_collision):
-        swrm.plot()
+    # if np.any(swrm.ib_collision): # uncomment to display whenever something gets stuck!
+    #     swrm.plot()
     swrm.props['stick'] = np.logical_or(swrm.props['stick'], swrm.ib_collision)
 
 swrm.plot_all(movie_filename='channel_flow_sticky.mp4', fps=3, fluid='vort')
 
-# Compare the result to that of ex_ib2d_ibmesh.py. You might have expected that 
-#   almost the entire swarm gets stuck to the cylinder - in fact, since these 
-#   are not inertial particles but tracer particles, and the flow behind the
-#   cylinder is slow and splits around the cylinder, very few agents actually 
-#   come in contact with the cylinder itself! More end up hitting the side of 
-#   the channel later on. You can clearly see these agents stuck though, as
-#   the video progresses toward the end.
+# Compare the result to that of ex_ib2d_ibmesh.py.
 
 # You can make use of the for-loop to update the swarm object in all kinds of
 #   ways, or just to collect data about the swarm dynamically. For instance,
-#   if you want to record every time that an agent encounters and immersed 
+#   if you want to record every time that an agent encounters an immersed 
 #   boundary, you could check swarm.ib_collision in the for-loop and then 
 #   record the time and boolean data by appending to a list.

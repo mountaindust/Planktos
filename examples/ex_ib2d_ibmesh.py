@@ -37,15 +37,10 @@ envir = planktos.environment()
 # As of now, Planktos only supports reading in ascii vtk files (not binary or 
 #    xml), though others may be supported in the future.
 
-# Read in ib2d vtk data with dt=5.0e-5, print_dump=1000.
+# Read in ib2d vtk data with dt=5.0e-5, print_dump=1000. The data points on the
+#   right and upper boundaries (periodic with the left and lower boundaries)
+#   will automatically be added in to complete the domain.
 envir.read_IB2d_vtk_data('ib2d_data', 5.0e-5, 1000)
-
-# This data is periodic in both directions, and the boundary is not repeated on 
-#   both sides in the vtk output. This results in the length of the two spatial 
-#   dimensions a bit short of the original 1 x 0.25 m, and the boundary data is 
-#   not necessarily the same on the matching boundaries of the spatial doman.
-#   Fix this by using the wrap_flow function.
-envir.wrap_flow(periodic_dim=[True, True])
 
 # Now we read in the vertex data to get an immersed mesh. These data include 
 #   points for two lines (the sides of the channel) and a circle representing 

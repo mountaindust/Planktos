@@ -984,6 +984,10 @@ class environment:
             number of first vtk dump to read in
         d_finish : int, optional
             number of last vtk dump to read in, or None to read to end
+        auto_regrid : bool, default=True
+            IB2d always has periodic BC and returns a VTK with fluid specified 
+            at the center of the mesh cells. Regrid based on this information to
+            make the fluid periodic within Planktos and to fill out the domain.
         '''
 
         ##### Parse parameters and read in data #####
@@ -1096,9 +1100,9 @@ class environment:
         self.flow_points = (x-x[0], y-y[0])
         self.fluid_domain_LLC = (x[0], y[0])
 
-        ### Convert environment dimensions ###
+        ### Convert environment dimensions and add back the periodic gridpoints ###
         self.L = [self.flow_points[dim][-1] for dim in range(2)]
-        self.__reset_flow_variables()
+        self.wrap_flow(periodic_dim=(True, True))
 
 
 
@@ -1497,7 +1501,7 @@ class environment:
 
 
 
-    def wrap_flow(self, periodic_dim=[True, True, False]):
+    def wrap_flow(self, periodic_dim=(True, True, False)):
         '''In some cases, software may print out fluid velocity data that omits 
         the velocities at the right boundaries in spatial dimensions that are 
         meant to be periodic. This helper function restores that data by copying 
@@ -1564,7 +1568,7 @@ class environment:
 
         # replace domain length
         self.L = [self.flow_points[d][-1] for d in range(dim)]
-        print("Fluid updated. Planktos domain size is now {}.".format(self.L))
+        self.__reset_flow_variables()
 
 
 
@@ -1648,7 +1652,7 @@ class environment:
                            [x_ends[1],y_ends[1],z_ends[0]],
                            [x_ends[1],y_ends[1],z_ends[1]]]
 
-        ### Include periodicity, if applicable ###
+        ### Include periodicity, if applicable, by extending out the fluid field ###
         flowshape = np.array(self.flow[0].shape)
         idx = []
         if len(self.flow[0].shape) == len(self.L):
@@ -1823,12 +1827,19 @@ class environment:
                 f = bndry_add2d(flowshape[1:], shp, this_vecs)
                 flow[0][n,...]=f[0]; flow[1][n,...]=f[1]
 
+        ### Add back the original fluid data ###
+        for dim in range(len(flow)):
+            if DIM3:
+                flow[dim][...,1:-1,1:-1,1:-1] = self.flow[dim]
+            else:
+                flow[dim][...,1:-1,1:-1] = self.flow[dim]
+
         ### Replace fluid and update domain ###
         self.flow_points = tuple(flow_points)
         self.flow = flow
         self.L = [self.flow_points[d][-1] for d in range(len(flow_points))]
+        self.fluid_domain_LLC = tuple(np.array(self.fluid_domain_LLC)-np.array(intervals)*0.5)
         self.__reset_flow_variables()
-        self.fluid_domain_LLC = tuple(np.array(self.fluid_domain_LLC)+np.array(intervals)*0.5)
 
 
 
@@ -1897,7 +1908,7 @@ class environment:
             raise FileNotFoundError("File {} not found!".format(filename))
         if res is None:
             assert self.flow_points is not None, "Must import flow data first!"
-            dists = np.concatenate([self.flow_points[ii][1:]-self.flow_points[ii][0:-1]
+            dists = np.concatenate([self.flow_points[ii][2:-1]-self.flow_points[ii][1:-2]
                                     for ii in range(2)])
             Eulerian_res = dists.min()
         else:

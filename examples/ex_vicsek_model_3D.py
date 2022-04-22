@@ -33,7 +33,9 @@ envir = planktos.environment(Lx=0.21, Ly=2.5, Lz=0.2, x_bndry='noflux',
 
 ##### Load fluid data #####
 # envir.read_comsol_vtu_data('comsol_data/WindTunnel-p22mps.vtu')
+# envir.center_cell_regrid()
 envir.read_comsol_vtu_data('comsol_data/PeriodicWindTunnel-p22mps.vtu')
+envir.center_cell_regrid(periodic_dim=(False, True, False))
 
 ##### Load mesh data #####
 # this was in mm...
