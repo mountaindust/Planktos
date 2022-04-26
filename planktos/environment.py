@@ -61,12 +61,13 @@ class environment:
         Length of domain in z direction
     x_bndry : {'zero', 'noflux', 'periodic'} as str or [str, str], default='zero'
         agent boundary condition in the x-axis (if the same on both sides), or 
-        [left bndry condition, right bndry condition]. Choices are 'zero' and 
-        'noflux'. Agents leaving a zero boundary condition will be marked as 
-        masked and cease to be updated or plotted afterward. In the noflux case, 
-        agents will undergo a sliding collision with the boundary. Movement 
-        that would have occurred through the boundary will be projected onto 
-        the boundary instead.
+        [left bndry condition, right bndry condition]. Choices are 'zero', 
+        'noflux', and 'periodic'. Agents leaving a zero boundary condition will 
+        be marked as masked and cease to be updated or plotted afterward. In the 
+        noflux case, agents will undergo a sliding collision with the boundary. 
+        Movement that would have occurred through the boundary will be projected 
+        onto the boundary instead. In the periodic case, agents leaving one side 
+        of the domain will reenter on the other side.
     y_bndry : str or [str, str], default='zero'
         agent boundary condition in the y-axis (if the same on both sides), or 
         [left bndry condition, right bndry condition].
