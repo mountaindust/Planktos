@@ -204,7 +204,7 @@ class environment:
     t_interp : list of PPoly objects
         Used for temporal CubicSpline interpolation. Set by interpolater method.
     dt_interp : list of PPoly objects
-        Used for temporal derivative interpolation. Set by interpolater method.
+        Used for temporal derivative interpolation. Set by dudt method.
 
     Examples
     --------
@@ -2449,7 +2449,6 @@ class environment:
     def _create_temporal_interpolations(self):
         '''Create PPoly CubicSplines to interpolate the fluid velocity in time.'''
         self.t_interp = []
-        self.dt_interp = []
         for flow in self.flow:
             # Defaults to axis=0 along which data is varying, which is t axis
             # Defaults to not-a-knot boundary condition, resulting in first
@@ -2458,7 +2457,16 @@ class environment:
             #   and last intervals. This will be overriden by this method
             #   to use constant extrapolation instead.
             self.t_interp.append(interpolate.CubicSpline(self.flow_times, flow))
-            self.dt_interp.append(self.t_interp[-1].derivative())
+
+
+
+    def _create_dt_interpolations(self):
+        '''Create PPoly objects for dudt.'''
+        self.dt_interp = []
+        if self.t_interp is None:
+            self._create_temporal_interpolations()
+        for ppoly in self.t_interp:
+            self.dt_interp.append(ppoly.derivative())
 
 
 
@@ -3184,9 +3192,9 @@ class environment:
             return [np.zeros_like(f) for f in self.flow]
         else:
             # temporal flow.
-            # If PPoly CubicSplines do not exist, create them.
-            if self.t_interp is None:
-                self._create_temporal_interpolations()
+            # If PPoly derivatives do not exist, create them.
+            if self.dt_interp is None:
+                self._create_dt_interpolations()
             return [dfdt(time) for dfdt in self.dt_interp]
 
 
@@ -3757,4 +3765,8 @@ class environment:
         cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])
         plt.colorbar(pcm, cax=cbaxes)
         plt.show()
+
+
+
+
 
