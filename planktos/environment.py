@@ -3795,14 +3795,22 @@ class fCubicSpline(interpolate.CubicSpline):
         if type(pos) == int:
             return self.__call__(self.x[pos])
         elif type(pos) == slice:
+            start = pos.start; stop = pos.stop; step = pos.step
+            if start is None: start = 0
+            if stop is None: stop = len(self.x)+1
+            if step is None: step = 1
             return np.stack([self.__call__(self.x[n]) for 
-                             n in range(pos.start,pos.stop,pos.step)])
+                             n in range(start,stop,step)])
         elif type(pos) == tuple:
             if type(pos[0]) == int:
                 return self.__call__(self.x[pos[0]])[pos[1:]]
             elif type(pos[0]) == slice:
+                start = pos[0].start; stop = pos[0].stop; step = pos[0].step
+                if start is None: start = 0
+                if stop is None: stop = len(self.x)+1
+                if step is None: step = 1
                 return np.stack([self.__call__(self.x[n])[pos[1:]] for 
-                                 n in range(pos[0].start,pos[0].stop,pos[0].step)])
+                                 n in range(start,stop,step)])
             else:
                 raise IndexError('Only integers or slices supported in fCubicSpline.')
         else:
