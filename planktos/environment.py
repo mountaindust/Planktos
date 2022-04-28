@@ -3539,9 +3539,6 @@ class environment:
 
         ########## 2D Plot #########
         if len(self.L) == 2:
-            # get worse case max velocity vector for scaling
-            max_u = self.flow[0].max(); max_v = self.flow[1].max()
-            max_mag = np.linalg.norm(np.array([max_u,max_v]))
             if len(self.L) == len(self.flow[0].shape) or t is not None:
                 # Single-time plot.
                 if loc is None:
