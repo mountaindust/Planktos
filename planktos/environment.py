@@ -134,10 +134,12 @@ class environment:
         current environment time
     time_history : list of floats
         list of past time states
-    flow : list of ndarrays
+    flow : list of ndarrays or fCubicSpline objects
         [x-vel field ndarray ([t],i,j,[k]), y-vel field ndarray ([t],i,j,[k]),
             z-vel field ndarray (if 3D)]. i is x index, j is y index, with the 
-            value of x and y increasing as the index increases.
+            value of x and y increasing as the index increases. Arrays get 
+            replaced by fCubicSpline objects (if the fluid velocity is 
+            temporally varying) when they are first needed.
     flow_times : ndarray of floats or None
         if specified, the time stamp for each index t in the flow arrays (time 
         varying fluid velocity fields only)
@@ -201,8 +203,6 @@ class environment:
         acts as a cache for the gradient of magnitude of the fluid velocity
     grad_time : float
         simulation time at which gradient above was calculated
-    t_interp : list of PPoly objects
-        Used for temporal CubicSpline interpolation. Set by interpolater method.
     dt_interp : list of PPoly objects
         Used for temporal derivative interpolation. Set by dudt method.
 
@@ -244,7 +244,6 @@ class environment:
         self.grad = None
         self.grad_time = None
         self.flow = flow
-        self.t_interp = None # list of PPoly objs for temporal CubicSpline interpolation
         self.dt_interp = None # list of PPoly objs for temporal derivative interpolation
 
         if flow is not None:
@@ -2426,8 +2425,10 @@ class environment:
             interpolated flow field as a list of ndarrays
         '''
 
-        # If PPoly CubicSplines do not exist, create them.
-        if self.t_interp is None:
+        # If fCubicSplines do not exist, create them.
+        if self.flow is None:
+            raise RuntimeError("Cannot temporally interpolate None flow.")
+        if not all([type(f) == fCubicSpline for f in self.flow]):
             self._create_temporal_interpolations()
 
         if t_indx is None and time is None:
@@ -2442,30 +2443,30 @@ class environment:
             return [f[-1, ...] for f in self.flow]
         else:
             # interpolate
-            return [f(time) for f in self.t_interp]
+            return [f(time) for f in self.flow]
 
 
 
     def _create_temporal_interpolations(self):
-        '''Create PPoly CubicSplines to interpolate the fluid velocity in time.'''
-        self.t_interp = []
-        for flow in self.flow:
+        '''Create PPoly fCubicSplines to interpolate the fluid velocity in time.'''
+        for n, flow in enumerate(self.flow):
             # Defaults to axis=0 along which data is varying, which is t axis
             # Defaults to not-a-knot boundary condition, resulting in first
             #   and second segments at curve ends being the same polynomial
             # Defaults to extrapolating out-of-bounds points based on first
             #   and last intervals. This will be overriden by this method
             #   to use constant extrapolation instead.
-            self.t_interp.append(interpolate.CubicSpline(self.flow_times, flow))
+            if type(flow) != fCubicSpline:
+                self.flow[n] = fCubicSpline(self.flow_times, flow)
 
 
 
     def _create_dt_interpolations(self):
         '''Create PPoly objects for dudt.'''
         self.dt_interp = []
-        if self.t_interp is None:
+        if not all([type(f) == fCubicSpline for f in self.flow]):
             self._create_temporal_interpolations()
-        for ppoly in self.t_interp:
+        for ppoly in self.flow:
             self.dt_interp.append(ppoly.derivative())
 
 
@@ -3233,11 +3234,10 @@ class environment:
 
 
     def __reset_flow_deriv(self):
-        '''Reset properties that are derived from the flow velocity itself.'''
+        '''Reset properties that are derived from the flow velocity.'''
 
         self.grad = None
         self.grad_time = None
-        self.t_interp = None
         self.dt_interp = None
 
 
