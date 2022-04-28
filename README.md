@@ -164,14 +164,16 @@ Class: environment
     - `bndry` list of tuples giving the boundary conditions (strings) of each dimension
     - `flow_times` list of times at which fluid data is specified
     - `flow_points` list of spatial points (as tuples) where flow data is specified. These are assumed to be the same across time points
-    - `flow` fluid flow velocity data. List of length 2 or 3, where each entry is an ndarray giving fluid velocity in the x, y, (and z) directions. If the flow is time-dependent, the first dimension of each ndarray is time, with the others being space. This implies that the velocity field must be specified on a regular spatial grid, and it is also assumed that the outermost points on the grid are on the boundary for interpolation purposes.
+    - `flow` fluid flow velocity data. List of length 2 or 3, where each entry is an ndarray giving fluid velocity in the x, y, (and z) directions. If the flow is time-dependent, the first dimension of each ndarray is time, with the others being space. This implies that the velocity field must be specified on a rectilinear spatial grid, and it is also assumed that the outermost points on the grid are on the boundary for interpolation purposes. The first 
+    time that temporal interpolation becomes necessary, these ndarrays are all replaced with 
+    spline objects (fCubicSpline, a subclass of scipy.interpolate.CubicSpline). The original
+    data can be regenerated using the regenerate_flow_data method.
     - `swarms` list of swarm objects in the environment
     - `time` current time of the simulation
     - `time_history` history of time points simulated
     - `ibmesh` Nx2x2 or Nx3x3 ndarray of mesh elements, given as line segment vertices (2D) or triangle vertices (3D)
     - `max_meshpt_dist` max distance between two vertices in ibmesh. Used internally.
-    - `t_interp` scipy.interpolate PPoly instance giving a CubicSpline interpolation of flow in time
-    - `t_interp` scipy.interpolate PPoly instance giving the time derivative of the flow velocity field
+    - `dt_interp` scipy.interpolate PPoly instance giving the time derivative of the flow velocity field
     - `struct_plots` additional items (structures) can be plotted along with the simulation by storing function handles in this list. The plotting routine will call each of them in order, passing the main axes handle as the first argument
     - `struct_plots_args` list of tuples supplying additional arguments to be passed to the struct_plots functions
     - `tiling` if the domain has been tiled, the amount of tiling is recorded here (x,y)
@@ -198,6 +200,9 @@ Class: environment
     - `load_NetCDF` Load a NetCDF file with fluid velocity data in it. Does not read in the data in case inspection is necessary; see read_NetCDF_flow.
     - `read_NetCDF_flow` Read in fluid velocity data from a loaded NetCDF file.
     - `wrap_flow` Wrap fluid velocity in periodic dimensions.
+    - `center_cell_regrid` If the loaded data represents the fluid velocity at the center of 
+    each grid cell, this method will add the boundaries back in, thus extending the domain 
+    to it's original extents on all sides.
     - `read_stl_mesh_data` Reads in 3D immersed boundary data from an ascii or binary stl file. Only static meshes are supported.
     - `read_IB2d_vertex_data` Read in 2D immersed boundary data from a .vertex file used in IB2d. Will assume that vertices closer than half (+ epsilon) the Eulerian mesh resolution are connected linearly. Only static meshes are supported.
     - `read_vertex_data_to_convex_hull` Read in 2D or 3D vertex data from a vtk file or a .vertex file and create a structure by computing the convex hull. Only static meshes are supported.
@@ -214,6 +219,7 @@ Class: environment
     - `dudt` Returns a temporally interpolated time-derivative of the flow field
     - `get_mean_fluid_speed` Return the mean fluid speed at the current time, interpolating if necessary
     - `reset` Resets environment to time=0. Swarm history will be lost, and all swarms will maintain their last position. This is typically called automatically if the fluid flow has been altered by another method. If rm_swarms=True, remove all swarms.
+    - `regenerate_flow_data` Regenerate the original fluid data from fCubicSpline objects
     - `save_fluid` Save the fluid velocity field as one or more vtk files (one for each time point).
     - `get_2D_vorticity` Calculate and return the vorticity of a 2D flow field, 
     potentially interpolated in time.
