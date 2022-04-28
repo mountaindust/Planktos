@@ -3215,6 +3215,15 @@ class environment:
 
 
 
+    def regenerate_flow_data(self):
+        '''Regenerates the original fluid velocity data from temporal spline 
+        objects.
+        '''
+        for n, flow in enumerate(self.flow):
+            self.flow[n] = flow.regenerate_data()
+
+
+
     def __reset_flow_variables(self, incl_rho_mu_U=False):
         '''To be used when the fluid flow changes. Resets all the helper
         parameters and reports new domain.'''
@@ -3798,6 +3807,12 @@ class fCubicSpline(interpolate.CubicSpline):
                 raise IndexError('Only integers or slices supported in fCubicSpline.')
         else:
             raise IndexError('Only integers or slices supported in fCubicSpline.')
+
+
+
+    def __setitem__(self, pos, val):
+        raise RuntimeError("Cannot assign to spline object. "+
+                           "Use regenerate_data to recreate original data first.")
 
 
 
