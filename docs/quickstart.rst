@@ -42,7 +42,7 @@ Non-optional depdencencies (other than FFmpeg) should automatically be installed
 Planktos is still in active development and updates occur often. You should 
 therefore pull the source repo often and then reinstall using the same command. 
 To avoid needing to reinstall each time you pull the repo, you can instead 
-install Planktos in "editable" mode: ::
+install Planktos in "editable" mode (requires pip version >= 21.1): ::
 
     pip install -e .
 
