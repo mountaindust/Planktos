@@ -3768,5 +3768,55 @@ class environment:
 
 
 
+class fCubicSpline(interpolate.CubicSpline):
+    '''
+    Extends Scipy's CubicSpline object to get info about original fluid data.
+    '''
+
+    def __init__(self, flow_times, flow, **kwargs):
+        super(fCubicSpline, self).__init__(flow_times, flow, **kwargs)
+
+        self.shape = flow.shape
+        self.data_max = flow.max()
+        self.data_min = flow.min()
+
+
+
+    def __getitem__(self, pos):
+        '''
+        Allows indexing into the interpolator.
+        '''
+        if type(pos) == int:
+            return self.__call__(self.x[pos])
+        elif type(pos) == slice:
+            return np.stack([self.__call__(self.x[n]) for 
+                             n in range(pos.start,pos.stop,pos.step)])
+        elif type(pos) == tuple:
+            if type(pos[0]) == int:
+                return self.__call__(self.x[pos[0]])[pos[1:]]
+            elif type(pos[0]) == slice:
+                return np.stack([self.__call__(self.x[n])[pos[1:]] for 
+                                 n in range(pos[0].start,pos[0].stop,pos[0].step)])
+            else:
+                raise IndexError('Only integers or slices supported in fCubicSpline.')
+        else:
+            raise IndexError('Only integers or slices supported in fCubicSpline.')
+
+
+
+    def max(self):
+        return self.data_max
+
+    def min(self):
+        return self.data_min
+
+    def absmax(self):
+        return np.abs(np.array([self.data_max, self.data_min])).max()
+
+    def regenerate_data(self):
+        '''
+        Rebuild the original data.
+        '''
+        return np.stack([self.__call__(val) for val in self.x])
 
 
