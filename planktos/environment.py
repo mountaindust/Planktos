@@ -2742,10 +2742,16 @@ class environment:
                 new_time = min(current_time + dt,T)
                 ### TODO: REDO THIS SOLVER!!!!!!!!
                 if ode_gen is None:
-                    y = s.positions[~s.positions[:,0].mask,:]
+                    if not ma.is_masked(s.positions):
+                        y = s.positions
+                    else:
+                        y = s.positions[~s.positions[:,0].mask,:]
                 else:
-                    y = np.concatenate((s.positions[~s.positions[:,0].mask,:], 
-                                        s.velocities[~s.velocities[:,0].mask,:]))
+                    if not ma.is_masked(s.positions):
+                        y = np.concatenate((s.positions, s.velocities))
+                    else:
+                        y = np.concatenate((s.positions[~s.positions[:,0].mask,:], 
+                                            s.velocities[~s.velocities[:,0].mask,:]))
                 try:
                     # solve
                     y_new = motion.RK45(ode_fun, current_time, y, new_time, h_start=t_bound)
