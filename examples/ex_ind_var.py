@@ -6,8 +6,6 @@ from agent to agent.
 '''
 
 import numpy as np
-import sys
-sys.path.append('..')
 import planktos
 
 # Let's go ahead and create a default environment with some Brinkman flow in 2D.

@@ -4,8 +4,6 @@ This is a tutorial and minimal working example of specifying non-default agent
 behavior. This is done by overriding parts of the swarm class.
 '''
 
-import sys
-sys.path.append('../')
 import numpy as np
 import planktos
 

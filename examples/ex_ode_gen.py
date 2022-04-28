@@ -5,8 +5,6 @@ of motion in Planktos.
 '''
 
 import numpy as np
-import sys
-sys.path.append('..')
 import planktos
 
 # In creating models of motion for agents, you will often want to specify a

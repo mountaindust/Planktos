@@ -8,8 +8,6 @@ This example loads the vtk fluid velocity field AND loads vertex data describing
 a 3D cylinder, creating an ibmesh out of it using a convex hull algorithm. \
 Agents should not be able to move through the cylinder boundaries.'''
 
-import sys
-sys.path.append('..')
 import planktos
 
 # Let's begin by creating a default environment.

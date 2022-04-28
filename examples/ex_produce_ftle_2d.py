@@ -2,8 +2,6 @@
 Examples of computing FTLE in 2D. 3D is largely untested.
 '''
 
-import sys
-sys.path.append('..')
 import planktos
 from planktos import motion
 

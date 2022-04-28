@@ -16,8 +16,6 @@ attaching nearby points. Agents cannot move through the cylinder or the channel
 boundaries.
 '''
 
-import sys
-sys.path.append('..')
 import planktos
 
 # As before, we begin by creating a default environment. It does not matter what 

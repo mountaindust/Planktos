@@ -3,13 +3,9 @@
 '''
 This is a tutorial and minimal working example in 2D to illustrate the main 
 points of creating a simulation in Planktos.
-'''
 
-# these two lines are to add the directory where the planktos folder is located 
-#   to the path so that the import statment can find it. If you are working in 
-#   the base directory of the repository, you can omit these lines.
-import sys
-sys.path.append('..')
+Planktos must be installed for this to work! (See README.md or documentation)
+'''
 
 import planktos
 

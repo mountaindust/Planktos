@@ -6,8 +6,6 @@ example and further illustrates the main points of creating a simulation in
 Planktos.
 '''
 
-import sys
-sys.path.append('..')
 import planktos
 
 # To create a 3D environment in Planktos, all you need to do is specify the 

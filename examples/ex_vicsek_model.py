@@ -23,8 +23,6 @@ References
     particles," Physical Review Letters, 75(6), 1226-1229.
 '''
 
-import sys
-sys.path.append('..')
 import numpy as np
 import planktos
 

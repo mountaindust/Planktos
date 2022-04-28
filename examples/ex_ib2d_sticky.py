@@ -12,8 +12,6 @@ Put it into the ib2d_data folder in this example directory, and you should be
 good to go!
 '''
 
-import sys
-sys.path.append('..')
 import numpy as np
 import planktos
 
