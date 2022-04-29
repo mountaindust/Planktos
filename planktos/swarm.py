@@ -727,11 +727,11 @@ class swarm:
 
         if not all or len(self.envir.time_history) == 0:
             if DIM2:
-                data = np.zeros((self.positions[~self.positions[:,0].mask,:].shape[0],3))
-                data[:,:2] = self.positions[~self.positions[:,0].mask,:]
+                data = np.zeros((self.positions[~ma.getmaskarray(self.positions[:,0]),:].shape[0],3))
+                data[:,:2] = self.positions[~ma.getmaskarray(self.positions[:,0]),:]
                 dataio.write_vtk_point_data(path, name, data)
             else:
-                dataio.write_vtk_point_data(path, name, self.positions[~self.positions[:,0].mask,:])
+                dataio.write_vtk_point_data(path, name, self.positions[~ma.getmaskarray(self.positions[:,0]),:])
         else:
             for cyc, time in enumerate(self.envir.time_history):
                 if DIM2:
@@ -745,13 +745,13 @@ class swarm:
                         cycle=cyc, time=time)
             cyc = len(self.envir.time_history)
             if DIM2:
-                data = np.zeros((self.positions[~self.positions[:,0].mask,:].shape[0],3))
-                data[:,:2] = self.positions[~self.positions[:,0].mask,:]
+                data = np.zeros((self.positions[~ma.getmaskarray(self.positions[:,0]),:].shape[0],3))
+                data[:,:2] = self.positions[~ma.getmaskarray(self.positions[:,0]),:]
                 dataio.write_vtk_point_data(path, name, data, cycle=cyc,
                                              time=self.envir.time)
             else:
                 dataio.write_vtk_point_data(path, name, 
-                    self.positions[~self.positions[:,0].mask,:],
+                    self.positions[~ma.getmaskarray(self.positions[:,0]),:],
                     cycle=cyc, time=self.envir.time)
 
 
@@ -1221,9 +1221,9 @@ class swarm:
             # if there are any masked agents, skip them in the loop
             if np.any(self.positions.mask):
                 for n, startpt, endpt in \
-                    zip(np.arange(self.positions.shape[0])[~self.positions.mask[:,0]],
-                        self.pos_history[-1][~self.positions.mask[:,0],:].copy(),
-                        self.positions[~self.positions.mask[:,0],:].copy()
+                    zip(np.arange(self.positions.shape[0])[~ma.getmaskarray(self.positions[:,0])],
+                        self.pos_history[-1][~ma.getmaskarray(self.positions[:,0]),:].copy(),
+                        self.positions[~ma.getmaskarray(self.positions[:,0]),:].copy()
                         ):
                     IBC_routine(n, self, startpt, endpt, ib_collisions)
             # if all are masked, skip all boundary checks

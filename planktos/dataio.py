@@ -587,7 +587,7 @@ def write_vtk_point_data(path, title, data, cycle=None, time=None):
 
     path = Path(path)
     if not path.is_dir():
-        os.mkdir(path)
+        os.makedirs(path)
     if cycle is None:
         filepath = path / (title + '.vtk')
     else:

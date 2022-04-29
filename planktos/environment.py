@@ -2764,16 +2764,16 @@ class environment:
                 s.pos_history.append(s.positions.copy())
                 # pull solution into swarm object's position/velocity attributes
                 if ode_gen is None:
-                    s.positions[~s.positions[:,0].mask,:] = y_new
+                    s.positions[~ma.getmaskarray(s.positions[:,0]),:] = y_new
                 else:
                     N = round(y_new.shape[0]/2)
-                    s.positions[~s.positions[:,0].mask,:] = y_new[:N,:]
+                    s.positions[~ma.getmaskarray(s.positions[:,0]),:] = y_new[:N,:]
                     s.velocities[~s.velocities[:,0].mask,:] = y_new[N:,:]
                 # apply boundary conditions
                 old_mask = s.positions.mask.copy()
                 s.apply_boundary_conditions()
                 # copy time to non-masked locations
-                last_time[~s.positions[:,0].mask] = new_time
+                last_time[~ma.getmaskarray(s.positions[:,0])] = new_time
                 
                 # check if there were any boundary exits.
                 #   if so, save this state. Also, always keep the first state
@@ -2827,7 +2827,7 @@ class environment:
                 self.time_history.append(self.time)
                 self.time += dt
                 # copy time to non-masked locations
-                last_time[~s.positions[:,0].mask] = self.time
+                last_time[~ma.getmaskarray(s.positions[:,0])] = self.time
 
                 print('t={}'.format(self.time))
 
