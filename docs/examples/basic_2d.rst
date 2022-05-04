@@ -4,15 +4,23 @@ Basic 2D example
 This example (along with all tutorial comments) can be found in 
 examples/basic_ex_2d.py.
 
-Depending on where your Planktos script is located, you need to add the location 
-of the planktos library to your path. For instance, assuming that you are within 
-the examples directory, you need to start with::
+If Planktos is properly installed according to the quickstart instructions, 
+loading the library is as easy as::
+
+    import planktos
+
+If this fails, Planktos has not been installed. Please follow the installation 
+instructions in the quickstart. Alternatively, you can explicitly specify the 
+location of the planktos library. Depending on where your Planktos script is 
+located, you would need to add the location of the planktos library to your 
+Python path. For instance, assuming that you are within the examples directory, 
+you'd need to start with::
 
     import sys
     sys.path.append('..')
     import planktos
 
-With that accomplished, the first thing we do is create an environment. 
+Once planktos is imported, the first thing we do is create an environment. 
 The default environment is a 10 meter by 10 meter 2D rectangle in which agents 
 can exit out of any side (after which they cease to be simulated). The fluid 
 velocity is zero everywhere until you set it to something else. See the 

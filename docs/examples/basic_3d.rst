@@ -3,8 +3,6 @@ Basic 3D example
 
 This is a minimal working example in 3D which builds on the 2D example. ::
 
-    import sys
-    sys.path.append('..')
     import planktos
 
 To create a 3D environment in Planktos, all you need to do is specify the 

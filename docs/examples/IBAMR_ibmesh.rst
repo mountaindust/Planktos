@@ -7,8 +7,6 @@ hull algorithm and demonstrates how the domain can be tiled. The script for this
 example can be found in the examples folder under the name ex_IBAMR_ibmesh.py. 
 The data was generated in IBAMR. [1]_ [2]_ ::
 
-    import sys
-    sys.path.append('..')
     import planktos
 
     envir = planktos.environment()

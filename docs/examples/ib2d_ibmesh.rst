@@ -14,8 +14,6 @@ example for the generated fluid velocity field and the .vertex data,
 creating an ibmesh out of it by attaching nearby points. Agents cannot move 
 through the cylinder or the channel boundaries. [1]_ [2]_ [3]_ ::
 
-    import sys
-    sys.path.append('..')
     import planktos
 
 As before, we begin by creating a default environment. It does not matter what 
@@ -35,9 +33,6 @@ that generated the data. You need to know two basic things:
 In the case of this example, dt=5.0e-5 and print_dump=1000. This means that 
 each time you go from one vtk file to the next, it represents a time step
 of length 5.0e-5*1000 = 0.05.
-
-As of now, Planktos only supports reading in ascii vtk files (not binary or 
-xml), though others may be supported in the future.
 
 Read in ib2d vtk data with dt=5.0e-5, print_dump=1000. ::
 
