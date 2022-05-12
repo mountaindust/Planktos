@@ -14,7 +14,10 @@ The 2D fluid velocity data for this example is large and several instances of
 fluid velocity fields were tested. Rather than trying to include all this data 
 for download somehow (GBs), it will be available on request. Running this example 
 will result in a null model simulation that includes the mesh data but does not 
-include the fluid velocity data. 
+include the fluid velocity data.
+
+Special thanks to Kimberlyn Eversman for adding a distance function that 
+respects periodic boundary conditions!
 
 References
 ----------
@@ -68,14 +71,56 @@ class vicsek(planktos.swarm):
         #   initial position or zero if there is no flow.
 
         ### Uniform random angle IC, just to verify things are working ###
-        # rnd_angles = self.rndState.rand(self.positions.shape[0])*2*np.pi
+        # rnd_angles = self.rndState.random(self.positions.shape[0])*2*np.pi
 
         ### Bias initial vel toward the right to move toward cylinder ###
         # Add a random perturbation with angle between [-nu/2, nu/2]
         rnd_angles = self.get_prop('nu')*(
-            self.rndState.rand(self.positions.shape[0]) - 0.5)
+            self.rndState.random(self.positions.shape[0]) - 0.5)
         self.velocities += self.get_prop('v')*np.array([
             np.cos(rnd_angles), np.sin(rnd_angles)]).T
+    
+    def __calc_dist(self, origin, positions_array):
+        ''' A private method that calculates the distance between an origin 
+        position and all the postions in postions_array, respecting periodic
+        boundary conditions when applicable.
+            
+            Parameters
+            ----------
+            origin : ndarray
+                length d array where d is the dimension of the environment.
+            positions_array : np array
+                N by d array where N is the number of agents and d is the 
+                    dimension of the environment.
+            domain : ndarray
+                length d array that specifies the dimensions of the environment.
+        '''
+
+        diffs = np.zeros(positions_array.shape)
+
+        # get boundary condition type
+        x_bndry = self.envir.bndry[0][0]
+        y_bndry = self.envir.bndry[1][0]
+
+        # get length of each spatial dimension
+        domain = self.envir.L
+
+        x_delta = positions_array[:,0] - origin[0]
+        y_delta = positions_array[:,1] - origin[1]
+        
+        if x_bndry == 'periodic':
+            diffs[:,0] = (x_delta + domain[0]/2) % domain[0] - domain[0]/2
+        else:
+            diffs[:,0] = x_delta
+
+        if y_bndry == 'periodic':
+            diffs[:,1] = (y_delta + domain[1]/2) % domain[1] - domain[1]/2
+        else:
+            diffs[:,1] = y_delta
+
+        dist = np.sqrt(diffs[:,0]**2 + diffs[:,1]**2)
+
+        return dist
 
 
     def get_positions(self, dt, params):
@@ -86,15 +131,14 @@ class vicsek(planktos.swarm):
         #   and averaging their angles
         avg_angles = np.zeros(self.positions.shape[0])
         for n in range(self.positions.shape[0]):
-            pos_diff = self.positions - self.positions[n,:]
-            dist = np.sqrt(pos_diff[:,0]**2 + pos_diff[:,1]**2)
+            dist = self.__calc_dist(self.positions[n,:], self.positions)
             avg_angles[n] = np.arctan2(
                 np.mean(self.velocities[dist<self.get_prop('r'),1]),
                 np.mean(self.velocities[dist<self.get_prop('r'),0]))
 
         # find new angles according to the Vicsek model
         angle_noise = self.get_prop('nu')*(
-            self.rndState.rand(self.positions.shape[0]) - 0.5)
+            self.rndState.random(self.positions.shape[0]) - 0.5)
         new_angles = avg_angles + angle_noise
 
         # convert to velocities and add the fluid velocity

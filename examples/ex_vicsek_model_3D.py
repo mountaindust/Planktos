@@ -8,6 +8,9 @@ The fluid velocity data will be made available on request. Running this example
 will result in a null model simulation that includes the mesh data but does not 
 include the fluid velocity data. 
 
+Special thanks to Kimberlyn Eversman for adding a distance function that 
+respects periodic boundary conditions!
+
 References
 ----------
 .. [1] Tamas Vicsek, Andras Czirok, Eshel Ben-Jacob, Inon Cohen, Ofer Schochet, 
@@ -71,17 +74,17 @@ class vicsek3d(planktos.swarm):
         #   initial position or zero if there is no flow.
 
         ### Uniform random angle IC, just to verify things are working ###
-        # rnd_angles_theta = self.rndState.rand(self.positions.shape[0])*2*np.pi
-        # rnd_angles_phi = self.rndState.rand(self.positions.shape[0])*np.pi
+        # rnd_angles_theta = self.rndState.random(self.positions.shape[0])*2*np.pi
+        # rnd_angles_phi = self.rndState.random(self.positions.shape[0])*np.pi
 
         ### Bias initial vel toward y+ to move toward cylinder ###
         # Add a random perturbation with theta angle between [-nu/2, nu/2] and
         #   phi angle between pi/2 + [-nu/4, nu/4]
         rnd_angles_theta = np.pi/2 + self.get_prop('nu_theta')*(
-            self.rndState.rand(self.positions.shape[0]) - 0.5)
+            self.rndState.random(self.positions.shape[0]) - 0.5)
         rnd_angles_phi = np.ones(self.positions.shape[0])*np.pi/2
         # rnd_angles_phi = np.pi/2 + 0.5*self.get_prop('nu_phi')*(
-        #     self.rndState.rand(self.positions.shape[0]) - 0.5)
+        #     self.rndState.random(self.positions.shape[0]) - 0.5)
 
         # Set IC
         self.velocities += self.get_prop('v')*np.array([
@@ -89,6 +92,55 @@ class vicsek3d(planktos.swarm):
             np.sin(rnd_angles_theta)*np.sin(rnd_angles_phi),
             np.cos(rnd_angles_phi)]).T
 
+    def __calc_dist(self, origin, positions_array):
+        ''' A private method that calculates the distance between an origin 
+        position and all the postions in postions_array, respecting periodic
+        boundary conditions when applicable.
+            
+            Parameters
+            ----------
+            origin : np array
+                1 by d array where d is the dimension of the environment.
+            positions_array : np array
+                N by d array where N is the number of agents and d is the 
+                    dimension of the environment.
+            domain : np array
+                1 by d array that has the dimensions of the domain. Give the 
+                    dimensions of the environment.
+        '''
+
+        diffs = np.zeros(positions_array.shape)
+
+        # get boundary condition type
+        x_bndry = self.envir.bndry[0][0]
+        y_bndry = self.envir.bndry[1][0]
+        z_bndry = self.envir.bndry[2][0]
+
+        # get length of each spatial dimension
+        domain = self.envir.L
+
+        x_delta = positions_array[:,0] - origin[0]
+        y_delta = positions_array[:,1] - origin[1]
+        z_delta = positions_array[:,2] - origin[2]
+        
+        if x_bndry == 'periodic':
+            diffs[:,0] = (x_delta + domain[0]/2) % domain[0] - domain[0]/2
+        else:
+            diffs[:,0] = x_delta
+
+        if y_bndry == 'periodic':
+            diffs[:,1] = (y_delta + domain[1]/2) % domain[1] - domain[1]/2
+        else:
+            diffs[:,1] = y_delta
+
+        if z_bndry == 'periodic':
+            diffs[:,2] = (z_delta + domain[2]/2) % domain[2] - domain[2]/2
+        else:
+            diffs[:,2] = z_delta
+
+        dist = np.sqrt(diffs[:,0]**2 + diffs[:,1]**2 + diffs[:,2]**2)
+            
+        return dist
 
     def get_positions(self, dt, params):
         # Note that the time-step matters: the angle noise and averaging happens
@@ -99,8 +151,7 @@ class vicsek3d(planktos.swarm):
         avg_angles_theta = np.zeros(self.positions.shape[0])
         avg_angles_phi = np.zeros(self.positions.shape[0])
         for n in range(self.positions.shape[0]):
-            pos_diff = self.positions - self.positions[n,:]
-            dist = np.sqrt(pos_diff[:,0]**2 + pos_diff[:,1]**2 + pos_diff[:,2]**2)
+            dist = self.__calc_dist(self.positions[n,:], self.positions)
             avg_angles_theta[n] = np.arctan2(
                 np.mean(self.velocities[dist<self.get_prop('r'),1]),
                 np.mean(self.velocities[dist<self.get_prop('r'),0]))
@@ -114,9 +165,9 @@ class vicsek3d(planktos.swarm):
 
         # find new angles according to the Vicsek model
         angle_noise_theta = self.get_prop('nu_theta')*(
-            self.rndState.rand(self.positions.shape[0]) - 0.5)
+            self.rndState.random(self.positions.shape[0]) - 0.5)
         angle_noise_phi = 0.5*self.get_prop('nu_phi')*(
-            self.rndState.rand(self.positions.shape[0]) - 0.5)
+            self.rndState.random(self.positions.shape[0]) - 0.5)
         new_angles_theta = avg_angles_theta + angle_noise_theta
         new_angles_phi = avg_angles_phi + angle_noise_phi
 
@@ -139,15 +190,18 @@ IC_pos[:,1] = 0.9
 IC_pos[:,2] = (np.random.rand(SWARM_SIZE)-0.5)*0.1 + z_center
 
 # create Vicsek swarm
-# swrm = vicsek3d(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
+swrm = vicsek3d(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
 
 # passive particles for comparsion
-swrm = planktos.swarm(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
+# swrm = planktos.swarm(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
 # swrm.shared_props['cov'] *= 0.02**2 # with jitter
-swrm.shared_props['cov'] *= 0 # without jitter
+# swrm.shared_props['cov'] *= 0 # without jitter
 
 # conduct simulation
 for ii in range(80): # 20 seconds w/ quarter second timesteps (null was 40 sec.)
     swrm.move(0.25)
 
-swrm.plot_all(movie_filename='vicsek3d_PeriodicPassive.mp4', fps=4) # realtime
+# swrm.plot_all(movie_filename='vicsek3d_PeriodicPassive.mp4', fps=4) # realtime
+
+# We can also save our simulation into a vtk file 
+swrm.save_pos_to_vtk('results/vicsek_3D_results', 'vicsek3d_PeriodicPassive')
