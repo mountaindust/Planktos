@@ -71,17 +71,17 @@ class vicsek3d(planktos.swarm):
         #   initial position or zero if there is no flow.
 
         ### Uniform random angle IC, just to verify things are working ###
-        # rnd_angles_theta = self.rndState.rand(self.positions.shape[0])*2*np.pi
-        # rnd_angles_phi = self.rndState.rand(self.positions.shape[0])*np.pi
+        # rnd_angles_theta = self.rndState.random(self.positions.shape[0])*2*np.pi
+        # rnd_angles_phi = self.rndState.random(self.positions.shape[0])*np.pi
 
         ### Bias initial vel toward y+ to move toward cylinder ###
         # Add a random perturbation with theta angle between [-nu/2, nu/2] and
         #   phi angle between pi/2 + [-nu/4, nu/4]
         rnd_angles_theta = np.pi/2 + self.get_prop('nu_theta')*(
-            self.rndState.rand(self.positions.shape[0]) - 0.5)
+            self.rndState.random(self.positions.shape[0]) - 0.5)
         rnd_angles_phi = np.ones(self.positions.shape[0])*np.pi/2
         # rnd_angles_phi = np.pi/2 + 0.5*self.get_prop('nu_phi')*(
-        #     self.rndState.rand(self.positions.shape[0]) - 0.5)
+        #     self.rndState.random(self.positions.shape[0]) - 0.5)
 
         # Set IC
         self.velocities += self.get_prop('v')*np.array([
@@ -157,9 +157,9 @@ class vicsek3d(planktos.swarm):
 
         # find new angles according to the Vicsek model
         angle_noise_theta = self.get_prop('nu_theta')*(
-            self.rndState.rand(self.positions.shape[0]) - 0.5)
+            self.rndState.random(self.positions.shape[0]) - 0.5)
         angle_noise_phi = 0.5*self.get_prop('nu_phi')*(
-            self.rndState.rand(self.positions.shape[0]) - 0.5)
+            self.rndState.random(self.positions.shape[0]) - 0.5)
         new_angles_theta = avg_angles_theta + angle_noise_theta
         new_angles_phi = avg_angles_phi + angle_noise_phi
 

@@ -68,18 +68,19 @@ class vicsek(planktos.swarm):
         #   initial position or zero if there is no flow.
 
         ### Uniform random angle IC, just to verify things are working ###
-        # rnd_angles = self.rndState.rand(self.positions.shape[0])*2*np.pi
+        # rnd_angles = self.rndState.random(self.positions.shape[0])*2*np.pi
 
         ### Bias initial vel toward the right to move toward cylinder ###
         # Add a random perturbation with angle between [-nu/2, nu/2]
         rnd_angles = self.get_prop('nu')*(
-            self.rndState.rand(self.positions.shape[0]) - 0.5)
+            self.rndState.random(self.positions.shape[0]) - 0.5)
         self.velocities += self.get_prop('v')*np.array([
             np.cos(rnd_angles), np.sin(rnd_angles)]).T
     
     def __calc_dist(self, origin, positions_array):
         ''' A private method that calculates the distance between an origin 
-        position and all the postions in postions_array
+        position and all the postions in postions_array, respecting periodic
+        boundary conditions when applicable.
             
             Parameters
             ----------
@@ -134,7 +135,7 @@ class vicsek(planktos.swarm):
 
         # find new angles according to the Vicsek model
         angle_noise = self.get_prop('nu')*(
-            self.rndState.rand(self.positions.shape[0]) - 0.5)
+            self.rndState.random(self.positions.shape[0]) - 0.5)
         new_angles = avg_angles + angle_noise
 
         # convert to velocities and add the fluid velocity
