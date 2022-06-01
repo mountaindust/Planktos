@@ -148,10 +148,9 @@ For agents, there is support for multiple species (swarms) along with individual
 variation though a pandas Dataframe property of the swarm class (swarm.props). 
 Individual agents have access to the local flow field through interpolation of 
 the spatial-temporal fluid velocity grid - specifically, Planktos implements a 
-cubic spline in time with linear interpolation in space 
-(future: tricubic spline in space). In addition to more custom behavior, 
-included in Planktos is an Ito SDE solver (Euler-Maruyama method) for movement 
-specified as an SDE of the type 
+cubic spline in time with linear interpolation in space. In addition to more 
+custom behavior, included in Planktos is an Ito SDE solver 
+(Euler-Maruyama method) for movement specified as an SDE of the type 
 
 .. math::
     dX_t = \mu dt + \sigma dW_t 
