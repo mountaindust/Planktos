@@ -2263,12 +2263,17 @@ class environment:
             new_points.append(self.flow_points[1])
         if DIM3:
             new_points.append(self.flow_points[2])
-        # shift domain to quadrant 1
-        self.flow_points = (new_points[0]-new_points[0][0], new_points[1]-new_points[1][0],
-                            new_points[2]-new_points[2][0])
+            # shift domain to quadrant 1
+            self.flow_points = (new_points[0]-new_points[0][0], new_points[1]-new_points[1][0],
+                                new_points[2]-new_points[2][0])
+            # update environment dimensions
+            self.L = [self.flow_points[dim][-1] for dim in range(3)]
+        else:
+            # 2D shifting and environment updating
+            self.flow_points = (new_points[0]-new_points[0][0], new_points[1]-new_points[1][0])
+            self.L = [self.flow_points[dim][-1] for dim in range(2)]
+
         self.flow_points = tuple(new_points)
-        # update environment dimensions
-        self.L = [self.flow_points[dim][-1] for dim in range(3)]
         self.__reset_flow_deriv()
 
 
