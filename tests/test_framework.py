@@ -175,8 +175,9 @@ def test_brinkman_2D():
     assert envir.flow[0][50,-1] == envir.flow[0][50,-6]
     assert envir.flow[1][50,-1] == envir.flow[1][50,-6]
 
-    assert envir.L == [30.5, 30.6] # added total of .5 in x, .6 in y
-    assert envir.flow_points[0][-1] == 30.5
+    assert np.all(np.isclose(envir.L,[30.5, 30.6], rtol=0.0)) # added total of .5 in x, .6 in y
+    assert np.isclose(envir.flow_points[0][-1],30.5, rtol=0.0)
+    assert np.isclose(envir.flow_points[1][-1],30.6, rtol=0.0)
     assert len(envir.flow_points[0]) == 100*3+1+5
     assert len(envir.flow_points[1]) == 100*3+1+6
     assert len(envir.flow_points[0]) == envir.flow[0].shape[0]

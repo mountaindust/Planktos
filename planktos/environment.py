@@ -2181,26 +2181,27 @@ class environment:
         if not TIME_DEP:
             for dim in range(len(self.L)):
                 # first, extend in x direction
-                self.flow[dim] = np.concatenate(tuple(
-                    np.array([self.flow[dim][0,...]]) for ii in range(x_minus)
-                    ) + (self.flow[dim],) + tuple(
-                    np.array([self.flow[dim][-1,...]]) for jj in range(x_plus)
-                    ), axis=0)
+                if x_minus+x_plus > 0:
+                    self.flow[dim] = np.concatenate(tuple(
+                        np.array([self.flow[dim][0,...]]) for ii in range(x_minus)
+                        ) + (self.flow[dim][:],) + tuple(
+                        np.array([self.flow[dim][-1,...]]) for jj in range(x_plus)
+                        ), axis=0)
                 # next, extend in y direction. This requires a shuffling
                 #   (tranpose) of dimensions...
-                if DIM3:
+                if DIM3 and y_minus+y_plus > 0:
                     self.flow[dim] = np.concatenate(tuple(
                         np.array([self.flow[dim][:,0,:]]).transpose(1,0,2)
                         for ii in range(y_minus)
-                        ) + (self.flow[dim],) + tuple(
+                        ) + (self.flow[dim][:],) + tuple(
                         np.array([self.flow[dim][:,-1,:]]).transpose(1,0,2)
                         for jj in range(y_plus)
                         ), axis=1)
-                else:
+                elif y_minus+y_plus > 0:
                     self.flow[dim] = np.concatenate(tuple(
                         np.array([self.flow[dim][:,0]]).T
                         for ii in range(y_minus)
-                        ) + (self.flow[dim],) + tuple(
+                        ) + (self.flow[dim][:],) + tuple(
                         np.array([self.flow[dim][:,-1]]).T
                         for jj in range(y_plus)
                         ), axis=1)
@@ -2209,38 +2210,42 @@ class environment:
             for dim in range(len(self.L)):
                 if DIM3:
                     # first, extend in x direction
-                    self.flow[dim] = np.concatenate(tuple(
-                        np.array([self.flow[dim][:,0,...]]).transpose(1,0,2,3) 
-                        for ii in range(x_minus)
-                        ) + (self.flow[dim],) + tuple(
-                        np.array([self.flow[dim][:,-1,...]]).transpose(1,0,2,3) 
-                        for jj in range(x_plus)
-                        ), axis=1)
+                    if x_minus+x_plus > 0:
+                        self.flow[dim] = np.concatenate(tuple(
+                            np.array([self.flow[dim][:,0,...]]).transpose(1,0,2,3) 
+                            for ii in range(x_minus)
+                            ) + (self.flow[dim][:],) + tuple(
+                            np.array([self.flow[dim][:,-1,...]]).transpose(1,0,2,3) 
+                            for jj in range(x_plus)
+                            ), axis=1)
                     # next, extend in y direction
-                    self.flow[dim] = np.concatenate(tuple(
-                        np.array([self.flow[dim][:,:,0,:]]).transpose(1,2,0,3)
-                        for ii in range(y_minus)
-                        ) + (self.flow[dim],) + tuple(
-                        np.array([self.flow[dim][:,:,-1,:]]).transpose(1,2,0,3)
-                        for jj in range(y_plus)
-                        ), axis=2)
+                    if y_minus+y_plus > 0:
+                        self.flow[dim] = np.concatenate(tuple(
+                            np.array([self.flow[dim][:,:,0,:]]).transpose(1,2,0,3)
+                            for ii in range(y_minus)
+                            ) + (self.flow[dim][:],) + tuple(
+                            np.array([self.flow[dim][:,:,-1,:]]).transpose(1,2,0,3)
+                            for jj in range(y_plus)
+                            ), axis=2)
                 else:
                     # first, extend in x direction
-                    self.flow[dim] = np.concatenate(tuple(
-                        np.array([self.flow[dim][:,0,:]]).transpose(1,0,2) 
-                        for ii in range(x_minus)
-                        ) + (self.flow[dim],) + tuple(
-                        np.array([self.flow[dim][:,-1,:]]).transpose(1,0,2) 
-                        for jj in range(x_plus)
-                        ), axis=1)
+                    if x_minus+x_plus > 0:
+                        self.flow[dim] = np.concatenate(tuple(
+                            np.array([self.flow[dim][:,0,:]]).transpose(1,0,2) 
+                            for ii in range(x_minus)
+                            ) + (self.flow[dim][:],) + tuple(
+                            np.array([self.flow[dim][:,-1,:]]).transpose(1,0,2) 
+                            for jj in range(x_plus)
+                            ), axis=1)
                     # next, extend in y direction
-                    self.flow[dim] = np.concatenate(tuple(
-                        np.array([self.flow[dim][:,:,0]]).tranpsose(1,2,0)
-                        for ii in range(y_minus)
-                        ) + (self.flow[dim],) + tuple(
-                        np.array([self.flow[dim][:,:,-1]]).transpose(1,2,0)
-                        for jj in range(y_plus)
-                        ), axis=2)
+                    if y_minus+y_plus > 0:
+                        self.flow[dim] = np.concatenate(tuple(
+                            np.array([self.flow[dim][:,:,0]]).tranpsose(1,2,0)
+                            for ii in range(y_minus)
+                            ) + (self.flow[dim][:],) + tuple(
+                            np.array([self.flow[dim][:,:,-1]]).transpose(1,2,0)
+                            for jj in range(y_plus)
+                            ), axis=2)
 
         # update environment dimensions and meshes
         new_points = []
@@ -2249,18 +2254,19 @@ class environment:
         self.L[1] += res_y*(y_minus+y_plus)
         if x_minus+x_plus > 0:
             new_points.append(np.concatenate(
-                [self.flow_points[0][0]-res_x*np.arange(1,x_minus+1)]+
+                [self.flow_points[0][0]-res_x*np.arange(x_minus,0,-1)]+
                 [self.flow_points[0]]+
                 [self.flow_points[0][-1]+res_x*np.arange(1,x_plus+1)]))
         else:
             new_points.append(self.flow_points[0])
         if y_minus+y_plus > 0:
             new_points.append(np.concatenate(
-                [self.flow_points[1][0]-res_y*np.arange(1,y_minus+1)]+
+                [self.flow_points[1][0]-res_y*np.arange(y_minus,0,-1)]+
                 [self.flow_points[1]]+
                 [self.flow_points[1][-1]+res_y*np.arange(1,y_plus+1)]))
         else:
             new_points.append(self.flow_points[1])
+
         if DIM3:
             new_points.append(self.flow_points[2])
             # shift domain to quadrant 1
@@ -2273,7 +2279,6 @@ class environment:
             self.flow_points = (new_points[0]-new_points[0][0], new_points[1]-new_points[1][0])
             self.L = [self.flow_points[dim][-1] for dim in range(2)]
 
-        self.flow_points = tuple(new_points)
         self.__reset_flow_deriv()
 
 
@@ -3808,7 +3813,7 @@ class fCubicSpline(interpolate.CubicSpline):
         elif type(pos) == slice:
             start = pos.start; stop = pos.stop; step = pos.step
             if start is None: start = 0
-            if stop is None: stop = len(self.x)+1
+            if stop is None: stop = len(self.x)
             if step is None: step = 1
             return np.stack([self.__call__(self.x[n]) for 
                              n in range(start,stop,step)])
@@ -3818,7 +3823,7 @@ class fCubicSpline(interpolate.CubicSpline):
             elif type(pos[0]) == slice:
                 start = pos[0].start; stop = pos[0].stop; step = pos[0].step
                 if start is None: start = 0
-                if stop is None: stop = len(self.x)+1
+                if stop is None: stop = len(self.x)
                 if step is None: step = 1
                 return np.stack([self.__call__(self.x[n])[pos[1:]] for 
                                  n in range(start,stop,step)])
