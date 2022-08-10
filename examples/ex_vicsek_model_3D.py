@@ -33,10 +33,13 @@ envir = planktos.environment(Lx=0.21, Ly=2.5, Lz=0.2, x_bndry='noflux',
         y_bndry='periodic', z_bndry='noflux')
 
 ##### Load fluid data #####
-# envir.read_comsol_vtu_data('comsol_data/WindTunnel-p22mps.vtu')
-# envir.center_cell_regrid()
-envir.read_comsol_vtu_data('comsol_data/PeriodicWindTunnel-p22mps.vtu')
-envir.center_cell_regrid(periodic_dim=(False, True, False))
+try:
+    # envir.read_comsol_vtu_data('comsol_data/WindTunnel-p22mps.vtu')
+    # envir.center_cell_regrid()
+    envir.read_comsol_vtu_data('comsol_data/PeriodicWindTunnel-p22mps.vtu')
+    envir.center_cell_regrid(periodic_dim=(False, True, False))
+except:
+    print('Running null model (without flow)')
 
 ##### Load mesh data #####
 # this was in mm...
@@ -201,7 +204,7 @@ swrm = vicsek3d(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
 for ii in range(80): # 20 seconds w/ quarter second timesteps (null was 40 sec.)
     swrm.move(0.25)
 
-# swrm.plot_all(movie_filename='vicsek3d_PeriodicPassive.mp4', fps=4) # realtime
+swrm.plot_all(movie_filename='vicsek3d_Periodic.mp4', fps=4) # realtime
 
 # We can also save our simulation into a vtk file 
-swrm.save_pos_to_vtk('results/vicsek_3D_results', 'vicsek3d_PeriodicPassive')
+# swrm.save_pos_to_vtk('results/vicsek_3D_results', 'vicsek3d_PeriodicPassive')
