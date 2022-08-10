@@ -1124,7 +1124,7 @@ class environment:
 
         data, mesh, time = dataio.read_vtk_Rectilinear_Grid_Vector(filename)
 
-        self.flow = list(data)
+        self.flow = data
         self.flow_times = None
 
         # shift domain to quadrant 1

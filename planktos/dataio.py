@@ -176,10 +176,10 @@ def read_vtk_Rectilinear_Grid_Vector(filename):
 
     Returns
     -------
-    tuple of arrays
+    list of arrays
         vector data as numpy arrays, one array for each dimension of the vector
         in order of x, y, z. Each array is indexed as [x,y,z]
-    tuple of arrays
+    list of arrays
         1D arrays of grid points in the x, y, and z directions
     time : float
     '''
@@ -240,7 +240,7 @@ def read_vtk_Rectilinear_Grid_Vector(filename):
             time = time[0]
             break
     
-    return (x_data, y_data, z_data), (x_mesh, y_mesh, z_mesh), time
+    return [x_data, y_data, z_data], [x_mesh, y_mesh, z_mesh], time
 
 
 
