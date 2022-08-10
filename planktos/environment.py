@@ -1106,7 +1106,7 @@ class environment:
 
 
 
-    def read_IBAMR3d_vtk_data(self, filename):
+    def read_IBAMR3d_vtk_data(self, filename, vel_conv=None, grid_conv=None):
         '''Reads in vtk flow data from a single source and sets environment
         variables accordingly. The resulting flow will be time invarient. It is
         assumed this data is a rectilinear grid.
@@ -1116,13 +1116,26 @@ class environment:
         Parameters
         ----------
         filename : string
-            filename of data to read
+            filename of data to read, incl. file extension
+        vel_conv : float, optional
+            scalar to multiply the velocity by in order to convert units
+        grid_conv : float, optional
+            scalar to multiply the grid by in order to convert units
         '''
         path = Path(filename)
         if not path.is_file(): 
             raise FileNotFoundError("File {} not found!".format(filename))
 
         data, mesh, time = dataio.read_vtk_Rectilinear_Grid_Vector(filename)
+
+        if vel_conv is not None:
+            print("Converting vel units by a factor of {}.".format(vel_conv))
+            for ii, d in enumerate(data):
+                data[ii] = d*vel_conv
+        if grid_conv is not None:
+            print("Converting grid units by a factor of {}.".format(grid_conv))
+            for ii, m in enumerate(mesh):
+                mesh[ii] = m*grid_conv
 
         self.flow = data
         self.flow_times = None
