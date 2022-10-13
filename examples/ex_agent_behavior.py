@@ -33,7 +33,7 @@ import planktos
 #   - get_prop() : return either shared or individual agent properties
 #   - get_fluid_drift() : return the fluid velocity at all agent locations
 #   - get_dudt() : return fluid velocity time derivative at all agent locations
-#   - get_fluid_gradient() : gradient of the magnitude of fluid velocity at all
+#   - get_fluid_mag_gradient() : gradient of the magnitude of fluid velocity at all
 #        agent locations
 
 # The subclassing and overriding itself is easy. Here we'll provide an example
@@ -56,7 +56,7 @@ class myswarm(planktos.swarm):
     #   is that if you need any swarm attributes or methods, you should access
     #   them via "self.<method or attribute here>". For example, you can get 
     #   the gradient of the fluid speed (magnitude of velocity) using 
-    #   self.get_fluid_gradient().
+    #   self.get_fluid_mag_gradient().
     def get_positions(self, dt, params=None):
         '''New get_positions method that moves 80% of the agents toward the
         mean position of the swarm.'''

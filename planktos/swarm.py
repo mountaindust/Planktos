@@ -962,7 +962,7 @@ class swarm:
         The get_fluid_drift method will return the fluid velocity at each agent 
         location using interpolation. Call it once outside of a loop for speed. 
         Similarly, the get_dudt method will return the time derivative of the 
-        fluid velocity at the location of each agent. The get_fluid_gradient 
+        fluid velocity at the location of each agent. The get_fluid_mag_gradient 
         method will return the gradient of the magnitude of the fluid velocity 
         at the location of each agent.
 
@@ -977,7 +977,7 @@ class swarm:
         add_prop : add a new agent/swarm property or overwrite an old one
         get_fluid_drift : return the fluid velocity at each agent location
         get_dudt : return time derivative of fluid velocity at each agent
-        get_fluid_gradient : 
+        get_fluid_mag_gradient : 
             return the gradient of the magnitude of the fluid velocity at each 
             agent
         '''
@@ -1118,7 +1118,7 @@ class swarm:
 
 
 
-    def get_fluid_gradient(self, positions=None):
+    def get_fluid_mag_gradient(self, positions=None):
         '''Return the gradient of the magnitude of the fluid velocity at all
         agent positions (or at provided positions) via linear interpolation of 
         the gradient.
@@ -1147,16 +1147,16 @@ class swarm:
 
         # If available, use the already calculuated gradient (if it's at the
         #   correct time)
-        if self.envir.grad is not None:
+        if self.envir.mag_grad is not None:
             if not TIME_DEP:
-                flow_grad = self.envir.grad
-            elif self.envir.grad_time == self.envir.time:
-                flow_grad = self.envir.grad
+                flow_grad = self.envir.mag_grad
+            elif self.envir.mag_grad_time == self.envir.time:
+                flow_grad = self.envir.mag_grad
 
         # Otherwise, calculate the gradient
         if flow_grad is None:
             self.envir.calculate_mag_gradient()
-            flow_grad = self.envir.grad
+            flow_grad = self.envir.mag_grad
 
         # Interpolate the gradient at agent positions and return
         x_grad = interpolate.interpn(self.envir.flow_points, flow_grad[0],

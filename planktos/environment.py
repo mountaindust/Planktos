@@ -199,10 +199,10 @@ class environment:
         integration time for FTLE
     FTLE_grid_dim : tuple of int
         grid dimension for the FTLE calculation (x,y,[z])
-    grad : ndarray
+    mag_grad : ndarray
         acts as a cache for the gradient of magnitude of the fluid velocity
-    grad_time : float
-        simulation time at which gradient above was calculated
+    mag_grad_time : float
+        simulation time at which magnitude gradient above was calculated
     dt_interp : list of PPoly objects
         Used for temporal derivative interpolation. Set by dudt method.
 
@@ -241,8 +241,8 @@ class environment:
         self.fluid_domain_LLC = None # original lower-left corner, if fluid comes from data
         self.tiling = None # (x,y) tiling amount
         self.orig_L = None # (Lx,Ly) before tiling/extending
-        self.grad = None
-        self.grad_time = None
+        self.mag_grad = None
+        self.mag_grad_time = None
         self.flow = flow
         self.dt_interp = None # list of PPoly objs for temporal derivative interpolation
 
@@ -2599,8 +2599,8 @@ class environment:
                             np.array(self.interpolate_temporal_flow())**2,
                             axis=0)), *self.flow_points, edge_order=2)
         # save the newly calculuate gradient
-        self.grad = flow_grad
-        self.grad_time = self.time
+        self.mag_grad = flow_grad
+        self.mag_grad_time = self.time
 
 
 
@@ -3274,8 +3274,8 @@ class environment:
     def __reset_flow_deriv(self):
         '''Reset properties that are derived from the flow velocity.'''
 
-        self.grad = None
-        self.grad_time = None
+        self.mag_grad = None
+        self.mag_grad_time = None
         self.dt_interp = None
 
 
