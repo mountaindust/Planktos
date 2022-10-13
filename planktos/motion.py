@@ -432,12 +432,12 @@ def inertial_particles(swarm):
 
         N = round(x.shape[0]/2)
         fluid_vel = swarm.get_fluid_drift(t,x[:N])
-        dudt = swarm.get_dudt(t,x[:N])
+        DuDt = swarm.get_DuDt(t,x[:N])
         Re = swarm.envir.Re # Reynolds number
         St = 2/9*(a/L)**2*Re # Stokes number
         mu = R/St
 
-        dvdt = 3*R/2*dudt - mu*(x[N:]-fluid_vel) + (1 - 3*R/2)*g
+        dvdt = 3*R/2*DuDt - mu*(x[N:]-fluid_vel) + (1 - 3*R/2)*g
         return ma.concatenate((x[N:],dvdt))
 
     # Return equations

@@ -1159,16 +1159,49 @@ class swarm:
             flow_grad = self.envir.mag_grad
 
         # Interpolate the gradient at agent positions and return
-        x_grad = interpolate.interpn(self.envir.flow_points, flow_grad[0],
-                                     positions, method='linear')
-        y_grad = interpolate.interpn(self.envir.flow_points, flow_grad[1],
-                                     positions, method='linear')
-        if len(self.envir.flow_points) == 3:
-            z_grad = interpolate.interpn(self.envir.flow_points, flow_grad[2],
-                                         positions, method='linear')
-            return np.array([x_grad, y_grad, z_grad]).T
-        else:
-            return np.array([x_grad, y_grad]).T
+        return self.envir.interpolate_flow(positions, flow_grad, method='linear')
+
+
+
+    def get_DuDt(self, time=None, positions=None):
+        '''Return the material derivative with respect to time of the fluid 
+        velocity at all agent positions (or at provided positions) via linear 
+        interpolation of the material gradient.
+        
+        Current swarm position is used unless alternative positions are explicitly
+        passed in.
+        
+        In the returned 2D ndarray, each row corresponds to an agent (in the
+        same order as listed in self.positions) and each column is a dimension.
+
+        Parameters
+        ----------
+        time : float, optional
+            time at which to return the data. defaults to the current 
+            environment time
+        positions : ndarray, optional
+            positions at which to return the data. defaults to the locations of 
+            the swarm agents, self.positions
+
+        Returns
+        -------
+        ndarray with shape NxD, where N is the number of agents and D the 
+            spatial dimension
+        '''
+
+        if positions is None:
+            positions = self.positions
+
+        if time is None:
+            time = self.envir.time
+
+        # Calculate if necessary, otherwise use cached copy
+        if self.envir.DuDt is None or self.envir.DuDt_time != time:
+            self.envir.calculate_DuDt(time=time)            
+
+        # Interpolate at agent positions and return
+        return self.envir.interpolate_flow(positions, self.envir.DuDt, 
+                                           method='linear')
 
 
 

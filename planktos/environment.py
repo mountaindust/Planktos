@@ -203,6 +203,10 @@ class environment:
         acts as a cache for the gradient of magnitude of the fluid velocity
     mag_grad_time : float
         simulation time at which magnitude gradient above was calculated
+    DuDt : list of ndarrays
+        material derivative cache
+    DuDt_time : float
+        simulation time at which material derivative was calculated
     dt_interp : list of PPoly objects
         Used for temporal derivative interpolation. Set by dudt method.
 
@@ -243,6 +247,8 @@ class environment:
         self.orig_L = None # (Lx,Ly) before tiling/extending
         self.mag_grad = None
         self.mag_grad_time = None
+        self.DuDt = None
+        self.DuDt_time = None
         self.flow = flow
         self.dt_interp = None # list of PPoly objs for temporal derivative interpolation
 
@@ -3206,7 +3212,7 @@ class environment:
 
         Returns
         -------
-        interpolated flow field as a list of ndarrays
+        List of ndarrays
         '''
 
         DIM3 = (len(self.L) == 3)
@@ -3226,6 +3232,58 @@ class environment:
             if self.dt_interp is None:
                 self._create_dt_interpolations()
             return [dfdt(time) for dfdt in self.dt_interp]
+
+
+
+    def calculate_DuDt(self, t_indx=None, time=None):
+        '''Calculate and store material derivative of the fluid velocity with 
+        respect to time. Defaults to interpolating at the current time, given by 
+        self.time. Gradient is calculated via second order accurate central 
+        differences (using numpy) with second order accuracy at the boundaries.
+        The material derivative is saved in case it is needed again.
+        
+        Parameters
+        ----------
+        t_indx : int, optional
+            Interpolate at a time referred to by self.envir.time_history[t_indx]
+        time : float, optional
+            Interpolate at a specific time. default is current time.
+        '''
+
+        DIM3 = (len(self.L) == 3)
+
+        TIME_DEP = len(self.flow[0].shape) != len(self.L)
+
+        if DIM3:
+            axis_tuple = (1,2,3)
+        else:
+            axis_tuple = (1,2)
+
+        if not TIME_DEP:
+            flow = self.flow
+        else:
+            # first, interpolate flow in time.
+            flow = self.interpolate_temporal_flow(t_indx=t_indx, time=time)
+            
+        flow_grad = np.gradient(np.array(flow),
+                    *self.flow_points, edge_order=2, axis=axis_tuple)
+
+        # Take dot product
+        DuDt = []
+        for g,f in zip(flow_grad,flow):
+            DuDt.append(g*f)
+        DuDt = np.sum(DuDt, axis=0)
+
+        # Add dudt
+        DuDt += np.array(self.dudt(t_indx, time))
+
+        self.DuDt = [u for u in DuDt]
+        if t_indx is None and time is None:
+            self.DuDt_time = self.time
+        elif t_indx is not None:
+            self.DuDt_time = self.time_history[t_indx]
+        else:
+            self.DuDt_time = time
 
 
 
