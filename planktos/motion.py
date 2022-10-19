@@ -159,7 +159,9 @@ def RK45(fun, t0, y0, tf, rtol=0.0001, atol=1e-06, h_start=None):
 def Euler_brownian_motion(swarm, dt, mu=None, ode=None, sigma=None):
     '''Uses the Euler-Maruyama method to solve the Ito SDE
     
-        :math:`dX_t = \mu(X_t,t) dt + \sigma(t) dW_t`
+        .. math::
+        
+            dX_t = \\mu(X_t,t) dt + \\sigma(t) dW_t
 
     where :math:`\mu` is the drift and :math:`\sigma` is the diffusion.
     :math:`\mu` can be specified directly as a constant or via an ode, or both.
@@ -347,9 +349,19 @@ def Euler_brownian_motion(swarm, dt, mu=None, ode=None, sigma=None):
 def inertial_particles(swarm):
     '''Function generator for ODEs governing small, rigid, spherical particles 
     whose dynamics can be described by the linearized Maxey-Riley equation [2]_
-    described in Haller and Sapsis (2008) [3]_. Critically, it is assumed that 
-    mu = R/St, where R is the density ratio 2*rho_f/(rho_f+2*rho_p) and St is 
-    the Stokes number, is much greater than 1.
+    described in Haller and Sapsis (2008) [3]_. 
+    
+        .. math::
+            \\frac{d\\mathbf{v}}{dt} &= \\frac{3R}{2}\\frac{D\\mathbf{u}}{Dt} -
+            \\mu(\\mathbf{v}-\\mathbf{u}) +
+            \\left(1-\\frac{3R}{2}\\right)\\mathbf{g} \\\\
+            \\text{with}& \\\\
+            \\frac{D\\mathbf{u}}{Dt} &= \\mathbf{u}_t + 
+            (\\nabla\\mathbf{u})\\mathbf{u}
+    
+    Critically, it is assumed that 
+    :math:`\mu = R/St` is much greater than 1, where R is the density ratio 
+    :math:`R=2\\rho_f/(\\rho_f+2\\rho_p)`, and St is the Stokes number.
 
     Parameters
     ----------
@@ -447,9 +459,17 @@ def inertial_particles(swarm):
 
 def highRe_massive_drift(swarm):
     '''Function generator for ODEs governing high Re massive drift with
-    drag and inertia. Assumes Re > 10 with neutrally buoyant particles
-    possessing mass and a known cross-sectional area given by the property
-    cross_sec.
+    drag as formulated by Nathan et al. [4]_. Assumes Re > 10 with 
+    neutrally buoyant particles possessing mass and a known cross-sectional area 
+    given by the property cross_sec.
+
+        .. math::
+            f_D = \\frac{\\rho C_d A}{m}||\\mathbf{u}-\\mathbf{v}||
+            (\\mathbf{u} -\\mathbf{v})
+
+    where :math:`f_D` is the drag force acting on the particle, :math:`C_d` is 
+    the drag coefficient, :math:`A` is the cross sectional area, :math:`\\rho` 
+    is the fluid density, and :math:`\\mathbf{u}` is the fluid velocity.
 
     Parameters
     ----------
@@ -465,12 +485,18 @@ def highRe_massive_drift(swarm):
     (if uniform across agents) or swarm.props (for individual variation):
 
     - m: mass of each agent
-    - Cd: Drag coefficient
+    - Cd: Drag coefficient acting on cross-sectional area
     - cross_sec: cross-sectional area of each agent
 
     Requires that the following are specified in the fluid environment:
 
     - rho: fluid density
+
+    References
+    ----------
+    .. [4] R. Nathan, G.G. Katul, G. Bohrer, A. Kuparinen, M.B. Soons, 
+      S.E. Thompson, A. Trakhtenbrot, H.S. Horn (2011). Mechanistic models of 
+      seed dispersal by wind. Theoretical Ecology, 4(2), 113-132
     '''
 
     ##### Get required physical parameters #####
@@ -506,7 +532,7 @@ def highRe_massive_drift(swarm):
         fluid_vel = swarm.get_fluid_drift(t,x[:N])
 
         diff = np.linalg.norm(x[N:]-fluid_vel,axis=1)
-        dvdt = (rho*Cd*cross_sec/2/m)*(fluid_vel-x[N:])*np.stack((diff,diff,diff)).T
+        dvdt = (rho*Cd*cross_sec/m**2)*(fluid_vel-x[N:])*np.stack((diff,diff,diff)).T
 
         return ma.concatenate((x[N:],dvdt))
 
