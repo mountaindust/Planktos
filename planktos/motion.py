@@ -469,7 +469,9 @@ def highRe_massive_drift(swarm):
 
     where :math:`f_D` is the drag force acting on the particle, :math:`C_d` is 
     the drag coefficient, :math:`A` is the cross sectional area, :math:`\\rho` 
-    is the fluid density, and :math:`\\mathbf{u}` is the fluid velocity.
+    is the fluid density, and :math:`\\mathbf{u}` is the fluid velocity. 
+    The system of ODEs are specified so that the acceleration is defined to be 
+    :math:`f_D/m`.
 
     Parameters
     ----------

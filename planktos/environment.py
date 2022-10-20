@@ -3241,6 +3241,11 @@ class environment:
         self.time. Gradient is calculated via second order accurate central 
         differences (using numpy) with second order accuracy at the boundaries.
         The material derivative is saved in case it is needed again.
+
+        The material derivative is given by
+        .. math::
+            \\frac{D\\mathbf{u}}{Dt} = \\mathbf{u}_t + 
+            (\\nabla\\mathbf{u})\\mathbf{u}
         
         Parameters
         ----------
