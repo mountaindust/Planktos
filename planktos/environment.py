@@ -2167,6 +2167,7 @@ class environment:
                     new_mesh[:,:,1] += self.orig_L[1]*jj
                     newmeshs.append(new_mesh)
             self.ibmesh = np.concatenate(newmeshs)
+        print("Fluid tiled. Planktos domain size is now {}.".format(self.L))
         self.__reset_flow_deriv()
 
 
