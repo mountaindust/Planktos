@@ -3340,6 +3340,8 @@ class environment:
         self.mag_grad = None
         self.mag_grad_time = None
         self.dt_interp = None
+        self.DuDt = None
+        self.DuDt_time = None
 
 
 
