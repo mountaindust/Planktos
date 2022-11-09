@@ -1515,7 +1515,7 @@ class swarm:
         # Get the distance for inclusion of meshpoints
         traj_dist = np.linalg.norm(endpt - startpt)
         # Must add to traj_dist to find endpoints of line segments
-        search_dist = np.linalg.norm((traj_dist,max_meshpt_dist*0.5))
+        search_dist = np.linalg.norm((traj_dist,max_meshpt_dist))
 
         # Find all mesh elements that have points within this distance
         #   NOTE: This is a major bottleneck if not done carefully.
