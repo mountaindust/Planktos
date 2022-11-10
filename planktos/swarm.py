@@ -1512,21 +1512,51 @@ class swarm:
         else:
             DIM = 3
 
-        # Get the distance for inclusion of meshpoints
-        traj_dist = np.linalg.norm(endpt - startpt)
-        # Must add to traj_dist to find endpoints of line segments
-        search_dist = np.linalg.norm((traj_dist,max_meshpt_dist))
+        # In barycentric coordinates, the centoid is always (1/3,1/3,1/3), and
+        #   the entries of the coordinates must add to 1. This suggests that the
+        #   furthest away you can be from every vertex simultaneously is 2/3 
+        #   down the medians (an increase in one barycentric coordinate results 
+        #   in a decrease in the others). Since the median length is bounded 
+        #   above by the length of the longest side of the triangle, circles 
+        #   centered at each vertex that are 2/3 times the length of the longest 
+        #   triangle side should be sufficient to cover any triangle.
+        # More precisely: equalateral triangles are probably the worst case. If 
+        #   so, all medians have length l*sqrt(3/4), where l is the length of a 
+        #   side of the triangle. This implies circles of radius l*sqrt(3/4)*2/3
+        #   are a strict lower bound on covering any circle.
 
-        # Find all mesh elements that have points within this distance
-        #   NOTE: This is a major bottleneck if not done carefully.
-        pt_bool = np.linalg.norm(
-                mesh.reshape((mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-startpt,
-                axis=1)<search_dist
+        # The result of this argument, from the worst-case scenario equalateral 
+        #   triangle in our collection, forms the radius we need to search from 
+        #   the line segment of travel in order to find vertices of mesh elements
+        #   that we potentially intersected.
+        search_rad = max_meshpt_dist*2/3
+        seg_length_2 = np.linalg.norm(endpt - startpt)**2
+
+        def min_distance(pt_list):
+            '''
+            Return minimum distances between line segment startpt,endpt and all 
+            points (rows) in pt_list.
+            '''
+            if seg_length_2 == 0:
+                return np.linalg.norm(pt_list-startpt,axis=1)
+            # Consider the line extending the segment: startpt + t*(endpt-startpt)
+            # Find the projection of all points onto this line.
+            # It falls where t = [(p-startpt).(endpt-startpt)]/|startpt-endpt|**2
+            # We then clamp t from [0,1] to handle points outside the segment
+            #   startpt,endpt
+            t_list = np.maximum(0,np.minimum(1,np.dot(
+                pt_list-startpt,endpt-startpt)/seg_length_2))
+            # determine the projection points on the segment
+            proj_pt_list = startpt + np.outer(t_list,(endpt-startpt))
+            # return the distance btwn pt_list and projected points
+            return np.linalg.norm(pt_list-proj_pt_list,axis=1)
+
+        # Find all mesh elements that have vertex points within search_rad of 
+        #   the trajectory segment.
+        pt_bool = min_distance(
+            mesh.reshape((mesh.shape[0]*mesh.shape[1],mesh.shape[2])))<=search_rad
         pt_bool = pt_bool.reshape((mesh.shape[0],mesh.shape[1]))
         close_mesh = mesh[np.any(pt_bool,axis=1)]
-
-        # elem_bool = [np.any(np.linalg.norm(mesh[ii]-startpt,axis=1)<search_dist)
-        #              for ii in range(mesh.shape[0])]
 
         # Get intersections
         if DIM == 2:
