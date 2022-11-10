@@ -11,8 +11,8 @@ Provides
 
 __author__ = "W. Christopher Strickland"
 __email__ = "cstric12@utk.edu"
-__copyright__ = "Copyright 2017, Christopher Strickland"
-__version__ = '0.5.3'
+__copyright__ = "Copyright 2022, Christopher Strickland"
+__version__ = '0.6.0'
 
 from .environment import environment
 from .swarm import swarm
