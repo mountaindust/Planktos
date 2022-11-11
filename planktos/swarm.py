@@ -1505,6 +1505,12 @@ class swarm:
         -------
         newendpt : length 2 or 3 array
             new end location for agent trajectory
+
+        Acknolwegements
+        ---------------
+        Appreciation goes to Anne Ho, for pointing out that the centroid of an
+        equalateral triangle is further away from any of its vertices than I had 
+        originally assumed it was.
         '''
 
         if len(startpt) == 2:
