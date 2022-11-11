@@ -1506,7 +1506,7 @@ class swarm:
         newendpt : length 2 or 3 array
             new end location for agent trajectory
 
-        Acknolwegements
+        Acknowledgements
         ---------------
         Appreciation goes to Anne Ho, for pointing out that the centroid of an
         equalateral triangle is further away from any of its vertices than I had 
