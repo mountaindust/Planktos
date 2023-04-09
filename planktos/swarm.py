@@ -3438,8 +3438,7 @@ class swarm:
         if frames is None:
             frames = range(len(self.pos_history)+1)
         anim = animation.FuncAnimation(fig, animate, frames=frames,
-                                    interval=dt*100, repeat=False, blit=True,
-                                    save_count=len(frames))
+                                    interval=dt*100, repeat=False, blit=True)
 
         if movie_filename is not None:
             try:
