@@ -95,6 +95,10 @@ class swarm:
         which contains only the agent starting positions in a column entitled
         'start_pos'. This is to aid in creating more properties later, if 
         desired, as it is only necessary to add columns to the existing dataframe. 
+    name : string, optional
+        Name of this swarm
+    color : matplotlib color format 
+        Plotting color (see https://matplotlib.org/stable/tutorials/colors/colors.html)
     **kwargs : dict, optional
         keyword arguments to be used in the 'grid' initialization method or
         values to be set as a swarm object property. In the latter case, these 
@@ -211,7 +215,8 @@ class swarm:
     '''
 
     def __init__(self, swarm_size=100, envir=None, init='random', seed=None, 
-                 shared_props=None, props=None, **kwargs):
+                 shared_props=None, props=None, name='organism', color='darkgreen',
+                 **kwargs):
 
         # use a new, 3D default environment if one was not given. Or infer
         #   dimension from init if possible.
@@ -239,6 +244,10 @@ class swarm:
 
         # initialize random number generator
         self.rndState = np.random.default_rng(seed=seed)
+
+        # set name and color
+        self.name = name
+        self.color = color
 
         # initialize agent locations
         if isinstance(init,np.ndarray) and len(init.shape) == 2:
@@ -2456,7 +2465,8 @@ class swarm:
 
             
             # scatter plot and time text
-            ax.scatter(positions[:,0], positions[:,1], label='organism', c='darkgreen', s=3)
+            ax.scatter(positions[:,0], positions[:,1], label=self.name, 
+                       c=self.color, s=3)
             ax.text(0.02, 0.95, 'time = {:.2f}'.format(time),
                     transform=ax.transAxes, fontsize=12)
 
@@ -2550,7 +2560,7 @@ class swarm:
 
             # scatter plot and time text
             ax.scatter(positions[:,0], positions[:,1], positions[:,2],
-                       label='organism')
+                       label=self.name, c=self.color)
             ax.text2D(0.02, 1, 'time = {:.2f}'.format(time),
                       transform=ax.transAxes, verticalalignment='top',
                       fontsize=12)
@@ -2827,7 +2837,7 @@ class swarm:
                                 scale=max_mag*5, alpha=0.2)
 
             # scatter plot
-            scat = ax.scatter([], [], label='organism', c='darkgreen', s=3)
+            scat = ax.scatter([], [], label=self.name, c=self.color, s=3)
 
             # textual info
             time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
@@ -2928,13 +2938,13 @@ class swarm:
 
             if downsamp is None:
                 scat = ax.scatter(self.pos_history[n0][:,0], self.pos_history[n0][:,1],
-                                self.pos_history[n0][:,2], label='organism',
-                                animated=True)
+                                self.pos_history[n0][:,2], label=self.name,
+                                c=self.color, animated=True)
             else:
                 scat = ax.scatter(self.pos_history[n0][downsamp,0],
                                 self.pos_history[n0][downsamp,1],
                                 self.pos_history[n0][downsamp,2],
-                                label='organism', animated=True)
+                                label=self.name, c=self.color, animated=True)
 
             # textual info
             time_text = ax.text2D(0.02, 1, 'time = {:.2f}'.format(
