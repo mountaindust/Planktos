@@ -152,6 +152,10 @@ class swarm:
         dictionary of properties shared by all agents as name-value pairs
     rndState : numpy Generator object
         random number generator for this swarm, seeded by the "seed" parameter
+    name : string
+        name of this swarm
+    color : matplotlib color format
+        Plotting color (see https://matplotlib.org/stable/tutorials/colors/colors.html)
 
     Notes
     -----

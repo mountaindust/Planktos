@@ -118,4 +118,5 @@ swrm.plot_all(movie_filename='channel_flow_ibmesh.mp4', fps=3, fluid='vort')
 #   making a movie with every one of those time steps as a frame! Depending on 
 #   the fps, you'll never notice the loss of detail if you just plot every Nth
 #   simulation step as a frame, and this is highly encouraged to cut down on 
-#   movie generation time and file size.
+#   movie generation time and file size. Use the "frames" parameter of the 
+#   plot_all function to do this.

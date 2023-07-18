@@ -117,6 +117,8 @@ class environment:
         manually need to change self.g (accel due to gravity) if using
         something else. Also, none of the methods of this class use this 
         attribute in any way, so it's probably best to work in meters.
+    ibmesh_color : matplotlib color format, optional
+        color of the ibmesh. Defaults to black in 2D, 'dimgrey' in 3D.
 
     Attributes
     ----------
@@ -180,6 +182,8 @@ class environment:
         maximum length of a mesh segment in ibmesh, typically determined 
         automatically. This is used in search algorithms to winnow down the 
         number of mesh elements to search for intersections of movement.
+    ibmesh_color : matplotlib color format
+        color of the ibmesh. Defaults to black in 2D, 'dimgrey' in 3D.
     plot_structs : list of function handles
         List of functions that plot additional environment structures which the 
         agents are unaware of. E.g., for visual purposes only.
@@ -226,7 +230,7 @@ class environment:
     def __init__(self, Lx=10, Ly=10, Lz=None,
                  x_bndry='zero', y_bndry='zero', z_bndry='noflux', flow=None,
                  flow_times=None, rho=None, mu=None, nu=None, char_L=None, 
-                 U=None, init_swarms=None, units='m'):
+                 U=None, init_swarms=None, units='m', ibmesh_color=None):
 
         # Save domain size, units
         if Lz is None:
@@ -336,6 +340,13 @@ class environment:
         #   points and reconstruct.
         self.ibmesh = None # Nx2x2 or Nx3x3 (element, pt in element, (x,y,z))
         self.max_meshpt_dist = None # max length of a mesh segment
+        if ibmesh_color is None:
+            if Lz is None:
+                self.ibmesh_color = 'k'
+            else:
+                self.ibmesh_color = 'dimgrey'
+        else:
+            self.ibmesh_color = ibmesh_color
 
         ##### Environment Structure Plotting #####
 
@@ -3425,7 +3436,7 @@ class environment:
             # plot ibmesh
             if self.ibmesh is not None:
                 line_segments = LineCollection(self.ibmesh)
-                line_segments.set_color('k')
+                line_segments.set_color(self.ibmesh_color)
                 ax.add_collection(line_segments)
 
             # include tick labels for endpoints
@@ -3447,7 +3458,7 @@ class environment:
         ########## 3D plot ##########
         else:
             if nohist:
-                ax = mplot3d.Axes3D(fig)
+                ax = fig.add_subplot(projection='3d')
             else:
                 # chop up axes for a tight layout with histograms
                 left_s, width_s = 0.025, 0.45
@@ -3461,7 +3472,7 @@ class environment:
                 rect_histz = [left_h, bottom_z, width_h, height_h]
 
                 # create scatter plot
-                ax = mplot3d.Axes3D(fig, rect=rect_scatter) #fig.add_subplot(121, projection='3d')
+                ax = fig.add_subplot(121, projection='3d')
                 ax.set_title('Organism positions')
                 # No real solution to 3D aspect ratio...
                 #ax.set_aspect('equal','box')
@@ -3509,7 +3520,7 @@ class environment:
             # plot ibmesh
             if self.ibmesh is not None:
                 structures = mplot3d.art3d.Poly3DCollection(self.ibmesh)
-                structures.set_color('g')
+                structures.set_color(self.ibmesh_color)
                 structures.set_alpha(0.3)
                 ax.add_collection3d(structures)
 
