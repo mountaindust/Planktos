@@ -1549,6 +1549,49 @@ class swarm:
         #   the line segment of travel in order to find vertices of mesh elements
         #   that we potentially intersected.
         search_rad = max_meshpt_dist*2/3
+
+        # Find all mesh elements that have vertex points within search_rad of 
+        #   the trajectory segment.
+        close_mesh = swarm._get_eligible_mesh_elements(startpt, endpt, mesh, search_rad)
+
+        # Get intersections
+        if DIM == 2:
+            intersection = swarm._seg_intersect_2D(startpt, endpt,
+                close_mesh[:,0,:], close_mesh[:,1,:])
+        else:
+            intersection = swarm._seg_intersect_3D_triangles(startpt, endpt,
+                close_mesh[:,0,:], close_mesh[:,1,:], close_mesh[:,2,:])
+
+        # Return endpt we already have if None.
+        if intersection is None:
+            return endpt
+        
+        # If we do have an intersection:
+        if ib_collisions == 'sliding':
+            # Project remaining piece of vector onto mesh and repeat processes 
+            #   as necessary until we have a final result.
+            return swarm._project_and_slide(startpt, endpt, intersection, mesh,
+                                            close_mesh, max_meshpt_dist, DIM,
+                                            old_intersection, kill)
+        elif ib_collisions == 'sticky':
+            # Return the point of intersection
+            
+            # small number to perturb off of the actual boundary in order to avoid
+            #   roundoff errors that would allow penetration
+            EPS = 1e-7
+
+            back_vec = (startpt-endpt)/np.linalg.norm(endpt-startpt)
+            return intersection[0] + back_vec*EPS
+
+
+
+    @staticmethod
+    def _get_eligible_mesh_elements(startpt, endpt, mesh, search_rad):
+        '''
+        From a list of mesh elements (mesh), find all elements that have vertex 
+        points within search_rad of the trajectory segment startpt,endpt.
+        '''
+
         seg_length_2 = np.linalg.norm(endpt - startpt)**2
 
         def min_distance(pt_list):
@@ -1569,48 +1612,18 @@ class swarm:
             proj_pt_list = startpt + np.outer(t_list,(endpt-startpt))
             # return the distance btwn pt_list and projected points
             return np.linalg.norm(pt_list-proj_pt_list,axis=1)
-
-        # Find all mesh elements that have vertex points within search_rad of 
-        #   the trajectory segment.
+        
         pt_bool = min_distance(
             mesh.reshape((mesh.shape[0]*mesh.shape[1],mesh.shape[2])))<=search_rad
         pt_bool = pt_bool.reshape((mesh.shape[0],mesh.shape[1]))
-        close_mesh = mesh[np.any(pt_bool,axis=1)]
-
-        # Get intersections
-        if DIM == 2:
-            intersection = swarm._seg_intersect_2D(startpt, endpt,
-                close_mesh[:,0,:], close_mesh[:,1,:])
-        else:
-            intersection = swarm._seg_intersect_3D_triangles(startpt, endpt,
-                close_mesh[:,0,:], close_mesh[:,1,:], close_mesh[:,2,:])
-
-        # Return endpt we already have if None.
-        if intersection is None:
-            return endpt
-        
-        # If we do have an intersection:
-        if ib_collisions == 'sliding':
-            # Project remaining piece of vector onto mesh and repeat processes 
-            #   as necessary until we have a final result.
-            return swarm._project_and_slide(startpt, endpt, intersection,
-                                            close_mesh, max_meshpt_dist, DIM,
-                                            old_intersection, kill)
-        elif ib_collisions == 'sticky':
-            # Return the point of intersection
-            
-            # small number to perturb off of the actual boundary in order to avoid
-            #   roundoff errors that would allow penetration
-            EPS = 1e-7
-
-            back_vec = (startpt-endpt)/np.linalg.norm(endpt-startpt)
-            return intersection[0] + back_vec*EPS
+        return mesh[np.any(pt_bool,axis=1)]
 
 
 
     @staticmethod
-    def _project_and_slide(startpt, endpt, intersection, mesh, max_meshpt_dist,
-                           DIM, old_intersection=None, kill=False):
+    def _project_and_slide(startpt, endpt, intersection, mesh, close_mesh, 
+                           max_meshpt_dist, DIM, old_intersection=None, 
+                           kill=False):
         '''Once we have an intersection point with an immersed mesh, project and 
         slide the agent along the mesh for its remaining movement, and determine 
         what happens if we fall off the edge of the element in all angle cases 
@@ -1629,12 +1642,14 @@ class swarm:
         intersection : list-like of data
             result of _seg_intersect_2D or _seg_intersect_3D_triangles. various 
             information about the intersection with the immersed mesh element
-        mesh : Nx2x2 or Nx3x3 array 
+        mesh : Nx2x2 or Nx3x3 array
+            full immersed boundary mesh (for recalculating close_mesh)
+        close_mesh : Nx2x2 or Nx3x3 array 
             eligible (nearby) mesh elements for interaction
         max_meshpt_dist : float
             max distance between two points on a mesh element (used to determine 
             how far away from startpt to search for mesh elements). Used here 
-            for passthrough to possible recursion
+            for possible recursion
         DIM : int
             dimension of system, either 2 or 3
         old_intersection : list-like of data
@@ -1727,15 +1742,15 @@ class swarm:
                 #   be intersecting it. And if by some numerical error we do,
                 #   we need to treat it.
                 pt_bool = np.logical_or(
-                    np.isclose(np.linalg.norm(mesh.reshape(
-                    (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-intersection[3],
+                    np.isclose(np.linalg.norm(close_mesh.reshape(
+                    (close_mesh.shape[0]*close_mesh.shape[1],close_mesh.shape[2]))-intersection[3],
                     axis=1),0),
-                    np.isclose(np.linalg.norm(mesh.reshape(
-                    (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-intersection[4],
+                    np.isclose(np.linalg.norm(close_mesh.reshape(
+                    (close_mesh.shape[0]*close_mesh.shape[1],close_mesh.shape[2]))-intersection[4],
                     axis=1),0)
                 )
-                pt_bool = pt_bool.reshape((mesh.shape[0],mesh.shape[1]))
-                adj_mesh = mesh[np.any(pt_bool,axis=1)]
+                pt_bool = pt_bool.reshape((close_mesh.shape[0],close_mesh.shape[1]))
+                adj_mesh = close_mesh[np.any(pt_bool,axis=1)]
                 # Check for intersection with these segemtns, but translate 
                 #   start/end points back from the segment a bit for numerical stability
                 # This has already been done for newendpt
@@ -1785,11 +1800,18 @@ class swarm:
                         # Obtuse. Repeat project_and_slide on new segment,
                         #   but send along info about old segment so we don't
                         #   get in an infinite loop.
+                        # Also, regenerate eligible mesh elements based on the 
+                        #   new location.
+                        search_rad = max_meshpt_dist*2/3
+                        close_mesh = swarm._get_eligible_mesh_elements(
+                            intersection[0]+EPS*norm_out_u, newendpt+EPS*proj_u, 
+                            mesh, search_rad)
+
                         return swarm._project_and_slide(intersection[0]+EPS*norm_out_u, 
                                                         newendpt+EPS*proj_u, 
                                                         adj_intersect, mesh, 
-                                                        max_meshpt_dist, DIM,
-                                                        intersection)
+                                                        close_mesh, max_meshpt_dist, 
+                                                        DIM, intersection)
 
                 ######  Went past, but did not intersect adjoining element! ######
 
@@ -1847,18 +1869,18 @@ class swarm:
                 #   be intersecting it. And if by some numerical error we do,
                 #   we need to treat it.
                 pt_bool = np.logical_or(np.logical_or(
-                    np.isclose(np.linalg.norm(mesh.reshape(
-                    (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-intersection[3],
+                    np.isclose(np.linalg.norm(close_mesh.reshape(
+                    (close_mesh.shape[0]*close_mesh.shape[1],close_mesh.shape[2]))-intersection[3],
                     axis=1),0),
-                    np.isclose(np.linalg.norm(mesh.reshape(
-                    (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-intersection[4],
+                    np.isclose(np.linalg.norm(close_mesh.reshape(
+                    (close_mesh.shape[0]*close_mesh.shape[1],close_mesh.shape[2]))-intersection[4],
                     axis=1),0)),
-                    np.isclose(np.linalg.norm(mesh.reshape(
-                    (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-intersection[5],
+                    np.isclose(np.linalg.norm(close_mesh.reshape(
+                    (close_mesh.shape[0]*close_mesh.shape[1],close_mesh.shape[2]))-intersection[5],
                     axis=1),0)
                 )
-                pt_bool = pt_bool.reshape((mesh.shape[0],mesh.shape[1]))
-                adj_mesh = mesh[np.any(pt_bool,axis=1)]
+                pt_bool = pt_bool.reshape((close_mesh.shape[0],close_mesh.shape[1]))
+                adj_mesh = close_mesh[np.any(pt_bool,axis=1)]
                 # check for intersection, but translate start/end points back
                 #   from the simplex a bit for numerical stability
                 # this has already been done for newendpt
@@ -1925,10 +1947,16 @@ class swarm:
                                                         adj_intersect, kill)
 
                     # Not an already discovered mesh element.
-                    # We slide. Pass along info about the old element.
+                    # We slide. Pass along info about the old element and 
+                    #   regenerate eligible mesh segments.
+                    search_rad = max_meshpt_dist*2/3
+                    close_mesh = swarm._get_eligible_mesh_elements(
+                        intersection[0]+EPS*norm_out_u, 
+                        newendpt+EPS*proj_u+EPS*norm_out_u, 
+                        mesh, search_rad)
                     return swarm._project_and_slide(intersection[0]+EPS*norm_out_u, 
                                                     newendpt+EPS*proj_u+EPS*norm_out_u, 
-                                                    adj_intersect, mesh, 
+                                                    adj_intersect, mesh, close_mesh,
                                                     max_meshpt_dist, DIM,
                                                     intersection, kill)
 
