@@ -56,19 +56,18 @@ Planktos directory): ::
 Running Directly From Source (no install)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Installing dependencies using Anaconda Python is highly recommended.
+Installing dependencies using Anaconda Python is highly recommended (except vtk).
 However, the default package manager, conda, appears unable to handle the 
 Planktos dependencies. The performance of conda has been degrading with time 
 as the number of available Python libraries increases, and this is particularly 
-true in the case of packages listed on the conda-forge channel. As of writing 
-this (July, 2021), it is pretty much broken.
+true in the case of packages listed on the conda-forge channel. 
 
-Instead, if you are using Anaconda Python, please first install the package manager 
+Instead, if you are using Anaconda Python, first install the package manager 
 `mamba <https://mamba.readthedocs.io/en/latest/>`_ and use it in place of conda.
 The commands are the same (it's a drop-in replacement for conda) but it is a C++ 
 solver based on libsolv which manages dependencies for RedHat, Debian, etc. Also, 
-it has multi-threaded downloads and doesn't break when trying to obtain vtk 
-and/or pyvista. Install with the following command::
+it has multi-threaded downloads and doesn't break when solving dependencies. 
+Install with the following command::
     
     conda install -c conda-forge mamba
 
@@ -78,14 +77,14 @@ Having done that, the dependencies are as follows:
 - numpy/scipy
 - matplotlib 3.x
 - pandas
-- vtk (if loading vtk data). Use mamba and conda-forge, not conda!! conda seems 
-  to break itself trying to install vtk for some reason, and takes an hour to try 
-  and solve the dependencies in the process. ::
+- vtk (if loading vtk data). I now suggest installing with pip to avoid a DLL 
+error. Incidently, if you get _image DLL errors from pillow when trying to load 
+matplotlib.pyplot, try using pip to reinstall using `pip install -U pillow`.
+- pyvista (if saving vtk data). I suggest using mamba and the conda-forge 
+  channel, not conda ::
 
-    mamba install -c conda-forge ffmpeg
-    
-- pyvista (if saving vtk data). Again, mamba not conda. Same problem 
-  as for vtk.
+    mamba install -c conda-forge pyvista
+
 - numpy-stl (if loading stl data). Again, get it from conda-forge.
 - netCDF4 (if loading netCDF data)
 - pytest (if running tests)
@@ -120,6 +119,16 @@ undergone rigorous testing, and running the method will add significant
 computational overhead due to the need to search for collisions with each 
 additional line segment. Finally, avoid mesh structures that intersect with a 
 periodic boundary (w.r.t. agents); behavior related to this is not implemented.
+
+If you use this software in your research, please cite it via the following paper: 
+
+Strickland, W.C., Battista, N.A., Hamlet, C.L., Miller, L.A. (2022), 
+Planktos: An agent-based modeling framework for small organism movement and 
+dispersal in a fluid environment with immersed structures. 
+*Bulletin of Mathematical Biology*, 84(72). 
+
+A suggested BibTeX entry is included in the file 
+:download:`Planktos.bib <../Planktos.bib>`.
 
 Research that utilizes this framework can be seen in:  
 

@@ -30,10 +30,12 @@ Functionality includes:
 * Velocity field analysis with respect to deterministic agent behavior via the 
   finite-time Lagrangian exponent.
 
-If you use this software in your project, please cite it as:  
+If you use this software in your project, please cite the following paper: 
 
-  Strickland, WC. (2017), *Planktos agent-based modeling framework*. 
-  https://github.com/mountaindust/Planktos.  
+  Strickland, W.C., Battista, N.A., Hamlet, C.L., Miller, L.A. (2022), 
+  Planktos: An agent-based modeling framework for small organism movement and 
+  dispersal in a fluid environment with immersed structures. 
+  *Bulletin of Mathematical Biology*, 84(72). 
 
 A suggested BibTeX entry is included in the file 
 :download:`Planktos.bib <../Planktos.bib>`.
