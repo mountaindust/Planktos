@@ -3256,8 +3256,8 @@ class environment:
 
         The material derivative is given by
         .. math::
-            \\frac{D\\mathbf{u}}{Dt} = \\mathbf{u}_t + 
-            (\\nabla\\mathbf{u})\\mathbf{u}
+        \\frac{D\\mathbf{u}}{Dt} = \\mathbf{u}_t + 
+        (\\nabla\\mathbf{u})\\mathbf{u}
         
         Parameters
         ----------

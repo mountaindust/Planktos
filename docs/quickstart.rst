@@ -77,11 +77,8 @@ Having done that, the dependencies are as follows:
 - numpy/scipy
 - matplotlib 3.x
 - pandas
-- vtk (if loading vtk data). I now suggest installing with pip to avoid a DLL 
-error. Incidently, if you get _image DLL errors from pillow when trying to load 
-matplotlib.pyplot, try using pip to reinstall using `pip install -U pillow`.
-- pyvista (if saving vtk data). I suggest using mamba and the conda-forge 
-  channel, not conda ::
+- vtk (if loading vtk data). I now suggest installing with pip to avoid a DLL error. Incidently, if you get _image DLL errors from pillow when trying to load matplotlib.pyplot, try using pip to reinstall using `pip install -U pillow`.
+- pyvista (if saving vtk data). I suggest using mamba and the conda-forge channel, not conda ::
 
     mamba install -c conda-forge pyvista
 
