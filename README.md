@@ -1,10 +1,10 @@
 # Planktos Agent-based Modeling Framework
 
-This project focuses on building a framework for ABMs of plankton and tiny
-insects, or other small entities whose effect on the surrounding flow can be
-considered negligable. Work is ongoing.
+Welcome to Planktos, a framework for constructing agent-based models of plankton, 
+tiny insects, and other small organisms whose effect on the surrounding fluid 
+can be considered negligable. This is an active research project and work is ongoing.
 
-Check out the online documentation at https://planktos.readthedocs.io!
+Check out the online documentation at https://planktos.readthedocs.io.\
 
 If you use this software in your project, please cite the following paper:  
 Strickland, W.C., Battista, N.A., Hamlet, C.L., Miller, L.A. (2022). Planktos: An agent-based modeling framework for small organism movement and dispersal in a fluid environment with immersed structures. *Bulletin of Mathematical Biology*, 84(72).  
@@ -13,6 +13,11 @@ Additionally, the documentation can be sited as:
 Strickland, W.C. (2017). *Planktos agent-based modeling framework, software documentation*. https://planktos.readthedocs.io.
 
 A suggested BibTeX entry for both of these is included in the file Planktos.bib.
+
+This project is supported by the National Science Foundation through award 
+number DMS-2410988, 2024-2027. The opinions, findings, and conclusions or 
+recommendations expressed here are those of the author(s) and do not necessarily 
+reflect the views of the National Science Foundation.
 
 ## Installation & Dependencies
 
