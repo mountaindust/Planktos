@@ -40,6 +40,11 @@ If you use this software in your project, please cite the following paper:
 A suggested BibTeX entry is included in the file 
 :download:`Planktos.bib <../Planktos.bib>`.
 
+This project is supported by the National Science Foundation through award 
+number DMS-2410988, 2024-2027. The opinions, findings, and conclusions or 
+recommendations expressed here are those of the author(s) and do not necessarily 
+reflect the views of the National Science Foundation.
+
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
