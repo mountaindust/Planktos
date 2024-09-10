@@ -438,6 +438,10 @@ class environment:
                 "Skipping auto-update, please verify all values for consistency!")
 
 
+    #######################################################################
+    #####                        FLUID SETTERS                        #####
+    #######################################################################
+
 
     def set_brinkman_flow(self, alpha, h_p, U, dpdx, res=101, tspan=None):
         r'''Get a fully developed Brinkman flow with a porous region.
@@ -976,6 +980,10 @@ class environment:
         self.fluid_domain_LLC = None
         self.h_p = h
 
+
+    #######################################################################
+    #####                        FLUID READERS                        #####
+    #######################################################################
 
 
     def read_IB2d_vtk_fluid_data(self, path, dt, print_dump, d_start=0, d_finish=None):
@@ -1872,6 +1880,10 @@ class environment:
         self.__reset_flow_variables()
 
 
+    #######################################################################
+    #####                        MESH READERS                         #####
+    #######################################################################
+
 
     def read_stl_mesh_data(self, filename, unit_conv=None):
         '''Reads in 3D mesh data from an ascii or binary stl file. Must have
@@ -2079,6 +2091,10 @@ class environment:
                   )).max()
         self.max_meshpt_dist = max_len
 
+
+    #######################################################################
+    #####                    DOMAIN MANIPULATIONS                     #####
+    #######################################################################
 
 
     def tile_flow(self, x=2, y=1):
@@ -2316,6 +2332,10 @@ class environment:
         self.__reset_flow_deriv()
 
 
+    #######################################################################
+    #####                       SWARM FUNCTIONS                       #####
+    #######################################################################
+
 
     def add_swarm(self, swarm_size=100, **kwargs):
         ''' Adds a swarm into this environment.
@@ -2452,6 +2472,10 @@ class environment:
                     self.bndry.append(z_bndry)
 
 
+    #######################################################################
+    #####                     FLUID INTERPOLATION                     #####
+    #######################################################################
+
 
     def interpolate_temporal_flow(self, t_indx=None, time=None):
         '''Interpolate flow in time using a cubic spline. Defaults to 
@@ -2576,6 +2600,10 @@ class environment:
         else:
             return np.array([x_vel, y_vel]).T
 
+
+    #######################################################################
+    #####                 CALCULATIONS AND ANALYSIS                   #####
+    #######################################################################
 
 
     def get_mean_fluid_speed(self):
@@ -3306,6 +3334,10 @@ class environment:
             self.DuDt_time = time
 
 
+    #######################################################################
+    #####                       HELPER FUNCTIONS                      #####
+    #######################################################################
+
 
     def reset(self, rm_swarms=False):
         '''Resets environment to time=0. Swarm history will be lost, and all
@@ -3358,6 +3390,10 @@ class environment:
         self.DuDt = None
         self.DuDt_time = None
 
+
+    #######################################################################
+    #####                           PLOTTING                          #####
+    #######################################################################
 
 
     def _plot_setup(self, fig, nohist=False):
