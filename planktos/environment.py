@@ -2094,9 +2094,12 @@ class environment:
 
 
 
-    def read_IB2d_vtk_mesh_data(self, path, dt, print_dump, d_start=0, d_finish=None):
+    def read_IB2d_vtk_mesh_data(self, path, dt, print_dump, d_start=0, d_finish=None, 
+                                brk_idx_list=(), add_idx_list=None):
         '''Reads in vtk mesh data for moving immersed boundaries.
         UNDER DEVELOPMENT.
+        TODO: merge with read_IB2d_vertex_data -> read_IB2d_mesh_data
+        TODO: test brk_idx_list and add_idx_list
 
         Assumes filenames are of the format lagsPts.####.vtk and that they 
         contain unstructured grid data (3d with z-direction unused).
@@ -2113,6 +2116,18 @@ class environment:
             number of first vtk dump to read in
         d_finish : int, optional
             number of last vtk dump to read in, or None to read to end
+        brk_idx_list : iterable of int
+            When loading lagsPts files, the default assumption is that each 
+            vertex point is connected to the next one via a line segment. If 
+            this should not be done in some locations, list the indices of the 
+            vertices that are not connected with their successor vertex using 
+            the MATLAB convention (indexing starts at 1) or equivalently, list 
+            the indices of the vertices that are not connected with their 
+            predecessor using Python convention (indexing starts at 0).
+        add_idx_list : iterable of 2-tuple of int
+            If additional line segements should be added between non-successive 
+            vertices, list index pairs of the vertices that should be connected 
+            using the MATLAB convention that indexing starts at 1.
         '''
 
         ##### Parse parameters and read in data #####
@@ -2150,17 +2165,30 @@ class environment:
             # trim z-direction and store
             mesh_list.append(points[:,:2])
 
+        ### Convert to T x N x 2 x 2 array of mesh elements
+
+        ibmesh = []
+
+        for t in range(len(mesh_list)):
+            ibmesh.append([])
+            for n in range(len(mesh_list[0])-1):
+                if n+1 not in brk_idx_list:
+                    ibmesh[t].append([mesh_list[t][n,:],mesh_list[t][n+1,:]])
+            if add_idx_list is not None:
+                for tup in add_idx_list:
+                    ibmesh[t].append([mesh_list[t][tup[0],:],mesh_list[t][tup[1],:]])
+
         print('Done!')
 
-        ### Save data - TODO: THIS IS CURRENTLY RAW POINTS, NOT ELEMENTS! ###
-        # if d_start != d_finish:
-        #     self.ibmesh = mesh_list
-        #     self.ibmesh_times = np.arange(d_start,d_finish+1)*print_dump*dt
-        #     # shift time so that ibmesh starts at t=0
-        #     self.ibmesh_times -= self.ibmesh_times[0]
-        # else:
-        #     self.ibmesh = mesh_list[0]
-        #     self.ibmesh_times = None
+        ### Save data
+        if d_start != d_finish:
+            self.ibmesh = np.array(ibmesh)
+            self.ibmesh_times = np.arange(d_start,d_finish+1)*print_dump*dt
+            # shift time so that ibmesh starts at t=0
+            self.ibmesh_times -= self.ibmesh_times[0]
+        else:
+            self.ibmesh = ibmesh[0] # squash t dimension
+            self.ibmesh_times = None
 
 
     #######################################################################
