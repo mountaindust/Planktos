@@ -340,6 +340,7 @@ class environment:
         #   points and reconstruct.
         self.ibmesh = None # Nx2x2 or Nx3x3 (element, pt in element, (x,y,z))
         self.max_meshpt_dist = None # max length of a mesh segment
+        self.ibmesh_times = None
         if ibmesh_color is None:
             if Lz is None:
                 self.ibmesh_color = 'k'
@@ -1040,7 +1041,7 @@ class environment:
         Y_vel = []
         path = str(path) # Get string for passing into functions
 
-        print('Reading vtk data...')
+        print('Reading vtk fluid data...')
         
         for n in range(d_start, d_finish+1):
             # Points to desired data viz_IB2d data file
@@ -2060,8 +2061,8 @@ class environment:
 
     def read_vertex_data_to_convex_hull(self, filename):
         '''Reads in 2D or 3D vertex data from a vtk file or a vertex file and 
-        applies ConvexHull triangulation to get a complete boundary. This uses 
-        Qhull through Scipy under the hood http://www.qhull.org/.
+        applies ConvexHull triangulation to get a complete, static boundary. 
+        This uses Qhull through Scipy under the hood http://www.qhull.org/.
         '''
 
         path = Path(filename)
@@ -2090,6 +2091,76 @@ class environment:
                   for ii  in range(DIM)
                   )).max()
         self.max_meshpt_dist = max_len
+
+
+
+    def read_IB2d_vtk_mesh_data(self, path, dt, print_dump, d_start=0, d_finish=None):
+        '''Reads in vtk mesh data for moving immersed boundaries.
+        UNDER DEVELOPMENT.
+
+        Assumes filenames are of the format lagsPts.####.vtk and that they 
+        contain unstructured grid data (3d with z-direction unused).
+
+        Parameters
+        ----------
+        path : str
+            path to folder with vtk data
+        dt : float
+            dt in input2d
+        print_dump : int
+            print_dump in input2d
+        d_start : int, default=0
+            number of first vtk dump to read in
+        d_finish : int, optional
+            number of last vtk dump to read in, or None to read to end
+        '''
+
+        ##### Parse parameters and read in data #####
+
+        path = Path(path)
+        if not path.is_dir(): 
+            raise FileNotFoundError("Directory {} not found!".format(str(path)))
+        
+        #infer d_finish
+        file_names = [x.name for x in path.iterdir() if x.is_file()]
+        if 'lagsPts.' in [x[:8] for x in file_names]:
+            u_nums = sorted([int(f[8:12]) for f in file_names if f[:8] == 'lagsPts.'])
+            if d_finish is None:
+                d_finish = u_nums[-1]
+        else:
+            raise FileNotFoundError(f"Could not find lagsPts.####.vtk files in {str(path)}.")
+        
+        mesh_list = []
+
+        print('Reading vtk mesh data...')
+
+        for n in range(d_start, d_finish+1):
+            # Points to desired data viz_IB2d data file
+            if n < 10:
+                numSim = '000'+str(n)
+            elif n < 100:
+                numSim = '00'+str(n)
+            elif n < 1000:
+                numSim = '0'+str(n)
+            else:
+                numSim = str(n)
+
+            filename = path / ('lagsPts.' + str(numSim) + '.vtk')
+            points, bounds = dataio.read_vtk_Unstructured_Grid_Points(filename)
+            # trim z-direction and store
+            mesh_list.append(points[:,:2])
+
+        print('Done!')
+
+        ### Save data - TODO: THIS IS CURRENTLY RAW POINTS, NOT ELEMENTS! ###
+        # if d_start != d_finish:
+        #     self.ibmesh = mesh_list
+        #     self.ibmesh_times = np.arange(d_start,d_finish+1)*print_dump*dt
+        #     # shift time so that ibmesh starts at t=0
+        #     self.ibmesh_times -= self.ibmesh_times[0]
+        # else:
+        #     self.ibmesh = mesh_list[0]
+        #     self.ibmesh_times = None
 
 
     #######################################################################
@@ -3917,6 +3988,10 @@ class environment:
         plt.colorbar(pcm, cax=cbaxes)
         plt.show()
 
+
+    #######################################################################
+    #####           FLUID AND MESH INTERPOLATION OBJECTS              #####
+    #######################################################################
 
 
 class fCubicSpline(interpolate.CubicSpline):
