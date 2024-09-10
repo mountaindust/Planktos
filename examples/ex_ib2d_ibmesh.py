@@ -38,7 +38,7 @@ envir = planktos.environment()
 # Read in ib2d vtk data with dt=5.0e-5, print_dump=1000. The data points on the
 #   right and upper boundaries (periodic with the left and lower boundaries)
 #   will automatically be added in to complete the domain.
-envir.read_IB2d_vtk_data('ib2d_data', 5.0e-5, 1000)
+envir.read_IB2d_vtk_fluid_data('ib2d_data', 5.0e-5, 1000)
 
 # Now we read in the vertex data to get an immersed mesh. These data include 
 #   points for two lines (the sides of the channel) and a circle representing 

@@ -17,7 +17,7 @@ from planktos import motion
 
 envir = planktos.environment(char_L=0.1, rho=1, mu=0.001, U=15)
 
-envir.read_IB2d_vtk_data('ib2d_data', 5.0e-5, 1000)
+envir.read_IB2d_vtk_fluid_data('ib2d_data', 5.0e-5, 1000)
 # Another option is to try a static flow field, for example by just using 
 #   cycle number 20 (in which vortices have formed). Just uncomment one or the
 #   other depending on what you want to calculate over!
@@ -69,7 +69,7 @@ envir.plot_2D_FTLE()
 envir = planktos.environment(char_L=0.1, rho=1, mu=0.001, U=15)
 # NOTE: We'll start with cycle 20 in the VTK data here, instead of from the 
 # beginning. It produces a more exciting result!
-envir.read_IB2d_vtk_data('ib2d_data', 5.0e-5, 1000, d_start=20, d_finish=None)
+envir.read_IB2d_vtk_fluid_data('ib2d_data', 5.0e-5, 1000, d_start=20, d_finish=None)
 
 ##############     Use a Passed in ODE Generator    ##############
 # Note: intertial particles requires certain parameters to be present in the 
@@ -94,7 +94,7 @@ envir.plot_2D_FTLE()
 #   that is operated on.
 
 envir = planktos.environment(char_L=0.1, rho=1, mu=0.001, U=15)
-envir.read_IB2d_vtk_data('ib2d_data', 5.0e-5, 1000, d_start=20, d_finish=None)
+envir.read_IB2d_vtk_fluid_data('ib2d_data', 5.0e-5, 1000, d_start=20, d_finish=None)
 
 ##############     FTLE with passed in swarm     ##############
 class ftle_swrm(planktos.swarm):
