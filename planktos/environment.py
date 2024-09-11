@@ -2099,7 +2099,6 @@ class environment:
         '''Reads in vtk mesh data for moving immersed boundaries.
         UNDER DEVELOPMENT.
         TODO: merge with read_IB2d_vertex_data -> read_IB2d_mesh_data
-        TODO: test brk_idx_list and add_idx_list
 
         Assumes filenames are of the format lagsPts.####.vtk and that they 
         contain unstructured grid data (3d with z-direction unused).
@@ -3496,7 +3495,11 @@ class environment:
 
 
     def _plot_setup(self, fig, nohist=False):
-        ''' Setup figures for plotting '''
+        ''' Setup figures for plotting 
+        
+        TODO: Currently NOT interpolating the ibmesh in time - just plotting 
+        the closest previous time for debugging. This will need to change.
+        '''
 
         ########## 2D plot ##########
         if len(self.L) == 2:
@@ -3573,7 +3576,14 @@ class environment:
 
             # plot ibmesh
             if self.ibmesh is not None:
-                line_segments = LineCollection(self.ibmesh)
+                if len(self.ibmesh.shape) < 4:
+                    # no time dependence
+                    line_segments = LineCollection(self.ibmesh)
+                else:
+                    # time dependent mesh
+                    loc = np.searchsorted(self.ibmesh_times, self.time, side='right')
+                    loc -= 1
+                    line_segments = LineCollection(self.ibmesh[loc,...])
                 line_segments.set_color(self.ibmesh_color)
                 ax.add_collection(line_segments)
 
