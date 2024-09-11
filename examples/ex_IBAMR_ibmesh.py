@@ -23,7 +23,7 @@ envir.read_IBAMR3d_vtk_dataset('../tests/IBAMR_test_data', start=3, finish=None)
 # Now we read in the vertex data. Unlike the ib2d_ibmesh example, here we will
 #   use a convex hull algorithm to create a solid object out of the vertex 
 #   points. This way, we don't end up with a cylinder without a top on it!
-envir.read_vertex_data_to_convex_hull('../tests/IBAMR_test_data/mesh_db.vtk')
+envir.read_3D_vertex_data_to_convex_hull('../tests/IBAMR_test_data/mesh_db.vtk')
 # Plot to see what we have:
 envir.plot_flow()
 

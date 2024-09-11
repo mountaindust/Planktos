@@ -18,7 +18,7 @@ import planktos
 # Let's begin by loading the same fluid and mesh as used in ex_ib2d_ibmesh.py
 envir = planktos.environment()
 envir.read_IB2d_vtk_fluid_data('ib2d_data', 5.0e-5, 1000)
-envir.read_IB2d_vertex_data('ib2d_data/channel.vertex')
+envir.read_IB2d_mesh_data('ib2d_data/channel.vertex', method='proximity')
 
 # In this example, we are going to create agents that stick to immersed
 #   boundaries whenever they come in contact, and then stay there!

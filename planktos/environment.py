@@ -338,8 +338,10 @@ class environment:
         #   unique vertex values in the ibmesh AND unique_inverse, the indices
         #   to reconstruct the mesh from the unique array. Then can update
         #   points and reconstruct.
-        self.ibmesh = None # Nx2x2 or Nx3x3 (element, pt in element, (x,y,z))
+        self.ibmesh = None # if static: Nx2x2 or Nx3x3 (element, pt in element, (x,y,z))
+                           # if moving: TxNx2x2 or TxNx3x3
         self.max_meshpt_dist = None # max length of a mesh segment
+                                    # TODO: will need to update with moving/deforming mesh
         self.ibmesh_times = None
         if ibmesh_color is None:
             if Lz is None:
@@ -1918,63 +1920,223 @@ class environment:
 
 
 
-    def read_IB2d_vertex_data(self, filename, res_factor=0.501, res=None):
-        '''Reads in 2D vertex data from a .vertex file (IB2d) for a static mesh. 
-        Assumes that any vertices closer than res_factor (default is half + a 
-        bit for numerical stability) times the Eulerian mesh resolution are 
-        connected linearly. This method gets the Eulerian mesh resolution from 
-        the fluid velocity data, so the flow data must be imported first. 
-        
-        Alternatively, you can pass in the Eulerian mesh resolution directly to 
-        the res parameter to get the mesh in absence of any fluid velocity 
-        field. Calculate it from the IB2d input file by taking the domain length 
-        and dividing by the number of Eulerian grid points: Lx/Nx and Ly/Ny. The 
-        smaller of the two numbers should be used.
+    def read_IB2d_mesh_data(self, path, dt=None, print_dump=None, d_start=0, d_finish=None, 
+                                brk_idx_list=(), add_idx_list=None,
+                                method='adjacent', res_factor=0.501, res=None):
+        '''Reads in IB2d folder with vtk mesh data for moving immersed 
+        boundaries or either a .vertex file or a single .vtk for a static mesh.
 
-        Avoid mesh structures that intersect with a periodic boundary; behavior 
-        related to this is not implemented.
+        In the case of a moving immersed boundary, this method assumes filenames 
+        are of the format lagsPts.####.vtk and that they contain unstructured 
+        grid data (3d with z-direction unused). Adjacent vertex points will be 
+        associated by mesh line segments unless excluded in brk_idx_list. 
+        Additional segments can be added between vertex points using add_idx_list.
+
+        In the case of a static immersed boundary, different methods can be used 
+        to associated vertex pairs as mesh elements. See the options for method 
+        below.
+
+        In all cases, avoid mesh structures that intersect with a periodic 
+        boundary; behavior related to this is not implemented.
 
         Parameters
         ----------
-        filename : string
-            vertex file to load
+        path or filename : str
+            path to directory with vtk data if importing a moving immersed boundary; 
+            otherwise, in the case of a static mesh, a single vtk or vertex file 
+            to load (including file extension).
+
+        Parameters for moving immersed boundaries
+        -----------------------------------------
+        dt : float
+            dt in input2d
+        print_dump : int
+            print_dump in input2d
+        d_start : int, default=0
+            number of first vtk dump to read in
+        d_finish : int, optional
+            number of last vtk dump to read in, or None to read to end
+        brk_idx_list : iterable of int, optional
+            When loading lagsPts files, the default assumption is that each 
+            vertex point is connected to the next one via a line segment. If 
+            this should not be done in some locations, list the indices of the 
+            vertices that are not connected with their successor vertex using 
+            the MATLAB convention (indexing starts at 1) or equivalently, list 
+            the indices of the vertices that are not connected with their 
+            predecessor using Python convention (indexing starts at 0).
+        add_idx_list : iterable of 2-tuple of int, optional
+            If additional line segements should be added between non-successive 
+            vertices, list index pairs of the vertices that should be connected 
+            using the MATLAB convention that indexing starts at 1.
+
+        Parameters for static immersed boundaries
+        -----------------------------------------
+        method : {'adjacent', 'proximity','hull'} as str, default='adjacent'
+            method for associating vertex pairs as individual mesh elements. 
+            - 'adjacent' (default): the same method will be used as for moving 
+            immersed boundaries. brk_idx_list and add_idx_list can be set to 
+            refine the resulting mesh. 
+            - 'proximity': any vertices closer than res_factor (default is half 
+            + a bit for numerical stability) times the Eulerian mesh resolution 
+            are connected linearly. This method gets the Eulerian mesh 
+            resolution from the fluid velocity data, so the flow data must be 
+            imported first. Alternatively, you can pass in the Eulerian mesh 
+            resolution directly to the res parameter to get the mesh in absence 
+            of any fluid velocity field. Calculate it from the IB2d input file 
+            by taking the domain length and dividing by the number of Eulerian 
+            grid points: Lx/Nx and Ly/Ny. The smaller of the two numbers should 
+            be used.
+            - 'hull': applies ConvexHull triangulation to get the mesh elements. 
+            This uses Qhull through Scipy under the hood http://www.qhull.org/.
         res_factor : float, default=0.501
             this times the Eulerian mesh resolution is the radius that will be
-            used.
+            used in the 'proximity' method
         res : float, optional
-            pass the Eulerian mesh resolution in directly, instead of 
-            calculating it from a loaded fluid velocity field
+            use in order to pass the Eulerian mesh resolution in directly, 
+            instead of calculating it from a loaded fluid velocity field, in the 
+            case of the 'proximity' method
         '''
 
-        path = Path(filename)
-        if not path.is_file(): 
-            raise FileNotFoundError("File {} not found!".format(filename))
-        if res is None:
-            assert self.flow_points is not None, "Must import flow data first!"
-            dists = np.concatenate([self.flow_points[ii][2:-1]-self.flow_points[ii][1:-2]
-                                    for ii in range(2)])
-            Eulerian_res = dists.min()
+        path = Path(path)
+
+        def _read_single_file(path_obj):
+            filename = str(path_obj)
+            if filename.strip()[-4:] == '.vtk':
+                points, bounds = dataio.read_vtk_Unstructured_Grid_Points(filename)
+                points = points[:,:2] # remove z-direction
+            elif filename.strip()[-7:] == '.vertex':
+                points = dataio.read_IB2d_vertices(filename)
+            else:
+                raise RuntimeError("File extension for {} not recognized.".format(filename))
+            return points
+
+        ####### Moving immersed boundary data #######
+        if path.is_dir(): 
+            #infer d_finish
+            file_names = [x.name for x in path.iterdir() if x.is_file()]
+            if 'lagsPts.' in [x[:8] for x in file_names]:
+                u_nums = sorted([int(f[8:12]) for f in file_names if f[:8] == 'lagsPts.'])
+                if d_finish is None:
+                    d_finish = u_nums[-1]
+            else:
+                raise FileNotFoundError(f"Could not find lagsPts.####.vtk files in {str(path)}.")
+            
+            mesh_list = []
+
+            print('Reading vtk mesh data...')
+
+            for n in range(d_start, d_finish+1):
+                # Points to desired data viz_IB2d data file
+                if n < 10:
+                    numSim = '000'+str(n)
+                elif n < 100:
+                    numSim = '00'+str(n)
+                elif n < 1000:
+                    numSim = '0'+str(n)
+                else:
+                    numSim = str(n)
+
+                filename = path / ('lagsPts.' + str(numSim) + '.vtk')
+                points, bounds = dataio.read_vtk_Unstructured_Grid_Points(filename)
+                # trim z-direction and store
+                mesh_list.append(points[:,:2])
+
+            ### Convert to T x N x 2 x 2 array of mesh elements
+
+            ibmesh = []
+
+            for t in range(len(mesh_list)):
+                ibmesh.append([])
+                for n in range(len(mesh_list[0])-1):
+                    if n+1 not in brk_idx_list:
+                        ibmesh[t].append([mesh_list[t][n,:],mesh_list[t][n+1,:]])
+                if add_idx_list is not None:
+                    for tup in add_idx_list:
+                        ibmesh[t].append([mesh_list[t][tup[0],:],mesh_list[t][tup[1],:]])
+
+            print('Done! Visually check structure with plot_envir().')
+
+            ### Save data
+            if d_start != d_finish:
+                self.ibmesh = np.array(ibmesh)
+                self.ibmesh_times = np.arange(d_start,d_finish+1)*print_dump*dt
+                # shift time so that ibmesh starts at t=0
+                self.ibmesh_times -= self.ibmesh_times[0]
+            else:
+                self.ibmesh = ibmesh[0] # squash t dimension
+                self.ibmesh_times = None
+
+            # Set maximum distance between mesh points.
+            self.max_meshpt_dist = np.linalg.norm(self.ibmesh[0,:,0,:]
+                                                  -self.ibmesh[0,:,1,:],axis=1).max()
+        
+        
+        ####### Static immersed boundary data #######
+        elif path.is_file():
+            ### adjacent method
+            if method == 'adjacent':
+                print('Reading vertex data and meshing...')
+                vertices = _read_single_file(path)
+                ibmesh = []
+                for n in range(vertices.shape[0]-1):
+                    if n+1 not in brk_idx_list:
+                        ibmesh.append([vertices[n,:],vertices[n+1,:]])
+                if add_idx_list is not None:
+                    for tup in add_idx_list:
+                        ibmesh.append([vertices[tup[0],:],vertices[tup[1],:]])
+                self.ibmesh = np.array(ibmesh)
+                print('Done! Visually check structure with plot_envir().')
+            
+            ### proximity method
+            elif method == 'proximity':
+                if res is None:
+                    assert self.flow_points is not None, "Must import flow data first!"
+                    dists = np.concatenate([self.flow_points[ii][2:-1]-self.flow_points[ii][1:-2]
+                                            for ii in range(2)])
+                    Eulerian_res = dists.min()
+                else:
+                    Eulerian_res = res
+
+                vertices = _read_single_file(path)
+                print("Processing vertex file for pair-wise connections within {}.".format(
+                    res_factor*Eulerian_res))
+                # shift coordinates to match any shift that happened in flow data
+                if self.fluid_domain_LLC is not None:
+                    for ii in range(2):
+                        vertices[:,ii] -= self.fluid_domain_LLC[ii]
+                dist_mat_test = distance.pdist(vertices)<=res_factor*Eulerian_res
+                idx = np.array(list(combinations(range(vertices.shape[0]),2)))
+                self.ibmesh = np.array([vertices[idx[dist_mat_test,0],:],
+                                        vertices[idx[dist_mat_test,1],:]])
+                self.ibmesh = np.transpose(self.ibmesh,(1,0,2))
+                print("Done! Visually check structure with plot_envir().")
+                
+            ### Convex hull method
+            elif method == 'hull':
+                vertices = _read_single_file(path)
+                # shift coordinates to match any shift that happened in flow data
+                if self.fluid_domain_LLC is not None:
+                    for ii in range(2):
+                        vertices[:,ii] -= self.fluid_domain_LLC[ii]
+                hull = ConvexHull(vertices)
+                self.ibmesh = vertices[hull.simplices]
+
+            ### Catch unknown methods
+            else:
+                raise RuntimeError(f"method {method} not found!")
+            
+            # Set maximum distance between mesh points.
+            self.max_meshpt_dist = np.linalg.norm(self.ibmesh[:,0,:]
+                                                      -self.ibmesh[:,1,:],axis=1).max()
+        
+        
+        ####### Neither a directory nor a filename #######
         else:
-            Eulerian_res = res
-
-        vertices = dataio.read_IB2d_vertices(filename)
-        print("Processing vertex file for point-wise connections within {}.".format(
-            res_factor*Eulerian_res))
-        dist_mat_test = distance.pdist(vertices)<=res_factor*Eulerian_res
-        idx = np.array(list(combinations(range(vertices.shape[0]),2)))
-        self.ibmesh = np.array([vertices[idx[dist_mat_test,0],:],
-                                vertices[idx[dist_mat_test,1],:]])
-        self.ibmesh = np.transpose(self.ibmesh,(1,0,2))
-        print("Done! Visually check structure with environment.plot_envir().")
-        # shift coordinates to match any shift that happened in flow data
-        if self.fluid_domain_LLC is not None:
-            for ii in range(2):
-                self.ibmesh[:,:,ii] -= self.fluid_domain_LLC[ii]
-        self.max_meshpt_dist = np.linalg.norm(self.ibmesh[:,0,:]-self.ibmesh[:,1,:],axis=1).max()
+            raise FileNotFoundError(f"Path {str(path)} not found!")
 
 
 
-    def add_vertices_to_2D_ibmesh(self):
+    def add_vertices_to_static_2D_ibmesh(self):
         '''Methods for auto-connecting mesh vertices into line segments may
         result in line segments that cross each other away from vertex points.
         This will cause undesirable behavior including mesh crossing. This
@@ -2059,8 +2221,8 @@ class environment:
 
 
 
-    def read_vertex_data_to_convex_hull(self, filename):
-        '''Reads in 2D or 3D vertex data from a vtk file or a vertex file and 
+    def read_3D_vertex_data_to_convex_hull(self, filename):
+        '''Reads in 3D vertex data from a vtk file or a vertex file and 
         applies ConvexHull triangulation to get a complete, static boundary. 
         This uses Qhull through Scipy under the hood http://www.qhull.org/.
         '''
@@ -2076,8 +2238,8 @@ class environment:
         else:
             raise RuntimeError("File extension for {} not recognized.".format(filename))
 
-        # get dimension
-        DIM = points.shape[1]
+        # set dimension
+        DIM = 3
 
         # shift to first quadrant
 
@@ -2091,195 +2253,6 @@ class environment:
                   for ii  in range(DIM)
                   )).max()
         self.max_meshpt_dist = max_len
-
-
-
-    def read_IB2d_vtk_mesh_data(self, path, dt=None, print_dump=None, d_start=0, d_finish=None, 
-                                brk_idx_list=(), add_idx_list=None,
-                                method='adjacent', res_factor=0.501, res=None):
-        '''Reads in IB2d vtk mesh data for moving immersed boundaries or a 
-        .vertex file for a static mesh.
-        UNDER DEVELOPMENT.
-        TODO: merge with read_vertex_data_to_convex_hull
-        TODO: test
-
-        In the case of a moving immersed boundary, this method assumes filenames 
-        are of the format lagsPts.####.vtk and that they contain unstructured 
-        grid data (3d with z-direction unused). Adjacent vertex points will be 
-        associated by mesh line segments unless excluded in brk_idx_list. 
-        Additional segments can be added between vertex points using add_idx_list.
-
-        In the case of a static immersed boundary, different methods can be used 
-        to associated vertex pairs as mesh elements. See the options for method 
-        below.
-
-        In all cases, avoid mesh structures that intersect with a periodic 
-        boundary; behavior related to this is not implemented.
-
-        Parameters
-        ----------
-        path or filename : str
-            path to folder with vtk data if importing a moving immersed boundary; 
-            otherwise, in the case of a static mesh, a vertex file to load
-
-        Parameters for moving immersed boundaries
-        -----------------------------------------
-        dt : float
-            dt in input2d
-        print_dump : int
-            print_dump in input2d
-        d_start : int, default=0
-            number of first vtk dump to read in
-        d_finish : int, optional
-            number of last vtk dump to read in, or None to read to end
-        brk_idx_list : iterable of int, optional
-            When loading lagsPts files, the default assumption is that each 
-            vertex point is connected to the next one via a line segment. If 
-            this should not be done in some locations, list the indices of the 
-            vertices that are not connected with their successor vertex using 
-            the MATLAB convention (indexing starts at 1) or equivalently, list 
-            the indices of the vertices that are not connected with their 
-            predecessor using Python convention (indexing starts at 0).
-        add_idx_list : iterable of 2-tuple of int, optional
-            If additional line segements should be added between non-successive 
-            vertices, list index pairs of the vertices that should be connected 
-            using the MATLAB convention that indexing starts at 1.
-
-        Parameters for static immersed boundaries
-        -----------------------------------------
-        method : {'adjacent', 'proximity'} as str, default='adjacent'
-            method for associating vertex pairs as individual mesh elements. 
-            - 'adjacent' (default): the same method will be used as for moving 
-            immersed boundaries. brk_idx_list and add_idx_list can be set to 
-            refine the resulting mesh. 
-            - 'proximity': any vertices closer than res_factor (default is half 
-            + a bit for numerical stability) times the Eulerian mesh resolution 
-            are connected linearly. This method gets the Eulerian mesh 
-            resolution from the fluid velocity data, so the flow data must be 
-            imported first. Alternatively, you can pass in the Eulerian mesh 
-            resolution directly to the res parameter to get the mesh in absence 
-            of any fluid velocity field. Calculate it from the IB2d input file 
-            by taking the domain length and dividing by the number of Eulerian 
-            grid points: Lx/Nx and Ly/Ny. The smaller of the two numbers should 
-            be used.
-        res_factor : float, default=0.501
-            this times the Eulerian mesh resolution is the radius that will be
-            used in the 'proximity' method
-        res : float, optional
-            use in order to pass the Eulerian mesh resolution in directly, 
-            instead of calculating it from a loaded fluid velocity field, in the 
-            case of the 'proximity' method
-        '''
-
-        path = Path(path)
-
-        ####### Moving immersed boundary data #######
-        if path.is_dir(): 
-            #infer d_finish
-            file_names = [x.name for x in path.iterdir() if x.is_file()]
-            if 'lagsPts.' in [x[:8] for x in file_names]:
-                u_nums = sorted([int(f[8:12]) for f in file_names if f[:8] == 'lagsPts.'])
-                if d_finish is None:
-                    d_finish = u_nums[-1]
-            else:
-                raise FileNotFoundError(f"Could not find lagsPts.####.vtk files in {str(path)}.")
-            
-            mesh_list = []
-
-            print('Reading vtk mesh data...')
-
-            for n in range(d_start, d_finish+1):
-                # Points to desired data viz_IB2d data file
-                if n < 10:
-                    numSim = '000'+str(n)
-                elif n < 100:
-                    numSim = '00'+str(n)
-                elif n < 1000:
-                    numSim = '0'+str(n)
-                else:
-                    numSim = str(n)
-
-                filename = path / ('lagsPts.' + str(numSim) + '.vtk')
-                points, bounds = dataio.read_vtk_Unstructured_Grid_Points(filename)
-                # trim z-direction and store
-                mesh_list.append(points[:,:2])
-
-            ### Convert to T x N x 2 x 2 array of mesh elements
-
-            ibmesh = []
-
-            for t in range(len(mesh_list)):
-                ibmesh.append([])
-                for n in range(len(mesh_list[0])-1):
-                    if n+1 not in brk_idx_list:
-                        ibmesh[t].append([mesh_list[t][n,:],mesh_list[t][n+1,:]])
-                if add_idx_list is not None:
-                    for tup in add_idx_list:
-                        ibmesh[t].append([mesh_list[t][tup[0],:],mesh_list[t][tup[1],:]])
-
-            print('Done! Visually check structure with environment.plot_envir().')
-
-            ### Save data
-            if d_start != d_finish:
-                self.ibmesh = np.array(ibmesh)
-                self.ibmesh_times = np.arange(d_start,d_finish+1)*print_dump*dt
-                # shift time so that ibmesh starts at t=0
-                self.ibmesh_times -= self.ibmesh_times[0]
-            else:
-                self.ibmesh = ibmesh[0] # squash t dimension
-                self.ibmesh_times = None
-        
-        
-        ####### Moving immersed boundary data #######
-        elif path.is_file():
-            ### adjacent method
-            if method == 'adjacent':
-                print('Reading vertex data and meshing...')
-                vertices = dataio.read_IB2d_vertices(str(path))
-                ibmesh = []
-                for n in range(vertices.shape[0]-1):
-                    if n+1 not in brk_idx_list:
-                        ibmesh.append([vertices[n,:],vertices[n+1,:]])
-                if add_idx_list is not None:
-                    for tup in add_idx_list:
-                        ibmesh.append([vertices[tup[0],:],vertices[tup[1],:]])
-                self.ibmesh = np.array(ibmesh)
-                print('Done! Visually check structure with environment.plot_envir().')
-            
-            ### proximity method
-            elif method == 'proximity':
-                if res is None:
-                    assert self.flow_points is not None, "Must import flow data first!"
-                    dists = np.concatenate([self.flow_points[ii][2:-1]-self.flow_points[ii][1:-2]
-                                            for ii in range(2)])
-                    Eulerian_res = dists.min()
-                else:
-                    Eulerian_res = res
-
-                vertices = dataio.read_IB2d_vertices(str(path))
-                print("Processing vertex file for pair-wise connections within {}.".format(
-                    res_factor*Eulerian_res))
-                dist_mat_test = distance.pdist(vertices)<=res_factor*Eulerian_res
-                idx = np.array(list(combinations(range(vertices.shape[0]),2)))
-                self.ibmesh = np.array([vertices[idx[dist_mat_test,0],:],
-                                        vertices[idx[dist_mat_test,1],:]])
-                self.ibmesh = np.transpose(self.ibmesh,(1,0,2))
-                print("Done! Visually check structure with environment.plot_envir().")
-                # shift coordinates to match any shift that happened in flow data
-                if self.fluid_domain_LLC is not None:
-                    for ii in range(2):
-                        self.ibmesh[:,:,ii] -= self.fluid_domain_LLC[ii]
-                self.max_meshpt_dist = np.linalg.norm(self.ibmesh[:,0,:]
-                                                      -self.ibmesh[:,1,:],axis=1).max()
-            
-            ### Catch unknown methods
-            else:
-                raise RuntimeError(f"method {method} not found!")
-        
-        
-        ####### Neither a directory nor a filename #######
-        else:
-            raise FileNotFoundError(f"Path {str(path)} not found!")
 
 
 

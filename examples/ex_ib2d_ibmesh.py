@@ -46,9 +46,10 @@ envir.read_IB2d_vtk_fluid_data('ib2d_data', 5.0e-5, 1000)
 #   create mesh structures out of these points by associating nearby points 
 #   within a radius. That is, if two points are within a certain distance of 
 #   each other, we draw a line between them. This is what the 
-#   read_IB2d_vertex_data function does, with a default radius of approx.
-#   half the resolution of the Eulerian, fluid velocity mesh.
-envir.read_IB2d_vertex_data('ib2d_data/channel.vertex')
+#   read_IB2d_vertex_data function does under the 'proximity' method, with a 
+#   default radius of approx. half the resolution of the Eulerian, fluid 
+#   velocity mesh.
+envir.read_IB2d_mesh_data('ib2d_data/channel.vertex', method='proximity')
 
 # For more complex vertex structures, this may attach too many points, causing 
 #   problems. You can try to adjust the radius, but if the structure has concave 

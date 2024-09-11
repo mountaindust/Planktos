@@ -37,7 +37,8 @@ envir = planktos.environment(Lx=1, Ly=0.25, x_bndry='periodic', y_bndry='periodi
 ##### Load your fluid data and mesh data here! #####
 
 ### To load only the IB2d mesh without the flow: ###
-envir.read_IB2d_vertex_data('vicsek_mesh/channel.vertex', res=0.001953125)
+envir.read_IB2d_mesh_data('vicsek_mesh/channel.vertex', method='proximity', 
+                          res=0.001953125)
 
 ### To load both IB2d flow data and mesh. Need to generate flow data first! ###
 # envir.read_IB2d_vtk_data('air_cylinder', 5.0e-5, 2000)
