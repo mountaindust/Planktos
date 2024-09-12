@@ -2786,12 +2786,29 @@ class environment:
             interpolated mesh as an ndarray
         '''
 
+        if self.ibmesh is None or self.ibmesh.ndim < 4:
+            raise RuntimeError("Cannot temporally interpolate None or static flow.")
+
         if t_index is None and time is None:
             time = self.time
         elif t_index is not None:
             time = self.time_history[t_index]
 
-        pass
+        # Enforce constant extrapolation
+        if time <= self.ibmesh_times[0]:
+            return self.ibmesh[0,...]
+        elif time >= self.ibmesh_times[-1]:
+            return self.ibmesh[-1,...]
+        else:
+            loc = np.searchsorted(self.ibmesh_times, time)
+            # could be equal to val on right, but not on left.
+            if time == self.ibmesh_times[loc]:
+                return self.ibmesh[loc,...]
+            else:
+                # interpolate and return
+                t = (time - self.ibmesh_times[loc-1])/\
+                    (self.ibmesh_times[loc] - self.ibmesh_times[loc-1])
+                return (1-t)*self.ibmesh[loc-1,...] + t*self.ibmesh[loc,...]
 
 
     #######################################################################
@@ -3591,9 +3608,6 @@ class environment:
 
     def _plot_setup(self, fig, nohist=False):
         ''' Setup figures for plotting 
-        
-        TODO: Currently NOT interpolating the ibmesh in time - just plotting 
-        the closest previous time for debugging. This will need to change.
         '''
 
         ########## 2D plot ##########
@@ -3671,14 +3685,13 @@ class environment:
 
             # plot ibmesh
             if self.ibmesh is not None:
-                if len(self.ibmesh.shape) < 4:
+                if self.ibmesh.ndim < 4:
                     # no time dependence
                     line_segments = LineCollection(self.ibmesh)
                 else:
-                    # time dependent mesh
-                    loc = np.searchsorted(self.ibmesh_times, self.time, side='right')
-                    loc -= 1
-                    line_segments = LineCollection(self.ibmesh[loc,...])
+                    # time dependent mesh. interpolate at current time.
+                    mesh = self.interpolate_temporal_mesh()
+                    line_segments = LineCollection(mesh)
                 line_segments.set_color(self.ibmesh_color)
                 ax.add_collection(line_segments)
 
