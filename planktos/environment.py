@@ -2143,7 +2143,11 @@ class environment:
         method adds a vertex point at any such intersection to avoid such
         problems.
         
-        ONLY SUPPORTED FOR STATIC MESHES!
+        ONLY SUPPORTED FOR STATIC MESHES! It's impossible to propagate added 
+        vertices in time, and this method should only be considered as a quick, 
+        temporary patch. The real solution to this problem is removing all 
+        extraneous mesh elements and/or using a different routine for connecting 
+        vertices.
         '''
 
         if self.ibmesh is None:
@@ -2637,11 +2641,11 @@ class environment:
 
 
     #######################################################################
-    #####                     FLUID INTERPOLATION                     #####
+    #####                FLUID AND MESH INTERPOLATION                 #####
     #######################################################################
 
 
-    def interpolate_temporal_flow(self, t_indx=None, time=None):
+    def interpolate_temporal_flow(self, t_index=None, time=None):
         '''Interpolate flow in time using a cubic spline. Defaults to 
         interpolating at the current time, given by self.time.
 
@@ -2663,10 +2667,10 @@ class environment:
         if not all([type(f) == fCubicSpline for f in self.flow]):
             self._create_temporal_interpolations()
 
-        if t_indx is None and time is None:
+        if t_index is None and time is None:
             time = self.time
-        elif t_indx is not None:
-            time = self.time_history[t_indx]
+        elif t_index is not None:
+            time = self.time_history[t_index]
 
         # Enforce constant extrapolation
         if time <= self.flow_times[0]:
@@ -2763,6 +2767,31 @@ class environment:
             return np.array([x_vel, y_vel, z_vel]).T
         else:
             return np.array([x_vel, y_vel]).T
+
+
+
+    def interpolate_temporal_mesh(self, t_index=None, time=None):
+        '''Linearly interpolate mesh vertices in time. Defaults to interpolating 
+        at the current time, given by self.time.
+        
+        Parameters
+        ----------
+        t_index : int
+            Interpolate at a time referred to by self.envir.time_history[t_indx]
+        time : float
+            Interpolate at a specific time
+
+        Returns
+        -------
+            interpolated mesh as an ndarray
+        '''
+
+        if t_index is None and time is None:
+            time = self.time
+        elif t_index is not None:
+            time = self.time_history[t_index]
+
+        pass
 
 
     #######################################################################
@@ -3277,7 +3306,7 @@ class environment:
 
         if TIMEVAR:
             if t_indx is not None or time is not None:
-                flow = self.interpolate_temporal_flow(t_indx=t_indx, time=time)
+                flow = self.interpolate_temporal_flow(t_index=t_indx, time=time)
                 v_x = flow[0]
                 v_y = flow[1]
             elif t_n is not None:
@@ -3378,7 +3407,7 @@ class environment:
 
         if time_history:
             for cyc, time in enumerate(self.time_history):
-                flow = self.interpolate_temporal_flow(t_indx=cyc)
+                flow = self.interpolate_temporal_flow(t_index=cyc)
                 dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, self.L, cyc, time)
             cycle = len(self.time_history)
         else:
@@ -3475,7 +3504,7 @@ class environment:
             flow = self.flow
         else:
             # first, interpolate flow in time.
-            flow = self.interpolate_temporal_flow(t_indx=t_indx, time=time)
+            flow = self.interpolate_temporal_flow(t_index=t_indx, time=time)
             
         flow_grad = np.gradient(np.array(flow),
                     *self.flow_points, edge_order=2, axis=axis_tuple)

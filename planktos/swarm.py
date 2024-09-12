@@ -2331,7 +2331,7 @@ class swarm:
                 flow = self.envir.flow
             else:
                 # temporally changing flow
-                flow = self.envir.interpolate_temporal_flow(t_indx=t_indx)
+                flow = self.envir.interpolate_temporal_flow(t_index=t_indx)
             flow_spd = np.sqrt(flow[0]**2 + flow[1]**2)
             avg_spd_x = flow[0].mean()
             avg_spd_y = flow[1].mean()
@@ -2488,7 +2488,7 @@ class swarm:
                 max_u = self.envir.flow[0].max(); max_v = self.envir.flow[1].max()
                 max_mag = np.linalg.norm(np.array([max_u,max_v]))
                 if len(self.envir.flow[0].shape) > 2:
-                    flow = self.envir.interpolate_temporal_flow(t_indx=loc)
+                    flow = self.envir.interpolate_temporal_flow(t_index=loc)
                 else:
                     flow = self.envir.flow
                 ax.quiver(self.envir.flow_points[0][::M], self.envir.flow_points[1][::N],
@@ -3132,7 +3132,7 @@ class swarm:
                         fld.autoscale()
                     elif fluid == 'quiver' and self.envir.flow is not None:
                         if self.envir.flow_times is not None:
-                            flow = self.envir.interpolate_temporal_flow(t_indx=n)
+                            flow = self.envir.interpolate_temporal_flow(t_index=n)
                             fld.set_UVC(flow[0][::M,::N].T, flow[1][::M,::N].T)
                         else:
                             fld.set_UVC(self.envir.flow[0][::M,::N].T, self.envir.flow[1][::M,::N].T)
