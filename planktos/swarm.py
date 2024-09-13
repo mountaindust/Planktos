@@ -1294,12 +1294,9 @@ class swarm:
             vector is exhausted. In sticky collisions, just return the point of 
             intersection.
         '''
-        if self.envir.ibmesh.ndim < 4:
-            new_loc = self._apply_internal_BC_static(startpt, endpt, 
-                        self.envir.ibmesh, self.envir.max_meshpt_dist,
-                        ib_collisions=ib_collisions)
-        else:
-            raise NotImplementedError("Only static meshes currently supported.")
+        new_loc = self._apply_internal_BC(startpt, endpt, 
+                    self.envir.ibmesh, self.envir.max_meshpt_dist,
+                    ib_collisions=ib_collisions)
         self.positions[idx] = new_loc
         if np.any(new_loc != endpt):
             self.ib_collision[idx] = True
@@ -1489,7 +1486,7 @@ class swarm:
 
     
     @staticmethod
-    def _apply_internal_BC_static(startpt, endpt, mesh, max_meshpt_dist, 
+    def _apply_internal_BC(startpt, endpt, mesh, max_meshpt_dist, 
                            old_intersection=None, kill=False, 
                            ib_collisions='sliding'):
         '''Apply internal boundaries to a trajectory starting and ending at
@@ -1541,6 +1538,13 @@ class swarm:
         else:
             DIM = 3
 
+        # We only want to check mesh elements that could feasibly intersect 
+        #   the line segment startpt endpt. Mesh elements are identified by 
+        #   their vertices; the question is: how far away from the line segment 
+        #   do we need to look for mesh vertices? Part of the answer to this 
+        #   question depends on how big mesh elements can be, since the longer 
+        #   they are, the further away their vertices could be.
+
         # In barycentric coordinates, the centoid is always (1/3,1/3,1/3), and
         #   the entries of the coordinates must add to 1. This suggests that the
         #   furthest away you can be from every vertex simultaneously is 2/3 
@@ -1560,38 +1564,45 @@ class swarm:
         #   that we potentially intersected.
         search_rad = max_meshpt_dist*2/3
 
-        # Find all mesh elements that have vertex points within search_rad of 
-        #   the trajectory segment.
-        close_mesh = swarm._get_eligible_mesh_elements(startpt, endpt, mesh, search_rad)
+        # STATIC MESH CASE
+        if mesh.ndim < 4:
 
-        # Get intersections
-        if DIM == 2:
-            intersection = swarm._seg_intersect_2D(startpt, endpt,
-                close_mesh[:,0,:], close_mesh[:,1,:])
-        else:
-            intersection = swarm._seg_intersect_3D_triangles(startpt, endpt,
-                close_mesh[:,0,:], close_mesh[:,1,:], close_mesh[:,2,:])
+            # Find all mesh elements that have vertex points within search_rad of 
+            #   the trajectory segment.
+            close_mesh = swarm._get_eligible_mesh_elements(startpt, endpt, mesh, search_rad)
 
-        # Return endpt we already have if None.
-        if intersection is None:
-            return endpt
-        
-        # If we do have an intersection:
-        if ib_collisions == 'sliding':
-            # Project remaining piece of vector onto mesh and repeat processes 
-            #   as necessary until we have a final result.
-            return swarm._project_and_slide(startpt, endpt, intersection, mesh,
-                                            close_mesh, max_meshpt_dist, DIM,
-                                            old_intersection, kill)
-        elif ib_collisions == 'sticky':
-            # Return the point of intersection
+            # Get intersections
+            if DIM == 2:
+                intersection = swarm._seg_intersect_2D(startpt, endpt,
+                    close_mesh[:,0,:], close_mesh[:,1,:])
+            else:
+                intersection = swarm._seg_intersect_3D_triangles(startpt, endpt,
+                    close_mesh[:,0,:], close_mesh[:,1,:], close_mesh[:,2,:])
+
+            # Return endpt we already have if None.
+            if intersection is None:
+                return endpt
             
-            # small number to perturb off of the actual boundary in order to avoid
-            #   roundoff errors that would allow penetration
-            EPS = 1e-7
+            # If we do have an intersection:
+            if ib_collisions == 'sliding':
+                # Project remaining piece of vector onto mesh and repeat processes 
+                #   as necessary until we have a final result.
+                return swarm._project_and_slide(startpt, endpt, intersection, mesh,
+                                                close_mesh, max_meshpt_dist, DIM,
+                                                old_intersection, kill)
+            elif ib_collisions == 'sticky':
+                # Return the point of intersection
+                
+                # small number to perturb off of the actual boundary in order to avoid
+                #   roundoff errors that would allow penetration
+                EPS = 1e-7
 
-            back_vec = (startpt-endpt)/np.linalg.norm(endpt-startpt)
-            return intersection[0] + back_vec*EPS
+                back_vec = (startpt-endpt)/np.linalg.norm(endpt-startpt)
+                return intersection[0] + back_vec*EPS
+        
+        # MOVING MESH CASE
+        else:
+            raise NotImplementedError("Only static meshes currently supported.")
 
 
 
@@ -1847,7 +1858,7 @@ class swarm:
                 newendpt = newstartpt + np.linalg.norm(newendpt-newstartpt)*orig_unit_vec
                 # repeat process to look for additional intersections
                 #   pass along current intersection in case of obtuse concave case
-                return swarm._apply_internal_BC_static(newstartpt, newendpt,
+                return swarm._apply_internal_BC(newstartpt, newendpt,
                                                 mesh, max_meshpt_dist,
                                                 intersection)
 
@@ -1952,7 +1963,7 @@ class swarm:
                         # Get new endpoint
                         newendpt = newstartpt + proj_vec
                         # Check for more intersections
-                        return swarm._apply_internal_BC_static(newstartpt, newendpt,
+                        return swarm._apply_internal_BC(newstartpt, newendpt,
                                                         mesh, max_meshpt_dist,
                                                         adj_intersect, kill)
 
@@ -1982,7 +1993,7 @@ class swarm:
                 # norm(newendpt - tri_intersect[0]) is the length of the overshoot.
                 newendpt = newstartpt + np.linalg.norm(newendpt-tri_intersect[0])*orig_unit_vec
                 # repeat process to look for additional intersections
-                return swarm._apply_internal_BC_static(newstartpt, newendpt, 
+                return swarm._apply_internal_BC(newstartpt, newendpt, 
                                                 mesh, max_meshpt_dist,
                                                 intersection, kill)
             else:
