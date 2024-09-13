@@ -1569,7 +1569,7 @@ class swarm:
 
             # Find all mesh elements that have vertex points within search_rad of 
             #   the trajectory segment.
-            close_mesh = swarm._get_eligible_mesh_elements(startpt, endpt, mesh, search_rad)
+            close_mesh = swarm._get_eligible_static_mesh_elements(startpt, endpt, mesh, search_rad)
 
             # Get intersections
             if DIM == 2:
@@ -1603,11 +1603,19 @@ class swarm:
         # MOVING MESH CASE
         else:
             raise NotImplementedError("Only static meshes currently supported.")
+        
+            # Consider the line segements formed as the vertex points of each of 
+            #   the mesh elements move in time. An equivalency to the static 
+            #   case condition is to find the shortest distance between all of 
+            #   these vertex line segments and the line segment startpt endpt. 
+            #   If the distances fall out of search_rad for all vertices in 
+            #   a mesh element, that mesh element can be ruled out for 
+            #   intersections.
 
 
 
     @staticmethod
-    def _get_eligible_mesh_elements(startpt, endpt, mesh, search_rad):
+    def _get_eligible_static_mesh_elements(startpt, endpt, mesh, search_rad):
         '''
         From a list of mesh elements (mesh), find all elements that have vertex 
         points within search_rad of the trajectory segment startpt,endpt.
@@ -1638,6 +1646,98 @@ class swarm:
             mesh.reshape((mesh.shape[0]*mesh.shape[1],mesh.shape[2])))<=search_rad
         pt_bool = pt_bool.reshape((mesh.shape[0],mesh.shape[1]))
         return mesh[np.any(pt_bool,axis=1)]
+
+
+
+    @staticmethod
+    def _closestDistanceBetweenLines(a0,a1,b0,b1):
+        ''' Given two 3D lines defined by numpy.array pairs (a0,a1,b0,b1)
+            Return the distance of the closest points on each segment
+
+            Acknowledgement: This solution comes form stackoverflow user Fnord, 
+            edited by Phil Dukhov, and greatly shortened here for our use case.
+        '''
+
+        # Calculate denomitator
+        A = a1 - a0
+        B = b1 - b0
+        magA = np.linalg.norm(A)
+        magB = np.linalg.norm(B)
+        
+        _A = A / magA
+        _B = B / magB
+        
+        cross = np.cross(_A, _B)
+        denom = np.linalg.norm(cross)**2
+        
+
+        # If lines are parallel (denom=0) test if lines overlap.
+        # If they don't overlap then there is a closest point solution.
+        # If they do overlap, there are infinite closest positions, but there 
+        #   is a closest distance
+        if not denom:
+            d0 = np.dot(_A,(b0-a0))
+            
+            # Overlap only possible with clamping
+            d1 = np.dot(_A,(b1-a0))
+                
+            # Is segment B before A?
+            if d0 <= 0 >= d1:
+                if np.absolute(d0) < np.absolute(d1):
+                    return np.linalg.norm(a0-b0)
+                return np.linalg.norm(a0-b1)
+                
+            # Is segment B after A?
+            elif d0 >= magA <= d1:
+                if np.absolute(d0) < np.absolute(d1):
+                    return np.linalg.norm(a1-b0)
+                return np.linalg.norm(a1-b1)
+                    
+            # Segments overlap, return distance between parallel segments
+            else:
+                return np.linalg.norm(((d0*_A)+a0)-b0) #TODO: Why not zero?
+        
+        # Lines criss-cross: Calculate the projected closest points
+        t = (b0 - a0)
+        detA = np.linalg.det([t, _B, cross])
+        detB = np.linalg.det([t, _A, cross])
+
+        t0 = detA/denom
+        t1 = detB/denom
+
+        pA = a0 + (_A * t0) # Projected closest point on segment A
+        pB = b0 + (_B * t1) # Projected closest point on segment B
+
+        # Clamp projections
+        if t0 < 0:
+            pA = a0
+        elif t0 > magA:
+            pA = a1
+        
+        if t1 < 0:
+            pB = b0
+        elif t1 > magB:
+            pB = b1
+            
+        # Clamp projection A
+        if t0 < 0 or t0 > magA:
+            dot = np.dot(_B,(pA-b0))
+            if dot < 0:
+                dot = 0
+            elif dot > magB:
+                dot = magB
+            pB = b0 + (_B * dot)
+    
+        # Clamp projection B
+        if t1 < 0 or t1 > magB:
+            dot = np.dot(_A,(pB-a0))
+            if dot < 0:
+                dot = 0
+            elif dot > magA:
+                dot = magA
+            pA = a0 + (_A * dot)
+
+        return np.linalg.norm(pA-pB)
 
 
 
@@ -1824,7 +1924,7 @@ class swarm:
                         # Also, regenerate eligible mesh elements based on the 
                         #   new location.
                         search_rad = max_meshpt_dist*2/3
-                        close_mesh = swarm._get_eligible_mesh_elements(
+                        close_mesh = swarm._get_eligible_static_mesh_elements(
                             intersection[0]+EPS*norm_out_u, newendpt+EPS*proj_u, 
                             mesh, search_rad)
 
@@ -1971,7 +2071,7 @@ class swarm:
                     # We slide. Pass along info about the old element and 
                     #   regenerate eligible mesh segments.
                     search_rad = max_meshpt_dist*2/3
-                    close_mesh = swarm._get_eligible_mesh_elements(
+                    close_mesh = swarm._get_eligible_static_mesh_elements(
                         intersection[0]+EPS*norm_out_u, 
                         newendpt+EPS*proj_u+EPS*norm_out_u, 
                         mesh, search_rad)
