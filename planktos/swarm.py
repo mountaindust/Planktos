@@ -1661,14 +1661,17 @@ class swarm:
             Return the distance of the closest points on each segment
 
             Acknowledgement: This solution comes form stackoverflow user Fnord, 
-            edited by Phil Dukhov, and altered here for our use case.
+            edited by Phil Dukhov. It has been heavily altered here, and its 
+            mathematical justification has been checked and documented.
 
             Assuming the lines formed by (a1-a0) and (b1-b0) are skew, the 
             closest points on the two lines are found using a method described 
             in docs/notes/Line_closest_points.md
+
+            TODO: b0 and b1 can be a vector of points.
         '''
 
-        # Calculate denomitator
+        # Calculate denominator
         A = a1 - a0
         B = b1 - b0
         magA = np.linalg.norm(A)
@@ -1678,8 +1681,13 @@ class swarm:
         _A = A / magA
         _B = B / magB
         
-        cross = np.cross(_A, _B)
-        denom = np.linalg.norm(cross)**2
+        if a0.shape[0] == 3:
+            # 3D
+            cross = np.cross(_A, _B)
+            denom = np.linalg.norm(cross)**2
+        else:
+            # 2D
+            denom = np.abs(np.linalg.det([_A, _B]))
         
 
         # If lines are parallel (denom=0) test if lines overlap.
@@ -1688,15 +1696,13 @@ class swarm:
         #   is a closest distance
         if not denom:
             d0 = np.dot(_A,(b0-a0))
-            
-            # Overlap only possible with clamping
             d1 = np.dot(_A,(b1-a0))
                 
             # Is segment B completely "before" A?
             if d0 <= 0 and d1 <= 0:
                 # Then the shortest distance is between whatever endpoint of b
                 #   is closer to a0
-                if np.absolute(d0) < np.absolute(d1):
+                if np.abs(d0) < np.abs(d1):
                     return np.linalg.norm(a0-b0)
                 return np.linalg.norm(a0-b1)
                 
@@ -1704,7 +1710,7 @@ class swarm:
             elif d0 >= magA and d1 >= magA:
                 # Then the shortest distance is between whatever endpoint of b
                 #   is closer to a1
-                if np.absolute(d0) < np.absolute(d1):
+                if np.abs(d0) < np.abs(d1):
                     return np.linalg.norm(a1-b0)
                 return np.linalg.norm(a1-b1)
                     
@@ -1716,12 +1722,19 @@ class swarm:
                 return np.linalg.norm(((d0*_A)+a0)-b0)
         
         # Lines are skew: Calculate the projected closest points.
-        t = (b0 - a0)
-        detA = np.linalg.det([t, _B, cross])
-        detB = np.linalg.det([t, _A, cross])
+        if a0.shape[0] == 3:
+            # 3D
+            t = (b0 - a0)
+            detA = np.linalg.det([t, _B, cross])
+            detB = np.linalg.det([t, _A, cross])
 
-        t0 = detA/denom
-        t1 = detB/denom
+            t0 = detA/denom
+            t1 = detB/denom
+        else:
+            # 2D (sol via setting eqn. of two lines equal to each other)
+            t = (a0 - b0)
+            t0 = np.linalg.det([_B, t])/denom
+            t1 = np.linalg.det([_A, t])/denom
 
         pA = a0 + (_A * t0) # Projected closest point on segment A
         pB = b0 + (_B * t1) # Projected closest point on segment B
