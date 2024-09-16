@@ -1612,6 +1612,12 @@ class swarm:
             #   a mesh element, that mesh element can be ruled out for 
             #   intersections.
 
+            # TODO: Use np.unique to eliminate duplicates in the eligibility 
+            #   check. This is cheap in memory because even if the mesh is 
+            #   time-varying, the mapping to/from unique mesh elements can be 
+            #   made time invariant. We can thus create this mapping and store 
+            #   it when the mesh is made, and then refer to it as needed.
+
 
 
     @staticmethod
@@ -1655,7 +1661,11 @@ class swarm:
             Return the distance of the closest points on each segment
 
             Acknowledgement: This solution comes form stackoverflow user Fnord, 
-            edited by Phil Dukhov, and greatly shortened here for our use case.
+            edited by Phil Dukhov, and altered here for our use case.
+
+            Assuming the lines formed by (a1-a0) and (b1-b0) are skew, the 
+            closest points on the two lines are found using a method described 
+            in docs/notes/Line_closest_points.md
         '''
 
         # Calculate denomitator
@@ -1664,6 +1674,7 @@ class swarm:
         magA = np.linalg.norm(A)
         magB = np.linalg.norm(B)
         
+        # normalized vectors in the direction of each line
         _A = A / magA
         _B = B / magB
         
@@ -1681,23 +1692,30 @@ class swarm:
             # Overlap only possible with clamping
             d1 = np.dot(_A,(b1-a0))
                 
-            # Is segment B before A?
-            if d0 <= 0 >= d1:
+            # Is segment B completely "before" A?
+            if d0 <= 0 and d1 <= 0:
+                # Then the shortest distance is between whatever endpoint of b
+                #   is closer to a0
                 if np.absolute(d0) < np.absolute(d1):
                     return np.linalg.norm(a0-b0)
                 return np.linalg.norm(a0-b1)
                 
-            # Is segment B after A?
-            elif d0 >= magA <= d1:
+            # Is segment B completely "after" A?
+            elif d0 >= magA and d1 >= magA:
+                # Then the shortest distance is between whatever endpoint of b
+                #   is closer to a1
                 if np.absolute(d0) < np.absolute(d1):
                     return np.linalg.norm(a1-b0)
                 return np.linalg.norm(a1-b1)
                     
-            # Segments overlap, return distance between parallel segments
+            # The projection of the segments overlap. Return distance between 
+            #   parallel segments (closest points are not unique).
             else:
-                return np.linalg.norm(((d0*_A)+a0)-b0) #TODO: Why not zero?
+                # Translate a0 along _A until it is perpendicular to b0, then 
+                #   find dist.
+                return np.linalg.norm(((d0*_A)+a0)-b0)
         
-        # Lines criss-cross: Calculate the projected closest points
+        # Lines are skew: Calculate the projected closest points.
         t = (b0 - a0)
         detA = np.linalg.det([t, _B, cross])
         detB = np.linalg.det([t, _A, cross])
