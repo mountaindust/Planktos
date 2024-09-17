@@ -1712,7 +1712,7 @@ class swarm:
             detstack[:,0,:] = np.broadcast_to(_A, (b0.shape[0],2))
             detstack[:,1,:] = _B
             # get abs(det([_A,_B]))
-            denom = np.abs(np.linalg.det(detstack))
+            denom = np.linalg.det(detstack)
         
         dist_vals = np.empty(b0.shape[0])
 
@@ -1739,7 +1739,8 @@ class swarm:
                     #   is closer to a0
                     if np.abs(d0) < np.abs(d1):
                         return_vals[n] =  np.linalg.norm(a0-b0z)
-                    return_vals[n] = np.linalg.norm(a0-b1z)
+                    else:
+                        return_vals[n] = np.linalg.norm(a0-b1z)
                     
                 # Is segment B completely "after" A?
                 elif d0 >= magA and d1 >= magA:
@@ -1747,7 +1748,8 @@ class swarm:
                     #   is closer to a1
                     if np.abs(d0) < np.abs(d1):
                         return_vals[n] = np.linalg.norm(a1-b0z)
-                    return_vals[n] = np.linalg.norm(a1-b1z)
+                    else:
+                        return_vals[n] = np.linalg.norm(a1-b1z)
                         
                 # The projection of the segments overlap. Return distance between 
                 #   parallel segments (closest points are not unique).
@@ -1761,66 +1763,71 @@ class swarm:
 
         # The rest of the lines are skew: Calculate the projected closest points.
         nonzero_bool = np.logical_not(zero_bool)
-        b0nz = b0[nonzero_bool,:]
-        b1nz = b1[nonzero_bool,:]
-        magBnz = magB[nonzero_bool]
-        _Bnz = _B[nonzero_bool,:]
-        crossnz = cross[nonzero_bool,:]
-        if a0.shape[0] == 3:
-            # 3D
-            t = (b0nz - a0)
+        if nonzero_bool.any():
+            b0nz = b0[nonzero_bool,:]
+            b1nz = b1[nonzero_bool,:]
+            magBnz = magB[nonzero_bool]
+            _Bnz = _B[nonzero_bool,:]
+            if a0.shape[0] == 3:
+                # 3D
+                t = (b0nz - a0)
+                crossnz = cross[nonzero_bool,:]
 
-            # detA = np.linalg.det([t, _B, cross])
-            detstack = np.empty((b0nz.shape[0],3,3))
-            detstack[:,0,:] = t
-            detstack[:,1,:] = _Bnz
-            detstack[:,2,:] = crossnz
-            detA = np.linalg.det(detstack)
-            # detB = np.linalg.det([t, _A, cross])
-            detstack[:,1,:] = np.broadcast_to(_A, (b0nz.shape[0],3))
-            detB = np.linalg.det(detstack)
+                # detA = np.linalg.det([t, _B, cross])
+                detstack = np.empty((b0nz.shape[0],3,3))
+                detstack[:,0,:] = t
+                detstack[:,1,:] = _Bnz
+                detstack[:,2,:] = crossnz
+                detA = np.linalg.det(detstack)
+                # detB = np.linalg.det([t, _A, cross])
+                detstack[:,1,:] = np.broadcast_to(_A, (b0nz.shape[0],3))
+                detB = np.linalg.det(detstack)
 
-            t0 = detA/denom[nonzero_bool]
-            t1 = detB/denom[nonzero_bool]
-        else:
-            # 2D (sol via setting eqn. of two lines equal to each other)
-            t = (a0 - b0nz)
-            # t0 = np.linalg.det([_B, t])/denom
-            detstack = np.empty((b0nz.shape[0],2,2))
-            detstack[:,0,:] = _Bnz
-            detstack[:,1,:] = t
-            t0 = np.linalg.det(detstack)/denom[nonzero_bool]
-            # t1 = np.linalg.det([_A, t])/denom
-            detstack[:,0,:] = np.broadcast_to(_A, (b0nz.shape[0],2))
-            t1 = np.linalg.det([_A, t])/denom[nonzero_bool]
+                t0 = detA/denom[nonzero_bool]
+                t1 = detB/denom[nonzero_bool]
+            else:
+                # 2D (sol via setting eqn. of two lines equal to each other)
+                t = (a0 - b0nz)
+                # t0 = np.linalg.det([_B, t])/denom
+                detstack = np.empty((b0nz.shape[0],2,2))
+                detstack[:,0,:] = _Bnz
+                detstack[:,1,:] = t
+                t0 = np.linalg.det(detstack)/denom[nonzero_bool]
+                # t1 = np.linalg.det([_A, t])/denom
+                detstack[:,0,:] = np.broadcast_to(_A, (b0nz.shape[0],2))
+                t1 = np.linalg.det(detstack)/denom[nonzero_bool]
 
-        pA = a0 + (_A * t0) # Projected closest point on segment A
-        pB = b0nz + (_Bnz * t1) # Projected closest point on segment B
+            pA = a0 + (_A * t0) # Projected closest point on line A
+            pB = b0nz + (_Bnz * t1) # Projected closest point on line B
 
-        # Clamp projections
-        pA[t0 < 0] = a0
-        pA[t0 > magA] = a1
-        
-        pB[t1 < 0] = b0nz[t1 < 0]
-        pB[t1 > magBnz] = b1nz[t1 > magBnz]
+            # Clamp projections
+            if len(pA.shape) == 1: # check for only one point (a0 not prev. reshaped)
+                pA = np.reshape(pA, (1,len(pA)))
+            pA[t0 < 0,:] = a0
+            pA[t0 > magA,:] = a1
             
-        # Clamp projection A
-        past_A_bool = np.logical_or(t0 < 0, t0 > magA)
-        # dot = np.dot(_B,(pA-b0))
-        dot = np.inner(_Bnz[past_A_bool],(pA[past_A_bool]-b0nz[past_A_bool]))
-        dot = np.maximum(dot, 0)
-        dot = np.minimum(dot, magBnz[past_A_bool])
-        pB[past_A_bool] = b0nz[past_A_bool] + (_Bnz[past_A_bool] * dot)
-    
-        # Clamp projection B
-        past_B_bool = np.logical_or(t1 < 0 or t1 > magBnz)
-        # dot = np.dot(_A,(pB-a0))
-        dot = np.inner(_A[past_B_bool],(pB[past_B_bool]-a0))
-        dot = np.maximum(dot, 0)
-        dot = np.minimum(dot, magA)
-        pA[past_B_bool] = a0 + (_A * dot)
+            pB[t1 < 0,:] = b0nz[t1 < 0]
+            pB[t1 > magBnz,:] = b1nz[t1 > magBnz]
+                
+            # Clamp projection A
+            past_A_bool = np.logical_or(t0 < 0, t0 > magA)
+            if past_A_bool.any():
+                # dot = np.dot(_B,(pA-b0))
+                dot = np.inner(_Bnz[past_A_bool,:],(pA[past_A_bool,:]-b0nz[past_A_bool,:]))
+                dot = np.maximum(dot, 0)
+                dot = np.minimum(dot, magBnz[past_A_bool])
+                pB[past_A_bool,:] = b0nz[past_A_bool,:] + (_Bnz[past_A_bool,:] * dot)
+        
+            # Clamp projection B
+            past_B_bool = np.logical_or(t1 < 0, t1 > magBnz)
+            if past_B_bool.any():
+                # dot = np.dot(_A,(pB-a0))
+                dot = np.inner(_A,(pB[past_B_bool,:]-a0))
+                dot = np.maximum(dot, 0)
+                dot = np.minimum(dot, magA)
+                pA[past_B_bool,:] = a0 + (_A * dot)
 
-        dist_vals[nonzero_bool] = np.linalg.norm(pA-pB)
+            dist_vals[nonzero_bool] = np.linalg.norm(pA-pB)
 
         return dist_vals
 
