@@ -1671,8 +1671,6 @@ class swarm:
             closest points on the two lines are found using a method described 
             in docs/notes/Line_closest_points.md
 
-            TODO: test
-
             Parameters
             ----------
             a0 : length 2 or length 3 ndarray
@@ -1788,10 +1786,11 @@ class swarm:
             past_A_bool = np.logical_or(t0 < 0, t0 > magA)
             if past_A_bool.any():
                 # dot = np.dot(_B,(pA-b0))
-                dot = np.inner(_Bnz[past_A_bool,:],(pA[past_A_bool,:]-b0nz[past_A_bool,:]))
+                dot = (_Bnz[past_A_bool,:]*(pA[past_A_bool,:]-b0nz[past_A_bool,:])).sum(1)
                 dot = np.maximum(dot, 0)
                 dot = np.minimum(dot, magBnz[past_A_bool])
-                pB[past_A_bool,:] = b0nz[past_A_bool,:] + (_Bnz[past_A_bool,:] * dot)
+                pB[past_A_bool,:] = b0nz[past_A_bool,:] + (_Bnz[past_A_bool,:] 
+                                                           * np.tile(dot,(a0.shape[0],1)).T)
         
             # Clamp projection B
             past_B_bool = np.logical_or(t1 < 0, t1 > magBnz)
@@ -1800,7 +1799,7 @@ class swarm:
                 dot = np.inner(_A,(pB[past_B_bool,:]-a0))
                 dot = np.maximum(dot, 0)
                 dot = np.minimum(dot, magA)
-                pA[past_B_bool,:] = a0 + (_A * dot)
+                pA[past_B_bool,:] = a0 + (_A * np.tile(dot,(a0.shape[0],1)).T)
 
             dist_vals[nonzero_bool] = np.linalg.norm(pA-pB, axis=1)
 
