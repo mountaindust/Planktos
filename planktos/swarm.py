@@ -889,7 +889,7 @@ class swarm:
             self.accelerations[:,:] = (velocity - self.velocities)/dt
             self.velocities[:,:] = velocity
             # Apply boundary conditions.
-            self.apply_boundary_conditions(ib_collisions=ib_collisions)
+            self.apply_boundary_conditions(dt, ib_collisions=ib_collisions)
 
         # Record new time
         if update_time:
@@ -1218,7 +1218,7 @@ class swarm:
 
 
 
-    def apply_boundary_conditions(self, ib_collisions='sliding'):
+    def apply_boundary_conditions(self, dt=None, ib_collisions='sliding'):
         '''Apply boundary conditions to self.positions.
         
         There is no reason for a user to call this method directly; it is 
@@ -1242,6 +1242,12 @@ class swarm:
         
         Parameters
         ----------
+        dt : float, optional
+            Size of the time step during which we are applying the BC. This is 
+            necessary for moving immersed boundaries and will be ignored for 
+            static IB. If it is None for moving immersed boundaries, it will be 
+            assumed that only the immersed boundary at the current environmental 
+            time needs to be checked.
         ib_collisions : {None, 'sliding' (default), 'sticky'}
             Type of interaction with immersed boundaries. If None, turn off all 
             interaction with immersed boundaries. In sliding collisions, 
@@ -1260,7 +1266,7 @@ class swarm:
                         self.pos_history[-1][~ma.getmaskarray(self.positions[:,0]),:].copy(),
                         self.positions[~ma.getmaskarray(self.positions[:,0]),:].copy()
                         ):
-                    self._IBC_routine(n, startpt, endpt, ib_collisions)
+                    self._IBC_routine(n, startpt, endpt, dt, ib_collisions)
             # if all are masked, skip all boundary checks
             elif np.all(self.positions.mask):
                 return
@@ -1269,14 +1275,14 @@ class swarm:
                 for n in range(self.positions.shape[0]):
                     startpt = self.pos_history[-1][n,:].copy()
                     endpt = self.positions[n,:].copy()
-                    self._IBC_routine(n, startpt, endpt, ib_collisions)
+                    self._IBC_routine(n, startpt, endpt, dt, ib_collisions)
 
         ##### Environment Boundary Conditions #####
-        self._domain_BC_loop(ib_collisions=ib_collisions)
+        self._domain_BC_loop(ib_collisions=ib_collisions, dt=dt)
 
 
 
-    def _IBC_routine(self, idx, startpt, endpt, ib_collisions):
+    def _IBC_routine(self, idx, startpt, endpt, dt=None, ib_collisions='sliding'):
         '''Routine for checking IB
         
         Parameters
@@ -1287,6 +1293,10 @@ class swarm:
             Agent starting point
         endpt : tuple
             Agent ending point
+        dt : float, optional
+            Size of the time step during which we are applying the BC. This is 
+            necessary for moving immersed boundaries and will be ignored for 
+            static IB.
         ib_collisions : {None, 'sliding' (default), 'sticky'}
             Type of interaction with immersed boundaries. If None, turn off all 
             interaction with immersed boundaries. In sliding collisions, 
@@ -1294,9 +1304,19 @@ class swarm:
             vector is exhausted. In sticky collisions, just return the point of 
             intersection.
         '''
-        new_loc = self._apply_internal_BC(startpt, endpt, 
-                    self.envir.ibmesh, self.envir.max_meshpt_dist,
-                    ib_collisions=ib_collisions)
+        # STATIC MESH CASE
+        if self.envir.ibmesh.ndim < 4:
+            new_loc = self._apply_internal_static_BC(startpt, endpt, 
+                        self.envir.ibmesh, self.envir.max_meshpt_dist,
+                        ib_collisions=ib_collisions)
+        # MOVING MESH CASE
+        else:
+            start_mesh = self.envir.interpolate_temporal_mesh()
+            end_mesh = self.envir.interpolate_temporal_mesh(time=self.envir.time+dt)
+            new_loc = self._apply_internal_static_BC(startpt, endpt, start_mesh, 
+                        end_mesh, dt, self.envir.max_meshpt_dist,
+                        ib_collisions=ib_collisions)
+
         self.positions[idx] = new_loc
         if np.any(new_loc != endpt):
             self.ib_collision[idx] = True
@@ -1305,10 +1325,10 @@ class swarm:
 
 
 
-    def _domain_BC_loop(self, ib_collisions, idx_array=None):
+    def _domain_BC_loop(self, ib_collisions, idx_array=None, dt=None):
         '''Loop over domain boundaries enforcing boundary conditions. Only 
         agents in idx_array will be checked, or all unmasked agents if idx_array 
-        is not given.
+        is not given. dt is passed along to _IBC_routine as necessary.
         '''
 
         if idx_array is None:
@@ -1400,7 +1420,7 @@ class swarm:
                         for n, idx in enumerate(left_idx):
                             startpt = startpts[n]
                             endpt = self.positions[idx,:].copy()
-                            self._IBC_routine(idx, startpt, endpt, 'sticky')
+                            self._IBC_routine(idx, startpt, endpt, dt, 'sticky')
                     # further domain crossings remain possible
                 elif bndry[0] == 'periodic':
                     # wrap everything exiting on the left to the right
@@ -1415,7 +1435,7 @@ class swarm:
                             startpt = self.positions[idx,:] - \
                                 s_array[n]*self.velocities[idx,:]
                             endpt = self.positions[idx,:].copy()
-                            self._IBC_routine(idx, startpt, endpt, ib_collisions)
+                            self._IBC_routine(idx, startpt, endpt, dt, ib_collisions)
                     # further domain crossings are possible. if this happens, 
                     #   velocity should be the same as original velocity b/c 
                     #   immersed boundaries do not intersect with domain bndry,
@@ -1456,7 +1476,7 @@ class swarm:
                         for n, idx in enumerate(right_idx):
                             startpt = startpts[n]
                             endpt = self.positions[idx,:].copy()
-                            self._IBC_routine(idx, startpt, endpt, 'sticky')
+                            self._IBC_routine(idx, startpt, endpt, dt, 'sticky')
                     # further domain crossings remain possible
                 elif bndry[1] == 'periodic':
                     # wrap everything exiting on the right to the left
@@ -1471,7 +1491,7 @@ class swarm:
                             startpt = self.positions[idx,:] - \
                                 s_array[n]*self.velocities[idx,:]
                             endpt = self.positions[idx,:].copy()
-                            self._IBC_routine(idx, startpt, endpt, ib_collisions)
+                            self._IBC_routine(idx, startpt, endpt, dt, ib_collisions)
                     # further domain crossings are possible. if this happens, 
                     #   velocity should be the same as original velocity b/c 
                     #   immersed boundaries do not intersect with domain bndry,
@@ -1481,14 +1501,14 @@ class swarm:
 
         ##### All BC applied to first exit. Conduct recursion if necessary #####
         if mult_idx is not None:
-            self._domain_BC_loop(ib_collisions, idx_array=mult_idx)
+            self._domain_BC_loop(ib_collisions, idx_array=mult_idx, dt=dt)
 
 
     
     @staticmethod
-    def _apply_internal_BC(startpt, endpt, mesh, max_meshpt_dist, 
-                           old_intersection=None, kill=False, 
-                           ib_collisions='sliding'):
+    def _apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist, 
+                                  old_intersection=None, kill=False, 
+                                  ib_collisions='sliding'):
         '''Apply internal boundaries to a trajectory starting and ending at
         startpt and endpt, returning a new endpt (or the original one) as
         appropriate.
@@ -1512,7 +1532,7 @@ class swarm:
             trajectory vector.
         kill : bool
             (for internal use only) set to True in 3D case if we have previously 
-            slid along the boundary line between two mesh elements. This 
+            slid along the boundary line between two mesh elements. This 
             prevents such a thing from happening more than once, in case of 
             pathological cases.
         ib_collisions : {'sliding' (default), 'sticky'}
@@ -1564,60 +1584,40 @@ class swarm:
         #   that we potentially intersected.
         search_rad = max_meshpt_dist*2/3
 
-        # STATIC MESH CASE
-        if mesh.ndim < 4:
+        # Find all mesh elements that have vertex points within search_rad of 
+        #   the trajectory segment.
+        close_mesh = swarm._get_eligible_static_mesh_elements(startpt, endpt, mesh, 
+                                                              search_rad)
 
-            # Find all mesh elements that have vertex points within search_rad of 
-            #   the trajectory segment.
-            close_mesh = swarm._get_eligible_static_mesh_elements(startpt, endpt, mesh, search_rad)
-
-            # Get intersections
-            if DIM == 2:
-                intersection = swarm._seg_intersect_2D(startpt, endpt,
-                    close_mesh[:,0,:], close_mesh[:,1,:])
-            else:
-                intersection = swarm._seg_intersect_3D_triangles(startpt, endpt,
-                    close_mesh[:,0,:], close_mesh[:,1,:], close_mesh[:,2,:])
-
-            # Return endpt we already have if None.
-            if intersection is None:
-                return endpt
-            
-            # If we do have an intersection:
-            if ib_collisions == 'sliding':
-                # Project remaining piece of vector onto mesh and repeat processes 
-                #   as necessary until we have a final result.
-                return swarm._project_and_slide(startpt, endpt, intersection, mesh,
-                                                close_mesh, max_meshpt_dist, DIM,
-                                                old_intersection, kill)
-            elif ib_collisions == 'sticky':
-                # Return the point of intersection
-                
-                # small number to perturb off of the actual boundary in order to avoid
-                #   roundoff errors that would allow penetration
-                EPS = 1e-7
-
-                back_vec = (startpt-endpt)/np.linalg.norm(endpt-startpt)
-                return intersection[0] + back_vec*EPS
-        
-        # MOVING MESH CASE
+        # Get intersections
+        if DIM == 2:
+            intersection = swarm._seg_intersect_2D(startpt, endpt,
+                close_mesh[:,0,:], close_mesh[:,1,:])
         else:
-            raise NotImplementedError("Only static meshes currently supported.")
+            intersection = swarm._seg_intersect_3D_triangles(startpt, endpt,
+                close_mesh[:,0,:], close_mesh[:,1,:], close_mesh[:,2,:])
+
+        # Return endpt we already have if None.
+        if intersection is None:
+            return endpt
         
-            # Consider the line segements formed as the vertex points of each of 
-            #   the mesh elements move in time. An equivalency to the static 
-            #   case condition is to find the shortest distance between all of 
-            #   these vertex line segments and the line segment startpt endpt. 
-            #   If the distances fall out of search_rad for all vertices in 
-            #   a mesh element, that mesh element can be ruled out for 
-            #   intersections.
+        # If we do have an intersection:
+        if ib_collisions == 'sliding':
+            # Project remaining piece of vector onto mesh and repeat processes 
+            #   as necessary until we have a final result.
+            return swarm._project_and_slide(startpt, endpt, intersection, mesh,
+                                            close_mesh, max_meshpt_dist, DIM,
+                                            old_intersection, kill)
+        elif ib_collisions == 'sticky':
+            # Return the point of intersection
+            
+            # small number to perturb off of the actual boundary in order to avoid
+            #   roundoff errors that would allow penetration
+            EPS = 1e-7
 
-            # TODO: Use np.unique to eliminate duplicates in the eligibility 
-            #   check. This is cheap in memory because even if the mesh is 
-            #   time-varying, the mapping to/from unique mesh elements can be 
-            #   made time invariant. We can thus create this mapping and store 
-            #   it when the mesh is made, and then refer to it as needed.
-
+            back_vec = (startpt-endpt)/np.linalg.norm(endpt-startpt)
+            return intersection[0] + back_vec*EPS
+        
 
 
     @staticmethod
@@ -1652,6 +1652,88 @@ class swarm:
             mesh.reshape((mesh.shape[0]*mesh.shape[1],mesh.shape[2])))<=search_rad
         pt_bool = pt_bool.reshape((mesh.shape[0],mesh.shape[1]))
         return mesh[np.any(pt_bool,axis=1)]
+    
+
+
+    @staticmethod
+    def _apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh, dt, 
+                                  max_meshpt_dist, old_intersection=None, 
+                                  kill=False, ib_collisions='sliding'):
+        '''Apply internal boundaries to a trajectory starting and ending at
+        startpt and endpt, returning a new endpt (or the original one) as
+        appropriate.
+
+        Parameters
+        ----------
+        startpt : length 2 or 3 array
+            start location for agent trajectory
+        endpt : length 2 or 3 array
+            end location for agent trajectory
+        start_mesh : Nx2x2 or Nx3x3 array
+            starting position for the mesh
+        end_mesh : Nx2x2 or Nx3x3 array
+            ending position for the mesh
+        dt : float
+            size of the time step
+        max_meshpt_dist : float
+            max distance between two points on a mesh element
+            (used to determine how far away from startpt to search for
+            mesh elements)
+        old_intersection : list-like of data
+            (for internal use only) records the last intersection in the 
+            recursion to check if we are bouncing back and forth between two 
+            boundaries as a result of a concave angle and the right kind of 
+            trajectory vector.
+        kill : bool
+            (for internal use only) set to True in 3D case if we have previously 
+            slid along the boundary line between two mesh elements. This 
+            prevents such a thing from happening more than once, in case of 
+            pathological cases.
+        ib_collisions : {'sliding' (default), 'sticky'}
+            Type of interaction with immersed boundaries. In sliding 
+            collisions, conduct recursive vector projection until the length of
+            the original vector is exhausted. In sticky collisions, just return 
+            the point of intersection.
+
+        Returns
+        -------
+        newendpt : length 2 or 3 array
+            new end location for agent trajectory
+        '''
+
+        if len(startpt) == 2:
+            DIM = 2
+        else:
+            DIM = 3
+
+        # See static case for derivation of the 2/3 argument
+        search_rad = max_meshpt_dist*2/3
+
+        close_mesh = swarm._get_eligible_moving_mesh_elements(startpt, endpt,
+                                                              start_mesh, end_mesh,
+                                                              search_rad)
+        
+        #TODO: Get intersections
+
+        raise NotImplementedError("Only static meshes currently supported.")
+
+
+    @staticmethod
+    def _get_eligible_moving_mesh_elements(startpt, endpt, start_mesh, end_mesh, 
+                                           search_rad):
+        '''
+        From starting and ending points for the mesh, find all elements that 
+        have vertex points which passed within search_rad of the trajectory 
+        segment startpt,endpt. Return a tuple of the start and end eligible meshes.
+        '''
+
+        dist_list = swarm._closest_dist_btwn_two_lines(startpt, endpt,
+            start_mesh.reshape((start_mesh.shape[0]*start_mesh.shape[1],start_mesh.shape[2])),
+            end_mesh.reshape((end_mesh.shape[0]*end_mesh.shape[1],end_mesh.shape[2])))
+        
+        pt_bool = dist_list < search_rad
+        pt_bool = pt_bool.reshape((start_mesh.shape[0], start_mesh.shape[1]))
+        return (start_mesh[np.any(pt_bool,axis=1)], end_mesh[np.any(pt_bool,axis=1)])
 
 
 
@@ -2069,9 +2151,9 @@ class swarm:
                 newendpt = newstartpt + np.linalg.norm(newendpt-newstartpt)*orig_unit_vec
                 # repeat process to look for additional intersections
                 #   pass along current intersection in case of obtuse concave case
-                return swarm._apply_internal_BC(newstartpt, newendpt,
-                                                mesh, max_meshpt_dist,
-                                                intersection)
+                return swarm._apply_internal_static_BC(newstartpt, newendpt,
+                                                       mesh, max_meshpt_dist,
+                                                       intersection)
 
             else:
                 ##########      Did not go past either Q0 or Q1      ##########
@@ -2174,7 +2256,7 @@ class swarm:
                         # Get new endpoint
                         newendpt = newstartpt + proj_vec
                         # Check for more intersections
-                        return swarm._apply_internal_BC(newstartpt, newendpt,
+                        return swarm._apply_internal_static_BC(newstartpt, newendpt,
                                                         mesh, max_meshpt_dist,
                                                         adj_intersect, kill)
 
@@ -2204,9 +2286,9 @@ class swarm:
                 # norm(newendpt - tri_intersect[0]) is the length of the overshoot.
                 newendpt = newstartpt + np.linalg.norm(newendpt-tri_intersect[0])*orig_unit_vec
                 # repeat process to look for additional intersections
-                return swarm._apply_internal_BC(newstartpt, newendpt, 
-                                                mesh, max_meshpt_dist,
-                                                intersection, kill)
+                return swarm._apply_internal_static_BC(newstartpt, newendpt, 
+                                                       mesh, max_meshpt_dist,
+                                                       intersection, kill)
             else:
                 # otherwise, we end on the mesh element
                 return newendpt
