@@ -1353,9 +1353,9 @@ class swarm:
             Agent starting point
         endpt : tuple
             Agent ending point
-        start_mesh : ndarray
+        start_mesh : Nx2x2 or Nx3x3 ndarray
             starting position for the IB mesh
-        end_mesh : ndarray
+        end_mesh : Nx2x2 or Nx3x3 ndarray
             ending position for the IB mesh
         max_meshpt_dist : float
             maximum distance between two mesh vertices at either time
@@ -1372,7 +1372,7 @@ class swarm:
         '''
 
         new_loc = self._apply_internal_moving_BC(startpt, endpt, start_mesh, 
-                    end_mesh, dt, max_meshpt_dist, max_mov, 
+                    end_mesh, max_meshpt_dist, max_mov, dt,
                     ib_collisions=ib_collisions)
         self.positions[idx] = new_loc
         if np.any(new_loc != endpt):
@@ -1725,8 +1725,8 @@ class swarm:
 
 
     @staticmethod
-    def _apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh, dt, 
-                                  max_meshpt_dist, max_mov, 
+    def _apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh, 
+                                  max_meshpt_dist, max_mov, dt, 
                                   old_intersection=None, kill=False, 
                                   ib_collisions='sliding'):
         '''Apply internal boundaries to a trajectory starting and ending at
@@ -1743,12 +1743,12 @@ class swarm:
             starting position for the mesh
         end_mesh : Nx2x2 or Nx3x3 array
             ending position for the mesh
+        max_meshpt_dist : float
+            maximum distance between two mesh vertices at either time
+        max_mov : float
+            maximum distance any mesh vertex moved
         dt : float
             size of the time step
-        max_meshpt_dist : float
-            max distance between two points on a mesh element
-            (used to determine how far away from startpt to search for
-            mesh elements)
         old_intersection : list-like of data
             (for internal use only) records the last intersection in the 
             recursion to check if we are bouncing back and forth between two 
@@ -1781,7 +1781,7 @@ class swarm:
 
         close_mesh = swarm._get_eligible_moving_mesh_elements(startpt, endpt,
                                                               start_mesh, end_mesh,
-                                                              search_rad)
+                                                              max_mov, search_rad)
         
         #TODO: Get intersections
 
@@ -1791,7 +1791,7 @@ class swarm:
 
     @staticmethod
     def _get_eligible_moving_mesh_elements(startpt, endpt, start_mesh, end_mesh, 
-                                           search_rad):
+                                           max_mov, search_rad):
         '''
         From starting and ending points for the mesh, find all elements that 
         have vertex points which passed within search_rad of the trajectory 
@@ -1803,13 +1803,29 @@ class swarm:
         #   in the static case. Instead, do a coarse rule-out and then refine 
         #   with closest distance between two lines.
 
+        # 1/2 a distance between two points is the furthest away you can be and 
+        #   still intersect the line segment between them
+        outer_rad = search_rad + 0.5*np.linalg.norm(endpt-startpt) + 0.5*max_mov
+        start_mesh_r = start_mesh.reshape((start_mesh.shape[0]*start_mesh.shape[1],
+                                           start_mesh.shape[2]))
+        end_mesh_r = end_mesh.reshape((end_mesh.shape[0]*end_mesh.shape[1],
+                                       end_mesh.shape[2]))
+        dist_array = np.empty((4, start_mesh_r.shape[0]))
+        dist_array[0,:] = np.linalg.norm(startpt - start_mesh_r, axis=1) < outer_rad
+        dist_array[1,:] = np.linalg.norm(startpt - end_mesh_r, axis=1) < outer_rad
+        dist_array[2,:] = np.linalg.norm(endpt - start_mesh_r, axis=1) < outer_rad
+        dist_array[3,:] = np.linalg.norm(endpt - end_mesh_r, axis=1) < outer_rad
+        outer_bool = np.any(dist_array, axis=0)
 
+        # anything within the outer radius gets a better check
         dist_list = swarm._closest_dist_btwn_two_lines(startpt, endpt,
-            start_mesh.reshape((start_mesh.shape[0]*start_mesh.shape[1],start_mesh.shape[2])),
-            end_mesh.reshape((end_mesh.shape[0]*end_mesh.shape[1],end_mesh.shape[2])))
-        
-        pt_bool = dist_list < search_rad
-        pt_bool = pt_bool.reshape((start_mesh.shape[0], start_mesh.shape[1]))
+            start_mesh_r[outer_bool,:], end_mesh_r[outer_bool,:])
+        inner_bool = dist_list < search_rad
+
+        # refine outer_bool with inner_bool
+        outer_bool[outer_bool] = inner_bool
+
+        pt_bool = outer_bool.reshape((start_mesh.shape[0], start_mesh.shape[1]))
         return (start_mesh[np.any(pt_bool,axis=1)], end_mesh[np.any(pt_bool,axis=1)])
 
 
