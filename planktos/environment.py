@@ -179,7 +179,7 @@ class environment:
         mesh structures that intersect with a periodic boundary - behavior 
         related to this is not implemented.
     max_meshpt_dist : float
-        maximum length of a mesh segment in ibmesh, typically determined 
+        maximum length of a static mesh segment in ibmesh, typically determined 
         automatically. This is used in search algorithms to winnow down the 
         number of mesh elements to search for intersections of movement.
     ibmesh_times : ndarray of floats or None
@@ -339,8 +339,8 @@ class environment:
         
         self.ibmesh = None # if static: Nx2x2 or Nx3x3 (element, pt in element, (x,y,z))
                            # if moving: TxNx2x2 or TxNx3x3
-        self.max_meshpt_dist = None # max length of a mesh segment
-                                    # TODO: will need to update with moving/deforming mesh
+        self.max_meshpt_dist = None # max length of a (static) mesh segment.
+                                    #  Stays None if mesh is moving.
         self.ibmesh_times = None
         if ibmesh_color is None:
             if Lz is None:
@@ -2065,9 +2065,7 @@ class environment:
                 self.ibmesh = ibmesh[0] # squash t dimension
                 self.ibmesh_times = None
 
-            # Set maximum distance between mesh points.
-            self.max_meshpt_dist = np.linalg.norm(self.ibmesh[0,:,0,:]
-                                                  -self.ibmesh[0,:,1,:],axis=1).max()
+            # Do not set maximum distance between mesh points - it changes.
         
         
         ####### Static immersed boundary data #######
@@ -2126,7 +2124,7 @@ class environment:
             
             # Set maximum distance between mesh points.
             self.max_meshpt_dist = np.linalg.norm(self.ibmesh[:,0,:]
-                                                      -self.ibmesh[:,1,:],axis=1).max()
+                                                  -self.ibmesh[:,1,:],axis=1).max()
         
         
         ####### Neither a directory nor a filename #######
@@ -2225,7 +2223,7 @@ class environment:
 
 
     def read_3D_vertex_data_to_convex_hull(self, filename):
-        '''Reads in 3D vertex data from a vtk file or a vertex file and 
+        '''Reads in static 3D vertex data from a vtk file or a vertex file and 
         applies ConvexHull triangulation to get a complete, static boundary. 
         This uses Qhull through Scipy under the hood http://www.qhull.org/.
         '''
