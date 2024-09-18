@@ -182,6 +182,9 @@ class environment:
         maximum length of a mesh segment in ibmesh, typically determined 
         automatically. This is used in search algorithms to winnow down the 
         number of mesh elements to search for intersections of movement.
+    ibmesh_times : ndarray of floats or None
+        if specified, the time stamp for each index t in the ibmesh (time 
+        varying meshes only)
     ibmesh_color : matplotlib color format
         color of the ibmesh. Defaults to black in 2D, 'dimgrey' in 3D.
     plot_structs : list of function handles
@@ -333,11 +336,7 @@ class environment:
         self.g = 9.80665 # m/s**2
 
         ##### Immersed Boundary Mesh #####
-
-        # When we implement a moving mesh, use np.unique to return both
-        #   unique vertex values in the ibmesh AND unique_inverse, the indices
-        #   to reconstruct the mesh from the unique array. Then can update
-        #   points and reconstruct.
+        
         self.ibmesh = None # if static: Nx2x2 or Nx3x3 (element, pt in element, (x,y,z))
                            # if moving: TxNx2x2 or TxNx3x3
         self.max_meshpt_dist = None # max length of a mesh segment
@@ -4136,7 +4135,7 @@ class environment:
 
 
     #######################################################################
-    #####           FLUID AND MESH INTERPOLATION OBJECTS              #####
+    #####               FLUID INTERPOLATION OBJECTS                   #####
     #######################################################################
 
 
