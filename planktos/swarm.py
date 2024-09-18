@@ -1272,6 +1272,7 @@ class swarm:
                 max_meshpt_dist_end = np.concatenate(tuple(
                     np.linalg.norm(end_mesh[:,ii,:]-end_mesh[:,(ii+1)%DIM,:], axis=1)
                     for ii  in range(DIM))).max()
+                max_meshpt_dist = np.max((max_meshpt_dist_start, max_mesh_dist_end))
                 # Calculate the maximum distance a mesh vertex moved
                 max_mov = np.concatenate(tuple(
                     np.linalg.norm(end_mesh[:,ii,:]-start_mesh[:,ii,:], axis=1)
@@ -1288,9 +1289,8 @@ class swarm:
                         self._IBC_routine_static(n, startpt, endpt, ib_collisions)
                     else:
                         self._IBC_routine_moving(n, startpt, endpt, start_mesh, 
-                                                 end_mesh, max_meshpt_dist_start, 
-                                                 max_meshpt_dist_end, max_mov, 
-                                                 dt, ib_collisions)
+                                                 end_mesh, max_meshpt_dist, 
+                                                 max_mov, dt, ib_collisions)
             # if all are masked, skip all boundary checks
             elif np.all(self.positions.mask):
                 return
@@ -1303,9 +1303,8 @@ class swarm:
                         self._IBC_routine_static(n, startpt, endpt, ib_collisions)
                     else:
                         self._IBC_routine_moving(n, startpt, endpt, start_mesh, 
-                                                 end_mesh, max_meshpt_dist_start, 
-                                                 max_meshpt_dist_end, max_mov, 
-                                                 dt, ib_collisions)
+                                                 end_mesh, max_meshpt_dist, 
+                                                 max_mov, dt, ib_collisions)
 
         ##### Environment Boundary Conditions #####
         self._domain_BC_loop(ib_collisions=ib_collisions, dt=dt)
@@ -1323,10 +1322,6 @@ class swarm:
             Agent starting point
         endpt : tuple
             Agent ending point
-        dt : float, optional
-            Size of the time step during which we are applying the BC. This is 
-            necessary for moving immersed boundaries and will be ignored for 
-            static IB.
         ib_collisions : {None, 'sliding' (default), 'sticky'}
             Type of interaction with immersed boundaries. If None, turn off all 
             interaction with immersed boundaries. In sliding collisions, 
@@ -1347,8 +1342,7 @@ class swarm:
 
 
     def _IBC_routine_moving(self, idx, startpt, endpt, start_mesh, end_mesh, 
-                            max_meshpt_dist_start, max_meshpt_dist_end, max_mov, 
-                            dt, ib_collisions='sliding'):
+                            max_meshpt_dist, max_mov, dt, ib_collisions='sliding'):
         '''Routine for checking moving IB
         
         Parameters
@@ -1359,10 +1353,16 @@ class swarm:
             Agent starting point
         endpt : tuple
             Agent ending point
-        dt : float, optional
-            Size of the time step during which we are applying the BC. This is 
-            necessary for moving immersed boundaries and will be ignored for 
-            static IB.
+        start_mesh : ndarray
+            starting position for the IB mesh
+        end_mesh : ndarray
+            ending position for the IB mesh
+        max_meshpt_dist : float
+            maximum distance between two mesh vertices at either time
+        max_mov : float
+            maximum distance any mesh vertex moved
+        dt : float
+            Size of the time step.
         ib_collisions : {None, 'sliding' (default), 'sticky'}
             Type of interaction with immersed boundaries. If None, turn off all 
             interaction with immersed boundaries. In sliding collisions, 
@@ -1372,8 +1372,8 @@ class swarm:
         '''
 
         new_loc = self._apply_internal_moving_BC(startpt, endpt, start_mesh, 
-                    end_mesh, dt, max_meshpt_dist_start, max_meshpt_dist_end,
-                    max_mov, ib_collisions=ib_collisions)
+                    end_mesh, dt, max_meshpt_dist, max_mov, 
+                    ib_collisions=ib_collisions)
         self.positions[idx] = new_loc
         if np.any(new_loc != endpt):
             self.ib_collision[idx] = True
@@ -1726,8 +1726,8 @@ class swarm:
 
     @staticmethod
     def _apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh, dt, 
-                                  max_meshpt_dist_start, max_meshpt_dist_end, 
-                                  max_mov, old_intersection=None, kill=False, 
+                                  max_meshpt_dist, max_mov, 
+                                  old_intersection=None, kill=False, 
                                   ib_collisions='sliding'):
         '''Apply internal boundaries to a trajectory starting and ending at
         startpt and endpt, returning a new endpt (or the original one) as
@@ -1777,7 +1777,7 @@ class swarm:
             DIM = 3
 
         # See static case for derivation of the 2/3 argument
-        search_rad = np.max((max_meshpt_dist_start, max_meshpt_dist_end))*2/3
+        search_rad = max_meshpt_dist*2/3
 
         close_mesh = swarm._get_eligible_moving_mesh_elements(startpt, endpt,
                                                               start_mesh, end_mesh,
