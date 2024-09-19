@@ -427,6 +427,8 @@ def seg_intersect_3D_triangles(P0, P1, Q0_list, Q1_list, Q2_list, get_all=False)
             # check if point is in triangle
             if np.all(coords>=0):
                 return (cross_pt, s_I_list, normal, Q0_list, Q1_list, Q2_list)
+            else:
+                return None
 
 
     # calculate barycentric coordinates for each plane intersection
@@ -475,7 +477,7 @@ def seg_intersect_3D_plane(u, n_list, w):
     n_list : Nx3 ndarray 
         normal vectors to the planes
     w : Nx3 ndarray
-        P0 - Q0 vectors from first point in line segment to point on each plane
+        P0 - Q0 vectors from first point in line segment to a point on each plane
         
     Returns
     -------
@@ -529,7 +531,8 @@ def seg_intersect_3D_plane(u, n_list, w):
 
 
 
-def seg_intersect_3D_cop_quadrilateral(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
+def seg_intersect_3D_quadrilateral(P0, P1, Q0_list, Q1_list, Q2_list, 
+                                       Q3_list, get_all=False):
     '''Find the intersection between a 2D line segment and quadrilaterals 
     in the 3D space formed by two spatial dimensions and time for the 
     application of finding intersections between a moving point and a moving 
@@ -540,6 +543,8 @@ def seg_intersect_3D_cop_quadrilateral(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
     elements, it can be assumed that P0, Q0, and Q1 are coplaner in the 
     t-dimension, and similarly for P1, Q2, and Q3. The t-direction is 
     therefore normalized to 0 and 1.
+
+    TODO: Testing needed!
     
     Parameters
     ----------
@@ -547,13 +552,13 @@ def seg_intersect_3D_cop_quadrilateral(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
         first point in line segment P
     P1 : length 2 array
         second point in line segment P 
-    Q0 : Nx2 ndarray 
+    Q0_list : Nx2 ndarray 
         first points in a list of 2D mesh elements at starting time.
-    Q1 : Nx2 ndarray 
+    Q1_list : Nx2 ndarray 
         second points in a list of 2D mesh elements at starting time.
-    Q2 : Nx2 ndarray 
+    Q2_list : Nx2 ndarray 
         first points in a list of 2D mesh elements at ending time.
-    Q3 : Nx2 ndarray
+    Q3_list : Nx2 ndarray
         second points in a list of 2D mesh elements at ending time.
     get_all : bool
         Return all intersections instead of just the first one encountered 
@@ -567,12 +572,93 @@ def seg_intersect_3D_cop_quadrilateral(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
     s_I : float between 0 and 1
         the fraction of the line segment traveled from P0 before 
         intersection occurred (only if intersection occurred)
-    vec : length 2 array
-        directional unit vector along the boundary (Q) intersected
-    Q_idx : int
-        index of mesh element that was intersected
+    Q0 : length 3 array
+        first point of mesh element that was intersected at time of intersection
+    Q1 : length 3 array
+        second point of mesh element that was intersected at time of intersection
     '''
-    pass
+    
+    # Get vectors normal to each plane leveraging unit-length in t direction
+    Q1Q0_diff = Q1_list-Q0_list
+    Q3Q2_diff = Q3_list-Q2_list
+
+    u = P1 - P0
+    w = P0 - Q0_list
+    
+    if len(Q0_list.shape) == 1:
+        # Only one plane
+        u = np.hstack((P1-P0,1))
+        w = np.hstack((P0-Q0_list,0))
+        # cross product
+        n_list = np.array([Q1Q0_diff[1], -Q1Q0_diff[0], 
+                           np.linalg.det(np.array([Q1Q0_diff,Q3Q2_diff]))])
+    else:
+        u = np.hstack((P1-P0,np.ones((Q0_list.shape[0],1))))
+        w = np.hstack((P0-Q0_list,np.zeros((Q0_list.shape[0],1))))
+        n_list = np.empty((Q0_list.shape[0],3))
+        # cross product
+        n_list[:,0] = Q1Q0_diff[:,1]
+        n_list[:,1] = -Q1Q0_diff[:,0]
+        n_list[:,2] = Q1Q0_diff[:,0]*Q3Q2_diff[:,1] - Q1Q0_diff[:,1]*Q3Q2_diff[:,0]
+
+    # determine intersections between line segement and full planes
+    s_I_list = seg_intersect_3D_plane(u, n_list, w)
+
+    ##### Narrow down to quadrilaterals #####
+
+    if len(Q0_list.shape) == 1:
+        # Single plane case
+        if s_I_list is None:
+            return None
+        else:
+            cross_pt = P0 + s_I_list*u
+            # Check for intersections outside of t unit interval
+            if cross_pt[2] < 0 or cross_pt[2] > 1:
+                return None
+            # Check if intersection is within mesh element. To do this, find the 
+            #   mesh element vertices at the time of intersection and see if the 
+            #   point of intersectin is between them.
+            # We know the pt of intersection is colinear, so we just need to 
+            #   compare to endpoints. A one dimensional check is enough except 
+            #   when the mesh element lies in the x- or y-direction. So check 
+            #   both to be safe.
+            first_pt = Q0_list + (Q2_list-Q0_list)*s_I_list
+            second_pt = Q1_list + (Q3_list-Q1_list)*s_I_list
+            if np.all(np.logical_and(first_pt <= cross_pt[:2], 
+                                     cross_pt[:2] <= second_pt)):
+                return (cross_pt, s_I_list, first_pt, second_pt)
+            else:
+                return None
+            
+    # Multiple plane case
+    closest_int = (None, -1)
+    intersections = []
+    for n, s_I in zip(np.arange(len(s_I_list))[s_I_list!=-1], s_I_list[s_I_list!=-1]):
+        # if get_all is False, we only care about the closest intersection!
+        # see if we need to worry about each one, and then record as appropriate
+        if closest_int[1] == -1 or closest_int[1] > s_I or get_all:
+            cross_pt = P0 + s_I*u
+            # Check that intersection is inside t unit interval
+            if 0 <= cross_pt[2] <= 1:
+                # Check if intersection is within mesh element
+                first_pt = Q0_list[n] + (Q2_list[n]-Q0_list[n])*s_I
+                second_pt = Q1_list[n] + (Q3_list[n]-Q1_list[n])*s_I
+                if np.all(np.logical_and(first_pt <= cross_pt[:2], 
+                                         cross_pt[:2] <= second_pt)):
+                    if get_all:
+                        intersections.append((cross_pt, s_I, first_pt, second_pt))
+                    else:
+                        closest_int = (cross_pt, s_I, first_pt, second_pt)
+    if not get_all:
+        if closest_int[0] is None:
+            return None
+        else:
+            return closest_int
+    else:
+        if len(intersections) == 0:
+            return None
+        else:
+            return intersections
 
 
 
