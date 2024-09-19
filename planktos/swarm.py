@@ -1780,19 +1780,29 @@ class swarm:
         # See static case for derivation of the 2/3 argument
         search_rad = max_meshpt_dist*2/3
 
-        close_mesh = swarm._get_eligible_moving_mesh_elements(startpt, endpt,
-                                                              start_mesh, end_mesh,
-                                                              max_mov, search_rad)
+        close_mesh_start, close_mesh_end = \
+            swarm._get_eligible_moving_mesh_elements(startpt, endpt, start_mesh, 
+                                                     end_mesh, max_mov, search_rad)
         
         # Get intersections
         if DIM == 2:
             # find interesections between line segment of motion and 
             #   quadrilateral in 3D (t,x,y) space
-            raise NotImplementedError("Only static meshes currently supported.")
+            intersection = geo.seg_intersect_3D_quadrilateral(startpt, endpt,
+                                close_mesh_start[:,0,:], close_mesh_start[:,1,:],
+                                close_mesh_end[:,0,:], close_mesh_end[:,1,:])
         else:
             # find interesections between line segment of motion and 
             #   hyper-quadrilateral (hyper-plane) in 4D (t,x,y,z) space
-            raise NotImplementedError("Only static meshes currently supported.")
+            raise NotImplementedError("3D moving meshes not currently supported.")
+        
+        raise NotImplementedError("Only static meshes currently supported.")
+    
+        # Return endpt we already have if None.
+        if intersection is None:
+            return endpt
+        
+        # TODO: apply sliding or sticky boundary conditions
 
 
 
