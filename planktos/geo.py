@@ -400,9 +400,6 @@ def seg_intersect_3D_triangles(P0, P1, Q0_list, Q1_list, Q2_list, get_all=False)
         Code, self-published: Amazon KDP.
     '''
 
-    # First, determine the intersection between the line and the plane
-
-    # Get normal vectors
     Q1Q0_diff = Q1_list-Q0_list
     Q2Q0_diff = Q2_list-Q0_list
     n_list = np.cross(Q1Q0_diff, Q2Q0_diff)
@@ -410,47 +407,32 @@ def seg_intersect_3D_triangles(P0, P1, Q0_list, Q1_list, Q2_list, get_all=False)
     u = P1 - P0
     w = P0 - Q0_list
 
-    # At intersection, w + su is perpendicular to n
+    # First, determine intersections between the line segment and full planes
+    s_I_list = seg_intersect_3D_plane(u, n_list, w)
+
     if len(Q0_list.shape) == 1:
         # only one triangle
-        denom = np.dot(n_list,u)
-        if denom != 0:
-            s_I = np.dot(-n_list,w)/denom
-            if 0<=s_I<=1:
-                # line segment crosses full plane
-                cross_pt = P0 + s_I*u
-                # calculate barycentric coordinates
-                normal = n_list/np.linalg.norm(n_list)
-                A_dbl = np.dot(n_list, normal)
-                Q0Pt = cross_pt-Q0_list
-                A_u_dbl = np.dot(np.cross(Q0Pt,Q2Q0_diff),normal)
-                A_v_dbl = np.dot(np.cross(Q1Q0_diff,Q0Pt),normal)
-                coords = np.array([A_u_dbl/A_dbl, A_v_dbl/A_dbl, 0])
-                coords[2] = 1 - coords[0] - coords[1]
-                # check if point is in triangle
-                if np.all(coords>=0):
-                    return (cross_pt, s_I, normal, Q0_list, Q1_list, Q2_list)
-        return None
+        if s_I_list is None:
+            return None
+        else:
+            cross_pt = P0 + s_I_list*u
+            # calculate barycentric coordinates
+            normal = n_list/np.linalg.norm(n_list)
+            A_dbl = np.dot(n_list, normal)
+            Q0Pt = cross_pt-Q0_list
+            A_u_dbl = np.dot(np.cross(Q0Pt,Q2Q0_diff),normal)
+            A_v_dbl = np.dot(np.cross(Q1Q0_diff,Q0Pt),normal)
+            coords = np.array([A_u_dbl/A_dbl, A_v_dbl/A_dbl, 0])
+            coords[2] = 1 - coords[0] - coords[1]
+            # check if point is in triangle
+            if np.all(coords>=0):
+                return (cross_pt, s_I_list, normal, Q0_list, Q1_list, Q2_list)
 
-    denom_list = np.multiply(n_list,u).sum(1) #vectorized dot product
-
-    # record non-parallel cases
-    not_par = denom_list != 0
-
-    # default is not intersecting
-    s_I_list = -np.ones_like(denom_list)
-    
-    # get intersection parameters
-    #   (einsum is faster for vectorized dot product, but need same length vectors)
-    if np.any(not_par):
-        s_I_list[not_par] = np.einsum('ij,ij->i',-n_list[not_par],w[not_par])/denom_list[not_par]
-    # test for intersection of line segment with full plane
-    plane_int = np.logical_and(0<=s_I_list, s_I_list<=1)
 
     # calculate barycentric coordinates for each plane intersection
     closest_int = (None, -1, None)
     intersections = []
-    for n, s_I in zip(np.arange(len(plane_int))[plane_int], s_I_list[plane_int]):
+    for n, s_I in zip(np.arange(len(s_I_list))[s_I_list!=-1], s_I_list[s_I_list!=-1]):
         # if get_all is False, we only care about the closest triangle intersection!
         # see if we need to worry about this one
         if closest_int[1] == -1 or closest_int[1] > s_I or get_all:
@@ -478,6 +460,72 @@ def seg_intersect_3D_triangles(P0, P1, Q0_list, Q1_list, Q2_list, get_all=False)
             return None
         else:
             return intersections
+
+
+
+def seg_intersect_3D_plane(u, n_list, w):
+    '''Given a 3D line segment from P0 to P1 in 3D, determine the intersection 
+    between the line segment and each plane defined by three points Q0, Q1, Q2. 
+    It is assumed that while the line segment may be parallel to the plane, it 
+    does not lie perfectly within the plane itself.
+
+    Parameters
+    ----------
+    u : vector P1 - P0 of line segment
+    n_list : Nx3 ndarray 
+        normal vectors to the planes
+    w : Nx3 ndarray
+        P0 - Q0 vectors from first point in line segment to point on each plane
+        
+    Returns
+    -------
+    - If there is only one plane and no intersection, None is returned
+    - If there is one plane with an intersection a float in [0,1] is returned
+        corresponding to the fraction of the line segment traveled from P0 
+        before intersection occurred
+    - If there are multiple planes, a length N array of floats is returned.
+        -1 is coded to mean that the line segment did not intersect with that 
+        plane. Otherwise, the faction of the line segment traveled from P0 
+        before intersection occurred with that plane is recorded
+
+    References
+    ----------
+    .. [1] Sunday, Daniel, (2021). Practial Geometry Algorithms with C++ 
+        Code, self-published: Amazon KDP.
+    '''
+
+    # At intersection, w + su is perpendicular to n
+
+    ##### Only one Q plane case #####
+    if len(w.shape) == 1:
+        # only one plane
+        denom = np.dot(n_list,u)
+        if denom != 0:
+            s_I = np.dot(-n_list,w)/denom
+            if 0<=s_I<=1:
+                # line segment crosses full plane
+                return s_I
+        return None
+
+    ##### Multiple planes #####
+    denom_list = np.multiply(n_list,u).sum(1) #vectorized dot product
+
+    # record non-parallel cases
+    not_par = denom_list != 0
+
+    # default is not intersecting (coded as -1)
+    s_I_list = -np.ones_like(denom_list)
+    
+    # get intersection parameters
+    #   (einsum is faster for vectorized dot product, but need same length vectors)
+    if np.any(not_par):
+        s_I_list[not_par] = np.einsum('ij,ij->i',-n_list[not_par],w[not_par])/denom_list[not_par]
+    # test for intersection of line segment with full plane.
+    #   Reset s_I_list to -1 for all non-intersecting cases.
+    s_I_list[np.logical_or(s_I_list<0, s_I_list>1)] = -1
+    # plane_int = np.logical_and(0<=s_I_list, s_I_list<=1)
+
+    return s_I_list
 
 
 
