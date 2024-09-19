@@ -19,6 +19,6 @@ from .swarm import swarm
 # from . import motion
 # from . import dataio
 
-__all__ = ["environment", "swarm", "motion", "dataio"]
+__all__ = ["environment", "swarm", "motion", "dataio", "geo"]
 environment.__module__ = "environment"
 swarm.__module__ = "swarm"

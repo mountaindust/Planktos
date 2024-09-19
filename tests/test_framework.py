@@ -509,35 +509,35 @@ def test_intersection_methods():
     # Two segments, parallel
     p0 = np.array([0.0, 0.0]); p1 = np.array([0.0, 1.])
     p2 = np.array([1., 0.]); p3 = np.array([1., 0.5])
-    assert planktos.swarm._seg_intersect_2D(p0, p1, p2, p3) is None
+    assert planktos.geo.seg_intersect_2D(p0, p1, p2, p3) is None
 
     # Two segments, no intersection
     p0 = np.array([0.0, 0.0]); p1 = np.array([0.0, 1.])
     p2 = np.array([1., 0.]); p3 = np.array([0.5, 0.5])
-    assert planktos.swarm._seg_intersect_2D(p0, p1, p2, p3) is None
+    assert planktos.geo.seg_intersect_2D(p0, p1, p2, p3) is None
 
     # Two segments, intersection
     p0 = np.array([1.0, 0.0]); p1 = np.array([1.0, 1.])
     p2 = np.array([2., 0.]); p3 = np.array([0., 0.5])
-    assert planktos.swarm._seg_intersect_2D(p0, p1, p2, p3) is not None
+    assert planktos.geo.seg_intersect_2D(p0, p1, p2, p3) is not None
 
     # Many segments, no intersection
     p0 = np.array([0.0, 0.0]); p1 = np.array([1., 1.])
     Q0_list = np.array([[0., 1.],[0., 1.],[2.35, 3.001]])
     Q1_list = np.array([[0., 2.],[1., 2.],[34.957, 11.3239]])
-    assert planktos.swarm._seg_intersect_2D(p0, p1, Q0_list, Q1_list) is None
+    assert planktos.geo.seg_intersect_2D(p0, p1, Q0_list, Q1_list) is None
     
     # Many segments, one intersection
     p0 = np.array([0.0, 0.0]); p1 = np.array([1., 1.])
     Q0_list = np.array([[0., 1.],[0., 1.],[0.25, 0.75]])
     Q1_list = np.array([[0., 2.],[1., 2.],[0.75, 0.25]])
-    assert planktos.swarm._seg_intersect_2D(p0, p1, Q0_list, Q1_list) is not None
+    assert planktos.geo.seg_intersect_2D(p0, p1, Q0_list, Q1_list) is not None
 
     # Many segments, two intersections
     p0 = np.array([1.0, 0.0]); p1 = np.array([1., 5.])
     Q0_list = np.array([[0., 4.],[0., 1.],[0., 2.],[10., 10.]])
     Q1_list = np.array([[5., 4.],[0.5, 2.],[3., 2.],[11., 11.]])
-    intersection = planktos.swarm._seg_intersect_2D(p0, p1, Q0_list, Q1_list)
+    intersection = planktos.geo.seg_intersect_2D(p0, p1, Q0_list, Q1_list)
     assert np.all(intersection[0] == np.array([1.,2.]))
     assert intersection[1] == 2./5.
     intsec = np.array([3.,0.])
@@ -550,23 +550,23 @@ def test_intersection_methods():
     tri2 = np.array([1., 2., 1.])
     Q0_list = np.array([tri0, tri1, tri2])
     Q1_list = np.array([tri1, tri2, tri0])
-    intersection = planktos.swarm._seg_intersect_2D(seg0, seg1, Q0_list, Q1_list)
+    intersection = planktos.geo.seg_intersect_2D(seg0, seg1, Q0_list, Q1_list)
     assert intersection is None
 
     # On a boundary, no interesection
     seg0 = np.array([1.1, 1., 1.]); seg1 = np.array([1.5, 1., 1.])
-    intersection = planktos.swarm._seg_intersect_2D(seg0, seg1, Q0_list, Q1_list)
+    intersection = planktos.geo.seg_intersect_2D(seg0, seg1, Q0_list, Q1_list)
     assert intersection is None
 
     # On a boundary, with interesection
     seg0 = np.array([1.1, 1., 1.]); seg1 = np.array([2.1, 1., 1.])
-    intersection = planktos.swarm._seg_intersect_2D(seg0, seg1, Q0_list, Q1_list)
+    intersection = planktos.geo.seg_intersect_2D(seg0, seg1, Q0_list, Q1_list)
     assert np.all(intersection[0] == tri1)
     assert np.isclose(intersection[1],0.9)
 
     # Off boundary, with interesection
     seg0 = np.array([1.1, 1.1, 1.]); seg1 = np.array([2.1, 2.1, 1.])
-    intersection = planktos.swarm._seg_intersect_2D(seg0, seg1, Q0_list, Q1_list)
+    intersection = planktos.geo.seg_intersect_2D(seg0, seg1, Q0_list, Q1_list)
     assert np.all(intersection[0] == np.array([1.5, 1.5, 1.]))
     assert np.isclose(intersection[1],0.4)
 
@@ -576,26 +576,26 @@ def test_intersection_methods():
     seg0 = np.array([0.5, 0.5, 2.]); seg1 = np.array([2.5, 2.5, 2.])
     tri0 = np.array([1., 1., 1.]); tri1 = np.array([2., 1., 1.])
     tri2 = np.array([1., 2., 1.])
-    assert planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2) is None
+    assert planktos.geo.seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2) is None
 
     # Parallel case, intersection
     seg0 = np.array([0.5, 0.5, 1.]); seg1 = np.array([2.5, 2.5, 1.])
     tri0 = np.array([1., 1., 1.]); tri1 = np.array([2., 1., 1.])
     tri2 = np.array([1., 2., 1.])
-    assert planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2) is None,\
+    assert planktos.geo.seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2) is None,\
         "Parallel should return None in all cases."
 
     # One non-parallel segment and triangle, no intersection
     seg0 = np.array([0.5, 0.5, 2.]); seg1 = np.array([2.5, 2.5, 1.5])
     tri0 = np.array([1., 1., 1.]); tri1 = np.array([2., 1., 1.])
     tri2 = np.array([1., 2., 1.])
-    assert planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2) is None
+    assert planktos.geo.seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2) is None
 
     # One non-parallel segment and triangle with intersection
     seg0 = np.array([0.5, 0.5, 0.5]); seg1 = np.array([2., 2., 1.5])
     tri0 = np.array([1., 1., 1.]); tri1 = np.array([4., 1., 1.])
     tri2 = np.array([1., 4., 1.])
-    intersection = planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2)
+    intersection = planktos.geo.seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2)
     assert intersection is not None
     assert np.all(np.isclose(intersection[0], np.array([1.25, 1.25, 1.])))
     assert np.isclose(intersection[1], 0.5)
@@ -607,14 +607,14 @@ def test_intersection_methods():
     tri0 = np.array([[1., 1., 1.], [1., 1., 2.], [20.5, 0.5, 0.5]])
     tri1 = np.array([[2., 1., 1.], [2., 1., 2.], [0.5, 20.5, 0.5]])
     tri2 = np.array([[1., 2., 1.], [1., 2., 1.], [10.5, 10.5, 20.5]])
-    assert planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2) is None
+    assert planktos.geo.seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2) is None
 
     # Many triangles, one intersection
     seg0 = np.array([0.5, 0.5, 0.5]); seg1 = np.array([2., 2., 1.5])
     tri0 = np.array([[1., 1., 1.],[2.5, 2.5, 20.],[6., 1., 10.]])
     tri1 = np.array([[4., 1., 1.],[4., 1., 1.],[4., 1., 1.]])
     tri2 = np.array([[1., 4., 1.],[1., 4., 1.],[8., 1., 1.]])
-    intersection = planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2)
+    intersection = planktos.geo.seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2)
     assert intersection is not None
     assert np.all(np.isclose(intersection[0], np.array([1.25, 1.25, 1.])))
     assert np.isclose(intersection[1], 0.5)
@@ -629,7 +629,7 @@ def test_intersection_methods():
                      [4., 1., 1.],[4., 1., 1.1]])
     tri2 = np.array([[1., 4., 1.2],[1., 4., 1.],[1., 4., 1.],
                      [8., 1., 1.],[1., 4., 1.1]])
-    intersection = planktos.swarm._seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2)
+    intersection = planktos.geo.seg_intersect_3D_triangles(seg0, seg1, tri0, tri1, tri2)
     assert intersection is not None
     assert np.all(np.isclose(intersection[0], np.array([1.25, 1.25, 1.])))
     assert np.isclose(intersection[1], 0.5)
