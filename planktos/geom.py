@@ -290,7 +290,7 @@ def seg_intersect_2D(P0, P1, Q0_list, Q1_list, get_all=False):
             s_I = np.dot(-v_perp,w)/denom
             t_I = -np.dot(u_perp,w)/denom
             if 0<=s_I<=1 and 0<=t_I<=1:
-                return (P0 + s_I*u, s_I, v, Q0_list, Q1_list)
+                return (P0 + s_I*u, s_I, v/np.linalg.norm(v), Q0_list, Q1_list)
         return None
 
     denom_list = np.multiply(v_perp,u).sum(1) #vectorized dot product
@@ -572,10 +572,16 @@ def seg_intersect_3D_quadrilateral(P0, P1, Q0_list, Q1_list, Q2_list,
     s_I : float between 0 and 1
         the fraction of the line segment traveled from P0 before 
         intersection occurred (only if intersection occurred)
+    vec : length 2 array
+        unit vector in the direction Q1 - Q0 at time of intersection
     Q0 : length 3 array
-        first point of mesh element that was intersected at time of intersection
+        first point of mesh element that was intersected at time 0
     Q1 : length 3 array
-        second point of mesh element that was intersected at time of intersection
+        second point of mesh element that was intersected at time 0
+    Q2 : length 3 array
+        first point of mesh element that was intersected at time dt
+    Q3 : length 3 array
+        second point of mesh element that was intersected at time dt
     '''
     
     # Get vectors normal to each plane leveraging unit-length in t direction
@@ -626,7 +632,9 @@ def seg_intersect_3D_quadrilateral(P0, P1, Q0_list, Q1_list, Q2_list,
             second_pt = Q1_list + (Q3_list-Q1_list)*s_I_list
             if np.all(np.logical_and(first_pt <= cross_pt[:2], 
                                      cross_pt[:2] <= second_pt)):
-                return (cross_pt, s_I_list, first_pt, second_pt)
+                return (cross_pt, s_I_list, 
+                        (second_pt-first_pt)/np.linalg.norm(second_pt-first_pt), 
+                        Q0_list, Q1_list, Q2_list, Q3_list)
             else:
                 return None
             
@@ -645,10 +653,13 @@ def seg_intersect_3D_quadrilateral(P0, P1, Q0_list, Q1_list, Q2_list,
                 second_pt = Q1_list[n] + (Q3_list[n]-Q1_list[n])*s_I
                 if np.all(np.logical_and(first_pt <= cross_pt[:2], 
                                          cross_pt[:2] <= second_pt)):
+                    intersec = (cross_pt, s_I, 
+                                (second_pt-first_pt)/np.linalg.norm(second_pt-first_pt),
+                                Q0_list[n], Q1_list[n], Q2_list[n], Q3_list[n])
                     if get_all:
-                        intersections.append((cross_pt, s_I, first_pt, second_pt))
+                        intersections.append(intersec)
                     else:
-                        closest_int = (cross_pt, s_I, first_pt, second_pt)
+                        closest_int = intersec
     if not get_all:
         if closest_int[0] is None:
             return None

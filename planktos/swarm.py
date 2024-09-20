@@ -1805,7 +1805,15 @@ class swarm:
         if intersection is None:
             return endpt
         
-        # TODO: apply sliding or sticky boundary conditions
+        # If we have an intersection with this agent, apply boundary condition
+        if ib_collisions == 'sticky':
+            # Return the point of intersection
+            
+            # small number to perturb off of the actual boundary in order to avoid
+            #   roundoff errors that would allow boundary penetration
+            EPS = 1e-7
+
+            pass
 
 
 
