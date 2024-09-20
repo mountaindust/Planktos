@@ -1246,9 +1246,7 @@ class swarm:
         dt : float, optional
             Size of the time step during which we are applying the BC. This is 
             necessary for moving immersed boundaries and will be ignored for 
-            static IB. If it is None for moving immersed boundaries, it will be 
-            assumed that only the immersed boundary at the current environmental 
-            time needs to be checked.
+            static IB.
         ib_collisions : {None, 'sliding' (default), 'sticky'}
             Type of interaction with immersed boundaries. If None, turn off all 
             interaction with immersed boundaries. In sliding collisions, 
@@ -1262,22 +1260,8 @@ class swarm:
 
             if not np.all(self.positions.mask) and self.envir.ibmesh.ndim == 4:
                 # Get moving mesh info to pass into IBC routine
-                start_mesh = self.envir.interpolate_temporal_mesh()
-                end_mesh = self.envir.interpolate_temporal_mesh(time=self.envir.time+dt)
-                # The maximum distance between meshpoints will change in time. 
-                #   Calculate them here and pass it along.
-                DIM = start_mesh.shape[1]
-                max_meshpt_dist_start = np.concatenate(tuple(
-                    np.linalg.norm(start_mesh[:,ii,:]-start_mesh[:,(ii+1)%DIM,:], axis=1)
-                    for ii  in range(DIM))).max()
-                max_meshpt_dist_end = np.concatenate(tuple(
-                    np.linalg.norm(end_mesh[:,ii,:]-end_mesh[:,(ii+1)%DIM,:], axis=1)
-                    for ii  in range(DIM))).max()
-                max_meshpt_dist = np.max((max_meshpt_dist_start, max_meshpt_dist_end))
-                # Calculate the maximum distance a mesh vertex moved
-                max_mov = np.concatenate(tuple(
-                    np.linalg.norm(end_mesh[:,ii,:]-start_mesh[:,ii,:], axis=1)
-                    for ii  in range(DIM))).max()
+                start_mesh, end_mesh, max_meshpt_dist, max_mov = \
+                    self._get_moving_mesh_info(dt)
 
             # if there are any masked agents, skip them in the loop
             if np.any(self.positions.mask):
@@ -1308,10 +1292,45 @@ class swarm:
                                                  max_mov, dt, ib_collisions)
 
         ##### Environment Boundary Conditions #####
-        if self.envir.ibmesh.ndim == 3:
-            self._domain_BC_loop(ib_collisions=ib_collisions, dt=dt)
-        else:
-            NotImplementedError("Only static meshes currently supported.")
+        self._domain_BC_loop(ib_collisions=ib_collisions, dt=dt)
+
+
+
+    def _get_moving_mesh_info(self, dt):
+        '''Helper function that returns interpolated mesh information needed for
+        the immersed boundary interaction check.
+
+        Parameters
+        ----------
+        dt : float
+            size of the time step.
+
+        Returns
+        -------
+        start_mesh : ndarray
+        end_mesh : ndarray
+        max_meshpt_dist : float
+        max_mov : float
+        '''
+
+        start_mesh = self.envir.interpolate_temporal_mesh()
+        end_mesh = self.envir.interpolate_temporal_mesh(time=self.envir.time+dt)
+        # The maximum distance between meshpoints will change in time. 
+        #   Calculate them here and pass it along.
+        DIM = start_mesh.shape[1]
+        max_meshpt_dist_start = np.concatenate(tuple(
+            np.linalg.norm(start_mesh[:,ii,:]-start_mesh[:,(ii+1)%DIM,:], axis=1)
+            for ii  in range(DIM))).max()
+        max_meshpt_dist_end = np.concatenate(tuple(
+            np.linalg.norm(end_mesh[:,ii,:]-end_mesh[:,(ii+1)%DIM,:], axis=1)
+            for ii  in range(DIM))).max()
+        max_meshpt_dist = np.max((max_meshpt_dist_start, max_meshpt_dist_end))
+        # Calculate the maximum distance a mesh vertex moved
+        max_mov = np.concatenate(tuple(
+            np.linalg.norm(end_mesh[:,ii,:]-start_mesh[:,ii,:], axis=1)
+            for ii  in range(DIM))).max()
+        
+        return (start_mesh, end_mesh, max_meshpt_dist, max_mov)
 
 
 
@@ -1389,7 +1408,7 @@ class swarm:
     def _domain_BC_loop(self, ib_collisions, idx_array=None, dt=None):
         '''Loop over domain boundaries enforcing boundary conditions. Only 
         agents in idx_array will be checked, or all unmasked agents if idx_array 
-        is not given.
+        is not given. dt is necessary for moving immersed boundaries.
         '''
 
         if idx_array is None:
@@ -1478,13 +1497,19 @@ class swarm:
                     #   complex interactions with the noflux boundary, enforce 
                     #   sticky ib collisions in all cases.
                     if self.envir.ibmesh is not None and ib_collisions is not None:
+                        if self.envir.ibmesh.ndim == 4:
+                            start_mesh, end_mesh, max_meshpt_dist, max_mov = \
+                                self._get_moving_mesh_info(dt)
                         for n, idx in enumerate(left_idx):
                             startpt = startpts[n]
                             endpt = self.positions[idx,:].copy()
                             if self.envir.ibmesh.ndim == 3:
                                 self._IBC_routine_static(idx, startpt, endpt, 'sticky')
                             else:
-                                raise NotImplementedError("Only static meshes currently supported.")
+                                self._IBC_routine_moving(idx, startpt, endpt, 
+                                                         start_mesh, end_mesh,
+                                                         max_meshpt_dist, max_mov,
+                                                         dt, 'sticky')
                     # further domain crossings remain possible
                 elif bndry[0] == 'periodic':
                     # wrap everything exiting on the left to the right
@@ -1495,6 +1520,9 @@ class swarm:
                     if self.envir.ibmesh is not None and ib_collisions is not None:
                         s_array = (self.positions[left_idx,dim]-
                             self.envir.L[dim])/self.velocities[left_idx,dim]
+                        if self.envir.ibmesh.ndim == 4:
+                            start_mesh, end_mesh, max_meshpt_dist, max_mov = \
+                                self._get_moving_mesh_info(dt)
                         for n, idx in enumerate(left_idx):
                             startpt = self.positions[idx,:] - \
                                 s_array[n]*self.velocities[idx,:]
@@ -1502,7 +1530,10 @@ class swarm:
                             if self.envir.ibmesh.ndim == 3:
                                 self._IBC_routine_static(idx, startpt, endpt, ib_collisions)
                             else:
-                                raise NotImplementedError("Only static meshes currently supported.")
+                                self._IBC_routine_moving(idx, startpt, endpt, 
+                                                         start_mesh, end_mesh,
+                                                         max_meshpt_dist, max_mov,
+                                                         dt, ib_collisions)
                     # further domain crossings are possible. if this happens, 
                     #   velocity should be the same as original velocity b/c 
                     #   immersed boundaries do not intersect with domain bndry,
@@ -1540,13 +1571,19 @@ class swarm:
                     #   complex interactions with the noflux boundary, enforce 
                     #   sticky ib collisions in all cases.
                     if self.envir.ibmesh is not None and ib_collisions is not None:
+                        if self.envir.ibmesh.ndim == 4:
+                            start_mesh, end_mesh, max_meshpt_dist, max_mov = \
+                                self._get_moving_mesh_info(dt)
                         for n, idx in enumerate(right_idx):
                             startpt = startpts[n]
                             endpt = self.positions[idx,:].copy()
                             if self.envir.ibmesh.ndim == 3:
                                 self._IBC_routine_static(idx, startpt, endpt, 'sticky')
                             else:
-                                raise NotImplementedError("Only static meshes currently supported.")
+                                self._IBC_routine_moving(idx, startpt, endpt, 
+                                                         start_mesh, end_mesh,
+                                                         max_meshpt_dist, max_mov,
+                                                         dt, 'sticky')
                     # further domain crossings remain possible
                 elif bndry[1] == 'periodic':
                     # wrap everything exiting on the right to the left
@@ -1557,6 +1594,9 @@ class swarm:
                     if self.envir.ibmesh is not None and ib_collisions is not None:
                         s_array = (self.positions[right_idx,dim]-0)/ \
                             self.velocities[right_idx,dim]
+                        if self.envir.ibmesh.ndim == 4:
+                            start_mesh, end_mesh, max_meshpt_dist, max_mov = \
+                                self._get_moving_mesh_info(dt)
                         for n, idx in enumerate(right_idx):
                             startpt = self.positions[idx,:] - \
                                 s_array[n]*self.velocities[idx,:]
@@ -1564,7 +1604,10 @@ class swarm:
                             if self.envir.ibmesh.ndim == 3:
                                 self._IBC_routine_static(idx, startpt, endpt, ib_collisions)
                             else:
-                                raise NotImplementedError("Only static meshes currently supported.")
+                                self._IBC_routine_moving(idx, startpt, endpt, 
+                                                         start_mesh, end_mesh,
+                                                         max_meshpt_dist, max_mov,
+                                                         dt, ib_collisions)
                     # further domain crossings are possible. if this happens, 
                     #   velocity should be the same as original velocity b/c 
                     #   immersed boundaries do not intersect with domain bndry,
