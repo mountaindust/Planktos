@@ -1799,7 +1799,6 @@ class swarm:
             #   hyper-quadrilateral (hyper-plane) in 4D (t,x,y,z) space
             raise NotImplementedError("3D moving meshes not currently supported.")
         
-        raise NotImplementedError("Only static meshes currently supported.")
     
         # Return endpt we already have if None.
         if intersection is None:
@@ -1813,7 +1812,36 @@ class swarm:
             #   roundoff errors that would allow boundary penetration
             EPS = 1e-7
 
-            pass
+            if DIM == 2:
+                x = intersection[0]
+                Q0 = intersection[2]
+                Q1 = intersection[3]
+                idx = intersection[4]
+
+                # Get the relative position of intersection within the mesh element
+                # Use max in case the element is vertical or horizontal
+                s = max((x[0]-Q0[0])/(Q1[0]-Q0[0]),(x[1]-Q0[1])/(Q1[1]-Q0[1]))
+                # Translate to final position of mesh element in this time step
+                if idx is None:
+                    dt_elem = close_mesh_end
+                else:
+                    dt_elem = close_mesh_end[idx]
+                new_pos = dt_elem[0,:] + s*(dt_elem[1,:] - dt_elem[0,:])
+                # Perturb a small bit off of the boundary.
+                #   This needs to be on the side of the element the motion 
+                #   came from.
+                # Find perpendicular direction
+                back_vec = (startpt-endpt)/np.linalg.norm(endpt-startpt)
+                perp_vec = np.array([Q1[1]-Q0[1],Q0[0]-Q1[0]])
+                signum = np.dot(back_vec,perp_vec)/np.linalg.norm(np.dot(back_vec,perp_vec))
+                # Perturb perpendicular to final time position of element
+                perp_vec = np.array([dt_elem[1,1]-dt_elem[0,1],dt_elem[0,0]-dt_elem[1,0]])
+                perp_vec = signum*perp_vec/np.linalg.norm(perp_vec)
+                return new_pos + perp_vec*EPS
+            else:
+                raise NotImplementedError("3D moving meshes not currently supported.")
+        else:
+            raise NotImplementedError("sliding moving meshes not currently supported.")
 
 
 
