@@ -3884,6 +3884,20 @@ class environment:
                                          self.flow[2][n][::M,::M,::M], **kwargs)
                 fig.canvas.draw()
             return [quiver, time_text]
+        
+        def animate_mvib(n, quiver, mesh_col, kwargs):
+            time_text.set_text('time = {:.2f}'.format(self.flow_times[n]))
+            if len(self.L) == 2:
+                quiver.set_UVC(self.flow[0][n][::M,::M].T,
+                               self.flow[1][n][::M,::M].T)
+            else:
+                quiver = ax.quiver(x,y,z,self.flow[0][n][::M,::M,::M],
+                                         self.flow[1][n][::M,::M,::M],
+                                         self.flow[2][n][::M,::M,::M], **kwargs)
+                fig.canvas.draw()
+            ibmesh = self.interpolate_temporal_mesh(time=self.flow_times[n])
+            mesh_col.set_segments(ibmesh)
+            return [quiver, mesh_col, time_text]
 
         if figsize is None:
             if len(self.L) == 2:
@@ -3923,10 +3937,9 @@ class environment:
                               self.flow[1][loc][::M,::M].T, 
                               scale=None, **kwargs)
                 # Check for moving immersed boundary
-                if self.ibmesh is not None:
-                    if self.ibmesh.ndim == 4:
+                if mesh_col is not None and self.ibmesh.ndim == 4:
                         ibmesh = self.interpolate_temporal_mesh(time=t)
-                        raise NotImplementedError("Moving mesh not ready yet.")
+                        mesh_col.set_segments(ibmesh)
             else:
                 # Animation plot
                 # create quiver object
@@ -3964,10 +3977,16 @@ class environment:
 
         if len(self.L) < len(self.flow[0].shape) and t is None:
             frames = range(len(self.flow_times))
-            anim = animation.FuncAnimation(fig, animate, frames=frames,
-                                        fargs=(quiver,kwargs),
-                                        interval=interval, repeat=False,
-                                        blit=True, save_count=len(frames))
+            if mesh_col is not None and self.ibmesh.ndim == 4:
+                anim = animation.FuncAnimation(fig, animate_mvib, frames=frames,
+                                            fargs=(quiver,mesh_col,kwargs),
+                                            interval=interval, repeat=False,
+                                            blit=True, save_count=len(frames))
+            else:
+                anim = animation.FuncAnimation(fig, animate, frames=frames,
+                                            fargs=(quiver,kwargs),
+                                            interval=interval, repeat=False,
+                                            blit=True, save_count=len(frames))
 
         plt.show()
 
