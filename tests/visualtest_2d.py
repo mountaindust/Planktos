@@ -9,7 +9,7 @@ sys.path.append('..')
 import planktos
 
 envir = planktos.environment()
-envir.read_IB2d_vtk_fluid_data('data/leaf_data', 1.0e-5, 100, d_start=1)
+envir.read_IB2d_fluid_data('data/leaf_data', 1.0e-5, 100, d_start=1)
 ### Use to test for boundary crossings ###
 envir.read_IB2d_mesh_data('data/leaf_data/leaf.vertex', 1.45)
 envir.add_vertices_to_static_2D_ibmesh()
