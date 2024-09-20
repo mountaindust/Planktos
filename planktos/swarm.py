@@ -2471,7 +2471,7 @@ class swarm:
                 fig = plt.figure(figsize=(x_length,y_length))
             else:
                 fig = plt.figure(figsize=figsize)
-            ax, axHistx, axHisty = self.envir._plot_setup(fig)
+            ax, mesh_col, axHistx, axHisty = self.envir._plot_setup(fig)
             if figsize is None:
                 # some final adjustments in a particular case
                 if x_length == 12:
@@ -2614,7 +2614,7 @@ class swarm:
                 fig = plt.figure(figsize=(10,5))
             else:
                 fig = plt.figure(figsize=figsize)
-            ax, axHistx, axHisty, axHistz = self.envir._plot_setup(fig)
+            ax, mesh_col, axHistx, axHisty, axHistz = self.envir._plot_setup(fig)
             if azim is not None or elev is not None:
                 ax.view_init(elev, azim)
 
@@ -2847,7 +2847,7 @@ class swarm:
                 fig = plt.figure(figsize=(x_length,y_length))
             else:
                 fig = plt.figure(figsize=figsize)
-            ax, axHistx, axHisty = self.envir._plot_setup(fig)
+            ax, mesh_col, axHistx, axHisty = self.envir._plot_setup(fig)
             if figsize is None:
                 # some final adjustments in a particular case
                 if x_length == 12:
@@ -2992,7 +2992,7 @@ class swarm:
                 fig = plt.figure(figsize=(10,5))
             else:
                 fig = plt.figure(figsize=figsize)
-            ax, axHistx, axHisty, axHistz = self.envir._plot_setup(fig)
+            ax, mesh_col, axHistx, axHisty, axHistz = self.envir._plot_setup(fig)
             if azim is not None or elev is not None:
                 ax.view_init(elev, azim)
 

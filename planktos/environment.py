@@ -2767,7 +2767,7 @@ class environment:
 
 
 
-    def interpolate_temporal_mesh(self, t_index=None, time=None):
+    def interpolate_temporal_mesh(self, time=None, t_index=None):
         '''Linearly interpolate mesh vertices in time. Defaults to interpolating 
         at the current time, given by self.time.
         
@@ -3690,7 +3690,9 @@ class environment:
                     mesh = self.interpolate_temporal_mesh()
                     line_segments = LineCollection(mesh)
                 line_segments.set_color(self.ibmesh_color)
-                ax.add_collection(line_segments)
+                mesh_col = ax.add_collection(line_segments)
+            else:
+                mesh_col = None
 
             # include tick labels for endpoints
             xticks = ax.get_xticks()
@@ -3703,9 +3705,9 @@ class environment:
                 ax.set_yticks(yticks)
 
             if nohist:
-                return ax
+                return ax, mesh_col
             else:
-                return ax, axHistx, axHisty
+                return ax, mesh_col, axHistx, axHisty
 
 
         ########## 3D plot ##########
@@ -3775,7 +3777,9 @@ class environment:
                 structures = mplot3d.art3d.Poly3DCollection(self.ibmesh)
                 structures.set_color(self.ibmesh_color)
                 structures.set_alpha(0.3)
-                ax.add_collection3d(structures)
+                mesh_col = ax.add_collection3d(structures)
+            else:
+                mesh_col = None
 
             # include tick labels for endpoints
             xticks = ax.get_xticks()
@@ -3792,9 +3796,9 @@ class environment:
                 ax.set_zticks(zticks)
 
             if nohist:
-                return ax
+                return ax, mesh_col
             else:
-                return ax, axHistx, axHisty, axHistz
+                return ax, mesh_col, axHistx, axHisty, axHistz
 
 
 
@@ -3824,7 +3828,7 @@ class environment:
                 fig = plt.figure()
         else:
             fig = plt.figure(figsize=figsize)
-        ax = self._plot_setup(fig, nohist=True)
+        self._plot_setup(fig, nohist=True)
         plt.show()
 
 
@@ -3903,7 +3907,7 @@ class environment:
                 fig = plt.figure()
         else:
             fig = plt.figure(figsize=figsize)
-        ax = self._plot_setup(fig, nohist=True)
+        ax, mesh_col = self._plot_setup(fig, nohist=True)
 
         ########## 2D Plot #########
         if len(self.L) == 2:
@@ -3918,6 +3922,11 @@ class environment:
                               self.flow[0][loc][::M,::M].T,
                               self.flow[1][loc][::M,::M].T, 
                               scale=None, **kwargs)
+                # Check for moving immersed boundary
+                if self.ibmesh is not None:
+                    if self.ibmesh.ndim == 4:
+                        ibmesh = self.interpolate_temporal_mesh(time=t)
+                        raise NotImplementedError("Moving mesh not ready yet.")
             else:
                 # Animation plot
                 # create quiver object
@@ -4007,7 +4016,7 @@ class environment:
             fig = plt.figure(figsize=(x_length,y_length))
         else:
             fig = plt.figure(figsize=figsize)
-        ax = self._plot_setup(fig, nohist=True)
+        ax, mesh_col = self._plot_setup(fig, nohist=True)
         ax.set_aspect('equal')
 
         if clip is not None:
@@ -4102,7 +4111,7 @@ class environment:
             fig = plt.figure(figsize=(x_length,y_length))
         else:
             fig = plt.figure(figsize=figsize)
-        ax = self._plot_setup(fig, nohist=True)
+        ax, mesh_col = self._plot_setup(fig, nohist=True)
         ax.set_aspect('equal')
         if smallest:
             FTLE = -self.FTLE_smallest
