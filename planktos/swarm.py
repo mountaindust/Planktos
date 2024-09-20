@@ -24,7 +24,7 @@ from matplotlib import animation, colors
 from .environment import environment
 from . import dataio
 from . import motion
-from . import geo
+from . import geom
 
 __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
@@ -513,10 +513,10 @@ class swarm:
 
             # Get intersections
             if DIM == 2:
-                intersections = geo.seg_intersect_2D(pt, endpt,
+                intersections = geom.seg_intersect_2D(pt, endpt,
                     close_mesh[:,0,:], close_mesh[:,1,:], get_all=True)
             else:
-                intersections = geo.seg_intersect_3D_triangles(pt, endpt,
+                intersections = geom.seg_intersect_3D_triangles(pt, endpt,
                     close_mesh[:,0,:], close_mesh[:,1,:], close_mesh[:,2,:], get_all=True)
 
             # For completeness, we should also worry about edge cases where 
@@ -1273,7 +1273,7 @@ class swarm:
                 max_meshpt_dist_end = np.concatenate(tuple(
                     np.linalg.norm(end_mesh[:,ii,:]-end_mesh[:,(ii+1)%DIM,:], axis=1)
                     for ii  in range(DIM))).max()
-                max_meshpt_dist = np.max((max_meshpt_dist_start, max_mesh_dist_end))
+                max_meshpt_dist = np.max((max_meshpt_dist_start, max_meshpt_dist_end))
                 # Calculate the maximum distance a mesh vertex moved
                 max_mov = np.concatenate(tuple(
                     np.linalg.norm(end_mesh[:,ii,:]-start_mesh[:,ii,:], axis=1)
@@ -1308,7 +1308,10 @@ class swarm:
                                                  max_mov, dt, ib_collisions)
 
         ##### Environment Boundary Conditions #####
-        self._domain_BC_loop(ib_collisions=ib_collisions, dt=dt)
+        if self.envir.ibmesh.ndim == 3:
+            self._domain_BC_loop(ib_collisions=ib_collisions, dt=dt)
+        else:
+            NotImplementedError("Only static meshes currently supported.")
 
 
 
@@ -1661,10 +1664,10 @@ class swarm:
 
         # Get intersections
         if DIM == 2:
-            intersection = geo.seg_intersect_2D(startpt, endpt,
+            intersection = geom.seg_intersect_2D(startpt, endpt,
                 close_mesh[:,0,:], close_mesh[:,1,:])
         else:
-            intersection = geo.seg_intersect_3D_triangles(startpt, endpt,
+            intersection = geom.seg_intersect_3D_triangles(startpt, endpt,
                 close_mesh[:,0,:], close_mesh[:,1,:], close_mesh[:,2,:])
 
         # Return endpt we already have if None.
@@ -1788,7 +1791,7 @@ class swarm:
         if DIM == 2:
             # find interesections between line segment of motion and 
             #   quadrilateral in 3D (t,x,y) space
-            intersection = geo.seg_intersect_3D_quadrilateral(startpt, endpt,
+            intersection = geom.seg_intersect_3D_quadrilateral(startpt, endpt,
                                 close_mesh_start[:,0,:], close_mesh_start[:,1,:],
                                 close_mesh_end[:,0,:], close_mesh_end[:,1,:])
         else:
@@ -1835,7 +1838,7 @@ class swarm:
         outer_bool = np.any(dist_array, axis=0)
 
         # anything within the outer radius gets a better check
-        dist_list = geo.closest_dist_btwn_two_lines(startpt, endpt,
+        dist_list = geom.closest_dist_btwn_two_lines(startpt, endpt,
             start_mesh_r[outer_bool,:], end_mesh_r[outer_bool,:])
         inner_bool = dist_list < search_rad
 
@@ -1983,7 +1986,7 @@ class swarm:
                 # This has already been done for newendpt
                 # Also go EPS further than newendpt for stability for what follows
                 if len(adj_mesh) > 0:
-                    adj_intersect = geo.seg_intersect_2D(intersection[0]+EPS*norm_out_u,
+                    adj_intersect = geom.seg_intersect_2D(intersection[0]+EPS*norm_out_u,
                         newendpt+EPS*proj_u, adj_mesh[:,0,:], adj_mesh[:,1,:])
                 else:
                     adj_intersect = None
@@ -2081,7 +2084,7 @@ class swarm:
             Q0_list = np.array(intersection[3:])
             Q1_list = Q0_list[(1,2,0),:]
             # go a little further along trajectory to treat acute case
-            tri_intersect = geo.seg_intersect_2D(intersection[0] + EPS*norm_out_u,
+            tri_intersect = geom.seg_intersect_2D(intersection[0] + EPS*norm_out_u,
                                                     newendpt + EPS*proj_u,
                                                     Q0_list, Q1_list)
             # if we reach the triangle boundary, check for a acute crossing
@@ -2113,7 +2116,7 @@ class swarm:
                 # this has already been done for newendpt
                 # also go EPS further than newendpt for stability for what follows
                 if len(adj_mesh) > 0:
-                    adj_intersect = geo.seg_intersect_3D_triangles(
+                    adj_intersect = geom.seg_intersect_3D_triangles(
                         intersection[0]+EPS*norm_out_u,
                         newendpt+EPS*proj_u, adj_mesh[:,0,:],
                         adj_mesh[:,1,:], adj_mesh[:,2,:])
