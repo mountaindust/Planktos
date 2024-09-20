@@ -2060,7 +2060,7 @@ class swarm:
                 s_I = np.dot(-v_perp,w)/denom
                 t_I = -np.dot(u_perp,w)/denom
                 if 0<=s_I<=1 and 0<=t_I<=1:
-                    return (P0 + s_I*u, s_I, v, Q0_list, Q1_list)
+                    return (P0 + s_I*u, s_I, v/np.linalg.norm(v), Q0_list, Q1_list)
             return None
 
         denom_list = np.multiply(v_perp,u).sum(1) #vectorized dot product
