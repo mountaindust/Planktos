@@ -4023,6 +4023,18 @@ class environment:
             cbar.update_normal(pc)
             fig.canvas.draw()
             return [pc, time_text]
+        
+        def animate_mvib(n, pc, mesh_col, time_text):
+            vort = self.get_2D_vorticity(t_n=n)
+            time_text.set_text('time = {:.3f}'.format(self.flow_times[n]))
+            ibmesh = self.interpolate_temporal_mesh(time=self.flow_times[n])
+            mesh_col.set_segments(ibmesh)
+            pc.set_array(vort.T)
+            pc.changed()
+            pc.autoscale()
+            cbar.update_normal(pc)
+            fig.canvas.draw()
+            return [pc, mesh_col, time_text]
 
         if figsize is None:
             aspectratio = self.L[0]/self.L[1]
@@ -4060,6 +4072,9 @@ class environment:
             cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])
             fig.colorbar(pc, cax=cbaxes)
         elif t is not None:
+            if mesh_col is not None and self.ibmesh.ndim == 4:
+                ibmesh = self.interpolate_temporal_mesh(time=t)
+                mesh_col.set_segments(ibmesh)
             vort = self.get_2D_vorticity(time=t)
             pc = ax.pcolormesh(self.flow_points[0], self.flow_points[1],
                           vort.T, shading='gouraud', cmap='RdBu', norm=norm)
@@ -4081,10 +4096,16 @@ class environment:
             time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
                                 fontsize=12)
             frames = range(len(self.flow_times))
-            anim = animation.FuncAnimation(fig, animate, frames=frames,
-                                        fargs=(pc,time_text),
-                                        interval=interval, repeat=False,
-                                        blit=False, save_count=len(frames))
+            if mesh_col is not None and self.ibmesh.ndim == 4:
+                anim = animation.FuncAnimation(fig, animate_mvib, frames=frames,
+                                            fargs=(pc,mesh_col,time_text),
+                                            interval=interval, repeat=False,
+                                            blit=False, save_count=len(frames))
+            else:
+                anim = animation.FuncAnimation(fig, animate, frames=frames,
+                                            fargs=(pc,time_text),
+                                            interval=interval, repeat=False,
+                                            blit=False, save_count=len(frames))
         plt.show()
 
 
