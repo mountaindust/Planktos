@@ -3654,24 +3654,26 @@ class environment:
 
         ########## 2D Plot #########
         if len(self.L) == 2:
+            max_u = self.flow[0].max(); max_v = self.flow[1].max()
+            max_mag = np.linalg.norm(np.array([max_u,max_v]))
             if len(self.L) == len(self.flow[0].shape) or t is not None:
                 # Single-time plot.
                 if loc is None:
                     ax.quiver(self.flow_points[0][::M], self.flow_points[1][::M],
                               self.flow[0][::M,::M].T, self.flow[1][::M,::M].T, 
-                              scale=None, **kwargs)
+                              scale=max_mag*5, **kwargs)
                 else:
                     ax.quiver(self.flow_points[0][::M], self.flow_points[1][::M],
                               self.flow[0][loc][::M,::M].T,
                               self.flow[1][loc][::M,::M].T, 
-                              scale=None, **kwargs)
+                              scale=max_mag*5, **kwargs)
             else:
                 # Animation plot
                 # create quiver object
                 quiver = ax.quiver(self.flow_points[0][::M], self.flow_points[1][::M], 
                                    self.flow[0][0][::M,::M].T,
                                    self.flow[1][0][::M,::M].T, 
-                                   scale=None, **kwargs)
+                                   scale=max_mag*5, **kwargs)
                 # textual info
                 time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
                                     fontsize=12)
@@ -3679,21 +3681,27 @@ class environment:
         else:
             x, y, z = np.meshgrid(self.flow_points[0][::M], self.flow_points[1][::M], 
                                   self.flow_points[2][::M], indexing='ij')
+            max_u = self.flow[0].max(); max_v = self.flow[1].max()
+            max_w = self.flow[2].max()
+            max_mag = np.linalg.norm(np.array([max_u,max_v,max_w]))
             if len(self.L) == len(self.flow[0].shape) or t is not None:
                 # Single-time plot.
                 if loc is None:
                     ax.quiver(x,y,z,self.flow[0][::M,::M,::M],
                                     self.flow[1][::M,::M,::M],
-                                    self.flow[2][::M,::M,::M], **kwargs)
+                                    self.flow[2][::M,::M,::M], 
+                                    max_mag*5, **kwargs)
                 else:
                     ax.quiver(x,y,z,self.flow[0][loc][::M,::M,::M],
                                     self.flow[1][loc][::M,::M,::M],
-                                    self.flow[2][loc][::M,::M,::M], **kwargs)
+                                    self.flow[2][loc][::M,::M,::M],
+                                    max_mag*5, **kwargs)
             else:
                 # Animation plot
                 quiver = ax.quiver(x,y,z,self.flow[0][0][::M,::M,::M],
                                          self.flow[1][0][::M,::M,::M],
-                                         self.flow[2][0][::M,::M,::M], **kwargs)
+                                         self.flow[2][0][::M,::M,::M],
+                                         max_mag*5, **kwargs)
                 # textual info
                 time_text = ax.text2D(0.02, 1, 'time = {:.2f}'.format(
                                   self.flow_times[0]),
