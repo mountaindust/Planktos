@@ -1739,29 +1739,8 @@ class swarm:
         From a list of mesh elements (mesh), find all elements that have vertex 
         points within search_rad of the trajectory segment startpt,endpt.
         '''
-
-        seg_length_2 = np.linalg.norm(endpt - startpt)**2
-
-        def min_distance(pt_list):
-            '''
-            Return minimum distances between line segment startpt,endpt and all 
-            points (rows) in pt_list.
-            '''
-            if seg_length_2 == 0:
-                return np.linalg.norm(pt_list-startpt,axis=1)
-            # Consider the line extending the segment: startpt + t*(endpt-startpt)
-            # Find the projection of all points onto this line.
-            # It falls where t = [(p-startpt).(endpt-startpt)]/|startpt-endpt|**2
-            # We then clamp t from [0,1] to handle points outside the segment
-            #   startpt,endpt
-            t_list = np.maximum(0,np.minimum(1,np.dot(
-                pt_list-startpt,endpt-startpt)/seg_length_2))
-            # determine the projection points on the segment
-            proj_pt_list = startpt + np.outer(t_list,(endpt-startpt))
-            # return the distance btwn pt_list and projected points
-            return np.linalg.norm(pt_list-proj_pt_list,axis=1)
         
-        pt_bool = min_distance(
+        pt_bool = geom.closest_dist_btwn_line_and_pts(startpt, endpt, 
             mesh.reshape((mesh.shape[0]*mesh.shape[1],mesh.shape[2])))<=search_rad
         pt_bool = pt_bool.reshape((mesh.shape[0],mesh.shape[1]))
         return mesh[np.any(pt_bool,axis=1)]

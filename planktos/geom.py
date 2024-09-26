@@ -15,8 +15,82 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 
 import numpy as np
 # from scipy.spatial import distance # used in _project_and_slide
+
+def closest_dist_btwn_line_and_pts(startpt, endpt, pt_list):
+    '''
+    Given a line segment that begins at startpt and ends at endpt, and a list of 
+    points (rows in pt_list), return the minimum distance between the line 
+    segment and each of the points.
+
+    Parameters
+    ----------
+    startpt : 1D ndarray 
+        start point of line segment
+    endpt : 1D ndarray
+        end point of line segment
+    pt_list : Nx2 or Nx3 ndarray
+        list of points where each row is a different point
+    '''
+
+    seg_length_2 = np.linalg.norm(endpt - startpt)**2
+
+    if seg_length_2 == 0:
+        return np.linalg.norm(pt_list-startpt,axis=1)
+    # Consider the line extending the segment: startpt + t*(endpt-startpt)
+    # Find the projection of all points onto this line.
+    # It falls where t = [(p-startpt).(endpt-startpt)]/|startpt-endpt|**2
+    # We then clamp t from [0,1] to handle points outside the segment
+    #   startpt,endpt
+    t_list = np.maximum(0,np.minimum(1,np.dot(
+        pt_list-startpt,endpt-startpt)/seg_length_2))
+    # determine the projection points on the segment
+    proj_pt_list = startpt + np.outer(t_list,(endpt-startpt))
+    # return the distance btwn pt_list and projected points
+    return np.linalg.norm(pt_list-proj_pt_list,axis=1)
+
+
+
+def closest_dist_btwn_lines_and_pt(Q0_list, Q1_list, pt):
+    '''
+    Given line segments that begin at Q0 and end at Q1, and a point in space, 
+    return the minimum distance between each of the line segments and the point.
+
+    TODO: Test. Also review math.
+
+    Parameters
+    ----------
+    Q0_list : Nx2 or Nx3 ndarray 
+        start points of line segments
+    Q1_list : Nx2 or Nx3 ndarray
+        end points of line segments
+    pt : 1D ndarray
+        point in 2D or 3D space
+    '''
+
+    seg_lengths_2 = np.linalg.norm(Q1_list - Q0_list, axis=1)**2
+
+    dist_list = np.empty(Q0_list.shape[0])
+
+    # Wherever the segment lengths are close to zero, calculate pt distance
+    z_check = seg_lengths_2 < np.finfo(float).eps * 100
+    dist_list[z_check] = np.linalg.norm(Q0_list[z_check] - pt, axis=1)
+
+    Q0 = Q0_list[~z_check]
+    Q1 = Q1_list[~z_check]
+
+    # For the rest, follow the same math as in closest_dist_btwn_line_and_pts
+    # First, find the projection of the point onto the line and clamp to segments
+    dot = ((pt-Q0)*(Q1-Q0).sum(1))/seg_lengths_2
+    t_list = np.maximum(0,np.minimum(1,dot))
+    # Find the point on the segments
+    proj_pt_list = Q0 + np.tile(t_list,Q0.shape[0],1).T*(Q1-Q0)
+    dist_list[~z_check] = np.linalg.norm(pt-proj_pt_list,axis=1)
+
+    return dist_list
+
+
     
-def closest_dist_btwn_two_lines(a0,a1,b0,b1):
+def closest_dist_btwn_two_lines(a0,a1,b0_list,b1_list):
     ''' Given two 3D lines defined by numpy.array pairs (a0,a1,b0,b1)
         Return the distance of the closest points on each segment. b0 and b1 
         can be arrays of points; each successive line segment (b0,b1) will 
@@ -37,24 +111,43 @@ def closest_dist_btwn_two_lines(a0,a1,b0,b1):
             start point for segment A
         a1 : length 2 or length 3 ndarray
             end point for segment A
-        b0 : Nx2 or Nx3 ndarray 
+        b0_list : Nx2 or Nx3 ndarray 
             first points in a list of line segments
-        b1 : Nx2 or Nx3 ndarray 
+        b1_list : Nx2 or Nx3 ndarray 
             second points in a list of line segments.
 
         Returns
         -------
         Length N ndarray of distances
     '''
-    if len(b0.shape) == 1:
-        b0 = np.reshape(b0, (1,len(b0)))
-        b1 = np.reshape(b1, (1,len(b1)))
+    if len(b0_list.shape) == 1:
+        b0_list = np.reshape(b0_list, (1,len(b0_list)))
+        b1_list = np.reshape(b1_list, (1,len(b1)))
 
     # Calculate denominator
     A = a1 - a0
-    B = b1 - b0
+    B = b1_list - b0_list
     magA = np.linalg.norm(A)
     magB = np.linalg.norm(B, axis=1)
+
+    # check for zeros
+    # TODO: check for magA == 0, fix with closest_dist_btwn_lines_and_pt
+    z_check_B = magB < np.finfo(float).eps * 100
+    if z_check_B.any():
+        # pull them out
+        bz_pts = b0_list[z_check_B]
+        b0 = b0_list[~z_check_B]
+        b1 = b1_list[~z_check_B]
+        B = B[~z_check_B]
+        magB = magB[~z_check_B]
+        # calculate distance between line A and these points
+        bz_pts_dist = closest_dist_btwn_line_and_pts(a0, a1, bz_pts)
+        if b0.size == 0:
+            # nothing left to do
+            return bz_pts_dist
+    else:
+        b0 = b0_list
+        b1 = b1_list
     
     # normalized vectors in the direction of each line
     _A = A / magA
@@ -208,7 +301,15 @@ def closest_dist_btwn_two_lines(a0,a1,b0,b1):
             n += 1
         dist_vals[zero_bool] = return_vals
 
-    return dist_vals
+    # add back zeros, if any
+    if z_check_B.any():
+        all_dist_vals = np.empty(b0_list.shape[0])
+        all_dist_vals[z_check_B] = bz_pts_dist
+        all_dist_vals[~z_check_B] = dist_vals
+    else:
+        all_dist_vals = dist_vals
+
+    return all_dist_vals
 
 
 
@@ -585,18 +686,16 @@ def seg_intersect_3D_quadrilateral(P0, P1, Q0_list, Q1_list, Q2_list,
     Q1Q0_diff = Q1_list-Q0_list
     Q3Q2_diff = Q3_list-Q2_list
 
-    u = P1 - P0
-    w = P0 - Q0_list
+    u = np.hstack((P1-P0,1)) # 3D vector P0 to P1
+    w = P0 - Q0_list # extend to 3D below, depending on size of Q0_list
     
     if len(Q0_list.shape) == 1:
         # Only one plane
-        u = np.hstack((P1-P0,1))
         w = np.hstack((P0-Q0_list,0))
         # cross product
         n_list = np.array([Q1Q0_diff[1], -Q1Q0_diff[0], 
                            np.linalg.det(np.array([Q1Q0_diff,Q3Q2_diff]))])
     else:
-        u = np.hstack((P1-P0,np.ones((Q0_list.shape[0],1))))
         w = np.hstack((P0-Q0_list,np.zeros((Q0_list.shape[0],1))))
         n_list = np.empty((Q0_list.shape[0],3))
         # cross product
@@ -614,7 +713,7 @@ def seg_intersect_3D_quadrilateral(P0, P1, Q0_list, Q1_list, Q2_list,
         if s_I_list is None:
             return None
         else:
-            cross_pt = P0 + s_I_list*u
+            cross_pt = np.hstack((P0,1)) + s_I_list*u
             # Check for intersections outside of t unit interval
             if cross_pt[2] < 0 or cross_pt[2] > 1:
                 return None
@@ -640,7 +739,7 @@ def seg_intersect_3D_quadrilateral(P0, P1, Q0_list, Q1_list, Q2_list,
         # if get_all is False, we only care about the closest intersection!
         # see if we need to worry about each one, and then record as appropriate
         if closest_int[1] == -1 or closest_int[1] > s_I or get_all:
-            cross_pt = P0 + s_I*u
+            cross_pt = np.hstack((P0,1)) + s_I*u
             # Check that intersection is inside t unit interval
             if 0 <= cross_pt[2] <= 1:
                 # Check if intersection is within mesh element
