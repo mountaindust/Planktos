@@ -15,7 +15,7 @@ from math import exp, log, sqrt
 import numpy as np
 import numpy.ma as ma
 from itertools import combinations
-from scipy import interpolate, stats
+from scipy import interpolate
 from scipy.spatial import distance, ConvexHull
 import pandas as pd
 if sys.platform == 'darwin': # OSX backend does not support blitting
@@ -28,8 +28,7 @@ from mpl_toolkits import mplot3d
 from matplotlib.collections import LineCollection
 
 import planktos
-from . import dataio
-from . import motion
+from planktos import dataio
 
 if dataio.NETCDF:
     from cftime import date2num
@@ -2171,7 +2170,7 @@ class environment:
                 axis=1)<self.max_meshpt_dist*2
             pt_bool = pt_bool.reshape((forward_meshes.shape[0],forward_meshes.shape[1]))
             close_mesh = forward_meshes[np.any(pt_bool,axis=1)]
-            intersections = planktos.swarm._seg_intersect_2D(seg[0,:], seg[1,:], 
+            intersections = planktos.geom.seg_intersect_2D(seg[0,:], seg[1,:], 
                 close_mesh[:,0,:], close_mesh[:,1,:], get_all=True)
             if intersections is None:
                 # Nothing to do; increment counter and continue
@@ -3004,7 +3003,7 @@ class environment:
         if swrm is None:
             ### SETUP SOLVER ###
             if ode_gen is None:
-                ode_fun = motion.tracer_particles(s, incl_dvdt=False)
+                ode_fun = planktos.motion.tracer_particles(s, incl_dvdt=False)
                 print("Finding {}D FTLE based on tracer particles.".format(len(grid_dim)))
             else:
                 ode_fun = ode_gen(s)
@@ -3033,7 +3032,7 @@ class environment:
                                             s.velocities[~s.velocities[:,0].mask,:]))
                 try:
                     # solve
-                    y_new = motion.RK45(ode_fun, current_time, y, new_time, h_start=t_bound)
+                    y_new = planktos.motion.RK45(ode_fun, current_time, y, new_time, h_start=t_bound)
                 except Exception as err:
                     print('RK45 solver returned an error at time {} with step_size {}.'.format(
                           current_time, dt))

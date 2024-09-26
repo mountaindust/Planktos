@@ -10,4 +10,13 @@ import planktos
 envir = planktos.environment(1,1)
 envir.read_IB2d_fluid_data('wobbly_beam/viz_IB2d', 5.0e-5, 10)
 envir.read_IB2d_mesh_data('wobbly_beam/viz_IB2d', 5.0e-5, 10)
-envir.plot_2D_vort()
+
+swrm = planktos.swarm(envir=envir, seed=1)
+swrm.plot()
+
+swrm.shared_props['cov'] *= 0.01
+
+for ii in range(10):
+    swrm.move(0.001)
+
+swrm.plot()

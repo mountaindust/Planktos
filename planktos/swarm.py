@@ -12,7 +12,7 @@ import sys, os, warnings
 from pathlib import Path
 import numpy as np
 import numpy.ma as ma
-from scipy import interpolate, stats
+from scipy import stats
 from scipy.spatial import distance
 import pandas as pd
 if sys.platform == 'darwin': # OSX backend does not support blitting
@@ -21,10 +21,7 @@ if sys.platform == 'darwin': # OSX backend does not support blitting
 import matplotlib.pyplot as plt
 from matplotlib import animation, colors
 
-from .environment import environment
-from . import dataio
-from . import motion
-from . import geom
+from planktos import environment, dataio, motion, geom
 
 __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
@@ -2522,7 +2519,11 @@ class swarm:
                 ax.quiver(self.envir.flow_points[0][::M], self.envir.flow_points[1][::N],
                           flow[0][::M,::N].T, flow[1][::M,::N].T, 
                           scale=max_mag*5, alpha=0.2)
-
+                
+            # ibmesh (if moving and not a current time - otherwise, done already)
+            if mesh_col is not None and self.envir.ibmesh.ndim == 4 and t is not None:
+                ibmesh = self.interpolate_temporal_mesh(time=t)
+                mesh_col.set_segments(ibmesh)
             
             # scatter plot and time text
             ax.scatter(positions[:,0], positions[:,1], label=self.name, 
@@ -3164,6 +3165,9 @@ class swarm:
                             fld.set_UVC(flow[0][::M,::N].T, flow[1][::M,::N].T)
                         else:
                             fld.set_UVC(self.envir.flow[0][::M,::N].T, self.envir.flow[1][::M,::N].T)
+                    if mesh_col is not None and self.envir.ibmesh.ndim == 4:
+                        ibmesh = self.envir.interpolate_temporal_mesh(time=self.envir.time_history[n])
+                        mesh_col.set_segments(ibmesh)
                     if downsamp is None:
                         scat.set_offsets(self.pos_history[n])
                     else:
@@ -3176,9 +3180,15 @@ class swarm:
                         for rect, h in zip(patches_y, n_y):
                             rect.set_width(h)
                         if fluid == 'vort' and self.envir.flow is not None:
-                            return [fld, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
+                            if mesh_col is not None and self.envir.ibmesh.ndim == 4:
+                                return [mesh_col, fld, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
+                            else:
+                                return [fld, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
                         else:
-                            return [scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
+                            if mesh_col is not None and self.envir.ibmesh.ndim == 4:
+                                return [mesh_col, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
+                            else:
+                                return [scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
                     else:
                         pos_x = self.pos_history[n][:,0].compressed()
                         pos_y = self.pos_history[n][:,1].compressed()
@@ -3215,9 +3225,15 @@ class swarm:
                         else:
                             axHisty.set_xlim(left=0)
                         if fluid == 'vort' and self.envir.flow is not None:
-                            return [fld, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
+                            if mesh_col is not None and self.envir.ibmesh.ndim == 4:
+                                return [mesh_col, fld, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
+                            else:
+                                return [fld, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
                         else:
-                            return [scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
+                            if mesh_col is not None and self.envir.ibmesh.ndim == 4:
+                                return [mesh_col, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
+                            else:
+                                return [scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
                     
                 else:
                     # 3D
@@ -3347,6 +3363,9 @@ class swarm:
                             fld.set_UVC(flow[0][::M,::N].T, flow[1][::M,::N].T)
                         else:
                             fld.set_UVC(self.envir.flow[0][::M,::N].T, self.envir.flow[1][::M,::N].T)
+                    if mesh_col is not None and self.envir.ibmesh.ndim == 4:
+                        ibmesh = self.envir.interpolate_temporal_mesh()
+                        mesh_col.set_segments(ibmesh)
                     if downsamp is None:
                         scat.set_offsets(self.positions)
                     else:
@@ -3359,9 +3378,15 @@ class swarm:
                         for rect, h in zip(patches_y, n_y):
                             rect.set_width(h)
                         if fluid == 'vort' and self.envir.flow is not None:
-                            return [fld, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
+                            if mesh_col is not None and self.envir.ibmesh.ndim == 4:
+                                return [mesh_col, fld, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
+                            else:
+                                return [fld, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
                         else:
-                            return [scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
+                            if mesh_col is not None and self.envir.ibmesh.ndim == 4:
+                                return [mesh_col, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
+                            else:
+                                return [scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
                     else:
                         pos_x = self.positions[:,0].compressed()
                         pos_y = self.positions[:,1].compressed()
@@ -3398,9 +3423,15 @@ class swarm:
                         else:
                             axHisty.set_xlim(left=0)
                         if fluid == 'vort' and self.envir.flow is not None:
-                            return [fld, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
+                            if mesh_col is not None and self.envir.ibmesh.ndim == 4:
+                                return [mesh_col, fld, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
+                            else:
+                                return [fld, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
                         else:
-                            return [scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
+                            if mesh_col is not None and self.envir.ibmesh.ndim == 4:
+                                return [mesh_col, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
+                            else:
+                                return [scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
                     
                 else:
                     # 3D end
