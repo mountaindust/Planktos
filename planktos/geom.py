@@ -39,6 +39,7 @@ def closest_dist_btwn_line_and_pts(startpt, endpt, pt_list):
     # Consider the line extending the segment: startpt + t*(endpt-startpt)
     # Find the projection of all points onto this line.
     # It falls where t = [(p-startpt).(endpt-startpt)]/|startpt-endpt|**2
+    #   for the eqn x = startpt + t*(endpt-startpt)
     # We then clamp t from [0,1] to handle points outside the segment
     #   startpt,endpt
     t_list = np.maximum(0,np.minimum(1,np.dot(
@@ -54,8 +55,6 @@ def closest_dist_btwn_lines_and_pt(Q0_list, Q1_list, pt):
     '''
     Given line segments that begin at Q0 and end at Q1, and a point in space, 
     return the minimum distance between each of the line segments and the point.
-
-    TODO: Test. Also review math.
 
     Parameters
     ----------
@@ -77,13 +76,14 @@ def closest_dist_btwn_lines_and_pt(Q0_list, Q1_list, pt):
 
     Q0 = Q0_list[~z_check]
     Q1 = Q1_list[~z_check]
+    seg_lengths_2[~z_check] = seg_lengths_2
 
     # For the rest, follow the same math as in closest_dist_btwn_line_and_pts
     # First, find the projection of the point onto the line and clamp to segments
-    dot = ((pt-Q0)*(Q1-Q0).sum(1))/seg_lengths_2
+    dot = ((pt-Q0)*(Q1-Q0)).sum(1)/seg_lengths_2 # dot prod of each row vec
     t_list = np.maximum(0,np.minimum(1,dot))
     # Find the point on the segments
-    proj_pt_list = Q0 + np.tile(t_list,Q0.shape[0],1).T*(Q1-Q0)
+    proj_pt_list = Q0 + np.tile(t_list,(pt.shape[0],1)).T*(Q1-Q0)
     dist_list[~z_check] = np.linalg.norm(pt-proj_pt_list,axis=1)
 
     return dist_list
@@ -131,7 +131,9 @@ def closest_dist_btwn_two_lines(a0,a1,b0_list,b1_list):
     magB = np.linalg.norm(B, axis=1)
 
     # check for zeros
-    # TODO: check for magA == 0, fix with closest_dist_btwn_lines_and_pt
+    if magA < np.finfo(float).eps * 100:
+        # a segment is essentially just one point
+        return closest_dist_btwn_lines_and_pt(b0_list, b1_list, a0)
     z_check_B = magB < np.finfo(float).eps * 100
     if z_check_B.any():
         # pull them out
