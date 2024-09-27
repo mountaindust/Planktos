@@ -12,11 +12,13 @@ envir.read_IB2d_fluid_data('wobbly_beam/viz_IB2d', 5.0e-5, 10)
 envir.read_IB2d_mesh_data('wobbly_beam/viz_IB2d', 5.0e-5, 10)
 
 swrm = planktos.swarm(envir=envir, seed=1)
-# swrm.plot()
-
 swrm.shared_props['cov'] *= 0.01
 
-for ii in range(100):
+# swrm.plot()
+
+for ii in range(36):
     swrm.move(0.001)
 
-swrm.plot_all()
+# Agent number 0 moves through boundary in next time step
+
+# swrm.plot_all()

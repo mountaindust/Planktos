@@ -503,12 +503,13 @@ def seg_intersect_3D_triangles(P0, P1, Q0_list, Q1_list, Q2_list, get_all=False)
         Code, self-published: Amazon KDP.
     '''
 
+    # center around Q0 and get a vector normal to the plane
     Q1Q0_diff = Q1_list-Q0_list
     Q2Q0_diff = Q2_list-Q0_list
     n_list = np.cross(Q1Q0_diff, Q2Q0_diff)
 
     u = P1 - P0
-    w = P0 - Q0_list
+    w = Q0_list - P0
 
     # First, determine intersections between the line segment and full planes
     s_I_list = seg_intersect_3D_plane(u, n_list, w)
@@ -570,17 +571,18 @@ def seg_intersect_3D_triangles(P0, P1, Q0_list, Q1_list, Q2_list, get_all=False)
 
 def seg_intersect_3D_plane(u, n_list, w):
     '''Given a 3D line segment from P0 to P1 in 3D, determine the intersection 
-    between the line segment and each plane defined by three points Q0, Q1, Q2. 
-    It is assumed that while the line segment may be parallel to the plane, it 
-    does not lie perfectly within the plane itself.
+    between the line segment and each plane defined by a normal vector and a 
+    point Q0 in the plane. Note that Q0 is inferred here - we actually just need 
+    a vector between P0 and Q0.
 
     Parameters
     ----------
-    u : vector P1 - P0 of line segment
+    u : length 3 ndarray
+        3D vector P1 - P0 of line segment
     n_list : Nx3 ndarray 
         normal vectors to the planes
     w : Nx3 ndarray
-        P0 - Q0 vectors from first point in line segment to a point on each plane
+        Q0 - P0 vectors from first point in line segment to a point on each plane
         
     Returns
     -------
@@ -606,7 +608,7 @@ def seg_intersect_3D_plane(u, n_list, w):
         # only one plane
         denom = np.dot(n_list,u)
         if denom != 0:
-            s_I = np.dot(-n_list,w)/denom
+            s_I = np.dot(n_list,w)/denom
             if 0<=s_I<=1:
                 # line segment crosses full plane
                 return s_I
@@ -624,7 +626,7 @@ def seg_intersect_3D_plane(u, n_list, w):
     # get intersection parameters
     #   (einsum is faster for vectorized dot product, but need same length vectors)
     if np.any(not_par):
-        s_I_list[not_par] = np.einsum('ij,ij->i',-n_list[not_par],w[not_par])/denom_list[not_par]
+        s_I_list[not_par] = np.einsum('ij,ij->i',n_list[not_par],w[not_par])/denom_list[not_par]
     # test for intersection of line segment with full plane.
     #   Reset s_I_list to -1 for all non-intersecting cases.
     s_I_list[np.logical_or(s_I_list<0, s_I_list>1)] = -1
@@ -646,8 +648,6 @@ def seg_intersect_3D_quadrilateral(P0, P1, Q0_list, Q1_list, Q2_list,
     elements, it can be assumed that P0, Q0, and Q1 are coplaner in the 
     t-dimension, and similarly for P1, Q2, and Q3. The t-direction is 
     therefore normalized to 0 and 1.
-
-    TODO: Testing needed!
     
     Parameters
     ----------
@@ -684,26 +684,26 @@ def seg_intersect_3D_quadrilateral(P0, P1, Q0_list, Q1_list, Q2_list,
         index of quadrilateral intersected. None if only one was being tested
     '''
     
-    # Get vectors normal to each plane leveraging unit-length in t direction
-    Q1Q0_diff = Q1_list-Q0_list
-    Q3Q2_diff = Q3_list-Q2_list
+    # Center around Q0 and get a vector normal to the plane
+    Q2Q0_diff = Q2_list-Q0_list
+    Q3Q0_diff = Q3_list-Q0_list
 
     u = np.hstack((P1-P0,1)) # 3D vector P0 to P1
-    w = P0 - Q0_list # extend to 3D below, depending on size of Q0_list
+    w = Q0_list - P0 # extend to 3D below, depending on size of Q0_list
     
     if len(Q0_list.shape) == 1:
         # Only one plane
-        w = np.hstack((P0-Q0_list,0))
+        w = np.hstack((w,0))
         # cross product
-        n_list = np.array([Q1Q0_diff[1], -Q1Q0_diff[0], 
-                           np.linalg.det(np.array([Q1Q0_diff,Q3Q2_diff]))])
+        n_list = np.array([Q2Q0_diff[1]-Q3Q0_diff[1], Q3Q0_diff[0]-Q2Q0_diff[0], 
+                           np.linalg.det(np.array([Q2Q0_diff,Q3Q0_diff]))])
     else:
-        w = np.hstack((P0-Q0_list,np.zeros((Q0_list.shape[0],1))))
+        w = np.hstack((w,np.zeros((Q0_list.shape[0],1))))
         n_list = np.empty((Q0_list.shape[0],3))
         # cross product
-        n_list[:,0] = Q1Q0_diff[:,1]
-        n_list[:,1] = -Q1Q0_diff[:,0]
-        n_list[:,2] = Q1Q0_diff[:,0]*Q3Q2_diff[:,1] - Q1Q0_diff[:,1]*Q3Q2_diff[:,0]
+        n_list[:,0] = Q2Q0_diff[:,1] - Q3Q0_diff[:,1]
+        n_list[:,1] = Q3Q0_diff[:,0] - Q2Q0_diff[:,0]
+        n_list[:,2] = Q2Q0_diff[:,0]*Q3Q0_diff[:,1] - Q2Q0_diff[:,1]*Q3Q0_diff[:,0]
 
     # determine intersections between line segement and full planes
     s_I_list = seg_intersect_3D_plane(u, n_list, w)
@@ -715,7 +715,7 @@ def seg_intersect_3D_quadrilateral(P0, P1, Q0_list, Q1_list, Q2_list,
         if s_I_list is None:
             return None
         else:
-            cross_pt = np.hstack((P0,1)) + s_I_list*u
+            cross_pt = np.hstack((P0,0)) + s_I_list*u
             # Check for intersections outside of t unit interval
             if cross_pt[2] < 0 or cross_pt[2] > 1:
                 return None
@@ -741,7 +741,7 @@ def seg_intersect_3D_quadrilateral(P0, P1, Q0_list, Q1_list, Q2_list,
         # if get_all is False, we only care about the closest intersection!
         # see if we need to worry about each one, and then record as appropriate
         if closest_int[1] == -1 or closest_int[1] > s_I or get_all:
-            cross_pt = np.hstack((P0,1)) + s_I*u
+            cross_pt = np.hstack((P0,0)) + s_I*u
             # Check that intersection is inside t unit interval
             if 0 <= cross_pt[2] <= 1:
                 # Check if intersection is within mesh element
