@@ -1840,22 +1840,30 @@ class swarm:
                 # Get the relative position of intersection within the mesh element
                 # Use max in case the element is vertical or horizontal
                 s = max((x[0]-Q0[0])/(Q1[0]-Q0[0]),(x[1]-Q0[1])/(Q1[1]-Q0[1]))
-                # Translate to final position of mesh element in this time step
                 if idx is None:
+                    st_elem = close_mesh_start
                     dt_elem = close_mesh_end
                 else:
+                    st_elem = close_mesh_start[idx]
                     dt_elem = close_mesh_end[idx]
+                # Translate to final position of mesh element in this time step
                 new_pos = dt_elem[0,:] + s*(dt_elem[1,:] - dt_elem[0,:])
+                
                 # Perturb a small bit off of the boundary.
                 #   This needs to be on the side of the element the motion 
                 #   came from.
-                # Find perpendicular direction
-                back_vec = (startpt-endpt)/np.linalg.norm(endpt-startpt)
-                perp_vec = np.array([Q1[1]-Q0[1],Q0[0]-Q1[0]])
-                signum = np.dot(back_vec,perp_vec)/np.linalg.norm(np.dot(back_vec,perp_vec))
-                # Perturb perpendicular to final time position of element
+
+                # Find perpendicular direction based off of starting positions
+                #   of both mesh element and agent
+                perp_vec = np.array([st_elem[1,1]-st_elem[0,1],st_elem[0,0]-st_elem[1,0]])
+                perp_vec /= np.linalg.norm(perp_vec)
+                # find the side of the mesh element the agent started on
+                to_pt_vec = startpt - st_elem[0,:]
+                signum = np.dot(to_pt_vec,perp_vec)/np.linalg.norm(np.dot(to_pt_vec,perp_vec))
+
+                # Now, perturb perpendicular from the end position of the element
                 perp_vec = np.array([dt_elem[1,1]-dt_elem[0,1],dt_elem[0,0]-dt_elem[1,0]])
-                perp_vec = signum*perp_vec/np.linalg.norm(perp_vec)
+                perp_vec *= signum/np.linalg.norm(perp_vec)
                 return new_pos + perp_vec*EPS
             else:
                 raise NotImplementedError("3D moving meshes not currently supported.")

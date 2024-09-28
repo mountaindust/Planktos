@@ -17,8 +17,11 @@ swrm.shared_props['cov'] *= 0.01
 # swrm.plot()
 
 for ii in range(36):
-    swrm.move(0.001)
+    swrm.move(0.001, ib_collisions='sticky')
 
 # Agent number 0 moves through boundary in next time step
+
+# for ii in range(64):
+#     swrm.move(0.001, ib_collisions='sticky')
 
 # swrm.plot_all()
