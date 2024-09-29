@@ -636,18 +636,145 @@ def seg_intersect_3D_plane(u, n_list, w):
 
 
 
-def seg_intersect_3D_quadrilateral(P0, P1, Q0_list, Q1_list, Q2_list, 
-                                       Q3_list, get_all=False):
-    '''Find the intersection between a 2D line segment and quadrilaterals 
-    in the 3D space formed by two spatial dimensions and time for the 
-    application of finding intersections between a moving point and a moving 
-    1D mesh element in 2D space and time. All arguments are assumed to be 
-    given as 2D spatial points.
+# def seg_intersect_3D_quadrilateral(P0, P1, Q0_list, Q1_list, Q2_list, 
+#                                        Q3_list, get_all=False):
+#     '''Find the intersection between a 2D line segment and quadrilaterals 
+#     in the 3D space formed by two spatial dimensions and time for the 
+#     application of finding intersections between a moving point and a moving 
+#     1D mesh element in 2D space and time. All arguments are assumed to be 
+#     given as 2D spatial points.
     
-    Since dt is the same for both the line segment and the moving mesh 
-    elements, it can be assumed that P0, Q0, and Q1 are coplaner in the 
-    t-dimension, and similarly for P1, Q2, and Q3. The t-direction is 
-    therefore normalized to 0 and 1.
+#     Since dt is the same for both the line segment and the moving mesh 
+#     elements, it can be assumed that P0, Q0, and Q1 are coplaner in the 
+#     t-dimension, and similarly for P1, Q2, and Q3. The t-direction is 
+#     therefore normalized to 0 and 1.
+    
+#     Parameters
+#     ----------
+#     P0 : length 2 array
+#         first point in line segment P
+#     P1 : length 2 array
+#         second point in line segment P 
+#     Q0_list : Nx2 ndarray 
+#         first points in a list of 2D mesh elements at starting time.
+#     Q1_list : Nx2 ndarray 
+#         second points in a list of 2D mesh elements at starting time.
+#     Q2_list : Nx2 ndarray 
+#         first points in a list of 2D mesh elements at ending time.
+#     Q3_list : Nx2 ndarray
+#         second points in a list of 2D mesh elements at ending time.
+#     get_all : bool
+#         Return all intersections instead of just the first one encountered 
+#         as you travel from P0 to P1. This will be delivered as a list of tuples 
+#         with the below information for each intersection
+
+#     Returns
+#     -------
+#     None if there is no intersection. Otherwise: 
+#     x : length 2 array 
+#         the (x,y) coordinates of the first point of intersection
+#     s_I : float between 0 and 1
+#         the fraction of the line segment traveled from P0 before 
+#         intersection occurred (only if intersection occurred)
+#     Q0 : length 2 array
+#         interpolated first point of 1D mesh element at time of interesection
+#     Q1 : length 2 array
+#         interpolated second point of 1D mesh element at time of interesection
+#     idx : int or None
+#         index of quadrilateral intersected. None if only one was being tested
+#     '''
+    
+#     # Center around Q0 and get a vector normal to the plane
+#     Q2Q0_diff = Q2_list-Q0_list
+#     Q3Q0_diff = Q3_list-Q0_list
+
+#     u = np.hstack((P1-P0,1)) # 3D vector P0 to P1
+#     w = Q0_list - P0 # extend to 3D below, depending on size of Q0_list
+    
+#     if len(Q0_list.shape) == 1:
+#         # Only one plane
+#         w = np.hstack((w,0))
+#         # cross product
+#         n_list = np.array([Q2Q0_diff[1]-Q3Q0_diff[1], Q3Q0_diff[0]-Q2Q0_diff[0], 
+#                            np.linalg.det(np.array([Q2Q0_diff,Q3Q0_diff]))])
+#     else:
+#         w = np.hstack((w,np.zeros((Q0_list.shape[0],1))))
+#         n_list = np.empty((Q0_list.shape[0],3))
+#         # cross product
+#         n_list[:,0] = Q2Q0_diff[:,1] - Q3Q0_diff[:,1]
+#         n_list[:,1] = Q3Q0_diff[:,0] - Q2Q0_diff[:,0]
+#         n_list[:,2] = Q2Q0_diff[:,0]*Q3Q0_diff[:,1] - Q2Q0_diff[:,1]*Q3Q0_diff[:,0]
+
+#     # determine intersections between line segement and full planes
+#     s_I_list = seg_intersect_3D_plane(u, n_list, w)
+
+#     ##### Narrow down to quadrilaterals #####
+
+#     if len(Q0_list.shape) == 1:
+#         # Single plane case
+#         if s_I_list is None:
+#             return None
+#         else:
+#             cross_pt = np.hstack((P0,0)) + s_I_list*u
+#             # Check for intersections outside of t unit interval
+#             if cross_pt[2] < 0 or cross_pt[2] > 1:
+#                 return None
+#             # Check if intersection is within mesh element. To do this, find the 
+#             #   mesh element vertices at the time of intersection and see if the 
+#             #   point of intersectin is between them.
+#             # We know the pt of intersection is colinear, so we just need to 
+#             #   compare to endpoints. A one dimensional check is enough except 
+#             #   when the mesh element lies in the x- or y-direction. So check 
+#             #   both to be safe.
+#             first_pt = Q0_list + (Q2_list-Q0_list)*s_I_list
+#             second_pt = Q1_list + (Q3_list-Q1_list)*s_I_list
+#             if np.all(np.logical_and(first_pt <= cross_pt[:2], 
+#                                      cross_pt[:2] <= second_pt)):
+#                 return (cross_pt, s_I_list, first_pt, second_pt, None)
+#             else:
+#                 return None
+            
+#     # Multiple plane case
+#     closest_int = (None, -1)
+#     intersections = []
+#     for n, s_I in zip(np.arange(len(s_I_list))[s_I_list!=-1], s_I_list[s_I_list!=-1]):
+#         # if get_all is False, we only care about the closest intersection!
+#         # see if we need to worry about each one, and then record as appropriate
+#         if closest_int[1] == -1 or closest_int[1] > s_I or get_all:
+#             cross_pt = np.hstack((P0,0)) + s_I*u
+#             # Check that intersection is inside t unit interval
+#             if 0 <= cross_pt[2] <= 1:
+#                 # Check if intersection is within mesh element
+#                 first_pt = Q0_list[n] + (Q2_list[n]-Q0_list[n])*s_I
+#                 second_pt = Q1_list[n] + (Q3_list[n]-Q1_list[n])*s_I
+#                 if np.all(np.logical_and(first_pt <= cross_pt[:2], 
+#                                          cross_pt[:2] <= second_pt)):
+#                     intersec = (cross_pt, s_I, first_pt, second_pt, n)
+#                     if get_all:
+#                         intersections.append(intersec)
+#                     else:
+#                         closest_int = intersec
+#     if not get_all:
+#         if closest_int[0] is None:
+#             return None
+#         else:
+#             return closest_int
+#     else:
+#         if len(intersections) == 0:
+#             return None
+#         else:
+#             return intersections
+        
+
+
+def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
+    '''Find the first intersection between a 2D line segement from P0 (t=0) to 
+    P1 (t=1) and the manifolds (multilinear polynomials) created by linear 
+    interpolation of the line segments from Q0_list and Q1_list (t=0) to Q2_list 
+    and Q3_list (t=1). All arguments are assumed to be given as 2D spatial
+    points or a list of spatial points in the case of the Q parameters.
+
+    TODO: Testing!
     
     Parameters
     ----------
@@ -655,13 +782,13 @@ def seg_intersect_3D_quadrilateral(P0, P1, Q0_list, Q1_list, Q2_list,
         first point in line segment P
     P1 : length 2 array
         second point in line segment P 
-    Q0_list : Nx2 ndarray 
+    Q0 : Nx2 ndarray 
         first points in a list of 2D mesh elements at starting time.
-    Q1_list : Nx2 ndarray 
+    Q1 : Nx2 ndarray 
         second points in a list of 2D mesh elements at starting time.
-    Q2_list : Nx2 ndarray 
+    Q2 : Nx2 ndarray 
         first points in a list of 2D mesh elements at ending time.
-    Q3_list : Nx2 ndarray
+    Q3 : Nx2 ndarray
         second points in a list of 2D mesh elements at ending time.
     get_all : bool
         Return all intersections instead of just the first one encountered 
@@ -673,97 +800,135 @@ def seg_intersect_3D_quadrilateral(P0, P1, Q0_list, Q1_list, Q2_list,
     None if there is no intersection. Otherwise: 
     x : length 2 array 
         the (x,y) coordinates of the first point of intersection
-    s_I : float between 0 and 1
+    t_I : float between 0 and 1
         the fraction of the line segment traveled from P0 before 
         intersection occurred (only if intersection occurred)
-    Q0 : length 2 array
+    Q0_interp : length 2 array
         interpolated first point of 1D mesh element at time of interesection
-    Q1 : length 2 array
+    Q1_interp : length 2 array
         interpolated second point of 1D mesh element at time of interesection
     idx : int or None
         index of quadrilateral intersected. None if only one was being tested
     '''
-    
-    # Center around Q0 and get a vector normal to the plane
-    Q2Q0_diff = Q2_list-Q0_list
-    Q3Q0_diff = Q3_list-Q0_list
 
-    u = np.hstack((P1-P0,1)) # 3D vector P0 to P1
-    w = Q0_list - P0 # extend to 3D below, depending on size of Q0_list
-    
-    if len(Q0_list.shape) == 1:
-        # Only one plane
-        w = np.hstack((w,0))
-        # cross product
-        n_list = np.array([Q2Q0_diff[1]-Q3Q0_diff[1], Q3Q0_diff[0]-Q2Q0_diff[0], 
-                           np.linalg.det(np.array([Q2Q0_diff,Q3Q0_diff]))])
-    else:
-        w = np.hstack((w,np.zeros((Q0_list.shape[0],1))))
-        n_list = np.empty((Q0_list.shape[0],3))
-        # cross product
-        n_list[:,0] = Q2Q0_diff[:,1] - Q3Q0_diff[:,1]
-        n_list[:,1] = Q3Q0_diff[:,0] - Q2Q0_diff[:,0]
-        n_list[:,2] = Q2Q0_diff[:,0]*Q3Q0_diff[:,1] - Q2Q0_diff[:,1]*Q3Q0_diff[:,0]
+    w = P1 - P0 # vector in the direction of the agent line segment
+    v0 = Q2 - Q0 # linear interpolation vector of first element points
+    v1 = Q3 - Q1 # linear interpolation vector of second element points
 
-    # determine intersections between line segement and full planes
-    s_I_list = seg_intersect_3D_plane(u, n_list, w)
-
-    ##### Narrow down to quadrilaterals #####
-
-    if len(Q0_list.shape) == 1:
-        # Single plane case
-        if s_I_list is None:
-            return None
-        else:
-            cross_pt = np.hstack((P0,0)) + s_I_list*u
-            # Check for intersections outside of t unit interval
-            if cross_pt[2] < 0 or cross_pt[2] > 1:
+    # Solving for the intersection results in a quadratic in t. See TODO,
+    # Put together quadratic equation At^2 + Bt + C = 0
+    if len(Q0.shape) == 1:
+        # Single mesh element case
+        A = Q0[0]*Q1[1]-Q1[0]*Q0[1] + (Q0[1]-Q1[1])*P0[0] + (Q1[0]-Q0[0])*P0[1]
+        B = Q0[0]*v1[1]+Q1[1]*v0[0]-Q1[0]*v0[1]-Q0[1]*v1[0] +\
+            (Q0[1]-Q1[1])*w[0] + (v0[1]-v1[1])*P0[0] +\
+            (Q1[0]-Q0[0])*w[1] + (v1[0]-v0[0])*P0[1]
+        C = v0[0]*v1[1]-v1[0]*v0[1] + (v0[1]-v1[1])*w[0] + (v1[0]-v0[0])*w[1]
+        # Check for linear case
+        if abs(A) < np.finfo(float).eps * 100:
+            # 0 = Bt + C
+            # Assume that if B == 0, no solution
+            if abs(B) < np.finfo(float).eps * 100:
                 return None
-            # Check if intersection is within mesh element. To do this, find the 
-            #   mesh element vertices at the time of intersection and see if the 
-            #   point of intersectin is between them.
-            # We know the pt of intersection is colinear, so we just need to 
-            #   compare to endpoints. A one dimensional check is enough except 
-            #   when the mesh element lies in the x- or y-direction. So check 
-            #   both to be safe.
-            first_pt = Q0_list + (Q2_list-Q0_list)*s_I_list
-            second_pt = Q1_list + (Q3_list-Q1_list)*s_I_list
-            if np.all(np.logical_and(first_pt <= cross_pt[:2], 
-                                     cross_pt[:2] <= second_pt)):
-                return (cross_pt, s_I_list, first_pt, second_pt, None)
+            else:
+                t_I = -C/B
+        else:
+            desc = B**2 - 4*A*C
+            if desc < 0:
+                return None
+            t_1 = (-B + np.sqrt(desc))/(2*A)
+            t_2 = (-B - np.sqrt(desc))/(2*A)
+            if (0<=t_1<=1) and not (0<=t_2<=1):
+                t_I = t_1
+            elif (0<=t_2<=1) and not (0<=t_1<=1):
+                t_I = t_2
+            elif (0<=t_1<=1) and (0<=t_2<=1) and t_1<=t_2:
+                t_I = t_1
+            elif (0<=t_1<=1) and (0<=t_2<=1) and t_1>t_2:
+                t_I = t_2
             else:
                 return None
-            
-    # Multiple plane case
-    closest_int = (None, -1)
-    intersections = []
-    for n, s_I in zip(np.arange(len(s_I_list))[s_I_list!=-1], s_I_list[s_I_list!=-1]):
-        # if get_all is False, we only care about the closest intersection!
-        # see if we need to worry about each one, and then record as appropriate
-        if closest_int[1] == -1 or closest_int[1] > s_I or get_all:
-            cross_pt = np.hstack((P0,0)) + s_I*u
-            # Check that intersection is inside t unit interval
-            if 0 <= cross_pt[2] <= 1:
+        ### Take only solutions within spatial bounds of moving mesh element ###
+        cross_pt = P0 + t_I*w
+        first_pt = Q0 + (Q2-Q0)*t_I
+        second_pt = Q1 + (Q3-Q1)*t_I
+        if np.all(np.logical_and(first_pt <= cross_pt, 
+                                 cross_pt <= second_pt)):
+            return (cross_pt, t_I, first_pt, second_pt, None)
+        else:
+            return None
+    else:
+        # Multiple mesh elements Q
+        t_sol = -np.ones(Q0.shape[0])
+        A = Q0[:,0]*Q1[:,1]-Q1[:,0]*Q0[:,1] + (Q0[:,1]-Q1[:,1])*P0[0] + (Q1[:,0]-Q0[:,0])*P0[1]
+        B = Q0[:,0]*v1[:,1]+Q1[:,1]*v0[:,0]-Q1[:,0]*v0[:,1]-Q0[:,1]*v1[:,0] +\
+            (Q0[:,1]-Q1[:,1])*w[0] + (v0[:,1]-v1[:,1])*P0[0] +\
+            (Q1[:,0]-Q0[:,0])*w[1] + (v1[:,0]-v0[:,0])*P0[1]
+        C = v0[:,0]*v1[:,1]-v1[:,0]*v0[:,1] + (v0[:,1]-v1[:,1])*w[0] + (v1[:,0]-v0[:,0])*w[1]
+
+        # Check for linear special case
+        is_linear = np.abs(A) < np.finfo(float).eps * 100
+        if is_linear.any():
+            # 0 = Bt + C
+            # Assume that if B == 0, no solution
+            B_zero = np.abs(B) < np.finfo(float).eps * 100
+            t_sol[np.logical_and(is_linear,~B_zero)] = \
+                -C[np.logical_and(is_linear,~B_zero)]/ \
+                B[np.logical_and(is_linear,~B_zero)]
+            A = A[~is_linear]; B = B[~is_linear]; C = C[~is_linear]
+
+        # Calculate and check descriminant
+        desc = B**2 - 4*A*C
+        no_sol = desc < 0
+        A = A[~no_sol]; B = B[~no_sol]; C = C[~no_sol]
+
+        # Get solutions
+        t_sol_1 = (-B + np.sqrt(desc[~no_sol]))/(2*A)
+        t_sol_2 = (-B - np.sqrt(desc[~no_sol]))/(2*A)
+        t_sol_1_bool = np.logical_and(0<=t_sol_1,t_sol_1<=1)
+        t_sol_2_bool = np.logical_and(0<=t_sol_2,t_sol_2<=1)
+        t_sol_both_bool =np.logical_and(t_sol_1_bool,t_sol_2_bool)
+        t_sol_c = -np.ones_like(t_sol_1)
+        t_sol_c[np.logical_and(t_sol_1_bool,~t_sol_both_bool)] = \
+            t_sol_1[np.logical_and(t_sol_1_bool,~t_sol_both_bool)]
+        t_sol_c[np.logical_and(t_sol_2_bool,~t_sol_both_bool)] = \
+            t_sol_2[np.logical_and(t_sol_2_bool,~t_sol_both_bool)]
+        t_sol_c[np.logical_and(t_sol_both_bool,t_sol_1<=t_sol_2)] = \
+            t_sol_1[np.logical_and(t_sol_both_bool,t_sol_1<=t_sol_2)]
+        t_sol_c[np.logical_and(t_sol_both_bool,t_sol_1>t_sol_2)] = \
+            t_sol_2[np.logical_and(t_sol_both_bool,t_sol_1>t_sol_2)]
+        
+        t_sol[np.logical_and(~is_linear,~no_sol)] = t_sol_c
+
+        ### Take only solutions within spatial bounds of moving mesh element ###
+        closest_int = (None, -1)
+        intersections = []
+        for n, t_I in zip(np.arange(len(t_sol))[t_sol!=-1], t_sol[t_sol!=-1]):
+            # if get_all is False, we only care about the closest intersection!
+            # see if we need to worry about each one, and then record as appropriate
+            if closest_int[1] == -1 or closest_int[1] > t_I or get_all:
+                cross_pt = P0 + t_I*w
                 # Check if intersection is within mesh element
-                first_pt = Q0_list[n] + (Q2_list[n]-Q0_list[n])*s_I
-                second_pt = Q1_list[n] + (Q3_list[n]-Q1_list[n])*s_I
-                if np.all(np.logical_and(first_pt <= cross_pt[:2], 
-                                         cross_pt[:2] <= second_pt)):
-                    intersec = (cross_pt, s_I, first_pt, second_pt, n)
+                first_pt = Q0[n] + (Q2[n]-Q0[n])*t_I
+                second_pt = Q1[n] + (Q3[n]-Q1[n])*t_I
+                if np.all(np.logical_and(first_pt <= cross_pt, 
+                                         cross_pt <= second_pt)):
+                    intersec = (cross_pt, t_I, first_pt, second_pt, n)
                     if get_all:
                         intersections.append(intersec)
                     else:
                         closest_int = intersec
-    if not get_all:
-        if closest_int[0] is None:
-            return None
+        if not get_all:
+            if closest_int[0] is None:
+                return None
+            else:
+                return closest_int
         else:
-            return closest_int
-    else:
-        if len(intersections) == 0:
-            return None
-        else:
-            return intersections
+            if len(intersections) == 0:
+                return None
+            else:
+                return intersections
+
 
 
 

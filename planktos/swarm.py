@@ -1810,7 +1810,7 @@ class swarm:
         if DIM == 2:
             # find interesections between line segment of motion and 
             #   quadrilateral in 3D (t,x,y) space
-            intersection = geom.seg_intersect_3D_quadrilateral(startpt, endpt,
+            intersection = geom.seg_intersect_2D_multilinear_poly(startpt, endpt,
                                 close_mesh_start[:,0,:], close_mesh_start[:,1,:],
                                 close_mesh_end[:,0,:], close_mesh_end[:,1,:])
         else:
