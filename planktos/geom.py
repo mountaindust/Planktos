@@ -774,6 +774,7 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
     and Q3_list (t=1). All arguments are assumed to be given as 2D spatial
     points or a list of spatial points in the case of the Q parameters.
 
+    TODO: Documentation on mathematics behind method
     TODO: Testing!
     
     Parameters
@@ -832,6 +833,8 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
                 return None
             else:
                 t_I = -C/B
+                if t_I<0 or 1<t_I:
+                    return None
         else:
             desc = B**2 - 4*A*C
             if desc < 0:
@@ -872,9 +875,11 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
             # 0 = Bt + C
             # Assume that if B == 0, no solution
             B_zero = np.abs(B) < np.finfo(float).eps * 100
-            t_sol[np.logical_and(is_linear,~B_zero)] = \
-                -C[np.logical_and(is_linear,~B_zero)]/ \
-                B[np.logical_and(is_linear,~B_zero)]
+            linear_sol = -C[np.logical_and(is_linear,~B_zero)]/ \
+                          B[np.logical_and(is_linear,~B_zero)]
+            linear_sol[linear_sol<0] = -1
+            linear_sol[linear_sol>1] = -1
+            t_sol[np.logical_and(is_linear,~B_zero)] = linear_sol
             A = A[~is_linear]; B = B[~is_linear]; C = C[~is_linear]
 
         # Calculate and check descriminant
