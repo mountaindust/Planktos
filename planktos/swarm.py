@@ -58,7 +58,6 @@ class swarm:
         environment with all of the defaults.
     init : {'random', 'grid', ndarray}, default='random'
         Method for initalizing agent positions.
-        
         * 'random': Uniform random distribution throughout the domain
         * 'grid': Uniform grid on interior of the domain, including capability
           to leave out closed immersed structures. In this case, swarm_size 
@@ -69,6 +68,14 @@ class swarm:
         * 2D array: All positions as specified. Shape of array should be NxD, 
           where N is the number of agents and D is spatial dimension. In this 
           case, swarm_size is ignored.
+    ib_condition : {None, 'sliding' (default), 'sticky'}
+        Boundary condition for immersed boundaries
+        * None: Will turn off all interactions with immersed boundaries
+        * 'sliding': (default) No flux in the direction normal to the boundary; 
+          any movement across the boundary will be subject to vector projection 
+          onto the boundary within a given time step
+        * 'sticky': The velocity at the boundary is zero - anything that hits 
+          the boundary stops for the remainder of the time step.
     seed : int, optional
         Seed for random number generator
     shared_props : dictionary, optional
@@ -216,9 +223,9 @@ class swarm:
 
     '''
 
-    def __init__(self, swarm_size=100, envir=None, init='random', seed=None, 
-                 shared_props=None, props=None, name='organism', color='darkgreen',
-                 **kwargs):
+    def __init__(self, swarm_size=100, envir=None, init='random', 
+                 ib_condition='sliding', seed=None, shared_props=None, 
+                 props=None, name='organism', color='darkgreen', **kwargs):
 
         # use a new, 3D default environment if one was not given. Or infer
         #   dimension from init if possible.
@@ -311,6 +318,7 @@ class swarm:
 
         # Initialize IB collision detection
         self.ib_collision = np.full(swarm_size, False)
+        self.ib_condition = ib_condition
 
         # initialize Dataframe of non-shared properties
         if props is None:
@@ -837,7 +845,7 @@ class swarm:
 
 
 
-    def move(self, dt=1.0, params=None, ib_collisions='sliding', 
+    def move(self, dt=1.0, params=None, ib_collisions='default', 
              update_time=True, silent=False):
         '''Move all organisms in the swarm over one time step of length dt.
         DO NOT override this method when subclassing; override get_positions
@@ -853,8 +861,9 @@ class swarm:
             length of time step to move all agents
         params : any, optional
             parameters to pass along to get_positions, if necessary
-        ib_collisions : {None, 'sliding' (default), 'sticky'}
-            Type of interaction with immersed boundaries. If None, turn off all 
+        ib_collisions : {None, 'default', 'sliding', 'sticky'}
+            Boundary condition for immersed boundaries. If 'default', use the 
+            default found in self.ib_condition. If None, turn off all 
             interaction with immersed boundaries. In sliding collisions, 
             conduct recursive vector projection until the length of the original 
             vector is exhausted. In sticky collisions, just return the point of 
@@ -874,6 +883,9 @@ class swarm:
             swarm after the time step dt, which Planktos users override in order 
             to specify their own, custom agent behavior.
         '''
+
+        if ib_collisions == 'default':
+            ib_collisions = self.ib_condition
 
         # Put current position in the history
         self.pos_history.append(self.positions.copy())

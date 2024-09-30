@@ -47,8 +47,11 @@ class permstick(planktos.swarm):
         return np.expand_dims(~stick,1)*all_move +\
                np.expand_dims(stick,1)*self.positions
 
-# Now we create the swarm similar to ex_ib2d_ibmesh.py
-swrm = permstick(swarm_size=100, envir=envir, init=(envir.L[0]*0.1,envir.L[1]*0.5))
+# Now we create the swarm similar to ex_ib2d_ibmesh.py.
+# Set the default ib condition to 'sticky'. We could also pass it in each time 
+#   in the move method below.
+swrm = permstick(swarm_size=100, envir=envir, 
+                 init=(envir.L[0]*0.1,envir.L[1]*0.5), ib_condition='sticky')
 swrm.shared_props['cov'] *= 0.0001
 
 # We also need to create our new agent property. We'll initialize it to all False
@@ -68,7 +71,7 @@ swrm.props['stick'] = np.full(100, False) # creates a length 100 array of False
 #   property in the for-loop!
 
 for ii in range(50):
-    swrm.move(0.025, ib_collisions='sticky')
+    swrm.move(0.025)
     # if np.any(swrm.ib_collision): # uncomment to display whenever something gets stuck!
     #     swrm.plot()
     swrm.props['stick'] = np.logical_or(swrm.props['stick'], swrm.ib_collision)
