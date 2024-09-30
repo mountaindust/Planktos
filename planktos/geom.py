@@ -14,6 +14,7 @@ __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
 import numpy as np
+import decimal
 # from scipy.spatial import distance # used in _project_and_slide
 
 def closest_dist_btwn_line_and_pts(startpt, endpt, pt_list):
@@ -883,9 +884,28 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
             t_sol[np.logical_and(is_linear,~B_zero)] = linear_sol
             A = A[~is_linear]; B = B[~is_linear]; C = C[~is_linear]
 
-        # Calculate and check descriminant
+        ### Calculate and check descriminant ###
+
+        # #  In case high accuracy is needed because of square and square-root
+        # with decimal.localcontext() as ctx:
+        #     ctx.prec = 35
+        #     no_sol = np.full_like(A, False)
+        #     t_sol_1 = []
+        #     t_sol_2 = []
+        #     for n in range(A.size):
+        #         A_dec = decimal.Decimal(A[n]); B_dec = decimal.Decimal(B[n])
+        #         C_dec = decimal.Decimal(C[n])
+        #         desc_dec = B_dec**2 - 4*A_dec*C_dec
+        #         no_sol[n] = desc_dec < 0
+        #         if not no_sol[n]:
+        #             t_sol_1.append(float((-B_dec + desc_dec.sqrt())/(2*A_dec)))
+        #             t_sol_2.append(float((-B_dec - desc_dec.sqrt())/(2*A_dec)))
+        # t_sol_1 = np.array(t_sol_1)
+        # t_sol_2 = np.array(t_sol_2)
+
         desc = B**2 - 4*A*C
         no_sol = desc < 0
+        has_deg2_sol = ~is_linear; has_deg2_sol[no_sol] = False
         A = A[~no_sol]; B = B[~no_sol]; C = C[~no_sol]
 
         # Get solutions
@@ -904,7 +924,7 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
         t_sol_c[np.logical_and(t_sol_both_bool,t_sol_1>t_sol_2)] = \
             t_sol_2[np.logical_and(t_sol_both_bool,t_sol_1>t_sol_2)]
         
-        t_sol[~is_linear][~no_sol] = t_sol_c
+        t_sol[has_deg2_sol] = t_sol_c
 
         ### Take only solutions within spatial bounds of moving mesh element ###
         closest_int = (None, -1)
@@ -934,7 +954,6 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
                 return None
             else:
                 return intersections
-
 
 
 

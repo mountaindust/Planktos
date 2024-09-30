@@ -19,9 +19,22 @@ swrm.shared_props['cov'] *= 0.01
 for ii in range(36):
     swrm.move(0.001)
 
-# Agent number 0 moves through boundary in next time step
+# Agent number 0 hits boundary in next time step
 
-for ii in range(64):
+swrm.move(0.001)
+
+# Agent number 0 must be stopped after starting very close to boundary
+
+swrm.move(0.001)
+
+for ii in range(12):
     swrm.move(0.001)
 
-swrm.plot_all()
+# ibmesh stops after data ends
+
+for ii in range(9):
+    swrm.move(0.001)
+
+# agents on right move through on next time step (but agents on left don't??)
+
+# swrm.plot_all()

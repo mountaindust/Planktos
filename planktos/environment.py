@@ -1914,7 +1914,7 @@ class environment:
             for ii in range(3):
                 ibmesh[:,:,ii] -= self.fluid_domain_LLC[ii]
         
-        self.ibmesh = ibmesh
+        self.ibmesh = ibmesh.astype(np.float64)
 
 
 
@@ -2056,12 +2056,12 @@ class environment:
 
             ### Save data
             if d_start != d_finish:
-                self.ibmesh = np.array(ibmesh)
+                self.ibmesh = np.array(ibmesh, dtype=np.float64)
                 self.ibmesh_times = np.arange(d_start,d_finish+1)*print_dump*dt
                 # shift time so that ibmesh starts at t=0
                 self.ibmesh_times -= self.ibmesh_times[0]
             else:
-                self.ibmesh = ibmesh[0] # squash t dimension
+                self.ibmesh = np.array(ibmesh[0], dtype=np.float64) # squash t dimension
                 self.ibmesh_times = None
 
             # Do not set maximum distance between mesh points - it changes.
@@ -2080,7 +2080,7 @@ class environment:
                 if add_idx_list is not None:
                     for tup in add_idx_list:
                         ibmesh.append([vertices[tup[0],:],vertices[tup[1],:]])
-                self.ibmesh = np.array(ibmesh)
+                self.ibmesh = np.array(ibmesh, dtype=np.float64)
                 print('Done! Visually check structure with plot_envir().')
             
             ### proximity method
@@ -2103,7 +2103,8 @@ class environment:
                 dist_mat_test = distance.pdist(vertices)<=res_factor*Eulerian_res
                 idx = np.array(list(combinations(range(vertices.shape[0]),2)))
                 self.ibmesh = np.array([vertices[idx[dist_mat_test,0],:],
-                                        vertices[idx[dist_mat_test,1],:]])
+                                        vertices[idx[dist_mat_test,1],:]], 
+                                        dtype=np.float64)
                 self.ibmesh = np.transpose(self.ibmesh,(1,0,2))
                 print("Done! Visually check structure with plot_envir().")
                 
@@ -2115,7 +2116,7 @@ class environment:
                     for ii in range(2):
                         vertices[:,ii] -= self.fluid_domain_LLC[ii]
                 hull = ConvexHull(vertices)
-                self.ibmesh = vertices[hull.simplices]
+                self.ibmesh = np.array(vertices[hull.simplices], dtype=np.float64)
 
             ### Catch unknown methods
             else:
@@ -2217,7 +2218,7 @@ class environment:
         # Done.
 
         # Replace ibmesh with new_ibmesh
-        self.ibmesh =  np.array(new_ibmesh)
+        self.ibmesh =  np.array(new_ibmesh, dtype=np.float64)
 
 
 
@@ -2247,7 +2248,7 @@ class environment:
         if self.fluid_domain_LLC is not None:
             for ii in range(DIM):
                 points[:,ii] -= self.fluid_domain_LLC[ii]
-        self.ibmesh = points[hull.simplices]
+        self.ibmesh = points[hull.simplices].astype(np.float64)
         max_len = np.concatenate(tuple(
                   np.linalg.norm(self.ibmesh[:,ii,:]-self.ibmesh[:,(ii+1)%DIM,:], axis=1)
                   for ii  in range(DIM)
@@ -2360,7 +2361,7 @@ class environment:
                     new_mesh[:,:,0] += self.orig_L[0]*ii
                     new_mesh[:,:,1] += self.orig_L[1]*jj
                     newmeshs.append(new_mesh)
-            self.ibmesh = np.concatenate(newmeshs)
+            self.ibmesh = np.concatenate(newmeshs).astype(np.float64)
         print("Fluid tiled. Planktos domain size is now {}.".format(self.L))
         self.__reset_flow_deriv()
 
