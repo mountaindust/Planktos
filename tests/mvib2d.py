@@ -21,7 +21,7 @@ for ii in range(36):
 
 # Agent number 0 moves through boundary in next time step
 
-# for ii in range(64):
-#     swrm.move(0.001)
+for ii in range(64):
+    swrm.move(0.001)
 
-# swrm.plot_all()
+swrm.plot_all()

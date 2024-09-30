@@ -820,11 +820,12 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
     # Put together quadratic equation At^2 + Bt + C = 0
     if len(Q0.shape) == 1:
         # Single mesh element case
-        A = Q0[0]*Q1[1]-Q1[0]*Q0[1] + (Q0[1]-Q1[1])*P0[0] + (Q1[0]-Q0[0])*P0[1]
+        A = v0[0]*v1[1]-v1[0]*v0[1] + (v0[1]-v1[1])*w[0] + (v1[0]-v0[0])*w[1]
         B = Q0[0]*v1[1]+Q1[1]*v0[0]-Q1[0]*v0[1]-Q0[1]*v1[0] +\
             (Q0[1]-Q1[1])*w[0] + (v0[1]-v1[1])*P0[0] +\
             (Q1[0]-Q0[0])*w[1] + (v1[0]-v0[0])*P0[1]
-        C = v0[0]*v1[1]-v1[0]*v0[1] + (v0[1]-v1[1])*w[0] + (v1[0]-v0[0])*w[1]
+        C = Q0[0]*Q1[1]-Q1[0]*Q0[1] + (Q0[1]-Q1[1])*P0[0] + (Q1[0]-Q0[0])*P0[1]
+        
         # Check for linear case
         if abs(A) < np.finfo(float).eps * 100:
             # 0 = Bt + C
@@ -863,11 +864,11 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
     else:
         # Multiple mesh elements Q
         t_sol = -np.ones(Q0.shape[0])
-        A = Q0[:,0]*Q1[:,1]-Q1[:,0]*Q0[:,1] + (Q0[:,1]-Q1[:,1])*P0[0] + (Q1[:,0]-Q0[:,0])*P0[1]
+        A = v0[:,0]*v1[:,1]-v1[:,0]*v0[:,1] + (v0[:,1]-v1[:,1])*w[0] + (v1[:,0]-v0[:,0])*w[1]
         B = Q0[:,0]*v1[:,1]+Q1[:,1]*v0[:,0]-Q1[:,0]*v0[:,1]-Q0[:,1]*v1[:,0] +\
             (Q0[:,1]-Q1[:,1])*w[0] + (v0[:,1]-v1[:,1])*P0[0] +\
             (Q1[:,0]-Q0[:,0])*w[1] + (v1[:,0]-v0[:,0])*P0[1]
-        C = v0[:,0]*v1[:,1]-v1[:,0]*v0[:,1] + (v0[:,1]-v1[:,1])*w[0] + (v1[:,0]-v0[:,0])*w[1]
+        C = Q0[:,0]*Q1[:,1]-Q1[:,0]*Q0[:,1] + (Q0[:,1]-Q1[:,1])*P0[0] + (Q1[:,0]-Q0[:,0])*P0[1]
 
         # Check for linear special case
         is_linear = np.abs(A) < np.finfo(float).eps * 100
@@ -903,7 +904,7 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
         t_sol_c[np.logical_and(t_sol_both_bool,t_sol_1>t_sol_2)] = \
             t_sol_2[np.logical_and(t_sol_both_bool,t_sol_1>t_sol_2)]
         
-        t_sol[np.logical_and(~is_linear,~no_sol)] = t_sol_c
+        t_sol[~is_linear][~no_sol] = t_sol_c
 
         ### Take only solutions within spatial bounds of moving mesh element ###
         closest_int = (None, -1)
