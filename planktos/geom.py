@@ -780,7 +780,7 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
 
         desc = B**2 - 4*A*C
         no_sol = desc < 0
-        has_deg2_sol = ~is_linear; has_deg2_sol[no_sol] = False
+        has_deg2_sol = ~is_linear; has_deg2_sol[~is_linear] = ~no_sol
         A = A[~no_sol]; B = B[~no_sol]; C = C[~no_sol]
 
         # Get solutions
