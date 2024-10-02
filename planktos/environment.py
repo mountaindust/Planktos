@@ -1920,7 +1920,7 @@ class environment:
 
 
     def read_IB2d_mesh_data(self, path, dt=None, print_dump=None, d_start=0, d_finish=None, 
-                                brk_idx_list=(), add_idx_list=None,
+                                brk_idx_list=(), add_idx_list=None, periodic=False, 
                                 method='adjacent', res_factor=0.501, res=None):
         '''Reads in IB2d folder with vtk mesh data for moving immersed 
         boundaries or either a .vertex file or a single .vtk for a static mesh.
@@ -1967,6 +1967,9 @@ class environment:
             If additional line segements should be added between non-successive 
             vertices, list index pairs of the vertices that should be connected 
             using the MATLAB convention that indexing starts at 1.
+        periodic : bool (default: False)
+            Whether or not the last vertex point should be considered adjacent 
+            to the first.
 
         Parameters for static immersed boundaries
         -----------------------------------------
@@ -2049,6 +2052,8 @@ class environment:
                 for n in range(len(mesh_list[0])-1):
                     if n+1 not in brk_idx_list:
                         ibmesh[t].append([mesh_list[t][n,:],mesh_list[t][n+1,:]])
+                if periodic:
+                    ibmesh[t].append([mesh_list[t][-1,:],mesh_list[t][0,:]])
                 if add_idx_list is not None:
                     for tup in add_idx_list:
                         ibmesh[t].append([mesh_list[t][tup[0],:],mesh_list[t][tup[1],:]])

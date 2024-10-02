@@ -41,4 +41,4 @@ for ii in range(9):
 for ii in range(41):
     swrm.move(0.001)
 
-swrm.plot_all()
+swrm.plot_all('mvib2d.mp4')
