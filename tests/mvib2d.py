@@ -36,5 +36,9 @@ for ii in range(9):
     swrm.move(0.001)
 
 # agents on right move through on next time step (but agents on left don't??)
+# agent index 62
 
-# swrm.plot_all()
+for ii in range(41):
+    swrm.move(0.001)
+
+swrm.plot_all()

@@ -645,7 +645,6 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
     points or a list of spatial points in the case of the Q parameters.
 
     TODO: Documentation on mathematics behind method
-    TODO: Testing!
     
     Parameters
     ----------
@@ -726,8 +725,14 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
         cross_pt = P0 + t_I*w
         first_pt = Q0 + (Q2-Q0)*t_I
         second_pt = Q1 + (Q3-Q1)*t_I
-        if np.all(np.logical_and(first_pt <= cross_pt, 
-                                 cross_pt <= second_pt)):
+        cross_vec = cross_pt - first_pt
+        elem_vec = (second_pt-first_pt)
+        elem_vec_norm = np.linalg.norm(elem_vec)
+        elem_vec /= elem_vec_norm # make into unit vector
+        # project cross point onto element; should be within zero and 
+        #   the length of the element
+        proj_len = np.dot(cross_vec,elem_vec)
+        if 0 <= proj_len <= elem_vec_norm:
             return (cross_pt, t_I, first_pt, second_pt, None)
         else:
             return None
@@ -806,8 +811,14 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
                 # Check if intersection is within mesh element
                 first_pt = Q0[n] + (Q2[n]-Q0[n])*t_I
                 second_pt = Q1[n] + (Q3[n]-Q1[n])*t_I
-                if np.all(np.logical_and(first_pt <= cross_pt, 
-                                         cross_pt <= second_pt)):
+                cross_vec = cross_pt - first_pt
+                elem_vec = (second_pt-first_pt)
+                elem_vec_norm = np.linalg.norm(elem_vec)
+                elem_vec /= elem_vec_norm # make into unit vector
+                # project cross point onto element; should be within zero and 
+                #   the length of the element
+                proj_len = np.dot(cross_vec,elem_vec)
+                if 0 <= proj_len <= elem_vec_norm:
                     intersec = (cross_pt, t_I, first_pt, second_pt, n)
                     if get_all:
                         intersections.append(intersec)
