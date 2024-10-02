@@ -644,7 +644,8 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
     and Q3_list (t=1). All arguments are assumed to be given as 2D spatial
     points or a list of spatial points in the case of the Q parameters.
 
-    TODO: Documentation on mathematics behind method
+    The mathematics behind this function are given in 
+    docs/Intersection_w_multilinear_polynomial.md
     
     Parameters
     ----------
