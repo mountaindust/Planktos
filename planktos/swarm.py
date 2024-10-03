@@ -94,7 +94,9 @@ class swarm:
         number of agents. If no dataframe is supplied, a default one is created 
         which contains only the agent starting positions in a column entitled
         'start_pos'. This is to aid in creating more properties later, if 
-        desired, as it is only necessary to add columns to the existing dataframe. 
+        desired, as it is only necessary to add columns to the existing dataframe.
+    store_prop_history : bool
+        Whether or not to keep a history of props at all time points
     name : string, optional
         Name of this swarm
     color : matplotlib color format 
@@ -148,6 +150,12 @@ class swarm:
         Pandas dataframe of individual agent properties that vary between agents. 
         This is the method by which individual variation among the agents should 
         be specified.
+    props_history : List of past Pandas DataFrames or None
+        If not None, this list records individual agent attributes at all 
+        previous points in time corresponding to the time_history attribute of 
+        the swarm's environment.
+    full_props_history : List of Pandas DataFrames or None
+        props_history plus the current time version of props
     shared_props : dictionary
         dictionary of properties shared by all agents as name-value pairs
     rndState : numpy Generator object
@@ -219,8 +227,8 @@ class swarm:
     '''
 
     def __init__(self, swarm_size=100, envir=None, init='random', seed=None, 
-                 shared_props=None, props=None, name='organism', color='darkgreen',
-                 **kwargs):
+                 shared_props=None, props=None, store_prop_history=False, 
+                 name='organism', color='darkgreen', **kwargs):
 
         # use a new, 3D default environment if one was not given. Or infer
         #   dimension from init if possible.
@@ -324,6 +332,10 @@ class swarm:
             # )
         else:
             self.props = props
+        if store_prop_history:
+            self.props_history = []
+        else:
+            self.props_history = None
 
         # Dictionary of shared properties
         if shared_props is None:
@@ -606,6 +618,16 @@ class swarm:
 
 
 
+    @property
+    def full_props_history(self):
+        '''History of self.props, including present time.'''
+        if self.props_history is not None:
+            return [*self.props_history, self.props]
+        else:
+            return None
+
+
+
     def save_data(self, path, name, pos_fmt='%.18e'):
         '''Save the full position history (with mask and time stamps) along with 
         current velocity and acceleration to csv files. Save shared_props to a 
@@ -619,6 +641,8 @@ class swarm:
         is less likely to be loaded outside of Python. props is saved to json 
         since it is likely to contain a variety of types of data, may need to be 
         loaded outside of Python, and json will be human readable.
+
+        props_history is not saved.
 
         Parameters
         ----------
@@ -879,6 +903,10 @@ class swarm:
 
         # Put current position in the history
         self.pos_history.append(self.positions.copy())
+
+        # Conditionally put props in the history too
+        if self.props_history is not None:
+            self.props_history.append(self.props.copy())
 
         # Check that something is left in the domain to move, and move it.
         if not np.all(self.positions.mask):
