@@ -14,6 +14,8 @@ input2d
 *.vertex
 *.vtu
 *.stl
+*.beam
+*.target
 
 # Autobackup files
 ~*
