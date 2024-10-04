@@ -2537,7 +2537,7 @@ class swarm:
             
             # scatter plot and time text
             ax.scatter(positions[:,0], positions[:,1], label=self.name, 
-                       c=self.color, s=3)
+                       color=self.color, s=3)
             ax.text(0.02, 0.95, 'time = {:.2f}'.format(time),
                     transform=ax.transAxes, fontsize=12)
 
@@ -2631,7 +2631,7 @@ class swarm:
 
             # scatter plot and time text
             ax.scatter(positions[:,0], positions[:,1], positions[:,2],
-                       label=self.name, c=self.color)
+                       label=self.name, color=self.color)
             ax.text2D(0.02, 1, 'time = {:.2f}'.format(time),
                       transform=ax.transAxes, verticalalignment='top',
                       fontsize=12)
@@ -2908,7 +2908,7 @@ class swarm:
                                 scale=max_mag*5, alpha=0.2)
 
             # scatter plot
-            scat = ax.scatter([], [], label=self.name, c=self.color, s=3)
+            scat = ax.scatter([], [], label=self.name, color=self.color, s=3)
 
             # textual info
             time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
@@ -3010,12 +3010,12 @@ class swarm:
             if downsamp is None:
                 scat = ax.scatter(self.pos_history[n0][:,0], self.pos_history[n0][:,1],
                                 self.pos_history[n0][:,2], label=self.name,
-                                c=self.color, animated=True)
+                                color=self.color, animated=True)
             else:
                 scat = ax.scatter(self.pos_history[n0][downsamp,0],
                                 self.pos_history[n0][downsamp,1],
                                 self.pos_history[n0][downsamp,2],
-                                label=self.name, c=self.color, animated=True)
+                                label=self.name, color=self.color, animated=True)
 
             # textual info
             time_text = ax.text2D(0.02, 1, 'time = {:.2f}'.format(
