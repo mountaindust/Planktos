@@ -46,39 +46,53 @@ class permstick(planktos.swarm):
         #   the array.
         return np.expand_dims(~stick,1)*all_move +\
                np.expand_dims(stick,1)*self.positions
+    
+    # After an agent runs into an immersed structure, we want it to stop moving 
+    #   for all future times. There is an attribute of the swarm object called 
+    #   ib_collision which is an array of bool, one for each agent. If the agent 
+    #   collided with an immersed structure in the most recent move, it is set 
+    #   to True for that agent. Otherwise, it is False. We'll use that to 
+    #   dynamically update our 'stick' property after the move is over.
+    # To do this, we will override after_move, a method that gets called 
+    #   after all the agents have moved.
+    def after_move(self, dt, params):
+        swrm.props.loc[swrm.ib_collision, 'stick'] = True
+        # Let's also color the agents that get stuck!
+        self.props.loc[self.ib_collision, 'color'] = 'yellow'
 
-# Now we create the swarm similar to ex_ib2d_ibmesh.py
-swrm = permstick(swarm_size=100, envir=envir, init=(envir.L[0]*0.1,envir.L[1]*0.5))
+
+# Now we create the swarm similar to ex_ib2d_ibmesh.py.
+# We will set store_prop_history=True because we want to keep track of agent 
+#   property changes through time.
+swrm = permstick(swarm_size=100, envir=envir, 
+                 init=(envir.L[0]*0.1,envir.L[1]*0.5), store_prop_history=True)
 swrm.shared_props['cov'] *= 0.0001
 
-# We also need to create our new agent property. We'll initialize it to all False
+# We also need to initialize our new agent properties. We'll set stick to False 
+#   starting out, so that none of them will be stuck at the beginning
 swrm.props['stick'] = np.full(100, False) # creates a length 100 array of False
 # An equivalent way to do this: swrm.add_prop('stick', np.full(100, False), shared=False)
+
+# Similarly, we need to initialize individual agent colors, since they won't all 
+#   be the same now across all time steps. We'll use the default color for this 
+#   initialization.
+swrm.props['color'] = np.full(100, swrm.shared_props['color'])
 
 
 # Now we move the swarm. We'll use the 'sticky' option for immersed boundary
 #   collisions instead of the default sliding option. This means that 
 #   whenever an agent runs into an immersed structure, it will stop its movement 
-#   for that time step at the point of intersection. It's free to move in the 
-#   next time step however, so how do we make it stick permanently? There's an 
-#   attribute of the swarm object called ib_collision which is an array of bool,
-#   one for each agent. If the agent collided with an immersed structure in the
-#   most recent move that agent made, it is set to True for that agent. 
-#   Otherwise, it is False. We'll use that to dynamically update our 'stick'
-#   property in the for-loop!
+#   for that time step at the point of intersection. It would be free to move in 
+#   the next time step however, which is why our after_move updates a property
+#   for us that is then used in get_positions.
 
 for ii in range(50):
     swrm.move(0.025, ib_collisions='sticky')
-    # if np.any(swrm.ib_collision): # uncomment to display whenever something gets stuck!
+    # if np.any(swrm.ib_collision): # uncomment to display whenever something is getting stuck!
     #     swrm.plot()
-    swrm.props['stick'] = np.logical_or(swrm.props['stick'], swrm.ib_collision)
+    
 
 swrm.plot_all(movie_filename='channel_flow_sticky.mp4', fps=3, fluid='vort')
 
 # Compare the result to that of ex_ib2d_ibmesh.py.
 
-# You can make use of the for-loop to update the swarm object in all kinds of
-#   ways, or just to collect data about the swarm dynamically. For instance,
-#   if you want to record every time that an agent encounters an immersed 
-#   boundary, you could check swarm.ib_collision in the for-loop and then 
-#   record the time and boolean data by appending to a list.
