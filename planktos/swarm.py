@@ -906,21 +906,26 @@ class swarm:
         # Save current position to put in the history
         old_positions = self.positions.copy()
 
-        # Conditionally put props in the history too
+        # Conditionally save props to put in the history too
         if self.props_history is not None:
-            self.props_history.append(self.props.copy())
+            old_props = self.props.copy()
 
         # Check that something is left in the domain to move, and move it.
         if not np.all(self.positions.mask):
             # Update positions, preserving mask
             self.positions[:,:] = self.get_positions(dt, params)
+            # Update history
             self.pos_history.append(old_positions)
+            if self.props_history is not None:
+                self.props_history.append(old_props)
             # Update velocity and acceleration of swarm
             velocity = (self.positions - old_positions)/dt
             self.accelerations[:,:] = (velocity - self.velocities)/dt
             self.velocities[:,:] = velocity
             # Apply boundary conditions.
             self.apply_boundary_conditions(dt, ib_collisions=ib_collisions)
+
+        self.after_move(dt, params)
 
         # Record new time
         if update_time:
@@ -1030,6 +1035,28 @@ class swarm:
         #   plus local fluid velocity and diffusion given by cov property
         #   specifying the covariance matrix.
         return motion.Euler_brownian_motion(self, dt)
+
+
+
+    def after_move(self, dt, params=None):
+        '''This method is called after the swarm's spatial positions have been 
+        updated via get_positions, but before the environment time has been 
+        updated to the new time (prev time + dt).
+
+        By default it does nothing, but you can override it in order to update 
+        agent properties or other things that should be set based on the state 
+        of the system at the end of the time step. For instance, you could use 
+        it to color agents that satisfy certain criteria, or have them switch 
+        state based upon their ending position.
+
+        Parameters
+        ----------
+        dt : float
+            length of time step
+        params : any, optional
+            any other parameters necessary
+        '''
+        pass
 
 
 
