@@ -75,12 +75,14 @@ class swarm:
         Seed for random number generator
     shared_props : dictionary, optional
         dictionary of properties shared by all agents as name-value pairs. If 
-        none are provided, two default properties will be created, 'mu' and 'cov', 
+        none are provided, four default properties will be created, 'mu' and 'cov', 
         corresponding to intrinsic mean drift and a covariance matrix for 
-        brownian motion respectively. 'mu' will be set to an array of zeros with 
-        length matching the spatial dimension, and 'cov' will be set to an 
-        identity matrix of appropriate size according to the spatial dimension. 
-        This allows the default agent behavior to be unbiased brownian motion.  
+        brownian motion respectively, and 'name' and 'color corresponding to the 
+        name of the swarm and its default color for plotting. 'mu' will be set 
+        to an array of zeros with length matching the spatial dimension, and 
+        'cov' will be set to an identity matrix of appropriate size according to 
+        the spatial dimension. This allows the default agent behavior to be 
+        unbiased brownian motion.  
         Examples:  
         * diam: diameter of the particles
         * m: mass of the particles
@@ -98,12 +100,13 @@ class swarm:
     store_prop_history : bool
         Whether or not to keep a history of props at all time points
     name : string, optional
-        Name of this swarm
+        Name of this swarm. Stored in shared_props.
     color : matplotlib color format 
         Default plotting color for swarm 
         (see https://matplotlib.org/stable/tutorials/colors/colors.html).
-        Can be overridden by supplying individual (and even time varying!) 
-        agent colors in a 'color' column of the props DataFrame.
+        Stored in shared_props. Can be overridden by supplying individual (and 
+        even time varying!) agent colors in a 'color' column of the props 
+        DataFrame.
     **kwargs : dict, optional
         keyword arguments to be used in the 'grid' initialization method or
         values to be set as a swarm object property. In the latter case, these 
@@ -160,16 +163,12 @@ class swarm:
     full_props_history : List of Pandas DataFrames or None
         props_history plus the current time version of props
     shared_props : dictionary
-        dictionary of properties shared by all agents as name-value pairs
+        dictionary of properties shared by all agents as name-value pairs. Must 
+        include 'name' and 'color' indicating the name of the swarm and its 
+        default color for plotting. 'mu' and 'cov' are required for Brownian 
+        motion, and other properties may be required for other physics.
     rndState : numpy Generator object
         random number generator for this swarm, seeded by the "seed" parameter
-    name : string
-        name of this swarm
-    color : matplotlib color format
-        Default plotting color for swarm 
-        (see https://matplotlib.org/stable/tutorials/colors/colors.html).
-        Can be overridden by supplying individual (and even time varying!) 
-        agent colors in a 'color' column of the props DataFrame.
 
     Notes
     -----
@@ -263,10 +262,6 @@ class swarm:
         # initialize random number generator
         self.rndState = np.random.default_rng(seed=seed)
 
-        # set name and color
-        self.name = name
-        self.color = color
-
         # initialize agent locations
         if isinstance(init,np.ndarray) and len(init.shape) == 2:
             swarm_size = init.shape[0]
@@ -346,11 +341,15 @@ class swarm:
         else:
             self.shared_props = shared_props
 
-        # Include parameters for a uniform standard random walk by default
+        # Include necessary default properties if they aren't already set
         if 'mu' not in self.shared_props and 'mu' not in self.props:
             self.shared_props['mu'] = np.zeros(len(self.envir.L))
         if 'cov' not in self.shared_props and 'cov' not in self.props:
             self.shared_props['cov'] = np.eye(len(self.envir.L))
+        if 'name' not in self.shared_props:
+            self.shared_props['name'] = name
+        if 'color' not in self.shared_props:
+            self.shared_props['color'] = color
 
         # Record any kwargs as swarm parameters
         for name, obj in kwargs.items():
@@ -2548,11 +2547,12 @@ class swarm:
                     color = self.props_history[loc]['color']
                 else:
                     color = self.props['color']
-                ax.scatter(positions[:,0], positions[:,1], label=self.name, 
-                           c=color, s=3)
+                ax.scatter(positions[:,0], positions[:,1], 
+                           label=self.shared_props['name'], c=color, s=3)
             else:
-                ax.scatter(positions[:,0], positions[:,1], label=self.name, 
-                           color=self.color, s=3)
+                ax.scatter(positions[:,0], positions[:,1], 
+                           label=self.shared_props['name'], 
+                           color=self.shared_props['color'], s=3)
             ax.text(0.02, 0.95, 'time = {:.2f}'.format(time),
                     transform=ax.transAxes, fontsize=12)
 
@@ -2652,10 +2652,11 @@ class swarm:
                 else:
                     color = self.props['color']
                 ax.scatter(positions[:,0], positions[:,1], positions[:,2],
-                           label=self.name, c=color)
+                           label=self.shared_props['name'], c=color)
             else:
                 ax.scatter(positions[:,0], positions[:,1], positions[:,2],
-                           label=self.name, color=self.color)
+                           label=self.shared_props['name'], 
+                           color=self.shared_props['color'])
             ax.text2D(0.02, 1, 'time = {:.2f}'.format(time),
                       transform=ax.transAxes, verticalalignment='top',
                       fontsize=12)
@@ -2935,7 +2936,8 @@ class swarm:
                                 scale=max_mag*5, alpha=0.2)
 
             # scatter plot
-            scat = ax.scatter([], [], label=self.name, c=self.color, s=3)
+            scat = ax.scatter([], [], label=self.shared_props['name'], 
+                              c=self.shared_props['color'], s=3)
 
             # textual info
             time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
@@ -3054,12 +3056,14 @@ class swarm:
                         else:
                             color = self.props['color']
                     scat = ax.scatter(self.pos_history[n0][:,0], self.pos_history[n0][:,1],
-                                    self.pos_history[n0][:,2], label=self.name,
+                                    self.pos_history[n0][:,2], 
+                                    label=self.shared_props['name'],
                                     c=color, animated=True)
                 else:
                     scat = ax.scatter(self.pos_history[n0][:,0], self.pos_history[n0][:,1],
-                                    self.pos_history[n0][:,2], label=self.name,
-                                    color=self.color, animated=True)
+                                    self.pos_history[n0][:,2], 
+                                    label=self.shared_props['name'],
+                                    color=self.shared_props['color'], animated=True)
             else:
                 if 'color' in self.props:
                     if self.props_history is not None:
@@ -3078,12 +3082,14 @@ class swarm:
                     scat = ax.scatter(self.pos_history[n0][downsamp,0],
                                     self.pos_history[n0][downsamp,1],
                                     self.pos_history[n0][downsamp,2],
-                                    label=self.name, color=color, animated=True)
+                                    label=self.shared_props['name'], 
+                                    color=color, animated=True)
                 else:
                     scat = ax.scatter(self.pos_history[n0][downsamp,0],
                                     self.pos_history[n0][downsamp,1],
                                     self.pos_history[n0][downsamp,2],
-                                    label=self.name, color=self.color, animated=True)
+                                    label=self.shared_props['name'], 
+                                    color=self.shared_props['color'], animated=True)
 
             # textual info
             time_text = ax.text2D(0.02, 1, 'time = {:.2f}'.format(
