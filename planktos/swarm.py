@@ -884,15 +884,16 @@ class swarm:
         if ib_collisions == 'default':
             ib_collisions = self.ib_condition
 
-        # Put current position in the history
-        self.pos_history.append(self.positions.copy())
+        # Save current position to put in the history
+        old_positions = self.positions.copy()
 
         # Check that something is left in the domain to move, and move it.
         if not np.all(self.positions.mask):
             # Update positions, preserving mask
             self.positions[:,:] = self.get_positions(dt, params)
+            self.pos_history.append(old_positions)
             # Update velocity and acceleration of swarm
-            velocity = (self.positions - self.pos_history[-1])/dt
+            velocity = (self.positions - old_positions)/dt
             self.accelerations[:,:] = (velocity - self.velocities)/dt
             self.velocities[:,:] = velocity
             # Apply boundary conditions.
