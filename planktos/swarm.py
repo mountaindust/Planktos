@@ -100,7 +100,10 @@ class swarm:
     name : string, optional
         Name of this swarm
     color : matplotlib color format 
-        Plotting color (see https://matplotlib.org/stable/tutorials/colors/colors.html)
+        Default plotting color for swarm 
+        (see https://matplotlib.org/stable/tutorials/colors/colors.html).
+        Can be overridden by supplying individual (and even time varying!) 
+        agent colors in a 'color' column of the props DataFrame.
     **kwargs : dict, optional
         keyword arguments to be used in the 'grid' initialization method or
         values to be set as a swarm object property. In the latter case, these 
@@ -163,7 +166,10 @@ class swarm:
     name : string
         name of this swarm
     color : matplotlib color format
-        Plotting color (see https://matplotlib.org/stable/tutorials/colors/colors.html)
+        Default plotting color for swarm 
+        (see https://matplotlib.org/stable/tutorials/colors/colors.html).
+        Can be overridden by supplying individual (and even time varying!) 
+        agent colors in a 'color' column of the props DataFrame.
 
     Notes
     -----
@@ -2536,8 +2542,17 @@ class swarm:
 
             
             # scatter plot and time text
-            ax.scatter(positions[:,0], positions[:,1], label=self.name, 
-                       color=self.color, s=3)
+            if 'color' in self.props:
+                if self.props_history is not None and loc is not None:
+                    # Get color from history
+                    color = self.props_history[loc]['color']
+                else:
+                    color = self.props['color']
+                ax.scatter(positions[:,0], positions[:,1], label=self.name, 
+                           c=color, s=3)
+            else:
+                ax.scatter(positions[:,0], positions[:,1], label=self.name, 
+                           color=self.color, s=3)
             ax.text(0.02, 0.95, 'time = {:.2f}'.format(time),
                     transform=ax.transAxes, fontsize=12)
 
@@ -2630,8 +2645,17 @@ class swarm:
                 ax.view_init(elev, azim)
 
             # scatter plot and time text
-            ax.scatter(positions[:,0], positions[:,1], positions[:,2],
-                       label=self.name, color=self.color)
+            if 'color' in self.props:
+                if self.props_history is not None and loc is not None:
+                    # Get color from history
+                    color = self.props_history[loc]['color']
+                else:
+                    color = self.props['color']
+                ax.scatter(positions[:,0], positions[:,1], positions[:,2],
+                           label=self.name, c=color)
+            else:
+                ax.scatter(positions[:,0], positions[:,1], positions[:,2],
+                           label=self.name, color=self.color)
             ax.text2D(0.02, 1, 'time = {:.2f}'.format(time),
                       transform=ax.transAxes, verticalalignment='top',
                       fontsize=12)
@@ -2764,6 +2788,9 @@ class swarm:
         ''' Plot the history of the swarm's movement, incl. current time in 
         successively updating plots or saved as a movie file. A movie file is
         created if movie_filename is specified.
+
+        Agent colors will be read from the 'color' column of props if it exists; 
+        otherwise it will default to the color attribute of the swarm.
         
         Parameters
         ----------
@@ -2908,7 +2935,7 @@ class swarm:
                                 scale=max_mag*5, alpha=0.2)
 
             # scatter plot
-            scat = ax.scatter([], [], label=self.name, color=self.color, s=3)
+            scat = ax.scatter([], [], label=self.name, c=self.color, s=3)
 
             # textual info
             time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
@@ -3006,16 +3033,57 @@ class swarm:
             ax, axHistx, axHisty, axHistz = self.envir._plot_setup(fig)
             if azim is not None or elev is not None:
                 ax.view_init(elev, azim)
-
+            # UNFORTUNATELY, 3D matplotlib plotting is very weird about masked 
+            #   arrays. The implemenation does not parallel 2D: it wants a color 
+            #   list that is the same length as the number of points it will be 
+            #   plotting, and not the length of the masked array in total. So, 
+            #   we have to check for masking and adjust appropriately.
             if downsamp is None:
-                scat = ax.scatter(self.pos_history[n0][:,0], self.pos_history[n0][:,1],
-                                self.pos_history[n0][:,2], label=self.name,
-                                color=self.color, animated=True)
+                if 'color' in self.props:
+                    if self.props_history is not None:
+                        # Get color from history
+                        if ma.is_masked(self.pos_history[n0]):
+                            not_msk = ~self.pos_history[n0][:,0].mask
+                            color = self.props_history[n0]['color'][not_msk]
+                        else:
+                            color = self.props_history[n0]['color']
+                    else:
+                        if ma.is_masked(self.pos_history[n0]):
+                            not_msk = ~self.pos_history[n0][:,0].mask
+                            color = self.props['color'][not_msk]
+                        else:
+                            color = self.props['color']
+                    scat = ax.scatter(self.pos_history[n0][:,0], self.pos_history[n0][:,1],
+                                    self.pos_history[n0][:,2], label=self.name,
+                                    c=color, animated=True)
+                else:
+                    scat = ax.scatter(self.pos_history[n0][:,0], self.pos_history[n0][:,1],
+                                    self.pos_history[n0][:,2], label=self.name,
+                                    color=self.color, animated=True)
             else:
-                scat = ax.scatter(self.pos_history[n0][downsamp,0],
-                                self.pos_history[n0][downsamp,1],
-                                self.pos_history[n0][downsamp,2],
-                                label=self.name, color=self.color, animated=True)
+                if 'color' in self.props:
+                    if self.props_history is not None:
+                        # Get color from history
+                        if ma.is_masked(self.pos_history[n0][downsamp,0]):
+                            not_msk = ~self.pos_history[n0][downsamp,0].mask
+                            color = self.props_history[n0]['color'][downsamp][not_msk]
+                        else:
+                            color = self.props_history[n0]['color'][downsamp]
+                    else:
+                        if ma.is_masked(self.pos_history[n0][downsamp,0]):
+                            not_msk = ~self.pos_history[n0][downsamp,0].mask
+                            color = self.props['color'][downsamp][not_msk]
+                        else:
+                            color = self.props['color'][downsamp]
+                    scat = ax.scatter(self.pos_history[n0][downsamp,0],
+                                    self.pos_history[n0][downsamp,1],
+                                    self.pos_history[n0][downsamp,2],
+                                    label=self.name, color=color, animated=True)
+                else:
+                    scat = ax.scatter(self.pos_history[n0][downsamp,0],
+                                    self.pos_history[n0][downsamp,1],
+                                    self.pos_history[n0][downsamp,2],
+                                    label=self.name, color=self.color, animated=True)
 
             # textual info
             time_text = ax.text2D(0.02, 1, 'time = {:.2f}'.format(
@@ -3177,8 +3245,19 @@ class swarm:
                             fld.set_UVC(self.envir.flow[0][::M,::N].T, self.envir.flow[1][::M,::N].T)
                     if downsamp is None:
                         scat.set_offsets(self.pos_history[n])
+                        if 'color' in self.props:
+                            if self.props_history is not None:
+                                scat.set_color(self.props_history[n]['color'])
+                            else:
+                                scat.set_color(self.props['color'])
                     else:
                         scat.set_offsets(self.pos_history[n][downsamp,:])
+                        if 'color' in self.props:
+                            if self.props_history is not None:
+                                scat.set_color(self.props_history[n]['color'][downsamp])
+                            else:
+                                scat.set_color(self.props['color'][downsamp])
+                    
                     if dist == 'hist':
                         n_x, _ = np.histogram(self.pos_history[n][:,0].compressed(), bins_x)
                         n_y, _ = np.histogram(self.pos_history[n][:,1].compressed(), bins_y)
@@ -3255,14 +3334,45 @@ class swarm:
                                     avg_spd_z, self.envir.units)+
                                     r'Agent $\overline{v}_z$'+': {:.2g} {}/s'.format(
                                     avg_swrm_vel[2], self.envir.units))
+                    # UNFORTUNATELY, 3D matplotlib plotting is very weird about masked 
+                    #   arrays. The implemenation does not parallel 2D: it wants a color 
+                    #   list that is the same length as the number of points it will be 
+                    #   plotting, and not the length of the masked array in total. So, 
+                    #   we have to check for masking and adjust appropriately.
                     if downsamp is None:
                         scat._offsets3d = (np.ma.ravel(self.pos_history[n][:,0].compressed()),
                                         np.ma.ravel(self.pos_history[n][:,1].compressed()),
                                         np.ma.ravel(self.pos_history[n][:,2].compressed()))
+                        if 'color' in self.props:
+                            if self.props_history is not None:
+                                if ma.is_masked(self.pos_history[n]):
+                                    not_msk = ~self.pos_history[n][:,0].mask
+                                    scat.set_color(self.props_history[n]['color'][not_msk])
+                                else:
+                                    scat.set_color(self.props_history[n]['color'])
+                            else:
+                                if ma.is_masked(self.pos_history[n]):
+                                    not_msk = ~self.pos_history[n][:,0].mask
+                                    scat.set_color(self.props['color'][not_msk])
+                                else:
+                                    scat.set_color(self.props['color'])
                     else:
                         scat._offsets3d = (np.ma.ravel(self.pos_history[n][downsamp,0].compressed()),
                                         np.ma.ravel(self.pos_history[n][downsamp,1].compressed()),
                                         np.ma.ravel(self.pos_history[n][downsamp,2].compressed()))
+                        if 'color' in self.props:
+                            if self.props_history is not None:
+                                if ma.is_masked(self.pos_history[n][downsamp,0]):
+                                    not_msk = ~self.pos_history[n][downsamp,0].mask
+                                    scat.set_color(self.props_history[n]['color'][downsamp][not_msk])
+                                else:
+                                    scat.set_color(self.props_history[n]['color'][downsamp])
+                            else:
+                                if ma.is_masked(self.pos_history[n][downsamp,0]):
+                                    not_msk = ~self.pos_history[n][downsamp,0].mask
+                                    scat.set_color(self.props['color'][downsamp][not_msk])
+                                else:
+                                    scat.set_color(self.props['color'][downsamp])
                     if dist == 'hist':
                         n_x, _ = np.histogram(self.pos_history[n][:,0].compressed(), bins_x)
                         n_y, _ = np.histogram(self.pos_history[n][:,1].compressed(), bins_y)
@@ -3360,8 +3470,12 @@ class swarm:
                             fld.set_UVC(self.envir.flow[0][::M,::N].T, self.envir.flow[1][::M,::N].T)
                     if downsamp is None:
                         scat.set_offsets(self.positions)
+                        if self.props_history is not None and 'color' in self.props:
+                            scat.set_color(self.props['color'])
                     else:
                         scat.set_offsets(self.positions[downsamp,:])
+                        if self.props_history is not None and 'color' in self.props:
+                            scat.set_color(self.props['color'][downsamp])
                     if dist == 'hist':
                         n_x, _ = np.histogram(self.positions[:,0].compressed(), bins_x)
                         n_y, _ = np.histogram(self.positions[:,1].compressed(), bins_y)
@@ -3436,14 +3550,31 @@ class swarm:
                                     avg_spd_z, self.envir.units)+
                                     r'Agent $\overline{v}_z$'+': {:.2g} {}/s'.format(
                                     avg_swrm_vel[2], self.envir.units))
+                    # UNFORTUNATELY, 3D matplotlib plotting is very weird about masked 
+                    #   arrays. The implemenation does not parallel 2D: it wants a color 
+                    #   list that is the same length as the number of points it will be 
+                    #   plotting, and not the length of the masked array in total. So, 
+                    #   we have to check for masking and adjust appropriately.
                     if downsamp is None:
                         scat._offsets3d = (np.ma.ravel(self.positions[:,0].compressed()),
                                         np.ma.ravel(self.positions[:,1].compressed()),
                                         np.ma.ravel(self.positions[:,2].compressed()))
+                        if 'color' in self.props:
+                            if ma.is_masked(self.positions):
+                                not_msk = ~self.positions[:,0].mask
+                                scat.set_color(self.props['color'][not_msk])
+                            else:
+                                scat.set_color(self.props['color'])
                     else:
                         scat._offsets3d = (np.ma.ravel(self.positions[downsamp,0].compressed()),
                                         np.ma.ravel(self.positions[downsamp,1].compressed()),
                                         np.ma.ravel(self.positions[downsamp,2].compressed()))
+                        if 'color' in self.props:
+                            if ma.is_masked(self.positions[downsamp,0]):
+                                not_msk = ~self.positions[downsamp,0].mask
+                                scat.set_color(self.props['color'][downsamp][not_msk])
+                            else:
+                                scat.set_color(self.props['color'][downsamp])
                     if dist == 'hist':
                         n_x, _ = np.histogram(self.positions[:,0].compressed(), bins_x)
                         n_y, _ = np.histogram(self.positions[:,1].compressed(), bins_y)
