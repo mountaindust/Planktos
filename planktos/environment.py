@@ -3690,18 +3690,18 @@ class environment:
                     ax.quiver(x,y,z,self.flow[0][::M,::M,::M],
                                     self.flow[1][::M,::M,::M],
                                     self.flow[2][::M,::M,::M], 
-                                    max_mag*5, **kwargs)
+                                    **kwargs)
                 else:
                     ax.quiver(x,y,z,self.flow[0][loc][::M,::M,::M],
                                     self.flow[1][loc][::M,::M,::M],
                                     self.flow[2][loc][::M,::M,::M],
-                                    max_mag*5, **kwargs)
+                                    **kwargs)
             else:
                 # Animation plot
                 quiver = ax.quiver(x,y,z,self.flow[0][0][::M,::M,::M],
                                          self.flow[1][0][::M,::M,::M],
                                          self.flow[2][0][::M,::M,::M],
-                                         max_mag*5, **kwargs)
+                                         **kwargs)
                 # textual info
                 time_text = ax.text2D(0.02, 1, 'time = {:.2f}'.format(
                                   self.flow_times[0]),
