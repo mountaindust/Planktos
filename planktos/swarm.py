@@ -3074,13 +3074,13 @@ class swarm:
                         # Get color from history
                         if ma.is_masked(self.pos_history[n0]):
                             not_msk = ~self.pos_history[n0][:,0].mask
-                            color = self.props_history[n0]['color'][not_msk]
+                            color = self.props_history[n0].loc[not_msk, 'color']
                         else:
                             color = self.props_history[n0]['color']
                     else:
                         if ma.is_masked(self.pos_history[n0]):
                             not_msk = ~self.pos_history[n0][:,0].mask
-                            color = self.props['color'][not_msk]
+                            color = self.props.loc[not_msk, 'color']
                         else:
                             color = self.props['color']
                     scat = ax.scatter(self.pos_history[n0][:,0], self.pos_history[n0][:,1],
@@ -3098,15 +3098,15 @@ class swarm:
                         # Get color from history
                         if ma.is_masked(self.pos_history[n0][downsamp,0]):
                             not_msk = ~self.pos_history[n0][downsamp,0].mask
-                            color = self.props_history[n0]['color'][downsamp][not_msk]
+                            color = self.props_history[n0].loc[downsamp,'color'][not_msk]
                         else:
-                            color = self.props_history[n0]['color'][downsamp]
+                            color = self.props_history[n0].loc[downsamp,'color']
                     else:
-                        if ma.is_masked(self.pos_history[n0][downsamp,0]):
-                            not_msk = ~self.pos_history[n0][downsamp,0].mask
-                            color = self.props['color'][downsamp][not_msk]
+                        if ma.is_masked(self.pos_history[n0][:,0]):
+                            not_msk = ~self.pos_history[n0][:,0].mask
+                            color = self.props.loc[downsamp,'color'][not_msk]
                         else:
-                            color = self.props['color'][downsamp]
+                            color = self.props.loc[downsamp,'color']
                     scat = ax.scatter(self.pos_history[n0][downsamp,0],
                                     self.pos_history[n0][downsamp,1],
                                     self.pos_history[n0][downsamp,2],
@@ -3288,9 +3288,9 @@ class swarm:
                         scat.set_offsets(self.pos_history[n][downsamp,:])
                         if 'color' in self.props:
                             if self.props_history is not None:
-                                scat.set_color(self.props_history[n]['color'][downsamp])
+                                scat.set_color(self.props_history[n].loc[downsamp,'color'])
                             else:
-                                scat.set_color(self.props['color'][downsamp])
+                                scat.set_color(self.props.loc[downsamp,'color'])
                     
                     if dist == 'hist':
                         n_x, _ = np.histogram(self.pos_history[n][:,0].compressed(), bins_x)
@@ -3381,13 +3381,13 @@ class swarm:
                             if self.props_history is not None:
                                 if ma.is_masked(self.pos_history[n]):
                                     not_msk = ~self.pos_history[n][:,0].mask
-                                    scat.set_color(self.props_history[n]['color'][not_msk])
+                                    scat.set_color(self.props_history[n].loc[not_msk,'color'])
                                 else:
                                     scat.set_color(self.props_history[n]['color'])
                             else:
                                 if ma.is_masked(self.pos_history[n]):
                                     not_msk = ~self.pos_history[n][:,0].mask
-                                    scat.set_color(self.props['color'][not_msk])
+                                    scat.set_color(self.props.loc[not_msk,'color'])
                                 else:
                                     scat.set_color(self.props['color'])
                     else:
@@ -3398,15 +3398,15 @@ class swarm:
                             if self.props_history is not None:
                                 if ma.is_masked(self.pos_history[n][downsamp,0]):
                                     not_msk = ~self.pos_history[n][downsamp,0].mask
-                                    scat.set_color(self.props_history[n]['color'][downsamp][not_msk])
+                                    scat.set_color(self.props_history[n].loc[downsamp,'color'][not_msk])
                                 else:
-                                    scat.set_color(self.props_history[n]['color'][downsamp])
+                                    scat.set_color(self.props_history[n].loc[downsamp,'color'])
                             else:
                                 if ma.is_masked(self.pos_history[n][downsamp,0]):
                                     not_msk = ~self.pos_history[n][downsamp,0].mask
-                                    scat.set_color(self.props['color'][downsamp][not_msk])
+                                    scat.set_color(self.props.loc[downsamp,'color'][not_msk])
                                 else:
-                                    scat.set_color(self.props['color'][downsamp])
+                                    scat.set_color(self.props.loc[downsamp,'color'])
                     if dist == 'hist':
                         n_x, _ = np.histogram(self.pos_history[n][:,0].compressed(), bins_x)
                         n_y, _ = np.histogram(self.pos_history[n][:,1].compressed(), bins_y)
@@ -3509,7 +3509,7 @@ class swarm:
                     else:
                         scat.set_offsets(self.positions[downsamp,:])
                         if self.props_history is not None and 'color' in self.props:
-                            scat.set_color(self.props['color'][downsamp])
+                            scat.set_color(self.props.loc[downsamp,'color'])
                     if dist == 'hist':
                         n_x, _ = np.histogram(self.positions[:,0].compressed(), bins_x)
                         n_y, _ = np.histogram(self.positions[:,1].compressed(), bins_y)
@@ -3596,7 +3596,7 @@ class swarm:
                         if 'color' in self.props:
                             if ma.is_masked(self.positions):
                                 not_msk = ~self.positions[:,0].mask
-                                scat.set_color(self.props['color'][not_msk])
+                                scat.set_color(self.props.loc[not_msk,'color'])
                             else:
                                 scat.set_color(self.props['color'])
                     else:
@@ -3606,9 +3606,9 @@ class swarm:
                         if 'color' in self.props:
                             if ma.is_masked(self.positions[downsamp,0]):
                                 not_msk = ~self.positions[downsamp,0].mask
-                                scat.set_color(self.props['color'][downsamp][not_msk])
+                                scat.set_color(self.props.loc[downsamp,'color'][not_msk])
                             else:
-                                scat.set_color(self.props['color'][downsamp])
+                                scat.set_color(self.props.loc[downsamp,'color'])
                     if dist == 'hist':
                         n_x, _ = np.histogram(self.positions[:,0].compressed(), bins_x)
                         n_y, _ = np.histogram(self.positions[:,1].compressed(), bins_y)
