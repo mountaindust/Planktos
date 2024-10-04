@@ -903,8 +903,8 @@ class swarm:
             to specify their own, custom agent behavior.
         '''
 
-        # Put current position in the history
-        self.pos_history.append(self.positions.copy())
+        # Save current position to put in the history
+        old_positions = self.positions.copy()
 
         # Conditionally put props in the history too
         if self.props_history is not None:
@@ -914,8 +914,9 @@ class swarm:
         if not np.all(self.positions.mask):
             # Update positions, preserving mask
             self.positions[:,:] = self.get_positions(dt, params)
+            self.pos_history.append(old_positions)
             # Update velocity and acceleration of swarm
-            velocity = (self.positions - self.pos_history[-1])/dt
+            velocity = (self.positions - old_positions)/dt
             self.accelerations[:,:] = (velocity - self.velocities)/dt
             self.velocities[:,:] = velocity
             # Apply boundary conditions.
