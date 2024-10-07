@@ -2622,6 +2622,89 @@ class environment:
 
 
 
+    def define_pic_grid(self, dx, dy, positions, return_neighbors=True):
+        '''Creates a grid across the domain with cells of size dx by dy for use 
+        in a particle-in-cell method. dx and dy should divide the domain evenly 
+        in their respective directions and represent the furthest away one needs 
+        to look from any individual agent in order to get all neighbor 
+        interactions (e.g., a characteristic distance).
+
+        TODO: All boundary conditions
+        
+        2D only for now.
+        TODO: 3D
+
+        Returns a dictionary of cells in which keys are (i,j) tuples indexing 
+        the cells starting at zero from the origin, and the values they point to 
+        are lists of agent indices whose positions are within that cell.
+
+        If return_neighbors is True, will also return a dictionary of cell 
+        indices in which the values are of agents located either within that 
+        cell OR in a neighboring cell. Neighbor cells are the 8 cells vertically 
+        or horizontally adjacent or diagonally adjacent. Adjacency on the 
+        boundaries of the domain depends upon the environment boundary condition: 
+        zero or no-flux will treat the edge of the environment as a hard 
+        boundary while periodic will wrap around to find neighboring cells.
+
+        Parameters
+        ----------
+        dx : float
+            length of grid cell in the x-direction
+        dy : float
+            length of grid cell in the x-direction
+        positions : ndarray
+            ndarray of agent positions (e.g., swarm.positions)
+        return_neighbors : bool, default=True
+            if True, return both a dictionary a dictionary of cells -> agent 
+            indices located inside cell AND a dictionary of cells -> agent 
+            indices in both cell and neighboring cells
+
+        Returns
+        -------
+        dictionary, or tuple of two dictonaries
+        '''
+
+        Nx = round(self.Lx/dx)
+        Ny = round(self.Ly/dy)
+
+        assert np.isclose(Nx*dx,self.Lx), "dx does not divide domain evenly."
+        assert np.isclose(Ny*dy,self.Ly), "dy does not divide domain evenly."
+
+        # Nx2 array of agent position indices
+        pos_ind = (positions//np.array([dx,dy])).astype(int)
+
+        # Form a dictionary of cells
+        cells = {}
+        for ii in range(self.N):
+            if tuple(pos_ind[ii,:]) in cells:
+                cells[tuple(pos_ind[ii,:])].append(ii)
+            else:
+                cells[tuple(pos_ind[ii,:])] = [ii]
+
+        if return_neighbors:
+            # Form a dictionary of all agents in the cell OR neighbors
+            for dim in self.bndry:
+                for bc in dim:
+                    if bc != 'periodic':
+                        raise NotImplementedError('Non-periodic domain still TODO.')
+            neigh = {}
+            for x in range(Nx):
+                for y in range(Ny):
+                    if (x,y) in cells:
+                        # cells on a torus, wrap around is automatic
+                        nearby_agents = []
+                        idx_list = [(x-1,y-1), (x-1,y), (x-1,y+1),
+                                    (x,y-1), (x,y), (x,y+1),
+                                    (x+1,y-1), (x+1,y), (x+1,y+1)]
+                        for idx in idx_list:
+                            if idx in cells:
+                                nearby_agents += cells[idx]
+                        neigh[(x,y)] = nearby_agents
+            return cells, neigh
+        return cells 
+
+
+
     def calculate_FTLE(self, grid_dim=None, testdir=None, t0=0, T=0.1, dt=0.001, 
                        ode_gen=None, props=None, t_bound=None, swrm=None, 
                        params=None):
