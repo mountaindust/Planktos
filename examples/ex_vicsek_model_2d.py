@@ -12,7 +12,7 @@ react to environmental conditions.
 
 The 2D fluid velocity data for this example is large and several instances of 
 fluid velocity fields were tested. Rather than trying to include all this data 
-for download somehow (GBs), it will be available on request. Running this example 
+for download somehow (400 MB), it will be available on request. Running this example 
 will result in a null model simulation that includes the mesh data but does not 
 include the fluid velocity data.
 
