@@ -2628,8 +2628,6 @@ class environment:
         in their respective directions and represent the furthest away one needs 
         to look from any individual agent in order to get all neighbor 
         interactions (e.g., a characteristic distance).
-
-        TODO: All boundary conditions
         
         2D only for now.
         TODO: 3D
@@ -2683,19 +2681,66 @@ class environment:
 
         if return_neighbors:
             # Form a dictionary of all agents in the cell OR neighbors
-            for dim in self.bndry:
-                for bc in dim:
-                    if bc != 'periodic':
-                        raise NotImplementedError('Non-periodic domain still TODO.')
             neigh = {}
             for x in range(Nx):
                 for y in range(Ny):
                     if (x,y) in cells:
-                        # cells on a torus, wrap around is automatic
                         nearby_agents = []
-                        idx_list = [(x-1,y-1), (x-1,y), (x-1,y+1),
-                                    (x,y-1), (x,y), (x,y+1),
-                                    (x+1,y-1), (x+1,y), (x+1,y+1)]
+                        # get list of adjacent cells depending on BC
+                        idx_list = []
+                        # x-1 column
+                        if x-1<0 and self.bndry[0][0] == 'periodic':
+                            if y-1<0 and self.bndry[1][0] == 'periodic':
+                                idx_list.append((Nx-1,Ny-1))
+                            elif y-1>=0:
+                                idx_list.append((Nx-1,y-1))
+                            idx_list.append((Nx-1,y))
+                            if y+1==Ny and self.bndry[1][1] == 'periodic':
+                                idx_list.append((Nx-1,0))
+                            elif y+1!=Ny:
+                                idx_list.append((Nx-1,y+1))
+                        elif x-1>=0:
+                            if y-1<0 and self.bndry[1][0] == 'periodic':
+                                idx_list.append((x-1,Ny-1))
+                            elif y-1>=0:
+                                idx_list.append((x-1,y-1))
+                            idx_list.append((x-1,y))
+                            if y+1==Ny and self.bndry[1][1] == 'periodic':
+                                idx_list.append((x-1,0))
+                            elif y+1!=Ny:
+                                idx_list.append((x-1,y+1))
+                        # x column
+                        if y-1<0 and self.bndry[1][0] == 'periodic':
+                            idx_list.append((x,Ny-1))
+                        elif y-1>=0:
+                            idx_list.append((x,y-1))
+                        idx_list.append((x,y))
+                        if y+1==Ny and self.bndry[1][1] == 'periodic':
+                            idx_list.append((x,0))
+                        elif y+1!=Ny:
+                            idx_list.append((x,y+1))
+                        # x+1 column
+                        if x+1==Nx and self.bndry[0][1] == 'periodic':
+                            if y-1<0 and self.bndry[1][0] == 'periodic':
+                                idx_list.append((0,Ny-1))
+                            elif y-1>=0:
+                                idx_list.append((0,y-1))
+                            idx_list.append((0,y))
+                            if y+1==Ny and self.bndry[1][1] == 'periodic':
+                                idx_list.append((0,0))
+                            elif y+1!=Ny:
+                                idx_list.append((0,y+1))
+                        elif x+1!=Nx:
+                            if y-1<0 and self.bndry[1][0] == 'periodic':
+                                idx_list.append((x+1,Ny-1))
+                            elif y-1>=0:
+                                idx_list.append((x+1,y-1))
+                            idx_list.append((x+1,y))
+                            if y+1==Ny and self.bndry[1][1] == 'periodic':
+                                idx_list.append((x+1,0))
+                            elif y+1!=Ny:
+                                idx_list.append((x+1,y+1))
+
                         for idx in idx_list:
                             if idx in cells:
                                 nearby_agents += cells[idx]
