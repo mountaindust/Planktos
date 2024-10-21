@@ -2645,7 +2645,7 @@ class environment:
 
         Parameters
         ----------
-        positions : ndarray
+        positions : Nx2 or Nx3 ndarray
             ndarray of agent positions (e.g., swarm.positions)
         dx : float
             length of grid cell in the x-direction
@@ -2685,7 +2685,7 @@ class environment:
 
         # Form a dictionary of cells
         cells = {}
-        for ii in range(self.N):
+        for ii in range(positions.shape[0]):
             if tuple(pos_ind[ii,:]) in cells:
                 cells[tuple(pos_ind[ii,:])].append(ii)
             else:
