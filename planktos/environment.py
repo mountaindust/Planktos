@@ -2660,7 +2660,7 @@ class environment:
 
         Returns
         -------
-        dictionary, or tuple of two dictonaries
+        cells dictionary, or tuple of two dictonaries (cells, neighbors)
         '''
 
         if dz is not None:
@@ -2668,14 +2668,14 @@ class environment:
         else:
             DIM3 = False
 
-        Nx = round(self.Lx/dx)
-        Ny = round(self.Ly/dy)
-        if DIM3: Nz = round(self.Lz/dz)
+        Nx = round(self.L[0]/dx)
+        Ny = round(self.L[1]/dy)
+        if DIM3: Nz = round(self.L[2]/dz)
 
-        assert np.isclose(Nx*dx,self.Lx), "dx does not divide domain evenly."
-        assert np.isclose(Ny*dy,self.Ly), "dy does not divide domain evenly."
+        assert np.isclose(Nx*dx,self.L[0]), "dx does not divide domain evenly."
+        assert np.isclose(Ny*dy,self.L[1]), "dy does not divide domain evenly."
         if DIM3:
-            assert np.isclose(Nz*dz,self.Lz), "dz does not divide domain evenly."
+            assert np.isclose(Nz*dz,self.L[2]), "dz does not divide domain evenly."
 
         # Nx2 array of agent position indices
         if DIM3:
