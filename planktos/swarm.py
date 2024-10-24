@@ -20,6 +20,7 @@ if sys.platform == 'darwin': # OSX backend does not support blitting
     matplotlib.use('Qt5Agg')
 import matplotlib.pyplot as plt
 from matplotlib import animation, colors
+from matplotlib.collections import LineCollection
 
 from .environment import environment
 from . import dataio
@@ -2566,9 +2567,29 @@ class swarm:
                 ax.quiver(self.envir.flow_points[0][::M], self.envir.flow_points[1][::N],
                           flow[0][::M,::N].T, flow[1][::M,::N].T, 
                           scale=max_mag*5, alpha=0.2)
-
             
-            # scatter plot and time text
+            # line headings construction  
+            # construct heading lines with length 2 points
+            line_end = np.empty_like(self.positions)
+            origin = ax.transData.transform((0,0)) # find data origin in display coord
+            inv = ax.transData.inverted() # get display -> data transform
+            # create line lengths/heading from (0,0) in display scaling
+            if 'angle' in self.props:
+                line_end[:,0] = 2*np.cos(self.props['angle'])
+                line_end[:,1] = 2*np.sin(self.props['angle'])
+            else:
+                vel_norm = np.linalg.norm(self.velocities, axis=1)
+                zero_bool = vel_norm < np.finfo(float).eps * 100
+                line_end[zero_bool,0] = 0; line_end[zero_bool,1] = 0
+                line_end[~zero_bool,0] = 2*self.velocities[~zero_bool,0]/vel_norm[~zero_bool]
+                line_end[~zero_bool,1] = 2*self.velocities[~zero_bool,1]/vel_norm[~zero_bool]
+            # translate to data's origin and transform back to data coord system
+            line_end = inv.transform(origin + line_end)
+            # create line collection
+            line_segs = [[self.positions[n,:],self.positions[n,:] + line_end[n,:]] 
+                        for n in range(line_end.shape[0])]
+
+            # scatter plot and line headings artists
             if 'color' in self.props:
                 if self.props_history is not None and loc is not None:
                     # Get color from history
@@ -2577,10 +2598,16 @@ class swarm:
                     color = self.props['color']
                 ax.scatter(positions[:,0], positions[:,1], 
                            label=self.shared_props['name'], c=color, s=3)
+                line_col = LineCollection(line_segs, colors=color)
             else:
                 ax.scatter(positions[:,0], positions[:,1], 
                            label=self.shared_props['name'], 
                            color=self.shared_props['color'], s=3)
+                line_col = LineCollection(line_segs, 
+                                          colors=self.shared_props['color'])
+            ax.add_collection(line_col)
+
+            # time text
             ax.text(0.02, 0.95, 'time = {:.2f}'.format(time),
                     transform=ax.transAxes, fontsize=12)
 
