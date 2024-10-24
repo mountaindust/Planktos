@@ -2628,8 +2628,6 @@ class environment:
         in their respective directions and represent the furthest away one needs 
         to look from any individual agent in order to get all neighbor 
         interactions (e.g., a characteristic distance).
-        
-        TODO: This needs some serious testing.
 
         Returns a dictionary of cells in which keys are (i,j) tuples indexing 
         the cells starting at zero from the origin, and the values they point to 
@@ -2638,7 +2636,7 @@ class environment:
         If return_neighbors is True, will also return a dictionary of cell 
         indices in which the values are of agents located either within that 
         cell OR in a neighboring cell. Neighbor cells are the 8 cells vertically 
-        or horizontally adjacent or diagonally adjacent. Adjacency on the 
+        or horizontally adjacent or diagonally adjacent (in 2D). Adjacency on the 
         boundaries of the domain depends upon the environment boundary condition: 
         zero or no-flux will treat the edge of the environment as a hard 
         boundary while periodic will wrap around to find neighboring cells.
@@ -2801,66 +2799,66 @@ class environment:
                                 if xid-1>=0:
                                     if yid-1>=0:
                                         if zid-1>=0:
-                                            idx_list.append(x_list[xid-1],y_list[yid-1],z_list[zid-1])
-                                        idx_list.append(x_list[xid-1],y_list[yid-1],z_list[zid])
+                                            idx_list.append((x_list[xid-1],y_list[yid-1],z_list[zid-1]))
+                                        idx_list.append((x_list[xid-1],y_list[yid-1],z_list[zid]))
                                         if zid+1<len(z_list):
-                                            idx_list.append(x_list[xid-1],y_list[yid-1],z_list[zid+1])
+                                            idx_list.append((x_list[xid-1],y_list[yid-1],z_list[zid+1]))
                                     
                                     if zid-1>=0:
-                                        idx_list.append(x_list[xid-1],y_list[yid],z_list[zid-1])
-                                    idx_list.append(x_list[xid-1],y_list[yid],z_list[zid])
+                                        idx_list.append((x_list[xid-1],y_list[yid],z_list[zid-1]))
+                                    idx_list.append((x_list[xid-1],y_list[yid],z_list[zid]))
                                     if zid+1<len(z_list):
-                                        idx_list.append(x_list[xid-1],y_list[yid],z_list[zid+1])
+                                        idx_list.append((x_list[xid-1],y_list[yid],z_list[zid+1]))
 
                                     if yid+1<len(y_list):
                                         if zid-1>=0:
-                                            idx_list.append(x_list[xid-1],y_list[yid+1],z_list[zid-1])
-                                        idx_list.append(x_list[xid-1],y_list[yid+1],z_list[zid])
+                                            idx_list.append((x_list[xid-1],y_list[yid+1],z_list[zid-1]))
+                                        idx_list.append((x_list[xid-1],y_list[yid+1],z_list[zid]))
                                         if zid+1<len(z_list):
-                                            idx_list.append(x_list[xid-1],y_list[yid+1],z_list[zid+1])
+                                            idx_list.append((x_list[xid-1],y_list[yid+1],z_list[zid+1]))
 
                                 # x
                                 if yid-1>=0:
                                     if zid-1>=0:
-                                        idx_list.append(x_list[xid],y_list[yid-1],z_list[zid-1])
-                                    idx_list.append(x_list[xid],y_list[yid-1],z_list[zid])
+                                        idx_list.append((x_list[xid],y_list[yid-1],z_list[zid-1]))
+                                    idx_list.append((x_list[xid],y_list[yid-1],z_list[zid]))
                                     if zid+1<len(z_list):
-                                        idx_list.append(x_list[xid],y_list[yid-1],z_list[zid+1])
+                                        idx_list.append((x_list[xid],y_list[yid-1],z_list[zid+1]))
                                 
                                 if zid-1>=0:
-                                    idx_list.append(x_list[xid],y_list[yid],z_list[zid-1])
-                                idx_list.append(x_list[xid],y_list[yid],z_list[zid])
+                                    idx_list.append((x_list[xid],y_list[yid],z_list[zid-1]))
+                                idx_list.append((x_list[xid],y_list[yid],z_list[zid]))
                                 if zid+1<len(z_list):
-                                    idx_list.append(x_list[xid],y_list[yid],z_list[zid+1])
+                                    idx_list.append((x_list[xid],y_list[yid],z_list[zid+1]))
 
                                 if yid+1<len(y_list):
                                     if zid-1>=0:
-                                        idx_list.append(x_list[xid],y_list[yid+1],z_list[zid-1])
-                                    idx_list.append(x_list[xid],y_list[yid+1],z_list[zid])
+                                        idx_list.append((x_list[xid],y_list[yid+1],z_list[zid-1]))
+                                    idx_list.append((x_list[xid],y_list[yid+1],z_list[zid]))
                                     if zid+1<len(z_list):
-                                        idx_list.append(x_list[xid],y_list[yid+1],z_list[zid+1])
+                                        idx_list.append((x_list[xid],y_list[yid+1],z_list[zid+1]))
 
                                 # x+1
                                 if xid+1<len(x_list):
                                     if yid-1>=0:
                                         if zid-1>=0:
-                                            idx_list.append(x_list[xid+1],y_list[yid-1],z_list[zid-1])
-                                        idx_list.append(x_list[xid+1],y_list[yid-1],z_list[zid])
+                                            idx_list.append((x_list[xid+1],y_list[yid-1],z_list[zid-1]))
+                                        idx_list.append((x_list[xid+1],y_list[yid-1],z_list[zid]))
                                         if zid+1<len(z_list):
-                                            idx_list.append(x_list[xid+1],y_list[yid-1],z_list[zid+1])
+                                            idx_list.append((x_list[xid+1],y_list[yid-1],z_list[zid+1]))
                                     
                                     if zid-1>=0:
-                                        idx_list.append(x_list[xid+1],y_list[yid],z_list[zid-1])
-                                    idx_list.append(x_list[xid+1],y_list[yid],z_list[zid])
+                                        idx_list.append((x_list[xid+1],y_list[yid],z_list[zid-1]))
+                                    idx_list.append((x_list[xid+1],y_list[yid],z_list[zid]))
                                     if zid+1<len(z_list):
-                                        idx_list.append(x_list[xid+1],y_list[yid],z_list[zid+1])
+                                        idx_list.append((x_list[xid+1],y_list[yid],z_list[zid+1]))
 
                                     if yid+1<len(y_list):
                                         if zid-1>=0:
-                                            idx_list.append(x_list[xid+1],y_list[yid+1],z_list[zid-1])
-                                        idx_list.append(x_list[xid+1],y_list[yid+1],z_list[zid])
+                                            idx_list.append((x_list[xid+1],y_list[yid+1],z_list[zid-1]))
+                                        idx_list.append((x_list[xid+1],y_list[yid+1],z_list[zid]))
                                         if zid+1<len(z_list):
-                                            idx_list.append(x_list[xid+1],y_list[yid+1],z_list[zid+1])
+                                            idx_list.append((x_list[xid+1],y_list[yid+1],z_list[zid+1]))
 
                                 for idx in idx_list:
                                     if idx in cells:
