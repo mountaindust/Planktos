@@ -148,6 +148,12 @@ class swarm:
     velocities : masked array, shape Nx2 (2D) or Nx3 (3D)
         velocity of all the agents in the swarm. same masking properties as 
         positions
+    vel_history : list of masked arrays
+        all previous velocity arrays are stored here. to get their corresponding 
+        times, check the time_history attribute of the swarm's environment.
+    full_vel_history : list of masked arrays
+        same as vel_history, but also includes the velocities attribute as the 
+        last entry in the list
     accelerations : masked array, shape Nx2 (2D) or Nx3 (3D)
         accelerations of all the agents in the swarm. same masking properties as 
         positions
@@ -316,8 +322,9 @@ class swarm:
         self.accelerations = ma.array(np.zeros((swarm_size, len(self.envir.L))),
                                       mask=self.positions.mask.copy())
 
-        # Initialize position history
+        # Initialize position and velocity history
         self.pos_history = []
+        self.vel_history = []
 
         # Initialize IB collision detection
         self.ib_collision = np.full(swarm_size, False)
@@ -619,6 +626,13 @@ class swarm:
     def full_pos_history(self):
         '''History of self.positions, including present time.'''
         return [*self.pos_history, self.positions]
+    
+
+
+    @property
+    def full_vel_history(self):
+        '''History of self.positions, including present time.'''
+        return [*self.vel_history, self.velocities]
 
 
 
@@ -907,6 +921,7 @@ class swarm:
 
         # Save current position to put in the history
         old_positions = self.positions.copy()
+        old_velocities = self.velocities.copy()
 
         # Conditionally save props to put in the history too
         if self.props_history is not None:
@@ -918,12 +933,12 @@ class swarm:
             self.positions[:,:] = self.get_positions(dt, params)
             # Update history
             self.pos_history.append(old_positions)
+            self.vel_history.append(old_velocities)
             if self.props_history is not None:
                 self.props_history.append(old_props)
             # Update velocity and acceleration of swarm
-            velocity = (self.positions - old_positions)/dt
-            self.accelerations[:,:] = (velocity - self.velocities)/dt
-            self.velocities[:,:] = velocity
+            self.velocities[:,:] = (self.positions - old_positions)/dt
+            self.accelerations[:,:] = (self.velocities - old_velocities)/dt
             # Apply boundary conditions.
             self.apply_boundary_conditions(dt, ib_collisions=ib_collisions)
 
@@ -2573,7 +2588,7 @@ class swarm:
 
             # Create marker headings to add to scatter
             paths = []
-            circle = Path.circle(radius=0.25)
+            circle = Path.circle(radius=cir_rad)
             line_codes = np.array([Path.MOVETO, Path.LINETO])
             codes = np.concatenate([circle.codes, line_codes])
             if 'angle' in self.props:
@@ -2837,7 +2852,7 @@ class swarm:
 
 
     def plot_all(self, movie_filename=None, frames=None, downsamp=None, fps=10, 
-                 dist='density', fluid=None, clip=None, figsize=None, 
+                 dist='density', fluid=None, clip=None, figsize=None, cir_rad=0.25,
                  save_kwargs=None, writer_kwargs=None, azim=None, elev=None):
         ''' Plot the history of the swarm's movement, incl. current time in 
         successively updating plots or saved as a movie file. A movie file is
@@ -2890,15 +2905,17 @@ class swarm:
         figsize : tuple of length 2, optional
             figure size in inches, (width, height). default is a heurstic that 
             works... most of the time?
-        writer_kwargs : dict of keyword arguments, optional
-            keys must be valid strings that match keyword arguments for a  
-            matplotlib 
+        cir_rad : float, default=0.25
+            plotting size of the agent circles (in 2D only)
         save_kwargs : dict of keyword arguments, optional
             keys must be valid strings that match keyword arguments for the 
             matplotlib animation.FFMpegWriter object. These arguments will be 
             used in the writer object initiation save assuming that a 
             movie_filename has been specified. Otherwise, defaults are the 
             passed in fps and metadata=dict(artist='Christopher Strickland')).
+        writer_kwargs : dict of keyword arguments, optional
+            keys must be valid strings that match keyword arguments for a  
+            matplotlib 
         azim : float, optional
             In 3D plots, the azimuthal viewing angle. Defaults to -60.
         elev : float, optional
@@ -2990,7 +3007,12 @@ class swarm:
 
             # scatter plot
             scat = ax.scatter([], [], label=self.shared_props['name'], 
-                              c=self.shared_props['color'], s=3)
+                              c=self.shared_props['color'])
+            
+            # set up marker headings to be added to the scatter plots
+            circle = Path.circle(radius=cir_rad)
+            line_codes = np.array([Path.MOVETO, Path.LINETO])
+            codes = np.concatenate([circle.codes, line_codes])
 
             # textual info
             time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
@@ -3275,6 +3297,7 @@ class swarm:
                     axHistz.set_ylim(bottom=0)
 
         # animation function. Called sequentially
+        angle_props_warned = [False]
         def animate(n):
             if n < len(self.pos_history):
                 time_text.set_text('time = {:.2f}'.format(self.envir.time_history[n]))
@@ -3309,6 +3332,20 @@ class swarm:
                                 scat.set_color(self.props_history[n]['color'])
                             else:
                                 scat.set_color(self.props['color'])
+                        # Grab angles for heading markers
+                        if 'angle' in self.props:
+                            if self.props_history is not None:
+                                angles = self.props_history[n]['angles']
+                            else:
+                                if not angle_props_warned[0]:
+                                    warnings.warn("Using velocity for heading markers "+
+                                                "and not the 'angles' property because "+
+                                                "the property history was not recorded.")
+                                angle_props_warned[0] = True
+                        else:
+                            # this is defined even for (0,0) by convention
+                            angles = np.arctan2(self.vel_history[n][:,1], 
+                                                self.vel_history[n][:,0])
                     else:
                         scat.set_offsets(self.pos_history[n][downsamp,:])
                         if 'color' in self.props:
@@ -3316,6 +3353,31 @@ class swarm:
                                 scat.set_color(self.props_history[n].loc[downsamp,'color'])
                             else:
                                 scat.set_color(self.props.loc[downsamp,'color'])
+                        # Grab angles for heading markers
+                        if 'angle' in self.props:
+                            if self.props_history is not None:
+                                angles = self.props.loc[downsamp,'angles']
+                            else:
+                                if not angle_props_warned[0]:
+                                    warnings.warn("Using velocity for heading markers "+
+                                                "and not the 'angles' property because "+
+                                                "the property history was not recorded.")
+                                angle_props_warned[0] = True
+                        else:
+                            # this is defined even for (0,0) by convention
+                            angles = np.arctan2(self.vel_history[n][downsamp,1], 
+                                                self.vel_history[n][downsamp,0])
+                    # set heading markers
+                    paths = []
+                    for angle in angles:
+                        # make the heading marker stick out by one diameter
+                        line_verts = np.array([[0,0],[cir_rad*3*np.cos(angle),
+                                                    cir_rad*3*np.sin(angle)]])
+                        # combine the circle and line vertices
+                        verts = np.concatenate([circle.vertices, line_verts])
+                        # append to path list
+                        paths.append(Path(verts, codes))
+                    scat.set_paths(paths)
                     
                     if dist == 'hist':
                         n_x, _ = np.histogram(self.pos_history[n][:,0].compressed(), bins_x)
@@ -3531,10 +3593,35 @@ class swarm:
                         scat.set_offsets(self.positions)
                         if self.props_history is not None and 'color' in self.props:
                             scat.set_color(self.props['color'])
+                        # Grab angles for heading markers
+                        if 'angle' in self.props and self.props_history is not None:
+                            angles = self.props['angles']
+                        else:
+                            # this is defined even for (0,0) by convention
+                            angles = np.arctan2(self.velocities[:,1], 
+                                                self.velocities[:,0])
                     else:
                         scat.set_offsets(self.positions[downsamp,:])
                         if self.props_history is not None and 'color' in self.props:
                             scat.set_color(self.props.loc[downsamp,'color'])
+                        # Grab angles for heading markers
+                        if 'angle' in self.props and self.props_history is not None:
+                            angles = self.props.loc[downsamp,'angles']
+                        else:
+                            # this is defined even for (0,0) by convention
+                            angles = np.arctan2(self.velocities[downsamp,1], 
+                                                self.velocities[downsamp,0])
+                    # set heading markers
+                    paths = []
+                    for angle in angles:
+                        # make the heading marker stick out by one diameter
+                        line_verts = np.array([[0,0],[cir_rad*3*np.cos(angle),
+                                                    cir_rad*3*np.sin(angle)]])
+                        # combine the circle and line vertices
+                        verts = np.concatenate([circle.vertices, line_verts])
+                        # append to path list
+                        paths.append(Path(verts, codes))
+                    scat.set_paths(paths)
                     if dist == 'hist':
                         n_x, _ = np.histogram(self.positions[:,0].compressed(), bins_x)
                         n_y, _ = np.histogram(self.positions[:,1].compressed(), bins_y)
