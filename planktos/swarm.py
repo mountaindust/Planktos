@@ -21,6 +21,7 @@ if sys.platform == 'darwin': # OSX backend does not support blitting
 import matplotlib.pyplot as plt
 from matplotlib import animation, colors
 from matplotlib.collections import LineCollection
+from matplotlib.path import Path
 
 from .environment import environment
 from . import dataio
@@ -2431,8 +2432,8 @@ class swarm:
 
 
     def plot(self, t=None, filename=None, blocking=True, dist='density', 
-             fluid=None, clip=None, figsize=None, save_kwargs=None, azim=None, 
-             elev=None):
+             fluid=None, clip=None, figsize=None, cir_rad=0.25, save_kwargs=None, 
+             azim=None, elev=None):
         '''Plot the position of the swarm at time t, or at the current time
         if no time is supplied. The actual time plotted will depend on the
         history of movement steps; the closest entry in
@@ -2469,6 +2470,8 @@ class swarm:
         figsize : tuple of length 2, optional
             figure size in inches, (width, height). default is a heurstic that 
             works... most of the time?
+        cir_rad : float, default=0.25
+            plotting size of the agent circles (in 2D only)
         save_kwargs : dict of keyword arguments, optional
             keys must be valid strings that match keyword arguments for the 
             matplotlib savefig function. These arguments will be passed to 
@@ -2567,45 +2570,40 @@ class swarm:
                 ax.quiver(self.envir.flow_points[0][::M], self.envir.flow_points[1][::N],
                           flow[0][::M,::N].T, flow[1][::M,::N].T, 
                           scale=max_mag*5, alpha=0.2)
-            
-            # line headings construction  
-            # construct heading lines with length 2 points
-            line_end = np.empty_like(self.positions)
-            origin = ax.transData.transform((0,0)) # find data origin in display coord
-            inv = ax.transData.inverted() # get display -> data transform
-            # create line lengths/heading from (0,0) in display scaling
-            if 'angle' in self.props:
-                line_end[:,0] = 2*np.cos(self.props['angle'])
-                line_end[:,1] = 2*np.sin(self.props['angle'])
-            else:
-                vel_norm = np.linalg.norm(self.velocities, axis=1)
-                zero_bool = vel_norm < np.finfo(float).eps * 100
-                line_end[zero_bool,0] = 0; line_end[zero_bool,1] = 0
-                line_end[~zero_bool,0] = 2*self.velocities[~zero_bool,0]/vel_norm[~zero_bool]
-                line_end[~zero_bool,1] = 2*self.velocities[~zero_bool,1]/vel_norm[~zero_bool]
-            # translate to data's origin and transform back to data coord system
-            line_end = inv.transform(origin + line_end)
-            # create line collection
-            line_segs = [[self.positions[n,:],self.positions[n,:] + line_end[n,:]] 
-                        for n in range(line_end.shape[0])]
 
-            # scatter plot and line headings artists
+            # Create marker headings to add to scatter
+            paths = []
+            circle = Path.circle(radius=0.25)
+            line_codes = np.array([Path.MOVETO, Path.LINETO])
+            codes = np.concatenate([circle.codes, line_codes])
+            if 'angle' in self.props:
+                angles = self.props['angles']
+            else:
+                # this is defined even for (0,0) by convention
+                angles = np.arctan2(self.velocities[:,1], self.velocities[:,0])
+            for angle in angles:
+                # make the heading marker stick out by one diameter
+                line_verts = np.array([[0,0],[cir_rad*3*np.cos(angle),
+                                              cir_rad*3*np.sin(angle)]])
+                # combine the circle and line vertices
+                verts = np.concatenate([circle.vertices, line_verts])
+                # append to path list
+                paths.append(Path(verts, codes))
+
+            # scatter plot
             if 'color' in self.props:
                 if self.props_history is not None and loc is not None:
                     # Get color from history
                     color = self.props_history[loc]['color']
                 else:
                     color = self.props['color']
-                ax.scatter(positions[:,0], positions[:,1], 
-                           label=self.shared_props['name'], c=color, s=3)
-                line_col = LineCollection(line_segs, colors=color)
+                sc = ax.scatter(positions[:,0], positions[:,1], 
+                           label=self.shared_props['name'], c=color)
             else:
-                ax.scatter(positions[:,0], positions[:,1], 
+                sc = ax.scatter(positions[:,0], positions[:,1], 
                            label=self.shared_props['name'], 
-                           color=self.shared_props['color'], s=3)
-                line_col = LineCollection(line_segs, 
-                                          colors=self.shared_props['color'])
-            ax.add_collection(line_col)
+                           color=self.shared_props['color'])
+            sc.set_paths(paths)
 
             # time text
             ax.text(0.02, 0.95, 'time = {:.2f}'.format(time),
