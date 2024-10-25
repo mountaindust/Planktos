@@ -32,7 +32,7 @@ class imsearch(planktos.swarm):
 
         # This property will define whether the agents are searching or moving
         #   e.g., which state they are in at any given time.
-        self.props['searching'] = np.full(self.positions.shape[0], True)
+        self.props['searching'] = np.full(self.N, True)
 
         # Shared rates of changing from searching to moving and moving to searching
         #   per unit time.
@@ -40,5 +40,8 @@ class imsearch(planktos.swarm):
         self.shared_props['r_ms'] = 0.25
 
     def get_positions(self, dt, params):
+
+        switch_time = -1*np.ones(self.N)
+        rand_numbers = self.rndState.random(self.N)
 
         pass
