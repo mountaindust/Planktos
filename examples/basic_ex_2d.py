@@ -67,7 +67,7 @@ for ii in range(240):
 # We can see where we ended up with swrm.plot(), or we can plot a particular time 
 #   by calling swarm.plot(time), e.g. swarm.plot(19.1). Or we can just plot 
 #   everything as a movie:
-swrm.plot_all()
+swrm.plot_all(plot_heading=False) # turn off agent headings since this is Brownian
 
 # Like many functions in Planktos, plot_all has a lot of options as well. For 
 #   example, you can generate an mp4 instead of viewing the movie directly by 

@@ -92,7 +92,8 @@ for ii in range(50):
     #     swrm.plot()
     
 
-swrm.plot_all(movie_filename='channel_flow_sticky.mp4', fps=3, fluid='vort')
+swrm.plot_all(movie_filename='channel_flow_sticky.mp4', fps=3, fluid='vort',
+              plot_heading=False)
 
 # Compare the result to that of ex_ib2d_ibmesh.py.
 
