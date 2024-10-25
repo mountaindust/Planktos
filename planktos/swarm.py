@@ -95,10 +95,10 @@ class swarm:
         Pandas dataframe of individual agent properties that vary between agents. 
         This is the method by which individual variation among the agents should 
         be specified. The number of rows in the dataframe should match the 
-        number of agents. If no dataframe is supplied, a default one is created 
-        which contains only the agent starting positions in a column entitled
-        'start_pos'. This is to aid in creating more properties later, if 
-        desired, as it is only necessary to add columns to the existing dataframe.
+        number of agents. If no dataframe is supplied, an empty one will be 
+        created. A special property (column) can be specified called 'angle' 
+        which, if props_history is being stored, will plot as the agent heading 
+        in 2D.
     store_prop_history : bool
         Whether or not to keep a history of props at all time points
     name : string, optional
@@ -163,7 +163,8 @@ class swarm:
     props : pandas DataFrame
         Pandas dataframe of individual agent properties that vary between agents. 
         This is the method by which individual variation among the agents should 
-        be specified.
+        be specified. A special column can be specified called 'angle' which, if 
+        props_history is being stored, will plot as the agent heading in 2D.
     props_history : List of past Pandas DataFrames or None
         If not None, this list records individual agent attributes at all 
         previous points in time corresponding to the time_history attribute of 
@@ -2592,7 +2593,7 @@ class swarm:
             line_codes = np.array([Path.MOVETO, Path.LINETO])
             codes = np.concatenate([circle.codes, line_codes])
             if 'angle' in self.props:
-                angles = self.props['angles']
+                angles = self.props['angle']
             else:
                 # this is defined even for (0,0) by convention
                 angles = np.arctan2(self.velocities[:,1], self.velocities[:,0])
@@ -3328,6 +3329,9 @@ class swarm:
                             fld.set_UVC(flow[0][::M,::N].T, flow[1][::M,::N].T)
                         else:
                             fld.set_UVC(self.envir.flow[0][::M,::N].T, self.envir.flow[1][::M,::N].T)
+                    warning_msg = "Using velocity for heading markers "+\
+                                  "and not the 'angles' property because "+\
+                                  "the property history was not recorded."
                     if downsamp is None:
                         scat.set_offsets(self.pos_history[n])
                         if 'color' in self.props:
@@ -3338,13 +3342,13 @@ class swarm:
                         # Grab angles for heading markers
                         if 'angle' in self.props:
                             if self.props_history is not None:
-                                angles = self.props_history[n]['angles']
+                                angles = self.props_history[n]['angle']
                             else:
                                 if not angle_props_warned[0]:
-                                    warnings.warn("Using velocity for heading markers "+
-                                                "and not the 'angles' property because "+
-                                                "the property history was not recorded.")
+                                    warnings.warn(warning_msg, stacklevel=9)
                                 angle_props_warned[0] = True
+                                angles = np.arctan2(self.vel_history[n][:,1], 
+                                                    self.vel_history[n][:,0])
                         else:
                             # this is defined even for (0,0) by convention
                             angles = np.arctan2(self.vel_history[n][:,1], 
@@ -3359,13 +3363,13 @@ class swarm:
                         # Grab angles for heading markers
                         if 'angle' in self.props:
                             if self.props_history is not None:
-                                angles = self.props.loc[downsamp,'angles']
+                                angles = self.props.loc[downsamp,'angle']
                             else:
                                 if not angle_props_warned[0]:
-                                    warnings.warn("Using velocity for heading markers "+
-                                                "and not the 'angles' property because "+
-                                                "the property history was not recorded.")
+                                    warnings.warn(warning_msg, stacklevel=9)
                                 angle_props_warned[0] = True
+                                angles = np.arctan2(self.vel_history[n][downsamp,1], 
+                                                    self.vel_history[n][downsamp,0])
                         else:
                             # this is defined even for (0,0) by convention
                             angles = np.arctan2(self.vel_history[n][downsamp,1], 
@@ -3601,7 +3605,7 @@ class swarm:
                             scat.set_color(self.props['color'])
                         # Grab angles for heading markers
                         if 'angle' in self.props and self.props_history is not None:
-                            angles = self.props['angles']
+                            angles = self.props['angle']
                         else:
                             # this is defined even for (0,0) by convention
                             angles = np.arctan2(self.velocities[:,1], 
@@ -3612,7 +3616,7 @@ class swarm:
                             scat.set_color(self.props.loc[downsamp,'color'])
                         # Grab angles for heading markers
                         if 'angle' in self.props and self.props_history is not None:
-                            angles = self.props.loc[downsamp,'angles']
+                            angles = self.props.loc[downsamp,'angle']
                         else:
                             # this is defined even for (0,0) by convention
                             angles = np.arctan2(self.velocities[downsamp,1], 
