@@ -2448,8 +2448,8 @@ class swarm:
 
 
     def plot(self, t=None, filename=None, blocking=True, dist='density', 
-             fluid=None, clip=None, figsize=None, cir_rad=0.25, save_kwargs=None, 
-             azim=None, elev=None):
+             fluid=None, clip=None, figsize=None, circ_rad=0.25, plot_heading=True,
+             save_kwargs=None, azim=None, elev=None):
         '''Plot the position of the swarm at time t, or at the current time
         if no time is supplied. The actual time plotted will depend on the
         history of movement steps; the closest entry in
@@ -2486,8 +2486,11 @@ class swarm:
         figsize : tuple of length 2, optional
             figure size in inches, (width, height). default is a heurstic that 
             works... most of the time?
-        cir_rad : float, default=0.25
+        circ_rad : float, default=0.25
             plotting size of the agent circles (in 2D only)
+        plot_heading : bool, default=True
+            whether or not to plot the direction (heading) of each agent as a 
+            small line.
         save_kwargs : dict of keyword arguments, optional
             keys must be valid strings that match keyword arguments for the 
             matplotlib savefig function. These arguments will be passed to 
@@ -2589,25 +2592,28 @@ class swarm:
 
             # Create marker headings to add to scatter
             paths = []
-            circle = Path.circle(radius=cir_rad)
-            line_codes = np.array([Path.MOVETO, Path.LINETO])
-            codes = np.concatenate([circle.codes, line_codes])
-            if 'angle' in self.props:
-                angles = self.props['angle']
-            else:
-                # this is defined even for (0,0) by convention
-                angles = np.arctan2(self.velocities[:,1], self.velocities[:,0])
-            for angle in angles:
-                if ma.is_masked(angle):
-                    paths.append(circle)
+            circle = Path.circle(radius=circ_rad)
+            if plot_heading:
+                line_codes = np.array([Path.MOVETO, Path.LINETO])
+                codes = np.concatenate([circle.codes, line_codes])
+                if 'angle' in self.props:
+                    angles = self.props['angle']
                 else:
-                    # make the heading marker stick out by one diameter
-                    line_verts = np.array([[0,0],[cir_rad*3*np.cos(angle),
-                                                cir_rad*3*np.sin(angle)]])
-                    # combine the circle and line vertices
-                    verts = np.concatenate([circle.vertices, line_verts])
-                    # append to path list
-                    paths.append(Path(verts, codes))
+                    # this is defined even for (0,0) by convention
+                    angles = np.arctan2(self.velocities[:,1], self.velocities[:,0])
+                for angle in angles:
+                    if ma.is_masked(angle):
+                        paths.append(circle)
+                    else:
+                        # make the heading marker stick out by one diameter
+                        line_verts = np.array([[0,0],[circ_rad*3*np.cos(angle),
+                                                    circ_rad*3*np.sin(angle)]])
+                        # combine the circle and line vertices
+                        verts = np.concatenate([circle.vertices, line_verts])
+                        # append to path list
+                        paths.append(Path(verts, codes))
+            else:
+                paths.append(circle)
 
             # scatter plot
             if 'color' in self.props:
@@ -2856,8 +2862,9 @@ class swarm:
 
 
     def plot_all(self, movie_filename=None, frames=None, downsamp=None, fps=10, 
-                 dist='density', fluid=None, clip=None, figsize=None, cir_rad=0.25,
-                 save_kwargs=None, writer_kwargs=None, azim=None, elev=None):
+                 dist='density', fluid=None, clip=None, figsize=None, circ_rad=0.25,
+                 plot_heading=True, save_kwargs=None, writer_kwargs=None, 
+                 azim=None, elev=None):
         ''' Plot the history of the swarm's movement, incl. current time in 
         successively updating plots or saved as a movie file. A movie file is
         created if movie_filename is specified.
@@ -2909,8 +2916,11 @@ class swarm:
         figsize : tuple of length 2, optional
             figure size in inches, (width, height). default is a heurstic that 
             works... most of the time?
-        cir_rad : float, default=0.25
+        circ_rad : float, default=0.25
             plotting size of the agent circles (in 2D only)
+        plot_heading : bool, default=True
+            whether or not to plot the direction (heading) of each agent as a 
+            small line.
         save_kwargs : dict of keyword arguments, optional
             keys must be valid strings that match keyword arguments for the 
             matplotlib animation.FFMpegWriter object. These arguments will be 
@@ -3014,7 +3024,7 @@ class swarm:
                               c=self.shared_props['color'])
             
             # set up marker headings to be added to the scatter plots
-            circle = Path.circle(radius=cir_rad)
+            circle = Path.circle(radius=circ_rad)
             line_codes = np.array([Path.MOVETO, Path.LINETO])
             codes = np.concatenate([circle.codes, line_codes])
 
@@ -3340,7 +3350,7 @@ class swarm:
                             else:
                                 scat.set_color(self.props['color'])
                         # Grab angles for heading markers
-                        if 'angle' in self.props:
+                        if 'angle' in self.props and plot_heading:
                             if self.props_history is not None:
                                 angles = self.props_history[n]['angle']
                             else:
@@ -3349,7 +3359,7 @@ class swarm:
                                 angle_props_warned[0] = True
                                 angles = np.arctan2(self.vel_history[n][:,1], 
                                                     self.vel_history[n][:,0])
-                        else:
+                        elif plot_heading:
                             # this is defined even for (0,0) by convention
                             angles = np.arctan2(self.vel_history[n][:,1], 
                                                 self.vel_history[n][:,0])
@@ -3361,7 +3371,7 @@ class swarm:
                             else:
                                 scat.set_color(self.props.loc[downsamp,'color'])
                         # Grab angles for heading markers
-                        if 'angle' in self.props:
+                        if 'angle' in self.props and plot_heading:
                             if self.props_history is not None:
                                 angles = self.props.loc[downsamp,'angle']
                             else:
@@ -3370,24 +3380,27 @@ class swarm:
                                 angle_props_warned[0] = True
                                 angles = np.arctan2(self.vel_history[n][downsamp,1], 
                                                     self.vel_history[n][downsamp,0])
-                        else:
+                        elif plot_heading:
                             # this is defined even for (0,0) by convention
                             angles = np.arctan2(self.vel_history[n][downsamp,1], 
                                                 self.vel_history[n][downsamp,0])
                     # set heading markers
-                    paths = []
-                    for angle in angles:
-                        if ma.is_masked(angle):
-                            paths.append(circle)
-                        else:
-                            # make the heading marker stick out by one diameter
-                            line_verts = np.array([[0,0],[cir_rad*3*np.cos(angle),
-                                                        cir_rad*3*np.sin(angle)]])
-                            # combine the circle and line vertices
-                            verts = np.concatenate([circle.vertices, line_verts])
-                            # append to path list
-                            paths.append(Path(verts, codes))
-                    scat.set_paths(paths)
+                    if plot_heading:
+                        paths = []
+                        for angle in angles:
+                            if ma.is_masked(angle):
+                                paths.append(circle)
+                            else:
+                                # make the heading marker stick out by one diameter
+                                line_verts = np.array([[0,0],[circ_rad*3*np.cos(angle),
+                                                            circ_rad*3*np.sin(angle)]])
+                                # combine the circle and line vertices
+                                verts = np.concatenate([circle.vertices, line_verts])
+                                # append to path list
+                                paths.append(Path(verts, codes))
+                        scat.set_paths(paths)
+                    else:
+                        scat.set_paths([circle])
                     
                     if dist == 'hist':
                         n_x, _ = np.histogram(self.pos_history[n][:,0].compressed(), bins_x)
@@ -3622,19 +3635,22 @@ class swarm:
                             angles = np.arctan2(self.velocities[downsamp,1], 
                                                 self.velocities[downsamp,0])
                     # set heading markers
-                    paths = []
-                    for angle in angles:
-                        if ma.is_masked(angle):
-                            paths.append(circle)
-                        else:
-                            # make the heading marker stick out by one diameter
-                            line_verts = np.array([[0,0],[cir_rad*3*np.cos(angle),
-                                                        cir_rad*3*np.sin(angle)]])
-                            # combine the circle and line vertices
-                            verts = np.concatenate([circle.vertices, line_verts])
-                            # append to path list
-                            paths.append(Path(verts, codes))
-                    scat.set_paths(paths)
+                    if plot_heading:
+                        paths = []
+                        for angle in angles:
+                            if ma.is_masked(angle):
+                                paths.append(circle)
+                            else:
+                                # make the heading marker stick out by one diameter
+                                line_verts = np.array([[0,0],[circ_rad*3*np.cos(angle),
+                                                            circ_rad*3*np.sin(angle)]])
+                                # combine the circle and line vertices
+                                verts = np.concatenate([circle.vertices, line_verts])
+                                # append to path list
+                                paths.append(Path(verts, codes))
+                        scat.set_paths(paths)
+                    else:
+                        scat.set_paths([circle])
                     if dist == 'hist':
                         n_x, _ = np.histogram(self.positions[:,0].compressed(), bins_x)
                         n_y, _ = np.histogram(self.positions[:,1].compressed(), bins_y)
