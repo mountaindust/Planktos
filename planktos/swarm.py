@@ -2597,13 +2597,16 @@ class swarm:
                 # this is defined even for (0,0) by convention
                 angles = np.arctan2(self.velocities[:,1], self.velocities[:,0])
             for angle in angles:
-                # make the heading marker stick out by one diameter
-                line_verts = np.array([[0,0],[cir_rad*3*np.cos(angle),
-                                              cir_rad*3*np.sin(angle)]])
-                # combine the circle and line vertices
-                verts = np.concatenate([circle.vertices, line_verts])
-                # append to path list
-                paths.append(Path(verts, codes))
+                if ma.is_masked(angle):
+                    paths.append(circle)
+                else:
+                    # make the heading marker stick out by one diameter
+                    line_verts = np.array([[0,0],[cir_rad*3*np.cos(angle),
+                                                cir_rad*3*np.sin(angle)]])
+                    # combine the circle and line vertices
+                    verts = np.concatenate([circle.vertices, line_verts])
+                    # append to path list
+                    paths.append(Path(verts, codes))
 
             # scatter plot
             if 'color' in self.props:
@@ -3370,13 +3373,16 @@ class swarm:
                     # set heading markers
                     paths = []
                     for angle in angles:
-                        # make the heading marker stick out by one diameter
-                        line_verts = np.array([[0,0],[cir_rad*3*np.cos(angle),
-                                                    cir_rad*3*np.sin(angle)]])
-                        # combine the circle and line vertices
-                        verts = np.concatenate([circle.vertices, line_verts])
-                        # append to path list
-                        paths.append(Path(verts, codes))
+                        if ma.is_masked(angle):
+                            paths.append(circle)
+                        else:
+                            # make the heading marker stick out by one diameter
+                            line_verts = np.array([[0,0],[cir_rad*3*np.cos(angle),
+                                                        cir_rad*3*np.sin(angle)]])
+                            # combine the circle and line vertices
+                            verts = np.concatenate([circle.vertices, line_verts])
+                            # append to path list
+                            paths.append(Path(verts, codes))
                     scat.set_paths(paths)
                     
                     if dist == 'hist':
@@ -3614,13 +3620,16 @@ class swarm:
                     # set heading markers
                     paths = []
                     for angle in angles:
-                        # make the heading marker stick out by one diameter
-                        line_verts = np.array([[0,0],[cir_rad*3*np.cos(angle),
-                                                    cir_rad*3*np.sin(angle)]])
-                        # combine the circle and line vertices
-                        verts = np.concatenate([circle.vertices, line_verts])
-                        # append to path list
-                        paths.append(Path(verts, codes))
+                        if ma.is_masked(angle):
+                            paths.append(circle)
+                        else:
+                            # make the heading marker stick out by one diameter
+                            line_verts = np.array([[0,0],[cir_rad*3*np.cos(angle),
+                                                        cir_rad*3*np.sin(angle)]])
+                            # combine the circle and line vertices
+                            verts = np.concatenate([circle.vertices, line_verts])
+                            # append to path list
+                            paths.append(Path(verts, codes))
                     scat.set_paths(paths)
                     if dist == 'hist':
                         n_x, _ = np.histogram(self.positions[:,0].compressed(), bins_x)
