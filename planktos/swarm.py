@@ -139,6 +139,8 @@ class swarm:
         any row corresponding to an agent that is within the spatial boundaries 
         of the environment, otherwise the mask for the row is set to True and 
         the position of that agent is no longer updated
+    N : read only property, int
+        The current number of agents in the swarm, based on positions.shape[0]
     pos_history : list of masked arrays
         all previous position arrays are stored here. to get their corresponding 
         times, check the time_history attribute of the swarm's environment.
@@ -280,7 +282,7 @@ class swarm:
                 print('Initializing swarm with uniform random positions...')
                 for ii in range(len(self.envir.L)):
                     self.positions[:,ii] = self.rndState.uniform(0, 
-                                        self.envir.L[ii], self.positions.shape[0])
+                                        self.envir.L[ii], self.N)
             elif init == 'grid':
                 assert 'grid_dim' in kwargs, "Required key word argument grid_dim missing for grid init."
                 x_num = kwargs['grid_dim'][0]; y_num = kwargs['grid_dim'][1]
@@ -294,7 +296,7 @@ class swarm:
                     testdir = None
                 print('Initializing swarm with grid positions...')
                 self.positions = self.grid_init(x_num, y_num, z_num, testdir)
-                swarm_size = self.positions.shape[0]
+                swarm_size = self.N
             else:
                 print("Initialization method {} not implemented.".format(init))
                 print("Exiting...")
@@ -644,6 +646,14 @@ class swarm:
             return [*self.props_history, self.props]
         else:
             return None
+
+
+
+    @property
+    def N(self):
+        '''Return the number of agents based on the number of entries in
+        self.positions'''
+        return self.positions.shape[0]
 
 
 
@@ -1347,7 +1357,7 @@ class swarm:
             # if there are any masked agents, skip them in the loop
             if np.any(self.positions.mask):
                 for n, startpt, endpt in \
-                    zip(np.arange(self.positions.shape[0])[~ma.getmaskarray(self.positions[:,0])],
+                    zip(np.arange(self.N)[~ma.getmaskarray(self.positions[:,0])],
                         self.pos_history[-1][~ma.getmaskarray(self.positions[:,0]),:].copy(),
                         self.positions[~ma.getmaskarray(self.positions[:,0]),:].copy()
                         ):
@@ -1357,7 +1367,7 @@ class swarm:
                 return
             # no masked agents: go through all of them
             else:
-                for n in range(self.positions.shape[0]):
+                for n in range(self.N):
                     startpt = self.pos_history[-1][n,:].copy()
                     endpt = self.positions[n,:].copy()
                     IBC_routine(n, self, startpt, endpt, ib_collisions)
@@ -1374,7 +1384,7 @@ class swarm:
         '''
 
         if idx_array is None:
-            idx_array = np.arange(self.positions.shape[0])
+            idx_array = np.arange(self.N)
 
         status_BC = np.zeros((len(idx_array),len(self.envir.L)))
 
