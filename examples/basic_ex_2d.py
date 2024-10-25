@@ -45,7 +45,11 @@ swrm = planktos.swarm(envir=envir, seed=1)
 swrm.plot()
 # Also try: 
 # swrm.plot(fluid='quiver')
-# to see fluid arrows in the background!
+# to see fluid arrows in the background! 
+# There are many options that can be 
+#   passed to the plot function as well as plot_all below. These include 
+#   changing how big the agents appear (circ_rad). See the documentation for 
+#   a complete explanation.
 
 # By default, the swarm is set up with two properties that are the same across 
 #   all agents: 'mu' and 'cov'. These are the mean drift (not counting the fluid) 
