@@ -43,5 +43,12 @@ class imsearch(planktos.swarm):
 
         switch_time = -1*np.ones(self.N)
         rand_numbers = self.rndState.random(self.N)
+        searching = self.props['searching']
+        moving = ~searching
+
+        # Gather switch times for any ballistic motion agents
+        if np.any(moving):
+            switch_ms = 1-np.exp(-self.shared_props['r_ms']*dt) > rand_numbers[moving]
+            switch_time[moving] += switch_ms*(1+self.randgen.rand(np.sum(moving)))
 
         pass
