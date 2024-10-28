@@ -39,16 +39,40 @@ class imsearch(planktos.swarm):
         self.shared_props['r_sm'] = 0.25
         self.shared_props['r_ms'] = 0.25
 
+        # Speed during ballistic motion
+        self.shared_props['s'] = 0.1
+
+        #   We need a property for the angle of ballistic motion. Note: 'angle' 
+        #   is a special property that interacts with plotting. We don't want 
+        #   all agents to have an angle for the purposes of plotting; only the 
+        #   ballistic motion ones have a specific angle. So we will use a 
+        #   different name for the property.
+        self.props['b_angle'] = np.zeros(self.N)
+
     def get_positions(self, dt, params):
 
         switch_time = -1*np.ones(self.N)
         rand_numbers = self.rndState.random(self.N)
-        searching = self.props['searching']
+        searching = self.props['searching'].to_numpy()
         moving = ~searching
 
-        # Gather switch times for any ballistic motion agents
+        # The below assumes that if the agents switch states during dt, the time 
+        #   at which they do is uniformly distributed.
+
+        # Gather switch times for any ballistic motion agents -> searching
         if np.any(moving):
             switch_ms = 1-np.exp(-self.shared_props['r_ms']*dt) > rand_numbers[moving]
-            switch_time[moving] += switch_ms*(1+self.randgen.rand(np.sum(moving)))
+            # invert CDF to get switch time
+            switch_time[moving] += switch_ms*(1-self.shared_props['r_ms']*
+                                              np.log(1-rand_numbers[moving]))
 
-        pass
+        # Gather switch times for searching agents -> ballistic motion
+        if any(searching):
+            switch_sm = 1-np.exp(-self.shared_props['r_sm']*dt) > rand_numbers[searching]
+            switch_time[searching] += switch_sm*(1-self.shared_props['r_sm']*
+                                                 np.log(1-rand_numbers[searching]))
+            # Assign a random angle to all ballistic motion.
+            newangle_agents = searching.copy()
+            newangle_agents[searching] = switch_sm
+            self.props.loc[newangle_agents,'b_angle'] = \
+                2*np.pi*self.rndState.random(np.sum(switch_sm))
