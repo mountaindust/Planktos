@@ -1,7 +1,9 @@
 #! /usr/bin/env python3
 '''
 This provides an example of how to handle arbitrary switching times in Planktos. 
-It is also an example of a basic intermittent search strategy.
+It is also an example of a basic intermittent search strategy. The result is 
+that this is a somewhat complex example in its entirety, but there are lots of 
+bits and pieces that could be pulled out and used in your own project!
 '''
 
 import numpy as np
@@ -14,6 +16,8 @@ envir = planktos.environment()
 swrm = planktos.swarm(envir=envir, seed=1, store_prop_history=True)
 
 # We will assume that the target is in the middle of the domain with radius 0.5
+target_rad = 0.5
+target_center = np.array((5,5))
 
 # Create a function that, given an axes object, will plot this target so that we 
 #   can visualize it. This does not count as an immersed boundary, even though 
@@ -49,30 +53,46 @@ class imsearch(planktos.swarm):
         #   different name for the property.
         self.props['b_angle'] = np.zeros(self.N)
 
+        # Whether or not the agent has found the target or not
+        self.props['found'] = np.full(self.N, False)
+
+        # If the agent starts within the target area, it finds it immediately
+        in_target = np.linalg.norm(self.positions-target_center, axis=1) < target_rad
+        self.props.loc[in_target, 'found'] = True
+
     def get_positions(self, dt, params):
 
         switch_time = -1*np.ones(self.N)
+        # It's best to use the swarm's own rndState object to generate random 
+        #   numbers for stochastic processes. That way, everything is 
+        #   reproducable with a single seed.
         rand_numbers = self.rndState.random(self.N)
-        searching = self.props['searching'].to_numpy()
-        moving = ~searching
-
-        # The below assumes that if the agents switch states during dt, the time 
-        #   at which they do is uniformly distributed.
+        searching = self.props['searching'].to_numpy(copy=True)
+        moving = ~searching.copy()
+        # remove from 'searching' the ones who have found the target
+        searching[self.props['found']] = False
 
         # Gather switch times for any ballistic motion agents -> searching
         if np.any(moving):
+            # test random number against CDF of exp dist to see if a switch occurs
             switch_ms = 1-np.exp(-self.shared_props['r_ms']*dt) > rand_numbers[moving]
             # invert CDF to get switch time
             switch_time[moving] += switch_ms*(1-self.shared_props['r_ms']*
                                               np.log(1-rand_numbers[moving]))
 
-        # Gather switch times for searching agents -> ballistic motion
+        # Gather switch times and angles for searching agents -> ballistic motion
         if any(searching):
+            # test random number against CDF of exp dist to see if a switch occurs
             switch_sm = 1-np.exp(-self.shared_props['r_sm']*dt) > rand_numbers[searching]
+            # invert CDF to get switch time
             switch_time[searching] += switch_sm*(1-self.shared_props['r_sm']*
                                                  np.log(1-rand_numbers[searching]))
-            # Assign a random angle to all ballistic motion.
+            # Assign a new random angle to all ballistic motion.
             newangle_agents = searching.copy()
-            newangle_agents[searching] = switch_sm
+            newangle_agents[searching] = switch_sm # bool of searching AND switching
             self.props.loc[newangle_agents,'b_angle'] = \
                 2*np.pi*self.rndState.random(np.sum(switch_sm))
+            
+        
+            
+        
