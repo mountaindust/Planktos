@@ -20,6 +20,8 @@ if sys.platform == 'darwin': # OSX backend does not support blitting
     matplotlib.use('Qt5Agg')
 import matplotlib.pyplot as plt
 from matplotlib import animation, colors
+from matplotlib.collections import LineCollection
+from matplotlib.path import Path
 
 from .environment import environment
 from . import dataio
@@ -93,10 +95,10 @@ class swarm:
         Pandas dataframe of individual agent properties that vary between agents. 
         This is the method by which individual variation among the agents should 
         be specified. The number of rows in the dataframe should match the 
-        number of agents. If no dataframe is supplied, a default one is created 
-        which contains only the agent starting positions in a column entitled
-        'start_pos'. This is to aid in creating more properties later, if 
-        desired, as it is only necessary to add columns to the existing dataframe.
+        number of agents. If no dataframe is supplied, an empty one will be 
+        created. A special property (column) can be specified called 'angle' 
+        which, if props_history is being stored, will plot as the agent heading 
+        in 2D.
     store_prop_history : bool
         Whether or not to keep a history of props at all time points
     name : string, optional
@@ -137,6 +139,8 @@ class swarm:
         any row corresponding to an agent that is within the spatial boundaries 
         of the environment, otherwise the mask for the row is set to True and 
         the position of that agent is no longer updated
+    N : read only property, int
+        The current number of agents in the swarm, based on positions.shape[0]
     pos_history : list of masked arrays
         all previous position arrays are stored here. to get their corresponding 
         times, check the time_history attribute of the swarm's environment.
@@ -146,6 +150,12 @@ class swarm:
     velocities : masked array, shape Nx2 (2D) or Nx3 (3D)
         velocity of all the agents in the swarm. same masking properties as 
         positions
+    vel_history : list of masked arrays
+        all previous velocity arrays are stored here. to get their corresponding 
+        times, check the time_history attribute of the swarm's environment.
+    full_vel_history : list of masked arrays
+        same as vel_history, but also includes the velocities attribute as the 
+        last entry in the list
     accelerations : masked array, shape Nx2 (2D) or Nx3 (3D)
         accelerations of all the agents in the swarm. same masking properties as 
         positions
@@ -155,7 +165,8 @@ class swarm:
     props : pandas DataFrame
         Pandas dataframe of individual agent properties that vary between agents. 
         This is the method by which individual variation among the agents should 
-        be specified.
+        be specified. A special column can be specified called 'angle' which, if 
+        props_history is being stored, will plot as the agent heading in 2D.
     props_history : List of past Pandas DataFrames or None
         If not None, this list records individual agent attributes at all 
         previous points in time corresponding to the time_history attribute of 
@@ -271,7 +282,7 @@ class swarm:
                 print('Initializing swarm with uniform random positions...')
                 for ii in range(len(self.envir.L)):
                     self.positions[:,ii] = self.rndState.uniform(0, 
-                                        self.envir.L[ii], self.positions.shape[0])
+                                        self.envir.L[ii], self.N)
             elif init == 'grid':
                 assert 'grid_dim' in kwargs, "Required key word argument grid_dim missing for grid init."
                 x_num = kwargs['grid_dim'][0]; y_num = kwargs['grid_dim'][1]
@@ -285,7 +296,7 @@ class swarm:
                     testdir = None
                 print('Initializing swarm with grid positions...')
                 self.positions = self.grid_init(x_num, y_num, z_num, testdir)
-                swarm_size = self.positions.shape[0]
+                swarm_size = self.N
             else:
                 print("Initialization method {} not implemented.".format(init))
                 print("Exiting...")
@@ -314,8 +325,9 @@ class swarm:
         self.accelerations = ma.array(np.zeros((swarm_size, len(self.envir.L))),
                                       mask=self.positions.mask.copy())
 
-        # Initialize position history
+        # Initialize position and velocity history
         self.pos_history = []
+        self.vel_history = []
 
         # Initialize IB collision detection
         self.ib_collision = np.full(swarm_size, False)
@@ -617,6 +629,13 @@ class swarm:
     def full_pos_history(self):
         '''History of self.positions, including present time.'''
         return [*self.pos_history, self.positions]
+    
+
+
+    @property
+    def full_vel_history(self):
+        '''History of self.positions, including present time.'''
+        return [*self.vel_history, self.velocities]
 
 
 
@@ -627,6 +646,14 @@ class swarm:
             return [*self.props_history, self.props]
         else:
             return None
+
+
+
+    @property
+    def N(self):
+        '''Return the number of agents based on the number of entries in
+        self.positions'''
+        return self.positions.shape[0]
 
 
 
@@ -905,6 +932,7 @@ class swarm:
 
         # Save current position to put in the history
         old_positions = self.positions.copy()
+        old_velocities = self.velocities.copy()
 
         # Conditionally save props to put in the history too
         if self.props_history is not None:
@@ -916,12 +944,12 @@ class swarm:
             self.positions[:,:] = self.get_positions(dt, params)
             # Update history
             self.pos_history.append(old_positions)
+            self.vel_history.append(old_velocities)
             if self.props_history is not None:
                 self.props_history.append(old_props)
             # Update velocity and acceleration of swarm
-            velocity = (self.positions - old_positions)/dt
-            self.accelerations[:,:] = (velocity - self.velocities)/dt
-            self.velocities[:,:] = velocity
+            self.velocities[:,:] = (self.positions - old_positions)/dt
+            self.accelerations[:,:] = (self.velocities - old_velocities)/dt
             # Apply boundary conditions.
             self.apply_boundary_conditions(dt, ib_collisions=ib_collisions)
 
@@ -1329,7 +1357,7 @@ class swarm:
             # if there are any masked agents, skip them in the loop
             if np.any(self.positions.mask):
                 for n, startpt, endpt in \
-                    zip(np.arange(self.positions.shape[0])[~ma.getmaskarray(self.positions[:,0])],
+                    zip(np.arange(self.N)[~ma.getmaskarray(self.positions[:,0])],
                         self.pos_history[-1][~ma.getmaskarray(self.positions[:,0]),:].copy(),
                         self.positions[~ma.getmaskarray(self.positions[:,0]),:].copy()
                         ):
@@ -1339,7 +1367,7 @@ class swarm:
                 return
             # no masked agents: go through all of them
             else:
-                for n in range(self.positions.shape[0]):
+                for n in range(self.N):
                     startpt = self.pos_history[-1][n,:].copy()
                     endpt = self.positions[n,:].copy()
                     IBC_routine(n, self, startpt, endpt, ib_collisions)
@@ -1356,7 +1384,7 @@ class swarm:
         '''
 
         if idx_array is None:
-            idx_array = np.arange(self.positions.shape[0])
+            idx_array = np.arange(self.N)
 
         status_BC = np.zeros((len(idx_array),len(self.envir.L)))
 
@@ -2430,8 +2458,8 @@ class swarm:
 
 
     def plot(self, t=None, filename=None, blocking=True, dist='density', 
-             fluid=None, clip=None, figsize=None, save_kwargs=None, azim=None, 
-             elev=None):
+             fluid=None, clip=None, figsize=None, circ_rad=0.25, plot_heading=True,
+             save_kwargs=None, azim=None, elev=None):
         '''Plot the position of the swarm at time t, or at the current time
         if no time is supplied. The actual time plotted will depend on the
         history of movement steps; the closest entry in
@@ -2468,6 +2496,11 @@ class swarm:
         figsize : tuple of length 2, optional
             figure size in inches, (width, height). default is a heurstic that 
             works... most of the time?
+        circ_rad : float, default=0.25
+            plotting size of the agent circles (in 2D only)
+        plot_heading : bool, default=True
+            whether or not to plot the direction (heading) of each agent as a 
+            small line.
         save_kwargs : dict of keyword arguments, optional
             keys must be valid strings that match keyword arguments for the 
             matplotlib savefig function. These arguments will be passed to 
@@ -2567,20 +2600,47 @@ class swarm:
                           flow[0][::M,::N].T, flow[1][::M,::N].T, 
                           scale=max_mag*5, alpha=0.2)
 
-            
-            # scatter plot and time text
+            # Create marker headings to add to scatter
+            paths = []
+            circle = Path.circle(radius=circ_rad)
+            if plot_heading:
+                line_codes = np.array([Path.MOVETO, Path.LINETO])
+                codes = np.concatenate([circle.codes, line_codes])
+                if 'angle' in self.props:
+                    angles = self.props['angle']
+                else:
+                    # this is defined even for (0,0) by convention
+                    angles = np.arctan2(self.velocities[:,1], self.velocities[:,0])
+                for angle in angles:
+                    if ma.is_masked(angle):
+                        paths.append(circle)
+                    else:
+                        # make the heading marker stick out by one diameter
+                        line_verts = np.array([[0,0],[circ_rad*3*np.cos(angle),
+                                                    circ_rad*3*np.sin(angle)]])
+                        # combine the circle and line vertices
+                        verts = np.concatenate([circle.vertices, line_verts])
+                        # append to path list
+                        paths.append(Path(verts, codes))
+            else:
+                paths.append(circle)
+
+            # scatter plot
             if 'color' in self.props:
                 if self.props_history is not None and loc is not None:
                     # Get color from history
                     color = self.props_history[loc]['color']
                 else:
                     color = self.props['color']
-                ax.scatter(positions[:,0], positions[:,1], 
-                           label=self.shared_props['name'], c=color, s=3)
+                sc = ax.scatter(positions[:,0], positions[:,1], 
+                           label=self.shared_props['name'], c=color)
             else:
-                ax.scatter(positions[:,0], positions[:,1], 
+                sc = ax.scatter(positions[:,0], positions[:,1], 
                            label=self.shared_props['name'], 
-                           color=self.shared_props['color'], s=3)
+                           color=self.shared_props['color'])
+            sc.set_paths(paths)
+
+            # time text
             ax.text(0.02, 0.95, 'time = {:.2f}'.format(time),
                     transform=ax.transAxes, fontsize=12)
 
@@ -2812,8 +2872,9 @@ class swarm:
 
 
     def plot_all(self, movie_filename=None, frames=None, downsamp=None, fps=10, 
-                 dist='density', fluid=None, clip=None, figsize=None, 
-                 save_kwargs=None, writer_kwargs=None, azim=None, elev=None):
+                 dist='density', fluid=None, clip=None, figsize=None, circ_rad=0.25,
+                 plot_heading=True, save_kwargs=None, writer_kwargs=None, 
+                 azim=None, elev=None):
         ''' Plot the history of the swarm's movement, incl. current time in 
         successively updating plots or saved as a movie file. A movie file is
         created if movie_filename is specified.
@@ -2865,15 +2926,20 @@ class swarm:
         figsize : tuple of length 2, optional
             figure size in inches, (width, height). default is a heurstic that 
             works... most of the time?
-        writer_kwargs : dict of keyword arguments, optional
-            keys must be valid strings that match keyword arguments for a  
-            matplotlib 
+        circ_rad : float, default=0.25
+            plotting size of the agent circles (in 2D only)
+        plot_heading : bool, default=True
+            whether or not to plot the direction (heading) of each agent as a 
+            small line.
         save_kwargs : dict of keyword arguments, optional
             keys must be valid strings that match keyword arguments for the 
             matplotlib animation.FFMpegWriter object. These arguments will be 
             used in the writer object initiation save assuming that a 
             movie_filename has been specified. Otherwise, defaults are the 
             passed in fps and metadata=dict(artist='Christopher Strickland')).
+        writer_kwargs : dict of keyword arguments, optional
+            keys must be valid strings that match keyword arguments for a  
+            matplotlib 
         azim : float, optional
             In 3D plots, the azimuthal viewing angle. Defaults to -60.
         elev : float, optional
@@ -2965,7 +3031,12 @@ class swarm:
 
             # scatter plot
             scat = ax.scatter([], [], label=self.shared_props['name'], 
-                              c=self.shared_props['color'], s=3)
+                              c=self.shared_props['color'])
+            
+            # set up marker headings to be added to the scatter plots
+            circle = Path.circle(radius=circ_rad)
+            line_codes = np.array([Path.MOVETO, Path.LINETO])
+            codes = np.concatenate([circle.codes, line_codes])
 
             # textual info
             time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
@@ -3250,6 +3321,7 @@ class swarm:
                     axHistz.set_ylim(bottom=0)
 
         # animation function. Called sequentially
+        angle_props_warned = [False]
         def animate(n):
             if n < len(self.pos_history):
                 time_text.set_text('time = {:.2f}'.format(self.envir.time_history[n]))
@@ -3277,6 +3349,9 @@ class swarm:
                             fld.set_UVC(flow[0][::M,::N].T, flow[1][::M,::N].T)
                         else:
                             fld.set_UVC(self.envir.flow[0][::M,::N].T, self.envir.flow[1][::M,::N].T)
+                    warning_msg = "Using velocity for heading markers "+\
+                                  "and not the 'angles' property because "+\
+                                  "the property history was not recorded."
                     if downsamp is None:
                         scat.set_offsets(self.pos_history[n])
                         if 'color' in self.props:
@@ -3284,6 +3359,20 @@ class swarm:
                                 scat.set_color(self.props_history[n]['color'])
                             else:
                                 scat.set_color(self.props['color'])
+                        # Grab angles for heading markers
+                        if 'angle' in self.props and plot_heading:
+                            if self.props_history is not None:
+                                angles = self.props_history[n]['angle']
+                            else:
+                                if not angle_props_warned[0]:
+                                    warnings.warn(warning_msg, stacklevel=9)
+                                angle_props_warned[0] = True
+                                angles = np.arctan2(self.vel_history[n][:,1], 
+                                                    self.vel_history[n][:,0])
+                        elif plot_heading:
+                            # this is defined even for (0,0) by convention
+                            angles = np.arctan2(self.vel_history[n][:,1], 
+                                                self.vel_history[n][:,0])
                     else:
                         scat.set_offsets(self.pos_history[n][downsamp,:])
                         if 'color' in self.props:
@@ -3291,6 +3380,37 @@ class swarm:
                                 scat.set_color(self.props_history[n].loc[downsamp,'color'])
                             else:
                                 scat.set_color(self.props.loc[downsamp,'color'])
+                        # Grab angles for heading markers
+                        if 'angle' in self.props and plot_heading:
+                            if self.props_history is not None:
+                                angles = self.props.loc[downsamp,'angle']
+                            else:
+                                if not angle_props_warned[0]:
+                                    warnings.warn(warning_msg, stacklevel=9)
+                                angle_props_warned[0] = True
+                                angles = np.arctan2(self.vel_history[n][downsamp,1], 
+                                                    self.vel_history[n][downsamp,0])
+                        elif plot_heading:
+                            # this is defined even for (0,0) by convention
+                            angles = np.arctan2(self.vel_history[n][downsamp,1], 
+                                                self.vel_history[n][downsamp,0])
+                    # set heading markers
+                    if plot_heading:
+                        paths = []
+                        for angle in angles:
+                            if ma.is_masked(angle):
+                                paths.append(circle)
+                            else:
+                                # make the heading marker stick out by one diameter
+                                line_verts = np.array([[0,0],[circ_rad*3*np.cos(angle),
+                                                            circ_rad*3*np.sin(angle)]])
+                                # combine the circle and line vertices
+                                verts = np.concatenate([circle.vertices, line_verts])
+                                # append to path list
+                                paths.append(Path(verts, codes))
+                        scat.set_paths(paths)
+                    else:
+                        scat.set_paths([circle])
                     
                     if dist == 'hist':
                         n_x, _ = np.histogram(self.pos_history[n][:,0].compressed(), bins_x)
@@ -3506,10 +3626,41 @@ class swarm:
                         scat.set_offsets(self.positions)
                         if self.props_history is not None and 'color' in self.props:
                             scat.set_color(self.props['color'])
+                        # Grab angles for heading markers
+                        if 'angle' in self.props and self.props_history is not None:
+                            angles = self.props['angle']
+                        else:
+                            # this is defined even for (0,0) by convention
+                            angles = np.arctan2(self.velocities[:,1], 
+                                                self.velocities[:,0])
                     else:
                         scat.set_offsets(self.positions[downsamp,:])
                         if self.props_history is not None and 'color' in self.props:
                             scat.set_color(self.props.loc[downsamp,'color'])
+                        # Grab angles for heading markers
+                        if 'angle' in self.props and self.props_history is not None:
+                            angles = self.props.loc[downsamp,'angle']
+                        else:
+                            # this is defined even for (0,0) by convention
+                            angles = np.arctan2(self.velocities[downsamp,1], 
+                                                self.velocities[downsamp,0])
+                    # set heading markers
+                    if plot_heading:
+                        paths = []
+                        for angle in angles:
+                            if ma.is_masked(angle):
+                                paths.append(circle)
+                            else:
+                                # make the heading marker stick out by one diameter
+                                line_verts = np.array([[0,0],[circ_rad*3*np.cos(angle),
+                                                            circ_rad*3*np.sin(angle)]])
+                                # combine the circle and line vertices
+                                verts = np.concatenate([circle.vertices, line_verts])
+                                # append to path list
+                                paths.append(Path(verts, codes))
+                        scat.set_paths(paths)
+                    else:
+                        scat.set_paths([circle])
                     if dist == 'hist':
                         n_x, _ = np.histogram(self.positions[:,0].compressed(), bins_x)
                         n_y, _ = np.histogram(self.positions[:,1].compressed(), bins_y)

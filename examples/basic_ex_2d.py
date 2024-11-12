@@ -45,7 +45,11 @@ swrm = planktos.swarm(envir=envir, seed=1)
 swrm.plot()
 # Also try: 
 # swrm.plot(fluid='quiver')
-# to see fluid arrows in the background!
+# to see fluid arrows in the background! 
+# There are many options that can be 
+#   passed to the plot function as well as plot_all below. These include 
+#   changing how big the agents appear (circ_rad). See the documentation for 
+#   a complete explanation.
 
 # By default, the swarm is set up with two properties that are the same across 
 #   all agents: 'mu' and 'cov'. These are the mean drift (not counting the fluid) 
@@ -67,7 +71,7 @@ for ii in range(240):
 # We can see where we ended up with swrm.plot(), or we can plot a particular time 
 #   by calling swarm.plot(time), e.g. swarm.plot(19.1). Or we can just plot 
 #   everything as a movie:
-swrm.plot_all()
+swrm.plot_all(plot_heading=False) # turn off agent headings since this is Brownian
 
 # Like many functions in Planktos, plot_all has a lot of options as well. For 
 #   example, you can generate an mp4 instead of viewing the movie directly by 

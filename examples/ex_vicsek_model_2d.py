@@ -71,12 +71,12 @@ class vicsek(planktos.swarm):
         #   initial position or zero if there is no flow.
 
         ### Uniform random angle IC, just to verify things are working ###
-        # rnd_angles = self.rndState.random(self.positions.shape[0])*2*np.pi
+        # rnd_angles = self.rndState.random(self.N)*2*np.pi
 
         ### Bias initial vel toward the right to move toward cylinder ###
         # Add a random perturbation with angle between [-nu/2, nu/2]
         rnd_angles = self.get_prop('nu')*(
-            self.rndState.random(self.positions.shape[0]) - 0.5)
+            self.rndState.random(self.N) - 0.5)
         self.velocities += self.get_prop('v')*np.array([
             np.cos(rnd_angles), np.sin(rnd_angles)]).T
     
@@ -129,8 +129,8 @@ class vicsek(planktos.swarm):
 
         # loop through the agents, checking to see which agents are within range 
         #   and averaging their angles
-        avg_angles = np.zeros(self.positions.shape[0])
-        for n in range(self.positions.shape[0]):
+        avg_angles = np.zeros(self.N)
+        for n in range(self.N):
             dist = self.__calc_dist(self.positions[n,:], self.positions)
             avg_angles[n] = np.arctan2(
                 np.mean(self.velocities[dist<self.get_prop('r'),1]),
@@ -138,7 +138,7 @@ class vicsek(planktos.swarm):
 
         # find new angles according to the Vicsek model
         angle_noise = self.get_prop('nu')*(
-            self.rndState.random(self.positions.shape[0]) - 0.5)
+            self.rndState.random(self.N) - 0.5)
         new_angles = avg_angles + angle_noise
 
         # convert to velocities and add the fluid velocity

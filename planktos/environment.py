@@ -2622,17 +2622,12 @@ class environment:
 
 
 
-    def define_pic_grid(self, dx, dy, positions, return_neighbors=True):
+    def define_pic_grid(self, positions, dx, dy, dz=None, return_neighbors=True):
         '''Creates a grid across the domain with cells of size dx by dy for use 
         in a particle-in-cell method. dx and dy should divide the domain evenly 
         in their respective directions and represent the furthest away one needs 
         to look from any individual agent in order to get all neighbor 
         interactions (e.g., a characteristic distance).
-
-        TODO: All boundary conditions
-        
-        2D only for now.
-        TODO: 3D
 
         Returns a dictionary of cells in which keys are (i,j) tuples indexing 
         the cells starting at zero from the origin, and the values they point to 
@@ -2641,19 +2636,21 @@ class environment:
         If return_neighbors is True, will also return a dictionary of cell 
         indices in which the values are of agents located either within that 
         cell OR in a neighboring cell. Neighbor cells are the 8 cells vertically 
-        or horizontally adjacent or diagonally adjacent. Adjacency on the 
+        or horizontally adjacent or diagonally adjacent (in 2D). Adjacency on the 
         boundaries of the domain depends upon the environment boundary condition: 
         zero or no-flux will treat the edge of the environment as a hard 
         boundary while periodic will wrap around to find neighboring cells.
 
         Parameters
         ----------
+        positions : Nx2 or Nx3 ndarray
+            ndarray of agent positions (e.g., swarm.positions)
         dx : float
             length of grid cell in the x-direction
         dy : float
-            length of grid cell in the x-direction
-        positions : ndarray
-            ndarray of agent positions (e.g., swarm.positions)
+            length of grid cell in the y-direction
+        dz : float, optional
+            length of grid cell in the z-direction
         return_neighbors : bool, default=True
             if True, return both a dictionary a dictionary of cells -> agent 
             indices located inside cell AND a dictionary of cells -> agent 
@@ -2661,21 +2658,32 @@ class environment:
 
         Returns
         -------
-        dictionary, or tuple of two dictonaries
+        cells dictionary, or tuple of two dictonaries (cells, neighbors)
         '''
 
-        Nx = round(self.Lx/dx)
-        Ny = round(self.Ly/dy)
+        if dz is not None:
+            DIM3 = True
+        else:
+            DIM3 = False
 
-        assert np.isclose(Nx*dx,self.Lx), "dx does not divide domain evenly."
-        assert np.isclose(Ny*dy,self.Ly), "dy does not divide domain evenly."
+        Nx = round(self.L[0]/dx)
+        Ny = round(self.L[1]/dy)
+        if DIM3: Nz = round(self.L[2]/dz)
+
+        assert np.isclose(Nx*dx,self.L[0]), "dx does not divide domain evenly."
+        assert np.isclose(Ny*dy,self.L[1]), "dy does not divide domain evenly."
+        if DIM3:
+            assert np.isclose(Nz*dz,self.L[2]), "dz does not divide domain evenly."
 
         # Nx2 array of agent position indices
-        pos_ind = (positions//np.array([dx,dy])).astype(int)
+        if DIM3:
+            pos_ind = (positions//np.array([dx,dy,dz])).astype(int)
+        else:
+            pos_ind = (positions//np.array([dx,dy])).astype(int)
 
         # Form a dictionary of cells
         cells = {}
-        for ii in range(self.N):
+        for ii in range(positions.shape[0]):
             if tuple(pos_ind[ii,:]) in cells:
                 cells[tuple(pos_ind[ii,:])].append(ii)
             else:
@@ -2683,23 +2691,180 @@ class environment:
 
         if return_neighbors:
             # Form a dictionary of all agents in the cell OR neighbors
-            for dim in self.bndry:
-                for bc in dim:
-                    if bc != 'periodic':
-                        raise NotImplementedError('Non-periodic domain still TODO.')
             neigh = {}
-            for x in range(Nx):
-                for y in range(Ny):
-                    if (x,y) in cells:
-                        # cells on a torus, wrap around is automatic
-                        nearby_agents = []
-                        idx_list = [(x-1,y-1), (x-1,y), (x-1,y+1),
-                                    (x,y-1), (x,y), (x,y+1),
-                                    (x+1,y-1), (x+1,y), (x+1,y+1)]
-                        for idx in idx_list:
-                            if idx in cells:
-                                nearby_agents += cells[idx]
-                        neigh[(x,y)] = nearby_agents
+            if not DIM3:
+                for x in range(Nx):
+                    for y in range(Ny):
+                        if (x,y) in cells:
+                            nearby_agents = []
+                            # get list of adjacent cells depending on BC
+                            idx_list = []
+                            # x-1 column
+                            if x-1<0 and self.bndry[0][0] == 'periodic':
+                                if y-1<0 and self.bndry[1][0] == 'periodic':
+                                    idx_list.append((Nx-1,Ny-1))
+                                elif y-1>=0:
+                                    idx_list.append((Nx-1,y-1))
+                                idx_list.append((Nx-1,y))
+                                if y+1==Ny and self.bndry[1][1] == 'periodic':
+                                    idx_list.append((Nx-1,0))
+                                elif y+1!=Ny:
+                                    idx_list.append((Nx-1,y+1))
+                            elif x-1>=0:
+                                if y-1<0 and self.bndry[1][0] == 'periodic':
+                                    idx_list.append((x-1,Ny-1))
+                                elif y-1>=0:
+                                    idx_list.append((x-1,y-1))
+                                idx_list.append((x-1,y))
+                                if y+1==Ny and self.bndry[1][1] == 'periodic':
+                                    idx_list.append((x-1,0))
+                                elif y+1!=Ny:
+                                    idx_list.append((x-1,y+1))
+                            # x column
+                            if y-1<0 and self.bndry[1][0] == 'periodic':
+                                idx_list.append((x,Ny-1))
+                            elif y-1>=0:
+                                idx_list.append((x,y-1))
+                            idx_list.append((x,y))
+                            if y+1==Ny and self.bndry[1][1] == 'periodic':
+                                idx_list.append((x,0))
+                            elif y+1!=Ny:
+                                idx_list.append((x,y+1))
+                            # x+1 column
+                            if x+1==Nx and self.bndry[0][1] == 'periodic':
+                                if y-1<0 and self.bndry[1][0] == 'periodic':
+                                    idx_list.append((0,Ny-1))
+                                elif y-1>=0:
+                                    idx_list.append((0,y-1))
+                                idx_list.append((0,y))
+                                if y+1==Ny and self.bndry[1][1] == 'periodic':
+                                    idx_list.append((0,0))
+                                elif y+1!=Ny:
+                                    idx_list.append((0,y+1))
+                            elif x+1!=Nx:
+                                if y-1<0 and self.bndry[1][0] == 'periodic':
+                                    idx_list.append((x+1,Ny-1))
+                                elif y-1>=0:
+                                    idx_list.append((x+1,y-1))
+                                idx_list.append((x+1,y))
+                                if y+1==Ny and self.bndry[1][1] == 'periodic':
+                                    idx_list.append((x+1,0))
+                                elif y+1!=Ny:
+                                    idx_list.append((x+1,y+1))
+
+                            for idx in idx_list:
+                                if idx in cells:
+                                    nearby_agents += cells[idx]
+                            neigh[(x,y)] = nearby_agents
+            # 3D
+            else:
+                if self.bndry[0][0] == 'periodic':
+                    x_list = [Nx-1]; xstrt = 1
+                else:
+                    x_list = []; xstrt = 0
+                x_list += list(range(Nx))
+                if self.bndry[0][1] == 'periodic':
+                    x_list.append(0); xend = len(x_list)-1
+                else:
+                    xend = len(x_list)
+
+                if self.bndry[1][0] == 'periodic':
+                    y_list = [Ny-1]; ystrt = 1
+                else:
+                    y_list = []; ystrt = 0
+                y_list += list(range(Ny))
+                if self.bndry[1][1] == 'periodic':
+                    y_list.append(0); yend = len(y_list)-1
+                else:
+                    yend = len(y_list)
+
+                if self.bndry[2][0] == 'periodic':
+                    z_list = [Nz-1]; zstrt = 1
+                else:
+                    z_list = []; zstrt = 0
+                z_list += list(range(Nz))
+                if self.bndry[2][1] == 'periodic':
+                    z_list.append(0); zend = len(z_list)-1
+                else:
+                    zend = len(z_list)
+
+                for xid in range(xstrt,xend):
+                    for yid in range(ystrt,yend):
+                        for zid in range(zstrt,zend):
+                            if (x_list[xid],y_list[yid],z_list[zid]) in cells:
+                                nearby_agents = []
+                                # get list of adjacent cells depending on BC
+                                idx_list = []
+                                # x-1
+                                if xid-1>=0:
+                                    if yid-1>=0:
+                                        if zid-1>=0:
+                                            idx_list.append((x_list[xid-1],y_list[yid-1],z_list[zid-1]))
+                                        idx_list.append((x_list[xid-1],y_list[yid-1],z_list[zid]))
+                                        if zid+1<len(z_list):
+                                            idx_list.append((x_list[xid-1],y_list[yid-1],z_list[zid+1]))
+                                    
+                                    if zid-1>=0:
+                                        idx_list.append((x_list[xid-1],y_list[yid],z_list[zid-1]))
+                                    idx_list.append((x_list[xid-1],y_list[yid],z_list[zid]))
+                                    if zid+1<len(z_list):
+                                        idx_list.append((x_list[xid-1],y_list[yid],z_list[zid+1]))
+
+                                    if yid+1<len(y_list):
+                                        if zid-1>=0:
+                                            idx_list.append((x_list[xid-1],y_list[yid+1],z_list[zid-1]))
+                                        idx_list.append((x_list[xid-1],y_list[yid+1],z_list[zid]))
+                                        if zid+1<len(z_list):
+                                            idx_list.append((x_list[xid-1],y_list[yid+1],z_list[zid+1]))
+
+                                # x
+                                if yid-1>=0:
+                                    if zid-1>=0:
+                                        idx_list.append((x_list[xid],y_list[yid-1],z_list[zid-1]))
+                                    idx_list.append((x_list[xid],y_list[yid-1],z_list[zid]))
+                                    if zid+1<len(z_list):
+                                        idx_list.append((x_list[xid],y_list[yid-1],z_list[zid+1]))
+                                
+                                if zid-1>=0:
+                                    idx_list.append((x_list[xid],y_list[yid],z_list[zid-1]))
+                                idx_list.append((x_list[xid],y_list[yid],z_list[zid]))
+                                if zid+1<len(z_list):
+                                    idx_list.append((x_list[xid],y_list[yid],z_list[zid+1]))
+
+                                if yid+1<len(y_list):
+                                    if zid-1>=0:
+                                        idx_list.append((x_list[xid],y_list[yid+1],z_list[zid-1]))
+                                    idx_list.append((x_list[xid],y_list[yid+1],z_list[zid]))
+                                    if zid+1<len(z_list):
+                                        idx_list.append((x_list[xid],y_list[yid+1],z_list[zid+1]))
+
+                                # x+1
+                                if xid+1<len(x_list):
+                                    if yid-1>=0:
+                                        if zid-1>=0:
+                                            idx_list.append((x_list[xid+1],y_list[yid-1],z_list[zid-1]))
+                                        idx_list.append((x_list[xid+1],y_list[yid-1],z_list[zid]))
+                                        if zid+1<len(z_list):
+                                            idx_list.append((x_list[xid+1],y_list[yid-1],z_list[zid+1]))
+                                    
+                                    if zid-1>=0:
+                                        idx_list.append((x_list[xid+1],y_list[yid],z_list[zid-1]))
+                                    idx_list.append((x_list[xid+1],y_list[yid],z_list[zid]))
+                                    if zid+1<len(z_list):
+                                        idx_list.append((x_list[xid+1],y_list[yid],z_list[zid+1]))
+
+                                    if yid+1<len(y_list):
+                                        if zid-1>=0:
+                                            idx_list.append((x_list[xid+1],y_list[yid+1],z_list[zid-1]))
+                                        idx_list.append((x_list[xid+1],y_list[yid+1],z_list[zid]))
+                                        if zid+1<len(z_list):
+                                            idx_list.append((x_list[xid+1],y_list[yid+1],z_list[zid+1]))
+
+                                for idx in idx_list:
+                                    if idx in cells:
+                                        nearby_agents += cells[idx]
+                                neigh[(x_list[xid],y_list[yid],z_list[zid])] = nearby_agents
+
             return cells, neigh
         return cells 
 

@@ -35,5 +35,5 @@ for ii in range(180):
     swrm.move(0.1)
 
 # Let's output this to a video. Notice how some agents have more jitter than others!
-swrm.plot_all('ex_2d_ind_var.mp4', fps=20)
+swrm.plot_all('ex_2d_ind_var.mp4', fps=20, plot_heading=False)
 # swrm.plot_all()
