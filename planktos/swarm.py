@@ -942,18 +942,21 @@ class swarm:
         if not np.all(self.positions.mask):
             # Update positions, preserving mask
             self.positions[:,:] = self.get_positions(dt, params)
-            # Update history
-            self.pos_history.append(old_positions)
-            self.vel_history.append(old_velocities)
-            if self.props_history is not None:
-                self.props_history.append(old_props)
-            # Update velocity and acceleration of swarm
-            self.velocities[:,:] = (self.positions - old_positions)/dt
-            self.accelerations[:,:] = (self.velocities - old_velocities)/dt
-            # Apply boundary conditions.
-            self.apply_boundary_conditions(dt, ib_collisions=ib_collisions)
 
-        self.after_move(dt, params)
+        # Update history
+        self.pos_history.append(old_positions)
+        self.vel_history.append(old_velocities)
+        if self.props_history is not None:
+            self.props_history.append(old_props)
+        
+        # Update velocity and acceleration of swarm
+        self.velocities[:,:] = (self.positions - old_positions)/dt
+        self.accelerations[:,:] = (self.velocities - old_velocities)/dt
+
+        # Apply boundary conditions (if anything was moving)
+        if not np.all(self.positions.mask):
+            self.apply_boundary_conditions(dt, ib_collisions=ib_collisions)
+            self.after_move(dt, params)
 
         # Record new time
         if update_time:
