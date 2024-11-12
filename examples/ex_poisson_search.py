@@ -59,8 +59,14 @@ class imsearch(planktos.swarm):
         self.props['found'] = np.full(self.N, False)
 
         # If the agent starts within the target area, it finds it immediately
-        in_target = np.linalg.norm(self.positions-target_center, axis=1) < target_rad
+        in_target = self.test_for_target(self.positions)
         self.props.loc[in_target, 'found'] = True
+
+    @staticmethod
+    def test_for_target(positions):
+        # Reusable function for testing if an array of positions is within the 
+        #   circular target, as defined outside the class.
+        return np.linalg.norm(positions-target_center, axis=1) < target_rad
 
     def get_positions(self, dt, params):
 
@@ -114,6 +120,37 @@ class imsearch(planktos.swarm):
             self.props.loc[newangle_agents,'b_angle'] = \
                 2*np.pi*self.rndState.random(np.sum(switch_sm))
             
+        #
+        # Find updated positions and return them while testing to see if the 
+        # target is found
+        #
+        found_target = self.props['found'].to_numpy(copy=True)
+        new_positions = self.positions.copy()
+
+        ### Those who were moving throughout ###
+        full_move = np.logical_and(moving,switch_time == -1)
+        new_positions[full_move] += self.shared_props['s']*np.array(
+            np.cos(self.props.loc[full_move,'b_angle']),
+            np.sin(self.props.loc[full_move,'b_angle'])) + \
+            self.get_fluid_drift(positions=new_positions[full_move])
         
+        ### Those who were moving and then started searching ###
+        first_move = np.logical_and(moving,switch_time != -1)
+        # First, move to location where state change happened
+        new_positions[first_move] += self.shared_props['s']*switch_time*np.array(
+            np.cos(self.props.loc[first_move,'b_angle']),
+            np.sin(self.props.loc[first_move,'b_angle'])) + \
+            self.get_fluid_drift(positions=new_positions[first_move])
+        # The agent is now searching. Is the target there?
+        in_target = self.test_for_target(new_positions[first_move])
+        found_target[first_move] = in_target
+        # If the target is found, no more movement
+        first_move = np.logical_and(first_move,~found_target)
+        # Assuming the target was not found, diffuse for the rest of the time period
+        # TODO
+        # Is the target there?
+        # TODO
             
-        
+        ### Those who were searching and then started moving ###
+        last_move = np.logical_and(searching,switch_time != -1)
+
