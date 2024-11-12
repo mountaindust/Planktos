@@ -1,9 +1,11 @@
 #! /usr/bin/env python3
 '''
 This provides an example of how to handle arbitrary switching times in Planktos. 
-It is also an example of a basic intermittent search strategy. The result is 
-that this is a somewhat complex example in its entirety, but there are lots of 
-bits and pieces that could be pulled out and used in your own project!
+It is also an example of a basic intermittent search strategy. 
+
+If you are just starting out, it is suggested that you skip this example and 
+come back to it, as it is somewhat complex in its entirety. But there are lots 
+of bits and pieces that can be pulled out and used in your own project!
 '''
 
 import numpy as np
@@ -62,25 +64,43 @@ class imsearch(planktos.swarm):
 
     def get_positions(self, dt, params):
 
+        # Get an array that will code the proprotion of [t,t+dt] at which the 
+        #   agents switched state. -1 will mean they didn't switch.
         switch_time = -1*np.ones(self.N)
+
         # It's best to use the swarm's own rndState object to generate random 
         #   numbers for stochastic processes. That way, everything is 
         #   reproducable with a single seed.
+
+        # Get one random number in [0,1] for each agent
         rand_numbers = self.rndState.random(self.N)
+
+        # We need to copy over the information about which agent is searching 
+        #   versus moving. Later, we will update all of them at once.
         searching = self.props['searching'].to_numpy(copy=True)
         moving = ~searching.copy()
-        # remove from 'searching' the ones who have found the target
+        # remove from 'searching' the ones who have already found the target.
+        #   They should remain frozen and not update.
         searching[self.props['found']] = False
 
-        # Gather switch times for any ballistic motion agents -> searching
+        #
+        # Gather switch times for any ballistic motion agents and transition 
+        # them to searching agents.
+        #
         if np.any(moving):
             # test random number against CDF of exp dist to see if a switch occurs
             switch_ms = 1-np.exp(-self.shared_props['r_ms']*dt) > rand_numbers[moving]
-            # invert CDF to get switch time
+            # invert CDF to get switch time. switch_ms is a bool, which will 
+            #   convert to zero or one when multiplied. The logic his handled 
+            #   this way because the length of switch_ms is the same as
+            #   switch_time[switch_ms], which is less than switch_time.
             switch_time[moving] += switch_ms*(1-self.shared_props['r_ms']*
                                               np.log(1-rand_numbers[moving]))
 
-        # Gather switch times and angles for searching agents -> ballistic motion
+        #
+        # Gather switch times and angles for searching agents and transition
+        # them to moving agents
+        #
         if any(searching):
             # test random number against CDF of exp dist to see if a switch occurs
             switch_sm = 1-np.exp(-self.shared_props['r_sm']*dt) > rand_numbers[searching]
@@ -90,6 +110,7 @@ class imsearch(planktos.swarm):
             # Assign a new random angle to all ballistic motion.
             newangle_agents = searching.copy()
             newangle_agents[searching] = switch_sm # bool of searching AND switching
+            # The new angle is uniform random in [0,2pi]
             self.props.loc[newangle_agents,'b_angle'] = \
                 2*np.pi*self.rndState.random(np.sum(switch_sm))
             
