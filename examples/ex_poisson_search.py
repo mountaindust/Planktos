@@ -31,7 +31,10 @@ class imsearch(planktos.swarm):
         self.shared_props['r_ms'] = 0.25
 
         # Speed during ballistic motion
-        self.shared_props['s'] = 0.1
+        self.shared_props['s'] = 2
+
+        # Set covariance matrix for diffusion
+        self.shared_props['cov'] *= 0.01 # identity times 0.01
 
         #   We need a property for the angle of ballistic motion. Note: 'angle' 
         #   is a special property that interacts with plotting. We don't want 
@@ -48,14 +51,15 @@ class imsearch(planktos.swarm):
         in_target = self.test_for_target(self.positions)
         self.props.loc[in_target, 'found'] = True
 
-        # Get the first two colors in the default colormap
+        # Get the first three colors in the default colormap
         prop_cycle = plt.rcParams['axes.prop_cycle']
         colors = prop_cycle.by_key()['color']
-        self.not_found_color = colors[0]
+        self.searching_color = colors[0]
         self.found_color = colors[1]
+        self.moving_color = colors[2]
 
         # Set agent colors accordingly
-        self.props['color'] = np.full(self.N, self.not_found_color)
+        self.props['color'] = np.full(self.N, self.searching_color)
         self.props.loc[in_target, 'color'] = self.found_color
 
     @staticmethod
@@ -89,7 +93,7 @@ class imsearch(planktos.swarm):
         # Gather switch times for any ballistic motion agents and transition 
         # them to searching agents.
         #
-        if np.any(moving):
+        if any(moving):
             # test random number against CDF of exp dist to see if a switch occurs
             switch_ms = 1-np.exp(-self.shared_props['r_ms']*dt) > rand_numbers[moving]
             # invert CDF to get switch time. switch_ms is a bool, which will 
@@ -124,67 +128,78 @@ class imsearch(planktos.swarm):
 
         ### Those who were moving throughout ###
         full_move = np.logical_and(moving,switch_time == -1)
-        new_positions[full_move] += self.shared_props['s']*dt*np.array(
-            np.cos(self.props.loc[full_move,'b_angle']),
-            np.sin(self.props.loc[full_move,'b_angle'])) + \
-            dt*self.get_fluid_drift(positions=new_positions[full_move])
+        if any(full_move):
+            new_positions[full_move] += self.shared_props['s']*dt*np.array([
+                np.cos(self.props.loc[full_move,'b_angle']),
+                np.sin(self.props.loc[full_move,'b_angle'])]).T + \
+                dt*self.get_fluid_drift(positions=new_positions[full_move])
         
         ### Those who were moving and then started searching ###
         first_move = np.logical_and(moving,switch_time != -1)
-        # First, move to location where state change happened
-        new_positions[first_move] += \
-            self.shared_props['s']*dt*switch_time[first_move]*np.array(
-            np.cos(self.props.loc[first_move,'b_angle']),
-            np.sin(self.props.loc[first_move,'b_angle'])) + \
-            dt*(1-switch_time[first_move])*\
-            self.get_fluid_drift(positions=new_positions[first_move])
-        # The agent is now searching. Is the target there?
-        found_target[first_move] = self.test_for_target(new_positions[first_move])
-        # If the target is found, no more movement. Remove these.
-        first_move = np.logical_and(first_move,~found_target)
-        # Assuming the target was not found, diffuse for the rest of the time period
-        new_positions[first_move] = planktos.motion.Euler_brownian_motion(
-            self, dt*(1-switch_time[first_move]), new_positions[first_move])
-        # Is the target there?
-        found_target[first_move] = self.test_for_target(new_positions[first_move])
+        if any(first_move):
+            # First, move to location where state change happened
+            start_time = np.column_stack([switch_time[first_move] for ii in range(2)])
+            new_positions[first_move] += \
+                self.shared_props['s']*dt*start_time*np.array([
+                np.cos(self.props.loc[first_move,'b_angle']),
+                np.sin(self.props.loc[first_move,'b_angle'])]).T + \
+                dt*start_time*self.get_fluid_drift(positions=new_positions[first_move])
+            # The agent is now searching. Is the target there?
+            found_target[first_move] = self.test_for_target(new_positions[first_move])
+            # If the target is found, no more movement. Remove these.
+            first_move = np.logical_and(first_move,~found_target)
+            # Assuming the target was not found, diffuse for the rest of the 
+            #   time period (different for each agent)
+            first_move_idx = first_move.nonzero()[0]
+            for n in first_move_idx:
+                new_positions[n] = planktos.motion.Euler_brownian_motion(
+                    self, dt*(1-switch_time[n]), new_positions[n])
+            # Is the target there?
+            found_target[first_move] = self.test_for_target(new_positions[first_move])
         
             
         ### Those who were searching and then started moving ###
         last_move = np.logical_and(searching,switch_time != -1)
-        # Diffuse
-        new_positions[last_move] = planktos.motion.Euler_brownian_motion(
-            self, dt*(1-switch_time[last_move]), new_positions[last_move])
-        # Is the target there?
-        found_target[last_move] = self.test_for_target(new_positions[last_move])
-        # If the target is found, no more movement. Remove these.
-        last_move = np.logical_and(last_move,~found_target)
-        # Ballistic motion for the rest of the time step using prev determined angle
-        new_positions[last_move] += \
-            self.shared_props['s']*dt*(1-switch_time[last_move])*np.array(
-            np.cos(self.props.loc[last_move,'b_angle']),
-            np.sin(self.props.loc[last_move,'b_angle'])) + \
-            dt*(1-switch_time[last_move])*\
-            self.get_fluid_drift(positions=new_positions[last_move])
+        if any(last_move):
+            # Diffuse
+            last_move_idx = last_move.nonzero()[0]
+            for n in last_move_idx:
+                new_positions[n] = planktos.motion.Euler_brownian_motion(
+                    self, dt*switch_time[n], new_positions[n])
+            # Is the target there?
+            found_target[last_move] = self.test_for_target(new_positions[last_move])
+            # If the target is found, no more movement. Remove these.
+            last_move = np.logical_and(last_move,~found_target)
+            # Ballistic motion for the rest of the time step using prev determined angle
+            time_left = np.column_stack([(1-switch_time[last_move]) for ii in range(2)])
+            new_positions[last_move] += \
+                self.shared_props['s']*dt*time_left*np.array([
+                np.cos(self.props.loc[last_move,'b_angle']),
+                np.sin(self.props.loc[last_move,'b_angle'])]).T + \
+                dt*time_left*self.get_fluid_drift(positions=new_positions[last_move])
         
         ### Those who are searching only ###
         full_search = np.logical_and(searching,switch_time == -1)
-        # Diffuse
-        new_positions[full_search] = planktos.motion.Euler_brownian_motion(
-            self, dt, new_positions[full_search])
-        # Is the target there?
-        found_target[full_search] = self.test_for_target(new_positions[full_search])
+        if any(full_search):
+            # Diffuse
+            new_positions[full_search] = planktos.motion.Euler_brownian_motion(
+                self, dt, new_positions[full_search])
+            # Is the target there?
+            found_target[full_search] = self.test_for_target(new_positions[full_search])
 
         #
         # Update states and search results and return positions
         #
 
         # Record all changes moving -> searching as searching
-        self.props[np.logical_and(moving,switch_time != -1),'searching'] = True
+        self.props.loc[np.logical_and(moving,switch_time != -1),'searching'] = True
         # Record changes searching -> moving only if target was not found first
-        self.props[last_move,'searching'] = False
+        self.props.loc[last_move,'searching'] = False
         # Record new "found target" state and update colors
         self.props['found'] = found_target
         self.props.loc[found_target, 'color'] = self.found_color
+        self.props.loc[last_move, 'color'] = self.moving_color
+        self.props.loc[first_move, 'color'] = self.searching_color
         # Return new agent positions
         return new_positions
 
@@ -193,7 +208,7 @@ class imsearch(planktos.swarm):
 # To keep this relatively simple, we will use an environment without background 
 #   flow.
 
-envir = planktos.environment()
+envir = planktos.environment(x_bndry='periodic', y_bndry='periodic')
 swrm = imsearch(envir=envir, seed=2, store_prop_history=True)
 
 # Create a function that, given an axes object, will plot this target so that we 
@@ -210,6 +225,7 @@ swrm.plot()
 
 dt = 0.1
 
-for ii in range(5):
+for ii in range(100):
     swrm.move(dt)
-    swrm.plot()
+
+swrm.plot_all()
