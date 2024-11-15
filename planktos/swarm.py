@@ -1178,7 +1178,7 @@ class swarm:
 
         # Interpolate fluid flow
         if self.envir.flow is None:
-            return np.zeros(self.positions.shape)
+            return np.zeros(positions.shape)
         else:
             if time is None:
                 return self.envir.interpolate_flow(positions, method='linear')
