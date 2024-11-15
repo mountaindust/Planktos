@@ -11,25 +11,9 @@ of bits and pieces that can be pulled out and used in your own project!
 import numpy as np
 import planktos
 
-# To keep this relatively simple, we will use an environment without background 
-#   flow.
-
-envir = planktos.environment()
-swrm = planktos.swarm(envir=envir, seed=1, store_prop_history=True)
-
 # We will assume that the target is in the middle of the domain with radius 0.5
 target_rad = 0.5
 target_center = np.array((5,5))
-
-# Create a function that, given an axes object, will plot this target so that we 
-#   can visualize it. This does not count as an immersed boundary, even though 
-#   we will eventually pass it to the environment object to plot it for us.
-def plot_target(ax, args):
-    theta = np.linspace(0,2*np.pi,200)
-    ax.plot(5+0.5*np.cos(theta),5+0.5*np.sin(theta), 'k', alpha=0.5)
-
-envir.plot_structs.append(plot_target)
-envir.plot_structs_args.append(None)
 
 # Subclass swarm to create our behavior
 class imsearch(planktos.swarm):
@@ -121,36 +105,92 @@ class imsearch(planktos.swarm):
                 2*np.pi*self.rndState.random(np.sum(switch_sm))
             
         #
-        # Find updated positions and return them while testing to see if the 
-        # target is found
+        # Find updated positions while testing to see if the target is found
         #
         found_target = self.props['found'].to_numpy(copy=True)
         new_positions = self.positions.copy()
 
         ### Those who were moving throughout ###
         full_move = np.logical_and(moving,switch_time == -1)
-        new_positions[full_move] += self.shared_props['s']*np.array(
+        new_positions[full_move] += self.shared_props['s']*dt*np.array(
             np.cos(self.props.loc[full_move,'b_angle']),
             np.sin(self.props.loc[full_move,'b_angle'])) + \
-            self.get_fluid_drift(positions=new_positions[full_move])
+            dt*self.get_fluid_drift(positions=new_positions[full_move])
         
         ### Those who were moving and then started searching ###
         first_move = np.logical_and(moving,switch_time != -1)
         # First, move to location where state change happened
-        new_positions[first_move] += self.shared_props['s']*switch_time*np.array(
+        new_positions[first_move] += \
+            self.shared_props['s']*dt*switch_time[first_move]*np.array(
             np.cos(self.props.loc[first_move,'b_angle']),
             np.sin(self.props.loc[first_move,'b_angle'])) + \
+            dt*(1-switch_time[first_move])*\
             self.get_fluid_drift(positions=new_positions[first_move])
         # The agent is now searching. Is the target there?
-        in_target = self.test_for_target(new_positions[first_move])
-        found_target[first_move] = in_target
-        # If the target is found, no more movement
+        found_target[first_move] = self.test_for_target(new_positions[first_move])
+        # If the target is found, no more movement. Remove these.
         first_move = np.logical_and(first_move,~found_target)
         # Assuming the target was not found, diffuse for the rest of the time period
-        # TODO
+        new_positions[first_move] = planktos.motion.Euler_brownian_motion(
+            self, dt*(1-switch_time[first_move]), new_positions[first_move])
         # Is the target there?
-        # TODO
+        found_target[first_move] = self.test_for_target(new_positions[first_move])
+        
             
         ### Those who were searching and then started moving ###
         last_move = np.logical_and(searching,switch_time != -1)
+        # Diffuse
+        new_positions[last_move] = planktos.motion.Euler_brownian_motion(
+            self, dt*(1-switch_time[last_move]), new_positions[last_move])
+        # Is the target there?
+        found_target[last_move] = self.test_for_target(new_positions[last_move])
+        # If the target is found, no more movement. Remove these.
+        last_move = np.logical_and(last_move,~found_target)
+        # Ballistic motion for the rest of the time step using prev determined angle
+        new_positions[last_move] += \
+            self.shared_props['s']*dt*(1-switch_time[last_move])*np.array(
+            np.cos(self.props.loc[last_move,'b_angle']),
+            np.sin(self.props.loc[last_move,'b_angle'])) + \
+            dt*(1-switch_time[last_move])*\
+            self.get_fluid_drift(positions=new_positions[last_move])
+        
+        ### Those who are searching only ###
+        full_search = np.logical_and(searching,switch_time == -1)
+        # Diffuse
+        new_positions[full_search] = planktos.motion.Euler_brownian_motion(
+            self, dt, new_positions[full_search])
+        # Is the target there?
+        found_target[full_search] = self.test_for_target(new_positions[full_search])
 
+        #
+        # Update states and search results and return positions
+        #
+
+        # Record all changes moving -> searching as searching
+        self.props[np.logical_and(moving,switch_time != -1),'searching'] = True
+        # Record changes searching -> moving only if target was not found first
+        self.props[last_move,'searching'] = False
+        # Record new "found target" state
+        self.props['found'] = found_target
+        # Return new agent positions
+        return new_positions
+
+######################################################
+
+# To keep this relatively simple, we will use an environment without background 
+#   flow.
+
+envir = planktos.environment()
+swrm = imsearch(envir=envir, seed=1, store_prop_history=True)
+
+# Create a function that, given an axes object, will plot this target so that we 
+#   can visualize it. This does not count as an immersed boundary, even though 
+#   we will eventually pass it to the environment object to plot it for us.
+def plot_target(ax, args):
+    theta = np.linspace(0,2*np.pi,200)
+    ax.plot(5+0.5*np.cos(theta),5+0.5*np.sin(theta), 'k', alpha=0.5)
+
+envir.plot_structs.append(plot_target)
+envir.plot_structs_args.append(None)
+
+envir.plot_envir()

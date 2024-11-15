@@ -3679,7 +3679,10 @@ class environment:
             # plot any ghost structures
             for plot_func, args in zip(self.plot_structs, 
                                        self.plot_structs_args):
-                plot_func(ax, *args)
+                if args is None:
+                    plot_func(ax, args)
+                else:
+                    plot_func(ax, *args)
 
             # plot ibmesh
             if self.ibmesh is not None:
