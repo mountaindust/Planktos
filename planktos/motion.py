@@ -260,6 +260,9 @@ def Euler_brownian_motion(swarm, dt, positions=None, velocities=None,
     
     # get critical info about number of agents and dimension of domain
     if positions is not None:
+        if positions.ndim == 1:
+            # one agent case
+            positions = np.array([positions,])
         n_agents = positions.shape[0]
         n_dim = positions.shape[1]
     else:
