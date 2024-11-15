@@ -9,6 +9,7 @@ of bits and pieces that can be pulled out and used in your own project!
 '''
 
 import numpy as np
+import matplotlib.pyplot as plt
 import planktos
 
 # We will assume that the target is in the middle of the domain with radius 0.5
@@ -43,8 +44,19 @@ class imsearch(planktos.swarm):
         self.props['found'] = np.full(self.N, False)
 
         # If the agent starts within the target area, it finds it immediately
+        #   because they all start out searching
         in_target = self.test_for_target(self.positions)
         self.props.loc[in_target, 'found'] = True
+
+        # Get the first two colors in the default colormap
+        prop_cycle = plt.rcParams['axes.prop_cycle']
+        colors = prop_cycle.by_key()['color']
+        self.not_found_color = colors[0]
+        self.found_color = colors[1]
+
+        # Set agent colors accordingly
+        self.props['color'] = np.full(self.N, self.not_found_color)
+        self.props.loc[in_target, 'color'] = self.found_color
 
     @staticmethod
     def test_for_target(positions):
@@ -170,8 +182,9 @@ class imsearch(planktos.swarm):
         self.props[np.logical_and(moving,switch_time != -1),'searching'] = True
         # Record changes searching -> moving only if target was not found first
         self.props[last_move,'searching'] = False
-        # Record new "found target" state
+        # Record new "found target" state and update colors
         self.props['found'] = found_target
+        self.props.loc[found_target, 'color'] = self.found_color
         # Return new agent positions
         return new_positions
 
@@ -181,7 +194,7 @@ class imsearch(planktos.swarm):
 #   flow.
 
 envir = planktos.environment()
-swrm = imsearch(envir=envir, seed=1, store_prop_history=True)
+swrm = imsearch(envir=envir, seed=2, store_prop_history=True)
 
 # Create a function that, given an axes object, will plot this target so that we 
 #   can visualize it. This does not count as an immersed boundary, even though 
@@ -193,4 +206,10 @@ def plot_target(ax, args):
 envir.plot_structs.append(plot_target)
 envir.plot_structs_args.append(None)
 
-envir.plot_envir()
+swrm.plot()
+
+dt = 0.1
+
+for ii in range(5):
+    swrm.move(dt)
+    swrm.plot()
