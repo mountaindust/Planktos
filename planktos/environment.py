@@ -195,8 +195,10 @@ class environment:
     FTLE_smallest : ndarray
         FTLE field calculated using the smallest eigenvalue. take the negative 
         of this to get backward-time information
-    FTLE_loc : ndarray
+    FTLE_loc : Nx2 masked ndarray
         spatial points on which the FTLE mesh was calculated
+    FTLE_loc_end : Nx2 masked ndarray
+        final locations for each of the FTLE mesh points
     FTLE_t0 : float
         start-time for the FTLE calculation
     FTLE_T : float
@@ -368,6 +370,7 @@ class environment:
         self.FTLE_largest = None
         self.FTLE_smallest = None # take negative to get backward-time picture
         self.FTLE_loc = None
+        self.FTLE_loc_end = None
         self.FTLE_t0 = None
         self.FTLE_T = None
         self.FTLE_grid_dim = None
@@ -2881,6 +2884,14 @@ class environment:
         as specified by a swarm object's get_positions method and updated in 
         discrete time intervals of length dt.
 
+        This method will set the following environment attributes:
+        - environment.FTLE_largest
+        - environment.FTLE_smallest
+        - environment.FTLE_loc
+        - environment.FTLE_t0
+        - environment.FTLE_T
+        - environment.FTLE_grid_dim
+
         All FTLE calculations will be done using a swarm object. This means that:
         
         1) The boundary conditions specified by this environment will be respected.
@@ -2917,7 +2928,8 @@ class environment:
             the flow field was specified at (self.flow_times) 
             for time varying flows?
         T : float, default=0.1
-            integration time. Default is 1, but longer is better (up to a point).
+            integration time. Default is 1, but longer is better (up to a point),
+            unless smallest FTLE is desired and agents are leaving the domain...
         dt : float, default=0.001
             if solving ode or tracer particles, this is the time step for 
             checking boundary conditions. If passing in a swarm object, 
@@ -3049,8 +3061,10 @@ class environment:
                           current_time, dt))
                     raise
 
-                # Put current position in the history (maybe only do this if something exits??)
-                s.pos_history.append(s.positions.copy())
+                # Save current position to put in the history
+                old_positions = s.positions.copy()
+                old_velocities = s.velocities.copy()
+
                 # pull solution into swarm object's position/velocity attributes
                 if ode_gen is None:
                     s.positions[~ma.getmaskarray(s.positions[:,0]),:] = y_new
@@ -3058,6 +3072,10 @@ class environment:
                     N = round(y_new.shape[0]/2)
                     s.positions[~ma.getmaskarray(s.positions[:,0]),:] = y_new[:N,:]
                     s.velocities[~s.velocities[:,0].mask,:] = y_new[N:,:]
+
+                # Update history
+                s.pos_history.append(old_positions)
+                s.vel_history.append(old_velocities)
                 # apply boundary conditions
                 old_mask = s.positions.mask.copy()
                 s.apply_boundary_conditions(dt)
@@ -3102,16 +3120,27 @@ class environment:
             self.time_history = []
 
             while self.time < T:
-                # Put current position in the history
-                s.pos_history.append(s.positions.copy())
+                # Save current position to put in the history
+                old_positions = s.positions.copy()
+                old_velocities = s.velocities.copy()
+                # Conditionally save props to put in the history too
+                if s.props_history is not None:
+                    old_props = s.props.copy()
+                
                 # Update positions
                 s.positions[:,:] = s.get_positions(dt, params)
+
+                # Update history
+                s.pos_history.append(old_positions)
+                s.vel_history.append(old_velocities)
+                if self.props_history is not None:
+                    s.props_history.append(old_props)
+
                 # Update velocity and acceleration
-                velocity = (s.positions - s.pos_history[-1])/dt
-                s.accelerations[:,:] = (velocity - s.velocities)/dt
-                s.velocities[:,:] = velocity
+                s.velocities[:,:] = (s.positions - old_positions)/dt
+                s.accelerations[:,:] = (s.velocities - old_velocities)/dt
                 # Apply boundary conditions.
-                s.apply_boundary_conditions()
+                s.apply_boundary_conditions(dt)
                 # Update time
                 self.time_history.append(self.time)
                 self.time += dt
@@ -3281,6 +3310,7 @@ class environment:
         self.FTLE_largest = FTLE_largest
         self.FTLE_smallest = FTLE_smallest
         self.FTLE_loc = s.pos_history[0]
+        self.FTLE_loc_end = s.positions
         self.FTLE_t0 = t0
         self.FTLE_T = T
         self.FTLE_grid_dim = grid_dim
@@ -4122,14 +4152,27 @@ class environment:
         #     norm = colors.Normalize(clip_l,clip_h,clip=True)
         # else:
         #     norm = None
-        grid_x = np.reshape(self.FTLE_loc[:,0].data, self.FTLE_grid_dim)
-        grid_y = np.reshape(self.FTLE_loc[:,1].data, self.FTLE_grid_dim)
-        pcm = ax.pcolormesh(grid_x, grid_y, FTLE, shading='gouraud', 
-                            cmap='plasma')
+        
+
         if smallest:
-            plt.title('Negative smallest fwrd-time FTLE field, $t_0$={}, $\Delta t$={}.'.format(
-                    self.FTLE_t0, self.FTLE_T))
+            grid_x, grid_y = np.mgrid[0:self.L[0]:self.FTLE_grid_dim[0]*1j,
+                                      0:self.L[1]:self.FTLE_grid_dim[1]*1j]
+            valid_points_x = self.FTLE_loc_end[~self.FTLE_loc_end[:,0].mask,0]
+            valid_points_y = self.FTLE_loc_end[~self.FTLE_loc_end[:,1].mask,1]
+            valid_vals = FTLE.flatten()[~self.FTLE_loc_end[:,0].mask]
+            grid_sFTLE = interpolate.griddata((valid_points_x,valid_points_y),
+                                              valid_vals, (grid_x,grid_y),
+                                              method='cubic')
+            pcm = ax.imshow(grid_sFTLE.T, extent=(0,self.L[0],0,self.L[1]), origin='lower')
+            plt.title('Negative smallest fwrd-time FTLE field, $t_0$={}, $\Delta t$={}.\n'.format(
+                    self.FTLE_t0, self.FTLE_T)+
+                    'Interpolated from {} out of {} starting points left in domain.'.format(
+                        np.sum(~self.FTLE_loc_end[:,0].mask),self.FTLE_loc_end.shape[0]))
         else:
+            grid_x = np.reshape(self.FTLE_loc[:,0].data, self.FTLE_grid_dim)
+            grid_y = np.reshape(self.FTLE_loc[:,1].data, self.FTLE_grid_dim)
+            pcm = ax.pcolormesh(grid_x, grid_y, FTLE, shading='gouraud', 
+                                cmap='plasma')
             plt.title('Largest fwrd-time FTLE field, $t_0$={}, $\Delta t$={}.'.format(
                     self.FTLE_t0, self.FTLE_T))
         axbbox = ax.get_position().get_points()
