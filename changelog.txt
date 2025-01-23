@@ -1,4 +1,4 @@
-0.7.0 Sabbatical branch
+0.7.0
 -----------------------
 Coloring for individual agents
 Agents can now be individually colored by setting a property. They can also be named. This is documented in the swarm constructor.
