@@ -1,0 +1,23 @@
+0.7.0 Sabbatical branch
+-----------------------
+Coloring for individual agents
+Agents can now be individually colored by setting a property. They can also be named. This is documented in the swarm constructor.
+
+Plotting of agent headings
+The direction individual agents are facing/moving can now be plotted in 2D. This is turned on by default. The heading is drawn from the agent's current velocity unless individual heading angles are a specified as an agent property.
+
+Property history
+Agent property history can now be optionally saved. This is necessary for plotting agents that change color over time (e.g., highlighting certain agents that fulfill a given condition) and other situations.
+
+New method after_move
+This method is called after agents finish moving. It can used to act on their final positions and velocities which was formerly not possible because interactions with immersed boundaries would come after the user defined behavior.
+
+Euler_brownian_motion is now robust to arbitrary starting positions/velocities, not just the current state of all agents together.
+
+define_pic_grid
+This new method of the environment class implements a particle-in-cell method for agents interacting with neighbors. It can be utilized to make user-defined behavior more efficient.
+
+ex_poisson_search.py
+New example demonstrating how to handle arbitrary switching times in Planktos and demonstrating a basic intermittent search strategy.
+
+Bug fixes.

@@ -3060,7 +3060,7 @@ class environment:
                     s.velocities[~s.velocities[:,0].mask,:] = y_new[N:,:]
                 # apply boundary conditions
                 old_mask = s.positions.mask.copy()
-                s.apply_boundary_conditions()
+                s.apply_boundary_conditions(dt)
                 # copy time to non-masked locations
                 last_time[~ma.getmaskarray(s.positions[:,0])] = new_time
                 
