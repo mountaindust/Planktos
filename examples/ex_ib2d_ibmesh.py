@@ -107,7 +107,8 @@ for ii in range(50):
 # Also, since this fluid velocity field is non-trivial, let's plot the vorticity
 #   behind the agents to better see what is going on! Just set the fluid 
 #   parameter of the function (this only works in 2D).
-swrm.plot_all(movie_filename='channel_flow_ibmesh.mp4', fps=3, fluid='vort')
+swrm.plot_all(movie_filename='channel_flow_ibmesh.mp4', fps=3, fluid='vort',
+              plot_heading=False)
 
 # Creating movies is another bottleneck in Planktos. Every frame has to be 
 #   generated individually and then saved, and the fluid vorticity is 

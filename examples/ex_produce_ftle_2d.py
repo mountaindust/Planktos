@@ -38,11 +38,11 @@ envir.read_IB2d_fluid_data('ib2d_data', 5.0e-5, 1000)
 #   temporal step-size to take. See the documentation of the method for full 
 #   details.
 
-# If you have the vertex data loaded, you can omit grid points that would fall 
-#   inside closed structures like our cylinder by choosing a test direction for
-#   seeing if points are inside a structure. See the documentation of the 
-#   calculate_FTLE method for details. If you want to see how this works, 
-#   uncomment the following two lines:
+# If you have the vertex data loaded (LINE 30 ABOVE), you can omit grid points 
+#   that would fall inside closed structures like our cylinder by choosing a 
+#   test direction for seeing if points are inside a structure. See the 
+#   documentation of the calculate_FTLE method for details. If you want to see 
+#   how this works, uncomment the following two lines:
 # s = envir.add_swarm(900, init='grid', grid_dim=(30,30), testdir='x1')
 # s.plot()
 

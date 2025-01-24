@@ -197,8 +197,10 @@ class environment:
     FTLE_smallest : ndarray
         FTLE field calculated using the smallest eigenvalue. take the negative 
         of this to get backward-time information
-    FTLE_loc : ndarray
+    FTLE_loc : Nx2 masked ndarray
         spatial points on which the FTLE mesh was calculated
+    FTLE_loc_end : Nx2 masked ndarray
+        final locations for each of the FTLE mesh points
     FTLE_t0 : float
         start-time for the FTLE calculation
     FTLE_T : float
@@ -369,6 +371,7 @@ class environment:
         self.FTLE_largest = None
         self.FTLE_smallest = None # take negative to get backward-time picture
         self.FTLE_loc = None
+        self.FTLE_loc_end = None
         self.FTLE_t0 = None
         self.FTLE_T = None
         self.FTLE_grid_dim = None
@@ -2866,6 +2869,254 @@ class environment:
 
 
 
+    def define_pic_grid(self, positions, dx, dy, dz=None, return_neighbors=True):
+        '''Creates a grid across the domain with cells of size dx by dy for use 
+        in a particle-in-cell method. dx and dy should divide the domain evenly 
+        in their respective directions and represent the furthest away one needs 
+        to look from any individual agent in order to get all neighbor 
+        interactions (e.g., a characteristic distance).
+
+        Returns a dictionary of cells in which keys are (i,j) tuples indexing 
+        the cells starting at zero from the origin, and the values they point to 
+        are lists of agent indices whose positions are within that cell.
+
+        If return_neighbors is True, will also return a dictionary of cell 
+        indices in which the values are of agents located either within that 
+        cell OR in a neighboring cell. Neighbor cells are the 8 cells vertically 
+        or horizontally adjacent or diagonally adjacent (in 2D). Adjacency on the 
+        boundaries of the domain depends upon the environment boundary condition: 
+        zero or no-flux will treat the edge of the environment as a hard 
+        boundary while periodic will wrap around to find neighboring cells.
+
+        Parameters
+        ----------
+        positions : Nx2 or Nx3 ndarray
+            ndarray of agent positions (e.g., swarm.positions)
+        dx : float
+            length of grid cell in the x-direction
+        dy : float
+            length of grid cell in the y-direction
+        dz : float, optional
+            length of grid cell in the z-direction
+        return_neighbors : bool, default=True
+            if True, return both a dictionary a dictionary of cells -> agent 
+            indices located inside cell AND a dictionary of cells -> agent 
+            indices in both cell and neighboring cells
+
+        Returns
+        -------
+        cells dictionary, or tuple of two dictonaries (cells, neighbors)
+        '''
+
+        if dz is not None:
+            DIM3 = True
+        else:
+            DIM3 = False
+
+        Nx = round(self.L[0]/dx)
+        Ny = round(self.L[1]/dy)
+        if DIM3: Nz = round(self.L[2]/dz)
+
+        assert np.isclose(Nx*dx,self.L[0]), "dx does not divide domain evenly."
+        assert np.isclose(Ny*dy,self.L[1]), "dy does not divide domain evenly."
+        if DIM3:
+            assert np.isclose(Nz*dz,self.L[2]), "dz does not divide domain evenly."
+
+        # Nx2 array of agent position indices
+        if DIM3:
+            pos_ind = (positions//np.array([dx,dy,dz])).astype(int)
+        else:
+            pos_ind = (positions//np.array([dx,dy])).astype(int)
+
+        # Form a dictionary of cells
+        cells = {}
+        for ii in range(positions.shape[0]):
+            if tuple(pos_ind[ii,:]) in cells:
+                cells[tuple(pos_ind[ii,:])].append(ii)
+            else:
+                cells[tuple(pos_ind[ii,:])] = [ii]
+
+        if return_neighbors:
+            # Form a dictionary of all agents in the cell OR neighbors
+            neigh = {}
+            if not DIM3:
+                for x in range(Nx):
+                    for y in range(Ny):
+                        if (x,y) in cells:
+                            nearby_agents = []
+                            # get list of adjacent cells depending on BC
+                            idx_list = []
+                            # x-1 column
+                            if x-1<0 and self.bndry[0][0] == 'periodic':
+                                if y-1<0 and self.bndry[1][0] == 'periodic':
+                                    idx_list.append((Nx-1,Ny-1))
+                                elif y-1>=0:
+                                    idx_list.append((Nx-1,y-1))
+                                idx_list.append((Nx-1,y))
+                                if y+1==Ny and self.bndry[1][1] == 'periodic':
+                                    idx_list.append((Nx-1,0))
+                                elif y+1!=Ny:
+                                    idx_list.append((Nx-1,y+1))
+                            elif x-1>=0:
+                                if y-1<0 and self.bndry[1][0] == 'periodic':
+                                    idx_list.append((x-1,Ny-1))
+                                elif y-1>=0:
+                                    idx_list.append((x-1,y-1))
+                                idx_list.append((x-1,y))
+                                if y+1==Ny and self.bndry[1][1] == 'periodic':
+                                    idx_list.append((x-1,0))
+                                elif y+1!=Ny:
+                                    idx_list.append((x-1,y+1))
+                            # x column
+                            if y-1<0 and self.bndry[1][0] == 'periodic':
+                                idx_list.append((x,Ny-1))
+                            elif y-1>=0:
+                                idx_list.append((x,y-1))
+                            idx_list.append((x,y))
+                            if y+1==Ny and self.bndry[1][1] == 'periodic':
+                                idx_list.append((x,0))
+                            elif y+1!=Ny:
+                                idx_list.append((x,y+1))
+                            # x+1 column
+                            if x+1==Nx and self.bndry[0][1] == 'periodic':
+                                if y-1<0 and self.bndry[1][0] == 'periodic':
+                                    idx_list.append((0,Ny-1))
+                                elif y-1>=0:
+                                    idx_list.append((0,y-1))
+                                idx_list.append((0,y))
+                                if y+1==Ny and self.bndry[1][1] == 'periodic':
+                                    idx_list.append((0,0))
+                                elif y+1!=Ny:
+                                    idx_list.append((0,y+1))
+                            elif x+1!=Nx:
+                                if y-1<0 and self.bndry[1][0] == 'periodic':
+                                    idx_list.append((x+1,Ny-1))
+                                elif y-1>=0:
+                                    idx_list.append((x+1,y-1))
+                                idx_list.append((x+1,y))
+                                if y+1==Ny and self.bndry[1][1] == 'periodic':
+                                    idx_list.append((x+1,0))
+                                elif y+1!=Ny:
+                                    idx_list.append((x+1,y+1))
+
+                            for idx in idx_list:
+                                if idx in cells:
+                                    nearby_agents += cells[idx]
+                            neigh[(x,y)] = nearby_agents
+            # 3D
+            else:
+                if self.bndry[0][0] == 'periodic':
+                    x_list = [Nx-1]; xstrt = 1
+                else:
+                    x_list = []; xstrt = 0
+                x_list += list(range(Nx))
+                if self.bndry[0][1] == 'periodic':
+                    x_list.append(0); xend = len(x_list)-1
+                else:
+                    xend = len(x_list)
+
+                if self.bndry[1][0] == 'periodic':
+                    y_list = [Ny-1]; ystrt = 1
+                else:
+                    y_list = []; ystrt = 0
+                y_list += list(range(Ny))
+                if self.bndry[1][1] == 'periodic':
+                    y_list.append(0); yend = len(y_list)-1
+                else:
+                    yend = len(y_list)
+
+                if self.bndry[2][0] == 'periodic':
+                    z_list = [Nz-1]; zstrt = 1
+                else:
+                    z_list = []; zstrt = 0
+                z_list += list(range(Nz))
+                if self.bndry[2][1] == 'periodic':
+                    z_list.append(0); zend = len(z_list)-1
+                else:
+                    zend = len(z_list)
+
+                for xid in range(xstrt,xend):
+                    for yid in range(ystrt,yend):
+                        for zid in range(zstrt,zend):
+                            if (x_list[xid],y_list[yid],z_list[zid]) in cells:
+                                nearby_agents = []
+                                # get list of adjacent cells depending on BC
+                                idx_list = []
+                                # x-1
+                                if xid-1>=0:
+                                    if yid-1>=0:
+                                        if zid-1>=0:
+                                            idx_list.append((x_list[xid-1],y_list[yid-1],z_list[zid-1]))
+                                        idx_list.append((x_list[xid-1],y_list[yid-1],z_list[zid]))
+                                        if zid+1<len(z_list):
+                                            idx_list.append((x_list[xid-1],y_list[yid-1],z_list[zid+1]))
+                                    
+                                    if zid-1>=0:
+                                        idx_list.append((x_list[xid-1],y_list[yid],z_list[zid-1]))
+                                    idx_list.append((x_list[xid-1],y_list[yid],z_list[zid]))
+                                    if zid+1<len(z_list):
+                                        idx_list.append((x_list[xid-1],y_list[yid],z_list[zid+1]))
+
+                                    if yid+1<len(y_list):
+                                        if zid-1>=0:
+                                            idx_list.append((x_list[xid-1],y_list[yid+1],z_list[zid-1]))
+                                        idx_list.append((x_list[xid-1],y_list[yid+1],z_list[zid]))
+                                        if zid+1<len(z_list):
+                                            idx_list.append((x_list[xid-1],y_list[yid+1],z_list[zid+1]))
+
+                                # x
+                                if yid-1>=0:
+                                    if zid-1>=0:
+                                        idx_list.append((x_list[xid],y_list[yid-1],z_list[zid-1]))
+                                    idx_list.append((x_list[xid],y_list[yid-1],z_list[zid]))
+                                    if zid+1<len(z_list):
+                                        idx_list.append((x_list[xid],y_list[yid-1],z_list[zid+1]))
+                                
+                                if zid-1>=0:
+                                    idx_list.append((x_list[xid],y_list[yid],z_list[zid-1]))
+                                idx_list.append((x_list[xid],y_list[yid],z_list[zid]))
+                                if zid+1<len(z_list):
+                                    idx_list.append((x_list[xid],y_list[yid],z_list[zid+1]))
+
+                                if yid+1<len(y_list):
+                                    if zid-1>=0:
+                                        idx_list.append((x_list[xid],y_list[yid+1],z_list[zid-1]))
+                                    idx_list.append((x_list[xid],y_list[yid+1],z_list[zid]))
+                                    if zid+1<len(z_list):
+                                        idx_list.append((x_list[xid],y_list[yid+1],z_list[zid+1]))
+
+                                # x+1
+                                if xid+1<len(x_list):
+                                    if yid-1>=0:
+                                        if zid-1>=0:
+                                            idx_list.append((x_list[xid+1],y_list[yid-1],z_list[zid-1]))
+                                        idx_list.append((x_list[xid+1],y_list[yid-1],z_list[zid]))
+                                        if zid+1<len(z_list):
+                                            idx_list.append((x_list[xid+1],y_list[yid-1],z_list[zid+1]))
+                                    
+                                    if zid-1>=0:
+                                        idx_list.append((x_list[xid+1],y_list[yid],z_list[zid-1]))
+                                    idx_list.append((x_list[xid+1],y_list[yid],z_list[zid]))
+                                    if zid+1<len(z_list):
+                                        idx_list.append((x_list[xid+1],y_list[yid],z_list[zid+1]))
+
+                                    if yid+1<len(y_list):
+                                        if zid-1>=0:
+                                            idx_list.append((x_list[xid+1],y_list[yid+1],z_list[zid-1]))
+                                        idx_list.append((x_list[xid+1],y_list[yid+1],z_list[zid]))
+                                        if zid+1<len(z_list):
+                                            idx_list.append((x_list[xid+1],y_list[yid+1],z_list[zid+1]))
+
+                                for idx in idx_list:
+                                    if idx in cells:
+                                        nearby_agents += cells[idx]
+                                neigh[(x_list[xid],y_list[yid],z_list[zid])] = nearby_agents
+
+            return cells, neigh
+        return cells 
+
+
+
     def calculate_FTLE(self, grid_dim=None, testdir=None, t0=0, T=0.1, dt=0.001, 
                        ode_gen=None, props=None, t_bound=None, swrm=None, 
                        params=None):
@@ -2876,6 +3127,14 @@ class environment:
         deterministic equations of motion, or other arbitrary particle movement 
         as specified by a swarm object's get_positions method and updated in 
         discrete time intervals of length dt.
+
+        This method will set the following environment attributes:
+        - environment.FTLE_largest
+        - environment.FTLE_smallest
+        - environment.FTLE_loc
+        - environment.FTLE_t0
+        - environment.FTLE_T
+        - environment.FTLE_grid_dim
 
         All FTLE calculations will be done using a swarm object. This means that:
         
@@ -2913,7 +3172,8 @@ class environment:
             the flow field was specified at (self.flow_times) 
             for time varying flows?
         T : float, default=0.1
-            integration time. Default is 1, but longer is better (up to a point).
+            integration time. Default is 1, but longer is better (up to a point),
+            unless smallest FTLE is desired and agents are leaving the domain...
         dt : float, default=0.001
             if solving ode or tracer particles, this is the time step for 
             checking boundary conditions. If passing in a swarm object, 
@@ -3045,8 +3305,10 @@ class environment:
                           current_time, dt))
                     raise
 
-                # Put current position in the history (maybe only do this if something exits??)
-                s.pos_history.append(s.positions.copy())
+                # Save current position to put in the history
+                old_positions = s.positions.copy()
+                old_velocities = s.velocities.copy()
+
                 # pull solution into swarm object's position/velocity attributes
                 if ode_gen is None:
                     s.positions[~ma.getmaskarray(s.positions[:,0]),:] = y_new
@@ -3054,9 +3316,13 @@ class environment:
                     N = round(y_new.shape[0]/2)
                     s.positions[~ma.getmaskarray(s.positions[:,0]),:] = y_new[:N,:]
                     s.velocities[~s.velocities[:,0].mask,:] = y_new[N:,:]
+
+                # Update history
+                s.pos_history.append(old_positions)
+                s.vel_history.append(old_velocities)
                 # apply boundary conditions
                 old_mask = s.positions.mask.copy()
-                s.apply_boundary_conditions()
+                s.apply_boundary_conditions(dt)
                 # copy time to non-masked locations
                 last_time[~ma.getmaskarray(s.positions[:,0])] = new_time
                 
@@ -3098,16 +3364,27 @@ class environment:
             self.time_history = []
 
             while self.time < T:
-                # Put current position in the history
-                s.pos_history.append(s.positions.copy())
+                # Save current position to put in the history
+                old_positions = s.positions.copy()
+                old_velocities = s.velocities.copy()
+                # Conditionally save props to put in the history too
+                if s.props_history is not None:
+                    old_props = s.props.copy()
+                
                 # Update positions
                 s.positions[:,:] = s.get_positions(dt, params)
+
+                # Update history
+                s.pos_history.append(old_positions)
+                s.vel_history.append(old_velocities)
+                if self.props_history is not None:
+                    s.props_history.append(old_props)
+
                 # Update velocity and acceleration
-                velocity = (s.positions - s.pos_history[-1])/dt
-                s.accelerations[:,:] = (velocity - s.velocities)/dt
-                s.velocities[:,:] = velocity
+                s.velocities[:,:] = (s.positions - old_positions)/dt
+                s.accelerations[:,:] = (s.velocities - old_velocities)/dt
                 # Apply boundary conditions.
-                s.apply_boundary_conditions()
+                s.apply_boundary_conditions(dt)
                 # Update time
                 self.time_history.append(self.time)
                 self.time += dt
@@ -3277,6 +3554,7 @@ class environment:
         self.FTLE_largest = FTLE_largest
         self.FTLE_smallest = FTLE_smallest
         self.FTLE_loc = s.pos_history[0]
+        self.FTLE_loc_end = s.positions
         self.FTLE_t0 = t0
         self.FTLE_T = T
         self.FTLE_grid_dim = grid_dim
@@ -3684,7 +3962,10 @@ class environment:
             # plot any ghost structures
             for plot_func, args in zip(self.plot_structs, 
                                        self.plot_structs_args):
-                plot_func(ax, *args)
+                if args is None:
+                    plot_func(ax, args)
+                else:
+                    plot_func(ax, *args)
 
             # plot ibmesh
             if self.ibmesh is not None:
@@ -4179,14 +4460,27 @@ class environment:
         #     norm = colors.Normalize(clip_l,clip_h,clip=True)
         # else:
         #     norm = None
-        grid_x = np.reshape(self.FTLE_loc[:,0].data, self.FTLE_grid_dim)
-        grid_y = np.reshape(self.FTLE_loc[:,1].data, self.FTLE_grid_dim)
-        pcm = ax.pcolormesh(grid_x, grid_y, FTLE, shading='gouraud', 
-                            cmap='plasma')
+        
+
         if smallest:
-            plt.title('Negative smallest fwrd-time FTLE field, $t_0$={}, $\Delta t$={}.'.format(
-                    self.FTLE_t0, self.FTLE_T))
+            grid_x, grid_y = np.mgrid[0:self.L[0]:self.FTLE_grid_dim[0]*1j,
+                                      0:self.L[1]:self.FTLE_grid_dim[1]*1j]
+            valid_points_x = self.FTLE_loc_end[~self.FTLE_loc_end[:,0].mask,0]
+            valid_points_y = self.FTLE_loc_end[~self.FTLE_loc_end[:,1].mask,1]
+            valid_vals = FTLE.flatten()[~self.FTLE_loc_end[:,0].mask]
+            grid_sFTLE = interpolate.griddata((valid_points_x,valid_points_y),
+                                              valid_vals, (grid_x,grid_y),
+                                              method='cubic')
+            pcm = ax.imshow(grid_sFTLE.T, extent=(0,self.L[0],0,self.L[1]), origin='lower')
+            plt.title('Negative smallest fwrd-time FTLE field, $t_0$={}, $\Delta t$={}.\n'.format(
+                    self.FTLE_t0, self.FTLE_T)+
+                    'Interpolated from {} out of {} starting points left in domain.'.format(
+                        np.sum(~self.FTLE_loc_end[:,0].mask),self.FTLE_loc_end.shape[0]))
         else:
+            grid_x = np.reshape(self.FTLE_loc[:,0].data, self.FTLE_grid_dim)
+            grid_y = np.reshape(self.FTLE_loc[:,1].data, self.FTLE_grid_dim)
+            pcm = ax.pcolormesh(grid_x, grid_y, FTLE, shading='gouraud', 
+                                cmap='plasma')
             plt.title('Largest fwrd-time FTLE field, $t_0$={}, $\Delta t$={}.'.format(
                     self.FTLE_t0, self.FTLE_T))
         axbbox = ax.get_position().get_points()

@@ -40,46 +40,53 @@ class permstick(planktos.swarm):
         return np.expand_dims(~stick,1)*all_move +\
                np.expand_dims(stick,1)*self.positions
 
+    def after_move(self, dt, params):
+        swrm.props.loc[swrm.ib_collision, 'stick'] = True
+        # Let's also color the agents that get stuck!
+        self.props.loc[self.ib_collision, 'color'] = 'yellow'
+
 # Set the swarm size
 SWARM_SIZE = 1000
 
 # Now we create the swarm similar to ex_ib2d_sticky.py. Can possibly do this 
 #   in a loop to get aggregate results.
 
-for trial in range(100):
-    envir.reset(rm_swarms=True)
+# for trial in range(100):
+#     envir.reset(rm_swarms=True)
 
-    ##### Point IC #####
-    # swrm = permstick(swarm_size=SWARM_SIZE, envir=envir, 
-    #                  init=(envir.L[0]*0.5,envir.L[1]*0.1,envir.L[2]*0.5))
-    ####################
+##### Point IC #####
+# swrm = permstick(swarm_size=SWARM_SIZE, envir=envir, 
+#                  init=(envir.L[0]*0.5,envir.L[1]*0.1,envir.L[2]*0.5))
+####################
 
-    ###### Uniformly distributed IC in the slice [0.1L_x,0.9L_x] x 0.1L_y x [0.1L_z,0.9L_z] #####
-    xz_rnd = np.random.rand(SWARM_SIZE,2)
-    IC_pos = np.zeros((SWARM_SIZE,3))
-    IC_pos[:,0] = xz_rnd[:,0]*envir.L[0]*0.8 + envir.L[0]*0.1
-    IC_pos[:,1] = envir.L[1]*0.1
-    IC_pos[:,2] = xz_rnd[:,1]*envir.L[2]*0.8 + envir.L[2]*0.1
-    swrm = permstick(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
-    ####################
+###### Uniformly distributed IC in the slice [0.1L_x,0.9L_x] x 0.1L_y x [0.1L_z,0.9L_z] #####
+xz_rnd = np.random.rand(SWARM_SIZE,2)
+IC_pos = np.zeros((SWARM_SIZE,3))
+IC_pos[:,0] = xz_rnd[:,0]*envir.L[0]*0.8 + envir.L[0]*0.1
+IC_pos[:,1] = envir.L[1]*0.1
+IC_pos[:,2] = xz_rnd[:,1]*envir.L[2]*0.8 + envir.L[2]*0.1
+swrm = permstick(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos, 
+                    store_prop_history=True)
+####################
 
-    # Set jitter to have a std of 0.5 mm/sec
-    swrm.shared_props['cov'] *= 0.25
-    swrm.props['stick'] = np.full(SWARM_SIZE, False) # creates a length 1000 array of False
+# Set jitter to have a std of 0.5 mm/sec
+swrm.shared_props['cov'] *= 0.25
+swrm.props['stick'] = np.full(SWARM_SIZE, False) # creates a length 1000 array of False
+swrm.props['color'] = np.full(SWARM_SIZE, swrm.shared_props['color'])
 
-    # Move the swarm similar to as in ex_ib2d_sticky.
-    for ii in range(120): # 1 minute w/ half second timesteps
-        swrm.move(0.5, ib_collisions='sticky')
-        swrm.props['stick'] = np.logical_or(swrm.props['stick'], swrm.ib_collision)
+# Move the swarm similar to as in ex_ib2d_sticky.
+for ii in range(120): # 1 minute w/ half second timesteps
+    swrm.move(0.5, ib_collisions='sticky')
 
-    print('{} organisms, {} stuck ({}%).'.format(SWARM_SIZE, swrm.props['stick'].sum(), 
-                                                swrm.props['stick'].sum()/SWARM_SIZE*100))
+print('{} organisms, {} stuck ({}%).'.format(SWARM_SIZE, swrm.props['stick'].sum(), 
+                                            swrm.props['stick'].sum()/SWARM_SIZE*100))
 
-    # print result to file
-    with open('results/seafan2to1_8mmps_sticky_1000dist_stuckfrac.txt', 'a') as f:
-        print(swrm.props['stick'].sum()/SWARM_SIZE, file=f)
+# print result to file
+# with open('results/seafan2to1_8mmps_sticky_1000dist_stuckfrac.txt', 'a') as f:
+#     print(swrm.props['stick'].sum()/SWARM_SIZE, file=f)
 
 
+#### After the loop ####
 swrm.plot_all(movie_filename='results/seafan2to1_8mmps_sticky_1000dist.mp4', fps=4) # double-time movie
 
 

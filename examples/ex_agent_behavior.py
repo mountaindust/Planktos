@@ -158,7 +158,7 @@ swrm.shared_props['cov'] = swrm.shared_props['cov'] * 0.01
 #   the swarm to not be biased. We'll do this so that the same number are
 #   selected each time based off the size of the swarm (for consistency), but 
 #   the acutal agents selected are random.
-num_agents = swrm.positions.shape[0]
+num_agents = swrm.N
 num_not_biased = round(num_agents*.2)
 idx_not_biased = np.random.choice(np.arange(num_agents), num_not_biased)
 bias_bool = [False if n in idx_not_biased else True for n in range(num_agents)]

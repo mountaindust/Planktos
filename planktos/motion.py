@@ -156,7 +156,8 @@ def RK45(fun, t0, y0, tf, rtol=0.0001, atol=1e-06, h_start=None):
 
 
 
-def Euler_brownian_motion(swarm, dt, mu=None, ode=None, sigma=None):
+def Euler_brownian_motion(swarm, dt, positions=None, velocities=None, 
+                          mu=None, ode=None, sigma=None):
     '''Uses the Euler-Maruyama method to solve the Ito SDE
     
         .. math::
@@ -180,6 +181,18 @@ def Euler_brownian_motion(swarm, dt, mu=None, ode=None, sigma=None):
     swarm : swarm object
     dt : float
         time step to take
+    positions : NxD ndarray, optional
+        the starting positions of all agents that will take the Euler step. If 
+        None, the current position of all agents in the swarm will be used. Note 
+        that if positions is provided and mu and/or sigma are not provided, mu 
+        and sigma must be the same for all agents in the swarm - otherwise, if 
+        they are properties that differ by agent, it will be impossible to pair 
+        positions with corresponding individual values for mu and sigma.
+    velocities : NxD ndarray, optional
+        the starting velocities of all agents that will take the Euler step. If 
+        None, the current velocities of all agents in the swarm will be used. 
+        This is only necessary if an ode is supplied, and it is ignored if 
+        positions is None.
     mu : 1D array of length D, array of shape NxD, or array of shape 2NxD, optional
         drift velocity as a 1D array of length D (spatial dimension), an array 
         of shape NxD (where N is the number of agents), or as an array of shape 
@@ -246,15 +259,29 @@ def Euler_brownian_motion(swarm, dt, mu=None, ode=None, sigma=None):
     '''
     
     # get critical info about number of agents and dimension of domain
-    n_agents = swarm.positions.shape[0]
-    n_dim = swarm.positions.shape[1]
+    if positions is not None:
+        if positions.ndim == 1:
+            # one agent case
+            positions = np.array([positions,])
+        n_agents = positions.shape[0]
+        n_dim = positions.shape[1]
+    else:
+        n_agents = swarm.positions.shape[0]
+        n_dim = swarm.positions.shape[1]
 
     # parse mu and ode arguments
     if mu is None and ode is None:
         # default mu is mean drift plus local fluid velocity
-        stoc_mu = swarm.get_prop('mu') + swarm.get_fluid_drift()
+        try:
+            stoc_mu = swarm.get_prop('mu') + swarm.get_fluid_drift(positions=positions)
+        except ValueError:
+            print("Mu must be explicitly passed (or constant among agents).")
+            raise
+
     elif mu is None:
         stoc_mu = swarm.get_prop('mu')
+        if stoc_mu.ndim > 1 and positions is not None:
+            raise ValueError("Mu must be explicitly passed (or constant among agents).")
     else:
         if mu.ndim == 1:
             assert len(mu) == n_dim, "mu must be specified all spatial dimensions"
@@ -268,7 +295,11 @@ def Euler_brownian_motion(swarm, dt, mu=None, ode=None, sigma=None):
     if ode is not None:
         assert callable(ode), "ode must be a callable function with signature ode(t,x)."
         # assume that ode retuns a vector of shape 2NxD
-        ode_mu = ode(swarm.envir.time, ma.concatenate((swarm.positions,swarm.velocities)))
+        if positions is None:
+            ode_mu = ode(swarm.envir.time, ma.concatenate((swarm.positions,swarm.velocities)))
+        else:
+            assert velocities is not None, "Velocities must be specified with ode"
+            ode_mu = ode(swarm.envir.time, ma.concatenate((positions,velocities)))
         if stoc_mu.ndim == 1 or stoc_mu.shape[0] == n_agents:
             ode_mu[:n_agents] += stoc_mu
         else:
@@ -299,15 +330,21 @@ def Euler_brownian_motion(swarm, dt, mu=None, ode=None, sigma=None):
                 raise type(ke)('When sigma=None, swarm must have either a '+
                                'cov or D property in swarm.shared_props or swarm.props.')
         if cov.ndim == 2: # Single cov matrix
+            if positions is None:
+                positions = swarm.positions
             if not np.isclose(cov.trace(),0):
                 # mu already multiplied by dt
-                return swarm.positions + mu +\
+                return positions + mu +\
                     swarm.rndState.multivariate_normal(np.zeros(n_dim), cov, n_agents)
             else:
                 # mu already multiplied by dt
-                return swarm.positions + mu
+                return positions + mu
         else: # vector of cov matrices
-            move = np.zeros_like(swarm.positions)
+            if positions is not None:
+                assert cov.shape[0] == n_agents, "sigma length must match positions length"
+            else:
+                positions = swarm.positions
+            move = np.zeros_like(positions)
             for ii in range(n_agents):
                 if mu.ndim > 1:
                     this_mu = mu[ii,:]
@@ -318,15 +355,17 @@ def Euler_brownian_motion(swarm, dt, mu=None, ode=None, sigma=None):
                         swarm.rndState.multivariate_normal(np.zeros(n_dim), cov[ii,:])
                 else:
                     move[ii,:] = this_mu
-            return swarm.positions + move
+            return positions + move
     else:
         # passed in sigma
+        if positions is None:
+            positions = swarm.positions
         if sigma.ndim == 2: # Single sigma for all agents
             # mu already multiplied by dt
-            return swarm.positions + mu +\
+            return positions + mu +\
                 sigma @ swarm.rndState.multivariate_normal(np.zeros(n_dim), dt*np.eye(n_dim))
         else: # Different sigma for each agent
-            move = np.zeros_like(swarm.positions)
+            move = np.zeros_like(positions)
             for ii in range(n_agents):
                 if mu.ndim > 1:
                     this_mu = mu[ii,:]
@@ -334,7 +373,7 @@ def Euler_brownian_motion(swarm, dt, mu=None, ode=None, sigma=None):
                     this_mu = mu
                 move[ii,:] = this_mu +\
                     sigma[ii,...] @ swarm.rndState.multivariate_normal(np.zeros(n_dim), dt*np.eye(n_dim))
-            return swarm.positions + move
+            return positions + move
 
 
 
