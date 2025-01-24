@@ -1,3 +1,15 @@
+1.0.0
+-----------------------
+Moving immersed boundaries are now supported in 2D!
+- sticky boundary conditions only
+- IB2d import
+- all 2D plotting routines updated to handle moving immersed boundaries
+
+Geometry module added to collect workhorse mathematical functions. Explanation of the mathematics and implementation has been added and cleaned up.
+
+Better code organization, including consolidation of IB2d mesh loading
+
+
 0.7.0
 -----------------------
 Coloring for individual agents
