@@ -12,7 +12,7 @@ import sys, os, warnings
 from pathlib import Path
 import numpy as np
 import numpy.ma as ma
-from scipy import stats
+from scipy import stats, integrate
 from scipy.spatial import distance
 import pandas as pd
 if sys.platform == 'darwin': # OSX backend does not support blitting
@@ -1393,6 +1393,10 @@ class swarm:
         self._domain_BC_loop(dt, ib_collisions=ib_collisions)
 
 
+    #######################################################################
+    #####          HELPER ROUTINES FOR BOUNDARY INTERACTIONS          #####
+    #######################################################################
+
 
     def _get_moving_mesh_info(self, dt):
         '''Helper function that returns interpolated mesh information needed for
@@ -1406,9 +1410,13 @@ class swarm:
         Returns
         -------
         start_mesh : ndarray
+            The mesh location at the current environment time
         end_mesh : ndarray
+            The mesh location after dt
         max_meshpt_dist : float
+            The maximum distance between any two meshpoints over time
         max_mov : float
+            The maximum distance any single mesh vertex moved over time
         '''
 
         start_mesh = self.envir.interpolate_temporal_mesh()
@@ -1945,18 +1953,19 @@ class swarm:
             return endpt, None
         
         # If we have an intersection with this agent, apply boundary condition
+
+        # small number to perturb off of the actual boundary in order to avoid
+        #   roundoff errors that would allow boundary penetration
+        EPS = 1e-7
+
         if ib_collisions == 'sticky':
             # Return the point of intersection
-            
-            # small number to perturb off of the actual boundary in order to avoid
-            #   roundoff errors that would allow boundary penetration
-            EPS = 1e-7
 
             if DIM == 2:
-                x = intersection[0]
-                Q0 = intersection[2]
-                Q1 = intersection[3]
-                idx = intersection[4]
+                x = intersection[0]    # (x,y) coordinates of intersection
+                Q0 = intersection[2]   # edge of mesh element at time of intersection
+                Q1 = intersection[3]   # edge of mesh element at time of intersection
+                idx = intersection[4]  # index into close_mesh_start/end above
 
                 # Get the relative position of intersection within the mesh element
                 # Use max in case the element is vertical or horizontal
@@ -1989,8 +1998,22 @@ class swarm:
             else:
                 raise NotImplementedError("3D moving meshes not currently supported.")
         else:
-            raise NotImplementedError("sliding moving meshes not currently supported.")
+            # Project remaining piece of movement vector onto mesh and repeat 
+            #   processes as necessary until we have a final result.
+            
+            if DIM == 2:
+                # Project remaining piece of vector onto mesh and repeat processes 
+                #   as necessary until we have a final result.
+                # new_pos = swarm._project_and_slide_moving(startpt, endpt, intersection, 
+                #                                 mesh, close_mesh_start, 
+                #                                 close_mesh_end, max_meshpt_dist, 
+                #                                 DIM, old_intersection, kill)
+                # return new_pos, new_pos - intersection[0]
 
+                raise NotImplementedError("sliding moving meshes not currently supported.")
+            else:
+                raise NotImplementedError("3D moving meshes not currently supported.")
+            
 
 
     @staticmethod
@@ -2396,6 +2419,100 @@ class swarm:
                 # otherwise, we end on the mesh element
                 return newendpt
 
+
+
+    @staticmethod
+    def _project_and_slide_moving(startpt, endpt, intersection, mesh, 
+                                  close_mesh_start, close_mesh_end, 
+                                  max_meshpt_dist, DIM, old_intersection=None, 
+                                  kill=False):
+        '''Once we have an intersection point with an immersed mesh, project and 
+        slide the agent along the moving mesh for its remaining movement, and 
+        determine what happens if we fall off the edge of the element (or the 
+        element moves away) in all possible angle cases.
+        (e.g. recursion of detecting further intersections and resulting in 
+        additional vector projection)
+
+        Parameters
+        ----------
+        startpt : length 2 or 3 array
+            original start point of movement, before intersection
+        endpt : length 2 or 3 array
+            original end point of movement, w/o intersection
+        intersection : list-like of data
+            result of seg_intersect_2D or seg_intersect_3D_triangles. various 
+            information about the intersection with the immersed mesh element
+        mesh : Nx2x2 or Nx3x3 array
+            full immersed boundary mesh (for recalculating close_mesh)
+        close_mesh_start : Nx2x2 or Nx3x3 array 
+            eligible (nearby) mesh elements for interaction as they are at the 
+            start time
+        close_mesh_end : Nx2x2 or Nx3x3 array 
+            eligible (nearby) mesh elements for interaction as they are at the 
+            end time
+        max_meshpt_dist : float
+            max distance between two points on a mesh element (used to determine 
+            how far away from startpt to search for mesh elements). Used here 
+            for possible recursion
+        DIM : int
+            dimension of system, either 2 or 3. 3 currently doesn't work.
+        old_intersection : list-like of data
+            (for internal use only) records the last intersection in the 
+            recursion to check if we are bouncing back and forth between two 
+            boundaries as a result of a concave angle and the right kind of 
+            trajectory vector.
+        kill : bool
+            (for internal use only) set to True in 3D case if we have previously 
+            slid along the boundary line between two mesh elements. This 
+            prevents such a thing from happening more than once, in case of 
+            pathological cases.
+
+        Returns
+        -------
+        newendpt : length 2 array
+            new endpoint for movement after projection
+        '''
+
+        # small number to perturb off of the actual boundary in order to avoid
+        #   roundoff errors that would allow penetration
+        EPS = 1e-7
+
+        if DIM != 2:
+            raise NotImplementedError("3D moving meshes not supported for sliding.")
+        
+        x = intersection[0]    # (x,y) coordinates of intersection
+        t_I = intersection[1]  # btwn 0 & 1, fraction of movement traveled so far
+        Q0 = intersection[2]   # edge of mesh element at time of intersection
+        Q1 = intersection[3]   # edge of mesh element at time of intersection
+        idx = intersection[4]  # index into close_mesh_start/end above
+        
+        # Get full travel vector, to be integrated from t_I to 1
+        vec = endpt-startpt
+
+        Q_t0 = Q1-Q0
+        Q_end = close_mesh_end[idx,1,:], close_mesh_end[idx,0,:]
+
+        # vector in direction of element as a function of time
+        # Q = lambda t: (1-t)*Q_t0 + (t-t_I)*Q_end
+        # We want to integrate Q/||Q||*dot(Q/||Q||,vec)
+
+        integ_x = lambda t: (1-t)*Q_t0[0]+(t-t_I)*Q_end[0]*\
+                            np.dot(vec,(1-t)*Q_t0+(t-t_I)*Q_end)/\
+                            np.dot((1-t)*Q_t0+(t-t_I)*Q_end, (1-t)*Q_t0+(t-t_I)*Q_end)
+        integ_y = lambda t: (1-t)*Q_t0[1]+(t-t_I)*Q_end[1]*\
+                            np.dot(vec,(1-t)*Q_t0+(t-t_I)*Q_end)/\
+                            np.dot((1-t)*Q_t0+(t-t_I)*Q_end, (1-t)*Q_t0+(t-t_I)*Q_end)
+        proj = lambda t: np.array([integrate.quad(integ_x, t_I, t) + x[0],
+                                   integrate.quad(integ_y, t_I, t) + x[1]])
+
+        # integrate up to 1 while determining if we reach edge or if vec and Q 
+        #   point in the same direction at some time t_I<t<1.
+        pass
+
+
+    #######################################################################
+    #####                      PLOTTING METHODS                       #####
+    #######################################################################
 
 
     def _calc_basic_stats(self, DIM3, t_indx=None):
