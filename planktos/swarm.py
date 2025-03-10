@@ -12,7 +12,7 @@ import sys, os, warnings
 from pathlib import Path
 import numpy as np
 import numpy.ma as ma
-from scipy import stats, integrate
+from scipy import stats, integrate, optimize
 from scipy.spatial import distance
 import pandas as pd
 if sys.platform == 'darwin': # OSX backend does not support blitting
@@ -2502,16 +2502,20 @@ class swarm:
         integ_y = lambda t: (1-t)*Q_t0[1]+(t-t_I)*Q_end[1]*\
                             np.dot(vec,(1-t)*Q_t0+(t-t_I)*Q_end)/\
                             np.dot((1-t)*Q_t0+(t-t_I)*Q_end, (1-t)*Q_t0+(t-t_I)*Q_end)
-        proj = lambda t: np.array([integrate.quad(integ_x, t_I, t) + x[0],
-                                   integrate.quad(integ_y, t_I, t) + x[1]])
+        proj = lambda t: np.array([integrate.quad(integ_x, t_I, t),
+                                   integrate.quad(integ_y, t_I, t)])
 
         # integrate to 1 to determine the final sliding location on the mesh element
-        slide_pt = proj(1)
+        slide_pt = proj(1) + x
         
         # test for a rotation past 180 degrees or sliding off the end
-        Q_t0_perp = np.array([Q_t0[1], -Q_t0[0]])
-        Q_end_perp = np.array([Q_end[1],-Q_end[0]])
-        rotated_past_bool = np.sign(np.dot(vec,Q_t0_perp)) != np.sign(np.dot(vec,Q_end_perp))
+
+        # first, check for the mesh element rotating until it points in the same 
+        #   direction as the agent's travel.
+        vec_perp = np.array([vec[1], -vec[0]])
+        # see if the dot product of vec_perp and the mesh element changes sign
+        rotated_past_bool = np.sign(np.dot(vec_perp,Q_t0)) != np.sign(np.dot(vec_perp,Q_end))
+
         # because mesh elements are linearly interpolated between start and end states, 
         #   they stretch or contract monotonically. It is therefore enough to check if 
         #   we have gone past the final mesh element's endpoint.
@@ -2533,9 +2537,19 @@ class swarm:
             # pull slide_pt back a bit for numerical stability and return
             return slide_pt + EPS*norm_out_u
         else:
-            # integrate up to 1 while determining the first time that we either 
+            # use Newton's method to determine the first time that we either 
             #   reach the mesh element edge or vec and Q point in the same direction.
-            pass
+            if rotated_past_bool:
+                # check to see when vec_perp and the mesh element have a 
+                #   dot product of zero. This is a linear function and can be solved
+                #   for analytically.
+                t_rot = np.dot(vec_perp,(t_I*Q_end-Q_t0))/np.dot(vec_perp,Q_end-Q_t0)
+                assert t_I<t_rot<1, "linear algebra problem in rotation detection"
+            if went_past_el_bool:
+                # check to see when we went past the end of the mesh element.
+                # use Newton's method in optimize.root_scalar.
+                pass
+
 
 
     #######################################################################
