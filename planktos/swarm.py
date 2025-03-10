@@ -2490,7 +2490,7 @@ class swarm:
         vec = endpt-startpt
 
         Q_t0 = Q1-Q0
-        Q_end = close_mesh_end[idx,1,:], close_mesh_end[idx,0,:]
+        Q_end = close_mesh_end[idx,1,:] - close_mesh_end[idx,0,:]
 
         # vector in direction of element as a function of time
         # Q = lambda t: (1-t)*Q_t0 + (t-t_I)*Q_end
@@ -2505,9 +2505,37 @@ class swarm:
         proj = lambda t: np.array([integrate.quad(integ_x, t_I, t) + x[0],
                                    integrate.quad(integ_y, t_I, t) + x[1]])
 
-        # integrate up to 1 while determining if we reach edge or if vec and Q 
-        #   point in the same direction at some time t_I<t<1.
-        pass
+        # integrate to 1 to determine the final sliding location on the mesh element
+        slide_pt = proj(1)
+        
+        # test for a rotation past 180 degrees or sliding off the end
+        Q_t0_perp = np.array([Q_t0[1], -Q_t0[0]])
+        Q_end_perp = np.array([Q_end[1],-Q_end[0]])
+        rotated_past_bool = np.sign(np.dot(vec,Q_t0_perp)) != np.sign(np.dot(vec,Q_end_perp))
+        # because mesh elements are linearly interpolated between start and end states, 
+        #   they stretch or contract monotonically. It is therefore enough to check if 
+        #   we have gone past the final mesh element's endpoint.
+        mesh_el_end_len = np.linalg.norm(Q_end)
+        Q0_end_dist = np.linalg.norm(slide_pt - close_mesh_end[idx,0,:])
+        Q1_end_dist = np.linalg.norm(slide_pt - close_mesh_end[idx,1,:])
+        # Since we are sliding on the mesh element, if the distance from
+        #   our new location to either of the mesh endpoints is greater
+        #   than the length of the mesh element, we must have gone beyond
+        #   the segment.
+        went_past_el_bool = (Q0_end_dist > mesh_el_end_len+EPS) or ( 
+                             Q1_end_dist > mesh_el_end_len+EPS)
+        
+        if not rotated_past_bool and not went_past_el_bool:
+            # get a normal to final position of mesh element that points back toward
+            #   where the agent came from
+            proj_end = np.dot(vec,Q_end)*Q_end
+            norm_out_u = (proj_end-vec)/np.linalg.norm(proj_end-vec)
+            # pull slide_pt back a bit for numerical stability and return
+            return slide_pt + EPS*norm_out_u
+        else:
+            # integrate up to 1 while determining the first time that we either 
+            #   reach the mesh element edge or vec and Q point in the same direction.
+            pass
 
 
     #######################################################################
