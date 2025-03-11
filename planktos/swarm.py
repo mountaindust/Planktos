@@ -2581,13 +2581,50 @@ class swarm:
         # If we went past the end of the mesh element, detect intersection with 
         #   adjoining elements.
         if went_past_el_bool:
-            # First, find adjacent mesh segments. These are ones that share
-            #   one of, but not both, endpoints with the current segment.
+            # First, find adjacent mesh segments on the end we went past. 
+            #   This is any mesh element that contains this endpoint.
             #   This will also pick up our current segment, but we shouldn't
             #   be intersecting it. And if by some numerical error we do,
             #   we need to treat it.
-            pass
+            if Q1_end_dist > Q0_end_dist:
+                # went past Q0
+                pt_bool = np.isclose(np.linalg.norm(close_mesh_end.reshape(
+                    (close_mesh_end.shape[0]*close_mesh_end.shape[1],close_mesh_end.shape[2]))
+                    -close_mesh_end[idx,0,:], axis=1), 0)
+            else:
+                # went past Q1
+                pt_bool = np.isclose(np.linalg.norm(close_mesh_end.reshape(
+                    (close_mesh_end.shape[0]*close_mesh_end.shape[1],close_mesh_end.shape[2]))
+                    -close_mesh_end[idx,1,:], axis=1), 0)
+            pt_bool = pt_bool.reshape((close_mesh_end.shape[0],close_mesh_end.shape[1]))
+            adj_mesh_end = close_mesh_end[np.any(pt_bool,axis=1)]
+            # get location of adj_mesh at time t_edge
+            adj_mesh_newstart = close_mesh_start[np.any(pt_bool,axis=1)]*(1-t_edge)\
+                                +close_mesh_end[np.any(pt_bool,axis=1)]*t_edge
+            # Check for intersection with these segments, with some translation 
+            #   for numerical stability
+            # get a normal to the mesh element at the time we reach the edge in
+            #   back toward where the agent came from. perturb in that direction
+            Q_vec = (1-t_edge)*Q_t0+(t_edge-t_I)*Q_end
+            proj_Q = np.dot(vec,Q_vec)*Q_vec
+            norm_out_u = (proj_Q-vec)/np.linalg.norm(proj_Q-vec)
+            # unit vector of mesh element in dir of travel
+            proj_Q_u = proj_Q/np.linalg.norm(proj_Q)
+            
 
+            if len(adj_mesh_end) > 0:
+                adj_intersect = geom.seg_intersect_2D_multilinear_poly(
+                                x+EPS*norm_out_u, proj_to_pt(t_edge)+EPS*proj_Q_u,
+                                adj_mesh_newstart[:,0,:], adj_mesh_newstart[:,1,:],
+                                adj_mesh_end[:,0,:], adj_mesh_end[:,1,:])
+            else:
+                adj_intersect = None
+
+            if adj_intersect is not None:
+                ##########  Went past and intersected adjoining element! ##########
+                pass
+
+        ##########  No immediate intersections ##########
         # If the mesh element rotated out of the way of the agent's original 
         #   trajectory or we did not intersect an adjoining mesh element at the 
         #   edge of the previous one, continue on the original trajectory from 
