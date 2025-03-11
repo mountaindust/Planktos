@@ -2583,9 +2583,12 @@ class swarm:
         if went_past_el_bool:
             # First, find adjacent mesh segments on the end we went past. 
             #   This is any mesh element that contains this endpoint.
-            #   This will also pick up our current segment, but we shouldn't
-            #   be intersecting it. And if by some numerical error we do,
-            #   we need to treat it.
+            #
+            #
+            #   TODO: EXCLUDE CURRENT MESH ELEMENT
+            #   So we can find angle between current one and adjacent one
+            #  
+            #  
             if Q1_end_dist > Q0_end_dist:
                 # went past Q0
                 pt_bool = np.isclose(np.linalg.norm(close_mesh_end.reshape(
@@ -2601,6 +2604,7 @@ class swarm:
             # get location of adj_mesh at time t_edge
             adj_mesh_newstart = close_mesh_start[np.any(pt_bool,axis=1)]*(1-t_edge)\
                                 +close_mesh_end[np.any(pt_bool,axis=1)]*t_edge
+            
             # Check for intersection with these segments, with some translation 
             #   for numerical stability
             # get a normal to the mesh element at the time we reach the edge in
@@ -2610,11 +2614,25 @@ class swarm:
             norm_out_u = (proj_Q-vec)/np.linalg.norm(proj_Q-vec)
             # unit vector of mesh element in dir of travel
             proj_Q_u = proj_Q/np.linalg.norm(proj_Q)
-            
+            # get new start point and end point of travel past mesh edge
+            newstartpt = proj_to_pt(t_edge) + EPS*norm_out_u
+            newendpt = proj_to_pt(t_edge) + (1-t_edge)*proj_Q_u + EPS*norm_out_u
 
             if len(adj_mesh_end) > 0:
+                #
+                #
+                #
+                #
+                # THIS ISN'T GOING TO WORK. MESH ELEMENT ARE ALWAYS MOVING
+                # NEED TO USE GEOMETRY OF MESH ELEMENTS AT THE TIME OF HITTING 
+                # THE EDGE TO DIRECTLY CALCULATE ANGLE.
+                #
+                #
+                #
+                #
+                #
                 adj_intersect = geom.seg_intersect_2D_multilinear_poly(
-                                x+EPS*norm_out_u, proj_to_pt(t_edge)+EPS*proj_Q_u,
+                                newstartpt-EPS*proj_Q_u, newendpt+EPS*proj_Q_u,
                                 adj_mesh_newstart[:,0,:], adj_mesh_newstart[:,1,:],
                                 adj_mesh_end[:,0,:], adj_mesh_end[:,1,:])
             else:
@@ -2622,7 +2640,64 @@ class swarm:
 
             if adj_intersect is not None:
                 ##########  Went past and intersected adjoining element! ##########
-                pass
+                # NOTE: this intersection should happen essentially immediately
+                #   after sliding off of the last element because they are joined
+                #   together. So we will take any elapsed time to this intersection
+                #   as negligible when calculating obtuse vs. acute angle.
+                # check that we haven't intersected this before
+                #   (should be impossible)
+                if old_intersection is not None and\
+                    np.all(adj_intersect[2] == old_intersection[2]) and\
+                    np.all(adj_intersect[3] == old_intersection[3]):
+                    # Going back and forth! Movement stops here.
+                    # NOTE: This happens when 1) trying to go through a
+                    #   mesh element, you 2) slide and intersect another
+                    #   mesh element. The angle between elements is acute,
+                    #   so you 3) slide back into the same element you
+                    #   intersected in (1). 
+                    # Back away from the intersection point slightly for
+                    #   numerical stability and stay put.
+                    return adj_intersect[0] - EPS*proj_Q_u
+                # Otherwise
+                if Q0_end_dist > Q1_end_dist:
+                    # went past Q1; base vectors off Q1 vertex
+                    midx = 3; n=1
+                    nidx = 2
+                else:
+                    # went past Q0; base vectors off Q0 vertex
+                    midx = 2; n=0
+                    nidx = 3
+                Q_vec_dir = intersection[nidx] - intersection[midx]
+                idx_a = adj_intersect[4]  # index into close_mesh_start/end above
+                adj_idx = np.argmin([
+                    np.linalg.norm(adj_mesh_end[idx_a,0,:]-close_mesh_end[idx,n,:]),
+                    np.linalg.norm(adj_mesh_end[idx_a,1,:]-close_mesh_end[idx,n,:])]) + 2
+                vec1 = adj_intersect[adj_idx] - intersection[midx]
+                if np.dot(Q_vec_dir,vec1) >= 0:
+                    # Acute. Movement stops here.
+                    # Back away from the intersection point slightly for
+                    #   numerical stability and stay put
+                    return adj_intersect[0] - EPS*proj_Q_u
+                else:
+                    # Obtuse. Repeat project_and_slide_moving on new segment,
+                    #   but send along info about old segment so we don't
+                    #   get in an infinite loop.
+                    # Also, regenerate eligible mesh elements based on the 
+                    #   new location.
+                    search_rad = max_meshpt_dist*2/3
+                    close_mesh_start, close_mesh_end = \
+                        swarm._get_eligible_moving_mesh_elements(newstartpt-EPS*proj_Q_u, 
+                                                                 newendpt+EPS*proj_Q_u, 
+                                                                 start_mesh, end_mesh,
+                                                                 max_mov, search_rad)
+
+                    return swarm._project_and_slide_moving(newstartpt-EPS*proj_Q_u, 
+                                                    newendpt+EPS*proj_Q_u, 
+                                                    adj_intersect, 
+                                                    start_mesh, end_mesh,
+                                                    close_mesh_start, close_mesh_end, 
+                                                    max_meshpt_dist, max_mov,
+                                                    intersection)
 
         ##########  No immediate intersections ##########
         # If the mesh element rotated out of the way of the agent's original 
@@ -2635,8 +2710,7 @@ class swarm:
             newstartpt = proj_to_pt(t_rot) + EPS*orig_unit_vec
             newendpt = newstartpt + vec*(1-t_rot)
         else:
-            # add EPS for separation from element along direction of element
-            # TODO!
+            # newendpt already calculated
             pass
         # repeat process
         new_loc, dx = swarm._apply_internal_moving_BC(newstartpt, newendpt,
