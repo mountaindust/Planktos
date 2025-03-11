@@ -2581,14 +2581,24 @@ class swarm:
         # If we went past the end of the mesh element, detect intersection with 
         #   adjoining elements.
         if went_past_el_bool:
-            # First, find adjacent mesh segments on the end we went past. 
-            #   This is any mesh element that contains this endpoint.
-            #
-            #
-            #   TODO: EXCLUDE CURRENT MESH ELEMENT
-            #   So we can find angle between current one and adjacent one
-            #  
-            #  
+            # get a unit vector in the direction of travel at edge time
+            Q_vec = ((1-t_edge)*Q_t0+(t_edge-t_I)*Q_end)/(1-t_I)
+            Q_vec *= np.dot(vec,Q_vec)
+            Q_vec_u = Q_vec/np.linalg.norm(Q_vec)
+            # projection of vec onto mesh element in dir of travel at edge time
+            proj_Q = np.dot(vec,Q_vec_u)*Q_vec_u
+            # unit normal to current mesh element toward where the agent came from
+            norm_out_u = (proj_Q-vec)/np.linalg.norm(proj_Q-vec)
+            
+            # get new start point and end point of travel past mesh edge
+            #   perturb in the direction normal to the mesh element at the time
+            #   the edge was reached
+            newstartpt = proj_to_pt(t_edge) + EPS*norm_out_u
+            newendpt = proj_to_pt(t_edge) + (1-t_edge)*proj_Q + EPS*norm_out_u
+
+            # Now, find adjacent mesh segments on the end we went past. 
+            #   This is any mesh element that contains the endpoint we went past
+            #   except the current mesh element
             if Q1_end_dist > Q0_end_dist:
                 # went past Q0
                 pt_bool = np.isclose(np.linalg.norm(close_mesh_end.reshape(
@@ -2600,25 +2610,45 @@ class swarm:
                     (close_mesh_end.shape[0]*close_mesh_end.shape[1],close_mesh_end.shape[2]))
                     -close_mesh_end[idx,1,:], axis=1), 0)
             pt_bool = pt_bool.reshape((close_mesh_end.shape[0],close_mesh_end.shape[1]))
+            # remove current mesh element
+            pt_bool[idx,:] = False
             adj_mesh_end = close_mesh_end[np.any(pt_bool,axis=1)]
-            # get location of adj_mesh at time t_edge
-            adj_mesh_newstart = close_mesh_start[np.any(pt_bool,axis=1)]*(1-t_edge)\
-                                +close_mesh_end[np.any(pt_bool,axis=1)]*t_edge
-            
-            # Check for intersection with these segments, with some translation 
-            #   for numerical stability
-            # get a normal to the mesh element at the time we reach the edge in
-            #   back toward where the agent came from. perturb in that direction
-            Q_vec = (1-t_edge)*Q_t0+(t_edge-t_I)*Q_end
-            proj_Q = np.dot(vec,Q_vec)*Q_vec
-            norm_out_u = (proj_Q-vec)/np.linalg.norm(proj_Q-vec)
-            # unit vector of mesh element in dir of travel
-            proj_Q_u = proj_Q/np.linalg.norm(proj_Q)
-            # get new start point and end point of travel past mesh edge
-            newstartpt = proj_to_pt(t_edge) + EPS*norm_out_u
-            newendpt = proj_to_pt(t_edge) + (1-t_edge)*proj_Q_u + EPS*norm_out_u
-
+            # if there are any adjacent mesh elements, get their location at 
+            #   time t_edge as well and calculate the angle at that time between 
+            #   the current mesh element and the adjacent ones. Then react 
+            #   accordingly.
             if len(adj_mesh_end) > 0:
+                adj_mesh_newstart = close_mesh_start[np.any(pt_bool,axis=1)]*(1-t_edge)\
+                                    +adj_mesh_end*t_edge
+                # get vectors in adjacent meshes oriented away from current edgepoint
+                pt_bool_0 = pt_bool[np.any(pt_bool,axis=1)]
+                pt_bool_0 = pt_bool_0[:,0] # first entry is the focal edgepoint
+                adj_vec = np.zeros((adj_mesh_newstart.shape[0],adj_mesh_newstart.shape[2]))
+                adj_vec[pt_bool_0] = adj_mesh_newstart[pt_bool_0,1,:] - \
+                                     adj_mesh_newstart[pt_bool_0,0,:]
+                adj_vec[~pt_bool_0] = adj_mesh_newstart[~pt_bool_0,0,:] - \
+                                      adj_mesh_newstart[~pt_bool_0,1,:]
+                # intersection cases will have an angle of -pi/2 to pi/2 between
+                #   norm_out_u and the adjacent mesh element oriented from the 
+                #   edge the agent is on. That means the dot product is positive.
+                intersect_bool = np.dot(adj_vec, norm_out_u) >= 0
+                # obtuse cases will have an angle of -pi/2 to pi/2 between proj_Q
+                #   and the adjacent mesh element oriented from the edge the 
+                #   agent is on. Therefore, get the acute cases by checking for 
+                #   non-positive dot product
+                acute_bool = np.dot(adj_vec, proj_Q) <= 0 & intersect_bool
+
+                if np.any(acute_bool):
+                    adj_vec = adj_vec[acute_bool]
+                    if adj_vec.shape[0] > 1:
+                        # get the one that is most acute
+                        adj_vec_n = adj_vec/np.linalg.norm(adj_vec,axis=1)
+                        elem_idx = np.argmax(np.dot(adj_vec_n,-Q_vec_u))
+                        adj_vec = adj_vec[elem_idx,:]
+                    else:
+                        adj_vec = adj_vec[0,:]
+                # BUT: NEED TO TRACK INDEX OF THE ELEMENT WE ARE CHOOSING!?
+
                 #
                 #
                 #
@@ -2632,7 +2662,7 @@ class swarm:
                 #
                 #
                 adj_intersect = geom.seg_intersect_2D_multilinear_poly(
-                                newstartpt-EPS*proj_Q_u, newendpt+EPS*proj_Q_u,
+                                newstartpt-EPS*Q_vec_u, newendpt+EPS*Q_vec_u,
                                 adj_mesh_newstart[:,0,:], adj_mesh_newstart[:,1,:],
                                 adj_mesh_end[:,0,:], adj_mesh_end[:,1,:])
             else:
@@ -2657,7 +2687,7 @@ class swarm:
                     #   intersected in (1). 
                     # Back away from the intersection point slightly for
                     #   numerical stability and stay put.
-                    return adj_intersect[0] - EPS*proj_Q_u
+                    return adj_intersect[0] - EPS*Q_vec_u
                 # Otherwise
                 if Q0_end_dist > Q1_end_dist:
                     # went past Q1; base vectors off Q1 vertex
@@ -2677,7 +2707,7 @@ class swarm:
                     # Acute. Movement stops here.
                     # Back away from the intersection point slightly for
                     #   numerical stability and stay put
-                    return adj_intersect[0] - EPS*proj_Q_u
+                    return adj_intersect[0] - EPS*Q_vec_u
                 else:
                     # Obtuse. Repeat project_and_slide_moving on new segment,
                     #   but send along info about old segment so we don't
@@ -2686,13 +2716,13 @@ class swarm:
                     #   new location.
                     search_rad = max_meshpt_dist*2/3
                     close_mesh_start, close_mesh_end = \
-                        swarm._get_eligible_moving_mesh_elements(newstartpt-EPS*proj_Q_u, 
-                                                                 newendpt+EPS*proj_Q_u, 
+                        swarm._get_eligible_moving_mesh_elements(newstartpt-EPS*Q_vec_u, 
+                                                                 newendpt+EPS*Q_vec_u, 
                                                                  start_mesh, end_mesh,
                                                                  max_mov, search_rad)
 
-                    return swarm._project_and_slide_moving(newstartpt-EPS*proj_Q_u, 
-                                                    newendpt+EPS*proj_Q_u, 
+                    return swarm._project_and_slide_moving(newstartpt-EPS*Q_vec_u, 
+                                                    newendpt+EPS*Q_vec_u, 
                                                     adj_intersect, 
                                                     start_mesh, end_mesh,
                                                     close_mesh_start, close_mesh_end, 
