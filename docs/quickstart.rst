@@ -1,6 +1,11 @@
 Quickstart
 ==========
 
+**Note**: that the vtk library takes a long time to load the first time you try to 
+import it. This means that Planktos might hang for quite some time when it tries 
+to import this library for the very first time, but the problem should not 
+repeat after that.
+
 Dependencies and installation
 -----------------------------
 
