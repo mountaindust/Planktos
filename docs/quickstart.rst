@@ -32,7 +32,7 @@ Installing Planktos
 ~~~~~~~~~~~~~~~~~~~
 
 Once FFmpeg is installed, Planktos can be installed from source using `pip` on 
-Python >= 3.7 from the Planktos directory. Navigate to the Planktos directory in 
+Python >= 3.8 from the Planktos directory. Navigate to the Planktos directory in 
 a terminal and use the command: ::
 
     pip install .
@@ -56,35 +56,25 @@ Planktos directory): ::
 Running Directly From Source (no install)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Installing dependencies using Anaconda Python is highly recommended (except vtk).
-However, the default package manager, conda, appears unable to handle the 
-Planktos dependencies. The performance of conda has been degrading with time 
-as the number of available Python libraries increases, and this is particularly 
-true in the case of packages listed on the conda-forge channel. 
+Installing dependencies using Anaconda Python is highly recommended. Make sure 
+you have the most updated version of conda before starting or things are likely
+to break (because the dependencies rely on conda-forge).
 
-Instead, if you are using Anaconda Python, first install the package manager 
-`mamba <https://mamba.readthedocs.io/en/latest/>`_ and use it in place of conda.
-The commands are the same (it's a drop-in replacement for conda) but it is a C++ 
-solver based on libsolv which manages dependencies for RedHat, Debian, etc. Also, 
-it has multi-threaded downloads and doesn't break when solving dependencies. 
-Install with the following command::
-    
-    conda install -c conda-forge mamba
+The dependencies are as follows:
 
-Having done that, the dependencies are as follows:
-
-- Python 3.7+ 
+- Python 3.8+ 
 - numpy/scipy
 - matplotlib 3.x
 - pandas
-- vtk (if loading vtk data). I now suggest installing with pip to avoid a DLL error. Incidently, if you get _image DLL errors from pillow when trying to load matplotlib.pyplot, try using pip to reinstall using `pip install -U pillow`.
-- pyvista (if saving vtk data). I suggest using mamba and the conda-forge channel, not conda ::
+- pyvista :: 
 
-    mamba install -c conda-forge pyvista
+    conda install conda-forge::pyvista
 
 - numpy-stl (if loading stl data). Again, get it from conda-forge.
 - netCDF4 (if loading netCDF data)
 - pytest (if running tests)
+
+If you get _image DLL errors from pillow when trying to load matplotlib.pyplot, try using pip to reinstall using `pip install -U pillow`.
 
 Getting started
 ---------------

@@ -1,7 +1,13 @@
 # Define versions so things don't break
 
-sphinx==5.0.2
-numpy==1.26.4
-scipy==1.11.4
-matplotlib==3.8.4
-pandas==2.2.1
+# sphinx==5.0.2
+# numpy==1.26.4
+# scipy==1.11.4
+# matplotlib==3.8.4
+# pandas==2.2.1
+
+sphinx == 7.3.7
+numpy == 1.26.4
+scipy == 1.13.1
+matplotlib == 3.9.2
+pandas == 2.2.2
