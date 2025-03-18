@@ -14,24 +14,17 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 import os
 from pathlib import Path
 import numpy as np
+import vtk
+from vtk.util import numpy_support # Converts vtkarray to/from numpy array
+from vtk.numpy_interface import dataset_adapter as dsa
+import pyvista as pv
 
-try:
-    import vtk
-    from vtk.util import numpy_support # Converts vtkarray to/from numpy array
-    from vtk.numpy_interface import dataset_adapter as dsa
-    VTK = True
-except ModuleNotFoundError:
-    VTK = False
 try:
     from stl import mesh as stlmesh
     STL = True
 except ModuleNotFoundError:
     STL = False
-try:
-    import pyvista as pv
-    PYVISTA = True
-except ModuleNotFoundError:
-    PYVISTA = False
+
 try:
     import netCDF4 as nc
     NETCDF = True
@@ -45,32 +38,28 @@ except ModuleNotFoundError:
 #                                                                           #
 #############################################################################
 
-def vtk_dep(func):
-    '''Decorator for VTK readers to check package import.'''
-    def wrapper(*args, **kwargs):
-        __doc__ = func.__doc__
-        if not VTK:
-            print("Cannot read VTK file: VTK library not installed.")
-            raise RuntimeError("Cannot read VTK file: VTK library not found in data_IO.")
-        else:
-            return func(*args, **kwargs)
-    wrapper.__doc__ = func.__doc__
-    return wrapper
+# def vtk_dep(func):
+#     '''Decorator for VTK readers to check package import.'''
+#     def wrapper(*args, **kwargs):
+#         __doc__ = func.__doc__
+#         if not VTK:
+#             print("Cannot read VTK file: VTK library not installed.")
+#             raise RuntimeError("Cannot read VTK file: VTK library not found in data_IO.")
+#         else:
+#             return func(*args, **kwargs)
+#     wrapper.__doc__ = func.__doc__
+#     return wrapper
 
-
-
-def pyvista_dep(func):
-    '''Decorator for pyvista writers to check package import.'''
-    def wrapper(*args, **kwargs):
-        if not PYVISTA:
-            print("Cannot write VTK files: pyvista library not installed.")
-            raise RuntimeError("Cannot write VTK files: pyvista library not found.")
-        else:
-            return func(*args, **kwargs)
-    wrapper.__doc__ = func.__doc__
-    return wrapper
-
-
+# def pyvista_dep(func):
+#     '''Decorator for pyvista writers to check package import.'''
+#     def wrapper(*args, **kwargs):
+#         if not PYVISTA:
+#             print("Cannot write VTK files: pyvista library not installed.")
+#             raise RuntimeError("Cannot write VTK files: pyvista library not found.")
+#         else:
+#             return func(*args, **kwargs)
+#     wrapper.__doc__ = func.__doc__
+#     return wrapper
 
 def stl_dep(func):
     '''Decorator for STL readers to check package import.'''
@@ -84,8 +73,6 @@ def stl_dep(func):
             return func(*args, **kwargs)
     wrapper.__doc__ = func.__doc__
     return wrapper
-
-
 
 def netcdf_dep(func):
     '''Decorator for NetCDF readers to check package import.'''
@@ -108,7 +95,7 @@ def netcdf_dep(func):
 #                                                                           #
 #############################################################################
 
-@vtk_dep
+#@vtk_dep
 def read_vtk_Structured_Points(filename):
     '''Read in either Scalar or Vector data from an ascii VTK Structured Points 
     file using the VTK Python library.
@@ -164,7 +151,7 @@ def read_vtk_Structured_Points(filename):
 
 
 
-@vtk_dep
+#@vtk_dep
 def read_vtk_Rectilinear_Grid_Vector(filename):
     '''Reads an ascii VTK file with Rectilinear Grid Vector data and TIME info
     using the VTK Python library.
@@ -244,7 +231,7 @@ def read_vtk_Rectilinear_Grid_Vector(filename):
 
 
 
-@vtk_dep
+#@vtk_dep
 def read_vtk_Unstructured_Grid_Points(filename):
     '''Read immersed mesh data from an ascii Unstructured Grid VTK file, such as
     those exported from VisIt. Uses the VTK Python library. The mesh should 
@@ -317,7 +304,7 @@ def read_vtk_Unstructured_Grid_Points(filename):
 
 
 
-@vtk_dep
+#@vtk_dep
 def read_2DEulerian_Data_From_vtk(path, simNum, strChoice, xy=False):
     '''Reads ascii Structured Points VTK files using the Python VTK library,
     where the file contains 2D IB2d data, either scalar or vector. 
@@ -560,7 +547,7 @@ def load_netcdf(filename):
 #                                                                           #
 #############################################################################
 
-@pyvista_dep
+#@pyvista_dep
 def write_vtk_point_data(path, title, data, cycle=None, time=None):
     '''Write point data to an ascii VTK file, such as agent positions. 
     
@@ -602,7 +589,7 @@ def write_vtk_point_data(path, title, data, cycle=None, time=None):
 
 
 
-@pyvista_dep
+#@pyvista_dep
 def write_vtk_2D_rectilinear_grid_scalars(path, title, data, grid_points, 
                                           cycle=None, time=None, binary=True):
     '''Write scalar data to an ascii VTK Rectilinear Grid file (e.g. vorticity). 
@@ -654,7 +641,7 @@ def write_vtk_2D_rectilinear_grid_scalars(path, title, data, grid_points,
 
 
 
-@pyvista_dep
+#@pyvista_dep
 def write_vtk_rectilinear_grid_vectors(path, title, data, grid_points, 
                                        cycle=None, time=None, binary=True):
     '''Write vector data on a 2D or 3D uniform grid (e.g. fluid velocity). Uses 
