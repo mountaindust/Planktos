@@ -2535,6 +2535,8 @@ class swarm:
             #   for analytically.
             t_rot = np.dot(vec_perp,(t_I*Q_end-Q_t0))/np.dot(vec_perp,Q_end-Q_t0)
             assert t_I<t_rot<1, "linear algebra problem in rotation detection"
+            # for debugging
+            print(f't_rot = {t_rot}')
         if went_past_el_bool:
             # check to see when we went past the end of the mesh element.
             # use Newton's method in optimize.root_scalar.
@@ -2562,7 +2564,9 @@ class swarm:
                 t_edge = sol.root
                 assert t_I<t_edge<1, "linear algebra problem in edge detection"
             else:
-                raise RuntimeError("Newton's method did not converge.")      
+                raise RuntimeError("Newton's method did not converge.")
+            # for debugging
+            print(f't_edge = {t_edge}')    
         # Choose the earlier of the two above events if both occurred
         if rotated_past_bool and went_past_el_bool:
             if t_rot < t_edge:
@@ -2677,7 +2681,9 @@ class swarm:
                                                                  newendpt, 
                                                                  start_mesh, end_mesh,
                                                                  max_mov, search_rad)
-
+                    # for debugging
+                    print(f'newstartpt = {newstartpt}')
+                    print(f'newendpt = {newendpt}')
                     return swarm._project_and_slide_moving(newstartpt, newendpt, 
                                                     adj_intersect, 
                                                     start_mesh, end_mesh,
@@ -2698,11 +2704,17 @@ class swarm:
             orig_unit_vec = vec/np.linalg.norm(vec)
             newstartpt = proj_to_pt(t_rot) - EPS*orig_unit_vec
             newendpt = newstartpt + (1-t_rot)*vec
+            # for debugging
+            print(f'newstartpt = {newstartpt}')
+            print(f'newendpt = {newendpt}')
         elif went_past_el_bool:
             # Slid off the end and encountered nothing.
             orig_unit_vec = vec/np.linalg.norm(vec)
             newstartpt = proj_to_pt(t_edge) + EPS*norm_out_u
             newendpt = newstartpt + (1-t_edge)*orig_unit_vec
+            # for debugging
+            print(f'newstartpt = {newstartpt}')
+            print(f'newendpt = {newendpt}')
         else:
             ######### Ended on mesh element ##########
             # get a normal to the final position of mesh element that points 
