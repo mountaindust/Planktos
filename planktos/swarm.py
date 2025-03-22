@@ -2505,9 +2505,7 @@ class swarm:
 
         Qvec = lambda t: (1-t)*Q_t0+(t-t_I)*Q_end
         Q0_t = lambda t: ((1-t)*Q0+(t-t_I)*close_mesh_end[idx,0,:])/(1-t_I)
-        if not np.any(np.isclose(Q_t0,0)):
-            s_I = (x-Q0)/Q_t0
-        elif np.isclose(Q_t0[0],0):
+        if np.isclose(Q_t0[0],0):
             s_I = (x[1]-Q0[1])/Q_t0[1]
         else:
             s_I = (x[0]-Q0[0])/Q_t0[0]
