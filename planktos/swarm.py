@@ -21,7 +21,7 @@ if sys.platform == 'darwin': # OSX backend does not support blitting
 import matplotlib.pyplot as plt
 from matplotlib import animation, colors
 from matplotlib.collections import LineCollection
-from matplotlib.path import Path
+from matplotlib.path import Path as mPath
 
 from .environment import environment
 from . import dataio
@@ -2605,9 +2605,9 @@ class swarm:
 
             # Create marker headings to add to scatter
             paths = []
-            circle = Path.circle(radius=circ_rad)
+            circle = mPath.circle(radius=circ_rad)
             if plot_heading:
-                line_codes = np.array([Path.MOVETO, Path.LINETO])
+                line_codes = np.array([mPath.MOVETO, mPath.LINETO])
                 codes = np.concatenate([circle.codes, line_codes])
                 if 'angle' in self.props:
                     angles = self.props['angle']
@@ -2624,7 +2624,7 @@ class swarm:
                         # combine the circle and line vertices
                         verts = np.concatenate([circle.vertices, line_verts])
                         # append to path list
-                        paths.append(Path(verts, codes))
+                        paths.append(mPath(verts, codes))
             else:
                 paths.append(circle)
 
@@ -3037,8 +3037,8 @@ class swarm:
                               c=self.shared_props['color'])
             
             # set up marker headings to be added to the scatter plots
-            circle = Path.circle(radius=circ_rad)
-            line_codes = np.array([Path.MOVETO, Path.LINETO])
+            circle = mPath.circle(radius=circ_rad)
+            line_codes = np.array([mPath.MOVETO, mPath.LINETO])
             codes = np.concatenate([circle.codes, line_codes])
 
             # textual info
@@ -3410,7 +3410,7 @@ class swarm:
                                 # combine the circle and line vertices
                                 verts = np.concatenate([circle.vertices, line_verts])
                                 # append to path list
-                                paths.append(Path(verts, codes))
+                                paths.append(mPath(verts, codes))
                         scat.set_paths(paths)
                     else:
                         scat.set_paths([circle])
@@ -3660,7 +3660,7 @@ class swarm:
                                 # combine the circle and line vertices
                                 verts = np.concatenate([circle.vertices, line_verts])
                                 # append to path list
-                                paths.append(Path(verts, codes))
+                                paths.append(mPath(verts, codes))
                         scat.set_paths(paths)
                     else:
                         scat.set_paths([circle])
