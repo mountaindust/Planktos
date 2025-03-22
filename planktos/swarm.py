@@ -2514,12 +2514,6 @@ class swarm:
         x_t = lambda t: s_I*Qvec(t)/(1-t_I) + Q0_t(t)
         integ_x = lambda t: Qvec(t)[0]*np.dot(vec,Qvec(t))/np.dot(Qvec(t),Qvec(t))
         integ_y = lambda t: Qvec(t)[1]*np.dot(vec,Qvec(t))/np.dot(Qvec(t),Qvec(t))
-        # integ_x = lambda t: ((1-t)*Q_t0[0]+(t-t_I)*Q_end[0])*\
-        #                     np.dot(vec,(1-t)*Q_t0+(t-t_I)*Q_end)/\
-        #                     np.dot((1-t)*Q_t0+(t-t_I)*Q_end, (1-t)*Q_t0+(t-t_I)*Q_end)
-        # integ_y = lambda t: ((1-t)*Q_t0[1]+(t-t_I)*Q_end[1])*\
-        #                     np.dot(vec,(1-t)*Q_t0+(t-t_I)*Q_end)/\
-        #                     np.dot((1-t)*Q_t0+(t-t_I)*Q_end, (1-t)*Q_t0+(t-t_I)*Q_end)
         proj_to_pt = lambda t: np.array([integrate.quad(integ_x, t_I, t)[0],
                                          integrate.quad(integ_y, t_I, t)[0]]) + x_t(t)
         proj_prime = lambda t: np.array([integ_x(t), integ_y(t)])\
