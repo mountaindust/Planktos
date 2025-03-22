@@ -2489,20 +2489,42 @@ class swarm:
         Q_t0 = Q1-Q0
         Q_end = close_mesh_end[idx,1,:] - close_mesh_end[idx,0,:]
 
+        if 1-t_I < EPS:
+            # get a normal to the final position of mesh element that points 
+            #   back toward where the agent came from. perturb in that direction
+            proj_end = np.dot(vec,Q_end)*Q_end
+            norm_out_u = (proj_end-vec)/np.linalg.norm(proj_end-vec)
+            # pull slide_pt back a bit for numerical stability and return
+            return x + EPS*norm_out_u
+
         # vector in direction of element as a function of time
         # Q = lambda t: (1-t)*Q_t0 + (t-t_I)*Q_end
-        # We want to integrate Q/||Q||*dot(Q/||Q||,vec)
+        # We want to integrate Q/||Q||*dot(Q/||Q||,vec) to get vector projection
+        #   over time.
+        # ALSO: the intersection point has to follow the moving mesh element
 
-        integ_x = lambda t: (1-t)*Q_t0[0]+(t-t_I)*Q_end[0]*\
-                            np.dot(vec,(1-t)*Q_t0+(t-t_I)*Q_end)/\
-                            np.dot((1-t)*Q_t0+(t-t_I)*Q_end, (1-t)*Q_t0+(t-t_I)*Q_end)
-        integ_y = lambda t: (1-t)*Q_t0[1]+(t-t_I)*Q_end[1]*\
-                            np.dot(vec,(1-t)*Q_t0+(t-t_I)*Q_end)/\
-                            np.dot((1-t)*Q_t0+(t-t_I)*Q_end, (1-t)*Q_t0+(t-t_I)*Q_end)
+        Qvec = lambda t: (1-t)*Q_t0+(t-t_I)*Q_end
+        Q0_t = lambda t: ((1-t)*Q0+(t-t_I)*close_mesh_end[idx,0,:])/(1-t_I)
+        if not np.any(np.isclose(Q_t0,0)):
+            s_I = (x-Q0)/Q_t0
+        elif np.isclose(Q_t0[0],0):
+            s_I = (x[1]-Q0[1])/Q_t0[1]
+        else:
+            s_I = (x[0]-Q0[0])/Q_t0[0]
+        x_t = lambda t: s_I*Qvec(t)/(1-t_I) + Q0_t(t)
+        integ_x = lambda t: Qvec(t)[0]*np.dot(vec,Qvec(t))/np.dot(Qvec(t),Qvec(t))
+        integ_y = lambda t: Qvec(t)[1]*np.dot(vec,Qvec(t))/np.dot(Qvec(t),Qvec(t))
+        # integ_x = lambda t: ((1-t)*Q_t0[0]+(t-t_I)*Q_end[0])*\
+        #                     np.dot(vec,(1-t)*Q_t0+(t-t_I)*Q_end)/\
+        #                     np.dot((1-t)*Q_t0+(t-t_I)*Q_end, (1-t)*Q_t0+(t-t_I)*Q_end)
+        # integ_y = lambda t: ((1-t)*Q_t0[1]+(t-t_I)*Q_end[1])*\
+        #                     np.dot(vec,(1-t)*Q_t0+(t-t_I)*Q_end)/\
+        #                     np.dot((1-t)*Q_t0+(t-t_I)*Q_end, (1-t)*Q_t0+(t-t_I)*Q_end)
         proj_to_pt = lambda t: np.array([integrate.quad(integ_x, t_I, t)[0],
-                                         integrate.quad(integ_y, t_I, t)[0]]) + x
-        proj_prime = lambda t: np.array([integ_x(t), integ_y(t)])
-
+                                         integrate.quad(integ_y, t_I, t)[0]]) + x_t(t)
+        proj_prime = lambda t: np.array([integ_x(t), integ_y(t)])\
+                           + (s_I*(Q_end-Q_t0) + (close_mesh_end[idx,0,:]-Q0))/(1-t_I)
+        
         # integrate to 1 to determine the final sliding location on the mesh element
         slide_pt = proj_to_pt(1)
         
