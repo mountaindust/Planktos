@@ -2565,13 +2565,13 @@ class swarm:
                                     (t-t_I)*close_mesh_end[idx,1,:]/(1-t_I)
                 Q_edge_prime = (close_mesh_end[idx,1,:]-Q1)/(1-t_I)
             # function that gives distance between projected location of 
-            #   agent and the relevant edge of the mesh element
+            #   agent at time t and the relevant edge of the mesh element
             dist_Qedge = lambda t: np.linalg.norm(proj_to_pt(t)-Q_edge(t))
             # derivative
             fprime = lambda t: np.dot(proj_to_pt(t)-Q_edge(t),
                                         proj_prime(t)-Q_edge_prime)/dist_Qedge(t)
             sol = optimize.root_scalar(dist_Qedge, method='newton', 
-                                        fprime=fprime, x0=x, xtol=1e-8)
+                                        fprime=fprime, x0=t_I, xtol=1e-6)
             # check solution
             if sol.converged:
                 assert dist_Qedge(sol.root) < EPS, "Wrong root in newton's method"
@@ -2627,11 +2627,13 @@ class swarm:
             #   accordingly.
             ################
             if len(adj_mesh_end) > 0:
-                adj_mesh_end_idx = np.any(pt_bool,axis=1).nonzero()
+                # index into close_mesh for adjacent mesh elements
+                adj_mesh_end_idx = np.any(pt_bool,axis=1).nonzero()[0]
+                # location of adj mesh at time t_edge
                 adj_mesh_newstart = close_mesh_start[adj_mesh_end_idx]*(1-t_edge)\
                                     +adj_mesh_end*t_edge
                 # get vectors in adjacent meshes oriented away from current edgepoint
-                pt_bool_0 = pt_bool_0[adj_mesh_end_idx,0]
+                pt_bool_0 = pt_bool[adj_mesh_end_idx,0]
                 adj_vec = np.zeros((adj_mesh_newstart.shape[0],adj_mesh_newstart.shape[2]))
                 # if first entry is the focal edgepoint, get vector from that
                 adj_vec[pt_bool_0] = adj_mesh_newstart[pt_bool_0,1,:] - \
@@ -2667,6 +2669,7 @@ class swarm:
                 else:
                     adj_vec = adj_vec[0,:]
                     adj_idx = adj_mesh_end_idx[intersect_bool][0]
+                    elem_idx = 0
                 ######### Treat the intersection case as per geometry #########
                 # NOTE: this intersection should happen essentially immediately
                 #   after sliding off of the last element because they are joined
@@ -2685,8 +2688,8 @@ class swarm:
                     # Also, regenerate eligible mesh elements based on the 
                     #   new location.
                     adj_intersect = (proj_to_pt(t_edge), t_edge, 
-                                     adj_mesh_newstart[adj_idx,0,:],
-                                     adj_mesh_newstart[adj_idx,1,:], adj_idx)
+                                     adj_mesh_newstart[elem_idx,0,:],
+                                     adj_mesh_newstart[elem_idx,1,:], adj_idx)
                     newstartpt = adj_intersect[0] + EPS*norm_out_u - EPS*Q_vec_u
                     newendpt = newstartpt + (1-t_edge)*proj_Q + EPS*Q_vec_u
                     search_rad = max_meshpt_dist*2/3
@@ -2731,12 +2734,15 @@ class swarm:
             print(f'newendpt = {newendpt}')
         else:
             ######### Ended on mesh element ##########
-            # get a normal to the final position of mesh element that points 
-            #   back toward where the agent came from. perturb in that direction
             proj_end = np.dot(vec,Q_end)*Q_end
-            norm_out_u = (proj_end-vec)/np.linalg.norm(proj_end-vec)
-            # pull slide_pt back a bit for numerical stability and return
-            return slide_pt + EPS*norm_out_u
+            if np.isclose(np.linalg.norm(proj_end-vec),0):
+                # sliding on a mesh element. simply return.
+                return slide_pt
+            else:
+                # get a normal to the final position of mesh element that points 
+                #   back toward where the agent came from. perturb in that direction
+                norm_out_u = (proj_end-vec)/np.linalg.norm(proj_end-vec)
+                return slide_pt + EPS*norm_out_u
 
         # recursion
         new_loc, dx = swarm._apply_internal_moving_BC(newstartpt, newendpt,
