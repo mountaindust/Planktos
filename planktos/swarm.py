@@ -2663,7 +2663,7 @@ class swarm:
                     # Obtuse. Repeat project_and_slide_moving on new segment,
                     #   but send along info about old segment so we don't
                     #   get in an infinite loop.
-                    adj_intersect = (proj_to_pt(t_edge), t_edge, 
+                    adj_intersect = (proj_to_pt(t_edge), 0, 
                                      adj_mesh_newstart[elem_idx,0,:],
                                      adj_mesh_newstart[elem_idx,1,:], adj_idx)
                     newstartpt = adj_intersect[0] + EPS*norm_out_u - EPS*Q_vec_u
