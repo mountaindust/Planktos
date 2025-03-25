@@ -1876,7 +1876,6 @@ class swarm:
     @staticmethod
     def _apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh, 
                                   max_meshpt_dist, max_mov, 
-                                  old_intersection=None, kill=False, 
                                   ib_collisions='sliding'):
         '''Apply internal boundaries to a trajectory starting and ending at
         startpt and endpt, returning a new endpt (or the original one) as
@@ -1896,16 +1895,6 @@ class swarm:
             maximum distance between two mesh vertices at either time
         max_mov : float
             maximum distance any mesh vertex moved
-        old_intersection : list-like of data
-            (for internal use only) records the last intersection in the 
-            recursion to check if we are bouncing back and forth between two 
-            boundaries as a result of a concave angle and the right kind of 
-            trajectory vector.
-        kill : bool
-            (for internal use only) set to True in 3D case if we have previously 
-            slid along the boundary line between two mesh elements. This 
-            prevents such a thing from happening more than once, in case of 
-            pathological cases.
         ib_collisions : {'sliding' (default), 'sticky'}
             Type of interaction with immersed boundaries. In sliding 
             collisions, conduct recursive vector projection until the length of
@@ -1951,13 +1940,12 @@ class swarm:
             return endpt, None
         
         # If we have an intersection with this agent, apply boundary condition
-
-        # small number to perturb off of the actual boundary in order to avoid
-        #   roundoff errors that would allow boundary penetration
-        EPS = 1e-7
-
         if ib_collisions == 'sticky':
             # Return the point of intersection
+
+            # small number to perturb off of the actual boundary in order to avoid
+            #   roundoff errors that would allow boundary penetration
+            EPS = 1e-7
 
             if DIM == 2:
                 x = intersection[0]    # (x,y) coordinates of intersection
@@ -2002,13 +1990,11 @@ class swarm:
             if DIM == 2:
                 # Project remaining piece of vector onto mesh and repeat processes 
                 #   as necessary until we have a final result.
-                # new_pos = swarm._project_and_slide_moving(startpt, endpt, intersection, 
-                #                                 mesh, close_mesh_start, 
-                #                                 close_mesh_end, max_meshpt_dist, 
-                #                                 old_intersection, kill)
-                # return new_pos, new_pos - intersection[0]
+                new_pos = swarm._project_and_slide_moving(startpt, endpt, intersection, 
+                                                close_mesh_start, close_mesh_end, 
+                                                max_meshpt_dist, max_mov)
+                return new_pos, new_pos - intersection[0]
 
-                raise NotImplementedError("sliding moving meshes not currently supported.")
             else:
                 raise NotImplementedError("3D moving meshes not currently supported.")
             
@@ -2419,10 +2405,8 @@ class swarm:
 
 
     @staticmethod
-    def _project_and_slide_moving(startpt, endpt, intersection, start_mesh, end_mesh,
-                                  close_mesh_start, close_mesh_end, 
-                                  max_meshpt_dist, max_mov, old_intersection=None, 
-                                  kill=False):
+    def _project_and_slide_moving(startpt, endpt, intersection, mesh_start, 
+                                  mesh_end, max_meshpt_dist, max_mov):
         '''Once we have an intersection point with an immersed mesh, project and 
         slide the agent along the moving mesh for its remaining movement, and 
         determine what happens if we fall off the edge of the element (or the 
@@ -2441,26 +2425,20 @@ class swarm:
             information about the intersection with the immersed mesh element
         mesh : Nx2x2 or Nx3x3 array
             full immersed boundary mesh (for recalculating close_mesh)
-        close_mesh_start : Nx2x2 or Nx3x3 array 
+        mesh_start : Nx2x2 or Nx3x3 array 
             eligible (nearby) mesh elements for interaction as they are at the 
             start time
-        close_mesh_end : Nx2x2 or Nx3x3 array 
+        mesh_end : Nx2x2 or Nx3x3 array 
             eligible (nearby) mesh elements for interaction as they are at the 
             end time
         max_meshpt_dist : float
             max distance between two points on a mesh element (used to determine 
-            how far away from startpt to search for mesh elements). Used here 
-            for possible recursion
-        old_intersection : list-like of data
-            (for internal use only) records the last intersection in the 
-            recursion to check if we are bouncing back and forth between two 
-            boundaries as a result of a concave angle and the right kind of 
-            trajectory vector.
-        kill : bool
-            (for internal use only) set to True in 3D case if we have previously 
-            slid along the boundary line between two mesh elements. This 
-            prevents such a thing from happening more than once, in case of 
-            pathological cases.
+            how far away from startpt to search for mesh elements). 
+            Passed-through here solely in case of recursion with 
+            _apply_internal_moving_BC.
+        max_mov : float
+            maximum distance any mesh vertex moved. Passed-through here solely 
+            in case of recursion with _apply_internal_moving_BC.
 
         Returns
         -------
@@ -2481,13 +2459,13 @@ class swarm:
         t_I = intersection[1]  # btwn 0 & 1, fraction of movement traveled so far
         Q0 = intersection[2]   # edge of mesh element at time of intersection
         Q1 = intersection[3]   # edge of mesh element at time of intersection
-        idx = intersection[4]  # index into close_mesh_start/end above
+        idx = intersection[4]  # index into mesh_start/end above
         
         # Get full travel vector, to be integrated from t_I to 1
         vec = endpt-startpt
 
         Q_t0 = Q1-Q0
-        Q_end = close_mesh_end[idx,1,:] - close_mesh_end[idx,0,:]
+        Q_end = mesh_end[idx,1,:] - mesh_end[idx,0,:]
 
         if 1-t_I < EPS:
             # get a normal to the final position of mesh element that points 
@@ -2504,7 +2482,7 @@ class swarm:
         # ALSO: the intersection point has to follow the moving mesh element
 
         Qvec = lambda t: (1-t)*Q_t0+(t-t_I)*Q_end
-        Q0_t = lambda t: ((1-t)*Q0+(t-t_I)*close_mesh_end[idx,0,:])/(1-t_I)
+        Q0_t = lambda t: ((1-t)*Q0+(t-t_I)*mesh_end[idx,0,:])/(1-t_I)
         if np.isclose(Q_t0[0],0):
             s_I = (x[1]-Q0[1])/Q_t0[1]
         else:
@@ -2515,7 +2493,7 @@ class swarm:
         proj_to_pt = lambda t: np.array([integrate.quad(integ_x, t_I, t)[0],
                                          integrate.quad(integ_y, t_I, t)[0]]) + x_t(t)
         proj_prime = lambda t: np.array([integ_x(t), integ_y(t)])\
-                           + (s_I*(Q_end-Q_t0) + (close_mesh_end[idx,0,:]-Q0))/(1-t_I)
+                           + (s_I*(Q_end-Q_t0) + (mesh_end[idx,0,:]-Q0))/(1-t_I)
         
         # integrate to 1 to determine the final sliding location on the mesh element
         slide_pt = proj_to_pt(1)
@@ -2532,8 +2510,8 @@ class swarm:
         #   they stretch or contract monotonically. It is therefore enough to check if 
         #   we have gone past the final mesh element's endpoint.
         mesh_el_end_len = np.linalg.norm(Q_end)
-        Q0_end_dist = np.linalg.norm(slide_pt - close_mesh_end[idx,0,:])
-        Q1_end_dist = np.linalg.norm(slide_pt - close_mesh_end[idx,1,:])
+        Q0_end_dist = np.linalg.norm(slide_pt - mesh_end[idx,0,:])
+        Q1_end_dist = np.linalg.norm(slide_pt - mesh_end[idx,1,:])
         # Since we are sliding on the mesh element, if the distance from
         #   our new location to either of the mesh endpoints is greater
         #   than the length of the mesh element, we must have gone beyond
@@ -2557,13 +2535,13 @@ class swarm:
             if Q1_end_dist > Q0_end_dist:
                 # went past Q0
                 Q_edge = lambda t: (1-t)*Q0/(1-t_I) + \
-                                    (t-t_I)*close_mesh_end[idx,0,:]/(1-t_I)
-                Q_edge_prime = (close_mesh_end[idx,0,:]-Q0)/(1-t_I)
+                                    (t-t_I)*mesh_end[idx,0,:]/(1-t_I)
+                Q_edge_prime = (mesh_end[idx,0,:]-Q0)/(1-t_I)
             else:
                 # went past Q1
                 Q_edge = lambda t: (1-t)*Q1/(1-t_I) + \
-                                    (t-t_I)*close_mesh_end[idx,1,:]/(1-t_I)
-                Q_edge_prime = (close_mesh_end[idx,1,:]-Q1)/(1-t_I)
+                                    (t-t_I)*mesh_end[idx,1,:]/(1-t_I)
+                Q_edge_prime = (mesh_end[idx,1,:]-Q1)/(1-t_I)
             # function that gives distance between projected location of 
             #   agent at time t and the relevant edge of the mesh element
             dist_Qedge = lambda t: np.linalg.norm(proj_to_pt(t)-Q_edge(t))
@@ -2608,18 +2586,18 @@ class swarm:
             #   except the current mesh element
             if Q1_end_dist > Q0_end_dist:
                 # went past Q0
-                pt_bool = np.isclose(np.linalg.norm(close_mesh_end.reshape(
-                    (close_mesh_end.shape[0]*close_mesh_end.shape[1],close_mesh_end.shape[2]))
-                    -close_mesh_end[idx,0,:], axis=1), 0)
+                pt_bool = np.isclose(np.linalg.norm(mesh_end.reshape(
+                    (mesh_end.shape[0]*mesh_end.shape[1],mesh_end.shape[2]))
+                    -mesh_end[idx,0,:], axis=1), 0)
             else:
                 # went past Q1
-                pt_bool = np.isclose(np.linalg.norm(close_mesh_end.reshape(
-                    (close_mesh_end.shape[0]*close_mesh_end.shape[1],close_mesh_end.shape[2]))
-                    -close_mesh_end[idx,1,:], axis=1), 0)
-            pt_bool = pt_bool.reshape((close_mesh_end.shape[0],close_mesh_end.shape[1]))
+                pt_bool = np.isclose(np.linalg.norm(mesh_end.reshape(
+                    (mesh_end.shape[0]*mesh_end.shape[1],mesh_end.shape[2]))
+                    -mesh_end[idx,1,:], axis=1), 0)
+            pt_bool = pt_bool.reshape((mesh_end.shape[0],mesh_end.shape[1]))
             # remove current mesh element
             pt_bool[idx,:] = False
-            adj_mesh_end = close_mesh_end[np.any(pt_bool,axis=1)]
+            adj_mesh_end = mesh_end[np.any(pt_bool,axis=1)]
 
             # if there are any adjacent mesh elements, get their location at 
             #   time t_edge as well and calculate the angle at that time between 
@@ -2630,7 +2608,7 @@ class swarm:
                 # index into close_mesh for adjacent mesh elements
                 adj_mesh_end_idx = np.any(pt_bool,axis=1).nonzero()[0]
                 # location of adj mesh at time t_edge
-                adj_mesh_newstart = close_mesh_start[adj_mesh_end_idx]*(1-t_edge)\
+                adj_mesh_newstart = mesh_start[adj_mesh_end_idx]*(1-t_edge)\
                                     +adj_mesh_end*t_edge
                 # get vectors in adjacent meshes oriented away from current edgepoint
                 pt_bool_0 = pt_bool[adj_mesh_end_idx,0]
@@ -2685,28 +2663,19 @@ class swarm:
                     # Obtuse. Repeat project_and_slide_moving on new segment,
                     #   but send along info about old segment so we don't
                     #   get in an infinite loop.
-                    # Also, regenerate eligible mesh elements based on the 
-                    #   new location.
                     adj_intersect = (proj_to_pt(t_edge), t_edge, 
                                      adj_mesh_newstart[elem_idx,0,:],
                                      adj_mesh_newstart[elem_idx,1,:], adj_idx)
                     newstartpt = adj_intersect[0] + EPS*norm_out_u - EPS*Q_vec_u
                     newendpt = newstartpt + (1-t_edge)*proj_Q + EPS*Q_vec_u
-                    search_rad = max_meshpt_dist*2/3
-                    close_mesh_start, close_mesh_end = \
-                        swarm._get_eligible_moving_mesh_elements(newstartpt, 
-                                                                 newendpt, 
-                                                                 start_mesh, end_mesh,
-                                                                 max_mov, search_rad)
+
                     # for debugging
                     print(f'newstartpt = {newstartpt}')
                     print(f'newendpt = {newendpt}')
                     return swarm._project_and_slide_moving(newstartpt, newendpt, 
                                                     adj_intersect, 
-                                                    start_mesh, end_mesh,
-                                                    close_mesh_start, close_mesh_end, 
-                                                    max_meshpt_dist, max_mov,
-                                                    intersection)      
+                                                    mesh_start, mesh_end, 
+                                                    max_meshpt_dist, max_mov)      
 
         ##########                                                  ##########
         #####   Only reached if we did not intersect adjacent element    #####
@@ -2744,11 +2713,10 @@ class swarm:
                 norm_out_u = (proj_end-vec)/np.linalg.norm(proj_end-vec)
                 return slide_pt + EPS*norm_out_u
 
-        # recursion
+        # recursion, but only on prev. eligible mesh elements
         new_loc, dx = swarm._apply_internal_moving_BC(newstartpt, newendpt,
-                                                    start_mesh, end_mesh,
-                                                    max_meshpt_dist, max_mov,
-                                                    intersection)
+                                                    mesh_start, mesh_end,
+                                                    max_meshpt_dist, max_mov)
         return new_loc
 
 
