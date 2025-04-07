@@ -2066,7 +2066,7 @@ class environment:
             ### Save data
             if d_start != d_finish:
                 self.ibmesh = np.array(ibmesh, dtype=np.float64)
-                self.ibmesh_times = np.arange(d_start,d_finish+1)*print_dump*dt
+                self.ibmesh_times = np.arange(d_start,d_finish+1,dtype=np.float64)*print_dump*dt
                 # shift time so that ibmesh starts at t=0
                 self.ibmesh_times -= self.ibmesh_times[0]
             else:

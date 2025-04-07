@@ -1852,7 +1852,7 @@ class swarm:
             
             # small number to perturb off of the actual boundary in order to avoid
             #   roundoff errors that would allow penetration
-            EPS = 1e-7
+            EPS = max_meshpt_dist*1e-7
 
             back_vec = (startpt-endpt)/np.linalg.norm(endpt-startpt)
             return intersection[0] + back_vec*EPS, np.zeros((DIM))
@@ -1945,7 +1945,7 @@ class swarm:
 
             # small number to perturb off of the actual boundary in order to avoid
             #   roundoff errors that would allow boundary penetration
-            EPS = 1e-7
+            EPS = max_meshpt_dist*1e-7
 
             if DIM == 2:
                 x = intersection[0]    # (x,y) coordinates of intersection
@@ -2092,7 +2092,7 @@ class swarm:
 
         # small number to perturb off of the actual boundary in order to avoid
         #   roundoff errors that would allow penetration
-        EPS = 1e-7
+        EPS = max_meshpt_dist*1e-7
 
         # Project remaining piece of vector from intersection onto mesh and get 
         #   a unit normal pointing out from the simplex
@@ -2448,7 +2448,7 @@ class swarm:
 
         # small number to perturb off of the actual boundary in order to avoid
         #   roundoff errors that would allow penetration
-        EPS = 1e-7
+        EPS = max_meshpt_dist*1e-7
 
         DIM = len(startpt)
 
