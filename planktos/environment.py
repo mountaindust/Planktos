@@ -4472,7 +4472,7 @@ class environment:
                                               valid_vals, (grid_x,grid_y),
                                               method='cubic')
             pcm = ax.imshow(grid_sFTLE.T, extent=(0,self.L[0],0,self.L[1]), origin='lower')
-            plt.title('Negative smallest fwrd-time FTLE field, $t_0$={}, $\Delta t$={}.\n'.format(
+            plt.title('Negative smallest fwrd-time FTLE field, $t_0$={}, $\\Delta t$={}.\n'.format(
                     self.FTLE_t0, self.FTLE_T)+
                     'Interpolated from {} out of {} starting points left in domain.'.format(
                         np.sum(~self.FTLE_loc_end[:,0].mask),self.FTLE_loc_end.shape[0]))
@@ -4481,7 +4481,7 @@ class environment:
             grid_y = np.reshape(self.FTLE_loc[:,1].data, self.FTLE_grid_dim)
             pcm = ax.pcolormesh(grid_x, grid_y, FTLE, shading='gouraud', 
                                 cmap='plasma')
-            plt.title('Largest fwrd-time FTLE field, $t_0$={}, $\Delta t$={}.'.format(
+            plt.title('Largest fwrd-time FTLE field, $t_0$={}, $\\Delta t$={}.'.format(
                     self.FTLE_t0, self.FTLE_T))
         axbbox = ax.get_position().get_points()
         cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])
