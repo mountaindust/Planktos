@@ -2543,11 +2543,12 @@ class swarm:
                                     (t-t_I)*mesh_end[idx,1,:]/(1-t_I)
                 Q_edge_prime = (mesh_end[idx,1,:]-Q1)/(1-t_I)
             # function that gives distance between projected location of 
-            #   agent at time t and the relevant edge of the mesh element
-            dist_Qedge = lambda t: np.linalg.norm(proj_to_pt(t)-Q_edge(t))
+            #   agent at time t and the relevant edge of the mesh element.
+            #   Find roots of the square distance.
+            dist_Qedge = lambda t: np.linalg.norm(proj_to_pt(t)-Q_edge(t))**2
             # derivative
-            fprime = lambda t: np.dot(proj_to_pt(t)-Q_edge(t),
-                                        proj_prime(t)-Q_edge_prime)/dist_Qedge(t)
+            fprime = lambda t: 2*np.dot(proj_to_pt(t)-Q_edge(t),
+                                        proj_prime(t)-Q_edge_prime)
             sol = optimize.root_scalar(dist_Qedge, method='newton', 
                                         fprime=fprime, x0=t_I, xtol=1e-6)
             # check solution
@@ -2660,9 +2661,7 @@ class swarm:
                     #   numerical stability and stay put.
                     return proj_to_pt(t_edge) - EPS*Q_vec_u + EPS*adj_vec
                 else:
-                    # Obtuse. Repeat project_and_slide_moving on new segment,
-                    #   but send along info about old segment so we don't
-                    #   get in an infinite loop.
+                    # Obtuse. Repeat project_and_slide_moving on new segment.
                     adj_intersect = (proj_to_pt(t_edge), 0, 
                                      adj_mesh_newstart[elem_idx,0,:],
                                      adj_mesh_newstart[elem_idx,1,:], adj_idx)
@@ -2670,8 +2669,8 @@ class swarm:
                     newendpt = newstartpt + (1-t_edge)*proj_Q + EPS*Q_vec_u
 
                     # for debugging
-                    print(f'newstartpt = {newstartpt}')
-                    print(f'newendpt = {newendpt}')
+                    print(f'newstartpt = {list(newstartpt)}')
+                    print(f'newendpt = {list(newendpt)}')
                     return swarm._project_and_slide_moving(newstartpt, newendpt, 
                                                     adj_intersect, 
                                                     mesh_start, mesh_end, 
@@ -2691,16 +2690,16 @@ class swarm:
             newstartpt = proj_to_pt(t_rot) - EPS*orig_unit_vec
             newendpt = newstartpt + (1-t_rot)*vec
             # for debugging
-            print(f'newstartpt = {newstartpt}')
-            print(f'newendpt = {newendpt}')
+            print(f'newstartpt = {list(newstartpt)}')
+            print(f'newendpt = {list(newendpt)}')
         elif went_past_el_bool:
             # Slid off the end and encountered nothing.
             orig_unit_vec = vec/np.linalg.norm(vec)
             newstartpt = proj_to_pt(t_edge) + EPS*norm_out_u
             newendpt = newstartpt + (1-t_edge)*orig_unit_vec
             # for debugging
-            print(f'newstartpt = {newstartpt}')
-            print(f'newendpt = {newendpt}')
+            print(f'newstartpt = {list(newstartpt)}')
+            print(f'newendpt = {list(newendpt)}')
         else:
             ######### Ended on mesh element ##########
             proj_end = np.dot(vec,Q_end)*Q_end
