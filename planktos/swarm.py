@@ -2531,7 +2531,7 @@ class swarm:
             print(f't_rot = {t_rot}')
         if went_past_el_bool:
             # check to see when we went past the end of the mesh element.
-            # use Newton's method in optimize.root_scalar.
+            # This is a non-linear least squares minimization problem
             if Q1_end_dist > Q0_end_dist:
                 # went past Q0
                 Q_edge = lambda t: (1-t)*Q0/(1-t_I) + \
@@ -2545,19 +2545,21 @@ class swarm:
             # function that gives distance between projected location of 
             #   agent at time t and the relevant edge of the mesh element.
             #   Find roots of the square distance.
-            dist_Qedge = lambda t: np.linalg.norm(proj_to_pt(t)-Q_edge(t))**2
+            resid = lambda t: proj_to_pt(t[0])-Q_edge(t[0])
+            # dist_Qedge = lambda t: np.linalg.norm(proj_to_pt(t)-Q_edge(t))**2
             # derivative
-            fprime = lambda t: 2*np.dot(proj_to_pt(t)-Q_edge(t),
-                                        proj_prime(t)-Q_edge_prime)
-            sol = optimize.root_scalar(dist_Qedge, method='newton', 
-                                        fprime=fprime, x0=t_I, xtol=1e-6)
+            jac = lambda t: np.array([proj_prime(t[0])-Q_edge_prime]).T
+            # fprime = lambda t: 2*np.dot(proj_to_pt(t)-Q_edge(t),
+            #                             proj_prime(t)-Q_edge_prime)
+            # Solve the non-linear least squares problem
+            sol = optimize.least_squares(resid, x0=t_I, jac=jac, bounds=(t_I,1),
+                                         method='dogbox', ftol=None, gtol=None)
+            # sol = optimize.root_scalar(dist_Qedge, method='newton', 
+            #                             fprime=fprime, x0=t_I, xtol=1e-6)
             # check solution
-            if sol.converged:
-                assert dist_Qedge(sol.root) < EPS, "Wrong root in newton's method"
-                t_edge = sol.root
-                assert t_I<t_edge<1, "linear algebra problem in edge detection"
-            else:
-                raise RuntimeError("Newton's method did not converge.")
+            if not sol.success:
+                raise RuntimeError("LSQ did not converge.")
+            t_edge = sol.x[0]
             # for debugging
             print(f't_edge = {t_edge}')    
         # Choose the earlier of the two above events if both occurred
@@ -2659,10 +2661,10 @@ class swarm:
                 if acute_bool:
                     # Back away from the intersection point slightly for
                     #   numerical stability and stay put.
-                    return proj_to_pt(t_edge) - EPS*Q_vec_u + EPS*adj_vec
+                    return Q_edge(t_edge) - EPS*Q_vec_u + EPS*adj_vec
                 else:
                     # Obtuse. Repeat project_and_slide_moving on new segment.
-                    adj_intersect = (proj_to_pt(t_edge), 0, 
+                    adj_intersect = (Q_edge(t_edge), 0, 
                                      adj_mesh_newstart[elem_idx,0,:],
                                      adj_mesh_newstart[elem_idx,1,:], adj_idx)
                     newstartpt = adj_intersect[0] + EPS*norm_out_u - EPS*Q_vec_u
@@ -2695,7 +2697,7 @@ class swarm:
         elif went_past_el_bool:
             # Slid off the end and encountered nothing.
             orig_unit_vec = vec/np.linalg.norm(vec)
-            newstartpt = proj_to_pt(t_edge) + EPS*norm_out_u
+            newstartpt = Q_edge(t_edge) + EPS*norm_out_u
             newendpt = newstartpt + (1-t_edge)*orig_unit_vec
             # for debugging
             print(f'newstartpt = {list(newstartpt)}')
