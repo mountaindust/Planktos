@@ -2470,7 +2470,7 @@ class swarm:
         if 1-t_I < EPS:
             # get a normal to the final position of mesh element that points 
             #   back toward where the agent came from. perturb in that direction
-            proj_end = np.dot(vec,Q_end)*Q_end
+            proj_end = np.dot(vec,Q_end)*Q_end/np.dot(Q_end,Q_end)
             norm_out_u = (proj_end-vec)/np.linalg.norm(proj_end-vec)
             # pull slide_pt back a bit for numerical stability and return
             return x + EPS*norm_out_u
@@ -2478,22 +2478,54 @@ class swarm:
         # vector in direction of element as a function of time
         # Q = lambda t: (1-t)*Q_t0 + (t-t_I)*Q_end
         # We want to integrate Q/||Q||*dot(Q/||Q||,vec) to get vector projection
-        #   over time.
-        # ALSO: the intersection point has to follow the moving mesh element
+        #   of agent over time along mesh element.
+        # ALSO: the base point needs to move orthogonally with the mesh element
+        #   as it moves, but not laterally because that would imply friction.
+        # E.g., Velocity comes from these sources:
+        #   1) velocity of agent movement along element minus friction
+        #   2) velocity along element due to friction and element moving (don't want)
+        #   3) velocity ortho to element (agent stays against element and can be 
+        #       pushed by element)
+        # Note: Velocity of the element is dependent on the position along the 
+        #   element, and the velocity of any point on the elem along the elem is 
+        #       the interpolated velocity of the two endpoints in that direction.
+        # If you take the point of intersection on the mesh element and follow 
+        #   it as the mesh element moves, and then subtract off the velocity 
+        #   in-line with the mesh element, you are left with only the velocity 
+        #   orthogonal to the mesh element at all times t. E.g. we do ((3)+(2)) - (2).
 
-        Qvec = lambda t: (1-t)*Q_t0+(t-t_I)*Q_end
-        Q0_t = lambda t: ((1-t)*Q0+(t-t_I)*mesh_end[idx,0,:])/(1-t_I)
+        # TODO: Sticky boundary condition should return final position on mesh,
+        #   not simply stop.
+
+        Qvec = lambda t: (1-t)*Q_t0+(t-t_I)*Q_end # vec in mesh elem direction
+        Q0_t = lambda t: ((1-t)*Q0+(t-t_I)*mesh_end[idx,0,:])/(1-t_I) # interp of Q0
+        # Lagrangian position of intersection on mesh element [0,1] from Q0
         if np.isclose(Q_t0[0],0):
             s_I = (x[1]-Q0[1])/Q_t0[1]
         else:
             s_I = (x[0]-Q0[0])/Q_t0[0]
+        # Location where intersection occurred on the mesh at any time t.
         x_t = lambda t: s_I*Qvec(t)/(1-t_I) + Q0_t(t)
+        # Velocity of x_t along the mesh at all times t
+        vs_I_x = lambda t: Qvec(t)[0]*(np.dot((mesh_end[idx,0,:]-Q0),Qvec(t))*(1-s_I)+
+                                       np.dot((mesh_end[idx,1,:]-Q1),Qvec(t))*s_I)/\
+                                       np.dot(Qvec(t),Qvec(t))/(1-t_I)
+        vs_I_y = lambda t: Qvec(t)[1]*(np.dot((mesh_end[idx,0,:]-Q0),Qvec(t))*(1-s_I)+
+                                       np.dot((mesh_end[idx,1,:]-Q1),Qvec(t))*s_I)/\
+                                       np.dot(Qvec(t),Qvec(t))/(1-t_I)
+        # Vector projection of agent movement onto mesh at all times t
         integ_x = lambda t: Qvec(t)[0]*np.dot(vec,Qvec(t))/np.dot(Qvec(t),Qvec(t))
         integ_y = lambda t: Qvec(t)[1]*np.dot(vec,Qvec(t))/np.dot(Qvec(t),Qvec(t))
+        # Integration of velocities based on moving intersection position
         proj_to_pt = lambda t: np.array([integrate.quad(integ_x, t_I, t)[0],
-                                         integrate.quad(integ_y, t_I, t)[0]]) + x_t(t)
+                                         integrate.quad(integ_y, t_I, t)[0]]) +\
+                               x_t(t) -\
+                               np.array([integrate.quad(vs_I_x, t_I, t)[0],
+                                         integrate.quad(vs_I_y, t_I, t)[0]])
+        # Derivative of proj_to_pt
         proj_prime = lambda t: np.array([integ_x(t), integ_y(t)])\
-                           + (s_I*(Q_end-Q_t0) + (mesh_end[idx,0,:]-Q0))/(1-t_I)
+                           + (s_I*(Q_end-Q_t0) + (mesh_end[idx,0,:]-Q0))/(1-t_I)\
+                           - np.array([vs_I_x(t), vs_I_y(t)])
         
         # integrate to 1 to determine the final sliding location on the mesh element
         slide_pt = proj_to_pt(1)
@@ -2546,16 +2578,11 @@ class swarm:
             #   agent at time t and the relevant edge of the mesh element.
             #   Find roots of the square distance.
             resid = lambda t: proj_to_pt(t[0])-Q_edge(t[0])
-            # dist_Qedge = lambda t: np.linalg.norm(proj_to_pt(t)-Q_edge(t))**2
             # derivative
             jac = lambda t: np.array([proj_prime(t[0])-Q_edge_prime]).T
-            # fprime = lambda t: 2*np.dot(proj_to_pt(t)-Q_edge(t),
-            #                             proj_prime(t)-Q_edge_prime)
             # Solve the non-linear least squares problem
             sol = optimize.least_squares(resid, x0=t_I, jac=jac, bounds=(t_I,1),
                                          method='dogbox', ftol=None, gtol=None)
-            # sol = optimize.root_scalar(dist_Qedge, method='newton', 
-            #                             fprime=fprime, x0=t_I, xtol=1e-6)
             # check solution
             if not sol.success:
                 raise RuntimeError("LSQ did not converge.")
@@ -2661,6 +2688,7 @@ class swarm:
                 if acute_bool:
                     # Back away from the intersection point slightly for
                     #   numerical stability and stay put.
+                    # TODO: what if it rotates acute?
                     return Q_edge(t_edge) - EPS*Q_vec_u + EPS*adj_vec
                 else:
                     # Obtuse. Repeat project_and_slide_moving on new segment.
@@ -2704,7 +2732,7 @@ class swarm:
             print(f'newendpt = {list(newendpt)}')
         else:
             ######### Ended on mesh element ##########
-            proj_end = np.dot(vec,Q_end)*Q_end
+            proj_end = np.dot(vec,Q_end)*Q_end/np.dot(Q_end,Q_end)
             if np.isclose(np.linalg.norm(proj_end-vec),0):
                 # sliding on a mesh element. simply return.
                 return slide_pt
