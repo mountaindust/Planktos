@@ -1963,7 +1963,7 @@ class swarm:
                     st_elem = close_mesh_start[idx]
                     dt_elem = close_mesh_end[idx]
                 # Translate to final position of mesh element in this time step
-                new_pos = dt_elem[0,:] + s*(dt_elem[1,:] - dt_elem[0,:])
+                new_pos = dt_elem[0,:]*(1-s)+ dt_elem[1,:]*s
                 
                 # Perturb a small bit off of the boundary.
                 #   This needs to be on the side of the element the motion 
@@ -1972,7 +1972,7 @@ class swarm:
                 # Find perpendicular direction based off of starting positions
                 #   of both mesh element and agent
                 perp_vec = np.array([st_elem[1,1]-st_elem[0,1],st_elem[0,0]-st_elem[1,0]])
-                perp_vec /= np.linalg.norm(perp_vec)
+                perp_vec /= np.linalg.norm(perp_vec) # unit vec perp to starting pos of element
                 # find the side of the mesh element the agent started on
                 to_pt_vec = startpt - st_elem[0,:]
                 signum = np.dot(to_pt_vec,perp_vec)/np.linalg.norm(np.dot(to_pt_vec,perp_vec))
@@ -2493,9 +2493,6 @@ class swarm:
         #   it as the mesh element moves, and then subtract off the velocity 
         #   in-line with the mesh element, you are left with only the velocity 
         #   orthogonal to the mesh element at all times t. E.g. we do ((3)+(2)) - (2).
-
-        # TODO: Sticky boundary condition should return final position on mesh,
-        #   not simply stop.
 
         Qvec = lambda t: (1-t)*Q_t0+(t-t_I)*Q_end # vec in mesh elem direction
         Q0_t = lambda t: ((1-t)*Q0+(t-t_I)*mesh_end[idx,0,:])/(1-t_I) # interp of Q0
