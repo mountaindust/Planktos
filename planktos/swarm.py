@@ -2494,7 +2494,7 @@ class swarm:
         #   in-line with the mesh element, you are left with only the velocity 
         #   orthogonal to the mesh element at all times t. E.g. we do ((3)+(2)) - (2).
 
-        Qvec = lambda t: (1-t)*Q_t0+(t-t_I)*Q_end # vec in mesh elem direction
+        Qvec = lambda t: ((1-t)*Q_t0+(t-t_I)*Q_end)/(1-t_I) # mesh elem direction vec
         Q0_t = lambda t: ((1-t)*Q0+(t-t_I)*mesh_end[idx,0,:])/(1-t_I) # interp of Q0
         # Lagrangian position of intersection on mesh element [0,1] from Q0
         if np.isclose(Q_t0[0],0):
@@ -2502,14 +2502,16 @@ class swarm:
         else:
             s_I = (x[0]-Q0[0])/Q_t0[0]
         # Location where intersection occurred on the mesh at any time t.
-        x_t = lambda t: s_I*Qvec(t)/(1-t_I) + Q0_t(t)
+        x_t = lambda t: s_I*Qvec(t) + Q0_t(t)
         # Velocity of x_t along the mesh at all times t
-        vs_I_x = lambda t: Qvec(t)[0]*(np.dot((mesh_end[idx,0,:]-Q0),Qvec(t))*(1-s_I)+
-                                       np.dot((mesh_end[idx,1,:]-Q1),Qvec(t))*s_I)/\
-                                       np.dot(Qvec(t),Qvec(t))/(1-t_I)
-        vs_I_y = lambda t: Qvec(t)[1]*(np.dot((mesh_end[idx,0,:]-Q0),Qvec(t))*(1-s_I)+
-                                       np.dot((mesh_end[idx,1,:]-Q1),Qvec(t))*s_I)/\
-                                       np.dot(Qvec(t),Qvec(t))/(1-t_I)
+        vs_I_x = lambda t: Qvec(t)[0]*\
+            (np.dot((mesh_end[idx,0,:]-Q0)/(1-t_I),Qvec(t))*(1-s_I)+
+             np.dot((mesh_end[idx,1,:]-Q1)/(1-t_I),Qvec(t))*s_I)/\
+            np.dot(Qvec(t),Qvec(t))
+        vs_I_y = lambda t: Qvec(t)[1]*\
+            (np.dot((mesh_end[idx,0,:]-Q0)/(1-t_I),Qvec(t))*(1-s_I)+
+             np.dot((mesh_end[idx,1,:]-Q1)/(1-t_I),Qvec(t))*s_I)/\
+            np.dot(Qvec(t),Qvec(t))
         # Vector projection of agent movement onto mesh at all times t
         integ_x = lambda t: Qvec(t)[0]*np.dot(vec,Qvec(t))/np.dot(Qvec(t),Qvec(t))
         integ_y = lambda t: Qvec(t)[1]*np.dot(vec,Qvec(t))/np.dot(Qvec(t),Qvec(t))
@@ -2563,13 +2565,11 @@ class swarm:
             # This is a non-linear least squares minimization problem
             if Q1_end_dist > Q0_end_dist:
                 # went past Q0
-                Q_edge = lambda t: (1-t)*Q0/(1-t_I) + \
-                                    (t-t_I)*mesh_end[idx,0,:]/(1-t_I)
+                Q_edge = lambda t: ((1-t)*Q0 + (t-t_I)*mesh_end[idx,0,:])/(1-t_I)
                 Q_edge_prime = (mesh_end[idx,0,:]-Q0)/(1-t_I)
             else:
                 # went past Q1
-                Q_edge = lambda t: (1-t)*Q1/(1-t_I) + \
-                                    (t-t_I)*mesh_end[idx,1,:]/(1-t_I)
+                Q_edge = lambda t: ((1-t)*Q1 + (t-t_I)*mesh_end[idx,1,:])/(1-t_I)
                 Q_edge_prime = (mesh_end[idx,1,:]-Q1)/(1-t_I)
             # function that gives distance between projected location of 
             #   agent at time t and the relevant edge of the mesh element.
