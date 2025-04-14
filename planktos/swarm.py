@@ -2721,9 +2721,8 @@ class swarm:
             print(f'newendpt = {list(newendpt)}')
         elif went_past_el_bool:
             # Slid off the end and encountered nothing.
-            orig_unit_vec = vec/np.linalg.norm(vec)
             newstartpt = Q_edge(t_edge) + EPS*norm_out_u
-            newendpt = newstartpt + (1-t_edge)*orig_unit_vec
+            newendpt = newstartpt + (1-t_edge)*vec
             # for debugging
             print(f'newstartpt = {list(newstartpt)}')
             print(f'newendpt = {list(newendpt)}')
