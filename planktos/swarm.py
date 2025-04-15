@@ -2464,19 +2464,42 @@ class swarm:
         # Get full travel vector, to be integrated from t_I to 1
         vec = endpt-startpt
 
-        Q_t0 = Q1-Q0
-        Q_end = mesh_end[idx,1,:] - mesh_end[idx,0,:]
+        Q_tI = Q1-Q0 # vector in direction of mesh elem at t_I
+        Q_end = mesh_end[idx,1,:] - mesh_end[idx,0,:] # same but at t=1
 
-        if 1-t_I < EPS:
+        Qvec = lambda t: ((1-t)*Q_tI+(t-t_I)*Q_end)/(1-t_I) # same but as func of t
+        Q0_t = lambda t: ((1-t)*Q0+(t-t_I)*mesh_end[idx,0,:])/(1-t_I) # interp of Q0
+        # Barycentric position of intersection on mesh element from Q0
+        if np.isclose(Q_tI[0],0):
+            s_I = (x[1]-Q0[1])/Q_tI[1]
+        else:
+            s_I = (x[0]-Q0[0])/Q_tI[0]
+        # Location where intersection occurred on the mesh at any time t.
+        x_t = lambda t: s_I*Qvec(t) + Q0_t(t)
+
+        # Determine if collision was head-on, or if it was an overtaking collision
+        vec_mag = np.linalg.norm(vec)
+        x_vel = (x_t(t_I+0.00001)-x)/0.00001 # approx change in x_t at t=t_I
+        # Collision is overtaking only if proj of x_vel onto vec is greater
+        #   than vec
+        if np.dot(x_vel,vec)/vec_mag > vec_mag:
+            overtaking_flag = True
+        else:
+            overtaking_flag = False
+        
+
+        if 1-t_I < 10e-7:
             # get a normal to the final position of mesh element that points 
             #   back toward where the agent came from. perturb in that direction
             proj_end = np.dot(vec,Q_end)*Q_end/np.dot(Q_end,Q_end)
             norm_out_u = (proj_end-vec)/np.linalg.norm(proj_end-vec)
             # pull slide_pt back a bit for numerical stability and return
+            if overtaking_flag:
+                norm_out_u = -norm_out_u
             return x + EPS*norm_out_u
 
         # vector in direction of element as a function of time
-        # Q = lambda t: (1-t)*Q_t0 + (t-t_I)*Q_end
+        # Q = lambda t: (1-t)*Q_tI + (t-t_I)*Q_end
         # We want to integrate Q/||Q||*dot(Q/||Q||,vec) to get vector projection
         #   of agent over time along mesh element.
         # ALSO: the base point needs to move orthogonally with the mesh element
@@ -2494,15 +2517,8 @@ class swarm:
         #   in-line with the mesh element, you are left with only the velocity 
         #   orthogonal to the mesh element at all times t. E.g. we do ((3)+(2)) - (2).
 
-        Qvec = lambda t: ((1-t)*Q_t0+(t-t_I)*Q_end)/(1-t_I) # mesh elem direction vec
-        Q0_t = lambda t: ((1-t)*Q0+(t-t_I)*mesh_end[idx,0,:])/(1-t_I) # interp of Q0
-        # Lagrangian position of intersection on mesh element [0,1] from Q0
-        if np.isclose(Q_t0[0],0):
-            s_I = (x[1]-Q0[1])/Q_t0[1]
-        else:
-            s_I = (x[0]-Q0[0])/Q_t0[0]
-        # Location where intersection occurred on the mesh at any time t.
-        x_t = lambda t: s_I*Qvec(t) + Q0_t(t)
+        
+        
         # Velocity of x_t along the mesh at all times t
         vs_I_x = lambda t: Qvec(t)[0]*\
             (np.dot((mesh_end[idx,0,:]-Q0)/(1-t_I),Qvec(t))*(1-s_I)+
@@ -2523,7 +2539,7 @@ class swarm:
                                          integrate.quad(vs_I_y, t_I, t)[0]])
         # Derivative of proj_to_pt
         proj_prime = lambda t: np.array([integ_x(t), integ_y(t)])\
-                           + (s_I*(Q_end-Q_t0) + (mesh_end[idx,0,:]-Q0))/(1-t_I)\
+                           + (s_I*(Q_end-Q_tI) + (mesh_end[idx,0,:]-Q0))/(1-t_I)\
                            - np.array([vs_I_x(t), vs_I_y(t)])
         
         # integrate to 1 to determine the final sliding location on the mesh element
@@ -2535,7 +2551,7 @@ class swarm:
         #   direction as the agent's travel.
         vec_perp = np.array([vec[1], -vec[0]])
         # see if the dot product of vec_perp and the mesh element changes sign
-        rotated_past_bool = np.sign(np.dot(vec_perp,Q_t0)) != np.sign(np.dot(vec_perp,Q_end))
+        rotated_past_bool = np.sign(np.dot(vec_perp,Q_tI)) != np.sign(np.dot(vec_perp,Q_end))
 
         # because mesh elements are linearly interpolated between start and end states, 
         #   they stretch or contract monotonically. It is therefore enough to check if 
@@ -2556,7 +2572,7 @@ class swarm:
             # check to see when vec_perp and the mesh element have a 
             #   dot product of zero. This is a linear function and can be solved
             #   for analytically.
-            t_rot = np.dot(vec_perp,(t_I*Q_end-Q_t0))/np.dot(vec_perp,Q_end-Q_t0)
+            t_rot = np.dot(vec_perp,(t_I*Q_end-Q_tI))/np.dot(vec_perp,Q_end-Q_tI)
             assert t_I<t_rot<1, "linear algebra problem in rotation detection"
             # for debugging
             print(f't_rot = {t_rot}')
@@ -2600,7 +2616,7 @@ class swarm:
         ##########                                                  ##########
         if went_past_el_bool:
             # get a unit vector in the direction of travel at edge time
-            Q_vec = ((1-t_edge)*Q_t0+(t_edge-t_I)*Q_end)/(1-t_I)
+            Q_vec = ((1-t_edge)*Q_tI+(t_edge-t_I)*Q_end)/(1-t_I)
             Q_vec *= np.dot(vec,Q_vec)
             Q_vec_u = Q_vec/np.linalg.norm(Q_vec)
             # projection of vec onto mesh element in dir of travel at edge time
@@ -2736,6 +2752,8 @@ class swarm:
                 # get a normal to the final position of mesh element that points 
                 #   back toward where the agent came from. perturb in that direction
                 norm_out_u = (proj_end-vec)/np.linalg.norm(proj_end-vec)
+                if overtaking_flag:
+                    norm_out_u = -norm_out_u
                 return slide_pt + EPS*norm_out_u
 
         # recursion, but only on prev. eligible mesh elements
