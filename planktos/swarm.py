@@ -1507,7 +1507,7 @@ class swarm:
         '''
 
         new_loc, dx = self._apply_internal_moving_BC(startpt, endpt, start_mesh, 
-                    end_mesh, max_meshpt_dist, max_mov, dt,
+                    end_mesh, max_meshpt_dist, max_mov, 
                     ib_collisions=ib_collisions)
         self.positions[idx] = new_loc
         if dx is not None:
@@ -1949,13 +1949,17 @@ class swarm:
 
             if DIM == 2:
                 x = intersection[0]    # (x,y) coordinates of intersection
+                t_I = intersection[1]
                 Q0 = intersection[2]   # edge of mesh element at time of intersection
                 Q1 = intersection[3]   # edge of mesh element at time of intersection
                 idx = intersection[4]  # index into close_mesh_start/end above
 
+                # Vector for agent travel
+                vec = endpt - startpt
+
                 # Get the relative position of intersection within the mesh element
                 # Use max in case the element is vertical or horizontal
-                s = max((x[0]-Q0[0])/(Q1[0]-Q0[0]),(x[1]-Q0[1])/(Q1[1]-Q0[1]))
+                s_I = max((x[0]-Q0[0])/(Q1[0]-Q0[0]),(x[1]-Q0[1])/(Q1[1]-Q0[1]))
                 if idx is None:
                     st_elem = close_mesh_start
                     dt_elem = close_mesh_end
@@ -1963,23 +1967,30 @@ class swarm:
                     st_elem = close_mesh_start[idx]
                     dt_elem = close_mesh_end[idx]
                 # Translate to final position of mesh element in this time step
-                new_pos = dt_elem[0,:]*(1-s)+ dt_elem[1,:]*s
+                new_pos = dt_elem[0,:]*(1-s_I)+ dt_elem[1,:]*s_I
                 
                 # Perturb a small bit off of the boundary.
                 #   This needs to be on the side of the element the motion 
                 #   came from.
-
-                # Find perpendicular direction based off of starting positions
-                #   of both mesh element and agent
-                perp_vec = np.array([st_elem[1,1]-st_elem[0,1],st_elem[0,0]-st_elem[1,0]])
-                perp_vec /= np.linalg.norm(perp_vec) # unit vec perp to starting pos of element
-                # find the side of the mesh element the agent started on
-                to_pt_vec = startpt - st_elem[0,:]
-                signum = np.dot(to_pt_vec,perp_vec)/np.linalg.norm(np.dot(to_pt_vec,perp_vec))
+                # Find direction indicator for which side of the mesh element 
+                #   the agent hit the element. Base this off of location of mesh 
+                #   and agent a small time before intersection.
+                tm = t_I - 0.00001
+                agent_prev_loc = startpt + vec*tm
+                Q_tI = Q1-Q0 # vector in direction of mesh elem at t_I
+                # vec in dir of mesh element at tm
+                Qvec_m = ((1-tm)*Q_tI+(tm-t_I)*(dt_elem[1]-dt_elem[0]))/(1-t_I)
+                # interp of Q0 at tm
+                Q0_tm = ((1-tm)*Q0+(tm-t_I)*dt_elem[0])/(1-t_I)
+                x_prev_loc = s_I*Qvec_m + Q0_tm
+                dir_vec = agent_prev_loc-x_prev_loc
+                Q_tI_orth = np.array([Q_tI[1],-Q_tI[0]])
+                side_signum = np.dot(dir_vec,Q_tI_orth)\
+                    /np.linalg.norm(np.dot(dir_vec,Q_tI_orth))
 
                 # Now, perturb perpendicular from the end position of the element
                 perp_vec = np.array([dt_elem[1,1]-dt_elem[0,1],dt_elem[0,0]-dt_elem[1,0]])
-                perp_vec *= signum/np.linalg.norm(perp_vec)
+                perp_vec *= side_signum/np.linalg.norm(perp_vec)
                 return new_pos + perp_vec*EPS, new_pos - x
             else:
                 raise NotImplementedError("3D moving meshes not currently supported.")
@@ -2343,8 +2354,6 @@ class swarm:
                         # Find the points in common between adj_intersect and
                         #   intersection
                         
-                        # Enter debugging here to test algorithm
-                        # import pdb; pdb.set_trace()
                         dist_mat = distance.cdist(intersection[3:],adj_intersect[3:])
                         pt_bool = np.isclose(dist_mat, np.zeros_like(dist_mat),
                                              atol=1e-6).any(1)
@@ -2406,7 +2415,8 @@ class swarm:
 
     @staticmethod
     def _project_and_slide_moving(startpt, endpt, intersection, mesh_start, 
-                                  mesh_end, max_meshpt_dist, max_mov):
+                                  mesh_end, max_meshpt_dist, max_mov,
+                                  side_signum=None):
         '''Once we have an intersection point with an immersed mesh, project and 
         slide the agent along the moving mesh for its remaining movement, and 
         determine what happens if we fall off the edge of the element (or the 
@@ -2439,6 +2449,9 @@ class swarm:
         max_mov : float
             maximum distance any mesh vertex moved. Passed-through here solely 
             in case of recursion with _apply_internal_moving_BC.
+        side_signum : {-1,1}, optional
+            used in recursion while sliding on adjacent elements to indicate the 
+            side of the elements that the agent originally contacted.
 
         Returns
         -------
@@ -2477,25 +2490,23 @@ class swarm:
         # Location where intersection occurred on the mesh at any time t.
         x_t = lambda t: s_I*Qvec(t) + Q0_t(t)
 
-        # Determine if collision was head-on, or if it was an overtaking collision
-        vec_mag = np.linalg.norm(vec)
-        x_vel = (x_t(t_I+0.00001)-x)/0.00001 # approx change in x_t at t=t_I
-        # Collision is overtaking only if proj of x_vel onto vec is greater
-        #   than vec
-        if np.dot(x_vel,vec)/vec_mag > vec_mag:
-            overtaking_flag = True
-        else:
-            overtaking_flag = False
-        
+        # Find direction indicator for which side of the mesh element the agent 
+        #   hit the element. Base this off of location of mesh and agent a small
+        #   time before intersection.
+        if side_signum is None:
+            agent_prev_loc = startpt + vec*(t_I-0.00001)
+            x_prev_loc = x_t(t_I-0.00001)
+            dir_vec = agent_prev_loc-x_prev_loc
+            Q_tI_orth = np.array([Q_tI[1],-Q_tI[0]])
+            side_signum = np.dot(dir_vec,Q_tI_orth)\
+                /np.linalg.norm(np.dot(dir_vec,Q_tI_orth))
 
         if 1-t_I < 10e-7:
             # get a normal to the final position of mesh element that points 
             #   back toward where the agent came from. perturb in that direction
-            proj_end = np.dot(vec,Q_end)*Q_end/np.dot(Q_end,Q_end)
-            norm_out_u = (proj_end-vec)/np.linalg.norm(proj_end-vec)
+            norm_out_u = side_signum*np.array([Q_end[1],-Q_end[0]])
+            norm_out_u /= np.linalg.norm(norm_out_u)
             # pull slide_pt back a bit for numerical stability and return
-            if overtaking_flag:
-                norm_out_u = -norm_out_u
             return x + EPS*norm_out_u
 
         # vector in direction of element as a function of time
@@ -2616,13 +2627,14 @@ class swarm:
         ##########                                                  ##########
         if went_past_el_bool:
             # get a unit vector in the direction of travel at edge time
-            Q_vec = ((1-t_edge)*Q_tI+(t_edge-t_I)*Q_end)/(1-t_I)
-            Q_vec *= np.dot(vec,Q_vec)
-            Q_vec_u = Q_vec/np.linalg.norm(Q_vec)
+            Qvec_tedge = Qvec(t_edge)
+            Qslide_vec_u = Qvec_tedge*np.dot(vec,Qvec_tedge)
+            Qslide_vec_u /= np.linalg.norm(Qslide_vec_u)
             # projection of vec onto mesh element in dir of travel at edge time
-            proj_Q = np.dot(vec,Q_vec_u)*Q_vec_u
+            proj_Q = np.dot(vec,Qslide_vec_u)*Qslide_vec_u
             # unit normal to current mesh element toward where the agent came from
-            norm_out_u = (proj_Q-vec)/np.linalg.norm(proj_Q-vec)
+            norm_out_u = side_signum*np.array([Qvec_tedge[1],-Qvec_tedge[0]])
+            norm_out_u /= np.linalg.norm(norm_out_u)
 
             # Now, find adjacent mesh segments on the end we went past. 
             #   This is any mesh element that contains the endpoint we went past
@@ -2684,7 +2696,7 @@ class swarm:
                 if adj_vec.shape[0] > 1:
                     # get the one that is most acute
                     adj_vec_u = adj_vec/np.linalg.norm(adj_vec,axis=1)
-                    elem_idx = np.argmax(np.dot(adj_vec_u,-Q_vec_u))
+                    elem_idx = np.argmax(np.dot(adj_vec_u,-Qslide_vec_u))
                     adj_vec = adj_vec[elem_idx,:]
                     adj_idx = adj_mesh_end_idx[intersect_bool][elem_idx]
                 else:
@@ -2692,24 +2704,24 @@ class swarm:
                     adj_idx = adj_mesh_end_idx[intersect_bool][0]
                     elem_idx = 0
                 ######### Treat the intersection case as per geometry #########
-                # NOTE: this intersection should happen essentially immediately
-                #   after sliding off of the last element because they are joined
-                #   together. So we will take any elapsed time to this intersection
-                #   as negligible
+                # NOTE: This intersection happens at the same time as sliding 
+                #   off of the last element because they are joined together.
                 
                 # Acute Case
                 if acute_bool:
                     # Back away from the intersection point slightly for
                     #   numerical stability and stay put.
                     # TODO: what if it rotates acute?
-                    return Q_edge(t_edge) - EPS*Q_vec_u + EPS*adj_vec
+                    return Q_edge(t_edge) - EPS*Qslide_vec_u + EPS*adj_vec
                 else:
                     # Obtuse. Repeat project_and_slide_moving on new segment.
-                    adj_intersect = (Q_edge(t_edge), 0, 
+                    adj_intersect = (Q_edge(t_edge), t_edge, 
                                      adj_mesh_newstart[elem_idx,0,:],
                                      adj_mesh_newstart[elem_idx,1,:], adj_idx)
-                    newstartpt = adj_intersect[0] + EPS*norm_out_u - EPS*Q_vec_u
-                    newendpt = newstartpt + (1-t_edge)*proj_Q + EPS*Q_vec_u
+                    # Supply a fake startpt based on back extrapolation from 
+                    #   intersection point
+                    newstartpt = adj_intersect[0] - t_edge*proj_Q
+                    newendpt = adj_intersect[0] + (1-t_edge)*proj_Q
 
                     # for debugging
                     print(f'newstartpt = {list(newstartpt)}')
@@ -2717,7 +2729,8 @@ class swarm:
                     return swarm._project_and_slide_moving(newstartpt, newendpt, 
                                                     adj_intersect, 
                                                     mesh_start, mesh_end, 
-                                                    max_meshpt_dist, max_mov)      
+                                                    max_meshpt_dist, max_mov,
+                                                    side_signum)      
 
         ##########                                                  ##########
         #####   Only reached if we did not intersect adjacent element    #####
@@ -2744,17 +2757,11 @@ class swarm:
             print(f'newendpt = {list(newendpt)}')
         else:
             ######### Ended on mesh element ##########
-            proj_end = np.dot(vec,Q_end)*Q_end/np.dot(Q_end,Q_end)
-            if np.isclose(np.linalg.norm(proj_end-vec),0):
-                # sliding on a mesh element. simply return.
-                return slide_pt
-            else:
-                # get a normal to the final position of mesh element that points 
-                #   back toward where the agent came from. perturb in that direction
-                norm_out_u = (proj_end-vec)/np.linalg.norm(proj_end-vec)
-                if overtaking_flag:
-                    norm_out_u = -norm_out_u
-                return slide_pt + EPS*norm_out_u
+            # get a normal to the final position of mesh element that points 
+            #   back toward where the agent came from. perturb in that direction
+            norm_out_u = side_signum*np.array([Q_end[1],-Q_end[0]])
+            norm_out_u /= np.linalg.norm(norm_out_u)
+            return slide_pt + EPS*norm_out_u
 
         # recursion, but only on prev. eligible mesh elements
         new_loc, dx = swarm._apply_internal_moving_BC(newstartpt, newendpt,
