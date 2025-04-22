@@ -2612,7 +2612,7 @@ class swarm:
                 raise RuntimeError("LSQ did not converge.")
             t_edge = sol.x[0]
             # for debugging
-            print(f't_edge = {t_edge}')    
+            print(f't_edge = {t_edge}')
         # Choose the earlier of the two above events if both occurred
         if rotated_past_bool and went_past_el_bool:
             if t_rot < t_edge:
@@ -2631,7 +2631,7 @@ class swarm:
             Qslide_vec_u = Qvec_tedge*np.dot(vec,Qvec_tedge)
             Qslide_vec_u /= np.linalg.norm(Qslide_vec_u)
             # projection of vec onto mesh element in dir of travel at edge time
-            proj_Q = np.dot(vec,Qslide_vec_u)*Qslide_vec_u
+            # proj_Q = np.dot(vec,Qslide_vec_u)*Qslide_vec_u
             # unit normal to current mesh element toward where the agent came from
             norm_out_u = side_signum*np.array([Qvec_tedge[1],-Qvec_tedge[0]])
             norm_out_u /= np.linalg.norm(norm_out_u)
@@ -2746,6 +2746,7 @@ class swarm:
             orig_unit_vec = vec/np.linalg.norm(vec)
             newstartpt = proj_to_pt(t_rot) - EPS*orig_unit_vec
             newendpt = newstartpt + (1-t_rot)*vec
+            mesh_now = mesh_start*(1-t_rot) + mesh_end*t_rot
             # for debugging
             print(f'newstartpt = {list(newstartpt)}')
             print(f'newendpt = {list(newendpt)}')
@@ -2753,6 +2754,7 @@ class swarm:
             # Slid off the end and encountered nothing.
             newstartpt = Q_edge(t_edge) + EPS*norm_out_u
             newendpt = newstartpt + (1-t_edge)*vec
+            mesh_now = mesh_start*(1-t_edge) + mesh_end*t_edge
             # for debugging
             print(f'newstartpt = {list(newstartpt)}')
             print(f'newendpt = {list(newendpt)}')
@@ -2764,9 +2766,10 @@ class swarm:
             norm_out_u /= np.linalg.norm(norm_out_u)
             return slide_pt + EPS*norm_out_u
 
-        # recursion, but only on prev. eligible mesh elements
+        # recursion, but only on prev. eligible mesh elements and treating 
+        #   t_rot or t_edge as the start time
         new_loc, dx = swarm._apply_internal_moving_BC(newstartpt, newendpt,
-                                                    mesh_start, mesh_end,
+                                                    mesh_now, mesh_end,
                                                     max_meshpt_dist, max_mov)
         return new_loc
 
