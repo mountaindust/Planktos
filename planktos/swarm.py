@@ -2479,11 +2479,27 @@ class swarm:
 
         Q_tI = Q1-Q0 # vector in direction of mesh elem at t_I
         Q_end = mesh_end[idx,1,:] - mesh_end[idx,0,:] # same but at t=1
-
         Qvec = lambda t: ((1-t)*Q_tI+(t-t_I)*Q_end)/(1-t_I) # same but as func of t
-        Qperp = lambda t: np.array([Qvec(t)[1],-Qvec(t)[0]])
-        Qvec_d = (Q_end-Q_tI)/(1-t_I)
         Q0_t = lambda t: ((1-t)*Q0+(t-t_I)*mesh_end[idx,0,:])/(1-t_I) # interp of Q0
+
+        # Find direction indicator for which side of the mesh element the agent 
+        #   hit the element. Base this off of location of mesh and agent a small
+        #   time before intersection.
+        if side_signum is None:
+            agent_prev_loc = startpt + vec*(t_I-0.00001)
+            # Barycentric position of intersection on mesh element from Q0
+            s_I = (x.sum()-Q0.sum())/Q_tI.sum()
+            x_prev_loc = s_I*Qvec(t_I-0.00001) + Q0_t(t_I-0.00001)
+            dir_vec = agent_prev_loc-x_prev_loc
+            Q_tI_orth = np.array([Q_tI[1],-Q_tI[0]])
+            # side_signum will orient back in the direction the agent came from
+            side_signum = np.dot(dir_vec,Q_tI_orth)\
+                /np.linalg.norm(np.dot(dir_vec,Q_tI_orth))
+
+        # get a perpendicular into the element
+        Qperp = lambda t: -side_signum*np.array([Qvec(t)[1],-Qvec(t)[0]])
+        # derivatives
+        Qvec_d = (Q_end-Q_tI)/(1-t_I)
         Q0_d = (mesh_end[idx,0,:]-Q0)/(1-t_I)
 
         # Vector projection of vec onto direction Q is obtained via 
@@ -2515,19 +2531,6 @@ class swarm:
         # integrate to 1 to determine the final sliding location on the mesh element
         slide_pt = proj_to_pt(1)
 
-        # Find direction indicator for which side of the mesh element the agent 
-        #   hit the element. Base this off of location of mesh and agent a small
-        #   time before intersection.
-        if side_signum is None:
-            agent_prev_loc = startpt + vec*(t_I-0.00001)
-            # Barycentric position of intersection on mesh element from Q0
-            s_I = (x.sum()-Q0.sum())/Q_tI.sum()
-            x_prev_loc = s_I*Qvec(t_I-0.00001) + Q0_t(t_I-0.00001)
-            dir_vec = agent_prev_loc-x_prev_loc
-            Q_tI_orth = np.array([Q_tI[1],-Q_tI[0]])
-            side_signum = np.dot(dir_vec,Q_tI_orth)\
-                /np.linalg.norm(np.dot(dir_vec,Q_tI_orth))
-
         if 1-t_I < 10e-7:
             # Special case where we are practically finished with this time step.
             # Get a normal to the final position of mesh element that points 
@@ -2537,17 +2540,11 @@ class swarm:
             # pull slide_pt back a bit for numerical stability and return
             return x + EPS*norm_out_u
         
-        ##########                                                     ##########
-        #####  Test for a rotation past 180 degrees or sliding off the end  #####
-        ##########                                                     ##########
+        ##########                                             ##########
+        #####             Test for sliding off the end              #####
+        ##########                                             ##########
 
-        # first, check for the mesh element rotating until it points in the same 
-        #   direction as the agent's travel.
-        vec_perp = np.array([vec[1], -vec[0]])
-        # see if the dot product of vec_perp and the mesh element changes sign
-        rotated_past_bool = np.sign(np.dot(vec_perp,Q_tI)) != np.sign(np.dot(vec_perp,Q_end))
-
-        # because mesh elements are linearly interpolated between start and end states, 
+        # Because mesh elements are linearly interpolated between start and end states, 
         #   they stretch or contract monotonically. It is therefore enough to check if 
         #   we have gone past the final mesh element's endpoint.
         mesh_el_end_len = np.linalg.norm(Q_end)
@@ -2558,18 +2555,7 @@ class swarm:
         #   than the length of the mesh element, we must have gone beyond
         #   the segment.
         went_past_el_bool = (Q0_end_dist > mesh_el_end_len+EPS) or ( 
-                             Q1_end_dist > mesh_el_end_len+EPS)    
-        
-        # Determine the first time that either vec and Q point in the same 
-        #   direction or we reach the mesh element edge, if either happen
-        if rotated_past_bool:
-            # check to see when vec_perp and the mesh element have a 
-            #   dot product of zero. This is a linear function and can be solved
-            #   for analytically.
-            t_rot = np.dot(vec_perp,(t_I*Q_end-Q_tI))/np.dot(vec_perp,Q_end-Q_tI)
-            assert t_I<t_rot<1, "linear algebra problem in rotation detection"
-            # for debugging
-            print(f't_rot = {t_rot}')
+                             Q1_end_dist > mesh_el_end_len+EPS)
         if went_past_el_bool:
             # check to see when we went past the end of the mesh element.
             # This is a non-linear least squares minimization problem
@@ -2596,18 +2582,50 @@ class swarm:
             t_edge = sol.x[0]
             # for debugging
             print(f't_edge = {t_edge}')
-        # Choose the earlier of the two above events if both occurred
-        if rotated_past_bool and went_past_el_bool:
-            if t_rot < t_edge:
-                went_past_el_bool = False
-            else:
-                rotated_past_bool = False
+        
+        ##########                                             ##########
+        #####                Test for rotating away                 #####
+        ##########                                             ##########
 
-        # If we went past the end of the mesh element, detect intersection with 
-        #   adjoining elements.
+        # Check for the mesh element rotating until it is moving faster 
+        #   than vec in the direction orth to the element (before reaching the 
+        #   edge of the element). The speed of Qperp should be a convex up 
+        #   function of position x along the element, which means we can check 
+        #   the final time to see if this is possible.
+        if went_past_el_bool:
+            t_end = t_edge
+        else:
+            t_end = 1
+
+        vec_Q_perp = np.dot(vec,Qperp(t_end))/np.dot(Qperp(t_end),Qperp(t_end))
+        x_Q_perp = np.dot(Q0_d + Qvec_d*np.linalg.norm(proj_to_pt(t_end)-Q0_t(t_end))
+                        /np.linalg.norm(Qvec(t_end)),
+                        Qperp(t_end))/np.dot(Qperp(t_end),Qperp(t_end))
+        rotated_past_bool = x_Q_perp > vec_Q_perp
+        
+        if rotated_past_bool:
+            # Determine when the velocity magnitudes in the ortho direction 
+            #   matched. This is a root finding problem.
+            spd_diff = lambda t: np.dot(Q0_d + 
+                Qvec_d*np.linalg.norm(proj_to_pt(t)-Q0_t(t))/np.linalg.norm(Qvec(t)),
+                Qperp(t))/np.dot(Qperp(t),Qperp(t)) -\
+                np.dot(vec,Qperp(t))/np.dot(Qperp(t),Qperp(t))
+            
+            sol = optimize.root_scalar(spd_diff, method='brentq', bracket=(t_I,t_end))
+
+            if not sol.converged:
+                raise RuntimeError("Brenq did not converge.")
+            t_rot = sol.root
+            # for debugging
+            print(f't_rot = {t_rot}')
+            # rotated away before end of element was reached
+            went_past_el_bool = False
+
         ##########                                                  ##########
         #####       Algorithms for going past end of mesh element        #####
         ##########                                                  ##########
+        # If we went past the end of the mesh element, detect intersection with 
+        #   adjoining elements.
         if went_past_el_bool:
             # get a unit vector in the direction of travel at edge time
             Qvec_tedge = Qvec(t_edge)

@@ -6,11 +6,12 @@ vector from the first endpoint to the second endpoint of the mesh element.
 
 Because the surface is frictionless, movement and deformation of the mesh 
 element will not impart any force onto an agent touching the surface except in 
-the direction orthogonal to the mesh element. It is assumed that the agent's 
-movement will keep it pressed up against the surface during the time step, so 
-all movement of the agent orthogonal to the surface can be explained by the 
-movement of the mesh element. In the direction of the mesh element, movement of 
-the agent is due to vector projection of its earlier movement.
+the direction orthogonal to the mesh element. The agent's movement will keep it 
+pressed up against the surface until the speed of the element in the direction 
+orthogonal to the element is greater than the speed of the agent in that same 
+direction, so the movement of the agent orthogonal to the mesh element is the 
+same as the mesh element itself. In the direction of the mesh element, movement 
+of the agent is due to vector projection of its earlier movement.
 
 Thus the change in agent position is given by
 $$\frac{d\mathbf{x}}{dt} = \frac{d\mathbf{x}_{agent\ \parallel\ \mathbf{Q}}}{dt} + 
@@ -50,14 +51,16 @@ continuous coefficients. A unique solution exists. Rather than formulate the
 solution as an integral equation, we choose to solve this using RK45.
 
 Agent movement can leave the mesh element in two ways. Either the mesh element 
-rotates so that it is parallel to the original movement of the agent (and so the 
-agent's movement orthogonal to the mesh element transitions from moving toward 
-the mesh element to moving away from it) or the agent reaches an endpoint of the 
-mesh element. We can detect the first case by looking for times at which the 
-dot product $\mathbf{v}_\perp\cdot\mathbf{Q}(t)$ is zero. For the second case, 
-we want to find the time at which either $||\mathbf{x}(t)-\mathbf{Q}_0(t)||$ or 
-$||\mathbf{x}(t)-\mathbf{Q}_1(t)||=0$. This is a nonlinear least squares 
-minimization problem in $t$, and we solve it using Powell's hybrid "dog leg" 
-method, a rectangular trust-region method implemented in scipy that makes use of 
-the Jacobian of the residual function, here simply 
-$\frac{d\mathbf{x}}{dt}-\frac{d\mathbf{Q}}{dt}$.
+rotates so that it begins to move faster than the agent in the direction 
+orthogonal to the mesh element or the agent reaches an endpoint of the 
+mesh element. We can detect the first case by examining the difference of the 
+two speeds in the direction orthogonal to the mesh element. If there is a sign 
+change during the time step, the time of separation can be solved for using a 
+bracketed root-finding algorithm. We use Brent's method as implemented by scipy.
+
+For the second case, we want to find the time at which either 
+$||\mathbf{x}(t)-\mathbf{Q}_0(t)||$ or $||\mathbf{x}(t)-\mathbf{Q}_1(t)||=0$. 
+This is a nonlinear least squares minimization problem in $t$, and we solve it 
+using Powell's hybrid "dog leg" method, a rectangular trust-region method 
+implemented in scipy that makes use of the Jacobian of the residual function, 
+here simply $\frac{d\mathbf{x}}{dt}-\frac{d\mathbf{Q}}{dt}$.
