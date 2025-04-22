@@ -2678,14 +2678,14 @@ class swarm:
                 #   norm_out_u and the adjacent mesh element oriented from the 
                 #   edge the agent is on. That means the dot product is positive.
                 intersect_bool = np.dot(adj_vec, norm_out_u) >= 0
-                # obtuse cases will have an angle of -pi/2 to pi/2 between proj_Q
+                # obtuse cases will have an angle of -pi/2 to pi/2 between vec
                 #   and the adjacent mesh element oriented from the edge the 
                 #   agent is on. Therefore, get the acute cases by checking for 
                 #   non-positive dot product
                 # just record whether or not there are acute cases, because we 
                 #   are going to grab the one that is most acute out of all of
                 #   intersect_bool
-                acute_bool = np.any(np.dot(adj_vec, proj_Q) <= 0 & intersect_bool)
+                acute_bool = np.any(np.dot(adj_vec, vec) <= 0 & intersect_bool)
             else:
                 intersect_bool = np.array([False])
             ################
@@ -2696,7 +2696,7 @@ class swarm:
                 if adj_vec.shape[0] > 1:
                     # get the one that is most acute
                     adj_vec_u = adj_vec/np.linalg.norm(adj_vec,axis=1)
-                    elem_idx = np.argmax(np.dot(adj_vec_u,-Qslide_vec_u))
+                    elem_idx = np.argmax(np.dot(adj_vec_u,-vec))
                     adj_vec = adj_vec[elem_idx,:]
                     adj_idx = adj_mesh_end_idx[intersect_bool][elem_idx]
                 else:
@@ -2706,7 +2706,7 @@ class swarm:
                 ######### Treat the intersection case as per geometry #########
                 # NOTE: This intersection happens at the same time as sliding 
                 #   off of the last element because they are joined together.
-                
+
                 # Acute Case
                 if acute_bool:
                     # Back away from the intersection point slightly for
@@ -2718,10 +2718,11 @@ class swarm:
                     adj_intersect = (Q_edge(t_edge), t_edge, 
                                      adj_mesh_newstart[elem_idx,0,:],
                                      adj_mesh_newstart[elem_idx,1,:], adj_idx)
-                    # Supply a fake startpt based on back extrapolation from 
-                    #   intersection point
-                    newstartpt = adj_intersect[0] - t_edge*proj_Q
-                    newendpt = adj_intersect[0] + (1-t_edge)*proj_Q
+                    # Supply new start/end pts based on new intersection point 
+                    #   and original trajectory
+                    orig_unit_vec = vec/np.linalg.norm(vec)
+                    newstartpt = adj_intersect[0] - t_edge*vec
+                    newendpt = adj_intersect[0] + (1-t_edge)*vec
 
                     # for debugging
                     print(f'newstartpt = {list(newstartpt)}')
