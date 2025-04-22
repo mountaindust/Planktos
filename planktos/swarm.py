@@ -2481,82 +2481,65 @@ class swarm:
         Q_end = mesh_end[idx,1,:] - mesh_end[idx,0,:] # same but at t=1
 
         Qvec = lambda t: ((1-t)*Q_tI+(t-t_I)*Q_end)/(1-t_I) # same but as func of t
+        Qperp = lambda t: np.array([Qvec(t)[1],-Qvec(t)[0]])
+        Qvec_d = (Q_end-Q_tI)/(1-t_I)
         Q0_t = lambda t: ((1-t)*Q0+(t-t_I)*mesh_end[idx,0,:])/(1-t_I) # interp of Q0
-        # Barycentric position of intersection on mesh element from Q0
-        if np.isclose(Q_tI[0],0):
-            s_I = (x[1]-Q0[1])/Q_tI[1]
-        else:
-            s_I = (x[0]-Q0[0])/Q_tI[0]
-        # Location where intersection occurred on the mesh at any time t.
-        x_t = lambda t: s_I*Qvec(t) + Q0_t(t)
+        Q0_d = (mesh_end[idx,0,:]-Q0)/(1-t_I)
+
+        # Vector projection of vec onto direction Q is obtained via 
+        #   Q/||Q||*dot(vec,Q/||Q||) = Q*dot(vec,Q)/||Q||**2.
+        # Agent movement is the sum of two components:
+        #   1) Movement along Qvec(t) due to projection of agent velocity (mesh 
+        #       element is frictionless so does not impact this)
+        #   2) Movement ortho to Qvec(t) due to movement of the mesh element
+        # This means that dx/dt is the projection of vec onto direction Qvec plus 
+        #   dx/dt due to mesh element movement projected onto direction Qperp.
+        # dx/dt due to mesh element is given by 
+        #   dx/dt = dQ0/dt + dQvec/dt*s(t) + Qvec*ds/dt where s(T) is the 
+        #   Berycentric coordinate of x(t) on the mesh element,
+        #   s(t) = ||x(t)-Q0(t)||/||Qvec(t)||. The third term in dx/dt can be 
+        #   neglected because the dot product of Qvec and Qperp is zero.
+
+        # Derivative of agent movement
+        def x_DE(t,x):
+            return Qvec(t)*np.dot(vec,Qvec(t))/np.dot(Qvec(t),Qvec(t)) +\
+            Qperp(t)*np.dot(Q0_d + Qvec_d*np.linalg.norm(x-Q0_t(t))/np.linalg.norm(Qvec(t)),
+                            Qperp(t))/np.dot(Qperp(t),Qperp(t))
+        
+        # Solve for position at time t
+        proj_to_pt = lambda t: integrate.solve_ivp(x_DE, t_span=(t_I,t), y0=x).y[:,-1]
+
+        # Derivative as a function of t alone for least squares optimization
+        proj_prime = lambda t: x_DE(t, proj_to_pt(t))
+        
+        # integrate to 1 to determine the final sliding location on the mesh element
+        slide_pt = proj_to_pt(1)
 
         # Find direction indicator for which side of the mesh element the agent 
         #   hit the element. Base this off of location of mesh and agent a small
         #   time before intersection.
         if side_signum is None:
             agent_prev_loc = startpt + vec*(t_I-0.00001)
-            x_prev_loc = x_t(t_I-0.00001)
+            # Barycentric position of intersection on mesh element from Q0
+            s_I = (x.sum()-Q0.sum())/Q_tI.sum()
+            x_prev_loc = s_I*Qvec(t_I-0.00001) + Q0_t(t_I-0.00001)
             dir_vec = agent_prev_loc-x_prev_loc
             Q_tI_orth = np.array([Q_tI[1],-Q_tI[0]])
             side_signum = np.dot(dir_vec,Q_tI_orth)\
                 /np.linalg.norm(np.dot(dir_vec,Q_tI_orth))
 
         if 1-t_I < 10e-7:
-            # get a normal to the final position of mesh element that points 
+            # Special case where we are practically finished with this time step.
+            # Get a normal to the final position of mesh element that points 
             #   back toward where the agent came from. perturb in that direction
             norm_out_u = side_signum*np.array([Q_end[1],-Q_end[0]])
             norm_out_u /= np.linalg.norm(norm_out_u)
             # pull slide_pt back a bit for numerical stability and return
             return x + EPS*norm_out_u
-
-        # vector in direction of element as a function of time
-        # Q = lambda t: (1-t)*Q_tI + (t-t_I)*Q_end
-        # We want to integrate Q/||Q||*dot(Q/||Q||,vec) to get vector projection
-        #   of agent over time along mesh element.
-        # ALSO: the base point needs to move orthogonally with the mesh element
-        #   as it moves, but not laterally because that would imply friction.
-        # E.g., Velocity comes from these sources:
-        #   1) velocity of agent movement along element minus friction
-        #   2) velocity along element due to friction and element moving (don't want)
-        #   3) velocity ortho to element (agent stays against element and can be 
-        #       pushed by element)
-        # Note: Velocity of the element is dependent on the position along the 
-        #   element, and the velocity of any point on the elem along the elem is 
-        #       the interpolated velocity of the two endpoints in that direction.
-        # If you take the point of intersection on the mesh element and follow 
-        #   it as the mesh element moves, and then subtract off the velocity 
-        #   in-line with the mesh element, you are left with only the velocity 
-        #   orthogonal to the mesh element at all times t. E.g. we do ((3)+(2)) - (2).
-
         
-        
-        # Velocity of x_t along the mesh at all times t
-        vs_I_x = lambda t: Qvec(t)[0]*\
-            (np.dot((mesh_end[idx,0,:]-Q0)/(1-t_I),Qvec(t))*(1-s_I)+
-             np.dot((mesh_end[idx,1,:]-Q1)/(1-t_I),Qvec(t))*s_I)/\
-            np.dot(Qvec(t),Qvec(t))
-        vs_I_y = lambda t: Qvec(t)[1]*\
-            (np.dot((mesh_end[idx,0,:]-Q0)/(1-t_I),Qvec(t))*(1-s_I)+
-             np.dot((mesh_end[idx,1,:]-Q1)/(1-t_I),Qvec(t))*s_I)/\
-            np.dot(Qvec(t),Qvec(t))
-        # Vector projection of agent movement onto mesh at all times t
-        integ_x = lambda t: Qvec(t)[0]*np.dot(vec,Qvec(t))/np.dot(Qvec(t),Qvec(t))
-        integ_y = lambda t: Qvec(t)[1]*np.dot(vec,Qvec(t))/np.dot(Qvec(t),Qvec(t))
-        # Integration of velocities based on moving intersection position
-        proj_to_pt = lambda t: np.array([integrate.quad(integ_x, t_I, t)[0],
-                                         integrate.quad(integ_y, t_I, t)[0]]) +\
-                               x_t(t) -\
-                               np.array([integrate.quad(vs_I_x, t_I, t)[0],
-                                         integrate.quad(vs_I_y, t_I, t)[0]])
-        # Derivative of proj_to_pt
-        proj_prime = lambda t: np.array([integ_x(t), integ_y(t)])\
-                           + (s_I*(Q_end-Q_tI) + (mesh_end[idx,0,:]-Q0))/(1-t_I)\
-                           - np.array([vs_I_x(t), vs_I_y(t)])
-        
-        # integrate to 1 to determine the final sliding location on the mesh element
-        slide_pt = proj_to_pt(1)
-        
-        # test for a rotation past 180 degrees or sliding off the end
+        ##########                                                     ##########
+        #####  Test for a rotation past 180 degrees or sliding off the end  #####
+        ##########                                                     ##########
 
         # first, check for the mesh element rotating until it points in the same 
         #   direction as the agent's travel.
