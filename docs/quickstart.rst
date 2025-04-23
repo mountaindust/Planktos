@@ -71,10 +71,14 @@ The dependencies are as follows:
 - numpy/scipy
 - matplotlib 3.x
 - pandas
-- pyvista :: 
+- vtk 9.3.1+ :: 
 
-    conda install conda-forge::pyvista
+    conda install conda-forge::vtk
 
+- pyvista (from conda-forge. Note: pyvista depends on vtk but for some reason, 
+    the vtk that installs when acquring pyvista can be years old, and is broken 
+    in modern versions of numpy. It is therefore recommended to install vtk 
+    itself first.)
 - numpy-stl (if loading stl data). Again, get it from conda-forge.
 - netCDF4 (if loading netCDF data)
 - pytest (if running tests)
