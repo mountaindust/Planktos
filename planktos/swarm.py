@@ -2581,7 +2581,7 @@ class swarm:
                 raise RuntimeError("LSQ did not converge.")
             t_edge = sol.x[0]
             # for debugging
-            print(f't_edge = {t_edge}')
+            # print(f't_edge = {t_edge}')
         
         ##########                                             ##########
         #####                Test for rotating away                 #####
@@ -2617,7 +2617,7 @@ class swarm:
                 raise RuntimeError("Brenq did not converge.")
             t_rot = sol.root
             # for debugging
-            print(f't_rot = {t_rot}')
+            # print(f't_rot = {t_rot}')
             # rotated away before end of element was reached
             went_past_el_bool = False
 
@@ -2726,8 +2726,8 @@ class swarm:
                     newendpt = adj_intersect[0] + (1-t_edge)*vec
 
                     # for debugging
-                    print(f'newstartpt = {list(newstartpt)}')
-                    print(f'newendpt = {list(newendpt)}')
+                    # print(f'newstartpt = {list(newstartpt)}')
+                    # print(f'newendpt = {list(newendpt)}')
                     return swarm._project_and_slide_moving(newstartpt, newendpt, 
                                                     adj_intersect, 
                                                     mesh_start, mesh_end, 
@@ -2749,16 +2749,16 @@ class swarm:
             newendpt = newstartpt + (1-t_rot)*vec
             mesh_now = mesh_start*(1-t_rot) + mesh_end*t_rot
             # for debugging
-            print(f'newstartpt = {list(newstartpt)}')
-            print(f'newendpt = {list(newendpt)}')
+            # print(f'newstartpt = {list(newstartpt)}')
+            # print(f'newendpt = {list(newendpt)}')
         elif went_past_el_bool:
             # Slid off the end and encountered nothing.
             newstartpt = Q_edge(t_edge) + EPS*norm_out_u
             newendpt = newstartpt + (1-t_edge)*vec
             mesh_now = mesh_start*(1-t_edge) + mesh_end*t_edge
             # for debugging
-            print(f'newstartpt = {list(newstartpt)}')
-            print(f'newendpt = {list(newendpt)}')
+            # print(f'newstartpt = {list(newstartpt)}')
+            # print(f'newendpt = {list(newendpt)}')
         else:
             ######### Ended on mesh element ##########
             # get a normal to the final position of mesh element that points 
