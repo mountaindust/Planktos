@@ -2744,8 +2744,9 @@ class swarm:
         #   in those cases.
         if rotated_past_bool:
             # add EPS for separation from element
-            orig_unit_vec = vec/np.linalg.norm(vec)
-            newstartpt = proj_to_pt(t_rot) - EPS*orig_unit_vec
+            norm_out_u = side_signum*np.array([Qvec(t_rot)[1],-Qvec(t_rot)[0]])
+            norm_out_u /= np.linalg.norm(norm_out_u)
+            newstartpt = proj_to_pt(t_rot) + EPS*norm_out_u
             newendpt = newstartpt + (1-t_rot)*vec
             mesh_now = mesh_start*(1-t_rot) + mesh_end*t_rot
             # for debugging
