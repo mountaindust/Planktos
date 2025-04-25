@@ -1380,6 +1380,8 @@ class swarm:
             # no masked agents: go through all of them
             else:
                 for n in range(self.N):
+                    if np.round(self.envir.time,3) == 0.074 and n == 18:
+                        import pdb; pdb.set_trace()
                     startpt = self.pos_history[-1][n,:].copy()
                     endpt = self.positions[n,:].copy()
                     if self.envir.ibmesh.ndim == 3:
@@ -2415,8 +2417,7 @@ class swarm:
 
     @staticmethod
     def _project_and_slide_moving(startpt, endpt, intersection, mesh_start, 
-                                  mesh_end, max_meshpt_dist, max_mov,
-                                  side_signum=None):
+                                  mesh_end, max_meshpt_dist, max_mov):
         '''Once we have an intersection point with an immersed mesh, project and 
         slide the agent along the moving mesh for its remaining movement, and 
         determine what happens if we fall off the edge of the element (or the 
@@ -2449,9 +2450,6 @@ class swarm:
         max_mov : float
             maximum distance any mesh vertex moved. Passed-through here solely 
             in case of recursion with _apply_internal_moving_BC.
-        side_signum : {-1,1}, optional
-            used in recursion while sliding on adjacent elements to indicate the 
-            side of the elements that the agent originally contacted.
 
         Returns
         -------
@@ -2485,16 +2483,15 @@ class swarm:
         # Find direction indicator for which side of the mesh element the agent 
         #   hit the element. Base this off of location of mesh and agent a small
         #   time before intersection.
-        if side_signum is None:
-            agent_prev_loc = startpt + vec*(t_I-0.00001)
-            # Barycentric position of intersection on mesh element from Q0
-            s_I = (x.sum()-Q0.sum())/Q_tI.sum()
-            x_prev_loc = s_I*Qvec(t_I-0.00001) + Q0_t(t_I-0.00001)
-            dir_vec = agent_prev_loc-x_prev_loc
-            Q_tI_orth = np.array([Q_tI[1],-Q_tI[0]])
-            # side_signum will orient back in the direction the agent came from
-            side_signum = np.dot(dir_vec,Q_tI_orth)\
-                /np.linalg.norm(np.dot(dir_vec,Q_tI_orth))
+        agent_prev_loc = startpt + vec*(t_I-0.00001)
+        # Barycentric position of intersection on mesh element from Q0
+        s_I = (x.sum()-Q0.sum())/Q_tI.sum()
+        x_prev_loc = s_I*Qvec(t_I-0.00001) + Q0_t(t_I-0.00001)
+        dir_vec = agent_prev_loc-x_prev_loc
+        Q_tI_orth = np.array([Q_tI[1],-Q_tI[0]])
+        # side_signum will orient back in the direction the agent came from
+        side_signum = np.dot(dir_vec,Q_tI_orth)\
+            /np.linalg.norm(np.dot(dir_vec,Q_tI_orth))
 
         # get a perpendicular into the element
         Qperp = lambda t: -side_signum*np.array([Qvec(t)[1],-Qvec(t)[0]])
@@ -2581,7 +2578,8 @@ class swarm:
                 raise RuntimeError("LSQ did not converge.")
             t_edge = sol.x[0]
             # for debugging
-            # print(f't_edge = {t_edge}')
+            print(f't_edge = {t_edge}')
+            import pdb; pdb.set_trace()
         
         ##########                                             ##########
         #####                Test for rotating away                 #####
@@ -2617,7 +2615,7 @@ class swarm:
                 raise RuntimeError("Brenq did not converge.")
             t_rot = sol.root
             # for debugging
-            # print(f't_rot = {t_rot}')
+            print(f't_rot = {t_rot}')
             # rotated away before end of element was reached
             went_past_el_bool = False
 
@@ -2687,6 +2685,9 @@ class swarm:
                 #   are going to grab the one that is most acute out of all of
                 #   intersect_bool
                 acute_bool = np.any(np.dot(adj_vec, vec) <= 0 & intersect_bool)
+                #   ERROR CASE:
+                #   adj_vec = np.array([-0.01595709246678,  0.01200235145133])
+                #   vec = np.array([ 0.00234942203469, -0.00381196925714])
             else:
                 intersect_bool = np.array([False])
             ################
@@ -2721,18 +2722,16 @@ class swarm:
                                      adj_mesh_newstart[elem_idx,1,:], adj_idx)
                     # Supply new start/end pts based on new intersection point 
                     #   and original trajectory
-                    orig_unit_vec = vec/np.linalg.norm(vec)
                     newstartpt = adj_intersect[0] - t_edge*vec
                     newendpt = adj_intersect[0] + (1-t_edge)*vec
 
                     # for debugging
-                    # print(f'newstartpt = {list(newstartpt)}')
-                    # print(f'newendpt = {list(newendpt)}')
+                    print(f'newstartpt = {list(newstartpt)}')
+                    print(f'newendpt = {list(newendpt)}')
                     return swarm._project_and_slide_moving(newstartpt, newendpt, 
                                                     adj_intersect, 
                                                     mesh_start, mesh_end, 
-                                                    max_meshpt_dist, max_mov,
-                                                    side_signum)      
+                                                    max_meshpt_dist, max_mov)      
 
         ##########                                                  ##########
         #####   Only reached if we did not intersect adjacent element    #####
@@ -2750,16 +2749,16 @@ class swarm:
             newendpt = newstartpt + (1-t_rot)*vec
             mesh_now = mesh_start*(1-t_rot) + mesh_end*t_rot
             # for debugging
-            # print(f'newstartpt = {list(newstartpt)}')
-            # print(f'newendpt = {list(newendpt)}')
+            print(f'newstartpt = {list(newstartpt)}')
+            print(f'newendpt = {list(newendpt)}')
         elif went_past_el_bool:
             # Slid off the end and encountered nothing.
             newstartpt = Q_edge(t_edge) + EPS*norm_out_u
             newendpt = newstartpt + (1-t_edge)*vec
             mesh_now = mesh_start*(1-t_edge) + mesh_end*t_edge
             # for debugging
-            # print(f'newstartpt = {list(newstartpt)}')
-            # print(f'newendpt = {list(newendpt)}')
+            print(f'newstartpt = {list(newstartpt)}')
+            print(f'newendpt = {list(newendpt)}')
         else:
             ######### Ended on mesh element ##########
             # get a normal to the final position of mesh element that points 

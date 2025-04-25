@@ -18,17 +18,17 @@ swrm = planktos.swarm(envir=envir, init=start_positions,
                       ib_condition='sliding', seed=1)
 swrm.shared_props['cov'] *= 0.01
 # swrm.plot()
-for ii in range(200):
-    swrm.move(0.001)
-
-# for ii in range(54):
+# for ii in range(200):
 #     swrm.move(0.001)
-# swrm.plot()
-# Agent number 89 penetrates in next time step
+
+for ii in range(74):
+    swrm.move(0.001)
+swrm.plot()
+# Agent number 18 penetrates in next time step
 
 # for ii in range(150):
 #     swrm.move(0.001)
-swrm.plot_all('mvib2d_sliding.mp4')
+# swrm.plot_all('mvib2d_sliding.mp4')
 
 ###### Damped springs rubberband ######
 # envir.read_IB2d_fluid_data('damped_rb/viz_IB2d', 1e-3, 20)
