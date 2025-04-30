@@ -2426,12 +2426,13 @@ class swarm:
     def _project_and_slide_moving(startpt, endpt, intersection, mesh_start, 
                                   mesh_end, max_meshpt_dist, max_mov, 
                                   prev_idx=None):
-        '''Once we have an intersection point with an immersed mesh, project and 
-        slide the agent along the moving mesh for its remaining movement, and 
-        determine what happens if we fall off the edge of the element (or the 
-        element moves away) in all possible angle cases.
-        (e.g. recursion of detecting further intersections and resulting in 
-        additional vector projection)
+        '''Once we have an intersection point with an immersed mesh, slide the 
+        agent along the moving mesh for its remaining movement (frictionless 
+        boundary interaction), and then determine what happens if we fall off 
+        the edge of the element or if the element rotates away.
+        
+        NOTE: Because we do not know the mass of the agents or the properties
+        of the fluid, we neglect inertial and drag forces in this computation.
 
         Parameters
         ----------
@@ -2468,6 +2469,7 @@ class swarm:
             new endpoint for movement after projection
         '''
 
+        # import pdb; pdb.set_trace()
         # small number to perturb off of the actual boundary in order to avoid
         #   roundoff errors that would allow penetration
         # base its magnitude off of the given coordinate points
@@ -2534,7 +2536,8 @@ class swarm:
                             Qperp(t))/np.dot(Qperp(t),Qperp(t))
         
         # Solve for position at time t
-        proj_to_pt = lambda t: integrate.solve_ivp(x_DE, t_span=(t_I,t), y0=x).y[:,-1]
+        proj_to_pt = lambda t: integrate.solve_ivp(x_DE, t_span=(t_I,t), y0=x, 
+                                                   rtol=1e-7, atol=1e-12).y[:,-1]
 
         # Derivative as a function of t alone for least squares optimization
         proj_prime = lambda t: x_DE(t, proj_to_pt(t))
