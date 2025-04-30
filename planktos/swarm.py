@@ -1852,7 +1852,10 @@ class swarm:
             
             # small number to perturb off of the actual boundary in order to avoid
             #   roundoff errors that would allow penetration
-            EPS = max_meshpt_dist*1e-7
+            # base its magnitude off of the given coordinate points
+            coord_mag = np.floor(np.log(np.max(
+                np.concatenate((startpt,endpt,close_mesh),axis=None))))
+            EPS = 10**(coord_mag-8)
 
             back_vec = (startpt-endpt)/np.linalg.norm(endpt-startpt)
             return intersection[0] + back_vec*EPS, np.zeros((DIM))
@@ -1945,7 +1948,10 @@ class swarm:
 
             # small number to perturb off of the actual boundary in order to avoid
             #   roundoff errors that would allow boundary penetration
-            EPS = max_meshpt_dist*1e-7
+            # base its magnitude off of the given coordinate points
+            coord_mag = np.floor(np.log(np.max(
+                np.concatenate((startpt,endpt,close_mesh_start,close_mesh_end),axis=None))))
+            EPS = 10**(coord_mag-8)
 
             if DIM == 2:
                 x = intersection[0]    # (x,y) coordinates of intersection
@@ -2103,7 +2109,10 @@ class swarm:
 
         # small number to perturb off of the actual boundary in order to avoid
         #   roundoff errors that would allow penetration
-        EPS = max_meshpt_dist*1e-7
+        # base its magnitude off of the given coordinate points
+        coord_mag = np.floor(np.log(np.max(
+            np.concatenate((startpt,endpt,close_mesh),axis=None))))
+        EPS = 10**(coord_mag-8)
 
         # Project remaining piece of vector from intersection onto mesh and get 
         #   a unit normal pointing out from the simplex
@@ -2461,7 +2470,10 @@ class swarm:
 
         # small number to perturb off of the actual boundary in order to avoid
         #   roundoff errors that would allow penetration
-        EPS = max_meshpt_dist*1e-7
+        # base its magnitude off of the given coordinate points
+        coord_mag = np.floor(np.log(np.max(
+            np.concatenate((startpt,endpt,mesh_start,mesh_end),axis=None))))
+        EPS = 10**(coord_mag-8)
 
         DIM = len(startpt)
 
