@@ -24,12 +24,17 @@ $$\frac{d\mathbf{x}_{agent\ \parallel\ \mathbf{Q}}}{dt} =
 
 Consider the change in a position $\mathbf{x}$ along a mesh element due only to 
 movement in the mesh element. $\mathbf{x}(t)$ can be parameterized as above via 
-$\mathbf{x}(t) = \mathbf{Q}_0(t) + s(t)\mathbf{Q}(t)$, so
+$$\mathbf{x}(t) = \mathbf{Q}_0(t) + s(t)\mathbf{Q}(t),$$ 
+so
 $$\frac{d\mathbf{x}_{elem}}{dt} = \frac{d\mathbf{Q}_0}{dt} 
 + s(t)\frac{d\mathbf{Q}}{dt} + \frac{ds}{dt}\mathbf{Q}(t).$$
-$s(t)$ can be found by solving the system of $\mathbf{x}$ equations
-$$s(t) = \frac{||\mathbf{x}(t)-\mathbf{Q}_0(t)||}{||\mathbf{Q}(t)||}.$$
-It is also possible to formulate this in a way that is linear in $\mathbf{x}$, 
+$s(t)$ can be found by solving the linearly dependent system of equations above.
+To avoid situations where $\mathbf{Q}(t)$ may be zero in one dimension, the 
+solution can be written as
+$$s(t) = \frac{||\mathbf{x}(t)-\mathbf{Q}_0(t)||}{||\mathbf{Q}(t)||}$$
+since $s(t)$ is a non-negative scalar function. One can also leverage the linear 
+dependence of the system to avoid that case - in particular, it is worth noting 
+that $s(t)$ is therefore linear in $\mathbf{x}$, 
 but it is more verbose in notation. Note that the $ds/dt$ term will disappear 
 when we project onto a direction perpendicular to $\mathbf{Q}(t)$.
 
