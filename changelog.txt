@@ -1,7 +1,6 @@
 1.0.0
 -----------------------
 Moving immersed boundaries are now supported in 2D!
-- sticky boundary conditions only
 - IB2d import
 - all 2D plotting routines updated to handle moving immersed boundaries
 - TODO: sliding BC
