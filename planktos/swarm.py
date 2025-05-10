@@ -2469,7 +2469,6 @@ class swarm:
             new endpoint for movement after projection
         '''
 
-        # import pdb; pdb.set_trace()
         # small number to perturb off of the actual boundary in order to avoid
         #   roundoff errors that would allow penetration
         # base its magnitude off of the given coordinate points
@@ -2558,22 +2557,55 @@ class swarm:
         #####             Test for sliding off the end              #####
         ##########                                             ##########
 
-        # Because mesh elements are linearly interpolated between start and end states, 
-        #   they stretch or contract monotonically. It is therefore enough to check if 
-        #   we have gone past the final mesh element's endpoint.
         mesh_el_end_len = np.linalg.norm(Q_end)
-        Q0_end_dist = np.linalg.norm(slide_pt - mesh_end[idx,0,:])
-        Q1_end_dist = np.linalg.norm(slide_pt - mesh_end[idx,1,:])
+        Q0_crit_dist = np.linalg.norm(slide_pt - mesh_end[idx,0,:])
+        Q1_crit_dist = np.linalg.norm(slide_pt - mesh_end[idx,1,:])
         # Since we are sliding on the mesh element, if the distance from
         #   our new location to either of the mesh endpoints is greater
         #   than the length of the mesh element, we must have gone beyond
-        #   the segment.
-        went_past_el_bool = (Q0_end_dist > mesh_el_end_len+EPS) or ( 
-                             Q1_end_dist > mesh_el_end_len+EPS)
+        #   the segment somewhere in the past.
+        went_past_el_bool = (Q0_crit_dist > mesh_el_end_len+EPS) or ( 
+                             Q1_crit_dist > mesh_el_end_len+EPS)
+        
+        # Because mesh elements are linearly interpolated between start and end 
+        #   states, they stretch or contract quadratically. Also, the direction 
+        #   of travel on the mesh element can change at most once. If we haven't
+        #   detected a trip past one of the endpoints already, establish the 
+        #   existence and feasibility of these critical points and check them in 
+        #   addition to the state at the end of the timestep.
+
+        if not went_past_el_bool:
+            t_crit_elem_denom = np.dot(Q_tI+Q_end,np.ones(2))-2*np.dot(Q_tI,Q_end)
+            if t_crit_elem_denom != 0:
+                t_crit_elem = np.dot(Q_tI,1-Q_end)/t_crit_elem_denom
+            else:
+                t_crit_elem = -1
+            if t_I < t_crit_elem < 1:
+                t_crit = t_crit_elem
+            else:
+                t_crit = None
+            
+            t_crit_x_denom = np.dot(Q_tI-Q_end,vec)
+            if t_crit_x_denom != 0:
+                t_crit_x = np.dot(Q_tI,vec)/t_crit_x_denom
+            else:
+                t_crit_x = -1
+            if t_I < t_crit_x < 1:
+                if t_crit is None or t_crit > t_crit_x:
+                    t_crit = t_crit_x
+
+            if t_crit is not None:
+                slide_pt_crit = proj_to_pt(t_crit)
+                mesh_el_crit_len = np.linalg.norm(Qvec(t_crit))
+                Q0_crit_dist = np.linalg.norm(slide_pt_crit - Q0_t(t_crit))
+                Q1_crit_dist = np.linalg.norm(slide_pt_crit - (Q0_t(t_crit)+Qvec(t_crit)))
+                went_past_el_bool = (Q0_crit_dist > mesh_el_crit_len+EPS) or ( 
+                                     Q1_crit_dist > mesh_el_crit_len+EPS)
+
         if went_past_el_bool:
             # check to see when we went past the end of the mesh element.
             # This is a non-linear least squares minimization problem
-            if Q1_end_dist > Q0_end_dist:
+            if Q1_crit_dist > Q0_crit_dist:
                 # went past Q0
                 # location of Q0 as a function of time, plus its derivative
                 Q_edge = lambda t: ((1-t)*Q0 + (t-t_I)*mesh_end[idx,0,:])/(1-t_I)
@@ -2589,7 +2621,7 @@ class swarm:
             resid = lambda t: proj_to_pt(t[0])-Q_edge(t[0])
             # derivative
             jac = lambda t: np.array([proj_prime(t[0])-Q_edge_prime]).T
-            # Solve the non-linear least squares problem
+            # Solve the non-linear least squares problem for a root local to t_I.
             sol = optimize.least_squares(resid, x0=t_I, jac=jac, bounds=(t_I,1),
                                          method='dogbox', ftol=None, gtol=None)
             # check solution
@@ -2656,7 +2688,7 @@ class swarm:
             # Now, find adjacent mesh segments on the end we went past. 
             #   This is any mesh element that contains the endpoint we went past
             #   except the current mesh element
-            if Q1_end_dist > Q0_end_dist:
+            if Q1_crit_dist > Q0_crit_dist:
                 # went past Q0
                 pt_bool = np.isclose(np.linalg.norm(mesh_end.reshape(
                     (mesh_end.shape[0]*mesh_end.shape[1],mesh_end.shape[2]))
@@ -2727,7 +2759,7 @@ class swarm:
                         adj_vec_end = mesh_end[adj_idx,0,:] - mesh_end[adj_idx,1,:]
                     adj_vec_end_u = adj_vec_end/np.linalg.norm(adj_vec_end)
                     Q_end_u = Q_end/np.linalg.norm(Q_end)
-                    if Q1_end_dist < Q0_end_dist:
+                    if Q1_crit_dist < Q0_crit_dist:
                         # went past Q1, not Q0
                         Q_end_u *= -1
                     mid_vec = (adj_vec_end_u + Q_end_u)*0.5

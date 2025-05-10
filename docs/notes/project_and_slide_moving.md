@@ -63,9 +63,32 @@ two speeds in the direction orthogonal to the mesh element. If there is a sign
 change during the time step, the time of separation can be solved for using a 
 bracketed root-finding algorithm. We use Brent's method as implemented by scipy.
 
-For the second case, we want to find the time at which either 
-$||\mathbf{x}(t)-\mathbf{Q}_0(t)||$ or $||\mathbf{x}(t)-\mathbf{Q}_1(t)||=0$. 
-This is a nonlinear least squares minimization problem in $t$, and we solve it 
-using Powell's hybrid "dog leg" method, a rectangular trust-region method 
-implemented in scipy that makes use of the Jacobian of the residual function, 
-here simply $\frac{d\mathbf{x}}{dt}-\frac{d\mathbf{Q}}{dt}$.
+For the second case detection, the situation is complicated. $x(t)$ can 
+intersect $\mathbf{Q}_0$ or $\mathbf{Q}_1$ at most twice because it can change 
+direction once on the mesh element, and also because 
+$||\mathbf{Q}_1(t)-\mathbf{Q}_0(t)||^2$ is quadratic and concave up, so it could 
+shrink and then grow again. In a really pathological case, $x(t)$ could move off 
+of one edge, come back on the mesh element, and then move off the other edge. 
+It's probably impossible to move off the same edge twice and then come back on... 
+but anyway, we only need to find the first time any of this happens.
+
+Let $\mathbf{Q}(t) = \mathbf{Q}_1(t)-\mathbf{Q}_0(t)$. 
+Then $||\mathbf{Q}_1(t)-\mathbf{Q}_0(t)||^2$ has a critical point at
+$$t^* = \frac{\mathbf{Q}(0)\cdot(1-\mathbf{Q}(1))}{
+    (\mathbf{Q(0)}+\mathbf{Q}(1))\cdot\mathbf{1}-2(\mathbf{Q}(0)\cdot\mathbf{Q}(1))}.$$
+If $x(t)$ changes direction, it does so when 
+$$\frac{d\mathbf{x}_{agent\ \parallel\ \mathbf{Q}}}{dt}=0 \implies
+\mathbf{Q}(t)\cdot\mathbf{v}=0$$
+This occurs when
+$$t^* = \frac{\mathbf{Q}(0)\cdot\mathbf{v}}{(\mathbf{Q}(0)-\mathbf{Q}(1))\cdot\mathbf{v}}$$
+
+If we check both of these critical times (if they exist, and if they are within 
+the interval starting at the time of intersection and ending at $t=1$), plus the 
+situation at $t=1$, we should have everything covered on detection.
+
+Then, actually finding $t$ is a nonlinear least squares minimization problem 
+(this avoids numerical issues versus a root finding algorithm on the difference 
+between $x(t)$ and $\mathbf{Q}_0$ or $\mathbf{Q}_1$), and we solve it using 
+Powell's hybrid "dog leg" method, a rectangular trust-region method implemented 
+in scipy that makes use of the Jacobian of the residual function, here simply 
+$\frac{d\mathbf{x}}{dt}-\frac{d\mathbf{Q}}{dt}$.

@@ -20,7 +20,7 @@ swrm.shared_props['cov'] *= 0.01
 # swrm.plot()
 for ii in range(200):
     swrm.move(0.001)
-swrm.plot_all('mvib2d_sliding.mp4', fluid='vort')
+swrm.plot_all('mvib2d_sliding.mp4')
 
 ###### Damped springs rubberband ######
 # envir.read_IB2d_fluid_data('damped_rb/viz_IB2d', 1e-3, 20)
