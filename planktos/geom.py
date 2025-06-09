@@ -358,12 +358,12 @@ def seg_intersect_2D(P0, P1, Q0_list, Q1_list, get_all=False):
     s_I : float between 0 and 1
         the fraction of the line segment traveled from P0 to P1 before
         intersection occurred
-    vec : length 2 (or 3) array
-        directional unit vector along the boundary (Q) intersected, Q1-Q0
     Q0 : length 2 (or 3) array
         first endpoint of mesh segment intersected
     Q1 : length 2 (or 3) array
         second endpoint of mesh segment intersected
+    idx : int or None
+        index of mesh element intersected. None if only one was being tested
 
     References
     ----------
@@ -394,7 +394,7 @@ def seg_intersect_2D(P0, P1, Q0_list, Q1_list, get_all=False):
             s_I = np.dot(-v_perp,w)/denom
             t_I = -np.dot(u_perp,w)/denom
             if 0<=s_I<=1 and 0<=t_I<=1:
-                return (P0 + s_I*u, s_I, v/np.linalg.norm(v), Q0_list, Q1_list)
+                return (P0 + s_I*u, s_I, Q0_list, Q1_list, None)
         return None
 
     denom_list = np.multiply(v_perp,u).sum(1) #vectorized dot product
@@ -438,8 +438,7 @@ def seg_intersect_2D(P0, P1, Q0_list, Q1_list, get_all=False):
                 x.append(P0+s_I*u)
             return zip(
                 x, s_I_list[intersect], 
-                v[intersect]/np.linalg.norm(v[intersect]),
-                Q0_list[intersect], Q1_list[intersect]
+                Q0_list[intersect], Q1_list[intersect], intersect
             )
         else:
             # find the closest intersection and return it
@@ -448,9 +447,7 @@ def seg_intersect_2D(P0, P1, Q0_list, Q1_list, get_all=False):
             v_intersected = v[intersect]
             s_I = s_I_list[intersect].min()
             s_I_idx = s_I_list[intersect].argmin()
-            return (P0 + s_I*u, s_I,
-                    v_intersected[s_I_idx]/np.linalg.norm(v_intersected[s_I_idx]),
-                    Q0[s_I_idx], Q1[s_I_idx])
+            return (P0 + s_I*u, s_I, Q0[s_I_idx], Q1[s_I_idx], s_I_idx)
     else:
         return None
 

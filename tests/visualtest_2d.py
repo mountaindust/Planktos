@@ -54,7 +54,7 @@ s.shared_props['cov'] *= 0.001
 # s.plot_all(movie_filename='leaf_2d_vort_sticky.mp4', figsize=(6,9), fps=30, fluid='vort')
 
 print('Moving swarm...')
-for ii in range(180): # 500
+for ii in range(500): # 500
     s.move(0.0005)
 
 # s.plot()
@@ -62,5 +62,5 @@ for ii in range(180): # 500
 #     s.move(0.0005)
 #     s.plot()
 
-# s.plot()
-# s.plot_all(movie_filename='leaf_2d_vort.mp4', figsize=(6,9), fps=30, fluid='vort')
+s.plot()
+s.plot_all(movie_filename='leaf_2d_vort.mp4', figsize=(6,9), fps=30, fluid='vort')

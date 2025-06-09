@@ -2119,15 +2119,16 @@ class swarm:
         # The first two entries of an intersection object are always:
         #   0) The point of intersection
         #   1) The fraction of line segment traveled before intersection occurred
-        # NOTE: In the case of 2D, intersection[2] is a unit vector on the line
-        #       In the case of 3D, intersection[2] is a unit normal to the triangle
+        # NOTE: In the case of 3D, intersection[2] is a unit normal to the triangle
         #   The remaining entries give the vertices of the line/triangle
 
         # Get leftover portion of travel vector
         vec = (1-intersection[1])*(endpt-startpt)
         if DIM == 2:
+            # get a unit vector in the direction of the intersected element
+            Qvec = intersection[3]-intersection[2]
             # project vec onto the line
-            proj = np.dot(vec,intersection[2])*intersection[2]
+            proj = np.dot(vec,Qvec)*Qvec
             # vec - proj is a normal that points from outside bndry inside
             #   reverse direction and normalize to get unit vector pointing out
             norm_out_u = (proj-vec)/np.linalg.norm(proj-vec)
@@ -2155,9 +2156,9 @@ class swarm:
         if DIM == 2:
             # Detect sliding off 1D edge
             # Equivalent to going past the endpoints
-            mesh_el_len = np.linalg.norm(intersection[4] - intersection[3])
-            Q0_dist = np.linalg.norm(newendpt-EPS*norm_out_u - intersection[3])
-            Q1_dist = np.linalg.norm(newendpt-EPS*norm_out_u - intersection[4])
+            mesh_el_len = np.linalg.norm(intersection[3] - intersection[2])
+            Q0_dist = np.linalg.norm(newendpt-EPS*norm_out_u - intersection[2])
+            Q1_dist = np.linalg.norm(newendpt-EPS*norm_out_u - intersection[3])
             # Since we are sliding on the mesh element, if the distance from
             #   our new location to either of the mesh endpoints is greater
             #   than the length of the mesh element, we must have gone beyond
@@ -2184,10 +2185,10 @@ class swarm:
                 #   we need to treat it.
                 pt_bool = np.logical_or(
                     np.isclose(np.linalg.norm(close_mesh.reshape(
-                    (close_mesh.shape[0]*close_mesh.shape[1],close_mesh.shape[2]))-intersection[3],
+                    (close_mesh.shape[0]*close_mesh.shape[1],close_mesh.shape[2]))-intersection[2],
                     axis=1),0),
                     np.isclose(np.linalg.norm(close_mesh.reshape(
-                    (close_mesh.shape[0]*close_mesh.shape[1],close_mesh.shape[2]))-intersection[4],
+                    (close_mesh.shape[0]*close_mesh.shape[1],close_mesh.shape[2]))-intersection[3],
                     axis=1),0)
                 )
                 pt_bool = pt_bool.reshape((close_mesh.shape[0],close_mesh.shape[1]))
@@ -2206,8 +2207,8 @@ class swarm:
                     # check that we haven't intersected this before
                     #   (should be impossible)
                     if old_intersection is not None and\
-                        np.all(adj_intersect[3] == old_intersection[3]) and\
-                        np.all(adj_intersect[4] == old_intersection[4]):
+                        np.all(adj_intersect[2] == old_intersection[2]) and\
+                        np.all(adj_intersect[3] == old_intersection[3]):
                         # Going back and forth! Movement stops here.
                         # NOTE: This happens when 1) trying to go through a
                         #   mesh element, you 2) slide and intersect another
@@ -2228,8 +2229,8 @@ class swarm:
                         nidx = 4
                     vec0 = intersection[nidx] - intersection[idx]
                     adj_idx = np.argmin([
-                        np.linalg.norm(adj_intersect[3]-intersection[idx]),
-                        np.linalg.norm(adj_intersect[4]-intersection[idx])]) + 3
+                        np.linalg.norm(adj_intersect[2]-intersection[idx]),
+                        np.linalg.norm(adj_intersect[3]-intersection[idx])]) + 3
                     vec1 = adj_intersect[adj_idx] - intersection[idx]
                     # Determine if the angle of mesh elements is acute or obtuse.
                     if np.dot(vec0,vec1) >= 0:
@@ -2265,10 +2266,10 @@ class swarm:
                     ##### went past Q1 #####
                     # put a new start point at the point crossing+EPS and bring out
                     #   EPS*norm_out_u
-                    newstartpt = intersection[4] + EPS*proj_u + EPS*norm_out_u
+                    newstartpt = intersection[3] + EPS*proj_u + EPS*norm_out_u
                 elif Q0_dist < Q1_dist:
                     ##### went past Q0 #####
-                    newstartpt = intersection[3] + EPS*proj_u + EPS*norm_out_u
+                    newstartpt = intersection[2] + EPS*proj_u + EPS*norm_out_u
                 else:
                     raise RuntimeError("Impossible case??")
                 
@@ -2575,8 +2576,8 @@ class swarm:
         endpt : length 2 or 3 array
             original end point of movement, w/o intersection
         intersection : list-like of data
-            result of seg_intersect_2D or seg_intersect_3D_triangles. various 
-            information about the intersection with the immersed mesh element
+            result of seg_intersect_2D_multilinear_poly. various information 
+            about the intersection with the immersed mesh element
         mesh_start : Nx2x2 or Nx3x3 array 
             eligible (nearby) mesh elements for interaction as they are at the 
             start time

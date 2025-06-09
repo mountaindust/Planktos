@@ -2204,13 +2204,13 @@ class environment:
                             np.array([new_seg_pieces[-1][1,:],intersection[0]]))
                     # now break up the segment that intersected seg
                     new_int_pieces.append(
-                        np.array([intersection[3],intersection[0]]))
+                        np.array([intersection[2],intersection[0]]))
                     new_int_pieces.append(
-                        np.array([intersection[0],intersection[4]]))
+                        np.array([intersection[0],intersection[3]]))
                     # and delete the original intersecting segment from the list
                     for ii, elem in enumerate(new_ibmesh[n+1:]):
-                        if np.all(elem == np.array([intersection[3],intersection[4]]))\
-                            or np.all(elem == np.array([intersection[4],intersection[3]])):
+                        if np.all(elem == np.array([intersection[2],intersection[3]]))\
+                            or np.all(elem == np.array([intersection[3],intersection[2]])):
                             new_ibmesh.pop(ii+n+1)
                             break
                 # add on the last segment which ends at the other endpoint
