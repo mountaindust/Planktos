@@ -2423,6 +2423,140 @@ class swarm:
 
 
     @staticmethod
+    def _project_and_slide_new(startpt, endpt, intersection, mesh, 
+                               max_meshpt_dist, prev_idx=None):
+        '''Once we have an intersection point with an immersed mesh, slide the 
+        agent along the moving mesh for its remaining movement (frictionless 
+        boundary interaction), and then determine what happens if we fall off 
+        the edge of the element or if the element rotates away.
+        
+        NOTE: Because we do not know the mass of the agents or the properties
+        of the fluid, we neglect inertial and drag forces in this computation.
+
+        Parameters
+        ----------
+        startpt : length 2 or 3 array
+            original start point of movement, before intersection
+        endpt : length 2 or 3 array
+            original end point of movement, w/o intersection
+        intersection : list-like of data
+            result of seg_intersect_2D or seg_intersect_3D_triangles. various 
+            information about the intersection with the immersed mesh element
+        mesh : Nx2x2 or Nx3x3 array
+            eligible (nearby) mesh elements for interaction
+        max_meshpt_dist : float
+            max distance between two points on a mesh element (used to determine 
+            how far away from startpt to search for mesh elements). 
+            Passed-through here solely in case of recursion with 
+            _apply_internal_moving_BC.
+        prev_idx : int, optional
+            in recursion with adjoining mesh elements, this prevents an infinite 
+            recusion with, e.g., mesh elements in an acute angle.
+
+        Returns
+        -------
+        newendpt : length 2 array
+            new endpoint for movement after projection
+        '''
+
+        # small number to perturb off of the actual boundary in order to avoid
+        #   roundoff errors that would allow penetration
+        # base its magnitude off of the given coordinate points
+        coord_mag = np.floor(np.log(np.max(
+            np.concatenate((startpt,endpt,mesh),axis=None))))
+        EPS = 10**(coord_mag-8)
+
+        # Get full travel vector
+        vec = endpt-startpt
+        # Get mesh element vector
+        Qvec = Q1-Q0
+
+        DIM = len(startpt)
+
+        if DIM == 2:
+        
+            x = intersection[0]    # (x,y) coordinates of intersection
+            t_I = intersection[1]  # btwn 0 & 1, fraction of movement traveled so far
+            Qvec_u = intersection[2] # unit vector along element intersected (Q1-Q0)
+            Q0 = intersection[3]   # edge of mesh element intersected
+            Q1 = intersection[4]   # edge of mesh element intersected
+
+            # Find direction indictor for which side of the mesh element the 
+            #   agent hit the element.
+            agent_prev_loc = startpt + vec*(t_I-0.00001)
+            dir_vec = agent_prev_loc-x
+            Q_orth_u = np.array([Qvec_u[1],-Qvec_u[0]])
+            # side_signum will orient back in the direction the agent came from
+            side_signum = np.dot(dir_vec,Q_orth_u)\
+                /np.linalg.norm(np.dot(dir_vec,Q_orth_u))
+            # Get a normal to the mesh element that points back toward where the 
+            #   agent came from.
+            norm_out_u = side_signum*Q_orth_u
+            
+            # get a perpendicular INTO the element
+            # Qperp_in = lambda t: -side_signum*np.array([Qvec(t)[1],-Qvec(t)[0]])
+
+            # Vector projection of vec onto direction Q is obtained via 
+            #   Q/||Q||*dot(vec,Q/||Q||) = Q*dot(vec,Q)/||Q||**2.
+
+            # Position of agent at time t
+            proj_to_pt = lambda t: (t-t_I)*Qvec*np.dot(vec,Qvec)/np.dot(Qvec,Qvec) + x
+            
+            # Projected position at end of time period
+            slide_pt = proj_to_pt(1)
+
+            if 1-t_I < 10e-7:
+                # Special case where we are practically finished with this time step.
+                # Perturb away from the mesh element and return.
+                return x + EPS*norm_out_u
+            
+            ##########                                             ##########
+            #####             Test for sliding off the end              #####
+            ##########                                             ##########
+
+            mesh_el_end_len = np.linalg.norm(Qvec)
+            Q0_crit_dist = np.linalg.norm(slide_pt - Q0)
+            Q1_crit_dist = np.linalg.norm(slide_pt - Q1)
+            # Since we are sliding on the mesh element, if the distance from
+            #   our new location to either of the mesh endpoints is greater
+            #   than the length of the mesh element, we must have gone beyond
+            #   the segment somewhere in the past.
+
+            # Check to see if and when we went past the end of the mesh element.
+            # Solve (t_edge-t_I)*Qvec*np.dot(vec,Qvec)/np.dot(Qvec,Qvec)+x=Q0 or Q1
+            if Q1_crit_dist > mesh_el_end_len+EPS and Q1_crit_dist > Q0_crit_dist:
+                # went past Q0
+                t_edge = np.linalg.norm((Q0-x)*np.dot(Qvec,Qvec)/np.dot(vec,Qvec)+t_I*Qvec)\
+                            /Qvec_u
+            elif Q0_crit_dist > mesh_el_end_len+EPS and Q0_crit_dist > Q1_crit_dist:
+                t_edge = np.linalg.norm((Q1-x)*np.dot(Qvec,Qvec)/np.dot(vec,Qvec)+t_I*Qvec)\
+                            /Qvec_u
+            else:
+                t_edge = None
+                
+            ##########                                                  ##########
+            #####       Algorithms for going past end of mesh element        #####
+            ##########                                                  ##########
+            # If we went past the end of the mesh element, detect intersection with 
+            #   adjoining elements.
+            if t_edge is not None:
+                # Find adjacent mesh segments on the end we went past.
+                #   This is any mesh element that contains the endpoint we went past
+                #   except the current mesh element
+                if Q1_crit_dist > Q0_crit_dist:
+                    # went past Q0
+                    pt_bool = np.isclose(np.linalg.norm(mesh.reshape(
+                        (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q0, axis=1), 0)
+                else:
+                    # went past Q1
+                    pt_bool = np.isclose(np.linalg.norm(mesh.reshape(
+                        (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q1, axis=1), 0)
+            pass
+                
+
+
+
+    @staticmethod
     def _project_and_slide_moving(startpt, endpt, intersection, mesh_start, 
                                   mesh_end, max_meshpt_dist, max_mov, 
                                   prev_idx=None):
@@ -2443,8 +2577,6 @@ class swarm:
         intersection : list-like of data
             result of seg_intersect_2D or seg_intersect_3D_triangles. various 
             information about the intersection with the immersed mesh element
-        mesh : Nx2x2 or Nx3x3 array
-            full immersed boundary mesh (for recalculating close_mesh)
         mesh_start : Nx2x2 or Nx3x3 array 
             eligible (nearby) mesh elements for interaction as they are at the 
             start time

@@ -359,7 +359,7 @@ def seg_intersect_2D(P0, P1, Q0_list, Q1_list, get_all=False):
         the fraction of the line segment traveled from P0 to P1 before
         intersection occurred
     vec : length 2 (or 3) array
-        directional unit vector along the boundary (Q) intersected
+        directional unit vector along the boundary (Q) intersected, Q1-Q0
     Q0 : length 2 (or 3) array
         first endpoint of mesh segment intersected
     Q1 : length 2 (or 3) array
