@@ -1383,6 +1383,8 @@ class swarm:
                     startpt = self.pos_history[-1][n,:].copy()
                     endpt = self.positions[n,:].copy()
                     if self.envir.ibmesh.ndim == 3:
+                        if n == 17 and self.envir.time > 0.174:
+                            import pdb; pdb.set_trace()
                         self._IBC_routine_static(n, dt, startpt, endpt, ib_collisions)
                     else:
                         self._IBC_routine_moving(n, dt, startpt, endpt, start_mesh, 
@@ -1840,6 +1842,10 @@ class swarm:
         
         # If we do have an intersection:
         if ib_collisions == 'sliding':
+            # TODO: Get eligible mesh elements for full range of projective travel
+            # ALSO: Translate intersection idx, to this new group.
+
+
             # Project remaining piece of vector onto mesh and repeat processes 
             #   as necessary until we have a final result.
             if DIM == 2:
@@ -2007,6 +2013,9 @@ class swarm:
         else:
             # Project remaining piece of movement vector onto mesh and repeat 
             #   processes as necessary until we have a final result.
+
+            # TODO: Get eligible mesh elements for full range of projective travel
+            # ALSO: Translate intersection idx, to this new group.
             
             if DIM == 2:
                 # Project remaining piece of vector onto mesh and repeat processes 
@@ -2548,9 +2557,6 @@ class swarm:
             # If we went past the end of the mesh element, detect intersection with 
             #   adjoining elements.
             if t_edge is not None:
-                # Get a unit vector in the direction of travel on the mesh element
-                Qslide_vec_u = Qvec*np.dot(vec,Qvec)
-                Qslide_vec_u /= np.linalg.norm(Qslide_vec_u)
                 # Find adjacent mesh segments on the end we went past.
                 #   This is any mesh element that contains the endpoint we went past
                 #   except the current mesh element
@@ -2558,10 +2564,14 @@ class swarm:
                     # went past Q0
                     pt_bool = np.isclose(np.linalg.norm(mesh.reshape(
                         (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q0, axis=1), 0)
+                    # Get a vector in the direction of travel on the mesh element
+                    Qvec_dir = -Qvec
                 else:
                     # went past Q1
                     pt_bool = np.isclose(np.linalg.norm(mesh.reshape(
                         (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q1, axis=1), 0)
+                    # Get a vector in the direction of travel on the mesh element
+                    Qvec_dir = Qvec
                 pt_bool = pt_bool.reshape((mesh.shape[0],mesh.shape[1]))
                 # remove current mesh element
                 pt_bool[idx,:] = False
@@ -2599,13 +2609,14 @@ class swarm:
                     adj_vec_idx = adj_mesh_idx[intersect_bool]
                     if adj_vec.shape[0] > 1:
                         # get the one that is most acute on the side of norm_out_u
-                        # Find the side norm is on
-                        det = Qslide_vec_u[0]*norm_out_u[1] - Qslide_vec_u[1]*norm_out_u[0]
+                        # Establish a signum for the side the norm_out_u is on
+                        # Direction of travel is Qvec_dir
+                        det = Qvec_dir[0]*norm_out_u[1] - Qvec_dir[1]*norm_out_u[0]
                         norm_side_sig = det/np.abs(det)
                         # Calculate angles
-                        det = Qslide_vec_u[0]*adj_vec[:,1] - Qslide_vec_u[1]*adj_vec[:,0]
+                        det = Qvec_dir[0]*adj_vec[:,1] - Qvec_dir[1]*adj_vec[:,0]
                         det *= norm_side_sig
-                        dot = np.dot(adj_vec, Qslide_vec_u)
+                        dot = np.dot(adj_vec, Qvec_dir)
                         angles = np.arctan2(det,dot)
                         # convert [-pi,pi] to [0,2pi]
                         angles[angles<0] += 2*np.pi
@@ -2977,19 +2988,36 @@ class swarm:
 
             if np.any(intersect_bool):
                 ########  Went past and intersected adjoining element! ########
+
+                ####################
+                #######
+                # TODO: Needs further testing
+                #######
+                ####################
                 # Get info about it
                 adj_vec = adj_vec[intersect_bool]
+                adj_vec_idx = adj_mesh_end_idx[intersect_bool]
+                adj_mesh_newstart = adj_mesh_newstart[intersect_bool]
                 if adj_vec.shape[0] > 1:
-                    # get the one that is most acute
-                    adj_vec_u = adj_vec/np.broadcast_to(
-                            np.linalg.norm(adj_vec,axis=1), adj_vec.T.shape).T
-                    elem_idx = np.argmax(np.dot(adj_vec_u,-Qslide_vec_u))
-                    adj_vec = adj_vec[elem_idx,:]
-                    adj_idx = adj_mesh_end_idx[intersect_bool][elem_idx]
+                    # get the one that is most acute on the side of norm_out_u
+                    # Establish a signum for the side the norm_out_u is on
+                    # Direction of travel is Qvec_dir
+                    det = Qslide_vec_u[0]*norm_out_u[1] - Qslide_vec_u[1]*norm_out_u[0]
+                    norm_side_sig = det/np.abs(det)
+                    # Calculate angles
+                    det = Qslide_vec_u[0]*adj_vec[:,1] - Qslide_vec_u[1]*adj_vec[:,0]
+                    det *= norm_side_sig
+                    dot = np.dot(adj_vec, Qslide_vec_u)
+                    angles = np.arctan2(det,dot)
+                    # convert [-pi,pi] to [0,2pi]
+                    angles[angles<0] += 2*np.pi
+                    adj_vec_int_idx = np.argmin(angles)
+                    adj_vec = adj_vec[adj_vec_int_idx,:]
+                    adj_idx = adj_vec_idx[adj_vec_int_idx]
                 else:
                     adj_vec = adj_vec[0,:]
                     adj_idx = adj_mesh_end_idx[intersect_bool][0]
-                    elem_idx = 0
+                    adj_vec_int_idx = 0
                 # NOTE: This intersection happens at the same time as sliding 
                 #   off of the last element because they are joined together.
 
@@ -3012,8 +3040,8 @@ class swarm:
                 else:
                     # Repeat project_and_slide_moving on new segment.
                     adj_intersect = (Q_edge(t_edge), t_edge, 
-                                     adj_mesh_newstart[elem_idx,0,:],
-                                     adj_mesh_newstart[elem_idx,1,:], adj_idx)
+                                     adj_mesh_newstart[adj_vec_int_idx,0,:],
+                                     adj_mesh_newstart[adj_vec_int_idx,1,:], adj_idx)
                     # Supply new start/end pts based on new intersection point 
                     #   and original trajectory
                     newstartpt = adj_intersect[0] - t_edge*vec

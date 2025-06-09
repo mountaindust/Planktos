@@ -438,16 +438,16 @@ def seg_intersect_2D(P0, P1, Q0_list, Q1_list, get_all=False):
                 x.append(P0+s_I*u)
             return zip(
                 x, s_I_list[intersect], 
-                Q0_list[intersect], Q1_list[intersect], intersect
+                Q0_list[intersect], Q1_list[intersect], intersect.nonzero()[0]
             )
         else:
             # find the closest intersection and return it
             Q0 = Q0_list[intersect]
             Q1 = Q1_list[intersect]
-            v_intersected = v[intersect]
             s_I = s_I_list[intersect].min()
             s_I_idx = s_I_list[intersect].argmin()
-            return (P0 + s_I*u, s_I, Q0[s_I_idx], Q1[s_I_idx], s_I_idx)
+            return (P0 + s_I*u, s_I, Q0[s_I_idx], Q1[s_I_idx], 
+                    intersect.nonzero()[0][s_I_idx])
     else:
         return None
 
