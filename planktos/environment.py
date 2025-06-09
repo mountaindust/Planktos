@@ -2226,8 +2226,10 @@ class environment:
                 n += len(new_seg_pieces)
         # Done.
 
-        # Replace ibmesh with new_ibmesh
-        self.ibmesh =  np.array(new_ibmesh, dtype=np.float64)
+        # Get rid of length zero mesh elements, replace ibmesh with new_ibmesh
+        new_ibmesh = np.array(new_ibmesh, dtype=np.float64)
+        elem_lengths = np.linalg.norm(new_ibmesh[:,1,:]-new_ibmesh[:,0,:],axis=1)
+        self.ibmesh = new_ibmesh[elem_lengths>0]
 
 
 
