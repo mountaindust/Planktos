@@ -1385,6 +1385,8 @@ class swarm:
                     if self.envir.ibmesh.ndim == 3:
                         self._IBC_routine_static(n, dt, startpt, endpt, ib_collisions)
                     else:
+                        # if self.envir.time > 0.1 and n == 56:
+                        #     import pdb; pdb.set_trace()
                         self._IBC_routine_moving(n, dt, startpt, endpt, start_mesh, 
                                                  end_mesh, max_meshpt_dist, 
                                                  max_mov, ib_collisions)
@@ -2612,9 +2614,9 @@ class swarm:
         # small number to perturb off of the actual boundary in order to avoid
         #   roundoff errors that would allow penetration
         # base its magnitude off of the given coordinate points
-        coord_mag = np.floor(np.log(np.max(
+        coord_mag = np.ceil(np.log(np.max(
             np.concatenate((startpt,endpt,mesh_start,mesh_end),axis=None))))
-        EPS = 10**(coord_mag-8)
+        EPS = 10**(coord_mag-7)
 
         DIM = len(startpt)
 
