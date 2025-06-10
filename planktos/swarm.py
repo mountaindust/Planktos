@@ -1859,10 +1859,10 @@ class swarm:
             # Project remaining piece of vector onto mesh and repeat processes 
             #   as necessary until we have a final result.
             if DIM == 2:
-                new_pos = swarm._project_and_slide_new(startpt, endpt, intersection, 
+                new_pos = swarm._project_and_slide_2D(startpt, endpt, intersection, 
                                                        close_mesh, max_meshpt_dist)
             else:
-                new_pos = swarm._project_and_slide(startpt, endpt, intersection, mesh,
+                new_pos = swarm._project_and_slide_3D(startpt, endpt, intersection, mesh,
                                                    close_mesh, max_meshpt_dist,
                                                    old_intersection, kill)
             return new_pos, new_pos - intersection[0]
@@ -2101,7 +2101,7 @@ class swarm:
 
 
     @staticmethod
-    def _project_and_slide(startpt, endpt, intersection, mesh, close_mesh, 
+    def _project_and_slide_3D(startpt, endpt, intersection, mesh, close_mesh, 
                            max_meshpt_dist, old_intersection=None, 
                            kill=False):
         '''Once we have an intersection point with an immersed mesh, project and 
@@ -2110,8 +2110,8 @@ class swarm:
         (e.g. some kind of recursion of detecting further intersections and 
         resulting in additional vector projection)
 
-        This, along with the intersection detection routines, is the real 
-        workhorse of immersed mesh interaction!
+        This method is here for legacy purposes until 3D can be fully debugged 
+        and updated.
 
         Parameters
         ----------
@@ -2148,6 +2148,8 @@ class swarm:
         '''
 
         DIM = len(startpt)
+        if DIM != 3:
+            raise RuntimeError("This method is now for 3D only!")
 
         # small number to perturb off of the actual boundary in order to avoid
         #   roundoff errors that would allow penetration
@@ -2166,14 +2168,6 @@ class swarm:
 
         # Get leftover portion of travel vector
         vec = (1-intersection[1])*(endpt-startpt)
-        if DIM == 2:
-            # get a unit vector in the direction of the intersected element
-            Qvec = intersection[3]-intersection[2]
-            # project vec onto the line
-            proj = np.dot(vec,Qvec)*Qvec
-            # vec - proj is a normal that points from outside bndry inside
-            #   reverse direction and normalize to get unit vector pointing out
-            norm_out_u = (proj-vec)/np.linalg.norm(proj-vec)
         if DIM == 3:
             # get a unit normal vector pointing back the way we came
             norm_out_u = -np.sign(np.dot(vec,intersection[2]))*intersection[2]
@@ -2191,149 +2185,7 @@ class swarm:
         #   an approximation to an in-boundary slide.
         # For this reason, pull newendpt back a bit for numerical stability
         newendpt = intersection[0] + proj + EPS*norm_out_u
-
-        ################################
-        ###########    2D    ###########
-        ################################
-        if DIM == 2:
-            # Detect sliding off 1D edge
-            # Equivalent to going past the endpoints
-            mesh_el_len = np.linalg.norm(intersection[3] - intersection[2])
-            Q0_dist = np.linalg.norm(newendpt-EPS*norm_out_u - intersection[2])
-            Q1_dist = np.linalg.norm(newendpt-EPS*norm_out_u - intersection[3])
-            # Since we are sliding on the mesh element, if the distance from
-            #   our new location to either of the mesh endpoints is greater
-            #   than the length of the mesh element, we must have gone beyond
-            #   the segment.
-            if Q0_dist > mesh_el_len+EPS or Q1_dist > mesh_el_len+EPS:
-                ##########      Went past either Q0 or Q1      ##########
-
-                # We check assuming the agent slid an additional EPS, because
-                #   if we end up in the non-concave case and fall off, we will
-                #   want to go EPS further so as to avoid corner penetration
-                #   The result of adding EPS in both the projection and normal
-                #   directions (below) is that some concave intersections will be
-                #   discovered (all acute, some obtuse) but others won't. However,
-                #   All undiscovered ones will be obtuse, so while re-detecting
-                #   the subsequent intersection is not the most efficient thing,
-                #   it should be stable.
-
-                # check for new crossing of segment attached to the
-                #   current line segment
-                # First, find adjacent mesh segments. These are ones that share
-                #   one of, but not both, endpoints with the current segment.
-                #   This will also pick up our current segment, but we shouldn't
-                #   be intersecting it. And if by some numerical error we do,
-                #   we need to treat it.
-                pt_bool = np.logical_or(
-                    np.isclose(np.linalg.norm(close_mesh.reshape(
-                    (close_mesh.shape[0]*close_mesh.shape[1],close_mesh.shape[2]))-intersection[2],
-                    axis=1),0),
-                    np.isclose(np.linalg.norm(close_mesh.reshape(
-                    (close_mesh.shape[0]*close_mesh.shape[1],close_mesh.shape[2]))-intersection[3],
-                    axis=1),0)
-                )
-                pt_bool = pt_bool.reshape((close_mesh.shape[0],close_mesh.shape[1]))
-                adj_mesh = close_mesh[np.any(pt_bool,axis=1)]
-                # Check for intersection with these segemtns, but translate 
-                #   start/end points back from the segment a bit for numerical stability
-                # This has already been done for newendpt
-                # Also go EPS further than newendpt for stability for what follows
-                if len(adj_mesh) > 0:
-                    adj_intersect = geom.seg_intersect_2D(intersection[0]+EPS*norm_out_u,
-                        newendpt+EPS*proj_u, adj_mesh[:,0,:], adj_mesh[:,1,:])
-                else:
-                    adj_intersect = None
-                if adj_intersect is not None:
-                    ##########  Went past and intersected adjoining element! ##########
-                    # check that we haven't intersected this before
-                    #   (should be impossible)
-                    if old_intersection is not None and\
-                        np.all(adj_intersect[2] == old_intersection[2]) and\
-                        np.all(adj_intersect[3] == old_intersection[3]):
-                        # Going back and forth! Movement stops here.
-                        # NOTE: This happens when 1) trying to go through a
-                        #   mesh element, you 2) slide and intersect another
-                        #   mesh element. The angle between elements is acute,
-                        #   so you 3) slide back into the same element you
-                        #   intersected in (1). 
-                        # Back away from the intersection point slightly for
-                        #   numerical stability and stay put.
-                        return adj_intersect[0] - EPS*proj_u
-                    # Otherwise:
-                    if Q0_dist > Q1_dist:
-                        # went past Q1; base vectors off Q1 vertex
-                        idx = 4
-                        nidx = 3
-                    else:
-                        # went past Q0; base vectors off Q0 vertex
-                        idx = 3
-                        nidx = 4
-                    vec0 = intersection[nidx] - intersection[idx]
-                    adj_idx = np.argmin([
-                        np.linalg.norm(adj_intersect[2]-intersection[idx]),
-                        np.linalg.norm(adj_intersect[3]-intersection[idx])]) + 3
-                    vec1 = adj_intersect[adj_idx] - intersection[idx]
-                    # Determine if the angle of mesh elements is acute or obtuse.
-                    if np.dot(vec0,vec1) >= 0:
-                        # Acute. Movement stops here.
-                        # Back away from the intersection point slightly for
-                        #   numerical stability and stay put
-                        return adj_intersect[0] - EPS*proj_u
-                    else:
-                        # Obtuse. Repeat project_and_slide on new segment,
-                        #   but send along info about old segment so we don't
-                        #   get in an infinite loop.
-                        # Also, regenerate eligible mesh elements based on the 
-                        #   new location.
-                        search_rad = max_meshpt_dist*2/3
-                        close_mesh = swarm._get_eligible_static_mesh_elements(
-                            intersection[0]+EPS*norm_out_u, newendpt+EPS*proj_u, 
-                            mesh, search_rad)
-
-                        return swarm._project_and_slide(intersection[0]+EPS*norm_out_u, 
-                                                        newendpt+EPS*proj_u, 
-                                                        adj_intersect, mesh, 
-                                                        close_mesh, max_meshpt_dist, 
-                                                        intersection)
-
-                ######  Went past, but did not intersect adjoining element! ######
-
-                # NOTE: There could still be an adjoining element at >180 degrees
-                #   But we will project along original heading as if there isn't one
-                #   and subsequently detect any intersections.
-                # DIM == 2, adj_intersect is None
-                
-                if Q0_dist > Q1_dist:
-                    ##### went past Q1 #####
-                    # put a new start point at the point crossing+EPS and bring out
-                    #   EPS*norm_out_u
-                    newstartpt = intersection[3] + EPS*proj_u + EPS*norm_out_u
-                elif Q0_dist < Q1_dist:
-                    ##### went past Q0 #####
-                    newstartpt = intersection[2] + EPS*proj_u + EPS*norm_out_u
-                else:
-                    raise RuntimeError("Impossible case??")
-                
-                # continue full amount of remaining movement along original heading
-                #   starting at newstartpt
-                orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
-                newendpt = newstartpt + np.linalg.norm(newendpt-newstartpt)*orig_unit_vec
-                # repeat process to look for additional intersections
-                #   pass along current intersection in case of obtuse concave case
-                new_loc, dx = swarm._apply_internal_static_BC(newstartpt, newendpt,
-                                                              mesh, max_meshpt_dist,
-                                                              intersection)
-                return new_loc
-
-            else:
-                ##########      Did not go past either Q0 or Q1      ##########
-                # We simply end on the mesh element
-                return newendpt
         
-        ################################
-        ###########    3D    ###########
-        ################################
         if DIM == 3:
             # Detect sliding off 2D edge using seg_intersect_2D
             Q0_list = np.array(intersection[3:])
@@ -2438,7 +2290,7 @@ class swarm:
                         intersection[0]+EPS*norm_out_u, 
                         newendpt+EPS*proj_u+EPS*norm_out_u, 
                         mesh, search_rad)
-                    return swarm._project_and_slide(intersection[0]+EPS*norm_out_u, 
+                    return swarm._project_and_slide_3D(intersection[0]+EPS*norm_out_u, 
                                                     newendpt+EPS*proj_u+EPS*norm_out_u, 
                                                     adj_intersect, mesh, close_mesh,
                                                     max_meshpt_dist, intersection, kill)
@@ -2466,7 +2318,7 @@ class swarm:
 
 
     @staticmethod
-    def _project_and_slide_new(startpt, endpt, intersection, mesh, 
+    def _project_and_slide_2D(startpt, endpt, intersection, mesh, 
                                max_meshpt_dist, prev_idx=None):
         '''Once we have an intersection point with an immersed mesh, slide the 
         agent along the moving mesh for its remaining movement (frictionless 
@@ -2673,7 +2525,7 @@ class swarm:
                         newstartpt = adj_intersect[0] - t_edge*vec
                         newendpt = adj_intersect[0] + (1-t_edge)*vec
 
-                        return swarm._project_and_slide_new(newstartpt, newendpt, 
+                        return swarm._project_and_slide_2D(newstartpt, newendpt, 
                                                         adj_intersect, 
                                                         mesh, max_meshpt_dist, 
                                                         prev_idx=idx)
@@ -2698,7 +2550,7 @@ class swarm:
                 if intersection_n is None:
                     return newendpt
                 else:
-                    new_loc = swarm._project_and_slide_new(newstartpt, newendpt,
+                    new_loc = swarm._project_and_slide_2D(newstartpt, newendpt,
                                                            intersection_n, mesh, 
                                                            max_meshpt_dist)
                 return new_loc
