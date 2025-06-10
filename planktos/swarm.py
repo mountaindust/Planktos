@@ -2032,10 +2032,10 @@ class swarm:
             # pull all mesh elements with either vertex within a radius of 
             #   search_rad of the halfway point between intersection and endpt
             midpt = intersection[0] + (endpt-intersection[0])/2
-            close_elems_start = start_mesh[np.linalg.norm(
-                start_mesh-midpt, axis=2).min(axis=1)<search_rad]
-            close_elems_end = end_mesh[np.linalg.norm(
-                end_mesh-midpt, axis=2).min(axis=1)<search_rad]
+            # base selection off of end_mesh positions
+            mesh_bool = np.linalg.norm(end_mesh-midpt, axis=2).min(axis=1)<search_rad
+            close_elems_start = start_mesh[mesh_bool]
+            close_elems_end = end_mesh[mesh_bool]
             # take only the elements that are not already in close_mesh and add 
             #   them to close_mesh
             new_elems_start = [x for x in close_elems_start 
@@ -2628,10 +2628,6 @@ class swarm:
                     intersect_bool = np.array([False])
 
                 # Handle any intersections with adjacent elements and return
-                ##############
-                # TODO: Update _project_and_slide_moving with this section.
-                ##############
-
                 if np.any(intersect_bool):
                     # Get info about the relevant adjacent elements
                     adj_vec = adj_vec[intersect_bool]
@@ -2650,8 +2646,6 @@ class swarm:
                         # convert [-pi,pi] to [0,2pi]
                         angles[angles<0] += 2*np.pi
                         adj_vec_int_idx = np.argmin(angles)
-                        assert angles[adj_vec_int_idx]<=np.pi, "??? in project_and_slide_new"
-
                         adj_vec = adj_vec[adj_vec_int_idx,:]
                         adj_idx = adj_vec_idx[adj_vec_int_idx]
                     else:
