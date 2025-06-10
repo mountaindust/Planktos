@@ -3,13 +3,15 @@
 Moving immersed boundaries are now supported in 2D!
 - IB2d import
 - all 2D plotting routines updated to handle moving immersed boundaries
-- TODO: sliding BC
+- sliding BC included!
 - TODO: include/test sticking particles (maybe they don't move with bndry?)
 - TODO: rework _apply_internal_static_BC to match moving algorithm
 
 Geometry module added to collect workhorse mathematical functions. Explanation of the mathematics and implementation has been added and cleaned up.
 
 Better code organization, including consolidation of IB2d mesh loading
+
+Critical bug fixes in agent-mesh interaction; extensive testing.
 
 
 0.7.0

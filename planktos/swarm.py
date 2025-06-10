@@ -1383,8 +1383,6 @@ class swarm:
                     startpt = self.pos_history[-1][n,:].copy()
                     endpt = self.positions[n,:].copy()
                     if self.envir.ibmesh.ndim == 3:
-                        if n == 17 and self.envir.time > 0.174:
-                            import pdb; pdb.set_trace()
                         self._IBC_routine_static(n, dt, startpt, endpt, ib_collisions)
                     else:
                         self._IBC_routine_moving(n, dt, startpt, endpt, start_mesh, 
@@ -1842,9 +1840,21 @@ class swarm:
         
         # If we do have an intersection:
         if ib_collisions == 'sliding':
-            # TODO: Get eligible mesh elements for full range of projective travel
-            # ALSO: Translate intersection idx, to this new group.
+            # Get eligible mesh elements for full range of projective travel
 
+            # Get elements out of close_mesh into list for concatenation
+            elems = [elem for elem in close_mesh]
+            # Get new elements
+            search_rad = np.linalg.norm(endpt-intersection[0])/2 + max_meshpt_dist
+            # pull all mesh elements with either vertex within a radius of 
+            #   search_rad of the halfway point between intersection and endpt
+            midpt = intersection[0] + (endpt-intersection[0])/2
+            close_elems = mesh[np.linalg.norm(mesh-midpt, axis=2).min(axis=1)<search_rad]
+            # take only the elements that are not already in close_mesh and add 
+            #   them to close_mesh
+            new_elems = [x for x in close_elems if not np.any((x == close_mesh).all(axis=(1,2)))]
+            # concatenate. this maintains idx from intersection object
+            close_mesh = np.stack(elems+new_elems)
 
             # Project remaining piece of vector onto mesh and repeat processes 
             #   as necessary until we have a final result.
@@ -2011,11 +2021,30 @@ class swarm:
             else:
                 raise NotImplementedError("3D moving meshes not currently supported.")
         else:
-            # Project remaining piece of movement vector onto mesh and repeat 
-            #   processes as necessary until we have a final result.
+            # Get eligible mesh elements for full range of projective travel
+            #   This is going to be really coarse.
 
-            # TODO: Get eligible mesh elements for full range of projective travel
-            # ALSO: Translate intersection idx, to this new group.
+            # Get elements out of close_mesh into list for concatenation
+            elems_start = [elem for elem in close_mesh_start]
+            elems_end = [elem for elem in close_mesh_end]
+            # Get new elements
+            search_rad = np.linalg.norm(endpt-intersection[0])/2 + max_meshpt_dist + max_mov
+            # pull all mesh elements with either vertex within a radius of 
+            #   search_rad of the halfway point between intersection and endpt
+            midpt = intersection[0] + (endpt-intersection[0])/2
+            close_elems_start = start_mesh[np.linalg.norm(
+                start_mesh-midpt, axis=2).min(axis=1)<search_rad]
+            close_elems_end = end_mesh[np.linalg.norm(
+                end_mesh-midpt, axis=2).min(axis=1)<search_rad]
+            # take only the elements that are not already in close_mesh and add 
+            #   them to close_mesh
+            new_elems_start = [x for x in close_elems_start 
+                               if not np.any((x == close_mesh_start).all(axis=(1,2)))]
+            new_elems_end = [x for x in close_elems_end 
+                             if not np.any((x == close_mesh_end).all(axis=(1,2)))]
+            # concatenate. this maintains idx from intersection object
+            close_mesh_start = np.stack(elems_start+new_elems_start)
+            close_mesh_end = np.stack(elems_end+new_elems_end)
             
             if DIM == 2:
                 # Project remaining piece of vector onto mesh and repeat processes 
@@ -2664,10 +2693,20 @@ class swarm:
                 newstartpt = Q_edge + EPS*norm_out_u
                 newendpt = newstartpt + (1-t_edge)*vec
                 # recursion on prev. eligible mesh elements and treating t_edge 
-                #   as the start time
-                new_loc, dx = swarm._apply_internal_static_BC(newstartpt, newendpt,
-                                                              mesh, max_meshpt_dist,
-                                                              ib_collisions='sliding')
+                #   as the start time. Only look for intersections with subset
+                #   of full eligible mesh.
+                close_mesh = swarm._get_eligible_static_mesh_elements(newstartpt, 
+                                                                      newendpt, mesh, 
+                                                                      max_meshpt_dist*2/3)
+                intersection_n = geom.seg_intersect_2D(newstartpt, newendpt,
+                                                       close_mesh[:,0,:], 
+                                                       close_mesh[:,1,:])
+                if intersection_n is None:
+                    return newendpt
+                else:
+                    new_loc = swarm._project_and_slide_new(newstartpt, newendpt,
+                                                           intersection_n, mesh, 
+                                                           max_meshpt_dist)
                 return new_loc
             else:
                 # Ended on mesh element
@@ -3090,11 +3129,23 @@ class swarm:
             norm_out_u /= np.linalg.norm(norm_out_u)
             return slide_pt + EPS*norm_out_u
 
-        # recursion, but only on prev. eligible mesh elements and treating 
-        #   t_rot or t_edge as the start time
-        new_loc, dx = swarm._apply_internal_moving_BC(newstartpt, newendpt,
-                                                    mesh_now, mesh_end,
-                                                    max_meshpt_dist, max_mov)
+        # recursion on prev. eligible mesh elements and treating t_rot or t_edge 
+        #   as the start time. Only look for intersections with subset of full 
+        #   eligible mesh.
+        close_mesh_start, close_mesh_end = \
+            swarm._get_eligible_moving_mesh_elements(newstartpt, newendpt, 
+                                                     mesh_now, mesh_end, max_mov, 
+                                                     max_meshpt_dist*2/3)
+        intersection_n = geom.seg_intersect_2D_multilinear_poly(newstartpt, newendpt,
+                                close_mesh_start[:,0,:], close_mesh_start[:,1,:],
+                                close_mesh_end[:,0,:], close_mesh_end[:,1,:])
+        if intersection_n is None:
+            return newendpt
+        else:
+            new_loc = swarm._project_and_slide_moving(newstartpt, newendpt,
+                                                      intersection_n, mesh_now,
+                                                      mesh_end, max_meshpt_dist,
+                                                      max_mov)
         return new_loc
 
 
