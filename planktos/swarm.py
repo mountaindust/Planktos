@@ -1385,8 +1385,6 @@ class swarm:
                     if self.envir.ibmesh.ndim == 3:
                         self._IBC_routine_static(n, dt, startpt, endpt, ib_collisions)
                     else:
-                        # if self.envir.time > 0.1 and n == 56:
-                        #     import pdb; pdb.set_trace()
                         self._IBC_routine_moving(n, dt, startpt, endpt, start_mesh, 
                                                  end_mesh, max_meshpt_dist, 
                                                  max_mov, ib_collisions)
@@ -1855,7 +1853,7 @@ class swarm:
             # take only the elements that are not already in close_mesh and add 
             #   them to close_mesh
             new_elems = [x for x in close_elems if not np.any((x == close_mesh).all(axis=(1,2)))]
-            # concatenate. this maintains idx from intersection object
+            # concatenate. THIS MAINTAINS IDX FROM INTERSECTION OBJECT.
             close_mesh = np.stack(elems+new_elems)
 
             # Project remaining piece of vector onto mesh and repeat processes 
@@ -1875,9 +1873,9 @@ class swarm:
             # small number to perturb off of the actual boundary in order to avoid
             #   roundoff errors that would allow penetration
             # base its magnitude off of the given coordinate points
-            coord_mag = np.floor(np.log(np.max(
+            coord_mag = np.ceil(np.log(np.max(
                 np.concatenate((startpt,endpt,close_mesh),axis=None))))
-            EPS = 10**(coord_mag-8)
+            EPS = 10**(coord_mag-7)
 
             back_vec = (startpt-endpt)/np.linalg.norm(endpt-startpt)
             return intersection[0] + back_vec*EPS, np.zeros((DIM))
@@ -1971,9 +1969,9 @@ class swarm:
             # small number to perturb off of the actual boundary in order to avoid
             #   roundoff errors that would allow boundary penetration
             # base its magnitude off of the given coordinate points
-            coord_mag = np.floor(np.log(np.max(
+            coord_mag = np.ceil(np.log(np.max(
                 np.concatenate((startpt,endpt,close_mesh_start,close_mesh_end),axis=None))))
-            EPS = 10**(coord_mag-8)
+            EPS = 10**(coord_mag-7)
 
             if DIM == 2:
                 x = intersection[0]    # (x,y) coordinates of intersection
@@ -2044,7 +2042,7 @@ class swarm:
                                if not np.any((x == close_mesh_start).all(axis=(1,2)))]
             new_elems_end = [x for x in close_elems_end 
                              if not np.any((x == close_mesh_end).all(axis=(1,2)))]
-            # concatenate. this maintains idx from intersection object
+            # concatenate. THIS MAINTAINS IDX FROM INTERSECTION OBJECT.
             close_mesh_start = np.stack(elems_start+new_elems_start)
             close_mesh_end = np.stack(elems_end+new_elems_end)
             
@@ -2156,9 +2154,9 @@ class swarm:
         # small number to perturb off of the actual boundary in order to avoid
         #   roundoff errors that would allow penetration
         # base its magnitude off of the given coordinate points
-        coord_mag = np.floor(np.log(np.max(
+        coord_mag = np.ceil(np.log(np.max(
             np.concatenate((startpt,endpt,close_mesh),axis=None))))
-        EPS = 10**(coord_mag-8)
+        EPS = 10**(coord_mag-7)
 
         # Project remaining piece of vector from intersection onto mesh and get 
         #   a unit normal pointing out from the simplex
@@ -2359,9 +2357,9 @@ class swarm:
         # small number to perturb off of the actual boundary in order to avoid
         #   roundoff errors that would allow penetration
         # base its magnitude off of the given coordinate points
-        coord_mag = np.floor(np.log(np.max(
+        coord_mag = np.ceil(np.log(np.max(
             np.concatenate((startpt,endpt,mesh),axis=None))))
-        EPS = 10**(coord_mag-8)
+        EPS = 10**(coord_mag-7)
 
         # Get full travel vector
         vec = endpt-startpt
@@ -2552,6 +2550,10 @@ class swarm:
                 if intersection_n is None:
                     return newendpt
                 else:
+                    # Get idx in intersection_n to match full mesh instead of close_mesh
+                    elem = close_mesh[intersection_n[4]]
+                    idx_n = np.argwhere((elem == mesh).all(axis=(1,2)))[0,0]
+                    intersection_n = (*intersection_n[:-1], idx_n)
                     new_loc = swarm._project_and_slide_2D(newstartpt, newendpt,
                                                            intersection_n, mesh, 
                                                            max_meshpt_dist)
@@ -2875,12 +2877,6 @@ class swarm:
 
             if np.any(intersect_bool):
                 ########  Went past and intersected adjoining element! ########
-
-                ####################
-                #######
-                # TODO: Needs further testing
-                #######
-                ####################
                 # Get info about it
                 adj_vec = adj_vec[intersect_bool]
                 adj_vec_idx = adj_mesh_end_idx[intersect_bool]
@@ -2990,6 +2986,10 @@ class swarm:
         if intersection_n is None:
             return newendpt
         else:
+            # Get idx in intersection_n to match full mesh instead of close_mesh
+            elem = close_mesh_start[intersection_n[4]]
+            idx_n = np.argwhere((elem == mesh_now).all(axis=(1,2)))[0,0]
+            intersection_n = (*intersection_n[:-1], idx_n)
             new_loc = swarm._project_and_slide_moving(newstartpt, newendpt,
                                                       intersection_n, mesh_now,
                                                       mesh_end, max_meshpt_dist,

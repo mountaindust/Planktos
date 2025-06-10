@@ -17,8 +17,12 @@ start_positions = rndState.random((100,2))*0.2 + 0.4
 swrm = planktos.swarm(envir=envir, init=start_positions, 
                       ib_condition='sliding', seed=1)
 swrm.shared_props['cov'] *= 0.01
+# swrm.props['color'] = np.full(100, swrm.shared_props['color'])
 # swrm.plot()
-for ii in range(200):
+
+# agent 56 is an escapee!
+# swrm.props.loc[56, 'color'] = 'orange'
+for ii in range(200): #200
     swrm.move(0.001)
 swrm.plot_all('mvib2d_sliding.mp4')
 
