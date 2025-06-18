@@ -4385,7 +4385,11 @@ class fCubicSpline(interpolate.CubicSpline):
     Extends Scipy's CubicSpline object to get info about original fluid data.
     '''
 
-    def __init__(self, flow_times, flow, **kwargs):
+    def __init__(self, flow_times, flow, valid_times=None, **kwargs):
+        '''
+        TODO: If valid_times is provided, return an error if requested time is 
+        not within this range.
+        '''
         super(fCubicSpline, self).__init__(flow_times, flow, **kwargs)
 
         self.shape = flow.shape
@@ -4447,7 +4451,7 @@ class fCubicSpline(interpolate.CubicSpline):
     
 
 
-class FluidData(fCubicSpline):
+class FluidData:
     '''
     An object which handles dynamic loading and splining of time-varing fluid 
     data, and supplies this data with an array-like interface for consistancy 
@@ -4518,14 +4522,30 @@ class FluidData(fCubicSpline):
             #     Planktos and to fill out the domain by adding back these last points
             flow, self.flow_points, self.L = self.wrap_flow(
                 flow, self.orig_flow_points, periodic_dim=(True, True))
+        else:
+            raise NotImplementedError("This data_type is unknown.")
             
-            self.loaded_times = flow_times[d_start:d_start+self.LNUM]
+        self.loaded_times = flow_times[d_start:d_start+self.LNUM]
+        self.valid_time_range = (self.loaded_times[0], 
+                                 self.loaded_times[round(self.LNUM/2)])
 
-            # Create initial spline
-
-            
+        # Create initial spline
+        bc_type = ('natural', 'not-a-knot')
+        for n, f in enumerate(flow):
+            flow[n] = fCubicSpline(self.loaded_times, f, bc_type=bc_type)
+        self.flow = flow
 
         raise NotImplementedError("Still a work in progress.")
+
+
+
+    def __getitem__(self, pos):
+        '''Allows indexing into the splined fluid velocity list.'''
+        return self.flow[pos]
+    
+    def __len__(self):
+        '''Returns the list of the fluid list.'''
+        return len(self.flow)
 
 
 
