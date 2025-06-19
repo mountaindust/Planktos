@@ -4388,25 +4388,24 @@ class fCubicSpline(interpolate.CubicSpline):
     Extends Scipy's CubicSpline object to get info about original fluid data.
     '''
 
-    def __init__(self, flow_times, flow, valid_time_bnds=None, **kwargs):
+    def __init__(self, flow_times, flow, extrapolate=(True, True), **kwargs):
         '''
         Creates a PPoly instance (CubicSpline is a subclass of PPoly) with some 
         additional info and capabilities. Will throw a custom error if times are
-        requested outside of valid_times, which is a 2-tuple. None within valid 
-        times means there is no boundary on that side (allowing for extrapolation).
+        requested outside of spline time bounds and extrapolate is False on 
+        that side.
         '''
         super(fCubicSpline, self).__init__(flow_times, flow, **kwargs)
 
         self.shape = flow.shape
         self.data_max = flow.max()
         self.data_min = flow.min()
-        self.valid_time_bnds = valid_time_bnds
+        self.extrapolate = extrapolate
 
     def __call__(self, val):
-        if self.valid_time_bnds is not None:
-            if (self.valid_time_bnds[0] is not None and val < self.valid_time_bnds[0])\
-                or (self.valid_time_bnds[1] is not None and val > self.valid_time_bnds[1]):
-                raise SplineRangeError
+        if (val < self.x[0] and not self.extrapolate[0]) \
+              or (val > self.x[-1] and not self.extrapolate[1]):
+            raise SplineRangeError('Out of range without extrapolation.')
         super(fCubicSpline, self).__call__(val)
 
     def __getitem__(self, pos):
@@ -4470,7 +4469,7 @@ class SplineRangeError(ValueError):
 
 class FluidData:
 
-    def __init__(self, path, data_type, d_start, d_finish, LNUM=8,
+    def __init__(self, path, data_type, d_start, d_finish, INUM=7,
                  flow_times=None, title=None, vector_data=None):
         '''
         Class file for dynamically loading time-varying fluid data and splining it.
@@ -4493,8 +4492,8 @@ class FluidData:
             file number to start with for full set. Usually 0.
         d_finish : int
             file number to end with for full set.
-        LNUM : int, default=8
-            number of data files to have loaded at any time. Must be even.
+        INUM : int, default=8
+            max number of splined intervals at any one time. Must be odd.
         flow_times : 1D ndarray
             time mesh for the fluid velocity field for IB2d data
         title : string, optional
@@ -4503,26 +4502,26 @@ class FluidData:
         vector_data : bool, optional
             whether or not VTK is vector data
         '''
-        assert LNUM % 2 == 0, "LNUM must be even."
-        self.LNUM = LNUM # number of data files to have loaded at any time
+        assert INUM % 2 != 0, "LNUM must be odd."
+        self.INUM = INUM # number of data files to have loaded at any time
 
         self.path = path
         self.data_type = data_type
         self.d_start = round(d_start)
-        if d_finish < d_start + self.LNUM:
+        if d_finish < d_start + self.INUM:
             raise RuntimeError("Not enough data files for dynamic splining.")
         self.d_finish = round(d_finish)
-        self.flow_timepts = None # to be set below, copy of envir.flow_times
+        self.flow_times = None # to be set below, copy of envir.flow_times
 
         # Depending on the data type, load the first bit and spline.
-        if data_type == 'IB2d':
+        if self.data_type == 'IB2d':
             assert vector_data is not None, "vector_data must be specified for IB2d"
             self.vector_data = vector_data
             assert flow_times is not None, "flow_times must be specified for IB2d"
-            self.flow_timepts = flow_times
+            self.flow_times = flow_times
 
             flow, x, y = self.read_IB2d_dumpfiles(path, d_start, 
-                                                  d_start + self.LNUM-1,
+                                                  d_start + self.INUM,
                                                   vector_data)
             # shift domain to quadrant 1
             self.orig_flow_points = (x-x[0], y-y[0])
@@ -4539,18 +4538,21 @@ class FluidData:
             raise NotImplementedError("This data_type is unknown.")
             
         ### Create initial spline ###
-        load_times = flow_times[0:self.LNUM]
-        # Only half the initially splined data sets will be conisidered 
-        #   "valid", because beyond that they are becoming affected by the
-        #   right boundary condition which lacks information about the
-        #   remainder of the dataset.
-        valid_time_bnds = (None, load_times[round(self.LNUM/2)])
-        self.valid_dumps_bnds = (d_start, d_start + round(self.LNUM/2))
-        self.valid_poly_bnds = (0, round(self.LNUM/2)-1)
+        load_times = self.flow_times[0:self.INUM+1]
+        
         bc_type = ('natural', 'not-a-knot')
         for n, f in enumerate(flow):
-            flow[n] = fCubicSpline(load_times, f, valid_time_bnds, bc_type=bc_type)
+            flow[n] = fCubicSpline(load_times, f, (True, False), bc_type=bc_type)
+            # Only half the initially splined data sets will be conisidered 
+            #   "valid", because beyond that the splines are more affected by the
+            #   right boundary condition which lacks information about the
+            #   remainder of the dataset.
+            # So, delete the portion of the splined data that we won't use.
+            flow[n].c = flow[n].c[:, 0:(int(self.INUM/2)+1), ...]
+            flow[n].x = flow[n].x[0:(int(self.INUM/2)+2)]
         self.flow = flow
+        self.loaded_dump_bnds = (d_start, d_start+int(self.INUM/2)+1)
+        self.loaded_idx_bnds = (0,int(self.INUM/2)+1) 
 
     def __call__(self, time):
         '''Retrieve fluid data at the requested time and update the spline 
@@ -4573,37 +4575,43 @@ class FluidData:
 
         # NOTE: fCubicSpline.c has shape (4,LNUM-1,...) where "..." is the array
         #   dimensions of the velocity grid.
-        while self.flow[0].valid_time_bnds[-1] is not None and\
-            time > self.flow[0].valid_time_bnds[-1]:
+        while time > self.flow[0].x[-1] and not self.flow[0].extrapolate[1]:
             ### spline forward ###
             # get info about what we will be loading
-            d_start = self.valid_dumps_bnds[1] + 1
-            if self.valid_dumps_bnds[1] + (self.LNUM-2) > self.d_finish:
+            d_start = self.loaded_dump_bnds[1] + 1
+            idx_start = self.loaded_idx_bnds[1]-1
+            if self.loaded_dump_bnds[1]-1 + self.INUM > self.d_finish:
                 # We are at the end of the dataset.
                 d_finish = self.d_finish
+                idx_finish = len(self.flow_times)
             else:
                 # We are contained in the middle of the dataset.
-                d_finish = self.valid_dumps_bnds[1] + self.LNUM-2
+                d_finish = self.loaded_dump_bnds[1]-1 + self.INUM
+                idx_finish = self.loaded_idx_bnds[1]-1 + self.INUM
+            # drop unneeded coefficients. Always keep last interval.
             for n in range(len(self.flow)):
-                # drop unneeded coefficients. Always keep one interval.
-                self.flow[n] = self.flow[n][:,self.valid_poly_bnds[1],...]
-
-        while self.flow[0].valid_time_bnds[0] is not None and\
-            time < self.flow[0].valid_time_bnds[0]:
-            ### spline backward ###
-            # get info about what we will be loading
-            d_end = self.valid_dumps_bnds[0]-1
-            if self.valid_dumps_bnds[0] - (self.LNUM-2) < self.d_start:
-                # We are at the left end of the dataset.
-                d_start = self.d_start
+                self.flow[n].c = self.flow[n].c[:,-1,...]
+                self.flow[n].x = self.flow[n].x[-2:]
+            # load new data
+            if self.data_type == 'IB2d':
+                flow, x, y = self.read_IB2d_dumpfiles(self.path, d_start, 
+                                                      d_finish, self.vector_data)
+                flow, flow_points, L = self.wrap_flow(
+                    flow, self.orig_flow_points, periodic_dim=(True, True))
             else:
-                # We are contained in the middle of the dataset.
-                d_start = self.valid_dumps_bnds[0] - (self.LNUM-2)
-            for n in range(len(self.flow)):
-                # drop unneeded coefficients. Always keep one interval.
-                self.flow[n] = self.flow[n][:,self.valid_poly_bnds[0],...]
+                raise NotImplementedError
+            # Spline it
+            pass
+            
+        while time < self.flow[0].x[0] and not self.flow[0].extrapolate[0]:
+            pass
 
         raise NotImplementedError("update_spline is TODO.")
+    
+
+
+    def respline(self, idx_start, idx_finish):
+        pass
 
 
 
