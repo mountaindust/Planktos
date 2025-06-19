@@ -4387,20 +4387,26 @@ class fCubicSpline(interpolate.CubicSpline):
 
     def __init__(self, flow_times, flow, valid_times=None, **kwargs):
         '''
-        TODO: If valid_times is provided, return an error if requested time is 
-        not within this range.
+        Creates a PPoly instance (CubicSpline is a subclass of PPoly) with some 
+        additional info and capabilities. Will throw a custom error if times are
+        requested outside of valid_times, which is a 2-tuple.
         '''
         super(fCubicSpline, self).__init__(flow_times, flow, **kwargs)
 
         self.shape = flow.shape
         self.data_max = flow.max()
         self.data_min = flow.min()
+        self.valid_times = valid_times
 
-
+    def __call__(self, val):
+        if self.valid_times is not None:
+            if val < self.valid_times[0] or val > self.valid_times[1]:
+                raise SplineRangeError
+        super(fCubicSpline, self).__call__(val)
 
     def __getitem__(self, pos):
         '''
-        Allows indexing into the interpolator.
+        Allows indexing into the interpolator at original time mesh points.
         '''
         if type(pos) == int:
             return self.__call__(self.x[pos])
@@ -4426,13 +4432,9 @@ class fCubicSpline(interpolate.CubicSpline):
         else:
             raise IndexError('Only integers or slices supported in fCubicSpline.')
 
-
-
     def __setitem__(self, pos, val):
         raise RuntimeError("Cannot assign to spline object. "+
                            "Use regenerate_data to recreate original data first.")
-
-
 
     def max(self):
         return self.data_max
@@ -4448,6 +4450,16 @@ class fCubicSpline(interpolate.CubicSpline):
         Rebuild the original data.
         '''
         return np.stack([self.__call__(val) for val in self.x])
+    
+
+
+class SplineRangeError(ValueError):
+    """
+    Exception raised for asking for a value outside of interpolation range.
+    """
+    def __init__(self, message="Value is outside of valid interpolation range."):
+        self.message = message
+        super().__init__(self.message)
     
 
 
@@ -4532,20 +4544,20 @@ class FluidData:
         # Create initial spline
         bc_type = ('natural', 'not-a-knot')
         for n, f in enumerate(flow):
-            flow[n] = fCubicSpline(self.loaded_times, f, bc_type=bc_type)
+            flow[n] = fCubicSpline(self.loaded_times, f, self.valid_time_range, 
+                                   bc_type=bc_type)
         self.flow = flow
 
-        raise NotImplementedError("Still a work in progress.")
-
-
-
     def __getitem__(self, pos):
-        '''Allows indexing into the splined fluid velocity list.'''
+        '''Allows indexing into the splined fluid velocity list, treating this 
+        object as a container for the spline objects.
+        '''
         return self.flow[pos]
     
     def __len__(self):
-        '''Returns the list of the fluid list.'''
+        '''Returns the len of the fluid list.'''
         return len(self.flow)
+    
 
 
 
