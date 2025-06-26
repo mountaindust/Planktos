@@ -1,7 +1,9 @@
 # Define versions so things don't break
 
 sphinx == 7.3.7
-numpy == 1.26.4
-scipy == 1.13.1
-matplotlib == 3.9.2
-pandas == 2.2.2
+numpy == 2.3
+scipy == 1.15
+matplotlib == 3.10
+pandas == 2.3
+vtk == 9.4.2
+pyvista == 0.45
