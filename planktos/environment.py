@@ -4379,9 +4379,11 @@ class environment:
         plt.show()
 
 
+
     #######################################################################
     #####               FLUID INTERPOLATION OBJECTS                   #####
     #######################################################################
+
 
 
 class fCubicSpline(interpolate.CubicSpline):
@@ -4501,7 +4503,7 @@ class FluidData:
             file number to start with for full set. Usually 0.
         d_finish : int
             file number to end with for full set.
-        INUM : int, default=8
+        INUM : int, default=7
             max number of splined intervals at any one time. Must be odd.
         flow_times : 1D ndarray
             time mesh for the fluid velocity field for IB2d data
@@ -4511,7 +4513,7 @@ class FluidData:
         vector_data : bool, optional
             whether or not VTK is vector data
         '''
-        assert INUM % 2 != 0, "LNUM must be odd."
+        assert INUM % 2 != 0, "INUM must be odd."
         self.INUM = INUM # This is how many intervals to use when initiating 
                          #  the spline object.
 
@@ -4638,6 +4640,7 @@ class FluidData:
                                   direction='right')
             
         while time < self.flow[0].x[0] and not self.flow[0].extrapolate[0]:
+            # TODO: DO THIS NEXT!
             pass
 
         raise NotImplementedError("update_spline is TODO.")
@@ -4731,6 +4734,7 @@ class FluidData:
             self.flow[dim] = fCubicSpline(x, y, s, extrapolate=extrapolate)
             # Remove data
             flow[dim] = 0
+
 
 
     @staticmethod
