@@ -2170,10 +2170,252 @@ class swarm:
         vec = (1-intersection[1])*(endpt-startpt)
         if DIM == 3:
             # get a unit normal vector pointing back the way we came
-            norm_out_u = -np.sign(np.dot(vec,intersection[2]))*intersection[2]
+            agent_prev_loc = startpt + (endpt-startpt)*(intersection[1]-0.00001)
+            dir_vec = agent_prev_loc-intersection[0]
+            Qvec10 = intersection[3]-intersection[2]
+            Qvec21 = intersection[4]-intersection[3]
+            Q_norm = np.cross(Qvec10, Qvec21)
+            # side_signum will orient back in the direction the agent came from
+            side_signum = np.dot(dir_vec,Q_norm)\
+                /np.linalg.norm(np.dot(dir_vec,Q_norm))
+            # Make the normal to the mesh element point back toward where the 
+            #   agent came from.
+            norm_out_u = side_signum*Q_norm
             # Get the component of vec that lies in the plane. We do this by
             #   subtracting off the component which is in the normal direction
             proj = vec - np.dot(vec,norm_out_u)*norm_out_u
+
+        # get a unit vector of proj for adding EPS in proj direction
+        if np.linalg.norm(proj) > 0:
+            proj_u = proj/np.linalg.norm(proj)
+        else:
+            proj_u = 0
+            
+        # IMPORTANT: there can be roundoff error, so proj should be considered
+        #   an approximation to an in-boundary slide.
+        # For this reason, pull newendpt back a bit for numerical stability
+        newendpt = intersection[0] + proj + EPS*norm_out_u
+        
+        if DIM == 3:
+            # Detect sliding off 2D edge using seg_intersect_2D
+            Q0_list = np.array(intersection[2:5])
+            Q1_list = Q0_list[(1,2,0),:]
+            # go a little further along trajectory to treat acute case
+            tri_intersect = geom.seg_intersect_2D(intersection[0] + EPS*norm_out_u,
+                                                    newendpt + EPS*proj_u,
+                                                    Q0_list, Q1_list)
+            # if we reach the triangle boundary, check for a acute crossing
+            #   then project overshoot onto original heading and add to 
+            #   intersection point
+            if tri_intersect is not None:
+                ##########      Went past triangle boundary      ##########
+                # check for new crossing of simplex attached to the current triangle
+                # First, find adjacent mesh segments. These are ones that share
+                #   one of, but not both, endpoints with the current segment.
+                #   This will also pick up our current segment, but we shouldn't
+                #   be intersecting it. And if by some numerical error we do,
+                #   we need to treat it.
+                pt_bool = np.logical_or(np.logical_or(
+                    np.isclose(np.linalg.norm(close_mesh.reshape(
+                    (close_mesh.shape[0]*close_mesh.shape[1],close_mesh.shape[2]))-intersection[2],
+                    axis=1),0),
+                    np.isclose(np.linalg.norm(close_mesh.reshape(
+                    (close_mesh.shape[0]*close_mesh.shape[1],close_mesh.shape[2]))-intersection[3],
+                    axis=1),0)),
+                    np.isclose(np.linalg.norm(close_mesh.reshape(
+                    (close_mesh.shape[0]*close_mesh.shape[1],close_mesh.shape[2]))-intersection[4],
+                    axis=1),0)
+                )
+                pt_bool = pt_bool.reshape((close_mesh.shape[0],close_mesh.shape[1]))
+                adj_mesh = close_mesh[np.any(pt_bool,axis=1)]
+                # check for intersection, but translate start/end points back
+                #   from the simplex a bit for numerical stability
+                # this has already been done for newendpt
+                # also go EPS further than newendpt for stability for what follows
+                if len(adj_mesh) > 0:
+                    adj_intersect = geom.seg_intersect_3D_triangles(
+                        intersection[0]+EPS*norm_out_u,
+                        newendpt+EPS*proj_u, adj_mesh[:,0,:],
+                        adj_mesh[:,1,:], adj_mesh[:,2,:])
+                else:
+                    adj_intersect = None
+                if adj_intersect is not None:
+                    ##########      Intersected adjoining element!      ##########
+                    # Acute or slightly obtuse intersection. In 3D, we will slide
+                    #   regardless of if it is acute or not.
+                    # First, detect if we're hitting a simplex we've already 
+                    #   been on before. If so, we follow the intersection line.
+                    if old_intersection is not None and\
+                        np.all(adj_intersect[2] == old_intersection[2]) and\
+                        np.all(adj_intersect[3] == old_intersection[3]) and\
+                        np.all(adj_intersect[4] == old_intersection[4]):
+                        # Going back and forth between two elements. Project
+                        #   onto the line of intersection.
+                        # NOTE: This happens when 1) trying to go through a
+                        #   mesh element, you 2) slide and intersect another
+                        #   mesh element. The angle between elements is acute,
+                        #   so you 3) slide back into the same element you
+                        #   intersected in (1).
+                        # NOTE: In rare cases, solving this problem by following
+                        #   the line of intersection can result in an infinite
+                        #   loop. For example, when going toward the point of
+                        #   a tetrahedron. This is what the kill switch is for.
+                        if kill:
+                            # End here to prevent possible bad behavior.
+                            return adj_intersect[0] - EPS*proj_u
+
+                        kill = True
+                        # Find the points in common between adj_intersect and
+                        #   intersection
+                        
+                        dist_mat = distance.cdist(intersection[2:5],adj_intersect[2:5])
+                        pt_bool = np.isclose(dist_mat, np.zeros_like(dist_mat),
+                                             atol=1e-6).any(1)
+                        two_pts = np.array(intersection[2:5])[pt_bool]
+                        assert two_pts.shape[0] == 2, "Other than two points found?"
+                        assert two_pts.shape[1] == 3, "Points aren't 3D?"
+                        # Get a unit vector from these points
+                        vec_intersect = two_pts[1,:] - two_pts[0,:]
+                        vec_intersect /= np.linalg.norm(vec_intersect)
+                        # Back up a tad from the intersection point, and project
+                        #   leftover movement in the direction of intersection vector
+                        newstartpt = adj_intersect[0] - EPS*proj_u
+                        # Get leftover portion of the travel vector
+                        vec_to_project = (1-adj_intersect[1])*proj
+                        # project vec onto the line
+                        proj_vec = np.dot(vec_to_project,vec_intersect)*vec_intersect
+                        # Get new endpoint
+                        newendpt = newstartpt + proj_vec
+                        # Check for more intersections
+                        new_loc, dx = swarm._apply_internal_static_BC(newstartpt, newendpt,
+                                                               mesh, max_meshpt_dist,
+                                                               adj_intersect, kill)
+                        return new_loc
+
+                    # Not an already discovered mesh element.
+                    # We slide. Pass along info about the old element and 
+                    #   regenerate eligible mesh segments.
+                    search_rad = max_meshpt_dist*2/3
+                    close_mesh = swarm._get_eligible_static_mesh_elements(
+                        intersection[0]+EPS*norm_out_u, 
+                        newendpt+EPS*proj_u+EPS*norm_out_u, 
+                        mesh, search_rad)
+                    return swarm._project_and_slide_3D(intersection[0]+EPS*norm_out_u, 
+                                                    newendpt+EPS*proj_u+EPS*norm_out_u, 
+                                                    adj_intersect, mesh, close_mesh,
+                                                    max_meshpt_dist, intersection, kill)
+
+                ##########      Did not intersect adjoining element!      ##########
+                # NOTE: There could still be an adjoining element w/ >180 connection
+                #   But we will project along original heading as if there isn't
+                #   one and subsequently detect any intersections.
+                # DIM == 3, adj_intersect is None
+                # put the new start point on the edge of the simplex (+EPS) and
+                #   continue full amount of remaining movement along original heading
+                newstartpt = tri_intersect[0] + EPS*proj_u + EPS*norm_out_u
+                orig_unit_vec = (endpt-startpt)/np.linalg.norm(endpt-startpt)
+                # norm(newendpt - tri_intersect[0]) is the length of the overshoot.
+                newendpt = newstartpt + np.linalg.norm(newendpt-tri_intersect[0])*orig_unit_vec
+                # repeat process to look for additional intersections
+                new_loc, dx = swarm._apply_internal_static_BC(newstartpt, newendpt, 
+                                                              mesh, max_meshpt_dist,
+                                                              intersection, kill)
+                return new_loc
+            else:
+                # otherwise, we end on the mesh element
+                return newendpt
+
+
+
+    @staticmethod
+    def _project_and_slide_3D_new(startpt, endpt, intersection, mesh, 
+                                  max_meshpt_dist, prev_idx=None):
+        '''Once we have an intersection point with an immersed mesh, slide the 
+        agent along the mesh for its remaining movement (frictionless 
+        boundary interaction), and then determine what happens if we fall off 
+        the edge of the element or if the element rotates away.
+        
+        NOTE: Because we do not know the mass of the agents or the properties
+        of the fluid, we neglect inertial and drag forces in this computation.
+
+        Parameters
+        ----------
+        startpt : length 2 or 3 array
+            original start point of movement, before intersection
+        endpt : length 2 or 3 array
+            original end point of movement, w/o intersection
+        intersection : list-like of data
+            result of seg_intersect_2D or seg_intersect_3D_triangles. various 
+            information about the intersection with the immersed mesh element
+        mesh : Nx2x2 or Nx3x3 array
+            eligible (nearby) mesh elements for interaction
+        max_meshpt_dist : float
+            max distance between two points on a mesh element (used to determine 
+            how far away from startpt to search for mesh elements). 
+            Passed-through here solely in case of recursion with 
+            _apply_internal_moving_BC.
+        prev_idx : int, optional
+            in recursion with adjoining mesh elements, this prevents an infinite 
+            recusion with, e.g., mesh elements in an acute angle.
+
+        Returns
+        -------
+        newendpt : length 2 or 3 array
+            new endpoint for movement after projection
+        '''
+
+        # small number to perturb off of the actual boundary in order to avoid
+        #   roundoff errors that would allow penetration
+        # base its magnitude off of the given coordinate points
+        coord_mag = np.ceil(np.log(np.max(
+            np.concatenate((startpt,endpt,close_mesh),axis=None))))
+        EPS = 10**(coord_mag-7)
+
+        # Get full travel vector
+        vec = endpt-startpt
+
+        # intersection comes from geom.seg_intersect_3D_triangles
+        x = intersection[0]     # (x,y,z) coordinates of intersection
+        t_I = intersection[1]   # btwn 0 & 1, fraction of movement traveled so far
+        Q0 = intersection[2]    # first vertex of mesh element intersected
+        Q1 = intersection[3]    # second vertex of mesh element intersected
+        Q2 = intersection[4]    # third vertex of mesh element intersected
+        idx = intersection[5]   # index into mesh that will yield Q0,Q1,Q2
+
+        # Get mesh element vectors
+        Qvec10 = Q1-Q0; Qvec10_u = Qvec10/np.linalg.norm(Qvec10)
+        Qvec21 = Q2-Q1; Qvec21_u = Qvec21/np.linalg.norm(Qvec21)
+        Qvec02 = Q0-Q2; Qvec02_u = Qvec02/np.linalg.norm(Qvec02)
+
+        # Find direction indictor for which side of the mesh element the 
+        #   agent hit the element.
+        agent_prev_loc = startpt + vec*(t_I-0.00001)
+        dir_vec = agent_prev_loc-x
+        Q_norm = np.cross(Qvec10, Qvec21)
+        # side_signum will orient back in the direction the agent came from
+        side_signum = np.dot(dir_vec,Q_norm)\
+            /np.linalg.norm(np.dot(dir_vec,Q_norm))
+        # Make the normal to the mesh element point back toward where the 
+        #   agent came from.
+        Q_norm = side_signum*Q_norm
+
+        # Vector projection onto mesh element is obtained by subtracting the
+        #   projection onto Q_norm.
+        # Vector projection onto Q_norm is 
+        #   Qn/||Qn||*dot(vec,Qn/||Qn||) = Qn*dot(vec,Qn)/||Qn||**2
+
+        # Position of agent at time t
+        proj_to_pt = lambda t: (t-t_I)*(vec-Q_norm*np.dot(vec,Q_norm)/
+                                        np.dot(Q_norm,Q_norm)) + x
+        
+        # Projected position at end of time period
+        slide_pt = proj_to_pt(1)
+
+        ##################
+
+        # Get the component of vec that lies in the plane. We do this by
+        #   subtracting off the component which is in the normal direction
+        proj = vec - np.dot(vec,norm_out_u)*norm_out_u
 
         # get a unit vector of proj for adding EPS in proj direction
         if np.linalg.norm(proj) > 0:
@@ -2321,7 +2563,7 @@ class swarm:
     def _project_and_slide_2D(startpt, endpt, intersection, mesh, 
                                max_meshpt_dist, prev_idx=None):
         '''Once we have an intersection point with an immersed mesh, slide the 
-        agent along the moving mesh for its remaining movement (frictionless 
+        agent along the mesh for its remaining movement (frictionless 
         boundary interaction), and then determine what happens if we fall off 
         the edge of the element or if the element rotates away.
         
@@ -2368,6 +2610,7 @@ class swarm:
 
         if DIM == 2:
         
+            # intersection comes from geom.seg_intersect_2D
             x = intersection[0]    # (x,y) coordinates of intersection
             t_I = intersection[1]  # btwn 0 & 1, fraction of movement traveled so far
             Q0 = intersection[2]   # edge of mesh element intersected
