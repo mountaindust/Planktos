@@ -4520,7 +4520,7 @@ class FluidData:
         self.path = path
         self.data_type = data_type
         self.d_start = round(d_start)
-        if d_finish < d_start + self.INUM:
+        if d_finish <= d_start + self.INUM:
             raise RuntimeError("Not enough data files for dynamic splining.")
         self.d_finish = round(d_finish)
         self.flow_times = None # to be set below, copy of envir.flow_times
@@ -4594,7 +4594,7 @@ class FluidData:
             ### spline forward ###
             # get info about what we will be loading
             d_start = self.loaded_dump_bnds[1]+1 # first dump to load
-            idx_start = self.loaded_idx_bnds[1]-1 # 
+            idx_start = self.loaded_idx_bnds[1]-1 # first index in new spline
             if self.loaded_dump_bnds[1]-1 + self.INUM > self.d_finish:
                 # We are at the end of the dataset.
                 d_finish = self.d_finish
@@ -4635,15 +4635,60 @@ class FluidData:
             self.flow = [0 for n in range(len(flow))]
 
             # Spline it
-            self.loaded_dump_bnds = (self.loaded_dump_bnds[1]-1,d_finish)
             self._set_new_splines(load_times, flow, dydx0, dydx1, extrapolate, 
                                   direction='right')
+            self.loaded_dump_bnds = (self.loaded_dump_bnds[1]-1,d_finish)
+            self.loaded_idx_bnds = (idx_start, idx_finish)
             
         while time < self.flow[0].x[0] and not self.flow[0].extrapolate[0]:
-            # TODO: DO THIS NEXT!
-            pass
+            ### spline backward ###
+            # get info about what we will be loading
+            d_finish = self.loaded_dump_bnds[0]-1 # last dump to load
+            idx_finish = self.loaded_idx_bnds[0]+1 # last index in new spline
+            if self.loaded_dump_bnds[0]+1 - self.INUM < self.d_start:
+                # We are at the beginning of the dataset.
+                d_start = self.d_start
+                idx_start = 0
+                extrapolate = (True, False)
+            else:
+                # We are contained in the middle of the dataset.
+                d_start = self.loaded_dump_bnds[0]+1 - self.INUM
+                idx_start = self.loaded_idx_bnds[0]+1 - self.INUM
+                extrapolate = (False, False)
+            load_times = self.flow_times[idx_start:idx_finish+1]
 
-        raise NotImplementedError("update_spline is TODO.")
+            dydx0 = []; dydx1 = []
+            for n in range(len(self.flow)):
+                # drop unneeded coefficients to save space
+                self.flow[n].c = self.flow[n].c[:,0,...]
+                # Extract derivative info for next spline
+                dydx0.append(self.flow[n].c[2,0,...])
+                dx = load_times[1] - load_times[0]
+                dydx1.append(3*self.flow[n].c[0,1,...]*dx**2
+                             + 2*self.flow[n].c[1,1,...]*dx
+                             + self.flow[n].c[2,1,...])
+                
+            # load new data
+            if self.data_type == 'IB2d':
+                flow, x, y = self.read_IB2d_dumpfiles(self.path, d_start, 
+                                                      d_finish, self.vector_data)
+                flow, flow_points, L = self.wrap_flow(
+                    flow, self.orig_flow_points, periodic_dim=(True, True))    
+            else:
+                raise NotImplementedError
+            
+            # add old spline data
+            for n,f in enumerate(flow):
+                flow[n] = np.concatenate((f, self.flow[n].c[3,0,...],
+                                          self.flow[n](load_times[1])))
+            # Remove the rest of the spline data
+            self.flow = [0 for n in range(len(flow))]
+
+            # Spline it
+            self._set_new_splines(load_times, flow, dydx0, dydx1, extrapolate, 
+                                  direction='left')
+            self.loaded_dump_bnds = (d_start, self.loaded_dump_bnds[0]+1)
+            self.loaded_idx_bnds = (idx_start, idx_finish)
     
 
 
