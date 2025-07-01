@@ -2398,30 +2398,80 @@ class swarm:
         # Make the normal to the mesh element point back toward where the 
         #   agent came from.
         Q_norm = side_signum*Q_norm
+        Q_norm_u = Q_norm/np.linalg.norm(Q_norm)
 
         # Vector projection onto mesh element is obtained by subtracting the
         #   projection onto Q_norm.
         # Vector projection onto Q_norm is 
         #   Qn/||Qn||*dot(vec,Qn/||Qn||) = Qn*dot(vec,Qn)/||Qn||**2
+        proj_vec = (vec - Q_norm*np.dot(vec,Q_norm)/np.dot(Q_norm,Q_norm))
+        proj_vec_u = proj_vec/np.linalg.norm(proj_vec)
 
         # Position of agent at time t
-        proj_to_pt = lambda t: (t-t_I)*(vec-Q_norm*np.dot(vec,Q_norm)/
-                                        np.dot(Q_norm,Q_norm)) + x
+        proj_to_pt = lambda t: (t-t_I)*proj_vec + x
         
         # Projected position at end of time period
         slide_pt = proj_to_pt(1)
 
+        if 1-t_I < 10e-7:
+            # Special case where we are practically finished with this time step.
+            # Perturb away from the mesh element and return.
+            return x + EPS*Q_norm_u
+        
+        ##########                                             ##########
+        #####             Test for sliding off the end              #####
+        ##########                                             ##########
+
+        # Detect sliding off 2D edge using seg_intersect_2D
+        # Construct lists of first and second points for the line segments
+        Q0_list = np.array(intersection[2:5]) # Q0,Q1,Q2
+        Q1_list = Q0_list[(1,2,0),:] # Q1,Q2,Q0
+        tri_intersect = geom.seg_intersect_2D(x, slide_pt, Q0_list, Q1_list)
+
+        ##########                                                  ##########
+        #####       Algorithms for going past end of mesh element        #####
+        ##########                                                  ##########
+
+        if tri_intersect is not None:
+            # Get time of intersection
+            t_edge = t_I + (1-t_I)*tri_intersect[1]
+            idx_edge = tri_intersect[4]
+            if idx_edge == 0:
+                # Went past Q0Q1
+                pt_bool0 = np.isclose(np.linalg.norm(mesh.reshape(
+                        (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q0, axis=1), 0)
+                pt_bool1 = np.isclose(np.linalg.norm(mesh.reshape(
+                        (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q1, axis=1), 0)
+            elif idx_edge == 1:
+                # Went past Q1Q2
+                pt_bool0 = np.isclose(np.linalg.norm(mesh.reshape(
+                        (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q1, axis=1), 0)
+                pt_bool1 = np.isclose(np.linalg.norm(mesh.reshape(
+                        (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q2, axis=1), 0)
+            elif idx_edge == 2:
+                # Went past Q2Q0
+                pt_bool0 = np.isclose(np.linalg.norm(mesh.reshape(
+                        (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q2, axis=1), 0)
+                pt_bool1 = np.isclose(np.linalg.norm(mesh.reshape(
+                        (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q0, axis=1), 0)
+            pt_bool0 = pt_bool0.reshape((mesh.shape[0],mesh.shape[1]))
+            pt_bool1 = pt_bool1.reshape((mesh.shape[0],mesh.shape[1]))
+            # remove current mesh element
+            pt_bool0[idx,:] = False
+            pt_bool1[idx,:] = False
+            adj_mesh = mesh[np.logical_and(np.any(pt_bool0,axis=1),
+                                           np.any(pt_bool1,axis=1))]
+            
+            # Determine if there are intersections with adjacent mesh elements
+            if len(adj_mesh) > 0:
+                # index into mesh for adjacent mesh elements
+                adj_mesh_idx = np.logical_and(np.any(pt_bool0,axis=1),
+                                              np.any(pt_bool1,axis=1)).nonzero()[0]
+                pass
+            else:
+                pass
+
         ##################
-
-        # Get the component of vec that lies in the plane. We do this by
-        #   subtracting off the component which is in the normal direction
-        proj = vec - np.dot(vec,norm_out_u)*norm_out_u
-
-        # get a unit vector of proj for adding EPS in proj direction
-        if np.linalg.norm(proj) > 0:
-            proj_u = proj/np.linalg.norm(proj)
-        else:
-            proj_u = 0
             
         # IMPORTANT: there can be roundoff error, so proj should be considered
         #   an approximation to an in-boundary slide.
@@ -2653,6 +2703,7 @@ class swarm:
             ##########                                             ##########
             #####             Test for sliding off the end              #####
             ##########                                             ##########
+
             mesh_el_end_len = np.linalg.norm(Qvec)
             Q0_crit_dist = np.linalg.norm(slide_pt - Q0)
             Q1_crit_dist = np.linalg.norm(slide_pt - Q1)
@@ -2678,6 +2729,7 @@ class swarm:
             ##########                                                  ##########
             #####       Algorithms for going past end of mesh element        #####
             ##########                                                  ##########
+
             # If we went past the end of the mesh element, detect intersection with 
             #   adjoining elements.
             if t_edge is not None:
@@ -2704,7 +2756,6 @@ class swarm:
                 # Determine if there are intersections with adjacent mesh elements
                 if len(adj_mesh) > 0:
                     # index into mesh for adjacent mesh elements
-                    #   adj_mesh = mesh[adj_mesh_idx]
                     adj_mesh_idx = np.any(pt_bool,axis=1).nonzero()[0]
                     # get vectors in adjacent meshes oriented away from current edgepoint
                     pt_bool_0 = pt_bool[adj_mesh_idx,0]
