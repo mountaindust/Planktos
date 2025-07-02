@@ -2435,6 +2435,9 @@ class swarm:
         if tri_intersect is not None:
             # Get time of intersection
             t_edge = t_I + (1-t_I)*tri_intersect[1]
+            # Get point of intersection
+            x_edge = tri_intersect[0]
+            # Get side of intersection
             idx_edge = tri_intersect[4]
             if idx_edge == 0:
                 # Went past Q0Q1
@@ -2442,18 +2445,21 @@ class swarm:
                         (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q0, axis=1), 0)
                 pt_bool1 = np.isclose(np.linalg.norm(mesh.reshape(
                         (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q1, axis=1), 0)
+                Qvec_edge = Qvec10
             elif idx_edge == 1:
                 # Went past Q1Q2
                 pt_bool0 = np.isclose(np.linalg.norm(mesh.reshape(
                         (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q1, axis=1), 0)
                 pt_bool1 = np.isclose(np.linalg.norm(mesh.reshape(
                         (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q2, axis=1), 0)
+                Qvec_edge = Qvec21
             elif idx_edge == 2:
                 # Went past Q2Q0
                 pt_bool0 = np.isclose(np.linalg.norm(mesh.reshape(
                         (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q2, axis=1), 0)
                 pt_bool1 = np.isclose(np.linalg.norm(mesh.reshape(
                         (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q0, axis=1), 0)
+                Qvec_edge = Qvec02
             pt_bool0 = pt_bool0.reshape((mesh.shape[0],mesh.shape[1]))
             pt_bool1 = pt_bool1.reshape((mesh.shape[0],mesh.shape[1]))
             # remove current mesh element
@@ -2467,9 +2473,66 @@ class swarm:
                 # index into mesh for adjacent mesh elements
                 adj_mesh_idx = np.logical_and(np.any(pt_bool0,axis=1),
                                               np.any(pt_bool1,axis=1)).nonzero()[0]
-                pass
+                # we need the mesh point of the adjacent mesh that is not part of the
+                #   edge of intersection
+                other_bool = np.logical_not(np.logical_or(pt_bool0[adj_mesh_idx,:],
+                                                          pt_bool1[adj_mesh_idx,:]))
+                adj_Q_other = adj_mesh[other_bool,:]
+                # get vector pointed away from shared edge on adjacent elements
+                adj_vec = adj_Q_other - x_edge
+                # intersection cases will have an angle of -pi/2 to pi/2 between
+                #   Q_norm_u and this vector oriented away from the edge the agent 
+                #   is on. That means the dot product is positive.
+                intersect_bool = np.dot(adj_vec, Q_norm_u) >= 0
             else:
-                pass
+                intersect_bool = np.array([False])
+
+            # Handle any intersections with adjacent elements and return
+            if np.any(intersect_bool):
+                # Get info about the relevant adjacent elements
+                adj_vec = adj_vec[intersect_bool]
+                adj_vec_idx = adj_mesh_idx[intersect_bool]
+                if adj_vec.shape[0] > 1:
+                    # get the mesh element that forms the most acute angle with
+                    #   the current mesh element. This is equivalent to the largest
+                    #   angle between proj_vec and adj_vec
+                    # clip protects against roundoff error
+                    adj_vec_u = adj_vec_u/np.linalg.norm(adj_vec_u, axis=-1)
+                    proj_adj_angles = np.arccos(
+                        np.clip(np.vecdot(proj_vec_u,adj_vec_u),-1.0, 1.0)
+                        ) # all within interval [0,pi]
+                    adj_vec_int_idx = np.argmax(proj_adj_angles)
+                    adj_vec = adj_vec[adj_vec_int_idx,:]
+                    adj_idx = adj_vec_idx[adj_vec_int_idx]
+                else:
+                    adj_vec = adj_vec[0,:]
+                    adj_idx = adj_mesh_idx[intersect_bool][0]
+
+                # Treat case of sliding back to a previous mesh element
+                if prev_idx is not None and prev_idx == adj_idx:
+                    # Back away from the intersection point slightly in some 
+                    #   direction that bisects the angle between the mesh 
+                    #   elements for stay put.
+                    adj_vec_u = adj_vec/np.linalg.norm(adj_vec)
+                    mid_vec = (adj_vec_u - proj_vec_u)*0.5
+                    return x_edge + EPS*mid_vec
+                else:
+                    # TODO: in extreme cases, it seems like this could cause
+                    #   penetration. Maybe it's better to detect acute angles
+                    #   and stop immediately.
+                    # Repeat project_and_slide on new segment.
+                    adj_intersect = (x_edge, t_edge, mesh[adj_idx,0,:],
+                                     mesh[adj_idx,1,:], mesh[adj_idx,2,:],
+                                     adj_idx)
+                    # Supply new start/end pts based on new intersection point 
+                    #   and original trajectory
+                    newstartpt = adj_intersect[0] - t_edge*vec
+                    newendpt = adj_intersect[0] + (1-t_edge)*vec
+
+                    return swarm._project_and_slide_3D_new(newstartpt, newendpt, 
+                                                        adj_intersect, 
+                                                        mesh, max_meshpt_dist, 
+                                                        prev_idx=idx)
 
         ##################
             
@@ -2810,7 +2873,7 @@ class swarm:
                         mid_vec = (adj_vec_u + Qvec_u)*0.5
                         return Q_edge + EPS*mid_vec
                     else:
-                        # Repeat project_and_slide_moving on new segment.
+                        # Repeat project_and_slide on new segment.
                         adj_intersect = (Q_edge, t_edge, 
                                          mesh[adj_idx,0,:],
                                          mesh[adj_idx,1,:], adj_idx)
