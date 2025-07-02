@@ -2491,22 +2491,27 @@ class swarm:
             if np.any(intersect_bool):
                 # Get info about the relevant adjacent elements
                 adj_vec = adj_vec[intersect_bool]
+                adj_vec_u = adj_vec/np.linalg.norm(adj_vec, axis=-1)
                 adj_vec_idx = adj_mesh_idx[intersect_bool]
                 if adj_vec.shape[0] > 1:
                     # get the mesh element that forms the most acute angle with
                     #   the current mesh element. This is equivalent to the largest
                     #   angle between proj_vec and adj_vec
                     # clip protects against roundoff error
-                    adj_vec_u = adj_vec_u/np.linalg.norm(adj_vec_u, axis=-1)
                     proj_adj_angles = np.arccos(
-                        np.clip(np.vecdot(proj_vec_u,adj_vec_u),-1.0, 1.0)
+                        np.clip(np.dot(proj_vec_u,adj_vec_u),-1.0, 1.0)
                         ) # all within interval [0,pi]
                     adj_vec_int_idx = np.argmax(proj_adj_angles)
                     adj_vec = adj_vec[adj_vec_int_idx,:]
+                    adj_vec_u = adj_vec_u[adj_vec_int_idx,:]
                     adj_idx = adj_vec_idx[adj_vec_int_idx]
+                    proj_adj_angle = proj_adj_angles[adj_vec_int_idx]
                 else:
                     adj_vec = adj_vec[0,:]
+                    adj_vec_u = adj_vec_u[0,:]
                     adj_idx = adj_mesh_idx[intersect_bool][0]
+                    proj_adj_angle = np.arccos(
+                        np.clip(np.dot(proj_vec_u,adj_vec_u),-1.0, 1.0))
 
                 # Treat case of sliding back to a previous mesh element
                 if prev_idx is not None and prev_idx == adj_idx:
@@ -2516,10 +2521,16 @@ class swarm:
                     adj_vec_u = adj_vec/np.linalg.norm(adj_vec)
                     mid_vec = (adj_vec_u - proj_vec_u)*0.5
                     return x_edge + EPS*mid_vec
+                # Treat case of sharp angle
+                elif proj_adj_angle >= np.pi/2:
+                    # Back away from the intersection point slightly in some 
+                    #   direction that bisects the angle between the mesh 
+                    #   elements for stay put.
+                    adj_vec_u = adj_vec/np.linalg.norm(adj_vec)
+                    mid_vec = (adj_vec_u - proj_vec_u)*0.5
+                    return x_edge + EPS*mid_vec
+                # Otherwise, slide on adjacent mesh element.
                 else:
-                    # TODO: in extreme cases, it seems like this could cause
-                    #   penetration. Maybe it's better to detect acute angles
-                    #   and stop immediately.
                     # Repeat project_and_slide on new segment.
                     adj_intersect = (x_edge, t_edge, mesh[adj_idx,0,:],
                                      mesh[adj_idx,1,:], mesh[adj_idx,2,:],
@@ -2751,9 +2762,11 @@ class swarm:
 
             # Vector projection of vec onto direction Q is obtained via 
             #   Q/||Q||*dot(vec,Q/||Q||) = Q*dot(vec,Q)/||Q||**2.
+            proj_vec = Qvec*np.dot(vec,Qvec)/np.dot(Qvec,Qvec)
+            proj_vec_u = proj_vec/np.linalg.norm(proj_vec)
 
             # Position of agent at time t
-            proj_to_pt = lambda t: (t-t_I)*Qvec*np.dot(vec,Qvec)/np.dot(Qvec,Qvec) + x
+            proj_to_pt = lambda t: (t-t_I)*proj_vec + x
             
             # Projected position at end of time period
             slide_pt = proj_to_pt(1)
@@ -2840,38 +2853,46 @@ class swarm:
                 if np.any(intersect_bool):
                     # Get info about the relevant adjacent elements
                     adj_vec = adj_vec[intersect_bool]
+                    adj_vec_u = adj_vec/np.linalg.norm(adj_vec, axis=-1)
                     adj_vec_idx = adj_mesh_idx[intersect_bool]
                     if adj_vec.shape[0] > 1:
                         # get the one that is most acute on the side of norm_out_u
-                        # Establish a signum for the side the norm_out_u is on
-                        # Direction of travel is Qvec_dir
-                        det = Qvec_dir[0]*norm_out_u[1] - Qvec_dir[1]*norm_out_u[0]
-                        norm_side_sig = det/np.abs(det)
-                        # Calculate angles
-                        det = Qvec_dir[0]*adj_vec[:,1] - Qvec_dir[1]*adj_vec[:,0]
-                        det *= norm_side_sig
-                        dot = np.dot(adj_vec, Qvec_dir)
-                        angles = np.arctan2(det,dot)
-                        # convert [-pi,pi] to [0,2pi]
-                        angles[angles<0] += 2*np.pi
-                        adj_vec_int_idx = np.argmin(angles)
+                        # This is equivalent to the largest angle between proj_vec 
+                        #   and adj_vec
+                        # clip protects against roundoff error
+                        proj_adj_angles = np.arccos(
+                            np.clip(np.dot(proj_vec_u,adj_vec_u),-1.0, 1.0)
+                            ) # all within interval [0,pi]
+                        adj_vec_int_idx = np.argmax(proj_adj_angles)
                         adj_vec = adj_vec[adj_vec_int_idx,:]
+                        adj_vec_u = adj_vec_u[adj_vec_int_idx,:]
                         adj_idx = adj_vec_idx[adj_vec_int_idx]
+                        proj_adj_angle = proj_adj_angles[adj_vec_int_idx]
                     else:
                         adj_vec = adj_vec[0,:]
+                        adj_vec_u = adj_vec_u[0,:]
                         adj_idx = adj_mesh_idx[intersect_bool][0]
+                        proj_adj_angle = np.arccos(
+                            np.clip(np.dot(proj_vec_u,adj_vec_u),-1.0, 1.0))
                     
                      # Treat case of sliding back to a previous mesh element
                     if prev_idx is not None and prev_idx == adj_idx:
                         # Back away from the intersection point slightly in the 
                         #   direction that bisects the angle between the mesh 
                         #   elements for stay put.
-                        adj_vec_u = adj_vec/np.linalg.norm(adj_vec)
                         if Q1_crit_dist < Q0_crit_dist:
                             # went past Q1, not Q0
                             Qvec_u *= -1
                         mid_vec = (adj_vec_u + Qvec_u)*0.5
                         return Q_edge + EPS*mid_vec
+                    # Treat case of sharp angle
+                    elif proj_adj_angle >= np.pi/2:
+                        # Back away from the intersection point slightly in some 
+                        #   direction that bisects the angle between the mesh 
+                        #   elements for stay put.
+                        mid_vec = (adj_vec_u + Qvec_u)*0.5
+                        return Q_edge + EPS*mid_vec
+                    # Otherwise, slide on adjacent mesh element.
                     else:
                         # Repeat project_and_slide on new segment.
                         adj_intersect = (Q_edge, t_edge, 
