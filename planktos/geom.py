@@ -486,14 +486,14 @@ def seg_intersect_3D_triangles(P0, P1, Q0_list, Q1_list, Q2_list, get_all=False)
     s_I : float between 0 and 1
         the fraction of the line segment traveled from P0 before 
         intersection occurred (only if intersection occurred)
-    normal : length 3 array
-        normal unit vector to plane of intersection
     Q0 : length 3 array
         first vertex of triangle intersected
     Q1 : length 3 array
         second vertex of triangle intersected
     Q2 : length 3 array
         third vertex of triangle intersected
+    idx : int or None
+        index of mesh element intersected. None if only one was being tested
     
     References
     ----------
@@ -528,7 +528,7 @@ def seg_intersect_3D_triangles(P0, P1, Q0_list, Q1_list, Q2_list, get_all=False)
             coords[2] = 1 - coords[0] - coords[1]
             # check if point is in triangle
             if np.all(coords>=0):
-                return (cross_pt, s_I_list, normal, Q0_list, Q1_list, Q2_list)
+                return (cross_pt, s_I_list, Q0_list, Q1_list, Q2_list, None)
             else:
                 return None
 
@@ -551,9 +551,9 @@ def seg_intersect_3D_triangles(P0, P1, Q0_list, Q1_list, Q2_list, get_all=False)
             # check if point is in triangle
             if np.all(coords>=0):
                 if get_all:
-                    intersections.append((cross_pt, s_I, normal, Q0_list[n], Q1_list[n], Q2_list[n]))
+                    intersections.append((cross_pt, s_I, Q0_list[n], Q1_list[n], Q2_list[n], n))
                 else:
-                    closest_int = (cross_pt, s_I, normal, Q0_list[n], Q1_list[n], Q2_list[n])
+                    closest_int = (cross_pt, s_I, Q0_list[n], Q1_list[n], Q2_list[n], n)
     if not get_all:
         if closest_int[0] is None:
             return None
