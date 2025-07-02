@@ -2285,16 +2285,10 @@ class swarm:
                     proj_adj_angle = np.arccos(
                         np.clip(np.dot(proj_vec_u,adj_vec_u),-1.0, 1.0))
 
-                # Treat case of sliding back to a previous mesh element
-                if prev_idx is not None and prev_idx == adj_idx:
-                    # Back away from the intersection point slightly in some 
-                    #   direction that bisects the angle between the mesh 
-                    #   elements for stay put.
-                    adj_vec_u = adj_vec/np.linalg.norm(adj_vec)
-                    mid_vec = (adj_vec_u - proj_vec_u)*0.5
-                    return x_edge + EPS*mid_vec
-                # Treat case of sharp angle
-                elif proj_adj_angle >= np.pi/2:
+                # Treat case of sliding back to a previous mesh element and the
+                #   case of a sharp angle
+                if (prev_idx is not None and prev_idx == adj_idx) or\
+                    proj_adj_angle >= np.pi/2:
                     # Back away from the intersection point slightly in some 
                     #   direction that bisects the angle between the mesh 
                     #   elements for stay put.
@@ -2486,14 +2480,10 @@ class swarm:
                     # went past Q0
                     pt_bool = np.isclose(np.linalg.norm(mesh.reshape(
                         (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q0, axis=1), 0)
-                    # Get a vector in the direction of travel on the mesh element
-                    Qvec_dir = -Qvec
                 else:
                     # went past Q1
                     pt_bool = np.isclose(np.linalg.norm(mesh.reshape(
                         (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q1, axis=1), 0)
-                    # Get a vector in the direction of travel on the mesh element
-                    Qvec_dir = Qvec
                 pt_bool = pt_bool.reshape((mesh.shape[0],mesh.shape[1]))
                 # remove current mesh element
                 pt_bool[idx,:] = False
@@ -2545,21 +2535,16 @@ class swarm:
                         proj_adj_angle = np.arccos(
                             np.clip(np.dot(proj_vec_u,adj_vec_u),-1.0, 1.0))
                     
-                     # Treat case of sliding back to a previous mesh element
-                    if prev_idx is not None and prev_idx == adj_idx:
+                    # Treat case of sliding back to a previous mesh element and the
+                    #   case of a sharp angle
+                    if (prev_idx is not None and prev_idx == adj_idx) or\
+                        proj_adj_angle >= np.pi/2:
                         # Back away from the intersection point slightly in the 
                         #   direction that bisects the angle between the mesh 
                         #   elements for stay put.
                         if Q1_crit_dist < Q0_crit_dist:
                             # went past Q1, not Q0
                             Qvec_u *= -1
-                        mid_vec = (adj_vec_u + Qvec_u)*0.5
-                        return Q_edge + EPS*mid_vec
-                    # Treat case of sharp angle
-                    elif proj_adj_angle >= np.pi/2:
-                        # Back away from the intersection point slightly in some 
-                        #   direction that bisects the angle between the mesh 
-                        #   elements for stay put.
                         mid_vec = (adj_vec_u + Qvec_u)*0.5
                         return Q_edge + EPS*mid_vec
                     # Otherwise, slide on adjacent mesh element.
@@ -2929,33 +2914,36 @@ class swarm:
                 ########  Went past and intersected adjoining element! ########
                 # Get info about it
                 adj_vec = adj_vec[intersect_bool]
+                adj_vec_u = adj_vec/np.linalg.norm(adj_vec, axis=-1)
                 adj_vec_idx = adj_mesh_end_idx[intersect_bool]
                 adj_mesh_newstart = adj_mesh_newstart[intersect_bool]
                 if adj_vec.shape[0] > 1:
                     # get the one that is most acute on the side of norm_out_u
-                    # Establish a signum for the side the norm_out_u is on
-                    # Direction of travel is Qvec_dir
-                    det = Qslide_vec_u[0]*norm_out_u[1] - Qslide_vec_u[1]*norm_out_u[0]
-                    norm_side_sig = det/np.abs(det)
-                    # Calculate angles
-                    det = Qslide_vec_u[0]*adj_vec[:,1] - Qslide_vec_u[1]*adj_vec[:,0]
-                    det *= norm_side_sig
-                    dot = np.dot(adj_vec, Qslide_vec_u)
-                    angles = np.arctan2(det,dot)
-                    # convert [-pi,pi] to [0,2pi]
-                    angles[angles<0] += 2*np.pi
-                    adj_vec_int_idx = np.argmin(angles)
+                    # This is equivalent to the largest angle between Qslide_vec_u 
+                    #   and adj_vec_u
+                    # clip protects against roundoff error
+                    proj_adj_angles = np.arccos(
+                        np.clip(np.dot(Qslide_vec_u, adj_vec_u),-1.0, 1.0)
+                        ) # all within interval [0,pi]
+                    adj_vec_int_idx = np.argmax(proj_adj_angles)
                     adj_vec = adj_vec[adj_vec_int_idx,:]
+                    adj_vec_u = adj_vec_u[adj_vec_int_idx,:]
                     adj_idx = adj_vec_idx[adj_vec_int_idx]
+                    proj_adj_angle = proj_adj_angles[adj_vec_int_idx]
                 else:
                     adj_vec = adj_vec[0,:]
+                    adj_vec_u = adj_vec_u[0,:]
                     adj_idx = adj_mesh_end_idx[intersect_bool][0]
                     adj_vec_int_idx = 0
+                    proj_adj_angle = np.arccos(
+                            np.clip(np.dot(Qslide_vec_u, adj_vec_u),-1.0, 1.0))
                 # NOTE: This intersection happens at the same time as sliding 
                 #   off of the last element because they are joined together.
 
-                # Treat case of sliding back to a previous mesh element
-                if prev_idx is not None and prev_idx == adj_idx:
+                # Treat case of sliding back to a previous mesh element and the
+                #   case of a sharp angle
+                if (prev_idx is not None and prev_idx == adj_idx) or\
+                    proj_adj_angle >= np.pi/2:
                     # Back away from the intersection point slightly in the 
                     #   direction that bisects the angle between the mesh 
                     #   elements for stay put.
