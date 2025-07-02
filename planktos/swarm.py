@@ -1858,12 +1858,8 @@ class swarm:
 
             # Project remaining piece of vector onto mesh and repeat processes 
             #   as necessary until we have a final result.
-            if DIM == 2:
-                new_pos = swarm._project_and_slide_2D(startpt, endpt, intersection, 
-                                                       close_mesh, max_meshpt_dist)
-            else:
-                new_pos = swarm._project_and_slide_3D(startpt, endpt, intersection,
-                                                      close_mesh, max_meshpt_dist)
+            new_pos = swarm._project_and_slide_static(startpt, endpt, intersection, 
+                                                        close_mesh, max_meshpt_dist)
             return new_pos, new_pos - intersection[0]
         
         elif ib_collisions == 'sticky':
@@ -2100,7 +2096,7 @@ class swarm:
 
 
     @staticmethod
-    def _project_and_slide_3D(startpt, endpt, intersection, mesh, 
+    def _project_and_slide_static(startpt, endpt, intersection, mesh, 
                                   max_meshpt_dist, prev_idx=None):
         '''Once we have an intersection point with an immersed mesh, slide the 
         agent along the mesh for its remaining movement (frictionless 
@@ -2146,258 +2142,9 @@ class swarm:
         # Get full travel vector
         vec = endpt-startpt
 
-        # intersection comes from geom.seg_intersect_3D_triangles
-        x = intersection[0]     # (x,y,z) coordinates of intersection
-        t_I = intersection[1]   # btwn 0 & 1, fraction of movement traveled so far
-        Q0 = intersection[2]    # first vertex of mesh element intersected
-        Q1 = intersection[3]    # second vertex of mesh element intersected
-        Q2 = intersection[4]    # third vertex of mesh element intersected
-        idx = intersection[5]   # index into mesh that will yield Q0,Q1,Q2
-
-        # Get mesh element vectors
-        Qvec10 = Q1-Q0; Qvec10_u = Qvec10/np.linalg.norm(Qvec10)
-        Qvec21 = Q2-Q1; Qvec21_u = Qvec21/np.linalg.norm(Qvec21)
-        Qvec02 = Q0-Q2; Qvec02_u = Qvec02/np.linalg.norm(Qvec02)
-
-        # Find direction indictor for which side of the mesh element the 
-        #   agent hit the element.
-        agent_prev_loc = startpt + vec*(t_I-0.00001)
-        dir_vec = agent_prev_loc-x
-        Q_norm = np.cross(Qvec10, Qvec21)
-        # side_signum will orient back in the direction the agent came from
-        side_signum = np.dot(dir_vec,Q_norm)\
-            /np.linalg.norm(np.dot(dir_vec,Q_norm))
-        # Make the normal to the mesh element point back toward where the 
-        #   agent came from.
-        Q_norm = side_signum*Q_norm
-        Q_norm_u = Q_norm/np.linalg.norm(Q_norm)
-
-        # Vector projection onto mesh element is obtained by subtracting the
-        #   projection onto Q_norm.
-        # Vector projection onto Q_norm is 
-        #   Qn/||Qn||*dot(vec,Qn/||Qn||) = Qn*dot(vec,Qn)/||Qn||**2
-        proj_vec = (vec - Q_norm*np.dot(vec,Q_norm)/np.dot(Q_norm,Q_norm))
-        proj_vec_u = proj_vec/np.linalg.norm(proj_vec)
-
-        # Position of agent at time t
-        proj_to_pt = lambda t: (t-t_I)*proj_vec + x
-        
-        # Projected position at end of time period
-        slide_pt = proj_to_pt(1)
-
-        if 1-t_I < 10e-7:
-            # Special case where we are practically finished with this time step.
-            # Perturb away from the mesh element and return.
-            return x + EPS*Q_norm_u
-        
-        ##########                                             ##########
-        #####             Test for sliding off the end              #####
-        ##########                                             ##########
-
-        # Detect sliding off 2D edge using seg_intersect_2D
-        # Construct lists of first and second points for the line segments
-        Q0_list = np.array(intersection[2:5]) # Q0,Q1,Q2
-        Q1_list = Q0_list[(1,2,0),:] # Q1,Q2,Q0
-        tri_intersect = geom.seg_intersect_2D(x, slide_pt, Q0_list, Q1_list)
-
-        ##########                                                  ##########
-        #####       Algorithms for going past end of mesh element        #####
-        ##########                                                  ##########
-
-        if tri_intersect is not None:
-            # Get time of intersection
-            t_edge = t_I + (1-t_I)*tri_intersect[1]
-            # Get point of intersection
-            x_edge = tri_intersect[0]
-            # Get side of intersection
-            idx_edge = tri_intersect[4]
-            if idx_edge == 0:
-                # Went past Q0Q1
-                pt_bool0 = np.isclose(np.linalg.norm(mesh.reshape(
-                        (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q0, axis=1), 0)
-                pt_bool1 = np.isclose(np.linalg.norm(mesh.reshape(
-                        (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q1, axis=1), 0)
-                Qvec_edge = Qvec10
-            elif idx_edge == 1:
-                # Went past Q1Q2
-                pt_bool0 = np.isclose(np.linalg.norm(mesh.reshape(
-                        (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q1, axis=1), 0)
-                pt_bool1 = np.isclose(np.linalg.norm(mesh.reshape(
-                        (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q2, axis=1), 0)
-                Qvec_edge = Qvec21
-            elif idx_edge == 2:
-                # Went past Q2Q0
-                pt_bool0 = np.isclose(np.linalg.norm(mesh.reshape(
-                        (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q2, axis=1), 0)
-                pt_bool1 = np.isclose(np.linalg.norm(mesh.reshape(
-                        (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q0, axis=1), 0)
-                Qvec_edge = Qvec02
-            pt_bool0 = pt_bool0.reshape((mesh.shape[0],mesh.shape[1]))
-            pt_bool1 = pt_bool1.reshape((mesh.shape[0],mesh.shape[1]))
-            # remove current mesh element
-            pt_bool0[idx,:] = False
-            pt_bool1[idx,:] = False
-            adj_mesh = mesh[np.logical_and(np.any(pt_bool0,axis=1),
-                                           np.any(pt_bool1,axis=1))]
-            
-            # Determine if there are intersections with adjacent mesh elements
-            if len(adj_mesh) > 0:
-                # index into mesh for adjacent mesh elements
-                adj_mesh_idx = np.logical_and(np.any(pt_bool0,axis=1),
-                                              np.any(pt_bool1,axis=1)).nonzero()[0]
-                # we need the mesh point of the adjacent mesh that is not part of the
-                #   edge of intersection
-                other_bool = np.logical_not(np.logical_or(pt_bool0[adj_mesh_idx,:],
-                                                          pt_bool1[adj_mesh_idx,:]))
-                adj_Q_other = adj_mesh[other_bool,:]
-                # get vector pointed away from shared edge on adjacent elements
-                adj_vec = adj_Q_other - x_edge
-                # intersection cases will have an angle of -pi/2 to pi/2 between
-                #   Q_norm_u and this vector oriented away from the edge the agent 
-                #   is on. That means the dot product is positive.
-                intersect_bool = np.dot(adj_vec, Q_norm_u) >= 0
-            else:
-                intersect_bool = np.array([False])
-
-            # Handle any intersections with adjacent elements and return
-            if np.any(intersect_bool):
-                # Get info about the relevant adjacent elements
-                adj_vec = adj_vec[intersect_bool]
-                adj_vec_u = adj_vec/np.linalg.norm(adj_vec, axis=-1)
-                adj_vec_idx = adj_mesh_idx[intersect_bool]
-                if adj_vec.shape[0] > 1:
-                    # get the mesh element that forms the most acute angle with
-                    #   the current mesh element. This is equivalent to the largest
-                    #   angle between proj_vec and adj_vec
-                    # clip protects against roundoff error
-                    proj_adj_angles = np.arccos(
-                        np.clip(np.dot(proj_vec_u,adj_vec_u),-1.0, 1.0)
-                        ) # all within interval [0,pi]
-                    adj_vec_int_idx = np.argmax(proj_adj_angles)
-                    adj_vec = adj_vec[adj_vec_int_idx,:]
-                    adj_vec_u = adj_vec_u[adj_vec_int_idx,:]
-                    adj_idx = adj_vec_idx[adj_vec_int_idx]
-                    proj_adj_angle = proj_adj_angles[adj_vec_int_idx]
-                else:
-                    adj_vec = adj_vec[0,:]
-                    adj_vec_u = adj_vec_u[0,:]
-                    adj_idx = adj_mesh_idx[intersect_bool][0]
-                    proj_adj_angle = np.arccos(
-                        np.clip(np.dot(proj_vec_u,adj_vec_u),-1.0, 1.0))
-
-                # Treat case of sliding back to a previous mesh element and the
-                #   case of a sharp angle
-                if (prev_idx is not None and prev_idx == adj_idx) or\
-                    proj_adj_angle >= np.pi/2:
-                    # Back away from the intersection point slightly in some 
-                    #   direction that bisects the angle between the mesh 
-                    #   elements for stay put.
-                    adj_vec_u = adj_vec/np.linalg.norm(adj_vec)
-                    mid_vec = (adj_vec_u - proj_vec_u)*0.5
-                    return x_edge + EPS*mid_vec
-                # Otherwise, slide on adjacent mesh element.
-                else:
-                    # Repeat project_and_slide on new segment.
-                    adj_intersect = (x_edge, t_edge, mesh[adj_idx,0,:],
-                                     mesh[adj_idx,1,:], mesh[adj_idx,2,:],
-                                     adj_idx)
-                    # Supply new start/end pts based on new intersection point 
-                    #   and original trajectory
-                    newstartpt = x_edge - t_edge*vec
-                    newendpt = x_edge + (1-t_edge)*vec
-
-                    return swarm._project_and_slide_3D(newstartpt, newendpt, 
-                                                        adj_intersect, 
-                                                        mesh, max_meshpt_dist, 
-                                                        prev_idx=idx)
-                
-        ##########                                         ##########
-        #####       No intersection with adjacent element       #####
-        ##########                                         ##########
-
-        if tri_intersect is not None:
-            # Continue on the original trajectory from the time of separation
-            #   from the mesh element.
-            # Recursively check for more intersections.
-            newstartpt = x_edge + EPS*Q_norm_u
-            newendpt = newstartpt + (1-t_edge)*vec
-            # recursion on prev. eligible mesh elements and treating t_edge 
-            #   as the start time. Only look for intersections with subset
-            #   of full eligible mesh.
-            close_mesh = swarm._get_eligible_static_mesh_elements(newstartpt, 
-                                                                  newendpt, mesh, 
-                                                                  max_meshpt_dist*2/3)
-            intersection_n = geom.seg_intersect_3D_triangles(newstartpt, newendpt,
-                             close_mesh[:,0,:], close_mesh[:,1,:], close_mesh[:,2,:])
-            if intersection_n is None:
-                return newendpt
-            else:
-                # Get idx in intersection_n to match full mesh instead of close_mesh
-                elem = close_mesh[intersection_n[-1]]
-                idx_n = np.argwhere((elem == mesh).all(axis=(1,2)))[0,0]
-                intersection_n = (*intersection_n[:-1], idx_n)
-                new_loc = swarm._project_and_slide_3D(newstartpt, newendpt,
-                                                          intersection_n, mesh, 
-                                                          max_meshpt_dist)
-            return new_loc
-        else:
-            # Ended on mesh element
-            # Perturb back toward where the agent came from.
-            return slide_pt + EPS*Q_norm_u
-
-
-
-    @staticmethod
-    def _project_and_slide_2D(startpt, endpt, intersection, mesh, 
-                               max_meshpt_dist, prev_idx=None):
-        '''Once we have an intersection point with an immersed mesh, slide the 
-        agent along the mesh for its remaining movement (frictionless 
-        boundary interaction), and then determine what happens if we fall off 
-        the edge of the element or if the element rotates away.
-        
-        NOTE: Because we do not know the mass of the agents or the properties
-        of the fluid, we neglect inertial and drag forces in this computation.
-
-        Parameters
-        ----------
-        startpt : length 2 or 3 array
-            original start point of movement, before intersection
-        endpt : length 2 or 3 array
-            original end point of movement, w/o intersection
-        intersection : list-like of data
-            result of seg_intersect_2D or seg_intersect_3D_triangles. various 
-            information about the intersection with the immersed mesh element
-        mesh : Nx2x2 or Nx3x3 array
-            eligible (nearby) mesh elements for interaction
-        max_meshpt_dist : float
-            max distance between two points on a mesh element (used to determine 
-            how far away from startpt to search for mesh elements). 
-            Passed-through here solely in case of recursion with 
-            _apply_internal_moving_BC.
-        prev_idx : int, optional
-            in recursion with adjoining mesh elements, this prevents an infinite 
-            recusion with, e.g., mesh elements in an acute angle.
-
-        Returns
-        -------
-        newendpt : length 2 array
-            new endpoint for movement after projection
-        '''
-
-        # small number to perturb off of the actual boundary in order to avoid
-        #   roundoff errors that would allow penetration
-        # base its magnitude off of the given coordinate points
-        coord_mag = np.ceil(np.log(np.max(
-            np.concatenate((startpt,endpt,mesh),axis=None))))
-        EPS = 10**(coord_mag-7)
-
-        # Get full travel vector
-        vec = endpt-startpt
-
         DIM = len(startpt)
 
         if DIM == 2:
-        
             # intersection comes from geom.seg_intersect_2D
             x = intersection[0]    # (x,y) coordinates of intersection
             t_I = intersection[1]  # btwn 0 & 1, fraction of movement traveled so far
@@ -2419,7 +2166,7 @@ class swarm:
                 /np.linalg.norm(np.dot(dir_vec,Q_orth_u))
             # Get a normal to the mesh element that points back toward where the 
             #   agent came from.
-            norm_out_u = side_signum*Q_orth_u
+            Q_norm_u = side_signum*Q_orth_u
             
             # get a perpendicular INTO the element
             # Qperp_in = lambda t: -side_signum*np.array([Qvec(t)[1],-Qvec(t)[0]])
@@ -2429,21 +2176,55 @@ class swarm:
             proj_vec = Qvec*np.dot(vec,Qvec)/np.dot(Qvec,Qvec)
             proj_vec_u = proj_vec/np.linalg.norm(proj_vec)
 
-            # Position of agent at time t
-            proj_to_pt = lambda t: (t-t_I)*proj_vec + x
-            
-            # Projected position at end of time period
-            slide_pt = proj_to_pt(1)
+        elif DIM == 3:
+            # intersection comes from geom.seg_intersect_3D_triangles
+            x = intersection[0]     # (x,y,z) coordinates of intersection
+            t_I = intersection[1]   # btwn 0 & 1, fraction of movement traveled so far
+            Q0 = intersection[2]    # first vertex of mesh element intersected
+            Q1 = intersection[3]    # second vertex of mesh element intersected
+            Q2 = intersection[4]    # third vertex of mesh element intersected
+            idx = intersection[5]   # index into mesh that will yield Q0,Q1,Q2
 
-            if 1-t_I < 10e-7:
-                # Special case where we are practically finished with this time step.
-                # Perturb away from the mesh element and return.
-                return x + EPS*norm_out_u
-            
-            ##########                                             ##########
-            #####             Test for sliding off the end              #####
-            ##########                                             ##########
+            # Get mesh element vectors
+            Qvec10 = Q1-Q0
+            Qvec21 = Q2-Q1
 
+            # Find direction indictor for which side of the mesh element the 
+            #   agent hit the element.
+            agent_prev_loc = startpt + vec*(t_I-0.00001)
+            dir_vec = agent_prev_loc-x
+            Q_norm = np.cross(Qvec10, Qvec21)
+            # side_signum will orient back in the direction the agent came from
+            side_signum = np.dot(dir_vec,Q_norm)\
+                /np.linalg.norm(np.dot(dir_vec,Q_norm))
+            # Make the normal to the mesh element point back toward where the 
+            #   agent came from.
+            Q_norm = side_signum*Q_norm
+            Q_norm_u = Q_norm/np.linalg.norm(Q_norm)
+
+            # Vector projection onto mesh element is obtained by subtracting the
+            #   projection onto Q_norm.
+            # Vector projection onto Q_norm is 
+            #   Qn/||Qn||*dot(vec,Qn/||Qn||) = Qn*dot(vec,Qn)/||Qn||**2
+            proj_vec = (vec - Q_norm*np.dot(vec,Q_norm)/np.dot(Q_norm,Q_norm))
+            proj_vec_u = proj_vec/np.linalg.norm(proj_vec)
+
+        # Position of agent at time t
+        proj_to_pt = lambda t: (t-t_I)*proj_vec + x
+        
+        # Projected position at end of time period
+        slide_pt = proj_to_pt(1)
+
+        if 1-t_I < 10e-7:
+            # Special case where we are practically finished with this time step.
+            # Perturb away from the mesh element and return.
+            return x + EPS*Q_norm_u
+            
+        ##########                                             ##########
+        #####             Test for sliding off the end              #####
+        ##########                                             ##########
+
+        if DIM == 2:
             mesh_el_end_len = np.linalg.norm(Qvec)
             Q0_crit_dist = np.linalg.norm(slide_pt - Q0)
             Q1_crit_dist = np.linalg.norm(slide_pt - Q1)
@@ -2465,17 +2246,32 @@ class swarm:
                 Q_edge = Q1
             else:
                 t_edge = None
+        elif DIM == 3:
+            # Detect sliding off 2D edge using seg_intersect_2D
+            # Construct lists of first and second points for the line segments
+            Q0_list = np.array(intersection[2:5]) # Q0,Q1,Q2
+            Q1_list = Q0_list[(1,2,0),:] # Q1,Q2,Q0
+            tri_intersect = geom.seg_intersect_2D(x, slide_pt, Q0_list, Q1_list)
+            if tri_intersect is None:
+                t_edge = None
+            else:
+                # Get time of intersection
+                t_edge = t_I + (1-t_I)*tri_intersect[1]
+                # Get point of intersection
+                x_edge = tri_intersect[0]
+                # Get side of intersection
+                idx_edge = tri_intersect[4]
                 
-            ##########                                                  ##########
-            #####       Algorithms for going past end of mesh element        #####
-            ##########                                                  ##########
+        ##########                                                  ##########
+        #####       Algorithms for going past end of mesh element        #####
+        ##########                                                  ##########
 
-            # If we went past the end of the mesh element, detect intersection with 
-            #   adjoining elements.
-            if t_edge is not None:
-                # Find adjacent mesh segments on the end we went past.
-                #   This is any mesh element that contains the endpoint we went past
-                #   except the current mesh element
+        if t_edge is not None:
+            # Find any adjacent mesh segments on the end we went past that would
+            #   cause intersection
+            if DIM == 2:
+                # In 2D, this is any mesh element that contains the endpoint 
+                #   we went past except the current mesh element
                 if Q1_crit_dist > Q0_crit_dist:
                     # went past Q0
                     pt_bool = np.isclose(np.linalg.norm(mesh.reshape(
@@ -2503,103 +2299,162 @@ class swarm:
                     adj_vec[~pt_bool_0] = adj_mesh[~pt_bool_0,0,:] - \
                                           adj_mesh[~pt_bool_0,1,:]
                     # intersection cases will have an angle of -pi/2 to pi/2 between
-                    #   norm_out_u and the adjacent mesh element oriented from the 
+                    #   Q_norm_u and the adjacent mesh element oriented from the 
                     #   edge the agent is on. That means the dot product is positive.
-                    intersect_bool = np.dot(adj_vec, norm_out_u) >= 0
+                    intersect_bool = np.dot(adj_vec, Q_norm_u) >= 0
                 else:
                     intersect_bool = np.array([False])
 
-                # Handle any intersections with adjacent elements and return
-                if np.any(intersect_bool):
-                    # Get info about the relevant adjacent elements
-                    adj_vec = adj_vec[intersect_bool]
-                    adj_vec_u = adj_vec/np.linalg.norm(adj_vec, axis=-1)
-                    adj_vec_idx = adj_mesh_idx[intersect_bool]
-                    if adj_vec.shape[0] > 1:
-                        # get the one that is most acute on the side of norm_out_u
-                        # This is equivalent to the largest angle between proj_vec 
-                        #   and adj_vec
-                        # clip protects against roundoff error
-                        proj_adj_angles = np.arccos(
-                            np.clip(np.dot(proj_vec_u,adj_vec_u),-1.0, 1.0)
-                            ) # all within interval [0,pi]
-                        adj_vec_int_idx = np.argmax(proj_adj_angles)
-                        adj_vec = adj_vec[adj_vec_int_idx,:]
-                        adj_vec_u = adj_vec_u[adj_vec_int_idx,:]
-                        adj_idx = adj_vec_idx[adj_vec_int_idx]
-                        proj_adj_angle = proj_adj_angles[adj_vec_int_idx]
-                    else:
-                        adj_vec = adj_vec[0,:]
-                        adj_vec_u = adj_vec_u[0,:]
-                        adj_idx = adj_mesh_idx[intersect_bool][0]
-                        proj_adj_angle = np.arccos(
-                            np.clip(np.dot(proj_vec_u,adj_vec_u),-1.0, 1.0))
+            elif DIM == 3:
+                if idx_edge == 0:
+                    # Went past Q0Q1
+                    pt_bool0 = np.isclose(np.linalg.norm(mesh.reshape(
+                            (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q0, axis=1), 0)
+                    pt_bool1 = np.isclose(np.linalg.norm(mesh.reshape(
+                            (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q1, axis=1), 0)
+                elif idx_edge == 1:
+                    # Went past Q1Q2
+                    pt_bool0 = np.isclose(np.linalg.norm(mesh.reshape(
+                            (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q1, axis=1), 0)
+                    pt_bool1 = np.isclose(np.linalg.norm(mesh.reshape(
+                            (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q2, axis=1), 0)
+                elif idx_edge == 2:
+                    # Went past Q2Q0
+                    pt_bool0 = np.isclose(np.linalg.norm(mesh.reshape(
+                            (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q2, axis=1), 0)
+                    pt_bool1 = np.isclose(np.linalg.norm(mesh.reshape(
+                            (mesh.shape[0]*mesh.shape[1],mesh.shape[2]))-Q0, axis=1), 0)
+                pt_bool0 = pt_bool0.reshape((mesh.shape[0],mesh.shape[1]))
+                pt_bool1 = pt_bool1.reshape((mesh.shape[0],mesh.shape[1]))
+                # remove current mesh element
+                pt_bool0[idx,:] = False
+                pt_bool1[idx,:] = False
+                adj_mesh = mesh[np.logical_and(np.any(pt_bool0,axis=1),
+                                            np.any(pt_bool1,axis=1))]
+                
+                # Determine if there are intersections with adjacent mesh elements
+                if len(adj_mesh) > 0:
+                    # index into mesh for adjacent mesh elements
+                    adj_mesh_idx = np.logical_and(np.any(pt_bool0,axis=1),
+                                                np.any(pt_bool1,axis=1)).nonzero()[0]
+                    # we need the mesh point of the adjacent mesh that is not part of the
+                    #   edge of intersection
+                    other_bool = np.logical_not(np.logical_or(pt_bool0[adj_mesh_idx,:],
+                                                            pt_bool1[adj_mesh_idx,:]))
+                    adj_Q_other = adj_mesh[other_bool,:]
+                    # get vector pointed away from shared edge on adjacent elements
+                    adj_vec = adj_Q_other - x_edge
+                    # intersection cases will have an angle of -pi/2 to pi/2 between
+                    #   Q_norm_u and this vector oriented away from the edge the agent 
+                    #   is on. That means the dot product is positive.
+                    intersect_bool = np.dot(adj_vec, Q_norm_u) >= 0
+                else:
+                    intersect_bool = np.array([False])
+
+            # Handle any intersections with adjacent elements and return
+            if np.any(intersect_bool):
+                # Get info about the relevant adjacent elements
+                adj_vec = adj_vec[intersect_bool]
+                adj_vec_u = adj_vec/np.linalg.norm(adj_vec, axis=-1)
+                adj_vec_idx = adj_mesh_idx[intersect_bool]
+                if adj_vec.shape[0] > 1:
+                    # get the mesh element that forms the most acute angle with
+                    #   the current mesh element. This is equivalent to the largest
+                    #   angle between proj_vec and adj_vec
+                    # clip protects against roundoff error
+                    proj_adj_angles = np.arccos(
+                        np.clip(np.dot(proj_vec_u,adj_vec_u),-1.0, 1.0)
+                        ) # all within interval [0,pi]
+                    adj_vec_int_idx = np.argmax(proj_adj_angles)
+                    adj_vec = adj_vec[adj_vec_int_idx,:]
+                    adj_vec_u = adj_vec_u[adj_vec_int_idx,:]
+                    adj_idx = adj_vec_idx[adj_vec_int_idx]
+                    proj_adj_angle = proj_adj_angles[adj_vec_int_idx]
+                else:
+                    adj_vec = adj_vec[0,:]
+                    adj_vec_u = adj_vec_u[0,:]
+                    adj_idx = adj_mesh_idx[intersect_bool][0]
+                    proj_adj_angle = np.arccos(
+                        np.clip(np.dot(proj_vec_u,adj_vec_u),-1.0, 1.0))
                     
-                    # Treat case of sliding back to a previous mesh element and the
-                    #   case of a sharp angle
-                    if (prev_idx is not None and prev_idx == adj_idx) or\
-                        proj_adj_angle >= np.pi/2:
-                        # Back away from the intersection point slightly in the 
-                        #   direction that bisects the angle between the mesh 
-                        #   elements for stay put.
-                        if Q1_crit_dist < Q0_crit_dist:
-                            # went past Q1, not Q0
-                            Qvec_u *= -1
-                        mid_vec = (adj_vec_u + Qvec_u)*0.5
+                # Treat case of sliding back to a previous mesh element and the
+                #   case of a sharp angle
+                if (prev_idx is not None and prev_idx == adj_idx) or\
+                    proj_adj_angle >= np.pi/2:
+                    # Back away from the intersection point slightly in the 
+                    #   direction that bisects the angle between the mesh 
+                    #   elements for stay put.
+                    mid_vec = (adj_vec_u - proj_vec_u)*0.5
+                    if DIM == 2:
                         return Q_edge + EPS*mid_vec
-                    # Otherwise, slide on adjacent mesh element.
-                    else:
-                        # Repeat project_and_slide on new segment.
+                    elif DIM == 3:
+                        return x_edge + EPS*mid_vec
+                # Otherwise, slide on adjacent mesh element.
+                else:
+                    # Repeat project_and_slide on new segment.
+                    if DIM == 2:
                         adj_intersect = (Q_edge, t_edge, 
-                                         mesh[adj_idx,0,:],
-                                         mesh[adj_idx,1,:], adj_idx)
+                                            mesh[adj_idx,0,:],
+                                            mesh[adj_idx,1,:], adj_idx)
                         # Supply new start/end pts based on new intersection point 
                         #   and original trajectory
-                        newstartpt = adj_intersect[0] - t_edge*vec
-                        newendpt = adj_intersect[0] + (1-t_edge)*vec
+                        newstartpt = Q_edge - t_edge*vec
+                        newendpt = Q_edge + (1-t_edge)*vec
+                    elif DIM == 3:
+                        adj_intersect = (x_edge, t_edge, mesh[adj_idx,0,:],
+                                        mesh[adj_idx,1,:], mesh[adj_idx,2,:],
+                                        adj_idx)
+                        # Supply new start/end pts based on new intersection point 
+                        #   and original trajectory
+                        newstartpt = x_edge - t_edge*vec
+                        newendpt = x_edge + (1-t_edge)*vec
 
-                        return swarm._project_and_slide_2D(newstartpt, newendpt, 
-                                                        adj_intersect, 
-                                                        mesh, max_meshpt_dist, 
-                                                        prev_idx=idx)
+                    return swarm._project_and_slide_static(newstartpt, newendpt, 
+                                                           adj_intersect, 
+                                                           mesh, max_meshpt_dist, 
+                                                           prev_idx=idx)
                     
-            ##########                                         ##########
-            #####       No intersection with adjacent element       #####
-            ##########                                         ##########
+        ##########                                         ##########
+        #####       No intersection with adjacent element       #####
+        ##########                                         ##########
 
-            if t_edge is not None:
-                # Continue on the original trajectory from the time of separation
-                #   from the mesh element.
-                # Recursively check for more intersections.
-                newstartpt = Q_edge + EPS*norm_out_u
-                newendpt = newstartpt + (1-t_edge)*vec
-                # recursion on prev. eligible mesh elements and treating t_edge 
-                #   as the start time. Only look for intersections with subset
-                #   of full eligible mesh.
-                close_mesh = swarm._get_eligible_static_mesh_elements(newstartpt, 
-                                                                      newendpt, mesh, 
-                                                                      max_meshpt_dist*2/3)
+        if t_edge is not None:
+            # Continue on the original trajectory from the time of separation
+            #   from the mesh element.
+            # Recursively check for more intersections.
+            if DIM == 2:
+                newstartpt = Q_edge + EPS*Q_norm_u
+            elif DIM == 3:
+                newstartpt = x_edge + EPS*Q_norm_u
+            newendpt = newstartpt + (1-t_edge)*vec
+            # recursion on prev. eligible mesh elements and treating t_edge 
+            #   as the start time. Only look for intersections with subset
+            #   of full eligible mesh.
+            close_mesh = swarm._get_eligible_static_mesh_elements(newstartpt, 
+                                                                  newendpt, mesh, 
+                                                                  max_meshpt_dist*2/3)
+            if DIM == 2:
                 intersection_n = geom.seg_intersect_2D(newstartpt, newendpt,
-                                                       close_mesh[:,0,:], 
-                                                       close_mesh[:,1,:])
-                if intersection_n is None:
-                    return newendpt
-                else:
-                    # Get idx in intersection_n to match full mesh instead of close_mesh
-                    elem = close_mesh[intersection_n[-1]]
-                    idx_n = np.argwhere((elem == mesh).all(axis=(1,2)))[0,0]
-                    intersection_n = (*intersection_n[:-1], idx_n)
-                    new_loc = swarm._project_and_slide_2D(newstartpt, newendpt,
-                                                           intersection_n, mesh, 
-                                                           max_meshpt_dist)
-                return new_loc
+                                                        close_mesh[:,0,:], 
+                                                        close_mesh[:,1,:])
+            elif DIM == 3:
+                intersection_n = geom.seg_intersect_3D_triangles(newstartpt, newendpt,
+                             close_mesh[:,0,:], close_mesh[:,1,:], close_mesh[:,2,:])
+            if intersection_n is None:
+                return newendpt
             else:
-                # Ended on mesh element
-                # Perturb back toward where the agent came from.
-                return slide_pt + EPS*norm_out_u
-            
+                # Get idx in intersection_n to match full mesh instead of close_mesh
+                elem = close_mesh[intersection_n[-1]]
+                idx_n = np.argwhere((elem == mesh).all(axis=(1,2)))[0,0]
+                intersection_n = (*intersection_n[:-1], idx_n)
+                new_loc = swarm._project_and_slide_static(newstartpt, newendpt,
+                                                          intersection_n, mesh, 
+                                                          max_meshpt_dist)
+            return new_loc
         else:
-            raise NotImplementedError("New 3D project_and_slide not implemented.")
+            # Ended on mesh element
+            # Perturb back toward where the agent came from.
+            return slide_pt + EPS*Q_norm_u
 
 
 
