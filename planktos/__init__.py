@@ -12,7 +12,7 @@ Provides
 __author__ = "W. Christopher Strickland"
 __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2025, Christopher Strickland"
-__version__ = '1.0.0'
+__version__ = '1.1.0'
 
 from .environment import environment
 from .swarm import swarm
