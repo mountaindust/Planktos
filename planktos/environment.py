@@ -3301,7 +3301,7 @@ class environment:
                                             s.velocities[~s.velocities[:,0].mask,:]))
                 try:
                     # solve
-                    y_new = planktos.motion.RK45(ode_fun, current_time, y, new_time, h_start=t_bound)
+                    y_new = planktos.motion.RK45(ode_fun, current_time, y, new_time, first_step=t_bound)
                 except Exception as err:
                     print('RK45 solver returned an error at time {} with step_size {}.'.format(
                           current_time, dt))

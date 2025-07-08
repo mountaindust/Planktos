@@ -19,6 +19,7 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 
 import numpy as np
 import numpy.ma as ma
+from scipy.integrate import solve_ivp
 
 
 
@@ -54,13 +55,20 @@ def flatten_ode(swarm):
 
 # TODO: diffusion in porous media https://en.wikipedia.org/wiki/Diffusion#Diffusion_in_porous_media
 
-def RK45(fun, t0, y0, tf, rtol=0.0001, atol=1e-06, h_start=None):
-    '''Runge-Kutta Dormand-Prince [1]_ solver (variable time-step solver). 
+def RK45(fun, t0, y0, tf, **kwargs):
+    '''This is now a wrapper around scipy.integrate.solve_ivp, calling the 
+    Runge-Kutta Dormand-Prince [1]_ solver (variable time-step solver) by default.
+    It offers a more robust solution than the former, custom implementation.
     
     The passed in ode function (fun) must have call signature (t,x) where x is 
     a 2-D array with a number of columns equal to the spatial dimension.
-    The solver will run to tf and then return, after which boundary conditions 
-    can be checked within a swarm object before restarting at the next time step.
+    The solver will run to tf and then return. It is expected that boundary 
+    conditions will be checked after this routine within a swarm object before 
+    the next time step.
+
+    Keyword arguments will be passed to solve_ivp. Important ones include 
+    atol and rtol; please see the documentation for scipy.integrate.solve_ivp 
+    for further info. Default values: rtol=1e-3 and atol=1e-6.
 
     Parameters
     ----------
@@ -74,12 +82,6 @@ def RK45(fun, t0, y0, tf, rtol=0.0001, atol=1e-06, h_start=None):
         initial state.
     tf : float
         final time, e.g. time to integrate to.
-    rtol, atol : float, defaults=0.0001, 1e-06
-        relative and absolute tolerance. The solver keeps the local error 
-        estimates less than ``atol + rtol * abs(y)``.
-    h_start : float, optional
-        time step-size to attempt first. Also the maximum step size to use. 
-        Defaults to (tf-t0)*0.5.
 
     Returns
     -------
@@ -92,67 +94,14 @@ def RK45(fun, t0, y0, tf, rtol=0.0001, atol=1e-06, h_start=None):
        formulae, *Journal of Computational and Applied Mathematics*, 6(1), 19-26.
     '''
 
-    A = np.array([0, 1/5, 3/10, 4/5, 8/9, 1, 1])
-    B = np.array([[1/5, 0, 0, 0, 0, 0],
-                  [3/40, 9/40, 0, 0, 0, 0],
-                  [44/45, -56/15, 32/9, 0, 0, 0],
-                  [19372/6561, -25360/2187, 64448/6561, -212/729, 0, 0],
-                  [9017/3168, -355/33, 46732/5247, 49/176, -5103/18656, 0],
-                  [35/384, 0, 500/1113, 125/192, -2187/6784, 11/84]])
-    E = np.array([5179/57600, 0, 7571/16695, 393/640, -92097/339200, 187/2100, 1/40])
+    if not isinstance(y0,np.ndarray) or len(y0.shape) != 2:
+        raise TypeError("y0 must be an ndarray of shape (N,D)")
+    N,D = y0.shape
+    vecfun = lambda t,x: fun(t,x.reshape(N,D)).flatten()
 
-    if h_start is None:
-        h_start = (tf-t0)*0.5
+    result = solve_ivp(vecfun, (t0, tf), y0.flatten(), vectorized=False, **kwargs)
 
-    t = t0
-    h = h_start
-
-    if isinstance(y0,np.ndarray):
-        K = np.zeros((7,y0.shape[0],y0.shape[1]))
-        y = np.array(y0)
-    else:
-        K = np.zeros(7)
-        y = y0
-    K[0] = fun(t0, y0)
-
-    while t<tf:
-        K[1] = fun(t+A[1]*h, y+h*(B[0,0]*K[0]))
-        K[2] = fun(t+A[2]*h, y+h*(B[1,0]*K[0]+B[1,1]*K[1]))
-        K[3] = fun(t+A[3]*h, y+h*(B[2,0]*K[0]+B[2,1]*K[1]+B[2,2]*K[2]))
-        K[4] = fun(t+A[4]*h, y+h*(B[3,0]*K[0]+B[3,1]*K[1]+B[3,2]*K[2]+B[3,3]*K[3]))
-        K[5] = fun(t+A[5]*h, y+h*(B[4,0]*K[0]+B[4,1]*K[1]+B[4,2]*K[2]+B[4,3]*K[3]+B[4,4]*K[4]))
-        y_new = y+h*(B[5,0]*K[0]+B[5,1]*K[1]+B[5,2]*K[2]+B[5,3]*K[3]+B[5,4]*K[4]+B[5,5]*K[5])
-        t_new = t+h
-        K[6] = fun(t_new, y_new)
-        err = y_new - (y+h*(E[0]*K[0]+E[1]*K[1]+E[2]*K[2]+E[3]*K[3]+E[4]*K[4]+E[5]*K[5]+E[6]*K[6]))
-
-        # Control on the maximum of the 2-norm of any particle's movement
-        if isinstance(y0,np.ndarray):
-            TE = np.max(np.linalg.norm(err,axis=1))
-        else:
-            TE = np.linalg.norm(err)
-        if np.isnan(TE):
-            raise RuntimeError("nan error in RK45 solver.")
-
-        eps = atol + rtol*np.max(np.abs(y))
-        h_last = h
-        # update stepsize h
-        if TE != 0:
-            h = min(h_start, 0.9*h*(eps/TE)**0.2)
-
-        if TE <= eps:
-            # accept step and continue
-            K[0] = K[6]
-            y = y_new
-            t = t_new
-            # adjust step size if necessary to not go past tf
-            if t+h > tf:
-                h = tf-t
-        else:
-            print("Restarting RK45 with h={} at t={}.".format(h,t))
-            print("(Error={} versus eps={}.)".format(TE,eps))
-
-    return y
+    return result.y[:,-1].reshape(N,D)
 
 
 
