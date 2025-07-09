@@ -14,7 +14,7 @@ __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
 import numpy as np
-import decimal
+
 # from scipy.spatial import distance # used in _project_and_slide
 
 def closest_dist_btwn_line_and_pts(startpt, endpt, pt_list):

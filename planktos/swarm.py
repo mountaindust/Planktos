@@ -13,7 +13,6 @@ from pathlib import Path
 import numpy as np
 import numpy.ma as ma
 from scipy import stats, integrate, optimize
-from scipy.spatial import distance
 import pandas as pd
 if sys.platform == 'darwin': # OSX backend does not support blitting
     import matplotlib
@@ -23,7 +22,8 @@ from matplotlib import animation, colors
 from matplotlib.collections import LineCollection
 from matplotlib.path import Path as mPath
 
-from planktos import Environment, dataio, motion, geom
+from planktos import Environment
+from . import dataio, motion, geom
 
 __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"

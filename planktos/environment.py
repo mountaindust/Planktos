@@ -28,7 +28,7 @@ from mpl_toolkits import mplot3d
 from matplotlib.collections import LineCollection
 
 import planktos
-from planktos import dataio
+from . import dataio
 
 if dataio.NETCDF:
     from cftime import date2num
