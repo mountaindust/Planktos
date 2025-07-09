@@ -277,18 +277,18 @@ class Environment:
                     # time-dependent flow
                     assert flow[0].shape[0] == flow[1].shape[0] == flow[2].shape[0]
                     assert flow_times is not None, "Must provide flow_times"
-                    self.__set_flow_variables(flow_times)
+                    self._set_flow_variables(flow_times)
                 else:
-                    self.__set_flow_variables()
+                    self._set_flow_variables()
             else:
                 # 2D flow
                 if max([len(f.shape) for f in flow]) > 2:
                     # time-dependent flow
                     assert flow[0].shape[0] == flow[1].shape[0]
                     assert flow_times is not None, "Must provide flow_times"
-                    self.__set_flow_variables(flow_times)
+                    self._set_flow_variables(flow_times)
                 else:
-                    self.__set_flow_variables()
+                    self._set_flow_variables()
 
         ##### swarm list #####
 
@@ -608,15 +608,15 @@ class Environment:
                 # no time; (y,x) -> (x,y) coordinates
                 flow = flow.T
                 self.flow = [flow, np.zeros_like(flow)] #x-direction, y-direction
-                self.__set_flow_variables()
+                self._set_flow_variables()
             else:
                 #time-dependent; (t,y,x)-> (t,x,y) coordinates
                 flow = np.transpose(flow, axes=(0, 2, 1))
                 self.flow = [flow, np.zeros_like(flow)]
                 if tspan is None:
-                    self.__set_flow_variables(tspan=1)
+                    self._set_flow_variables(tspan=1)
                 else:
-                    self.__set_flow_variables(tspan=tspan)
+                    self._set_flow_variables(tspan=tspan)
         else:
             # 3D
             if len(flow.shape) == 2:
@@ -625,7 +625,7 @@ class Environment:
                 flow = np.transpose(flow, axes=(2, 0, 1)) #(x,y,z)
                 self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
 
-                self.__set_flow_variables()
+                self._set_flow_variables()
 
             else:
                 # (t,z,x) -> (t,z,y,x) coordinates
@@ -634,15 +634,15 @@ class Environment:
                 self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
 
                 if tspan is None:
-                    self.__set_flow_variables(tspan=1)
+                    self._set_flow_variables(tspan=1)
                 else:
-                    self.__set_flow_variables(tspan=tspan)
-        self.__reset_flow_variables()
+                    self._set_flow_variables(tspan=tspan)
+        self._reset_flow_variables()
         self.h_p = h_p
 
 
 
-    def __set_flow_variables(self, tspan=None):
+    def _set_flow_variables(self, tspan=None):
         '''Store points at which flow is specified, and time information.
 
         Parameters
@@ -770,8 +770,8 @@ class Environment:
                          np.zeros((res,res,res))]
 
         # housekeeping
-        self.__set_flow_variables()
-        self.__reset_flow_variables()
+        self._set_flow_variables()
+        self._reset_flow_variables()
         self.fluid_domain_LLC = None
         self.h_p = h_p
 
@@ -956,7 +956,7 @@ class Environment:
                 # 3D
                 flow = np.broadcast_to(U_B,(res,res,res))
                 self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
-            self.__set_flow_variables()
+            self._set_flow_variables()
         else:
             # time dependent
             if len(self.L) == 2:
@@ -974,13 +974,13 @@ class Environment:
                 flow = np.transpose(flow, axes=(2,0,1,3))
                 self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
             if tspan is None:
-                self.__set_flow_variables(tspan=1)
+                self._set_flow_variables(tspan=1)
             else:
-                self.__set_flow_variables(tspan=tspan)
+                self._set_flow_variables(tspan=tspan)
 
 
         # housekeeping
-        self.__reset_flow_variables()
+        self._reset_flow_variables()
         self.fluid_domain_LLC = None
         self.h_p = h
 
@@ -1175,7 +1175,7 @@ class Environment:
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(3)]
-        self.__reset_flow_variables()
+        self._reset_flow_variables()
         # record the original lower left corner (can be useful for later imports)
         self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
 
@@ -1255,7 +1255,7 @@ class Environment:
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(3)]
-        self.__reset_flow_variables()
+        self._reset_flow_variables()
         # record the original lower left corner (can be useful for later imports)
         self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
 
@@ -1304,7 +1304,7 @@ class Environment:
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(3)]
-        self.__reset_flow_variables()
+        self._reset_flow_variables()
         # record the original lower left corner (can be useful for later imports)
         self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
 
@@ -1535,7 +1535,7 @@ class Environment:
         self.L = [self.flow_points[dim][-1] for dim in range(s_dim)]
         if time_dep:
             self.flow_times = flow_times
-        self.__reset_flow_variables()
+        self._reset_flow_variables()
         if s_dim == 2:
             self.fluid_domain_LLC = (flow_points_x[0], flow_points_y[0])
         else:
@@ -1610,7 +1610,7 @@ class Environment:
 
         # replace domain length
         self.L = [self.flow_points[d][-1] for d in range(dim)]
-        self.__reset_flow_variables()
+        self._reset_flow_variables()
 
 
 
@@ -1881,7 +1881,7 @@ class Environment:
         self.flow = flow
         self.L = [self.flow_points[d][-1] for d in range(len(flow_points))]
         self.fluid_domain_LLC = tuple(np.array(self.fluid_domain_LLC)-np.array(intervals)*0.5)
-        self.__reset_flow_variables()
+        self._reset_flow_variables()
 
 
     #######################################################################
@@ -2374,7 +2374,7 @@ class Environment:
                     newmeshs.append(new_mesh)
             self.ibmesh = np.concatenate(newmeshs).astype(np.float64)
         print("Fluid tiled. Planktos domain size is now {}.".format(self.L))
-        self.__reset_flow_deriv()
+        self._reset_flow_deriv()
 
 
 
@@ -2505,7 +2505,7 @@ class Environment:
             self.flow_points = (new_points[0]-new_points[0][0], new_points[1]-new_points[1][0])
             self.L = [self.flow_points[dim][-1] for dim in range(2)]
 
-        self.__reset_flow_deriv()
+        self._reset_flow_deriv()
 
 
     #######################################################################
@@ -3856,7 +3856,7 @@ class Environment:
 
 
 
-    def __reset_flow_variables(self, incl_rho_mu_U=False):
+    def _reset_flow_variables(self, incl_rho_mu_U=False):
         '''To be used when the fluid flow changes. Resets all the helper
         parameters and reports new domain.'''
 
@@ -3865,7 +3865,7 @@ class Environment:
         self.orig_L = None
         self.plot_structs = []
         self.plot_structs_args = []
-        self.__reset_flow_deriv()
+        self._reset_flow_deriv()
         if incl_rho_mu_U:
             self.mu = None
             self.rho = None
@@ -3874,7 +3874,7 @@ class Environment:
 
 
 
-    def __reset_flow_deriv(self):
+    def _reset_flow_deriv(self):
         '''Reset properties that are derived from the flow velocity.'''
 
         self.mag_grad = None
