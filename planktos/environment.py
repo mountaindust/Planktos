@@ -642,44 +642,6 @@ class Environment:
 
 
 
-    def _set_flow_variables(self, tspan=None):
-        '''Store points at which flow is specified, and time information.
-
-        Parameters
-        ----------
-            tspan : float, floats [tstart, tend], or iterable, optional
-                times at which flow is specified or scalar dt. Required if flow 
-                is time-dependent; None will be interpreted as non time-dependent 
-                flow.
-        '''
-
-        # Get points defining the spatial grid for flow data
-        points = []
-        if tspan is None:
-            # no time-dependent flow
-            for dim, mesh_size in enumerate(self.flow[0].shape[::-1]):
-                points.append(np.linspace(0, self.L[dim], mesh_size))
-        else:
-            # time-dependent flow
-            for dim, mesh_size in enumerate(self.flow[0].shape[:0:-1]):
-                points.append(np.linspace(0, self.L[dim], mesh_size))
-        self.flow_points = tuple(points)
-
-        # set time
-        if tspan is not None:
-            if not hasattr(tspan, '__iter__'):
-                # set flow_times based off zero
-                self.flow_times = np.arange(0, tspan*self.flow[0].shape[0], tspan)
-            elif len(tspan) == 2:
-                self.flow_times = np.linspace(tspan[0], tspan[1], self.flow[0].shape[0])
-            else:
-                assert len(tspan) == self.flow[0].shape[0]
-                self.flow_times = np.array(tspan)
-        else:
-            self.flow_times = None
-
-
-
     def set_two_layer_channel_flow(self, a, h_p, Cd, S, res=101):
         '''Apply wide-channel flow with vegetation layer according to the
         two-layer model described in Defina and Bixio (2005), 
@@ -983,6 +945,44 @@ class Environment:
         self._reset_flow_variables()
         self.fluid_domain_LLC = None
         self.h_p = h
+
+
+
+    def _set_flow_variables(self, tspan=None):
+        '''Store points at which flow is specified, and time information.
+
+        Parameters
+        ----------
+            tspan : float, floats [tstart, tend], or iterable, optional
+                times at which flow is specified or scalar dt. Required if flow 
+                is time-dependent; None will be interpreted as non time-dependent 
+                flow.
+        '''
+
+        # Get points defining the spatial grid for flow data
+        points = []
+        if tspan is None:
+            # no time-dependent flow
+            for dim, mesh_size in enumerate(self.flow[0].shape[::-1]):
+                points.append(np.linspace(0, self.L[dim], mesh_size))
+        else:
+            # time-dependent flow
+            for dim, mesh_size in enumerate(self.flow[0].shape[:0:-1]):
+                points.append(np.linspace(0, self.L[dim], mesh_size))
+        self.flow_points = tuple(points)
+
+        # set time
+        if tspan is not None:
+            if not hasattr(tspan, '__iter__'):
+                # set flow_times based off zero
+                self.flow_times = np.arange(0, tspan*self.flow[0].shape[0], tspan)
+            elif len(tspan) == 2:
+                self.flow_times = np.linspace(tspan[0], tspan[1], self.flow[0].shape[0])
+            else:
+                assert len(tspan) == self.flow[0].shape[0]
+                self.flow_times = np.array(tspan)
+        else:
+            self.flow_times = None
 
 
     #######################################################################
