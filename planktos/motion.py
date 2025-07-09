@@ -17,6 +17,7 @@ __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
+import warnings
 import numpy as np
 import numpy.ma as ma
 from scipy.integrate import solve_ivp
@@ -107,6 +108,7 @@ def RK45(fun, t0, y0, tf, **kwargs):
 
 def Euler_brownian_motion(swarm, dt, positions=None, velocities=None, 
                           mu=None, ode=None, sigma=None):
+    warnings.simplefilter("ignore", category=SyntaxWarning)
     '''Uses the Euler-Maruyama method to solve the Ito SDE
     
         .. math::
@@ -206,6 +208,7 @@ def Euler_brownian_motion(swarm, dt, positions=None, velocities=None,
     Stratonovich function call at that time too, because with a spatially 
     dependent sigma, Ito and Stratonovich are no longer equivalent.
     '''
+    warnings.resetwarnings()
     
     # get critical info about number of agents and dimension of domain
     if positions is not None:
@@ -335,6 +338,7 @@ def Euler_brownian_motion(swarm, dt, positions=None, velocities=None,
 #############################################################################
 
 def inertial_particles(swarm):
+    warnings.simplefilter("ignore", category=SyntaxWarning)
     '''Function generator for ODEs governing small, rigid, spherical particles 
     whose dynamics can be described by the linearized Maxey-Riley equation [2]_
     described in Haller and Sapsis (2008) [3]_. 
@@ -384,6 +388,7 @@ def inertial_particles(swarm):
     .. [3] Haller, G. and Sapsis, T. (2008). Where do inertial particles go in
       fluid flows? Physica D: Nonlinear Phenomena, 237(5), 573-583.
     '''
+    warnings.resetwarnings()
     
     ##### Check for presence of required physical parameters #####
     try:
