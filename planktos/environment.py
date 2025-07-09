@@ -28,7 +28,7 @@ from mpl_toolkits import mplot3d
 from matplotlib.collections import LineCollection
 
 import planktos
-from . import dataio
+from . import dataio, fluid
 
 if dataio.NETCDF:
     from cftime import date2num
@@ -1040,96 +1040,31 @@ class Environment:
                 d_finish = u_nums[-1]
             vector_data = False
 
-        X_vel = []
-        Y_vel = []
-        path = str(path) # Get string for passing into functions
-
-        print('Reading vtk fluid data...')
-        
-        for n in range(d_start, d_finish+1):
-            # Points to desired data viz_IB2d data file
-            if n < 10:
-                numSim = '000'+str(n)
-            elif n < 100:
-                numSim = '00'+str(n)
-            elif n < 1000:
-                numSim = '0'+str(n)
-            else:
-                numSim = str(n)
-
-            # Imports (x,y) grid values and ALL Eulerian Data %
-            #                      DEFINITIONS
-            #          x: x-grid                y: y-grid
-            #       Omega: vorticity           P: pressure
-            #    uMag: mag. of velocity
-            #    uX: mag. of x-Velocity   uY: mag. of y-Velocity
-            #    u: velocity vector
-            #    Fx: x-directed Force     Fy: y-directed Force
-            #
-            #  Note: U(j,i): j-corresponds to y-index, i to the x-index
-            
-            if vector_data:
-                # read in vector velocity data
-                strChoice = 'u'; xy = True
-                uX, uY, x, y = dataio.read_2DEulerian_Data_From_vtk(path, numSim,
-                                                                     strChoice,xy)
-                X_vel.append(uX.T) # (y,x) -> (x,y) coordinates
-                Y_vel.append(uY.T) # (y,x) -> (x,y) coordinates
-            else:
-                # read in x-directed Velocity Magnitude #
-                strChoice = 'uX'; xy = True
-                uX,x,y = dataio.read_2DEulerian_Data_From_vtk(path,numSim,
-                                                               strChoice,xy)
-                X_vel.append(uX.T) # (y,x) -> (x,y) coordinates
-
-                # read in y-directed Velocity Magnitude #
-                strChoice = 'uY'
-                uY = dataio.read_2DEulerian_Data_From_vtk(path,numSim,
-                                                           strChoice)
-                Y_vel.append(uY.T) # (y,x) -> (x,y) coordinates
-
-            ###### The following is just for reference! ######
-
-            # read in Vorticity #
-            # strChoice = 'Omega'; first = 0
-            # Omega = dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
-            #                                               strChoice,first)
-            # read in Pressure #
-            # strChoice = 'P'; first = 0
-            # P = dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
-            #                                           strChoice,first)
-            # read in Velocity Magnitude #
-            # strChoice = 'uMag'; first = 0
-            # uMag = dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
-            #                                              strChoice,first)
-            # read in x-directed Forces #
-            # strChoice = 'Fx'; first = 0
-            # Fx = dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
-            #                                            strChoice,first)
-            # read in y-directed Forces #
-            # strChoice = 'Fy'; first = 0
-            # Fy = dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
-            #                                            strChoice,first)
-
-            ###################################################
-
-        print('Done!')
-
-        ### Save data ###
+        # Save time data
         if d_start != d_finish:
-            self.flow = [np.transpose(np.dstack(X_vel),(2,0,1)), 
-                         np.transpose(np.dstack(Y_vel),(2,0,1))] 
             self.flow_times = np.arange(d_start,d_finish+1)*print_dump*dt
             # shift time so that flow starts at t=0
             self.flow_times -= self.flow_times[0]
         else:
-            self.flow = [X_vel[0], Y_vel[0]]
             self.flow_times = None
+
+        path = str(path) # Get string for passing into functions
+
+        ### Load fluid data ###
+        print('Reading vtk fluid data...')
+        self.flow, x, y = fluid.read_IB2d_dumpfiles(path, d_start, d_finish, 
+                                                    vector_data)
+        print('Done!')
+
         # shift domain to quadrant 1
         self.flow_points = (x-x[0], y-y[0])
         self.fluid_domain_LLC = (x[0], y[0])
 
         ### Convert environment dimensions and add back the periodic gridpoints ###
+        # IB2d always has periodic BC and returns a VTK with fluid specified 
+        #     at grid points but lacking the grid points at the end of the 
+        #     domain (since it's a duplicate). Make the fluid periodic within 
+        #     Planktos and to fill out the domain by adding back these last points
         self.L = [self.flow_points[dim][-1] for dim in range(2)]
         self.wrap_flow(periodic_dim=(True, True))
 
