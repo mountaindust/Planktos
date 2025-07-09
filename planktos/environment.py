@@ -258,7 +258,6 @@ class Environment:
         self.DuDt = None
         self.DuDt_time = None
         self.flow = flow
-        self.dt_interp = None # list of PPoly objs for temporal derivative interpolation
 
         if flow is not None:
             try:
@@ -2452,8 +2451,8 @@ class Environment:
         # If fCubicSplines do not exist, create them.
         if self.flow is None:
             raise RuntimeError("Cannot temporally interpolate None flow.")
-        if not all([type(f) == fCubicSpline for f in self.flow]):
-            self._create_temporal_interpolations()
+        if not all([type(f) == fluid.fCubicSpline for f in self.flow]):
+            self.flow = fluid.create_temporal_interpolations(self.flow_times, self.flow)
 
         if t_index is None and time is None:
             time = self.time
@@ -2468,30 +2467,6 @@ class Environment:
         else:
             # interpolate
             return [f(time) for f in self.flow]
-
-
-
-    def _create_temporal_interpolations(self):
-        '''Create PPoly fCubicSplines to interpolate the fluid velocity in time.'''
-        for n, flow in enumerate(self.flow):
-            # Defaults to axis=0 along which data is varying, which is t axis
-            # Defaults to not-a-knot boundary condition, resulting in first
-            #   and second segments at curve ends being the same polynomial
-            # Defaults to extrapolating out-of-bounds points based on first
-            #   and last intervals. This will be overriden by this method
-            #   to use constant extrapolation instead.
-            if type(flow) != fCubicSpline:
-                self.flow[n] = fCubicSpline(self.flow_times, flow)
-
-
-
-    def _create_dt_interpolations(self):
-        '''Create PPoly objects for dudt.'''
-        self.dt_interp = []
-        if not all([type(f) == fCubicSpline for f in self.flow]):
-            self._create_temporal_interpolations()
-        for ppoly in self.flow:
-            self.dt_interp.append(ppoly.derivative())
 
 
 
@@ -3544,10 +3519,14 @@ class Environment:
             return [np.zeros_like(f) for f in self.flow]
         else:
             # temporal flow.
-            # If PPoly derivatives do not exist, create them.
-            if self.dt_interp is None:
-                self._create_dt_interpolations()
-            return [dfdt(time) for dfdt in self.dt_interp]
+            # Create temporary PPoly objects for dudt.
+            if not all([type(f) == fluid.fCubicSpline for f in self.flow]):
+                self.flow = fluid.create_temporal_interpolations(self.flow_times, self.flow)
+            dudt_list = []
+            for ppoly in self.flow:
+                dfdt = ppoly.derivative()
+                dudt_list.append(dfdt(time))
+            return dudt_list
 
 
 
@@ -3659,7 +3638,6 @@ class Environment:
 
         self.mag_grad = None
         self.mag_grad_time = None
-        self.dt_interp = None
         self.DuDt = None
         self.DuDt_time = None
 
@@ -4269,76 +4247,5 @@ class Environment:
         cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])
         plt.colorbar(pcm, cax=cbaxes)
         plt.show()
-
-
-    #######################################################################
-    #####               FLUID INTERPOLATION OBJECTS                   #####
-    #######################################################################
-
-
-class fCubicSpline(interpolate.CubicSpline):
-    '''
-    Extends Scipy's CubicSpline object to get info about original fluid data.
-    '''
-
-    def __init__(self, flow_times, flow, **kwargs):
-        super(fCubicSpline, self).__init__(flow_times, flow, **kwargs)
-
-        self.shape = flow.shape
-        self.data_max = flow.max()
-        self.data_min = flow.min()
-
-
-
-    def __getitem__(self, pos):
-        '''
-        Allows indexing into the interpolator.
-        '''
-        if type(pos) == int:
-            return self.__call__(self.x[pos])
-        elif type(pos) == slice:
-            start = pos.start; stop = pos.stop; step = pos.step
-            if start is None: start = 0
-            if stop is None: stop = len(self.x)
-            if step is None: step = 1
-            return np.stack([self.__call__(self.x[n]) for 
-                             n in range(start,stop,step)])
-        elif type(pos) == tuple:
-            if type(pos[0]) == int:
-                return self.__call__(self.x[pos[0]])[pos[1:]]
-            elif type(pos[0]) == slice:
-                start = pos[0].start; stop = pos[0].stop; step = pos[0].step
-                if start is None: start = 0
-                if stop is None: stop = len(self.x)
-                if step is None: step = 1
-                return np.stack([self.__call__(self.x[n])[pos[1:]] for 
-                                 n in range(start,stop,step)])
-            else:
-                raise IndexError('Only integers or slices supported in fCubicSpline.')
-        else:
-            raise IndexError('Only integers or slices supported in fCubicSpline.')
-
-
-
-    def __setitem__(self, pos, val):
-        raise RuntimeError("Cannot assign to spline object. "+
-                           "Use regenerate_data to recreate original data first.")
-
-
-
-    def max(self):
-        return self.data_max
-
-    def min(self):
-        return self.data_min
-
-    def absmax(self):
-        return np.abs(np.array([self.data_max, self.data_min])).max()
-
-    def regenerate_data(self):
-        '''
-        Rebuild the original data.
-        '''
-        return np.stack([self.__call__(val) for val in self.x])
 
 

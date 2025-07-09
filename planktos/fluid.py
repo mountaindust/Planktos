@@ -10,6 +10,7 @@ Email: cstric12@utk.edu
 
 import warnings
 import numpy as np
+from scipy import interpolate
 from pathlib import Path
 from . import dataio
 
@@ -280,3 +281,102 @@ def read_IBAMR3d_vtkfiles(path, d_start=0, d_finish=None,
             mesh[ii] = m*grid_conv
 
     return flow, mesh, flow_times
+
+
+
+#######################################################################
+#####           FLUID TEMPORAL INTERPOLATION ROUTINES             #####
+#######################################################################
+
+def create_temporal_interpolations(flow_times, flow_data):
+    '''This function controls how temporal interpolations of the fluid
+    velocity data will be created for the Environment class.
+
+    Parameters
+    ----------
+    flow_times : 1D array of time points
+    flow_data : list of ndarrays with fluid velocity field data.
+        This data should be expected to be overwritten to save space.
+
+    Returns
+    -------
+    list of interpolation objects (PPoly)
+    '''
+
+    for n, flow in enumerate(flow_data):
+        # Defaults to axis=0 along which data is varying, which is t axis
+        # Defaults to not-a-knot boundary condition, resulting in first
+        #   and second segments at curve ends being the same polynomial
+        # Defaults to extrapolating out-of-bounds points based on first
+        #   and last intervals. This will be overriden by this method
+        #   to use constant extrapolation instead.
+        flow_data[n] = fCubicSpline(flow_times, flow)
+    return flow_data
+
+
+
+class fCubicSpline(interpolate.CubicSpline):
+    '''
+    Extends Scipy's CubicSpline object to get info about original fluid data.
+    '''
+
+    def __init__(self, flow_times, flow, **kwargs):
+        super(fCubicSpline, self).__init__(flow_times, flow, **kwargs)
+
+        self.shape = flow.shape
+        self.data_max = flow.max()
+        self.data_min = flow.min()
+
+
+
+    def __getitem__(self, pos):
+        '''
+        Allows indexing into the interpolator.
+        '''
+        if type(pos) == int:
+            return self.__call__(self.x[pos])
+        elif type(pos) == slice:
+            start = pos.start; stop = pos.stop; step = pos.step
+            if start is None: start = 0
+            if stop is None: stop = len(self.x)
+            if step is None: step = 1
+            return np.stack([self.__call__(self.x[n]) for 
+                             n in range(start,stop,step)])
+        elif type(pos) == tuple:
+            if type(pos[0]) == int:
+                return self.__call__(self.x[pos[0]])[pos[1:]]
+            elif type(pos[0]) == slice:
+                start = pos[0].start; stop = pos[0].stop; step = pos[0].step
+                if start is None: start = 0
+                if stop is None: stop = len(self.x)
+                if step is None: step = 1
+                return np.stack([self.__call__(self.x[n])[pos[1:]] for 
+                                 n in range(start,stop,step)])
+            else:
+                raise IndexError('Only integers or slices supported in fCubicSpline.')
+        else:
+            raise IndexError('Only integers or slices supported in fCubicSpline.')
+
+
+
+    def __setitem__(self, pos, val):
+        raise RuntimeError("Cannot assign to spline object. "+
+                           "Use regenerate_data to recreate original data first.")
+
+
+
+    def max(self):
+        return self.data_max
+
+    def min(self):
+        return self.data_min
+
+    def absmax(self):
+        return np.abs(np.array([self.data_max, self.data_min])).max()
+
+    def regenerate_data(self):
+        '''
+        Rebuild the original data.
+        '''
+        return np.stack([self.__call__(val) for val in self.x])
+
