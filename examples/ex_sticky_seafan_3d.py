@@ -33,7 +33,7 @@ envir.read_stl_mesh_data('comsol_data/seafan_cylinder.stl')
 envir.tile_flow(x=13)
 
 # See ex_ib2d_sticky for details about this "sticky" behavior!
-class permstick(planktos.swarm):
+class permstick(planktos.Swarm):
     def get_positions(self, dt, params):
         stick = self.get_prop('stick')
         all_move = planktos.motion.Euler_brownian_motion(self, dt)

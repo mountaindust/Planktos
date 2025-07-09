@@ -38,10 +38,10 @@ are only available in 2D. ::
 
 .. image:: ../_static/basic_ex_3d_envir.png
 
-Now let's repeat the steps from basic_ex_2d.py, creating a default swarm,
+Now let's repeat the steps from basic_ex_2d.py, creating a default Swarm,
 changing the covariance, running the simulation, and plotting. ::
 
-    swrm = planktos.swarm(envir=envir)
+    swrm = planktos.Swarm(envir=envir)
     swrm.shared_props['cov'] = swrm.shared_props['cov'] * 0.01
 
     print('Moving swarm...')

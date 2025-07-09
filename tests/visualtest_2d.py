@@ -14,7 +14,7 @@ envir.read_IB2d_fluid_data('data/leaf_data', 1.0e-5, 100, d_start=1)
 envir.read_IB2d_mesh_data('data/leaf_data/leaf.vertex', 1.45)
 envir.add_vertices_to_static_2D_ibmesh()
 
-class permstick(planktos.swarm):
+class permstick(planktos.Swarm):
     def get_positions(self, dt, params):
         stick = self.get_prop('stick')
         return np.expand_dims(~stick,1)*super().get_positions(dt, params=params) +\

@@ -39,16 +39,16 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 
 class Environment:
     '''
-    Rectangular environment containing fluid info, immersed meshs, and swarms.
+    Rectangular environment containing fluid info, immersed meshs, and Swarms.
 
     The Environment class does much of the heavy lifting of Planktos. It loads 
     and contains information about the fluid velocity field, the dimensions of 
     the physical environment being simulated, boundary conditions for the agents, 
-    the agent swarms that are in the environment, any immersed meshes, and all 
+    the agent Swarms that are in the environment, any immersed meshes, and all 
     simulation time information. Additionally, it provides functions for 
     manipulating the fluid velocity field in certain ways (e.g. extending,  
     tiling, and interpolating), calculating vorticity and FTLE, viewing info 
-    about the fluid itself, and calling the move function on all swarms 
+    about the fluid itself, and calling the move function on all Swarms 
     contained in the environment. It is essential to any Planktos simulation 
     and typically the first Planktos object you create.
 
@@ -109,8 +109,8 @@ class Environment:
         and/or when simulating inertial particles
     U : float, optional
         characteristic fluid speed. Used for some calculations.
-    init_swarms : swarm object or list of swarm objects, optional
-        initial swarms in this environment. Can be added later.
+    init_swarms : Swarm object or list of Swarm objects, optional
+        initial Swarms in this environment. Can be added later.
     units : string, default='m'
         length units to use, default is meters. Note that you will
         manually need to change self.g (accel due to gravity) if using
@@ -129,8 +129,8 @@ class Environment:
         so it's probably best to work in meters.
     bndry :  list of lists, each with two of {'zero', 'noflux', 'periodic'}
         Boundary conditions in each direction [x, y, [z]] for agents
-    swarms : list of swarm objects
-        The swarms that belong to this environment
+    swarms : list of Swarm objects
+        The Swarms that belong to this environment
     time : float
         current environment time
     time_history : list of floats
@@ -299,7 +299,7 @@ class Environment:
                 self.swarms = init_swarms
             else:
                 self.swarms = [init_swarms]
-            # reset each swarm's environment
+            # reset each Swarm's environment
             for sw in self.swarms:
                 sw.envir = self
 
@@ -2514,32 +2514,32 @@ class Environment:
 
 
     def add_swarm(self, swarm_size=100, **kwargs):
-        ''' Adds a swarm into this Environment.
+        ''' Adds a Swarm into this Environment.
 
         Parameters
         ----------
-        swarm_size : swarm object or int (size of swarm), default=100
-            If a swarm object is given, all following parameters will be ignored 
+        swarm_size : Swarm object or int (size of swarm), default=100
+            If a Swarm object is given, all following parameters will be ignored 
             (since the object is already initialized)
         init : string
-            Method for initializing positions. See swarm class for options.
+            Method for initializing positions. See Swarm class for options.
         seed : int
             Seed for random number generator
         kwargs
-            keyword arguments to be set as swarm properties (see swarm class for 
+            keyword arguments to be set as Swarm properties (see Swarm class for 
             details)
         '''
 
-        if isinstance(swarm_size, planktos.swarm):
+        if isinstance(swarm_size, planktos.Swarm):
             swarm_size._change_envir(self)
         else:
-            return planktos.swarm(swarm_size, self, **kwargs)
+            return planktos.Swarm(swarm_size, self, **kwargs)
             
 
 
     def move_swarms(self, dt=1.0, params=None, ib_collisions='sliding', 
                     silent=False):
-        '''Move all swarms in the Environment.
+        '''Move all Swarms in the Environment.
 
         Parameters
         ----------
@@ -2893,7 +2893,7 @@ class Environment:
         Parameters
         ----------
         positions : Nx2 or Nx3 ndarray
-            ndarray of agent positions (e.g., swarm.positions)
+            ndarray of agent positions (e.g., Swarm.positions)
         dx : float
             length of grid cell in the x-direction
         dy : float
@@ -3127,7 +3127,7 @@ class Environment:
         be conducted with respect to the fluid velocity field loaded in this 
         environment and either tracer particle movement (default), an ode specifying
         deterministic equations of motion, or other arbitrary particle movement 
-        as specified by a swarm object's get_positions method and updated in 
+        as specified by a Swarm object's get_positions method and updated in 
         discrete time intervals of length dt.
 
         This method will set the following Environment attributes:
@@ -3138,7 +3138,7 @@ class Environment:
         - Environment.FTLE_T
         - Environment.FTLE_grid_dim
 
-        All FTLE calculations will be done using a swarm object. This means that:
+        All FTLE calculations will be done using a Swarm object. This means that:
         
         1) The boundary conditions specified by this environment will be respected.
         2) Immersed boundaries (if any are loaded into this environment) will be 
@@ -3147,9 +3147,9 @@ class Environment:
 
         If passing in a set of ode or finding the FTLE field for tracer particles, 
         an RK45 solver will be used. Otherwise, integration will be via the 
-        swarm object's get_positions method.
+        Swarm object's get_positions method.
 
-        If both ode and swarm arguments are None, the default is to calculate the 
+        If both ode and swrm arguments are None, the default is to calculate the 
         FTLE based on massless tracer particles.
 
         Parameters
@@ -3178,40 +3178,40 @@ class Environment:
             unless smallest FTLE is desired and agents are leaving the domain...
         dt : float, default=0.001
             if solving ode or tracer particles, this is the time step for 
-            checking boundary conditions. If passing in a swarm object, 
+            checking boundary conditions. If passing in a Swarm object, 
             this argument represents the length of the Euler time steps.
         ode_gen : function handle, optional
             functional handle for an ode generator that takes
-            in a swarm object and returns an ode function handle with
+            in a Swarm object and returns an ode function handle with
             call signature ODEs(t,x), where t is the current time (float) 
             and x is a 2*NxD array with the first N rows giving v=dxdt and 
             the second N rows giving dvdt. D is the spatial dimension of 
             the problem. See the ODE generator functions in motion.py for 
             examples of format. 
-            The ODEs will be solved using RK45 with a newly created swarm 
+            The ODEs will be solved using RK45 with a newly created Swarm 
             specified on a grid throughout the domain.
         props : dict, optional 
-            dictionary of properties for the swarm that will be created to solve 
+            dictionary of properties for the Swarm that will be created to solve 
             the odes. Effectively, this passes parameter values into the ode 
             generator. If unspecified, will default to the values for the first 
-            agent in the props of the swarm provided.
+            agent in the props of the Swarm provided.
         t_bound : float, optional
             if solving ode or tracer particles, this is the bound on
             the RK45 integration step size. Defaults to dt/100.
-        swrm : swarm object, optional 
-            swarm object with user-defined movement rules as 
+        swrm : Swarm object, optional 
+            Swarm object with user-defined movement rules as 
             specified by the get_positions method. This allows for arbitrary 
             FTLE calculations through subclassing and overriding this method. 
             Steps of length dt will be taken until the integration length T 
-            is reached. The swarm object itself will not be altered; a shallow 
+            is reached. The Swarm object itself will not be altered; a shallow 
             copy will be created for the purpose of calculating the FTLE on 
             a grid.
         params : dict, optional 
-            params to be passed to supplied swarm object's get_positions method.
+            params to be passed to supplied Swarm object's get_positions method.
 
         Returns
         -------
-        swarm object
+        Swarm object
             used to calculuate the FTLE
         list
             list of dt integration steps
@@ -3221,7 +3221,7 @@ class Environment:
         '''
 
         ###########################################################
-        ######              Setup swarm object               ######
+        ######              Setup Swarm object               ######
         ###########################################################
         if grid_dim is None:
             grid_dim = tuple(len(pts) for pts in self.flow_points)
@@ -3230,13 +3230,13 @@ class Environment:
             print("Warning: FTLE has not been well tested for 3D cases!")
 
         if swrm is None:
-            s = planktos.swarm(envir=self, shared_props=props, init='grid', 
+            s = planktos.Swarm(envir=self, shared_props=props, init='grid', 
                       grid_dim=grid_dim, testdir=testdir)
-            # NOTE: swarm has been appended to this environment!
+            # NOTE: Swarm has been appended to this environment!
         else:
-            # Get a shallow copy of the swarm passed in
+            # Get a shallow copy of the Swarm passed in
             s = copy.copy(swrm)
-            # Add swarm to Environment and re-initialize swarm positions
+            # Add Swarm to Environment and re-initialize swarm positions
             self.add_swarm(s)
             s.positions = s.grid_init(*grid_dim, testdir=testdir)
             s.pos_history = []
@@ -3263,7 +3263,7 @@ class Environment:
         ######              Solve for positions              ######
         ###########################################################
 
-        ###### OPTION A: Solve ODEs if no swarm object was passed in ######
+        ###### OPTION A: Solve ODEs if no Swarm object was passed in ######
 
         prnt_str = "Solving for positions from time {} to time {}:".format(t0,T)
         # NOTE: the scipy.integrate solvers convert masked arrays into ndarrays, 
@@ -3311,7 +3311,7 @@ class Environment:
                 old_positions = s.positions.copy()
                 old_velocities = s.velocities.copy()
 
-                # pull solution into swarm object's position/velocity attributes
+                # pull solution into Swarm object's position/velocity attributes
                 if ode_gen is None:
                     s.positions[~ma.getmaskarray(s.positions[:,0]),:] = y_new
                 else:
@@ -3353,15 +3353,15 @@ class Environment:
 
             # DONE SOLVING
 
-        ###### OPTION B: Run get_positions on supplied swarm object ######
+        ###### OPTION B: Run get_positions on supplied Swarm object ######
 
         else:
-            print("Finding {}D FTLE based on supplied swarm object.".format(len(grid_dim)))
+            print("Finding {}D FTLE based on supplied Swarm object.".format(len(grid_dim)))
             print(prnt_str)
             # save this environment's time history
             envir_time = self.time
             envir_time_history = list(self.time_history)
-            # now track this swarm's time
+            # now track this Swarm's time
             self.time = t0
             self.time_history = []
 
@@ -3834,8 +3834,8 @@ class Environment:
 
     def reset(self, rm_swarms=False):
         '''Resets environment to time=0. Swarm history will be lost, and all
-        swarms will maintain their last position and velocities. 
-        If rm_swarms=True, remove all swarms.'''
+        Swarms will maintain their last position and velocities. 
+        If rm_swarms=True, remove all Swarms.'''
 
         self.time = 0.0
         self.time_history = []

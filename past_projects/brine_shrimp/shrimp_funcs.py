@@ -20,7 +20,7 @@ def collect_cell_counts(swm, g_bounds, b_bounds, cell_size):
     '''Collect and return counts of shrimp in experiemental cells.
     
     Arguments:
-        swm: swarm object
+        swm: Swarm object
         g_bounds: bounds of green zone in y-direction
         b_bounds: bounds of blue zone in y-direction
         cell_size: width of each square cell in mm
@@ -74,7 +74,7 @@ def collect_zone_statistics(swm, g_bounds, b_bounds):
     '''Find the mean time (and std) for shrimp to enter each zone.
 
     Arguments:
-        swm: swarm object
+        swm: Swarm object
         g_bounds: bounds of green zone in y-direction
         b_bounds: bounds of blue zone in y-direction
 

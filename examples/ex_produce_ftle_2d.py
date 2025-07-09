@@ -5,7 +5,7 @@ Examples of computing FTLE in 2D. 3D is largely untested.
 import planktos
 from planktos import motion
 
-# The Planktos FTLE solver works by creating a grid of agents in a swarm and 
+# The Planktos FTLE solver works by creating a grid of agents in a Swarm and 
 #   then solving equations of motion over a certain integration time, T. The 
 #   idea is that, unlike other FTLE solvers, Planktos can find this FTLE data 
 #   with respect to motion rules as arbitrary as the agents' behavior. The 
@@ -73,7 +73,7 @@ envir.read_IB2d_fluid_data('ib2d_data', 5.0e-5, 1000, d_start=20, d_finish=None)
 
 ##############     Use a Passed in ODE Generator    ##############
 # Note: intertial particles requires certain parameters to be present in the 
-#   swarm object that generates the ODE functions (which in turn define the 
+#   Swarm object that generates the ODE functions (which in turn define the 
 #   parameters in the ODEs). We can specify these using a dictionary and the
 #   props parameter of calculate_FTLE.
 envir.calculate_FTLE((512,128),T=0.1,dt=0.001,ode_gen=motion.inertial_particles,
@@ -86,18 +86,18 @@ envir.plot_2D_FTLE()
 
 ################################################################################
 # Finally, we can calculate the FTLE using behavior rules pulled from a passed 
-#   in swarm object subclass. All this example does is reproduce the tracer
-#   particle result using a swarm and Euler steps (we can't solve arbitrary 
+#   in Swarm object subclass. All this example does is reproduce the tracer
+#   particle result using a Swarm and Euler steps (we can't solve arbitrary 
 #   sub-class motion using anything except Euler steps), but even so, being able 
 #   to do so gives us a lot of freedom for analysis! Note that the passed-in 
-#   swarm is not used or changed itself in any way - a copy is made, and then 
+#   Swarm is not used or changed itself in any way - a copy is made, and then 
 #   that is operated on.
 
 envir = planktos.Environment(char_L=0.1, rho=1, mu=0.001, U=15)
 envir.read_IB2d_fluid_data('ib2d_data', 5.0e-5, 1000, d_start=20, d_finish=None)
 
-##############     FTLE with passed in swarm     ##############
-class ftle_swrm(planktos.swarm):
+##############     FTLE with passed in Swarm     ##############
+class ftle_swrm(planktos.Swarm):
     
     def get_positions(self, dt, params=None):
        return self.positions + self.get_fluid_drift()*dt

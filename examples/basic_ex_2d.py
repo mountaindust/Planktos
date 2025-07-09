@@ -32,14 +32,14 @@ envir.plot_flow()
 # We could also plot vorticity with envir.plot_2D_vort(), but it wouldn't look 
 #   like much.
 
-# Now, let's add an agent swarm! Since this is a simple example, we will go with
+# Now, let's add an agent Swarm! Since this is a simple example, we will go with
 #   the default agent behavior: fluid advection with brownian motion, or "jitter".
-#   By default, the swarm class creates a swarm with 100 agents initialized to
+#   By default, the Swarm class creates a Swarm with 100 agents initialized to
 #   random positions throughout the environment. We just need to tell it what 
 #   environment it should go in by passing in our Environment object.
 #   Let's also specify a seed for the random number generator, so that our 
 #   results will be reproducable.
-swrm = planktos.swarm(envir=envir, seed=1)
+swrm = planktos.Swarm(envir=envir, seed=1)
 
 # Let's plot our new agents to see what we have so far:
 swrm.plot()
@@ -51,7 +51,7 @@ swrm.plot()
 #   changing how big the agents appear (circ_rad). See the documentation for 
 #   a complete explanation.
 
-# By default, the swarm is set up with two properties that are the same across 
+# By default, the Swarm is set up with two properties that are the same across 
 #   all agents: 'mu' and 'cov'. These are the mean drift (not counting the fluid) 
 #   and covariance matrix for the brownian motion. 'mu' defaults to a vector of 
 #   zeros and 'cov' to an identity matrix. Since we are working in units of meters,
@@ -62,14 +62,14 @@ swrm.shared_props['cov'] = swrm.shared_props['cov'] * 0.01
 #   that, you edit the columns of swrm.props, which is a pandas DataFrame.
 
 # Now it's time to simulate our swarm's movement! We do this by calling the 
-#   "move" method of the swarm object in a for loop. "move" takes one argument,
+#   "move" method of the Swarm object in a for loop. "move" takes one argument,
 #   which is the temporal step size. For example, if we want to move the swarm
 #   for 24 seconds with a step size of 0.1 seconds each time, we use:
 for ii in range(240):
     swrm.move(0.1)
 
 # We can see where we ended up with swrm.plot(), or we can plot a particular time 
-#   by calling swarm.plot(time), e.g. swarm.plot(19.1). Or we can just plot 
+#   by calling Swarm.plot(time), e.g. Swarm.plot(19.1). Or we can just plot 
 #   everything as a movie:
 swrm.plot_all(plot_heading=False) # turn off agent headings since this is Brownian
 
@@ -78,7 +78,7 @@ swrm.plot_all(plot_heading=False) # turn off agent headings since this is Browni
 #   passing in a filename.
 
 # You can always continue to move the swarm, even after it has already moved. 
-#   And data about the swarm can be exported using the swrm.save_data function, 
+#   And data about the Swarm can be exported using the swrm.save_data function, 
 #   or swrm.save_pos_to_csv if you only want the positions over time, or
 #   swrm.save_pos_to_vtk if you want to visualize the swarm in something like VisIt.
 

@@ -170,8 +170,8 @@ vertex data (2D) or via stl file in 3D. Again, more (open source) formats may be
 considered if requested. Mesh data should never intersect any of the domain 
 boundaries. This will not be checked, but is essential for correct preformance.
 
-For agents, there is support for multiple species (swarms) along with individual 
-variation though a pandas Dataframe property of the swarm class (swarm.props). 
+For agents, there is support for multiple species (Swarms) along with individual 
+variation though a pandas Dataframe property of the Swarm class (Swarm.props). 
 Individual agents have access to the local flow field through interpolation of 
 the spatial-temporal fluid velocity grid - specifically, Planktos implements a 
 cubic spline in time with linear interpolation in space. In addition to more 

@@ -64,16 +64,16 @@ boundaries and the mesh structures with the following command::
 
 .. image:: ../_static/ib2d_cyl_channel_mesh.png
 
-Now we add a swarm to our Environment.
+Now we add a Swarm to our Environment.
 Let's use the default number of agents (100), but place them all in the same
 point, just to the left of the cylinder and in the middle of the channel.
 The length of the domain in each direction can be obtained via the envir.L
-attribute, so we'll use that to pass an (x,y) point to our swarm 
+attribute, so we'll use that to pass an (x,y) point to our Swarm 
 constructor as an init parameter. This tells the constructor to put all the
 agents at that one point. You can also pass in a list of points to 
 explicitly specify where all agents should begin individually. ::
 
-    swrm = planktos.swarm(envir=envir, init=(envir.L[0]*0.1,envir.L[1]*0.5))
+    swrm = planktos.Swarm(envir=envir, init=(envir.L[0]*0.1,envir.L[1]*0.5))
 
 Once again, let's reduce the amount of jitter (variance). Remember that 
 variance is standard deviation squared, so for a standard deviation of 0.01

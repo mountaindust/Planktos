@@ -37,12 +37,12 @@ envir.tile_flow(3,3)
 # Now we can see the effect - notice that the cylinder mesh got tiled too!!
 envir.plot_flow()
 
-# Let's add a swarm with 100 agents all positioned somewhat behind the 
+# Let's add a Swarm with 100 agents all positioned somewhat behind the 
 #   center left-most cylinder with respect to the flow (which is in the 
 #   y-direction in this example). Remember that we can do this by specifying a 
-#   point to the init argument of the swarm class, and that we can get the 
+#   point to the init argument of the Swarm class, and that we can get the 
 #   length of the domain in each direction with the envir.L attribute. 
-swrm = planktos.swarm(envir=envir, init=(envir.L[0]*0.5, 0.04, envir.L[2]*0.1))
+swrm = planktos.Swarm(envir=envir, init=(envir.L[0]*0.5, 0.04, envir.L[2]*0.1))
 
 # adjust the amount of jitter (variance)...
 swrm.shared_props['cov'] *= 0.0001

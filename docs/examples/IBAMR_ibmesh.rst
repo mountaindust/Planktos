@@ -39,10 +39,10 @@ original size. ::
 
 .. image:: ../_static/IBAMR_tiled.png
 
-Let's add a swarm with 100 agents all positioned somewhat behind the 
+Let's add a Swarm with 100 agents all positioned somewhat behind the 
 center left-most cylinder with respect to the flow (which is in the 
 x-direction in this example). Remember that we can do this by specifying a 
-point to the init argument of the swarm class, and that we can get the 
+point to the init argument of the Swarm class, and that we can get the 
 length of the domain in each direction with the envir.L attribute.
 
 In previous examples, our swarm plots always came with plotted estimates for 
@@ -52,7 +52,7 @@ we center a Gaussian around each agent and then add them all up to get the
 curves you see. However, we can also view histograms in Planktos. Just for 
 fun, let's do that for a change. ::
 
-    swrm = planktos.swarm(envir=envir, init=(envir.L[0]*0.5, 0.04, envir.L[2]*0.1))
+    swrm = planktos.Swarm(envir=envir, init=(envir.L[0]*0.5, 0.04, envir.L[2]*0.1))
     swrm.plot(dist='hist')
 
 .. image:: ../_static/IBAMR_agents.png

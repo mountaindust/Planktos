@@ -25,7 +25,7 @@ envir.read_IB2d_mesh_data('ib2d_data/channel.vertex', method='proximity')
 
 # To do this, we need to define some new agent behavior. It will rely on a 
 #   user-defined agent property, which we will call 'stick'.
-class permstick(planktos.swarm):
+class permstick(planktos.Swarm):
     def get_positions(self, dt, params):
         # first, we will get the value of the 'stick' property. It is expected
         #   to be different across agents, and to have boolean value. If it is
@@ -48,7 +48,7 @@ class permstick(planktos.swarm):
                np.expand_dims(stick,1)*self.positions
     
     # After an agent runs into an immersed structure, we want it to stop moving 
-    #   for all future times. There is an attribute of the swarm object called 
+    #   for all future times. There is an attribute of the Swarm object called 
     #   ib_collision which is an array of bool, one for each agent. If the agent 
     #   collided with an immersed structure in the most recent move, it is set 
     #   to True for that agent. Otherwise, it is False. We'll use that to 
@@ -60,7 +60,7 @@ class permstick(planktos.swarm):
         # Let's also color the agents that get stuck!
         self.props.loc[self.ib_collision, 'color'] = 'yellow'
 
-# Now we create the swarm similar to ex_ib2d_ibmesh.py.
+# Now we create the Swarm similar to ex_ib2d_ibmesh.py.
 # We will set store_prop_history=True because we want to keep track of agent 
 #   property changes through time. We will also set the default ib condition to 
 #   'sticky'. We could alternatively pass it in each time to the move method 
@@ -99,8 +99,8 @@ swrm.plot_all(movie_filename='channel_flow_sticky.mp4', fps=3, fluid='vort',
 
 # Compare the result to that of ex_ib2d_ibmesh.py.
 
-# Note that you can make use of the for-loop to update the swarm object in all 
-#   kinds of ways, or just to collect data about the swarm dynamically. For 
+# Note that you can make use of the for-loop to update the Swarm object in all 
+#   kinds of ways, or just to collect data about the Swarm dynamically. For 
 #   instance, if you want to record every time that an agent encounters an 
 #   immersed boundary, you could check swarm.ib_collision in the for-loop and 
 #   then record the time and boolean data by appending to a list.

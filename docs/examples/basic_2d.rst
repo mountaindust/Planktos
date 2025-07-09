@@ -50,13 +50,13 @@ everything looks right. Again, see documentation for options::
 We could also plot vorticity with envir.plot_2D_vort(), but it wouldn't look 
 like much.
 
-Now, let's add an agent swarm! Since this is a simple example, we will go with
+Now, let's add an agent Swarm! Since this is a simple example, we will go with
 the default agent behavior: fluid advection with brownian motion, or "jitter".
-By default, the swarm class creates a swarm with 100 agents initialized to
+By default, the Swarm class creates a Swarm with 100 agents initialized to
 random positions throughout the Environment. We just need to tell it what 
 Environment it should go in by passing in our Environment object:: 
 
-    swrm = planktos.swarm(envir=envir)
+    swrm = planktos.Swarm(envir=envir)
 
 Let's plot our new agents to see what we have so far, with fluid velocity arrows 
 in the background::
@@ -68,10 +68,10 @@ in the background::
 The bars that you see at the bottom denote the height of the porous layer and 
 aren't really "there" in the sense that the porous layer is homogenous - Planktos 
 just gives them a random distribution to mimic seagrass. To the top and right, 
-you can see the Gaussian kernel density estimation for the swarm. Various 
+you can see the Gaussian kernel density estimation for the Swarm. Various 
 statistics are also given.
 
-By default, the swarm is set up with two properties that are the same across 
+By default, the Swarm is set up with two properties that are the same across 
 all agents: 'mu' and 'cov'. These are the mean drift (not counting the fluid) 
 and covariance matrix for the brownian motion. 'mu' defaults to a vector of 
 zeros and 'cov' to an identity matrix. Since we are working in units of meters,
@@ -83,7 +83,7 @@ It is also possible to set properties which are different between agents. For
 that, you edit the columns of swrm.props, which is a pandas DataFrame.
 
 Now it's time to simulate our swarm's movement! We do this by calling the 
-"move" method of the swarm object in a for loop. "move" takes one argument,
+"move" method of the Swarm object in a for loop. "move" takes one argument,
 which is the temporal step size. For example, if we want to move the swarm
 for 24 seconds with a step size of 0.1 seconds each time, we use::
 
@@ -91,7 +91,7 @@ for 24 seconds with a step size of 0.1 seconds each time, we use::
         swrm.move(0.1)
 
 We can see where we ended up with swrm.plot(), or we can plot a particular time 
-by calling swarm.plot(time), e.g. swarm.plot(19.1). Or we can just plot 
+by calling Swarm.plot(time), e.g. Swarm.plot(19.1). Or we can just plot 
 everything as a movie with swrm.plot_all(). Run the corresponding example, 
 basic_ex_2d.py in the examples folder to see this animation!
 

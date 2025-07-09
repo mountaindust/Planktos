@@ -29,18 +29,18 @@ __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
-class swarm:
+class Swarm:
     '''
     Fundamental Planktos object describing a group of similar agents.
 
-    The swarm class (alongside the Environment class) provides the main agent 
-    functionality of Planktos. Each swarm object should be thought of as a group 
+    The Swarm class (alongside the Environment class) provides the main agent 
+    functionality of Planktos. Each Swarm object should be thought of as a group 
     of similar (though not necessarily identical) agents. Planktos implements 
     agents in this way rather than as individual objects for speed purposes; it 
     is easier to vectorize a swarm of agents than individual agent objects, and 
     also much easier to plot them all, get data on them all, etc.
 
-    The swarm object contains all information on the agents' positions, 
+    The Swarm object contains all information on the agents' positions, 
     properties, and movement algorithm. It also handles plotting of the agents 
     and saving of agent data to file for further analysis.
 
@@ -54,9 +54,9 @@ class swarm:
     Parameters
     ----------
     swarm_size : int, default=100
-        Number of agents in the swarm. ignored when using the 'grid' init method. 
+        Number of agents in the Swarm. ignored when using the 'grid' init method. 
     envir : Environment object, optional
-        Environment for the swarm to exist in. Defaults to a newly initialized 
+        Environment for the Swarm to exist in. Defaults to a newly initialized 
         Environment with all of the defaults.
     init : {'random', 'grid', ndarray}, default='random'
         Method for initalizing agent positions.
@@ -116,7 +116,7 @@ class swarm:
         DataFrame.
     **kwargs : dict, optional
         keyword arguments to be used in the 'grid' initialization method or
-        values to be set as a swarm object property. In the latter case, these 
+        values to be set as a Swarm object property. In the latter case, these 
         values can be floats, ndarrays, or iterables, but keep in mind that
         problems will result with parsing if the number of agents is
         equal to the spatial dimension - this is to be avoided. This method of 
@@ -133,12 +133,12 @@ class swarm:
         The first char is x,y, or z denoting the dimensional direction of the 
         search ray, the second is either 0 or 1 denoting the direction 
         (backward vs. forward) along that direction. See documentation of 
-        swarm.grid_init for more information.
+        Swarm.grid_init for more information.
 
     Attributes
     ----------
     envir : Environment object
-        Environment that this swarm belongs to
+        Environment that this Swarm belongs to
     positions : masked array, shape Nx2 (2D) or Nx3 (3D)
         spatial location of all the agents in the swarm. the mask is False for 
         any row corresponding to an agent that is within the spatial boundaries 
@@ -148,7 +148,7 @@ class swarm:
         The current number of agents in the swarm, based on positions.shape[0]
     pos_history : list of masked arrays
         all previous position arrays are stored here. to get their corresponding 
-        times, check the time_history attribute of the swarm's Environment.
+        times, check the time_history attribute of the Swarm's Environment.
     full_pos_history : list of masked arrays
         same as pos_history, but also includes the positions attribute as the 
         last entry in the list
@@ -157,7 +157,7 @@ class swarm:
         positions
     vel_history : list of masked arrays
         all previous velocity arrays are stored here. to get their corresponding 
-        times, check the time_history attribute of the swarm's Environment.
+        times, check the time_history attribute of the Swarm's Environment.
     full_vel_history : list of masked arrays
         same as vel_history, but also includes the velocities attribute as the 
         last entry in the list
@@ -175,7 +175,7 @@ class swarm:
     props_history : List of past Pandas DataFrames or None
         If not None, this list records individual agent attributes at all 
         previous points in time corresponding to the time_history attribute of 
-        the swarm's Environment.
+        the Swarm's Environment.
     full_props_history : List of Pandas DataFrames or None
         props_history plus the current time version of props
     shared_props : dictionary
@@ -184,7 +184,7 @@ class swarm:
         default color for plotting. 'mu' and 'cov' are required for Brownian 
         motion, and other properties may be required for other physics.
     rndState : numpy Generator object
-        random number generator for this swarm, seeded by the "seed" parameter
+        random number generator for this Swarm, seeded by the "seed" parameter
 
     Notes
     -----
@@ -200,11 +200,11 @@ class swarm:
             swm.move(0.1)
 
     In order to accomodate general, user-defined behavior algorithms, all other 
-    agent behaviors should be explicitly specified by subclassing this swarm 
+    agent behaviors should be explicitly specified by subclassing this Swarm 
     class and overriding the get_positions method. This is easy, and takes the 
     following form: ::
 
-        class myagents(planktos.swarm):
+        class myagents(planktos.Swarm):
             
             def get_positions(self, dt, params=None):
                 #
@@ -219,31 +219,31 @@ class swarm:
                 #   there in case you want this method to take in any external 
                 #   info (e.g. time-varying forcing functions, user-controlled 
                 #   behavior switching, etc.). Note that this method has full 
-                #   access to all of the swarm attributes via the "self" 
+                #   access to all of the Swarm attributes via the "self" 
                 #   argument. For example, self.positions will return an NxD 
                 #   masked array of current agent positions. The one thing this 
                 #   method SHOULD NOT do is set the positions, velocities, or 
-                #   accelerations attributes of the swarm. This will be handled 
+                #   accelerations attributes of the Swarm. This will be handled 
                 #   automatically after this method returns, and after boundary 
                 #   conditions have been checked.
 
                 return newpositions
 
-    Then, when you create a swarm object, create it using::
+    Then, when you create a Swarm object, create it using::
     
-        swrm = myagents() # add swarm parameters as necessary, as documented above
+        swrm = myagents() # add Swarm parameters as necessary, as documented above
 
-    This will create a swarm object, but with your my_positions method instead 
+    This will create a Swarm object, but with your my_positions method instead 
     of the default one!
 
     Examples
     --------
-    Create a default swarm in an Environment with some fluid data loaded and tiled.
+    Create a default Swarm in an Environment with some fluid data loaded and tiled.
 
     >>> envir = planktos.Environment()
     >>> envir.read_IBAMR3d_vtk_dataset('../tests/IBAMR_test_data', start=5, finish=None)
     >>> envir.tile_flow(3,3)
-    >>> swrm = swarm(envir=envir)
+    >>> swrm = Swarm(envir=envir)
 
     '''
 
@@ -285,7 +285,7 @@ class swarm:
         self.positions = ma.zeros((swarm_size, len(self.envir.L)))
         if isinstance(init,str):
             if init == 'random':
-                print('Initializing swarm with uniform random positions...')
+                print('Initializing Swarm with uniform random positions...')
                 for ii in range(len(self.envir.L)):
                     self.positions[:,ii] = self.rndState.uniform(0, 
                                         self.envir.L[ii], self.N)
@@ -300,7 +300,7 @@ class swarm:
                     testdir = kwargs['testdir']
                 else:
                     testdir = None
-                print('Initializing swarm with grid positions...')
+                print('Initializing Swarm with grid positions...')
                 self.positions = self.grid_init(x_num, y_num, z_num, testdir)
                 swarm_size = self.N
             else:
@@ -370,7 +370,7 @@ class swarm:
         if 'color' not in self.shared_props:
             self.shared_props['color'] = color
 
-        # Record any kwargs as swarm parameters
+        # Record any kwargs as Swarm parameters
         for name, obj in kwargs.items():
             try:
                 if isinstance(obj,np.ndarray) and obj.shape[0] == swarm_size and\
@@ -409,8 +409,8 @@ class swarm:
         interior and boundaries of the domain. The output of this method is 
         appropriate for finding FTLE, and that is its main purpose. It will 
         automatically be called by the Environment class's calculate_FTLE method, 
-        and if you want to initialize a swarm with a grid this is possible by 
-        passing the init='grid' keyword argument when the swarm is created. 
+        and if you want to initialize a Swarm with a grid this is possible by 
+        passing the init='grid' keyword argument when the Swarm is created. 
         So there is probably no reason to use this method directly.
 
         Grid list moves in the [Z direction], Y direction, then X direction (due 
@@ -717,7 +717,7 @@ class swarm:
         * The first row contains cycle and time information. The cycle is given, 
           and then each time stamp is repeated D times, where D is the spatial 
           dimension of the system.
-        * Each subsequent row corresponds to a different agent in the swarm.
+        * Each subsequent row corresponds to a different agent in the Swarm.
         * Reading across the columns of an agent row: first, a boolean is given
           showing the state of the mask for that time step. Agents are masked
           when they have exited the domain. Then, the position vector is given
@@ -872,7 +872,7 @@ class swarm:
         other parameters will be pulled from the Environment's attributes. 
         
         If diam is not specified, this method will look for it in the 
-        shared_props dictionary of this swarm.
+        shared_props dictionary of this Swarm.
         
         Parameters
         ----------
@@ -925,7 +925,7 @@ class swarm:
         update_time : bool, default=True
             whether or not to update the Environment's time by dt. Probably 
             The only reason to change this to False is if there are multiple 
-            swarm objects in the same Environment - then you want to update 
+            Swarm objects in the same Environment - then you want to update 
             each before incrementing the time in the Environment.
         silent : bool, default=False
             If True, suppress printing the updated time.
@@ -976,13 +976,13 @@ class swarm:
             if not silent:
                 print('time = {}'.format(np.round(self.envir.time,11)))
 
-            # Check for other swarms in Environment and freeze them
+            # Check for other Swarms in Environment and freeze them
             warned = False
             for s in self.envir.swarms:
                 if s is not self and len(s.pos_history) < len(self.pos_history):
                     s.pos_history.append(s.positions.copy())
                     if not warned:
-                        warnings.warn("Other swarms in the Environment were not"+
+                        warnings.warn("Other Swarms in the Environment were not"+
                                       " moved during this environmental timestep.\n"+
                                       "If this was not your intent, call"+
                                       " envir.move_swarms instead of this method"+
@@ -1060,12 +1060,12 @@ class swarm:
         See Also
         --------
         get_prop : 
-            given an agent/swarm property name, return the value(s). When 
-            accessing a property in swarm.props, this can be preferred over 
+            given an agent/Swarm property name, return the value(s). When 
+            accessing a property in Swarm.props, this can be preferred over 
             accessing the property directly through the because instead of 
             returning a pandas Series object (for a column in the DataFrame), it 
             automatically converts to a numpy array first.
-        add_prop : add a new agent/swarm property or overwrite an old one
+        add_prop : add a new agent/Swarm property or overwrite an old one
         get_fluid_drift : return the fluid velocity at each agent location
         get_dudt : return time derivative of fluid velocity at each agent
         get_fluid_mag_gradient : 
@@ -1081,7 +1081,7 @@ class swarm:
 
 
     def after_move(self, dt, params=None):
-        '''This method is called after the swarm's spatial positions have been 
+        '''This method is called after the Swarm's spatial positions have been 
         updated via get_positions, but before the environment time has been 
         updated to the new time (prev time + dt).
 
@@ -1143,7 +1143,7 @@ class swarm:
             if False, set as a property that applies to all agents in the swarm. 
             if True, value should be an ndarray with a number of rows equal to 
             the number of agents in the swarm, and the property will be set as 
-            a column in the swarm.props DataFrame.
+            a column in the Swarm.props DataFrame.
         '''
         if shared:
             self.shared_props[prop_name] = value
@@ -1823,7 +1823,7 @@ class swarm:
 
         # Find all mesh elements that have vertex points within search_rad of 
         #   the trajectory segment.
-        close_mesh = swarm._get_eligible_static_mesh_elements(startpt, endpt, mesh, 
+        close_mesh = Swarm._get_eligible_static_mesh_elements(startpt, endpt, mesh, 
                                                               search_rad)
 
         # Get intersections
@@ -1858,7 +1858,7 @@ class swarm:
 
             # Project remaining piece of vector onto mesh and repeat processes 
             #   as necessary until we have a final result.
-            new_pos = swarm._project_and_slide_static(startpt, endpt, intersection, 
+            new_pos = Swarm._project_and_slide_static(startpt, endpt, intersection, 
                                                         close_mesh, max_meshpt_dist)
             return new_pos, new_pos - intersection[0]
         
@@ -1937,7 +1937,7 @@ class swarm:
         search_rad = max_meshpt_dist*2/3
 
         close_mesh_start, close_mesh_end = \
-            swarm._get_eligible_moving_mesh_elements(startpt, endpt, start_mesh, 
+            Swarm._get_eligible_moving_mesh_elements(startpt, endpt, start_mesh, 
                                                      end_mesh, max_mov, search_rad)
         
         # Get intersections
@@ -2044,7 +2044,7 @@ class swarm:
             if DIM == 2:
                 # Project remaining piece of vector onto mesh and repeat processes 
                 #   as necessary until we have a final result.
-                new_pos = swarm._project_and_slide_moving(startpt, endpt, intersection, 
+                new_pos = Swarm._project_and_slide_moving(startpt, endpt, intersection, 
                                                 close_mesh_start, close_mesh_end, 
                                                 max_meshpt_dist, max_mov)
                 return new_pos, new_pos - intersection[0]
@@ -2409,7 +2409,7 @@ class swarm:
                         newstartpt = x_edge - t_edge*vec
                         newendpt = x_edge + (1-t_edge)*vec
 
-                    return swarm._project_and_slide_static(newstartpt, newendpt, 
+                    return Swarm._project_and_slide_static(newstartpt, newendpt, 
                                                            adj_intersect, 
                                                            mesh, max_meshpt_dist, 
                                                            prev_idx=idx)
@@ -2430,7 +2430,7 @@ class swarm:
             # recursion on prev. eligible mesh elements and treating t_edge 
             #   as the start time. Only look for intersections with subset
             #   of full eligible mesh.
-            close_mesh = swarm._get_eligible_static_mesh_elements(newstartpt, 
+            close_mesh = Swarm._get_eligible_static_mesh_elements(newstartpt, 
                                                                   newendpt, mesh, 
                                                                   max_meshpt_dist*2/3)
             if DIM == 2:
@@ -2447,7 +2447,7 @@ class swarm:
                 elem = close_mesh[intersection_n[-1]]
                 idx_n = np.argwhere((elem == mesh).all(axis=(1,2)))[0,0]
                 intersection_n = (*intersection_n[:-1], idx_n)
-                new_loc = swarm._project_and_slide_static(newstartpt, newendpt,
+                new_loc = Swarm._project_and_slide_static(newstartpt, newendpt,
                                                           intersection_n, mesh, 
                                                           max_meshpt_dist)
             return new_loc
@@ -2826,7 +2826,7 @@ class swarm:
                     # for debugging
                     # print(f'newstartpt = {list(newstartpt)}')
                     # print(f'newendpt = {list(newendpt)}')
-                    return swarm._project_and_slide_moving(newstartpt, newendpt, 
+                    return Swarm._project_and_slide_moving(newstartpt, newendpt, 
                                                     adj_intersect, 
                                                     mesh_start, mesh_end, 
                                                     max_meshpt_dist, max_mov,
@@ -2870,7 +2870,7 @@ class swarm:
         #   as the start time. Only look for intersections with subset of full 
         #   eligible mesh.
         close_mesh_start, close_mesh_end = \
-            swarm._get_eligible_moving_mesh_elements(newstartpt, newendpt, 
+            Swarm._get_eligible_moving_mesh_elements(newstartpt, newendpt, 
                                                      mesh_now, mesh_end, max_mov, 
                                                      max_meshpt_dist*2/3)
         intersection_n = geom.seg_intersect_2D_multilinear_poly(newstartpt, newendpt,
@@ -2883,7 +2883,7 @@ class swarm:
             elem = close_mesh_start[intersection_n[4]]
             idx_n = np.argwhere((elem == mesh_now).all(axis=(1,2)))[0,0]
             intersection_n = (*intersection_n[:-1], idx_n)
-            new_loc = swarm._project_and_slide_moving(newstartpt, newendpt,
+            new_loc = Swarm._project_and_slide_moving(newstartpt, newendpt,
                                                       intersection_n, mesh_now,
                                                       mesh_end, max_meshpt_dist,
                                                       max_mov)
@@ -3418,7 +3418,7 @@ class swarm:
         created if movie_filename is specified.
 
         Agent colors will be read from the 'color' column of props if it exists; 
-        otherwise it will default to the color attribute of the swarm.
+        otherwise it will default to the color attribute of the Swarm.
         
         Parameters
         ----------

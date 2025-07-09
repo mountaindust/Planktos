@@ -1,12 +1,12 @@
-swarm class
+Swarm class
 ===========
 
-The swarm class acts as a collection of agents that share a similar motion model. 
-All agents must be grouped into a swarm, and every swarm must also have an 
+The Swarm class acts as a collection of agents that share a similar motion model. 
+All agents must be grouped into a Swarm, and every Swarm must also have an 
 associated Environment object. Internally, information about agent locations, 
-velocities, and accelerations within the swarm are stored as masked NumPy arrays 
+velocities, and accelerations within the Swarm are stored as masked NumPy arrays 
 where each row is an agent and each column is a spatial dimension. The mask 
-refers to whether or not the agent has left the spatial domain. Any swarm 
+refers to whether or not the agent has left the spatial domain. Any Swarm 
 properties that do not vary from agent to agent are stored within the 
 shared_props attribute, implemented as a Python dictionary. Properties that 
 vary between agents are stored within the props attribute as a pandas DataFrame.
@@ -17,5 +17,5 @@ Author: Christopher Strickland
 
 Email: cstric12@utk.edu
 
-.. autoclass:: planktos.swarm
+.. autoclass:: planktos.Swarm
     :members:

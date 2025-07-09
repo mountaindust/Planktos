@@ -1,6 +1,6 @@
 '''Utility functions for calculating geometric quantities. These are the 
 workhorses of agent interaction with immersed boundaries. Prior to 0.7, they 
-were static methods of swarm.
+were static methods of Swarm.
 
 Created: Thurs September 19 2024
 

@@ -1,13 +1,13 @@
 Specifying agent behavior
 -------------------------
 
-This example shows how to override parts of the swarm class in order to specify 
+This example shows how to override parts of the Swarm class in order to specify 
 agent behavior. ::
 
     import numpy as np
     import planktos
 
-Agent movement is defined by the get_positions method of the swarm class.
+Agent movement is defined by the get_positions method of the Swarm class.
 By default, the only thing this method does is call
 planktos.motion.Euler_brownian_motion, which uses an Euler method to solve
 an Ito SDE describing, by default, basic drift-diffusion. However, you can
@@ -17,19 +17,19 @@ do whatever you like, including:
 - Solve a deterministic system of equations instead, using motion RK45
 - Write some code to do other things, or some combination of these three.
 
-To accomplish this, you need to subclass the swarm class and override the
+To accomplish this, you need to subclass the Swarm class and override the
 get_positions method. We'll walk through this below.
 
 Boundary conditions (including collisions with immersed mesh structures) and
 updating the positions, velocities, and accelerations properties of the 
-swarm will be handled automatically after the get_positions method returns.
+Swarm will be handled automatically after the get_positions method returns.
 So all you need to concentrate on is returning the new agent positions from
 this function, assuming no boundary or mesh interactions occur.
 
 It's worth looking through the planktos.motion library to see what's there.
 This library contains the SDE and RK45 solvers, and has some generators for
 deterministic equations of motion (which you can copy to create your own).
-There are also several different methods of the swarm class which can 
+There are also several different methods of the Swarm class which can 
 provide key information for behavior. Examples include:
 
 - positions : current positions of all agents
@@ -40,29 +40,29 @@ provide key information for behavior. Examples include:
   agent locations
 
 The subclassing and overriding itself is easy. Here we'll provide an example
-where 80% of the agents move toward the mean position of the swarm (biased
+where 80% of the agents move toward the mean position of the Swarm (biased
 random walk), while 20% do not (unbiased random walk).
 
-First, we create a new swarm class which inherits everything from the original, 
+First, we create a new Swarm class which inherits everything from the original, 
 and then we write a new get_positions method for this class. The call signature 
 must remain the same as the original.  If you've never written a class method 
 before, the first parameter in the call signature must always be "self". This 
-refers to the swarm object itself and is *implicitly passed* whenever 
+refers to the Swarm object itself and is *implicitly passed* whenever 
 get_positions is called. In other words, you would call this method via 
 swrm.get_positions(dt), and NOT "swrm.get_positions(swrm, dt)". This detail 
-doesn't matter so much here; the swrm.move method is how we update swarms, and 
+doesn't matter so much here; the swrm.move method is how we update Swarms, and 
 it will do the business of calling get_positions for us. The main thing to 
-remember  is that if you need any swarm attributes or methods, you should access
+remember  is that if you need any Swarm attributes or methods, you should access
 them via "self.<method or attribute here>". For example, you can get the 
 gradient of the fluid speed (magnitude of velocity) using self.get_fluid_gradient(). ::
 
-    class myswarm(planktos.swarm):
+    class myswarm(planktos.Swarm):
 
         def get_positions(self, dt, params=None):
             '''New get_positions method that moves 80% of the agents toward the
-            mean position of the swarm.'''
+            mean position of the Swarm.'''
 
-            # First, get the mean position of the swarm. 
+            # First, get the mean position of the Swarm. 
 
             mean_pos = self.positions.mean(axis=0)
 
@@ -70,7 +70,7 @@ gradient of the fluid speed (magnitude of velocity) using self.get_fluid_gradien
             #   don't is constant throughout the simulation and determined ahead 
             #   of time. Since it is an agent property and differs across 
             #   different agents, it should be stored in the self.props 
-            #   DataFrame. This will get set when the swarm is created. 
+            #   DataFrame. This will get set when the Swarm is created. 
             #   We'll assume it's formatted as a boolean: True means moving 
             #   toward the mean, False means you don't. We'll also assume the 
             #   property is called 'bias'.
@@ -123,9 +123,9 @@ gradient of the fluid speed (magnitude of velocity) using self.get_fluid_gradien
             return planktos.motion.Euler_brownian_motion(self, dt, mu=mu, 
                                                          sigma=sigma)
 
-We have now defined a new swarm class, called myswarm, with our custom 
+We have now defined a new Swarm class, called myswarm, with our custom 
 behavior. To use it, we follow the same steps as in previous examples, but
-create an object out of our new class rather than the swarm class itself.
+create an object out of our new class rather than the Swarm class itself.
 
 Create a 3D environment that is a bit longer in the x-direction and a bit
 shorter in the y-direction (because of limits in 3D plotting, this will appear 
@@ -136,8 +136,8 @@ axes will be labeled correctly). Also, make the y-boundaries solid to agents. ::
                                 rho=1000, mu=1000)
     envir.set_brinkman_flow(alpha=66, h_p=1.5, U=1, dpdx=1, res=101)
 
-Now we create a swarm object from our new class. It inherits all methods, 
-defaults, and options as the original swarm class. But we'll just go with
+Now we create a Swarm object from our new class. It inherits all methods, 
+defaults, and options as the original Swarm class. But we'll just go with
 the default here. ::
 
     swrm = myswarm(envir=envir)

@@ -16,8 +16,8 @@ import planktos
 target_rad = 0.5
 target_center = np.array((5,5))
 
-# Subclass swarm to create our behavior
-class imsearch(planktos.swarm):
+# Subclass Swarm to create our behavior
+class imsearch(planktos.Swarm):
     def __init__(self, *args, **kwargs):
         super(imsearch, self).__init__(*args, **kwargs)
 
@@ -74,7 +74,7 @@ class imsearch(planktos.swarm):
         #   agents switched state. -1 will mean they didn't switch.
         switch_time = -1*np.ones(self.N)
 
-        # It's best to use the swarm's own rndState object to generate random 
+        # It's best to use the Swarm's own rndState object to generate random 
         #   numbers for stochastic processes. That way, everything is 
         #   reproducable with a single seed.
 

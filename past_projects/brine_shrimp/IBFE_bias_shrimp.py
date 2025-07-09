@@ -60,7 +60,7 @@ print('-------------------------------------------')
 ############                  SPECIFY BEHAVIOR                  ############
 ############################################################################
 
-class Bshrimp(planktos.swarm):
+class Bshrimp(planktos.Swarm):
 
     def __init__(self, *args, **kwargs):
         super(Bshrimp, self).__init__(*args, **kwargs)

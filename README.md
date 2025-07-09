@@ -112,8 +112,8 @@ can also be extended and tiled in simple ways as appropriate. Mesh data must be
 time-invariant and loaded via IB2d/IBAMR-style vertex data (2D) or via stl file 
 in 3D. Again, more (open source) formats may be considered if requested.
 
-For agents, there is support for multiple species (swarms) along with individual 
-variation though a Pandas Dataframe property of the swarm class (swarm.props). 
+For agents, there is support for multiple species (Swarms) along with individual 
+variation though a Pandas Dataframe property of the Swarm class (Swarm.props). 
 Individual agents have access to the local flow field through interpolation of 
 the spatial-temporal fluid velocity grid - specifically, Planktos implements a 
 cubic spline in time with linear interpolation in space 
@@ -156,8 +156,8 @@ and running the method will add significant computational overhead due to the
 need to search for crossings.
 
 When experimenting with different agent behavior than what is prescribed in the
-swarm class by default (e.g. different movement rules), it is strongly suggested 
-that you subclass swarm (found in framework.py) in an appropriate subfolder. That 
+Swarm class by default (e.g. different movement rules), it is strongly suggested 
+that you subclass Swarm (found in framework.py) in an appropriate subfolder. That 
 way, you can keep track of everything you have tried and its outcome. 
 
 Research that utilizes this framework can be seen in:  
@@ -177,7 +177,7 @@ Class: Environment
     time that temporal interpolation becomes necessary, these ndarrays are all replaced with 
     spline objects (fCubicSpline, a subclass of scipy.interpolate.CubicSpline). The original
     data can be regenerated using the regenerate_flow_data method.
-    - `swarms` list of swarm objects in the Environment
+    - `swarms` list of Swarm objects in the Environment
     - `time` current time of the simulation
     - `time_history` history of time points simulated
     - `ibmesh` Nx2x2 or Nx3x3 ndarray of mesh elements, given as line segment vertices (2D) or triangle vertices (3D)
@@ -220,14 +220,14 @@ Class: Environment
     - `tile_flow` Tile the current fluid flow in the x and/or y directions. It is assumed that the flow is roughly periodic in the direction(s) specified - no checking will be done, and no errors thrown if not.
     - `extend` Extend the domain by duplicating the boundary flow a number of times in a given (or multiple) directions. Good when there is fully resolved fluid \
     flow before/after or on the sides of a structure.
-    - `add_swarm` Add or initialize a swarm into the Environment
-    - `move_swarms` Call the move method of each swarm in the Environment
+    - `add_swarm` Add or initialize a Swarm into the Environment
+    - `move_swarms` Call the move method of each Swarm in the Environment
     - `set_boundary_conditions` Check that each boundary condition is implemented before setting the bndry property.
     - `interpolate_flow` Interpolate a fluid velocity field in space at the given positions
     - `interpolate_temporal_flow` Linearly interpolate the flow field in time
     - `dudt` Returns a temporally interpolated time-derivative of the flow field
     - `get_mean_fluid_speed` Return the mean fluid speed at the current time, interpolating if necessary
-    - `reset` Resets Environment to time=0. Swarm history will be lost, and all swarms will maintain their last position. This is typically called automatically if the fluid flow has been altered by another method. If rm_swarms=True, remove all swarms.
+    - `reset` Resets Environment to time=0. Swarm history will be lost, and all Swarms will maintain their last position. This is typically called automatically if the fluid flow has been altered by another method. If rm_swarms=True, remove all Swarms.
     - `regenerate_flow_data` Regenerate the original fluid data from fCubicSpline objects
     - `save_fluid` Save the fluid velocity field as one or more vtk files (one for each time point).
     - `get_2D_vorticity` Calculate and return the vorticity of a 2D flow field, 
@@ -242,7 +242,7 @@ Class: Environment
     - `plot_2D_vort` Plot vorticity for 2D fluid velocity fields, including time-varying vorticity.
     - `plot_2D_FTLE` Plot a generated 2D FTLE field.
     
-Class: swarm
+Class: Swarm
 
 - Properties
     - `positions` list of current spatial positions, one for each agent
@@ -252,9 +252,9 @@ Class: swarm
     projectile motion)
     - `accelerations` list of current accelerations, one for each agent (for use
     in projectile motion)
-    - `envir` Environment object that this swarm belongs to
+    - `envir` Environment object that this Swarm belongs to
     - `rndState` random number generator (for reproducability)
-    - `shared_props` properties shared by all members of the swarm. Includes:
+    - `shared_props` properties shared by all members of the Swarm. Includes:
         - `mu` default mean for Gaussian walk (zeros)
         - `cov` covariance matrix for Gaussian walk (identity matrix)
         - `diam` characteristic length for agents' Reynolds number (if provided)
@@ -266,17 +266,17 @@ Class: swarm
     of the properties mentioned under shared_props above can be provided here
     instead.
 - Methods
-    - `full_pos_history` return the full position history of the swarm, past and present
+    - `full_pos_history` return the full position history of the Swarm, past and present
     - `save_data` save position, velocity, and accel data to csv, save agent property
     information to npz and json
     - `save_pos_to_csv` save all current and past agent positions to csv
     - `save_pos_to_vtk` save the positions at each time step to a vtk file. only the positions
     inside the domain are saved.
     - `calc_re` Calculate the Reynolds number based on Environment variables.
-    Requires rho and mu to be set in the Environment, and diam to be set in swarm
+    Requires rho and mu to be set in the Environment, and diam to be set in Swarm
     - `grid_init` return a grid of initial positions based on a grid. does not set
-    the swarm to these positions.
-    - `move` move each agent in the swarm. Do not override: see get_positions.
+    the Swarm to these positions.
+    - `move` move each agent in the Swarm. Do not override: see get_positions.
     - `get_positions` returns new physical locations for the agents. OVERRIDE THIS WHEN SUBCLASSING!
     - `get_prop` return the property requested as either a single value (if shared) or a numpy array (if varying by individual)
     - `add_prop` add a new property and check that it isn't in both props and shared_props
@@ -284,7 +284,7 @@ Class: swarm
     - `get_fluid_gradient` get the gradient of the magnitude of the fluid velocity
     at each agent's position via interpolation
     - `apply_boundary_condition` method used to enforce the boundary conditions during a move
-    - `plot` plot the swarm's current position or a previous position at the time provided
-    - `plot_all` plot all of the swarm's positions up to the current time. can also be 
+    - `plot` plot the Swarm's current position or a previous position at the time provided
+    - `plot_all` plot all of the Swarm's positions up to the current time. can also be 
     used to save a video
 

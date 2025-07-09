@@ -1,5 +1,5 @@
 """
-Test suite for planktos: Environment and swarm classes.
+Test suite for planktos: Environment and Swarm classes.
 For use with py.test package.
 
 Created on April 04 2017
@@ -21,7 +21,7 @@ from planktos import motion
 
 ############   Basic Overrides to test different physics  ############
 
-class highRe_massive_swarm(planktos.swarm):
+class highRe_massive_swarm(planktos.Swarm):
 
     def get_positions(self, dt, params=None):
         '''Uses projectile motion'''
@@ -30,13 +30,13 @@ class highRe_massive_swarm(planktos.swarm):
         #   of motion.
         ode = motion.highRe_massive_drift(self)
 
-        # mu property of swarm will automatically be added to ode equations
+        # mu property of Swarm will automatically be added to ode equations
         #   in the right way.
         return motion.Euler_brownian_motion(self, dt, ode=ode)
 
 
 
-class lowRe_massive_swarm(planktos.swarm):
+class lowRe_massive_swarm(planktos.Swarm):
 
     def get_positions(self, dt, params=None):
         '''Uses Haller and Sapsis'''
@@ -45,7 +45,7 @@ class lowRe_massive_swarm(planktos.swarm):
         #   of motion.
         ode = motion.inertial_particles(self)
 
-        # mu property of swarm will automatically be added to ode equations
+        # mu property of Swarm will automatically be added to ode equations
         #   in the right way.
         return motion.Euler_brownian_motion(self, dt, ode=ode)
 
@@ -65,15 +65,15 @@ def test_basic():
         sw.move(0.25)
     assert envir.time == 2.5
 
-    sw = planktos.swarm()
+    sw = planktos.Swarm()
     for ii in range(10):
         sw.move(0.25)
     assert sw.envir.time == 2.5
 
     envir2 = planktos.Environment()
-    sw = planktos.swarm()
+    sw = planktos.Swarm()
     envir2.add_swarm(sw)
-    assert envir2.swarms[0] is sw, "pre-existing swarm not added"
+    assert envir2.swarms[0] is sw, "pre-existing Swarm not added"
     for ii in range(10):
         sw.move(0.25)
 
@@ -117,7 +117,7 @@ def test_indiv_variation():
 
 def test_brinkman_2D():
     '''Test several 2D dynamics using brinkman flow'''
-    ########## Single swarm, time-independent flow ##########
+    ########## Single Swarm, time-independent flow ##########
     envir = planktos.Environment(Lx=10, Ly=10, x_bndry=('zero','zero'), 
                                y_bndry=('noflux','zero'), rho=1000, mu=5000)
     assert len(envir.L) == 2, "default dim is not 2"
@@ -126,7 +126,7 @@ def test_brinkman_2D():
     assert len(envir.flow[0].shape) == 2, "Flow vector should be 2D"
     assert np.isclose(envir.flow[0][50,-1],.5), "top of the domain should match U"
     envir.add_swarm(swarm_size=110, init='random')
-    assert len(envir.swarms) == 1, "too many swarms in envir"
+    assert len(envir.swarms) == 1, "too many Swarms in envir"
     sw = envir.swarms[0]
 
     for ii in range(20):
@@ -137,7 +137,7 @@ def test_brinkman_2D():
 
     # reset
     envir.reset(rm_swarms=True)
-    assert envir.swarms == [], "swarms still present"
+    assert envir.swarms == [], "Swarms still present"
     assert envir.time == 0, "time not reset"
     assert len(envir.time_history) == 0, "time history not reset"
 
@@ -203,7 +203,7 @@ def test_brinkman_2D():
             assert 0 <= pos[0] <= envir.L[0] and pos[1] <= envir.L[1], \
                    "zero bndry not respected"
 
-    ########## Single swarm, time-dependent flow ##########
+    ########## Single Swarm, time-dependent flow ##########
     envir = planktos.Environment(rho=1000, mu=20000)
     envir.set_brinkman_flow(alpha=66, h_p=1.5, U=0.1*np.arange(-2,6),
                             dpdx=np.ones(8)*0.22306, res=101, tspan=[0, 10])
@@ -222,9 +222,9 @@ def test_brinkman_2D():
     assert len(envir.flow_times) == 8, "flow_times don't match data"
     assert len(envir.flow_points[0]) > len(envir.flow_points[1])
     assert len(envir.flow_points[0]) == envir.flow[0].shape[1]
-    sw = planktos.swarm(swarm_size=70, envir=envir, init=(5,5))
-    assert sw is envir.swarms[0], "swarm not in envir list"
-    assert len(envir.swarms) == 1, "too many swarms in envir"
+    sw = planktos.Swarm(swarm_size=70, envir=envir, init=(5,5))
+    assert sw is envir.swarms[0], "Swarm not in envir list"
+    assert len(envir.swarms) == 1, "too many Swarms in envir"
 
     # extend flow
     flow_shape_old = envir.flow[0].shape
@@ -254,7 +254,7 @@ def test_multiple_2D_swarms():
     envir.set_brinkman_flow(alpha=66, h_p=1.5, U=.5, dpdx=0.22306, res=50)
     envir.add_swarm()
     s2 = envir.add_swarm()
-    assert len(envir.swarms) == 2, "Two swarms are not present"
+    assert len(envir.swarms) == 2, "Two Swarms are not present"
 
     for ii in range(20):
         envir.move_swarms(0.5)
@@ -274,7 +274,7 @@ def test_multiple_2D_swarms():
 
 def test_brinkman_3D():
     '''Test 3D dynamics using Brinkman flow'''
-    ########## Single swarm, time-independent flow ##########
+    ########## Single Swarm, time-independent flow ##########
     envir = planktos.Environment(Lx=50, Ly=50, Lz=50, x_bndry=('zero','zero'), 
                                y_bndry=('zero','zero'),
                                z_bndry=('noflux','noflux'), rho=1000, mu=250000)
@@ -305,7 +305,7 @@ def test_brinkman_3D():
     
 
     envir.add_swarm()
-    assert len(envir.swarms) == 1, "too many swarms in envir"
+    assert len(envir.swarms) == 1, "too many Swarms in envir"
     sw = envir.swarms[0]
 
     for ii in range(20):
@@ -327,7 +327,7 @@ def test_brinkman_3D():
             assert 0 <= pos[0] <= envir.L[0] and 0 <= pos[1] <= envir.L[1],\
                    "zero bndry not respected"
 
-    ########## Single swarm, time-dependent flow ##########
+    ########## Single Swarm, time-dependent flow ##########
     envir = planktos.Environment(Lz=10, rho=1000, mu=1000)
     U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-3,6,2)))
     envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(20)*0.22306,
@@ -377,10 +377,10 @@ def test_massive_physics():
     envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(20)*0.22306, 
                             res=50, tspan=[0, 40])
     envir.U = U.max()
-    ### specify physical properties of swarm and move swarm with low Re ###
+    ### specify physical properties of Swarm and move Swarm with low Re ###
     sw = lowRe_massive_swarm(diam=0.002, R=2/3)
     envir.add_swarm(sw)
-    assert sw is envir.swarms[0], "swarm improperly assigned to Environment"
+    assert sw is envir.swarms[0], "Swarm improperly assigned to Environment"
     for ii in range(10):
         sw.move(0.5)
     assert len(sw.pos_history) == 10, "all movements not recorded"

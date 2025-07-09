@@ -36,10 +36,10 @@ envir.set_brinkman_flow(alpha=66, h_p=1.5, U=1, dpdx=1, res=101)
 #   are only available in 2D.
 envir.plot_flow()
 
-# Now let's repeat the steps from basic_ex_2d.py, creating a default swarm,
+# Now let's repeat the steps from basic_ex_2d.py, creating a default Swarm,
 #   changing the covariance, running the simulation, and plotting.
 
-swrm = planktos.swarm(envir=envir, seed=1)
+swrm = planktos.Swarm(envir=envir, seed=1)
 swrm.shared_props['cov'] = swrm.shared_props['cov'] * 0.01
 
 print('Moving swarm...')
