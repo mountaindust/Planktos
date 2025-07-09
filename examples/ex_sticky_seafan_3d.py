@@ -18,7 +18,7 @@ import numpy as np
 import planktos
 
 # Begin by loading the fluid and mesh.
-envir = planktos.environment()
+envir = planktos.Environment()
 # In this data, space is in mm but velocity is in m/s. Convert velocity to mm/s.
 envir.read_comsol_vtu_data('comsol_data/Velocity2to1_8mmps.vtu', vel_conv=1000)
 envir.units = 'mm'

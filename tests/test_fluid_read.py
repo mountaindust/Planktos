@@ -30,7 +30,7 @@ from planktos import dataio
 def test_IBAMR_load():
     '''Test loading IBAMR fluid data into the environment'''
     pathname = 'tests/IBAMR_test_data'
-    envir = planktos.environment() # default environment, 2D.
+    envir = planktos.Environment() # default environment, 2D.
 
     ##### Load only the final recorded flow #####
     envir.read_IBAMR3d_vtk_dataset(pathname, start=5, finish=None)
@@ -143,7 +143,7 @@ def test_vtu_load():
     pathname = 'tests/data/comsol/vtu_test_data.txt'
     path = Path(pathname)
     assert path.is_file(), "Comsol data {} not found!".format(pathname)
-    envir = planktos.environment() # default environment, 2D.
+    envir = planktos.Environment() # default environment, 2D.
 
     envir.read_comsol_vtu_data(pathname, vel_conv=1000)
     envir.set_boundary_conditions(('zero','zero'), ('zero','zero'), ('noflux','noflux'))

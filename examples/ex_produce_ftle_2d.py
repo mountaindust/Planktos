@@ -15,7 +15,7 @@ from planktos import motion
 #   time-varying IB2d channel flow data. Again, it can be downloaded from
 #   https://drive.google.com/drive/folders/104ekG8cEJYuvk6NR8pTGn4wEISILUcuH?usp=sharing.
 
-envir = planktos.environment(char_L=0.1, rho=1, mu=0.001, U=15)
+envir = planktos.Environment(char_L=0.1, rho=1, mu=0.001, U=15)
 
 envir.read_IB2d_fluid_data('ib2d_data', 5.0e-5, 1000)
 # Another option is to try a static flow field, for example by just using 
@@ -52,7 +52,7 @@ envir.calculate_FTLE((512,128),T=0.1,dt=0.001) # w/o vertex data loaded
 # envir.calculate_FTLE((102,25),T=0.1, dt=0.001, testdir='x1') # w/ vertex data loaded
 ############################################################
 
-# The result is saved in the environment object and can be plotted like this:
+# The result is saved in the Environment object and can be plotted like this:
 envir.plot_2D_FTLE()
 
 
@@ -66,7 +66,7 @@ envir.plot_2D_FTLE()
 #   a generator for such an ode function in the planktos.motion library, so
 #   let's use that.
 
-envir = planktos.environment(char_L=0.1, rho=1, mu=0.001, U=15)
+envir = planktos.Environment(char_L=0.1, rho=1, mu=0.001, U=15)
 # NOTE: We'll start with cycle 20 in the VTK data here, instead of from the 
 # beginning. It produces a more exciting result!
 envir.read_IB2d_fluid_data('ib2d_data', 5.0e-5, 1000, d_start=20, d_finish=None)
@@ -93,7 +93,7 @@ envir.plot_2D_FTLE()
 #   swarm is not used or changed itself in any way - a copy is made, and then 
 #   that is operated on.
 
-envir = planktos.environment(char_L=0.1, rho=1, mu=0.001, U=15)
+envir = planktos.Environment(char_L=0.1, rho=1, mu=0.001, U=15)
 envir.read_IB2d_fluid_data('ib2d_data', 5.0e-5, 1000, d_start=20, d_finish=None)
 
 ##############     FTLE with passed in swarm     ##############

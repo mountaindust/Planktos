@@ -1,5 +1,5 @@
 """
-Test suite for planktos: environment and swarm classes.
+Test suite for planktos: Environment and swarm classes.
 For use with py.test package.
 
 Created on April 04 2017
@@ -59,7 +59,7 @@ class lowRe_massive_swarm(planktos.swarm):
 
 def test_basic():
     '''Test no-flow, basic stuff'''
-    envir = planktos.environment()
+    envir = planktos.Environment()
     sw = envir.add_swarm()
     for ii in range(10):
         sw.move(0.25)
@@ -70,7 +70,7 @@ def test_basic():
         sw.move(0.25)
     assert sw.envir.time == 2.5
 
-    envir2 = planktos.environment()
+    envir2 = planktos.Environment()
     sw = planktos.swarm()
     envir2.add_swarm(sw)
     assert envir2.swarms[0] is sw, "pre-existing swarm not added"
@@ -84,7 +84,7 @@ def test_indiv_variation():
     This mainly just checks that there are no syntax errors.'''
     swarm_size = 30
     # 2D
-    envir = planktos.environment()
+    envir = planktos.Environment()
     sw = envir.add_swarm(swarm_size=swarm_size)
     sw.add_prop('mu', [np.random.randn(2) for ii in range(swarm_size)])
     assert 'mu' not in sw.shared_props
@@ -101,7 +101,7 @@ def test_indiv_variation():
     for ii in range(10):
         sw.move(0.01)
     # 3D
-    envir = planktos.environment(Lz=10)
+    envir = planktos.Environment(Lz=10)
     sw = envir.add_swarm(swarm_size=swarm_size)
     sw.add_prop('mu', [np.random.randn(3) for ii in range(swarm_size)])
     for ii in range(10):
@@ -118,7 +118,7 @@ def test_indiv_variation():
 def test_brinkman_2D():
     '''Test several 2D dynamics using brinkman flow'''
     ########## Single swarm, time-independent flow ##########
-    envir = planktos.environment(Lx=10, Ly=10, x_bndry=('zero','zero'), 
+    envir = planktos.Environment(Lx=10, Ly=10, x_bndry=('zero','zero'), 
                                y_bndry=('noflux','zero'), rho=1000, mu=5000)
     assert len(envir.L) == 2, "default dim is not 2"
     envir.set_brinkman_flow(alpha=66, h_p=1.5, U=.5, dpdx=0.22306, res=101)
@@ -204,7 +204,7 @@ def test_brinkman_2D():
                    "zero bndry not respected"
 
     ########## Single swarm, time-dependent flow ##########
-    envir = planktos.environment(rho=1000, mu=20000)
+    envir = planktos.Environment(rho=1000, mu=20000)
     envir.set_brinkman_flow(alpha=66, h_p=1.5, U=0.1*np.arange(-2,6),
                             dpdx=np.ones(8)*0.22306, res=101, tspan=[0, 10])
     assert envir.flow_times is not None, "flow_times unset"
@@ -250,7 +250,7 @@ def test_brinkman_2D():
 
     
 def test_multiple_2D_swarms():
-    envir = planktos.environment(rho=1000, mu=5000)
+    envir = planktos.Environment(rho=1000, mu=5000)
     envir.set_brinkman_flow(alpha=66, h_p=1.5, U=.5, dpdx=0.22306, res=50)
     envir.add_swarm()
     s2 = envir.add_swarm()
@@ -275,7 +275,7 @@ def test_multiple_2D_swarms():
 def test_brinkman_3D():
     '''Test 3D dynamics using Brinkman flow'''
     ########## Single swarm, time-independent flow ##########
-    envir = planktos.environment(Lx=50, Ly=50, Lz=50, x_bndry=('zero','zero'), 
+    envir = planktos.Environment(Lx=50, Ly=50, Lz=50, x_bndry=('zero','zero'), 
                                y_bndry=('zero','zero'),
                                z_bndry=('noflux','noflux'), rho=1000, mu=250000)
     envir.set_brinkman_flow(alpha=66, h_p=15, U=5, dpdx=0.22306, res=50)
@@ -328,7 +328,7 @@ def test_brinkman_3D():
                    "zero bndry not respected"
 
     ########## Single swarm, time-dependent flow ##########
-    envir = planktos.environment(Lz=10, rho=1000, mu=1000)
+    envir = planktos.Environment(Lz=10, rho=1000, mu=1000)
     U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-3,6,2)))
     envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(20)*0.22306,
                             tspan=[0, 40], res=50)
@@ -353,7 +353,7 @@ def test_brinkman_3D():
     assert envir.flow[1].shape[3] == flow_shape_old[3]
 
     # replace original flow for speed
-    envir = planktos.environment(Lz=10, rho=1000, mu=1000)
+    envir = planktos.Environment(Lz=10, rho=1000, mu=1000)
     envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(20)*0.22306,
                             res=50, tspan=[0, 40])
     envir.add_swarm()
@@ -371,7 +371,7 @@ def test_brinkman_3D():
 
 def test_massive_physics():
     ### Get a 3D, time-dependent flow environment ###
-    envir = planktos.environment(Lz=10, rho=1000, mu=1000, char_L=10)
+    envir = planktos.Environment(Lz=10, rho=1000, mu=1000, char_L=10)
     # kinematic viscosity nu should be calculated automatically from rho and mu
     U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-3,6,2)))
     envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(20)*0.22306, 
@@ -380,7 +380,7 @@ def test_massive_physics():
     ### specify physical properties of swarm and move swarm with low Re ###
     sw = lowRe_massive_swarm(diam=0.002, R=2/3)
     envir.add_swarm(sw)
-    assert sw is envir.swarms[0], "swarm improperly assigned to environment"
+    assert sw is envir.swarms[0], "swarm improperly assigned to Environment"
     for ii in range(10):
         sw.move(0.5)
     assert len(sw.pos_history) == 10, "all movements not recorded"
@@ -401,7 +401,7 @@ def test_massive_physics():
 def test_channel_flow():
     '''Test specification of channel flow in the environment'''
     ### 2D, time-independent flow ###
-    envir = planktos.environment(Lx=20, Ly=10, x_bndry=('zero','zero'), 
+    envir = planktos.Environment(Lx=20, Ly=10, x_bndry=('zero','zero'), 
                                y_bndry=('noflux','zero'), rho=1000, mu=5000)
     envir.set_two_layer_channel_flow(a=1, h_p=1, Cd=0.25, S=0.1, res=51)
     assert envir.flow_times is None, "flow_times should be None for stationary flow"
@@ -418,7 +418,7 @@ def test_channel_flow():
     assert len(envir.time_history) == 20, "all times not recorded"
 
     ### 3D, time-independent flow ###
-    envir = planktos.environment(Lx=20, Ly=30, Lz=10, x_bndry=('zero','zero'), 
+    envir = planktos.Environment(Lx=20, Ly=30, Lz=10, x_bndry=('zero','zero'), 
                                y_bndry=('zero','zero'),
                                z_bndry=('noflux','noflux'), rho=1000, mu=5000)
     envir.set_two_layer_channel_flow(a=1, h_p=1, Cd=0.25, S=0.1, res=51)
@@ -440,7 +440,7 @@ def test_channel_flow():
 def test_canopy_flow():
     '''Test specificiation of canopy flow in the enviornment'''
     ### 2D, time-independent flow ###
-    envir = planktos.environment(Lx=40, Ly=40, x_bndry=('zero','zero'), 
+    envir = planktos.Environment(Lx=40, Ly=40, x_bndry=('zero','zero'), 
                                y_bndry=('noflux','zero'), rho=1000, mu=5000)
     envir.set_canopy_flow(h=15, a=1, U_h=1, res=51)
     assert envir.flow_times is None, "flow_times should be None for stationary flow"
@@ -457,7 +457,7 @@ def test_canopy_flow():
     assert len(envir.time_history) == 20, "all times not recorded"
 
     ### 3D, time-independent flow ###
-    envir = planktos.environment(Lx=20, Ly=30, Lz=10, x_bndry=('zero','zero'), 
+    envir = planktos.Environment(Lx=20, Ly=30, Lz=10, x_bndry=('zero','zero'), 
                                y_bndry=('zero','zero'),
                                z_bndry=('noflux','noflux'), rho=1000, mu=5000)
     envir.set_canopy_flow(h=15, a=1, U_h=1, res=51)
@@ -475,7 +475,7 @@ def test_canopy_flow():
     assert len(envir.time_history) == 20, "all times not recorded"
 
     ### 2D, time dependent flow ###
-    envir = planktos.environment(Lx=50, Ly=40, rho=1000, mu=1000)
+    envir = planktos.Environment(Lx=50, Ly=40, rho=1000, mu=1000)
     U_h = np.arange(-0.5,1.2,0.1)
     U_h[5] = 0
     envir.set_canopy_flow(h=15, a=1, U_h=U_h, tspan=[0,20], res=51)
@@ -487,7 +487,7 @@ def test_canopy_flow():
     assert np.all(envir.flow[0][0,0,-1] == envir.flow[0][0,-1,-1]), "flow is constant w.r.t x"
 
     ### 3D, time dependent flow ###
-    envir = planktos.environment(Lx=50, Ly=30, Lz=40, rho=1000, mu=1000)
+    envir = planktos.Environment(Lx=50, Ly=30, Lz=40, rho=1000, mu=1000)
     U_h = np.arange(-0.5,1.2,0.1)
     U_h[5] = 0
     envir.set_canopy_flow(h=15, a=1, U_h=U_h, tspan=[0,20], res=51)

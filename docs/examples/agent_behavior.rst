@@ -132,7 +132,7 @@ shorter in the y-direction (because of limits in 3D plotting, this will appear
 in plots with a square aspect ratio but everything is still correct, and the 
 axes will be labeled correctly). Also, make the y-boundaries solid to agents. ::
 
-    envir = planktos.environment(Lx=20, Ly=5, Lz=10, y_bndry=['noflux', 'noflux'],
+    envir = planktos.Environment(Lx=20, Ly=5, Lz=10, y_bndry=['noflux', 'noflux'],
                                 rho=1000, mu=1000)
     envir.set_brinkman_flow(alpha=66, h_p=1.5, U=1, dpdx=1, res=101)
 

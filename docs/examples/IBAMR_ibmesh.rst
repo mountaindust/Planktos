@@ -9,7 +9,7 @@ The data was generated in IBAMR. [1]_ [2]_ ::
 
     import planktos
 
-    envir = planktos.environment()
+    envir = planktos.Environment()
 
 Now, load the VTK data. This is just an excerpt from the larger data set, and
 only file dumps 3-5 are included. So we will start at 3 and go until there

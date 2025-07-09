@@ -208,12 +208,12 @@ class imsearch(planktos.swarm):
 # To keep this relatively simple, we will use an environment without background 
 #   flow.
 
-envir = planktos.environment(x_bndry='periodic', y_bndry='periodic')
+envir = planktos.Environment(x_bndry='periodic', y_bndry='periodic')
 swrm = imsearch(envir=envir, seed=2, store_prop_history=True)
 
 # Create a function that, given an axes object, will plot this target so that we 
 #   can visualize it. This does not count as an immersed boundary, even though 
-#   we will eventually pass it to the environment object to plot it for us.
+#   we will eventually pass it to the Environment object to plot it for us.
 def plot_target(ax, args):
     theta = np.linspace(0,2*np.pi,200)
     ax.plot(5+0.5*np.cos(theta),5+0.5*np.sin(theta), 'k', alpha=0.5)

@@ -144,7 +144,7 @@ class myswarm(planktos.swarm):
 
 # Create a 3D environment that is a bit longer in the x-direction and a bit
 #   shorter in the y-direction. Also, make the y-boundaries solid to agents.
-envir = planktos.environment(Lx=20, Ly=5, Lz=10, y_bndry=['noflux', 'noflux'],
+envir = planktos.Environment(Lx=20, Ly=5, Lz=10, y_bndry=['noflux', 'noflux'],
                              rho=1000, mu=1000)
 envir.set_brinkman_flow(alpha=66, h_p=1.5, U=1, dpdx=1, res=101)
 

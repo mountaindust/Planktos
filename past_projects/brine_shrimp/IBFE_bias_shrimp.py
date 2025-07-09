@@ -30,7 +30,7 @@ parser.add_argument("-t", "--time", type=int, default=55,
                     help="time in sec to run the simulation")
 
 # Intialize environment
-envir = planktos.environment(x_bndry=['noflux', 'noflux'])
+envir = planktos.Environment(x_bndry=['noflux', 'noflux'])
 
 ############     Import IBMAR data on flow and extend domain     ############
 

@@ -10,8 +10,8 @@ Agents should not be able to move through the cylinder boundaries.'''
 
 import planktos
 
-# Let's begin by creating a default environment.
-envir = planktos.environment()
+# Let's begin by creating a default Environment.
+envir = planktos.Environment()
 
 # Now, load the VTK data. This is just an excerpt from the larger data set, and
 #   only file dumps 3-5 are included. So we will start at 3 and go until there

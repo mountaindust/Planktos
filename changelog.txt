@@ -6,7 +6,13 @@ Moving immersed boundaries are now supported in 2D!
 - both sticky and frictionless immersed boundary interactions included!
 - reworked _apply_internal_static_BC for 2D and 3D cases, important bug fixes
 - TODO: include/test sticking particles (maybe they don't move with bndry?)
-- TODO: refactor swarm, environment -> Swarm, Environment, change imports in __init__.py and in headings.
+- TODO: refactor swarm, environment -> Swarm, Environment
+- TODO: clean up Swarm and Environment by kicking static methods and loaders to external module
+- TODO: combine Swarm and Environment classes into common.py because they heavily depend on each other.
+    change imports in __init__.py and in headings.
+- TODO: chane the name of get_positions to agent_model
+- TODO: update installation instructions
+
 
 Geometry module added to collect workhorse mathematical functions. Explanation of the mathematics and implementation has been added and cleaned up.
 
@@ -32,7 +38,7 @@ This method is called after agents finish moving. It can used to act on their fi
 Euler_brownian_motion is now robust to arbitrary starting positions/velocities, not just the current state of all agents together.
 
 define_pic_grid
-This new method of the environment class implements a particle-in-cell method for agents interacting with neighbors. It can be utilized to make user-defined behavior more efficient.
+This new method of the Environment class implements a particle-in-cell method for agents interacting with neighbors. It can be utilized to make user-defined behavior more efficient.
 
 ex_poisson_search.py
 New example demonstrating how to handle arbitrary switching times in Planktos and demonstrating a basic intermittent search strategy.

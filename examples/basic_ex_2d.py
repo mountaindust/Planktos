@@ -13,9 +13,9 @@ import planktos
 # The default environment is a 10 meter by 10 meter 2D rectangle in which agents 
 #   can exit out of any side (after which they cease to be simulated). The fluid 
 #   velocity is zero everywhere until you set it to something else. See the 
-#   docstring of the environment class in planktos/environment.py to see all the 
+#   docstring of the Environment class in planktos/environment.py to see all the 
 #   options!
-envir = planktos.environment()
+envir = planktos.Environment()
 
 # Let's add some fluid velocity. First, we'll specify some (currently unrealistic)
 #   properties of our fluid:
@@ -36,7 +36,7 @@ envir.plot_flow()
 #   the default agent behavior: fluid advection with brownian motion, or "jitter".
 #   By default, the swarm class creates a swarm with 100 agents initialized to
 #   random positions throughout the environment. We just need to tell it what 
-#   environment it should go in by passing in our environment object.
+#   environment it should go in by passing in our Environment object.
 #   Let's also specify a seed for the random number generator, so that our 
 #   results will be reproducable.
 swrm = planktos.swarm(envir=envir, seed=1)

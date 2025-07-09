@@ -47,7 +47,7 @@ def main(swarm_size=1000, time=600, data='', D=None, seed=1, create_movie=False,
     '''
 
     # Intialize environment
-    envir = planktos.environment(x_bndry=['noflux', 'noflux'])
+    envir = planktos.Environment(x_bndry=['noflux', 'noflux'])
 
     ############     Import COMSOL data on flow     ############
 

@@ -3,7 +3,7 @@ swarm class
 
 The swarm class acts as a collection of agents that share a similar motion model. 
 All agents must be grouped into a swarm, and every swarm must also have an 
-associated environment object. Internally, information about agent locations, 
+associated Environment object. Internally, information about agent locations, 
 velocities, and accelerations within the swarm are stored as masked NumPy arrays 
 where each row is an agent and each column is a spatial dimension. The mask 
 refers to whether or not the agent has left the spatial domain. Any swarm 

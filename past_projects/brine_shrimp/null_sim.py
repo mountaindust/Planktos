@@ -42,7 +42,7 @@ for y in range(1024):
     flow_z[:,y,:] = npzfile['z_flow']
 
 # Intialize environment with this flow and the original length
-envir = planktos.environment(Lx=80, Ly=320, Lz=80, x_bndry=['noflux', 'noflux'],
+envir = planktos.Environment(Lx=80, Ly=320, Lz=80, x_bndry=['noflux', 'noflux'],
                              flow = [flow_x, flow_y, flow_z])
 
 print('Domain set to {} mm.'.format(envir.L))

@@ -37,11 +37,11 @@ __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
-class environment:
+class Environment:
     '''
     Rectangular environment containing fluid info, immersed meshs, and swarms.
 
-    The environment class does much of the heavy lifting of Planktos. It loads 
+    The Environment class does much of the heavy lifting of Planktos. It loads 
     and contains information about the fluid velocity field, the dimensions of 
     the physical environment being simulated, boundary conditions for the agents, 
     the agent swarms that are in the environment, any immersed meshes, and all 
@@ -224,11 +224,11 @@ class environment:
     dynamic viscosity recorded. The fluid velocity is zero everywhere, but can
     be set to something different later.
 
-    >>> envir = planktos.environment(Lz=10, rho=1000, mu=1000)
+    >>> envir = planktos.Environment(Lz=10, rho=1000, mu=1000)
 
-    Create a 2D 5x3 meter environment with zero fluid velocity.
+    Create a 2D 5x3 meter Environment with zero fluid velocity.
 
-    >>> envir = planktos.environment(Lx=5, Ly=3)
+    >>> envir = planktos.Environment(Lx=5, Ly=3)
     '''
 
     def __init__(self, Lx=10, Ly=10, Lz=None,
@@ -459,8 +459,8 @@ class environment:
         2D vs. 3D flow is based on the current dimension of the environment.
 
         After this method is successfully called, the flow property of the 
-        environment class will be set to the resulting Brinkman flow, and h_p 
-        will be set in the environment's properties.
+        Environment class will be set to the resulting Brinkman flow, and h_p 
+        will be set in the Environment's properties.
 
         Parameters
         ----------
@@ -490,7 +490,7 @@ class environment:
         --------
         Create a 3D environment with time varying Brinkman flow
 
-        >>> envir = planktos.environment(Lz=10, rho=1000, mu=1000)
+        >>> envir = planktos.Environment(Lz=10, rho=1000, mu=1000)
         >>> U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-5,8,3)))
         >>> envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(20)*0.22306, 
             res=101, tspan=[0, 20])
@@ -1311,13 +1311,13 @@ class environment:
 
 
     def load_NetCDF(self, filename):
-        '''Load a NetCDF file into the netcdf attribute of the environment. 
+        '''Load a NetCDF file into the netcdf attribute of the Environment. 
         Does not automatically read in any data.
 
         Because NetCDF files can contain multiple data sets with different 
         dimension names and associated metadata, and because it may be desirable 
         to explore the data set first and/or load only a subset of the data, 
-        this method just loads the Dataset into the environment object.
+        this method just loads the Dataset into the Environment object.
         See the documentation/tutorial for netCDF4 on ways to read the metadata
         for the loaded Dataset. See read_NetCDF_flow for reading in data from a 
         loaded NetCDF dataset.
@@ -1413,7 +1413,7 @@ class environment:
 
         See Also
         --------
-        load_NetCDF : Load a NetCDF file into the netcdf environment attribute.
+        load_NetCDF : Load a NetCDF file into the netcdf Environment attribute.
 
         Notes
         -----
@@ -2514,7 +2514,7 @@ class environment:
 
 
     def add_swarm(self, swarm_size=100, **kwargs):
-        ''' Adds a swarm into this environment.
+        ''' Adds a swarm into this Environment.
 
         Parameters
         ----------
@@ -2539,7 +2539,7 @@ class environment:
 
     def move_swarms(self, dt=1.0, params=None, ib_collisions='sliding', 
                     silent=False):
-        '''Move all swarms in the environment.
+        '''Move all swarms in the Environment.
 
         Parameters
         ----------
@@ -2738,7 +2738,7 @@ class environment:
             points is used.
         time : float, optional
             if None, the present time. Otherwise, the flow field will be
-            interpolated to the time given based on the environment flow_times.
+            interpolated to the time given based on the Environment flow_times.
             This is only supported for environmental flow fields (not ones 
             passed in as an argument).
         method : string, default='linear'
@@ -3130,13 +3130,13 @@ class environment:
         as specified by a swarm object's get_positions method and updated in 
         discrete time intervals of length dt.
 
-        This method will set the following environment attributes:
-        - environment.FTLE_largest
-        - environment.FTLE_smallest
-        - environment.FTLE_loc
-        - environment.FTLE_t0
-        - environment.FTLE_T
-        - environment.FTLE_grid_dim
+        This method will set the following Environment attributes:
+        - Environment.FTLE_largest
+        - Environment.FTLE_smallest
+        - Environment.FTLE_loc
+        - Environment.FTLE_t0
+        - Environment.FTLE_T
+        - Environment.FTLE_grid_dim
 
         All FTLE calculations will be done using a swarm object. This means that:
         
@@ -3236,7 +3236,7 @@ class environment:
         else:
             # Get a shallow copy of the swarm passed in
             s = copy.copy(swrm)
-            # Add swarm to environment and re-initialize swarm positions
+            # Add swarm to Environment and re-initialize swarm positions
             self.add_swarm(s)
             s.positions = s.grid_init(*grid_dim, testdir=testdir)
             s.pos_history = []
@@ -3280,7 +3280,7 @@ class environment:
             print(prnt_str)
 
             # keep a list of all times solved for 
-            #   (time history normally stored in environment class)
+            #   (time history normally stored in Environment class)
             current_time = t0
             time_list = [] 
 

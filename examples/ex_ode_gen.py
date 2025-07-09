@@ -76,9 +76,9 @@ class myswarm(planktos.swarm):
         #   swarm covariance matrix.
         return planktos.motion.Euler_brownian_motion(self, dt, ode=swrm_odes)
 
-# Now we create the environment/swarm and run it!
+# Now we create the Environment/swarm and run it!
 
-envir = planktos.environment(Lx=20, Ly=5, Lz=10, y_bndry=['noflux', 'noflux'],
+envir = planktos.Environment(Lx=20, Ly=5, Lz=10, y_bndry=['noflux', 'noflux'],
                              rho=1000, mu=1000)
 envir.set_brinkman_flow(alpha=66, h_p=1.5, U=1, dpdx=1, res=101)
 swrm = myswarm(envir=envir)

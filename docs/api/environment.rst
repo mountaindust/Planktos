@@ -1,7 +1,7 @@
-environment class
+Environment class
 =================
 
-Every instance of the environment class is functionally a rectangular spatial 
+Every instance of the Environment class is functionally a rectangular spatial 
 domain in either two or three dimensions. The lower left corner is located at 
 the Euclidean origin. Boundary conditions are specified with respect to the 
 agents on each side of the domain. A fluid velocity field can be specified on a 
@@ -15,5 +15,5 @@ Author: Christopher Strickland
 
 Email: cstric12@utk.edu
 
-.. autoclass:: planktos.environment
+.. autoclass:: planktos.Environment
     :members:

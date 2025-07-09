@@ -13,7 +13,7 @@ import planktos
 #   of all three dimensions this time (in meters). We'll plan on using Brinkman
 #   flow again, so let's also go ahead and specify the fluid density and 
 #   dynamic viscosity:
-envir = planktos.environment(Lx=20, Ly=10, Lz=4, rho=1000, mu=1000)
+envir = planktos.Environment(Lx=20, Ly=10, Lz=4, rho=1000, mu=1000)
 
 # Now let's set the Brinkman flow. It automatically gets translated into all
 #   available spatial dimensions:

@@ -7,7 +7,7 @@ import sys
 sys.path.append('..')
 import planktos
 
-envir = planktos.environment()
+envir = planktos.Environment()
 envir.read_comsol_vtu_data('data/seafan/sea_fan_data.vtu')
 envir.read_stl_mesh_data('data/seafan/sea-fan-piece.stl')
 

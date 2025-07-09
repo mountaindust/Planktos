@@ -31,7 +31,7 @@ import planktos
 
 ##### Begin by loading the fluid and mesh. #####
 # with just this line, we get an empty domain with no flow to test things out
-envir = planktos.environment(Lx=1, Ly=0.25, x_bndry='periodic', y_bndry='periodic')
+envir = planktos.Environment(Lx=1, Ly=0.25, x_bndry='periodic', y_bndry='periodic')
 
 
 ##### Load your fluid data and mesh data here! #####

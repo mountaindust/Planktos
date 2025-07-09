@@ -8,12 +8,12 @@ from agent to agent.
 import numpy as np
 import planktos
 
-# Let's go ahead and create a default environment with some Brinkman flow in 2D.
-envir = planktos.environment(rho=1000, mu=1000)
+# Let's go ahead and create a default Environment with some Brinkman flow in 2D.
+envir = planktos.Environment(rho=1000, mu=1000)
 envir.set_brinkman_flow(alpha=66, h_p=1.5, U=1, dpdx=1, res=101)
 
 # Let's add a very default swarm. Another way of adding a swarm to an existing 
-#   environment is by using the envir.add_swarm method. You can pass any 
+#   Environment is by using the envir.add_swarm method. You can pass any 
 #   parameters for the swarm to the add_swarm method just like you would the
 #   planktos.swarm constructor. You just skip the envir argument!
 swrm = envir.add_swarm()

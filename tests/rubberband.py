@@ -7,7 +7,7 @@ import planktos
 
 rndState = np.random.default_rng(1)
 
-envir = planktos.environment(1,1)
+envir = planktos.Environment(1,1)
 
 ###### Poroelastic rubberband #######
 envir.read_IB2d_fluid_data('poroelastic_rb/viz_IB2d', 1e-4, 20)

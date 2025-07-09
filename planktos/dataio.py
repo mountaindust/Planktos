@@ -609,7 +609,7 @@ def write_vtk_2D_rectilinear_grid_scalars(path, title, data, grid_points,
     data : ndarray 
         scalar data, must be 2D
     grid_points : tuple (length 2) 
-        grid points in each direction; environment.flow_points
+        grid points in each direction; Environment.flow_points
     cycle : int
         dump number, e.g. integer time step in the simulation
     time : float
@@ -664,7 +664,7 @@ def write_vtk_rectilinear_grid_vectors(path, title, data, grid_points,
         a time component (e.g., the dimension of the array should match the 
         length of the list which should match the length of parameter L)
     grid_points : tuple
-        grid points in each direction; environment.flow_points
+        grid points in each direction; Environment.flow_points
     cycle : int, optional
         dump number, which will also be included in the filename
     time : float, optional

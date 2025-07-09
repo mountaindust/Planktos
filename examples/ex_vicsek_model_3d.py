@@ -25,11 +25,11 @@ import planktos
 # setup an empty domain representing one of the two cases
 
 # Wind Tunnel:
-# envir = planktos.environment(Lx=0.21, Ly=2.5, Lz=0.2, x_bndry='noflux', 
+# envir = planktos.Environment(Lx=0.21, Ly=2.5, Lz=0.2, x_bndry='noflux', 
 #         y_bndry='zero', z_bndry='noflux')
 
 # Periodic Wind Tunnel:
-envir = planktos.environment(Lx=0.21, Ly=2.5, Lz=0.2, x_bndry='noflux', 
+envir = planktos.Environment(Lx=0.21, Ly=2.5, Lz=0.2, x_bndry='noflux', 
         y_bndry='periodic', z_bndry='noflux')
 
 ##### Load fluid data #####

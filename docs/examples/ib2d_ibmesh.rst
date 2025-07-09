@@ -16,11 +16,11 @@ through the cylinder or the channel boundaries. [1]_ [2]_ [3]_ ::
 
     import planktos
 
-As before, we begin by creating a default environment. It does not matter what 
+As before, we begin by creating a default Environment. It does not matter what 
 the dimensions are - when we load the vtk data, it will automatically 
 change shape to adjust to the data! ::
 
-    envir = planktos.environment()
+    envir = planktos.Environment()
 
 When reading in VTK data, it really helps to have access to the input2d file 
 that generated the data. You need to know two basic things:
@@ -57,14 +57,14 @@ crossing. It may not be ideal, but it's often good enough in a pinch! One
 thing you absolutely don't want are mesh lines crossing without a vertex 
 at every crossing point. This can cause issues with the algorithm that 
 handles agent-mesh collisions, resulting in agents finding their way through
-the mesh. You can check things are correct by viewing just the environment 
+the mesh. You can check things are correct by viewing just the Environment 
 boundaries and the mesh structures with the following command::
 
     envir.plot_envir()
 
 .. image:: ../_static/ib2d_cyl_channel_mesh.png
 
-Now we add a swarm to our environment.
+Now we add a swarm to our Environment.
 Let's use the default number of agents (100), but place them all in the same
 point, just to the left of the cylinder and in the middle of the channel.
 The length of the domain in each direction can be obtained via the envir.L

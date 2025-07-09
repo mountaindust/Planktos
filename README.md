@@ -145,9 +145,9 @@ of the boundary do not cross except at vertices. This is to keep computational
 speed up and numerical complexity down. So, especially if you are auto-creating
 boundaries from vertex data, be sure and check that boundary segments are not
 intersecting each other away from specified vertices! A quick way to do this is
-to call environment.plot_envir() after the mesh import is done to visually check 
+to call Environment.plot_envir() after the mesh import is done to visually check 
 that the boundary formed correctly and doesn't cross itself in unexpected ways. 
-There is also a method of the environment class called add_vertices_to_2D_ibmesh 
+There is also a method of the Environment class called add_vertices_to_2D_ibmesh 
 which will add vertices at all 2D mesh crossing points, however it's use is
 discouraged because it results in complex vertices that attach more than two
 mesh segments and leftover segments that do not contribute to the dynamics at all. 
@@ -166,7 +166,7 @@ Strickland (2020). Experiments and agent based models of zooplankton movement
 within complex flow environments, *Biomimetics*, 5(1), 2.
 
 ## API
-Class: environment
+Class: Environment
    
 - Properties
     - `L` list, length 2 (2D) or 3 (3D) with length of each domain dimension
@@ -177,7 +177,7 @@ Class: environment
     time that temporal interpolation becomes necessary, these ndarrays are all replaced with 
     spline objects (fCubicSpline, a subclass of scipy.interpolate.CubicSpline). The original
     data can be regenerated using the regenerate_flow_data method.
-    - `swarms` list of swarm objects in the environment
+    - `swarms` list of swarm objects in the Environment
     - `time` current time of the simulation
     - `time_history` history of time points simulated
     - `ibmesh` Nx2x2 or Nx3x3 ndarray of mesh elements, given as line segment vertices (2D) or triangle vertices (3D)
@@ -197,10 +197,10 @@ Class: environment
     - `Re` read-only Reynolds number calculated from above parameters
     - `g` acceleration due to gravity (9.80665 m/s**2)
 - Methods
-    - `set_brinkman_flow` Given several (possibly time-dependent) fluid variables, calculate Brinkman flow on a regular grid with a given resolution and set that as the environment's fluid  velocity. Capable of handling both 2D and 3D domains.
+    - `set_brinkman_flow` Given several (possibly time-dependent) fluid variables, calculate Brinkman flow on a regular grid with a given resolution and set that as the Environment's fluid velocity. Capable of handling both 2D and 3D domains.
     - `set_two_layer_channel_flow` Apply wide-channel flow with vegetation layer according to the two-layer model described in Defina and Bixio (2005) "Vegetated Open Channel Flow".
     - `set_canopy_flow` Apply flow within and above a uniform homogenous canopy according to the model described in Finnigan and Belcher (2004), "Flow over a hill covered with a plant canopy".
-    - `read_IB2d_vtk_data` Read in 2D fluid velocity data from IB2d and set the environment's flow variable.
+    - `read_IB2d_vtk_data` Read in 2D fluid velocity data from IB2d and set the Environment's flow variable.
     - `read_IBAMR3d_vtk_data` Read in 3D fluid velocity data from vtk files obtained from IBAMR. See read_IBAMR3d_py27.py for converting IBAMR data to vtk format using VisIt.
     - `read_IBAMR3d_vtk_dataset` Read in multiple vtk files with naming scheme
     IBAMR_db_###.vtk where ### is the dump number (automatic format when using
@@ -220,14 +220,14 @@ Class: environment
     - `tile_flow` Tile the current fluid flow in the x and/or y directions. It is assumed that the flow is roughly periodic in the direction(s) specified - no checking will be done, and no errors thrown if not.
     - `extend` Extend the domain by duplicating the boundary flow a number of times in a given (or multiple) directions. Good when there is fully resolved fluid \
     flow before/after or on the sides of a structure.
-    - `add_swarm` Add or initialize a swarm into the environment
-    - `move_swarms` Call the move method of each swarm in the environment
+    - `add_swarm` Add or initialize a swarm into the Environment
+    - `move_swarms` Call the move method of each swarm in the Environment
     - `set_boundary_conditions` Check that each boundary condition is implemented before setting the bndry property.
     - `interpolate_flow` Interpolate a fluid velocity field in space at the given positions
     - `interpolate_temporal_flow` Linearly interpolate the flow field in time
     - `dudt` Returns a temporally interpolated time-derivative of the flow field
     - `get_mean_fluid_speed` Return the mean fluid speed at the current time, interpolating if necessary
-    - `reset` Resets environment to time=0. Swarm history will be lost, and all swarms will maintain their last position. This is typically called automatically if the fluid flow has been altered by another method. If rm_swarms=True, remove all swarms.
+    - `reset` Resets Environment to time=0. Swarm history will be lost, and all swarms will maintain their last position. This is typically called automatically if the fluid flow has been altered by another method. If rm_swarms=True, remove all swarms.
     - `regenerate_flow_data` Regenerate the original fluid data from fCubicSpline objects
     - `save_fluid` Save the fluid velocity field as one or more vtk files (one for each time point).
     - `get_2D_vorticity` Calculate and return the vorticity of a 2D flow field, 
@@ -252,7 +252,7 @@ Class: swarm
     projectile motion)
     - `accelerations` list of current accelerations, one for each agent (for use
     in projectile motion)
-    - `envir` environment object that this swarm belongs to
+    - `envir` Environment object that this swarm belongs to
     - `rndState` random number generator (for reproducability)
     - `shared_props` properties shared by all members of the swarm. Includes:
         - `mu` default mean for Gaussian walk (zeros)
@@ -272,8 +272,8 @@ Class: swarm
     - `save_pos_to_csv` save all current and past agent positions to csv
     - `save_pos_to_vtk` save the positions at each time step to a vtk file. only the positions
     inside the domain are saved.
-    - `calc_re` Calculate the Reynolds number based on environment variables.
-    Requires rho and mu to be set in the environment, and diam to be set in swarm
+    - `calc_re` Calculate the Reynolds number based on Environment variables.
+    Requires rho and mu to be set in the Environment, and diam to be set in swarm
     - `grid_init` return a grid of initial positions based on a grid. does not set
     the swarm to these positions.
     - `move` move each agent in the swarm. Do not override: see get_positions.

@@ -23,7 +23,7 @@ from matplotlib import animation, colors
 from matplotlib.collections import LineCollection
 from matplotlib.path import Path as mPath
 
-from planktos import environment, dataio, motion, geom
+from planktos import Environment, dataio, motion, geom
 
 __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
@@ -33,7 +33,7 @@ class swarm:
     '''
     Fundamental Planktos object describing a group of similar agents.
 
-    The swarm class (alongside the environment class) provides the main agent 
+    The swarm class (alongside the Environment class) provides the main agent 
     functionality of Planktos. Each swarm object should be thought of as a group 
     of similar (though not necessarily identical) agents. Planktos implements 
     agents in this way rather than as individual objects for speed purposes; it 
@@ -55,9 +55,9 @@ class swarm:
     ----------
     swarm_size : int, default=100
         Number of agents in the swarm. ignored when using the 'grid' init method. 
-    envir : environment object, optional
+    envir : Environment object, optional
         Environment for the swarm to exist in. Defaults to a newly initialized 
-        environment with all of the defaults.
+        Environment with all of the defaults.
     init : {'random', 'grid', ndarray}, default='random'
         Method for initalizing agent positions.
         * 'random': Uniform random distribution throughout the domain
@@ -137,8 +137,8 @@ class swarm:
 
     Attributes
     ----------
-    envir : environment object
-        environment that this swarm belongs to
+    envir : Environment object
+        Environment that this swarm belongs to
     positions : masked array, shape Nx2 (2D) or Nx3 (3D)
         spatial location of all the agents in the swarm. the mask is False for 
         any row corresponding to an agent that is within the spatial boundaries 
@@ -148,7 +148,7 @@ class swarm:
         The current number of agents in the swarm, based on positions.shape[0]
     pos_history : list of masked arrays
         all previous position arrays are stored here. to get their corresponding 
-        times, check the time_history attribute of the swarm's environment.
+        times, check the time_history attribute of the swarm's Environment.
     full_pos_history : list of masked arrays
         same as pos_history, but also includes the positions attribute as the 
         last entry in the list
@@ -157,7 +157,7 @@ class swarm:
         positions
     vel_history : list of masked arrays
         all previous velocity arrays are stored here. to get their corresponding 
-        times, check the time_history attribute of the swarm's environment.
+        times, check the time_history attribute of the swarm's Environment.
     full_vel_history : list of masked arrays
         same as vel_history, but also includes the velocities attribute as the 
         last entry in the list
@@ -175,7 +175,7 @@ class swarm:
     props_history : List of past Pandas DataFrames or None
         If not None, this list records individual agent attributes at all 
         previous points in time corresponding to the time_history attribute of 
-        the swarm's environment.
+        the swarm's Environment.
     full_props_history : List of Pandas DataFrames or None
         props_history plus the current time version of props
     shared_props : dictionary
@@ -238,9 +238,9 @@ class swarm:
 
     Examples
     --------
-    Create a default swarm in an environment with some fluid data loaded and tiled.
+    Create a default swarm in an Environment with some fluid data loaded and tiled.
 
-    >>> envir = planktos.environment()
+    >>> envir = planktos.Environment()
     >>> envir.read_IBAMR3d_vtk_dataset('../tests/IBAMR_test_data', start=5, finish=None)
     >>> envir.tile_flow(3,3)
     >>> swrm = swarm(envir=envir)
@@ -252,28 +252,28 @@ class swarm:
                  props=None, store_prop_history=False, name='organism', 
                  color='darkgreen', **kwargs):
 
-        # use a new, 3D default environment if one was not given. Or infer
+        # use a new, 3D default Environment if one was not given. Or infer
         #   dimension from init if possible.
         if envir is None:
             if isinstance(init,str):
-                self.envir = environment(init_swarms=self, Lz=10)
+                self.envir = Environment(init_swarms=self, Lz=10)
             elif isinstance(init,np.ndarray) and len(init.shape) == 2:
                 if init.shape[1] == 2:
-                    self.envir = environment(init_swarms=self)
+                    self.envir = Environment(init_swarms=self)
                 else:
-                    self.envir = environment(init_swarms=self, Lz=10)
+                    self.envir = Environment(init_swarms=self, Lz=10)
             else:
                 if len(init) == 2:
-                    self.envir = environment(init_swarms=self)
+                    self.envir = Environment(init_swarms=self)
                 else:
-                    self.envir = environment(init_swarms=self, Lz=10)
+                    self.envir = Environment(init_swarms=self, Lz=10)
         else:
             try:
-                assert envir.__class__.__name__ == 'environment'
+                assert envir.__class__.__name__ == 'Environment'
                 envir.swarms.append(self)
                 self.envir = envir
             except AssertionError as ae:
-                print("Error: invalid environment object.")
+                print("Error: invalid Environment object.")
                 raise ae
 
         # initialize random number generator
@@ -408,7 +408,7 @@ class swarm:
         The full, unmasked grid will be x_num by y_num [by z_num] on the 
         interior and boundaries of the domain. The output of this method is 
         appropriate for finding FTLE, and that is its main purpose. It will 
-        automatically be called by the environment class's calculate_FTLE method, 
+        automatically be called by the Environment class's calculate_FTLE method, 
         and if you want to initialize a swarm with a grid this is possible by 
         passing the init='grid' keyword argument when the swarm is created. 
         So there is probably no reason to use this method directly.
@@ -830,7 +830,7 @@ class swarm:
 
 
     def _change_envir(self, envir):
-        '''Manages a change from one environment to another'''
+        '''Manages a change from one Environment to another'''
 
         if self.positions.shape[1] != len(envir.L):
             if self.positions.shape[1] > len(envir.L):
@@ -859,7 +859,7 @@ class swarm:
                 if len(other_props) > 0:
                     print('WARNING: other properties {} were not projected.'.format(other_props))
             else:
-                raise RuntimeError("Swarm dimension smaller than new environment dimension!"+
+                raise RuntimeError("Swarm dimension smaller than new Environment dimension!"+
                     " Cannot scale up!")
         self.envir = envir
         envir.swarms.append(self)
@@ -869,7 +869,7 @@ class swarm:
     def calc_re(self, u, diam=None):
         '''Calculate and return the Reynolds number as experienced by a swarm 
         with characteristic length 'diam' in a fluid moving with velocity u. All 
-        other parameters will be pulled from the environment's attributes. 
+        other parameters will be pulled from the Environment's attributes. 
         
         If diam is not specified, this method will look for it in the 
         shared_props dictionary of this swarm.
@@ -895,7 +895,7 @@ class swarm:
             'diam' in self.shared_props:
             return self.envir.rho*u*diam/self.envir.mu
         else:
-            raise RuntimeError("Parameters necessary for Re calculation in environment are undefined.")
+            raise RuntimeError("Parameters necessary for Re calculation in Environment are undefined.")
 
 
 
@@ -923,10 +923,10 @@ class swarm:
             vector is exhausted. In sticky collisions, just return the point of 
             intersection.
         update_time : bool, default=True
-            whether or not to update the environment's time by dt. Probably 
+            whether or not to update the Environment's time by dt. Probably 
             The only reason to change this to False is if there are multiple 
-            swarm objects in the same environment - then you want to update 
-            each before incrementing the time in the environment.
+            swarm objects in the same Environment - then you want to update 
+            each before incrementing the time in the Environment.
         silent : bool, default=False
             If True, suppress printing the updated time.
 
@@ -976,13 +976,13 @@ class swarm:
             if not silent:
                 print('time = {}'.format(np.round(self.envir.time,11)))
 
-            # Check for other swarms in environment and freeze them
+            # Check for other swarms in Environment and freeze them
             warned = False
             for s in self.envir.swarms:
                 if s is not self and len(s.pos_history) < len(self.pos_history):
                     s.pos_history.append(s.positions.copy())
                     if not warned:
-                        warnings.warn("Other swarms in the environment were not"+
+                        warnings.warn("Other swarms in the Environment were not"+
                                       " moved during this environmental timestep.\n"+
                                       "If this was not your intent, call"+
                                       " envir.move_swarms instead of this method"+
@@ -2996,7 +2996,7 @@ class swarm:
         '''Plot the position of the swarm at time t, or at the current time
         if no time is supplied. The actual time plotted will depend on the
         history of movement steps; the closest entry in
-        environment.time_history will be shown without interpolation.
+        Environment.time_history will be shown without interpolation.
         
         Parameters
         ----------
