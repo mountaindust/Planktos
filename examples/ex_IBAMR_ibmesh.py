@@ -18,7 +18,7 @@ envir = planktos.Environment()
 #   are none left. This is just a bit of data which originally came from IBAMR 
 #   that we use for testing purposes, thus it's location in the tests folder. 
 #   All other information is pulled from the VTK headers!
-envir.read_IBAMR3d_vtk_dataset('../tests/IBAMR_test_data', start=3, finish=None)
+envir.read_IBAMR3d_vtk_data('../tests/IBAMR_test_data', d_start=3, d_finish=None)
 
 # Now we read in the vertex data. Unlike the ib2d_ibmesh example, here we will
 #   use a convex hull algorithm to create a solid object out of the vertex 
