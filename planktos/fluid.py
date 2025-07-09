@@ -121,7 +121,7 @@ def wrap_flow(flow, flow_points, periodic_dim=(True, True, False)):
     flow : list of ndarrays
         This will be overwritten to save space!
     flow_points : tuple of mesh coordinates (x,y,[z])
-    periodic_dim : list of 3 bool, default=[True, True, False]
+    periodic_dim : list of 2 or 3 bool, default=[True, True, False]
         True if that spatial dimension is periodic, otherwise False
 
     Returns
