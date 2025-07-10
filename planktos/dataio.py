@@ -1,4 +1,9 @@
 '''Functions for reading and writing data from vtk, vtu, vertex files, and stl.
+These are low-level functions that are probably unnecessary to use directly,
+unless you just want to directly get numpy arrays from datasets.
+
+If you are trying to load data into an Environment class, use the relevant
+loader methods in Environment.
 
 Created: Wed April 05 2017
 

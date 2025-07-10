@@ -16,9 +16,5 @@ __version__ = '1.0.0'
 
 from .environment import Environment
 from .swarm import Swarm
-# from . import motion
-# from . import dataio
 
-__all__ = ["Environment", "Swarm", "motion", "dataio", "geom"]
-Environment.__module__ = "environment"
-Swarm.__module__ = "swarm"
+__all__ = ["Environment", "Swarm", "motion", "dataio", "fluid"]
