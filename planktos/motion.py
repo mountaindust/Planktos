@@ -21,31 +21,6 @@ import warnings
 import numpy as np
 import numpy.ma as ma
 from scipy.integrate import solve_ivp
-
-
-
-# Decorator to convert an ODE function expecting a 2NxD shaped x-variable array 
-#   into a flattened version that can be read into scipy.integrate.ode. All the 
-#   ODE generators in this module create 2NxD (or in one special case, NxD) 
-#   functions, which is what our built-in solvers expect.
-# This decorator should be completely unnecessary unless you really want to use 
-#   scipy's integrator.
-def flatten_ode(swarm):
-    '''Defines a decorator capable of converting a flattened, passed in 
-    x-variable array into a 2NxD shape for generated ODE functions, and then 
-    take the result of the ODE functions and reflatten. Need knowledge of the 
-    dimension of swarm for this, so the Swarm must be passed to the decorator.
-    2N accounts for N equations giving the derivative of position w.r.t time and
-    N equations giving the derivative of velocity. D is the dimension of the
-    problem (2D or 3D).'''
-    dim = swarm.positions.shape[1]
-    N_dbl = swarm.positions.shape[0]*2
-    def decorator(func):
-        def wrapper(t,x):
-            result = func(t,np.reshape(x,(N_dbl,dim)))
-            return result.flatten()
-        return wrapper
-    return decorator
     
 
 #############################################################################
@@ -53,6 +28,8 @@ def flatten_ode(swarm):
 #                           ODE AND SDE SOLVERS!                            #
 #                                                                           #
 #############################################################################
+
+# These all expect a 2NxD or NxD array.
 
 # TODO: diffusion in porous media https://en.wikipedia.org/wiki/Diffusion#Diffusion_in_porous_media
 
@@ -108,23 +85,22 @@ def RK45(fun, t0, y0, tf, **kwargs):
 
 def Euler_brownian_motion(swarm, dt, positions=None, velocities=None, 
                           mu=None, ode=None, sigma=None):
-    warnings.simplefilter("ignore", category=SyntaxWarning)
     '''Uses the Euler-Maruyama method to solve the Ito SDE
     
         .. math::
         
             dX_t = \\mu(X_t,t) dt + \\sigma(t) dW_t
 
-    where :math:`\mu` is the drift and :math:`\sigma` is the diffusion.
-    :math:`\mu` can be specified directly as a constant or via an ode, or both.
+    where :math:`\\mu` is the drift and :math:`\\sigma` is the diffusion.
+    :math:`\\mu` can be specified directly as a constant or via an ode, or both.
     If both are ommited, the default is to use the mu property of the Swarm
     object plus the local fluid drift. If an ode is given but mu is not, the
     the mu property of the Swarm will be added to the ode velocity term before
     solving (however, the Swarm mu is zero by default).
     
-    :math:`\sigma` can be provided a number of ways (see below), and can be 
+    :math:`\\sigma` can be provided a number of ways (see below), and can be 
     dependent on time or agent if passed in directly. This solver is only order 
-    0.5 if :math:`\sigma` is dependent on spatial position, so this is not 
+    0.5 if :math:`\\sigma` is dependent on spatial position, so this is not 
     directly supported.
 
     Parameters
@@ -165,11 +141,11 @@ def Euler_brownian_motion(swarm, dt, positions=None, velocities=None,
     sigma : array, optional
         Brownian diffusion coefficient matrix. If None, use the 'cov' property 
         of the Swarm object, or lacking that, the 'D' property. For convienence, 
-        :math:`\sigma` can be provided in several ways:
+        :math:`\\sigma` can be provided in several ways:
 
         - As a covariance matrix stored in Swarm.get_prop('cov'). This is the 
           default. The matrix given by this Swarm property is assumed
-          to be defined by :math:`\sigma\sigma^T` and independent of time or
+          to be defined by :math:`\\sigma\\sigma^T` and independent of time or
           spatial location. The result of using this matrix is that the 
           integrated Wiener process over an interval dt has covariance 
           Swarm.get_prop('cov')*dt, and this will be fed directly into the 
@@ -177,7 +153,7 @@ def Euler_brownian_motion(swarm, dt, positions=None, velocities=None,
           It should be a square matrix with the length of each side equal to 
           the spatial dimension, and be symmetric.
         - As a diffusion tensor (matrix). The diffusion tensor is given by
-          :math:`D = 0.5*\sigma\sigma^T`, so it is really just half the
+          :math:`D = 0.5*\\sigma\\sigma^T`, so it is really just half the
           covariance matrix. This is the diffusion tensor as given in the
           Fokker-Planck equation or the heat equation. As in the case of the
           covariance matrix, it is assumed constant in time and space, and
@@ -208,7 +184,6 @@ def Euler_brownian_motion(swarm, dt, positions=None, velocities=None,
     Stratonovich function call at that time too, because with a spatially 
     dependent sigma, Ito and Stratonovich are no longer equivalent.
     '''
-    warnings.resetwarnings()
     
     # get critical info about number of agents and dimension of domain
     if positions is not None:
@@ -328,17 +303,16 @@ def Euler_brownian_motion(swarm, dt, positions=None, velocities=None,
             return positions + move
 
 
-
 #############################################################################
 #                                                                           #
 #                        ODE GENERATOR FUNCTIONS                            #
 #  These functions generate a handle to an ODE for use within a stochastic  #
-#      solver or scipy.integrate.ode (with the flatten_ode decorator).      #
+#    solver or RK45, which is a wrapper around scipy.integrate.solve_ivp    #
 #                                                                           #
 #############################################################################
 
+
 def inertial_particles(swarm):
-    warnings.simplefilter("ignore", category=SyntaxWarning)
     '''Function generator for ODEs governing small, rigid, spherical particles 
     whose dynamics can be described by the linearized Maxey-Riley equation [2]_
     described in Haller and Sapsis (2008) [3]_. 
@@ -352,7 +326,7 @@ def inertial_particles(swarm):
             (\\nabla\\mathbf{u})\\mathbf{u}
     
     Critically, it is assumed that 
-    :math:`\mu = R/St` is much greater than 1, where R is the density ratio 
+    :math:`\\mu = R/St` is much greater than 1, where R is the density ratio 
     :math:`R=2\\rho_f/(\\rho_f+2\\rho_p)`, and St is the Stokes number.
 
     Parameters
@@ -388,7 +362,6 @@ def inertial_particles(swarm):
     .. [3] Haller, G. and Sapsis, T. (2008). Where do inertial particles go in
       fluid flows? Physica D: Nonlinear Phenomena, 237(5), 573-583.
     '''
-    warnings.resetwarnings()
     
     ##### Check for presence of required physical parameters #####
     try:

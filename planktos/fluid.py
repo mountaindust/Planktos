@@ -14,7 +14,7 @@ from scipy import interpolate
 from pathlib import Path
 from . import dataio
 
-def read_IB2d_dumpfiles(path, d_start, d_finish, vector_data):
+def _read_IB2d_dumpfiles(path, d_start, d_finish, vector_data):
     '''
     Load IB2d data at path starting with dump d_start and ending with dump
     d_end. This can read just one or many dump files.
@@ -113,84 +113,7 @@ def read_IB2d_dumpfiles(path, d_start, d_finish, vector_data):
 
 
 
-def wrap_flow(flow, flow_points, periodic_dim=(True, True, False)):
-    '''In some cases, software may print out fluid velocity data that omits 
-    the velocities at the right boundaries in spatial dimensions that are 
-    meant to be periodic. This helper function restores that data by copying 
-    everything over. 3rd dimension will automatically be ignored if 2D.
-
-    Parameters
-    ----------
-    flow : list of ndarrays
-        This will be overwritten to save space!
-    flow_points : tuple of mesh coordinates (x,y,[z])
-    periodic_dim : list of 2 or 3 bool, default=[True, True, False]
-        True if that spatial dimension is periodic, otherwise False
-
-    Returns
-    -------
-    flow : list of ndarrays
-    flow_points : tuple of mesh coordinates (ndarrays)
-    L : list of dimension lengths
-    '''
-
-    dim = len(flow_points)
-    if dim == len(flow[0].shape):
-        TIME_DEP = False
-    else:
-        TIME_DEP = True
-            
-    dx = np.array([flow_points[d][-1]-flow_points[d][-2] 
-                    for d in range(dim)])
-    
-    # find new flow field shape
-    new_flow_shape = np.array(flow[0].shape)
-    if not TIME_DEP:
-        new_flow_shape += 1*np.array(periodic_dim)
-    else:
-        new_flow_shape[1:] += 1*np.array(periodic_dim)
-
-    # create new flow field, putting old data in lower left corner
-    new_flow = [np.zeros(new_flow_shape) for d in range(dim)]
-    if TIME_DEP:
-        old_shape = flow[0].shape[1:]
-    else:
-        old_shape = flow[0].shape
-    for d in range(dim):
-        if dim == 2:
-            new_flow[d][...,:old_shape[0],:old_shape[1]] = flow[d]
-        else:
-            new_flow[d][...,:old_shape[0],:old_shape[1],:old_shape[2]] = flow[d]
-    # replace old flow field
-    flow = new_flow
-
-    # fill in the new edges and update flow points
-    flow_points_new = []
-    for d in range(dim):
-        if periodic_dim[d]:
-            flow_points_new.append(np.append(flow_points[d], 
-                                flow_points[d][-1]+dx[d]))
-            for dd in range(dim):
-                if d == 0 and not TIME_DEP:
-                    flow[dd][-1,...] = flow[dd][0,...]
-                elif d == 0 and TIME_DEP:
-                    flow[dd][:,-1,...] = flow[dd][:,0,...]
-                elif d == 1 and not TIME_DEP:
-                    flow[dd][:,-1,...] = flow[dd][:,0,...]
-                elif d == 1 and TIME_DEP:
-                    flow[dd][:,:,-1,...] = flow[dd][:,:,0,...]
-                else:
-                    flow[dd][...,-1] = flow[dd][...,0]
-        else:
-            flow_points_new.append(flow_points[d])
-
-    flow_pts = tuple(flow_points_new)
-    # return flow, flow_points, L
-    return flow, flow_pts, [flow_pts[d][-1] for d in range(dim)]
-
-
-
-def read_IBAMR3d_vtkfiles(path, d_start=0, d_finish=None, 
+def _read_IBAMR3d_vtkfiles(path, d_start=0, d_finish=None, 
                           vel_conv=None, grid_conv=None):
     '''Reads in one or more vtk Rectilinear Grid Vector files. If path
     refers to a single file, the resulting flow will be time invarient.
@@ -282,6 +205,82 @@ def read_IBAMR3d_vtkfiles(path, d_start=0, d_finish=None,
 
     return flow, mesh, flow_times
 
+
+
+def _wrap_flow(flow, flow_points, periodic_dim=(True, True, False)):
+    '''In some cases, software may print out fluid velocity data that omits 
+    the velocities at the right boundaries in spatial dimensions that are 
+    meant to be periodic. This helper function restores that data by copying 
+    everything over. 3rd dimension will automatically be ignored if 2D.
+
+    Parameters
+    ----------
+    flow : list of ndarrays
+        This will be overwritten to save space!
+    flow_points : tuple of mesh coordinates (x,y,[z])
+    periodic_dim : list of 2 or 3 bool, default=[True, True, False]
+        True if that spatial dimension is periodic, otherwise False
+
+    Returns
+    -------
+    flow : list of ndarrays
+    flow_points : tuple of mesh coordinates (ndarrays)
+    L : list of dimension lengths
+    '''
+
+    dim = len(flow_points)
+    if dim == len(flow[0].shape):
+        TIME_DEP = False
+    else:
+        TIME_DEP = True
+            
+    dx = np.array([flow_points[d][-1]-flow_points[d][-2] 
+                    for d in range(dim)])
+    
+    # find new flow field shape
+    new_flow_shape = np.array(flow[0].shape)
+    if not TIME_DEP:
+        new_flow_shape += 1*np.array(periodic_dim)
+    else:
+        new_flow_shape[1:] += 1*np.array(periodic_dim)
+
+    # create new flow field, putting old data in lower left corner
+    new_flow = [np.zeros(new_flow_shape) for d in range(dim)]
+    if TIME_DEP:
+        old_shape = flow[0].shape[1:]
+    else:
+        old_shape = flow[0].shape
+    for d in range(dim):
+        if dim == 2:
+            new_flow[d][...,:old_shape[0],:old_shape[1]] = flow[d]
+        else:
+            new_flow[d][...,:old_shape[0],:old_shape[1],:old_shape[2]] = flow[d]
+    # replace old flow field
+    flow = new_flow
+
+    # fill in the new edges and update flow points
+    flow_points_new = []
+    for d in range(dim):
+        if periodic_dim[d]:
+            flow_points_new.append(np.append(flow_points[d], 
+                                flow_points[d][-1]+dx[d]))
+            for dd in range(dim):
+                if d == 0 and not TIME_DEP:
+                    flow[dd][-1,...] = flow[dd][0,...]
+                elif d == 0 and TIME_DEP:
+                    flow[dd][:,-1,...] = flow[dd][:,0,...]
+                elif d == 1 and not TIME_DEP:
+                    flow[dd][:,-1,...] = flow[dd][:,0,...]
+                elif d == 1 and TIME_DEP:
+                    flow[dd][:,:,-1,...] = flow[dd][:,:,0,...]
+                else:
+                    flow[dd][...,-1] = flow[dd][...,0]
+        else:
+            flow_points_new.append(flow_points[d])
+
+    flow_pts = tuple(flow_points_new)
+    # return flow, flow_points, L
+    return flow, flow_pts, [flow_pts[d][-1] for d in range(dim)]
 
 
 #######################################################################

@@ -1051,7 +1051,7 @@ class Environment:
 
         ### Load fluid data ###
         print('Reading vtk fluid data...')
-        self.flow, x, y = fluid.read_IB2d_dumpfiles(path, d_start, d_finish, 
+        self.flow, x, y = fluid._read_IB2d_dumpfiles(path, d_start, d_finish, 
                                                     vector_data)
         print('Done!')
 
@@ -1065,7 +1065,7 @@ class Environment:
         #     domain (since it's a duplicate). Make the fluid periodic within 
         #     Planktos and to fill out the domain by adding back these last points
         self.L = [self.flow_points[dim][-1] for dim in range(2)]
-        self.flow, self.flow_points, self.L = fluid.wrap_flow(
+        self.flow, self.flow_points, self.L = fluid._wrap_flow(
             self.flow, self.flow_points, periodic_dim=(True, True))
         self._reset_flow_variables()
 
@@ -1096,7 +1096,7 @@ class Environment:
             scalar to multiply the grid by in order to convert units
         '''
 
-        self.flow, mesh, self.flow_times = fluid.read_IBAMR3d_vtkfiles(path,
+        self.flow, mesh, self.flow_times = fluid._read_IBAMR3d_vtkfiles(path,
                                                 d_start, d_finish, 
                                                 vel_conv, grid_conv)
         # shift domain to quadrant 1
