@@ -16,8 +16,8 @@ import planktos
 target_rad = 0.5
 target_center = np.array((5,5))
 
-# Subclass swarm to create our behavior
-class imsearch(planktos.swarm):
+# Subclass Swarm to create our behavior
+class imsearch(planktos.Swarm):
     def __init__(self, *args, **kwargs):
         super(imsearch, self).__init__(*args, **kwargs)
 
@@ -68,13 +68,13 @@ class imsearch(planktos.swarm):
         #   circular target, as defined outside the class.
         return np.linalg.norm(positions-target_center, axis=1) < target_rad
 
-    def get_positions(self, dt, params):
+    def apply_agent_model(self, dt):
 
         # Get an array that will code the proprotion of [t,t+dt] at which the 
         #   agents switched state. -1 will mean they didn't switch.
         switch_time = -1*np.ones(self.N)
 
-        # It's best to use the swarm's own rndState object to generate random 
+        # It's best to use the Swarm's own rndState object to generate random 
         #   numbers for stochastic processes. That way, everything is 
         #   reproducable with a single seed.
 
@@ -208,12 +208,12 @@ class imsearch(planktos.swarm):
 # To keep this relatively simple, we will use an environment without background 
 #   flow.
 
-envir = planktos.environment(x_bndry='periodic', y_bndry='periodic')
+envir = planktos.Environment(x_bndry='periodic', y_bndry='periodic')
 swrm = imsearch(envir=envir, seed=2, store_prop_history=True)
 
 # Create a function that, given an axes object, will plot this target so that we 
 #   can visualize it. This does not count as an immersed boundary, even though 
-#   we will eventually pass it to the environment object to plot it for us.
+#   we will eventually pass it to the Environment object to plot it for us.
 def plot_target(ax, args):
     theta = np.linspace(0,2*np.pi,200)
     ax.plot(5+0.5*np.cos(theta),5+0.5*np.sin(theta), 'k', alpha=0.5)

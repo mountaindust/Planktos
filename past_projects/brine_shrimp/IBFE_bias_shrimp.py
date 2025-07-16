@@ -30,7 +30,7 @@ parser.add_argument("-t", "--time", type=int, default=55,
                     help="time in sec to run the simulation")
 
 # Intialize environment
-envir = planktos.environment(x_bndry=['noflux', 'noflux'])
+envir = planktos.Environment(x_bndry=['noflux', 'noflux'])
 
 ############     Import IBMAR data on flow and extend domain     ############
 
@@ -60,7 +60,7 @@ print('-------------------------------------------')
 ############                  SPECIFY BEHAVIOR                  ############
 ############################################################################
 
-class Bshrimp(planktos.swarm):
+class Bshrimp(planktos.Swarm):
 
     def __init__(self, *args, **kwargs):
         super(Bshrimp, self).__init__(*args, **kwargs)
@@ -73,11 +73,11 @@ class Bshrimp(planktos.swarm):
         self.shared_props['cov'] = 25*np.eye(3)
         # set advection portion below
 
-    def get_positions(self, dt, params=None):
+    def apply_agent_model(self, dt):
         '''Use the new get_fluid_gradient method to advect the brine shrimp
         in the direction of slowest flow'''
         if self.envir.flow is None:
-            super(Bshrimp, self).get_positions(dt, params)
+            super(Bshrimp, self).apply_agent_model(dt)
         else:
             
             # get unit vector in direction of greatest descent

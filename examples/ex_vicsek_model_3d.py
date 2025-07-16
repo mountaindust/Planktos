@@ -25,11 +25,11 @@ import planktos
 # setup an empty domain representing one of the two cases
 
 # Wind Tunnel:
-# envir = planktos.environment(Lx=0.21, Ly=2.5, Lz=0.2, x_bndry='noflux', 
+# envir = planktos.Environment(Lx=0.21, Ly=2.5, Lz=0.2, x_bndry='noflux', 
 #         y_bndry='zero', z_bndry='noflux')
 
 # Periodic Wind Tunnel:
-envir = planktos.environment(Lx=0.21, Ly=2.5, Lz=0.2, x_bndry='noflux', 
+envir = planktos.Environment(Lx=0.21, Ly=2.5, Lz=0.2, x_bndry='noflux', 
         y_bndry='periodic', z_bndry='noflux')
 
 ##### Load fluid data #####
@@ -56,7 +56,7 @@ SWARM_SIZE = 500
 # we will use a spherical coordinate system for our extension. theta is in the
 #   x-y plane, phi is the inclination angle down from the positive z-direction. 
 #   Phi will be between 0 and pi.
-class vicsek3d(planktos.swarm):
+class vicsek3d(planktos.Swarm):
     def __init__(self, *args, **kwargs):
         super(vicsek3d, self).__init__(*args, **kwargs)
 
@@ -145,7 +145,7 @@ class vicsek3d(planktos.swarm):
             
         return dist
 
-    def get_positions(self, dt, params):
+    def apply_agent_model(self, dt):
         # Note that the time-step matters: the angle noise and averaging happens
         #   every dt according to the Vicsek model
 
@@ -184,7 +184,7 @@ class vicsek3d(planktos.swarm):
         return self.positions + new_vel*dt
 
 
-# create a swarm with initial conditions behind the cylinder
+# create a Swarm with initial conditions behind the cylinder
 x_center = 0.105 # +/- 0.05
 z_center = 0.1 # +/- 0.05
 IC_pos = np.zeros((SWARM_SIZE,3))
@@ -192,11 +192,11 @@ IC_pos[:,0] = (np.random.rand(SWARM_SIZE)-0.5)*0.1 + x_center
 IC_pos[:,1] = 0.9
 IC_pos[:,2] = (np.random.rand(SWARM_SIZE)-0.5)*0.1 + z_center
 
-# create Vicsek swarm
+# create Vicsek Swarm
 swrm = vicsek3d(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
 
 # passive particles for comparsion
-# swrm = planktos.swarm(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
+# swrm = planktos.Swarm(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
 # swrm.shared_props['cov'] *= 0.02**2 # with jitter
 # swrm.shared_props['cov'] *= 0 # without jitter
 

@@ -21,7 +21,7 @@ import planktos
 # As before, we begin by creating a default environment. It does not matter what 
 #   the dimensions are - when we load the vtk data, it will automatically 
 #   change shape to adjust to the data!
-envir = planktos.environment()
+envir = planktos.Environment()
 
 # When reading in VTK data, it really helps to have access to the input2d file 
 #   that generated the data. You need to know two basic things:
@@ -63,15 +63,15 @@ envir.read_IB2d_mesh_data('ib2d_data/channel.vertex', method='proximity')
 #   boundaries and the mesh structures with the following command:
 envir.plot_envir()
 
-# Now we add a swarm to our environment.
+# Now we add a Swarm to our Environment.
 # Let's use the default number of agents (100), but place them all in the same
 #   point, just to the left of the cylinder and in the middle of the channel.
 #   The length of the domain in each direction can be obtained via the envir.L
-#   attribute, so we'll use that to pass an (x,y) point to our swarm 
+#   attribute, so we'll use that to pass an (x,y) point to our Swarm 
 #   constructor as an init parameter. This tells the constructor to put all the
 #   agents at that one point. You can also pass in a list of points to 
 #   explicitly specify where all agents should begin individually.
-swrm = planktos.swarm(envir=envir, init=(envir.L[0]*0.1,envir.L[1]*0.5), seed=1)
+swrm = planktos.Swarm(envir=envir, init=(envir.L[0]*0.1,envir.L[1]*0.5), seed=1)
 
 # Once again, let's reduce the amount of jitter (variance). Remember that 
 #   variance is standard deviation squared, so for a standard deviation of 0.01

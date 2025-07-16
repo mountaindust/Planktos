@@ -1,13 +1,13 @@
 #! /usr/bin/env python3
 '''
 This is a tutorial and minimal working example of specifying non-default agent 
-behavior. This is done by overriding parts of the swarm class.
+behavior. This is done by overriding parts of the Swarm class.
 '''
 
 import numpy as np
 import planktos
 
-# Agent movement is defined by the get_positions method of the swarm class.
+# Agent movement is defined by the apply_agent_model method of the Swarm class.
 #   By default, the only thing this method does is call
 #   planktos.motion.Euler_brownian_motion, which uses an Euler method to solve
 #   an Ito SDE describing, by default, basic drift-diffusion. However, you can
@@ -15,19 +15,19 @@ import planktos
 #   - Solve some other SDE of the general form described in Euler_brownian_motion
 #   - Solve a deterministic system of equations instead, using motion RK45
 #   - Write some code to do other things, or some combination of these three.
-#   To accomplish this, you need to subclass the swarm class and override the
-#   get_positions method. We'll walk through this below.
+#   To accomplish this, you need to subclass the Swarm class and override the
+#   apply_agent_model method. We'll walk through this below.
 
 # Boundary conditions (including collisions with immersed mesh structures) and
 #   updating the positions, velocities, and accelerations properties of the 
-#   swarm will be handled automatically after the get_positions method returns.
+#   Swarm will be handled automatically after the apply_agent_model method returns.
 #   So all you need to concentrate on is returning the new agent positions from
 #   this function, assuming no boundary or mesh interactions occur.
 
 # It's worth looking through the planktos.motion library to see what's there!
 #   This library contains the SDE and RK45 solvers, and has some generators for
 #   deterministic equations of motion (which you can copy to create your own).
-#   There are also several different methods of the swarm class which can 
+#   There are also several different methods of the Swarm class which can 
 #   provide key information for behavior. Examples include:
 #   - positions : current positions of all agents
 #   - get_prop() : return either shared or individual agent properties
@@ -40,28 +40,28 @@ import planktos
 #   where 80% of the agents move toward the mean position of the swarm (biased
 #   random walk), while 20% do not (unbiased random walk).
 
-# First, we create a new swarm class which inherits everything from the original
+# First, we create a new Swarm class which inherits everything from the original
 
-class myswarm(planktos.swarm):
+class myswarm(planktos.Swarm):
 
-    # Now we re-write (called overriding) the get_positions method.
+    # Now we re-write (called overriding) the apply_agent_model method.
     #   Note that the call signature should remain the same as the original!
     # If you've never written a class method before, the first parameter in
-    #   the call signature must always be "self". This refers to the swarm 
-    #   object itself and is IMPLICITLY PASSED whenever get_positions is called.
-    #   In other words, you would call this method via swrm.get_positions(dt),
-    #   and NOT "swrm.get_positions(swrm, dt)". This detail doesn't matter so
-    #   much here; the swrm.move method is how we update swarms, and it will do
-    #   the business of calling get_positions for us. The main thing to remember
-    #   is that if you need any swarm attributes or methods, you should access
+    #   the call signature must always be "self". This refers to the Swarm 
+    #   object itself and is IMPLICITLY PASSED whenever apply_agent_model is called.
+    #   In other words, you would call this method via swrm.apply_agent_model(dt),
+    #   and NOT "swrm.apply_agent_model(swrm, dt)". This detail doesn't matter so
+    #   much here; the swrm.move method is how we update Swarms, and it will do
+    #   the business of calling apply_agent_model for us. The main thing to remember
+    #   is that if you need any Swarm attributes or methods, you should access
     #   them via "self.<method or attribute here>". For example, you can get 
     #   the gradient of the fluid speed (magnitude of velocity) using 
     #   self.get_fluid_mag_gradient().
-    def get_positions(self, dt, params=None):
-        '''New get_positions method that moves 80% of the agents toward the
+    def apply_agent_model(self, dt):
+        '''New apply_agent_model method that moves 80% of the agents toward the
         mean position of the swarm.'''
 
-        # When accessing swarm information, be careful that you do not 
+        # When accessing Swarm information, be careful that you do not 
         #   accidently overwrite the object properties. Most assignments in 
         #   Python are by reference, meaning that the new variable is just an 
         #   alias for the data in the old variable. This is done for speed. So 
@@ -77,7 +77,7 @@ class myswarm(planktos.swarm):
         # Let's assume that which agents move toward the mean is constant and
         #   determined ahead of time. Since it is an agent property and differs
         #   across different agents, it should be stored in the self.props
-        #   DataFrame. This gets set when the swarm is created. We'll assume
+        #   DataFrame. This gets set when the Swarm is created. We'll assume
         #   it's formatted as a boolean: True means moving toward the mean,
         #   False means you don't. We'll also assume the property is called
         #   'bias'.
@@ -138,18 +138,18 @@ class myswarm(planktos.swarm):
 
 ############################
 
-# We have now defined a new swarm class, called myswarm, with our custom 
+# We have now defined a new Swarm class, called myswarm, with our custom 
 #   behavior. To use it, we follow the same steps as in previous examples, but
-#   create an object out of our new class rather than the swarm class itself.
+#   create an object out of our new class rather than the Swarm class itself.
 
 # Create a 3D environment that is a bit longer in the x-direction and a bit
 #   shorter in the y-direction. Also, make the y-boundaries solid to agents.
-envir = planktos.environment(Lx=20, Ly=5, Lz=10, y_bndry=['noflux', 'noflux'],
+envir = planktos.Environment(Lx=20, Ly=5, Lz=10, y_bndry=['noflux', 'noflux'],
                              rho=1000, mu=1000)
 envir.set_brinkman_flow(alpha=66, h_p=1.5, U=1, dpdx=1, res=101)
 
-# Now we create a swarm object from our new class. It inherits all methods, 
-#   defaults, and options as the original swarm class. But we'll just go with
+# Now we create a Swarm object from our new class. It inherits all methods, 
+#   defaults, and options as the original Swarm class. But we'll just go with
 #   the default here.
 swrm = myswarm(envir=envir)
 swrm.shared_props['cov'] = swrm.shared_props['cov'] * 0.01

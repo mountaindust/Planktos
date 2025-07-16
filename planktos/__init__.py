@@ -4,8 +4,8 @@ Planktos
 ========
 
 Provides
-  1. An environment class for agent swarms to move around in
-  2. A swarm class for agents
+  1. An Environment class for agent swarms to move around in
+  2. A Swarm class for agents
   3. Supporting functions to handle data I/O, solving eqns of motion, etc.
 '''
 
@@ -14,11 +14,7 @@ __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2025, Christopher Strickland"
 __version__ = '1.1.0'
 
-from .environment import environment
-from .swarm import swarm
-# from . import motion
-# from . import dataio
+from ._environment import Environment
+from ._swarm import Swarm
 
-__all__ = ["environment", "swarm", "motion", "dataio", "geom"]
-environment.__module__ = "environment"
-swarm.__module__ = "swarm"
+__all__ = [s for s in dir() if not s.startswith('_')]

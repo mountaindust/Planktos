@@ -1,7 +1,7 @@
 '''
 Library for different sorts of particle motion, including implementations of
 various numerical methods for relevant equations of motion. Most of these will 
-take in a swarm object from which information about the particles
+take in a Swarm object from which information about the particles
 and their environment can be accessed along with relevant parameters. They will 
 then return the new particle positions or Delta x after a time dt, depending on
 implementation.
@@ -20,31 +20,6 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 import numpy as np
 import numpy.ma as ma
 from scipy.integrate import solve_ivp
-
-
-
-# Decorator to convert an ODE function expecting a 2NxD shaped x-variable array 
-#   into a flattened version that can be read into scipy.integrate.ode. All the 
-#   ODE generators in this module create 2NxD (or in one special case, NxD) 
-#   functions, which is what our built-in solvers expect.
-# This decorator should be completely unnecessary unless you really want to use 
-#   scipy's integrator.
-def flatten_ode(swarm):
-    '''Defines a decorator capable of converting a flattened, passed in 
-    x-variable array into a 2NxD shape for generated ODE functions, and then 
-    take the result of the ODE functions and reflatten. Need knowledge of the 
-    dimension of swarm for this, so the swarm must be passed to the decorator.
-    2N accounts for N equations giving the derivative of position w.r.t time and
-    N equations giving the derivative of velocity. D is the dimension of the
-    problem (2D or 3D).'''
-    dim = swarm.positions.shape[1]
-    N_dbl = swarm.positions.shape[0]*2
-    def decorator(func):
-        def wrapper(t,x):
-            result = func(t,np.reshape(x,(N_dbl,dim)))
-            return result.flatten()
-        return wrapper
-    return decorator
     
 
 #############################################################################
@@ -52,6 +27,8 @@ def flatten_ode(swarm):
 #                           ODE AND SDE SOLVERS!                            #
 #                                                                           #
 #############################################################################
+
+# These all expect a 2NxD or NxD array.
 
 # TODO: diffusion in porous media https://en.wikipedia.org/wiki/Diffusion#Diffusion_in_porous_media
 
@@ -63,7 +40,7 @@ def RK45(fun, t0, y0, tf, **kwargs):
     The passed in ode function (fun) must have call signature (t,x) where x is 
     a 2-D array with a number of columns equal to the spatial dimension.
     The solver will run to tf and then return. It is expected that boundary 
-    conditions will be checked after this routine within a swarm object before 
+    conditions will be checked after this routine within a Swarm object before 
     the next time step.
 
     Keyword arguments will be passed to solve_ivp. Important ones include 
@@ -113,33 +90,33 @@ def Euler_brownian_motion(swarm, dt, positions=None, velocities=None,
         
             dX_t = \\mu(X_t,t) dt + \\sigma(t) dW_t
 
-    where :math:`\mu` is the drift and :math:`\sigma` is the diffusion.
-    :math:`\mu` can be specified directly as a constant or via an ode, or both.
-    If both are ommited, the default is to use the mu property of the swarm
+    where :math:`\\mu` is the drift and :math:`\\sigma` is the diffusion.
+    :math:`\\mu` can be specified directly as a constant or via an ode, or both.
+    If both are ommited, the default is to use the mu property of the Swarm
     object plus the local fluid drift. If an ode is given but mu is not, the
-    the mu property of the swarm will be added to the ode velocity term before
-    solving (however, the swarm mu is zero by default).
+    the mu property of the Swarm will be added to the ode velocity term before
+    solving (however, the Swarm mu is zero by default).
     
-    :math:`\sigma` can be provided a number of ways (see below), and can be 
+    :math:`\\sigma` can be provided a number of ways (see below), and can be 
     dependent on time or agent if passed in directly. This solver is only order 
-    0.5 if :math:`\sigma` is dependent on spatial position, so this is not 
+    0.5 if :math:`\\sigma` is dependent on spatial position, so this is not 
     directly supported.
 
     Parameters
     ----------
-    swarm : swarm object
+    swarm : Swarm object
     dt : float
         time step to take
     positions : NxD ndarray, optional
         the starting positions of all agents that will take the Euler step. If 
-        None, the current position of all agents in the swarm will be used. Note 
+        None, the current position of all agents in the Swarm will be used. Note 
         that if positions is provided and mu and/or sigma are not provided, mu 
-        and sigma must be the same for all agents in the swarm - otherwise, if 
+        and sigma must be the same for all agents in the Swarm - otherwise, if 
         they are properties that differ by agent, it will be impossible to pair 
         positions with corresponding individual values for mu and sigma.
     velocities : NxD ndarray, optional
         the starting velocities of all agents that will take the Euler step. If 
-        None, the current velocities of all agents in the swarm will be used. 
+        None, the current velocities of all agents in the Swarm will be used. 
         This is only necessary if an ode is supplied, and it is ignored if 
         positions is None.
     mu : 1D array of length D, array of shape NxD, or array of shape 2NxD, optional
@@ -149,10 +126,10 @@ def Euler_brownian_motion(swarm, dt, positions=None, velocities=None,
         In the last case, the first N rows give the velocity and the second N 
         rows are the acceleration. In this case, a Taylor series method Euler 
         step will be used. If no mu and no ode is given, a default brownian 
-        drift of swarm.get_prop('mu') + the local fluid drift will be used. 
+        drift of Swarm.get_prop('mu') + the local fluid drift will be used. 
         If mu=None but an ode is given, the default for mu will be 
-        swarm.get_prop('mu') alone, as fluid interaction is assumed to be 
-        handled by the ode. Note that the default swarm value for mu is zeros, 
+        Swarm.get_prop('mu') alone, as fluid interaction is assumed to be 
+        handled by the ode. Note that the default Swarm value for mu is zeros, 
         so the ode will specify the entire drift term unless mu is set to 
         something else.
     ode : callable, optional
@@ -162,24 +139,24 @@ def Euler_brownian_motion(swarm, dt, positions=None, velocities=None,
         information on default behavior if this is not specified.
     sigma : array, optional
         Brownian diffusion coefficient matrix. If None, use the 'cov' property 
-        of the swarm object, or lacking that, the 'D' property. For convienence, 
-        :math:`\sigma` can be provided in several ways:
+        of the Swarm object, or lacking that, the 'D' property. For convienence, 
+        :math:`\\sigma` can be provided in several ways:
 
-        - As a covariance matrix stored in swarm.get_prop('cov'). This is the 
-          default. The matrix given by this swarm property is assumed
-          to be defined by :math:`\sigma\sigma^T` and independent of time or
+        - As a covariance matrix stored in Swarm.get_prop('cov'). This is the 
+          default. The matrix given by this Swarm property is assumed
+          to be defined by :math:`\\sigma\\sigma^T` and independent of time or
           spatial location. The result of using this matrix is that the 
           integrated Wiener process over an interval dt has covariance 
-          swarm.get_prop('cov')*dt, and this will be fed directly into the 
+          Swarm.get_prop('cov')*dt, and this will be fed directly into the 
           random number generator to produce motion with these characteristics.
           It should be a square matrix with the length of each side equal to 
           the spatial dimension, and be symmetric.
         - As a diffusion tensor (matrix). The diffusion tensor is given by
-          :math:`D = 0.5*\sigma\sigma^T`, so it is really just half the
+          :math:`D = 0.5*\\sigma\\sigma^T`, so it is really just half the
           covariance matrix. This is the diffusion tensor as given in the
           Fokker-Planck equation or the heat equation. As in the case of the
           covariance matrix, it is assumed constant in time and space, and
-          should be specified as a swarm property with the name 'D'. Again,
+          should be specified as a Swarm property with the name 'D'. Again,
           it will be fed directly into the random number generator. 
           It should be a square matrix with the length of each side equal to 
           the spatial dimension, and be symmetric.
@@ -325,14 +302,14 @@ def Euler_brownian_motion(swarm, dt, positions=None, velocities=None,
             return positions + move
 
 
-
 #############################################################################
 #                                                                           #
 #                        ODE GENERATOR FUNCTIONS                            #
 #  These functions generate a handle to an ODE for use within a stochastic  #
-#      solver or scipy.integrate.ode (with the flatten_ode decorator).      #
+#    solver or RK45, which is a wrapper around scipy.integrate.solve_ivp    #
 #                                                                           #
 #############################################################################
+
 
 def inertial_particles(swarm):
     '''Function generator for ODEs governing small, rigid, spherical particles 
@@ -348,12 +325,12 @@ def inertial_particles(swarm):
             (\\nabla\\mathbf{u})\\mathbf{u}
     
     Critically, it is assumed that 
-    :math:`\mu = R/St` is much greater than 1, where R is the density ratio 
+    :math:`\\mu = R/St` is much greater than 1, where R is the density ratio 
     :math:`R=2\\rho_f/(\\rho_f+2\\rho_p)`, and St is the Stokes number.
 
     Parameters
     ----------
-    swarm : swarm object
+    swarm : Swarm object
 
     Returns
     -------
@@ -361,8 +338,8 @@ def inertial_particles(swarm):
 
     Notes
     -----
-    Requires that the following are specified in either swarm.shared_props
-    (if uniform across agents) or swarm.props (for individual variation):
+    Requires that the following are specified in either Swarm.shared_props
+    (if uniform across agents) or Swarm.props (for individual variation):
 
     - rho or R: particle density or density ratio, respectively.
       if supplying R, 0<R<2/3 corresponds to aerosols, R=2/3 is
@@ -394,12 +371,12 @@ def inertial_particles(swarm):
             rho_f = swarm.envir.rho
             R = 2*rho_f/(rho_f+2*rho_p)
         except KeyError:
-            raise KeyError("Could not find required physical property R or rho in swarm object.")
+            raise KeyError("Could not find required physical property R or rho in Swarm object.")
 
     try:
         a = swarm.get_prop('diam')*0.5 # radius of particles
     except KeyError:
-        raise KeyError("Could not find required physical property 'diam' in swarm object.")
+        raise KeyError("Could not find required physical property 'diam' in Swarm object.")
 
     assert swarm.envir.char_L is not None, "Characteristic length scale in envir not specified."
     L = swarm.envir.char_L
@@ -463,7 +440,7 @@ def highRe_massive_drift(swarm):
 
     Parameters
     ----------
-    swarm : swarm object
+    swarm : Swarm object
 
     Returns
     -------
@@ -471,8 +448,8 @@ def highRe_massive_drift(swarm):
 
     Notes
     -----
-    Requires that the following are specified in either swarm.shared_props
-    (if uniform across agents) or swarm.props (for individual variation):
+    Requires that the following are specified in either Swarm.shared_props
+    (if uniform across agents) or Swarm.props (for individual variation):
 
     - m: mass of each agent
     - Cd: Drag coefficient acting on cross-sectional area
@@ -536,7 +513,7 @@ def tracer_particles(swarm, incl_dvdt=True):
 
     Parameters
     ----------
-    swarm : swarm object
+    swarm : Swarm object
     incl_dvdt : bool, default=True
         Whether or not to include equations for dvdt so that x has shape 2NxD 
         matching most other ODEs (dvdt will just be given as 0).

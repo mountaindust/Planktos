@@ -13,7 +13,7 @@ import planktos
 #   of all three dimensions this time (in meters). We'll plan on using Brinkman
 #   flow again, so let's also go ahead and specify the fluid density and 
 #   dynamic viscosity:
-envir = planktos.environment(Lx=20, Ly=10, Lz=4, rho=1000, mu=1000)
+envir = planktos.Environment(Lx=20, Ly=10, Lz=4, rho=1000, mu=1000)
 
 # Now let's set the Brinkman flow. It automatically gets translated into all
 #   available spatial dimensions:
@@ -36,10 +36,10 @@ envir.set_brinkman_flow(alpha=66, h_p=1.5, U=1, dpdx=1, res=101)
 #   are only available in 2D.
 envir.plot_flow()
 
-# Now let's repeat the steps from basic_ex_2d.py, creating a default swarm,
+# Now let's repeat the steps from basic_ex_2d.py, creating a default Swarm,
 #   changing the covariance, running the simulation, and plotting.
 
-swrm = planktos.swarm(envir=envir, seed=1)
+swrm = planktos.Swarm(envir=envir, seed=1)
 swrm.shared_props['cov'] = swrm.shared_props['cov'] * 0.01
 
 print('Moving swarm...')

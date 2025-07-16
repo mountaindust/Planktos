@@ -17,7 +17,6 @@ import numpy.ma as ma
 from itertools import combinations
 from scipy import interpolate
 from scipy.spatial import distance, ConvexHull
-from scipy.linalg import solve_banded
 import pandas as pd
 if sys.platform == 'darwin': # OSX backend does not support blitting
     import matplotlib
@@ -29,27 +28,27 @@ from mpl_toolkits import mplot3d
 from matplotlib.collections import LineCollection
 
 import planktos
-from planktos import dataio
+from . import _dataio, _geom, fluid, motion
 
-if dataio.NETCDF:
+if _dataio.NETCDF:
     from cftime import date2num
 
 __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
-class environment:
+class Environment:
     '''
-    Rectangular environment containing fluid info, immersed meshs, and swarms.
+    Rectangular environment containing fluid info, immersed meshs, and Swarms.
 
-    The environment class does much of the heavy lifting of Planktos. It loads 
+    The Environment class does much of the heavy lifting of Planktos. It loads 
     and contains information about the fluid velocity field, the dimensions of 
     the physical environment being simulated, boundary conditions for the agents, 
-    the agent swarms that are in the environment, any immersed meshes, and all 
+    the agent Swarms that are in the environment, any immersed meshes, and all 
     simulation time information. Additionally, it provides functions for 
     manipulating the fluid velocity field in certain ways (e.g. extending,  
     tiling, and interpolating), calculating vorticity and FTLE, viewing info 
-    about the fluid itself, and calling the move function on all swarms 
+    about the fluid itself, and calling the move function on all Swarms 
     contained in the environment. It is essential to any Planktos simulation 
     and typically the first Planktos object you create.
 
@@ -110,8 +109,8 @@ class environment:
         and/or when simulating inertial particles
     U : float, optional
         characteristic fluid speed. Used for some calculations.
-    init_swarms : swarm object or list of swarm objects, optional
-        initial swarms in this environment. Can be added later.
+    init_swarms : Swarm object or list of Swarm objects, optional
+        initial Swarms in this environment. Can be added later.
     units : string, default='m'
         length units to use, default is meters. Note that you will
         manually need to change self.g (accel due to gravity) if using
@@ -130,8 +129,8 @@ class environment:
         so it's probably best to work in meters.
     bndry :  list of lists, each with two of {'zero', 'noflux', 'periodic'}
         Boundary conditions in each direction [x, y, [z]] for agents
-    swarms : list of swarm objects
-        The swarms that belong to this environment
+    swarms : list of Swarm objects
+        The Swarms that belong to this environment
     time : float
         current environment time
     time_history : list of floats
@@ -225,11 +224,11 @@ class environment:
     dynamic viscosity recorded. The fluid velocity is zero everywhere, but can
     be set to something different later.
 
-    >>> envir = planktos.environment(Lz=10, rho=1000, mu=1000)
+    >>> envir = planktos.Environment(Lz=10, rho=1000, mu=1000)
 
-    Create a 2D 5x3 meter environment with zero fluid velocity.
+    Create a 2D 5x3 meter Environment with zero fluid velocity.
 
-    >>> envir = planktos.environment(Lx=5, Ly=3)
+    >>> envir = planktos.Environment(Lx=5, Ly=3)
     '''
 
     def __init__(self, Lx=10, Ly=10, Lz=None,
@@ -259,7 +258,6 @@ class environment:
         self.DuDt = None
         self.DuDt_time = None
         self.flow = flow
-        self.dt_interp = None # list of PPoly objs for temporal derivative interpolation
 
         if flow is not None:
             try:
@@ -278,18 +276,18 @@ class environment:
                     # time-dependent flow
                     assert flow[0].shape[0] == flow[1].shape[0] == flow[2].shape[0]
                     assert flow_times is not None, "Must provide flow_times"
-                    self.__set_flow_variables(flow_times)
+                    self._set_flow_variables(flow_times)
                 else:
-                    self.__set_flow_variables()
+                    self._set_flow_variables()
             else:
                 # 2D flow
                 if max([len(f.shape) for f in flow]) > 2:
                     # time-dependent flow
                     assert flow[0].shape[0] == flow[1].shape[0]
                     assert flow_times is not None, "Must provide flow_times"
-                    self.__set_flow_variables(flow_times)
+                    self._set_flow_variables(flow_times)
                 else:
-                    self.__set_flow_variables()
+                    self._set_flow_variables()
 
         ##### swarm list #####
 
@@ -300,7 +298,7 @@ class environment:
                 self.swarms = init_swarms
             else:
                 self.swarms = [init_swarms]
-            # reset each swarm's environment
+            # reset each Swarm's environment
             for sw in self.swarms:
                 sw.envir = self
 
@@ -460,8 +458,8 @@ class environment:
         2D vs. 3D flow is based on the current dimension of the environment.
 
         After this method is successfully called, the flow property of the 
-        environment class will be set to the resulting Brinkman flow, and h_p 
-        will be set in the environment's properties.
+        Environment class will be set to the resulting Brinkman flow, and h_p 
+        will be set in the Environment's properties.
 
         Parameters
         ----------
@@ -491,7 +489,7 @@ class environment:
         --------
         Create a 3D environment with time varying Brinkman flow
 
-        >>> envir = planktos.environment(Lz=10, rho=1000, mu=1000)
+        >>> envir = planktos.Environment(Lz=10, rho=1000, mu=1000)
         >>> U=0.1*np.array(list(range(0,5))+list(range(5,-5,-1))+list(range(-5,8,3)))
         >>> envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(20)*0.22306, 
             res=101, tspan=[0, 20])
@@ -609,15 +607,15 @@ class environment:
                 # no time; (y,x) -> (x,y) coordinates
                 flow = flow.T
                 self.flow = [flow, np.zeros_like(flow)] #x-direction, y-direction
-                self.__set_flow_variables()
+                self._set_flow_variables()
             else:
                 #time-dependent; (t,y,x)-> (t,x,y) coordinates
                 flow = np.transpose(flow, axes=(0, 2, 1))
                 self.flow = [flow, np.zeros_like(flow)]
                 if tspan is None:
-                    self.__set_flow_variables(tspan=1)
+                    self._set_flow_variables(tspan=1)
                 else:
-                    self.__set_flow_variables(tspan=tspan)
+                    self._set_flow_variables(tspan=tspan)
         else:
             # 3D
             if len(flow.shape) == 2:
@@ -626,7 +624,7 @@ class environment:
                 flow = np.transpose(flow, axes=(2, 0, 1)) #(x,y,z)
                 self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
 
-                self.__set_flow_variables()
+                self._set_flow_variables()
 
             else:
                 # (t,z,x) -> (t,z,y,x) coordinates
@@ -635,49 +633,11 @@ class environment:
                 self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
 
                 if tspan is None:
-                    self.__set_flow_variables(tspan=1)
+                    self._set_flow_variables(tspan=1)
                 else:
-                    self.__set_flow_variables(tspan=tspan)
-        self.__reset_flow_variables()
+                    self._set_flow_variables(tspan=tspan)
+        self._reset_flow_variables()
         self.h_p = h_p
-
-
-
-    def __set_flow_variables(self, tspan=None):
-        '''Store points at which flow is specified, and time information.
-
-        Parameters
-        ----------
-            tspan : float, floats [tstart, tend], or iterable, optional
-                times at which flow is specified or scalar dt. Required if flow 
-                is time-dependent; None will be interpreted as non time-dependent 
-                flow.
-        '''
-
-        # Get points defining the spatial grid for flow data
-        points = []
-        if tspan is None:
-            # no time-dependent flow
-            for dim, mesh_size in enumerate(self.flow[0].shape[::-1]):
-                points.append(np.linspace(0, self.L[dim], mesh_size))
-        else:
-            # time-dependent flow
-            for dim, mesh_size in enumerate(self.flow[0].shape[:0:-1]):
-                points.append(np.linspace(0, self.L[dim], mesh_size))
-        self.flow_points = tuple(points)
-
-        # set time
-        if tspan is not None:
-            if not hasattr(tspan, '__iter__'):
-                # set flow_times based off zero
-                self.flow_times = np.arange(0, tspan*self.flow[0].shape[0], tspan)
-            elif len(tspan) == 2:
-                self.flow_times = np.linspace(tspan[0], tspan[1], self.flow[0].shape[0])
-            else:
-                assert len(tspan) == self.flow[0].shape[0]
-                self.flow_times = np.array(tspan)
-        else:
-            self.flow_times = None
 
 
 
@@ -771,8 +731,8 @@ class environment:
                          np.zeros((res,res,res))]
 
         # housekeeping
-        self.__set_flow_variables()
-        self.__reset_flow_variables()
+        self._set_flow_variables()
+        self._reset_flow_variables()
         self.fluid_domain_LLC = None
         self.h_p = h_p
 
@@ -957,7 +917,7 @@ class environment:
                 # 3D
                 flow = np.broadcast_to(U_B,(res,res,res))
                 self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
-            self.__set_flow_variables()
+            self._set_flow_variables()
         else:
             # time dependent
             if len(self.L) == 2:
@@ -975,15 +935,53 @@ class environment:
                 flow = np.transpose(flow, axes=(2,0,1,3))
                 self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
             if tspan is None:
-                self.__set_flow_variables(tspan=1)
+                self._set_flow_variables(tspan=1)
             else:
-                self.__set_flow_variables(tspan=tspan)
+                self._set_flow_variables(tspan=tspan)
 
 
         # housekeeping
-        self.__reset_flow_variables()
+        self._reset_flow_variables()
         self.fluid_domain_LLC = None
         self.h_p = h
+
+
+
+    def _set_flow_variables(self, tspan=None):
+        '''Store points at which flow is specified, and time information.
+
+        Parameters
+        ----------
+            tspan : float, floats [tstart, tend], or iterable, optional
+                times at which flow is specified or scalar dt. Required if flow 
+                is time-dependent; None will be interpreted as non time-dependent 
+                flow.
+        '''
+
+        # Get points defining the spatial grid for flow data
+        points = []
+        if tspan is None:
+            # no time-dependent flow
+            for dim, mesh_size in enumerate(self.flow[0].shape[::-1]):
+                points.append(np.linspace(0, self.L[dim], mesh_size))
+        else:
+            # time-dependent flow
+            for dim, mesh_size in enumerate(self.flow[0].shape[:0:-1]):
+                points.append(np.linspace(0, self.L[dim], mesh_size))
+        self.flow_points = tuple(points)
+
+        # set time
+        if tspan is not None:
+            if not hasattr(tspan, '__iter__'):
+                # set flow_times based off zero
+                self.flow_times = np.arange(0, tspan*self.flow[0].shape[0], tspan)
+            elif len(tspan) == 2:
+                self.flow_times = np.linspace(tspan[0], tspan[1], self.flow[0].shape[0])
+            else:
+                assert len(tspan) == self.flow[0].shape[0]
+                self.flow_times = np.array(tspan)
+        else:
+            self.flow_times = None
 
 
     #######################################################################
@@ -1055,8 +1053,8 @@ class environment:
         ### Load fluid data ###
         if not dyload:
             print('Reading vtk fluid data...')
-            self.flow, x, y = FluidData.read_IB2d_dumpfiles(path, d_start, d_finish, 
-                                                            vector_data)
+            self.flow, x, y = fluid._read_IB2d_dumpfiles(path, d_start, d_finish, 
+                                                         vector_data)
             print('Done!')
             
             # shift domain to quadrant 1
@@ -1069,133 +1067,49 @@ class environment:
             #     domain (since it's a duplicate). Make the fluid periodic within 
             #     Planktos and to fill out the domain by adding back these last points
             self.L = [self.flow_points[dim][-1] for dim in range(2)]
-            self.wrap_flow(periodic_dim=(True, True))
+            self.flow, self.flow_points, self.L = fluid._wrap_flow(
+                self.flow, self.flow_points, periodic_dim=(True, True))
+            self._reset_flow_variables()
         else:
             raise NotImplementedError("dyload not done yet.")
 
 
 
-    def read_IBAMR3d_vtk_data(self, filename, vel_conv=None, grid_conv=None):
-        '''Reads in vtk flow data from a single source and sets environment
-        variables accordingly. The resulting flow will be time invarient. It is
-        assumed this data is a rectilinear grid.
+    def read_IBAMR3d_vtk_data(self, path, d_start=0, d_finish=None,
+                              vel_conv=None, grid_conv=None):
+        '''Reads in one or more vtk Rectilinear Grid Vector files. If path
+        refers to a single file, the resulting flow will be time invarient.
+        Otherwise, this method will assume that files are named IBAMR_db_###.vtk 
+        where ### is the dump number, and that the mesh is the same in each vtk.
+        Also, imported times will be translated backward so that the first time 
+        loaded corresponds to a Planktos environment time of 0.0.
 
         All environment variables will be reset.
 
         Parameters
         ----------
-        filename : string
-            filename of data to read, incl. file extension
+        path : string
+            path to vtk data, incl. file extension if a single file
+        d_start : int, default=0
+            vtk dump number to start with.
+        d_finish : int, optional
+            vtk dump number to end with. If None, end with last one.
         vel_conv : float, optional
             scalar to multiply the velocity by in order to convert units
         grid_conv : float, optional
             scalar to multiply the grid by in order to convert units
         '''
-        path = Path(filename)
-        if not path.is_file(): 
-            raise FileNotFoundError("File {} not found!".format(filename))
 
-        data, mesh, time = dataio.read_vtk_Rectilinear_Grid_Vector(filename)
-
-        if vel_conv is not None:
-            print("Converting vel units by a factor of {}.".format(vel_conv))
-            for ii, d in enumerate(data):
-                data[ii] = d*vel_conv
-        if grid_conv is not None:
-            print("Converting grid units by a factor of {}.".format(grid_conv))
-            for ii, m in enumerate(mesh):
-                mesh[ii] = m*grid_conv
-
-        self.flow = data
-        self.flow_times = None
-
+        self.flow, mesh, self.flow_times = fluid._read_IBAMR3d_vtkfiles(path,
+                                                d_start, d_finish, 
+                                                vel_conv, grid_conv)
         # shift domain to quadrant 1
         self.flow_points = (mesh[0]-mesh[0][0], mesh[1]-mesh[1][0],
                             mesh[2]-mesh[2][0])
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(3)]
-        self.__reset_flow_variables()
-        # record the original lower left corner (can be useful for later imports)
-        self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
-
-
-
-    def read_IBAMR3d_vtk_dataset(self, path, start=None, finish=None):
-        '''Reads in vtk flow data generated by VisIt from IBAMR and sets
-        environment variables accordingly. Assumes that the vtk filenames are
-        IBAMR_db_###.vtk where ### is the dump number, as automatically done
-        with read_IBAMR3d_py27.py. Also assumes that the mesh is the same
-        for each vtk.
-
-        Imported times will be translated backward so that the first time loaded
-        corresponds to an agent environment time of 0.0.
-
-        Parameters
-        ----------
-        path : string
-            path to vtk data
-        start : int, optional
-            vtk file number to start with. If None, start at first one.
-        finish : int, optional
-            vtk file number to end with. If None, end with last one.
-        '''
-
-        path = Path(path)
-        if not path.is_dir(): 
-            raise FileNotFoundError("Directory {} not found!".format(str(path)))
-        file_names = [x.name for x in path.iterdir() if x.is_file() and
-                      x.name[:9] == 'IBAMR_db_']
-        file_nums = sorted([int(f[9:12]) for f in file_names])
-        if start is None:
-            start = file_nums[0]
-        else:
-            start = int(start)
-            assert start in file_nums, "Start number not found!"
-        if finish is None:
-            finish = file_nums[-1]
-        else:
-            finish = int(finish)
-            assert finish in file_nums, "Finish number not found!"
-
-        ### Gather data ###
-        flow = [[], [], []]
-        flow_times = []
-
-        for n in range(start, finish+1):
-            if n < 10:
-                num = '00'+str(n)
-            elif n < 100:
-                num = '0'+str(n)
-            else:
-                num = str(n)
-            this_file = path / ('IBAMR_db_'+num+'.vtk')
-            data, mesh, time = dataio.read_vtk_Rectilinear_Grid_Vector(str(this_file))
-            for dim in range(3):
-                flow[dim].append(data[dim])
-            flow_times.append(time)
-
-        ### Save data ###
-        self.flow = [np.array(flow[0]).squeeze(), np.array(flow[1]).squeeze(),
-                     np.array(flow[2]).squeeze()]
-        # parse time information
-        if None not in flow_times and len(flow_times) > 1:
-            # shift time so that the first time is 0.
-            self.flow_times = np.array(flow_times) - min(flow_times)
-        elif None in flow_times and len(flow_times) > 1:
-            # could not parse time information
-            warnings.warn("Could not retrieve time information from at least"+
-                          " one vtk file. Assuming unit time-steps...", UserWarning)
-            self.flow_times = np.arange(len(flow_times))
-        else:
-            self.flow_times = None
-        # shift domain to quadrant 1
-        self.flow_points = (mesh[0]-mesh[0][0], mesh[1]-mesh[1][0],
-                            mesh[2]-mesh[2][0])
-
-        ### Convert environment dimensions and reset simulation time ###
-        self.L = [self.flow_points[dim][-1] for dim in range(3)]
-        self.__reset_flow_variables()
+        self._reset_flow_variables()
         # record the original lower left corner (can be useful for later imports)
         self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
 
@@ -1224,7 +1138,7 @@ class environment:
         if not path.is_file(): 
             raise FileNotFoundError("File {} not found!".format(str(filename)))
 
-        data, mesh = dataio.read_vtu_mesh_velocity(filename)
+        data, mesh = _dataio.read_vtu_mesh_velocity(filename)
 
         if vel_conv is not None:
             print("Converting vel units by a factor of {}.".format(vel_conv))
@@ -1244,20 +1158,20 @@ class environment:
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(3)]
-        self.__reset_flow_variables()
+        self._reset_flow_variables()
         # record the original lower left corner (can be useful for later imports)
         self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
 
 
 
     def load_NetCDF(self, filename):
-        '''Load a NetCDF file into the netcdf attribute of the environment. 
+        '''Load a NetCDF file into the netcdf attribute of the Environment. 
         Does not automatically read in any data.
 
         Because NetCDF files can contain multiple data sets with different 
         dimension names and associated metadata, and because it may be desirable 
         to explore the data set first and/or load only a subset of the data, 
-        this method just loads the Dataset into the environment object.
+        this method just loads the Dataset into the Environment object.
         See the documentation/tutorial for netCDF4 on ways to read the metadata
         for the loaded Dataset. See read_NetCDF_flow for reading in data from a 
         loaded NetCDF dataset.
@@ -1275,7 +1189,7 @@ class environment:
         if not path.is_file(): 
             raise FileNotFoundError("File {} not found!".format(str(filename)))
 
-        self.netcdf = dataio.load_netcdf(filename)
+        self.netcdf = _dataio.load_netcdf(filename)
 
 
 
@@ -1353,7 +1267,7 @@ class environment:
 
         See Also
         --------
-        load_NetCDF : Load a NetCDF file into the netcdf environment attribute.
+        load_NetCDF : Load a NetCDF file into the netcdf Environment attribute.
 
         Notes
         -----
@@ -1475,30 +1389,11 @@ class environment:
         self.L = [self.flow_points[dim][-1] for dim in range(s_dim)]
         if time_dep:
             self.flow_times = flow_times
-        self.__reset_flow_variables()
+        self._reset_flow_variables()
         if s_dim == 2:
             self.fluid_domain_LLC = (flow_points_x[0], flow_points_y[0])
         else:
             self.fluid_domain_LLC = (flow_points_x[0], flow_points_y[0], flow_points_z[0])
-
-
-
-    def wrap_flow(self, periodic_dim=(True, True, False)):
-        '''In some cases, software may print out fluid velocity data that omits 
-        the velocities at the right boundaries in spatial dimensions that are 
-        meant to be periodic. This helper function restores that data by copying 
-        everything over. 3rd dimension will automatically be ignored if 2D.
-
-        Parameters
-        ----------
-        periodic_dim : list of 3 bool, default=[True, True, False]
-            True if that spatial dimension is periodic, otherwise False
-        '''
-
-        self.flow, self.flow_points, self.L = FluidData.wrap_flow(
-            self.flow, self.flow_points, periodic_dim)
-
-        self.__reset_flow_variables()
 
 
 
@@ -1769,7 +1664,7 @@ class environment:
         self.flow = flow
         self.L = [self.flow_points[d][-1] for d in range(len(flow_points))]
         self.fluid_domain_LLC = tuple(np.array(self.fluid_domain_LLC)-np.array(intervals)*0.5)
-        self.__reset_flow_variables()
+        self._reset_flow_variables()
 
 
     #######################################################################
@@ -1799,7 +1694,7 @@ class environment:
         if not path.is_file(): 
             raise FileNotFoundError("File {} not found!".format(filename))
 
-        ibmesh, self.max_meshpt_dist = dataio.read_stl_mesh(filename, unit_conv)
+        ibmesh, self.max_meshpt_dist = _dataio.read_stl_mesh(filename, unit_conv)
 
         # shift coordinates to match any shift that happened in flow data
         if self.fluid_domain_LLC is not None:
@@ -1895,10 +1790,10 @@ class environment:
         def _read_single_file(path_obj):
             filename = str(path_obj)
             if filename.strip()[-4:] == '.vtk':
-                points, bounds = dataio.read_vtk_Unstructured_Grid_Points(filename)
+                points, bounds = _dataio.read_vtk_Unstructured_Grid_Points(filename)
                 points = points[:,:2] # remove z-direction
             elif filename.strip()[-7:] == '.vertex':
-                points = dataio.read_IB2d_vertices(filename)
+                points = _dataio.read_IB2d_vertices(filename)
             else:
                 raise RuntimeError("File extension for {} not recognized.".format(filename))
             return points
@@ -1930,7 +1825,7 @@ class environment:
                     numSim = str(n)
 
                 filename = path / ('lagsPts.' + str(numSim) + '.vtk')
-                points, bounds = dataio.read_vtk_Unstructured_Grid_Points(filename)
+                points, bounds = _dataio.read_vtk_Unstructured_Grid_Points(filename)
                 # trim z-direction and store
                 mesh_list.append(points[:,:2])
 
@@ -2068,7 +1963,7 @@ class environment:
                 axis=1)<self.max_meshpt_dist*2
             pt_bool = pt_bool.reshape((forward_meshes.shape[0],forward_meshes.shape[1]))
             close_mesh = forward_meshes[np.any(pt_bool,axis=1)]
-            intersections = planktos.geom.seg_intersect_2D(seg[0,:], seg[1,:], 
+            intersections = _geom.seg_intersect_2D(seg[0,:], seg[1,:], 
                 close_mesh[:,0,:], close_mesh[:,1,:], get_all=True)
             if intersections is None:
                 # Nothing to do; increment counter and continue
@@ -2132,9 +2027,9 @@ class environment:
             raise FileNotFoundError("File {} not found!".format(filename))
 
         if filename.strip()[-4:] == '.vtk':
-            points, bounds = dataio.read_vtk_Unstructured_Grid_Points(filename)
+            points, bounds = _dataio.read_vtk_Unstructured_Grid_Points(filename)
         elif filename.strip()[-7:] == '.vertex':
-            points = dataio.read_IB2d_vertices(filename)
+            points = _dataio.read_IB2d_vertices(filename)
         else:
             raise RuntimeError("File extension for {} not recognized.".format(filename))
 
@@ -2262,7 +2157,7 @@ class environment:
                     newmeshs.append(new_mesh)
             self.ibmesh = np.concatenate(newmeshs).astype(np.float64)
         print("Fluid tiled. Planktos domain size is now {}.".format(self.L))
-        self.__reset_flow_deriv()
+        self._reset_flow_deriv()
 
 
 
@@ -2393,7 +2288,7 @@ class environment:
             self.flow_points = (new_points[0]-new_points[0][0], new_points[1]-new_points[1][0])
             self.L = [self.flow_points[dim][-1] for dim in range(2)]
 
-        self.__reset_flow_deriv()
+        self._reset_flow_deriv()
 
 
     #######################################################################
@@ -2402,39 +2297,39 @@ class environment:
 
 
     def add_swarm(self, swarm_size=100, **kwargs):
-        ''' Adds a swarm into this environment.
+        ''' Adds a Swarm into this Environment.
 
         Parameters
         ----------
-        swarm_size : swarm object or int (size of swarm), default=100
-            If a swarm object is given, all following parameters will be ignored 
+        swarm_size : Swarm object or int (size of swarm), default=100
+            If a Swarm object is given, all following parameters will be ignored 
             (since the object is already initialized)
         init : string
-            Method for initializing positions. See swarm class for options.
+            Method for initializing positions. See Swarm class for options.
         seed : int
             Seed for random number generator
         kwargs
-            keyword arguments to be set as swarm properties (see swarm class for 
+            keyword arguments to be set as Swarm properties (see Swarm class for 
             details)
         '''
 
-        if isinstance(swarm_size, planktos.swarm):
+        if isinstance(swarm_size, planktos.Swarm):
             swarm_size._change_envir(self)
         else:
-            return planktos.swarm(swarm_size, self, **kwargs)
+            return planktos.Swarm(swarm_size, self, **kwargs)
             
 
 
-    def move_swarms(self, dt=1.0, params=None, ib_collisions='sliding', 
+    def move_swarms(self, dt=1.0, ib_collisions='sliding', 
                     silent=False):
-        '''Move all swarms in the environment.
+        '''Move all Swarms in the Environment.
 
         Parameters
         ----------
         dt : float
             length of time step to move all agents
         params : any, optional
-            parameters to pass along to get_positions, if necessary
+            parameters to pass along to apply_agent_model, if necessary
         ib_collisions : {None, 'sliding' (default), 'sticky'}
             Type of interaction with immersed boundaries. If None, turn off all 
             interaction with immersed boundaries. In sliding collisions, 
@@ -2446,7 +2341,7 @@ class environment:
         '''
 
         for s in self.swarms:
-            s.move(dt, params, ib_collisions, update_time=False)
+            s.move(dt, ib_collisions, update_time=False)
 
         # update time
         self.time_history.append(self.time)
@@ -2560,8 +2455,8 @@ class environment:
         # If fCubicSplines do not exist, create them.
         if self.flow is None:
             raise RuntimeError("Cannot temporally interpolate None flow.")
-        if not all([type(f) == fCubicSpline for f in self.flow]):
-            self._create_temporal_interpolations()
+        if not all([type(f) == fluid.fCubicSpline for f in self.flow]):
+            self.flow = fluid.create_temporal_interpolations(self.flow_times, self.flow)
 
         if t_index is None and time is None:
             time = self.time
@@ -2576,30 +2471,6 @@ class environment:
         else:
             # interpolate
             return [f(time) for f in self.flow]
-
-
-
-    def _create_temporal_interpolations(self):
-        '''Create PPoly fCubicSplines to interpolate the fluid velocity in time.'''
-        for n, flow in enumerate(self.flow):
-            # Defaults to axis=0 along which data is varying, which is t axis
-            # Defaults to not-a-knot boundary condition, resulting in first
-            #   and second segments at curve ends being the same polynomial
-            # Defaults to extrapolating out-of-bounds points based on first
-            #   and last intervals. This will be overriden by this method
-            #   to use constant extrapolation instead.
-            if type(flow) != fCubicSpline:
-                self.flow[n] = fCubicSpline(self.flow_times, flow)
-
-
-
-    def _create_dt_interpolations(self):
-        '''Create PPoly objects for dudt.'''
-        self.dt_interp = []
-        if not all([type(f) == fCubicSpline for f in self.flow]):
-            self._create_temporal_interpolations()
-        for ppoly in self.flow:
-            self.dt_interp.append(ppoly.derivative())
 
 
 
@@ -2626,7 +2497,7 @@ class environment:
             points is used.
         time : float, optional
             if None, the present time. Otherwise, the flow field will be
-            interpolated to the time given based on the environment flow_times.
+            interpolated to the time given based on the Environment flow_times.
             This is only supported for environmental flow fields (not ones 
             passed in as an argument).
         method : string, default='linear'
@@ -2781,7 +2652,7 @@ class environment:
         Parameters
         ----------
         positions : Nx2 or Nx3 ndarray
-            ndarray of agent positions (e.g., swarm.positions)
+            ndarray of agent positions (e.g., Swarm.positions)
         dx : float
             length of grid cell in the x-direction
         dy : float
@@ -3008,25 +2879,24 @@ class environment:
 
 
     def calculate_FTLE(self, grid_dim=None, testdir=None, t0=0, T=0.1, dt=0.001, 
-                       ode_gen=None, props=None, t_bound=None, swrm=None, 
-                       params=None):
+                       ode_gen=None, props=None, t_bound=None, swrm=None):
         '''Calculate the FTLE field at the given time(s) t0 with integration 
         length T on a discrete grid with given dimensions. The calculation will 
         be conducted with respect to the fluid velocity field loaded in this 
         environment and either tracer particle movement (default), an ode specifying
         deterministic equations of motion, or other arbitrary particle movement 
-        as specified by a swarm object's get_positions method and updated in 
+        as specified by a Swarm object's apply_agent_model method and updated in 
         discrete time intervals of length dt.
 
-        This method will set the following environment attributes:
-        - environment.FTLE_largest
-        - environment.FTLE_smallest
-        - environment.FTLE_loc
-        - environment.FTLE_t0
-        - environment.FTLE_T
-        - environment.FTLE_grid_dim
+        This method will set the following Environment attributes:
+        - Environment.FTLE_largest
+        - Environment.FTLE_smallest
+        - Environment.FTLE_loc
+        - Environment.FTLE_t0
+        - Environment.FTLE_T
+        - Environment.FTLE_grid_dim
 
-        All FTLE calculations will be done using a swarm object. This means that:
+        All FTLE calculations will be done using a Swarm object. This means that:
         
         1) The boundary conditions specified by this environment will be respected.
         2) Immersed boundaries (if any are loaded into this environment) will be 
@@ -3035,9 +2905,9 @@ class environment:
 
         If passing in a set of ode or finding the FTLE field for tracer particles, 
         an RK45 solver will be used. Otherwise, integration will be via the 
-        swarm object's get_positions method.
+        Swarm object's apply_agent_model method.
 
-        If both ode and swarm arguments are None, the default is to calculate the 
+        If both ode and swrm arguments are None, the default is to calculate the 
         FTLE based on massless tracer particles.
 
         Parameters
@@ -3066,40 +2936,38 @@ class environment:
             unless smallest FTLE is desired and agents are leaving the domain...
         dt : float, default=0.001
             if solving ode or tracer particles, this is the time step for 
-            checking boundary conditions. If passing in a swarm object, 
+            checking boundary conditions. If passing in a Swarm object, 
             this argument represents the length of the Euler time steps.
         ode_gen : function handle, optional
             functional handle for an ode generator that takes
-            in a swarm object and returns an ode function handle with
+            in a Swarm object and returns an ode function handle with
             call signature ODEs(t,x), where t is the current time (float) 
             and x is a 2*NxD array with the first N rows giving v=dxdt and 
             the second N rows giving dvdt. D is the spatial dimension of 
             the problem. See the ODE generator functions in motion.py for 
             examples of format. 
-            The ODEs will be solved using RK45 with a newly created swarm 
+            The ODEs will be solved using RK45 with a newly created Swarm 
             specified on a grid throughout the domain.
         props : dict, optional 
-            dictionary of properties for the swarm that will be created to solve 
+            dictionary of properties for the Swarm that will be created to solve 
             the odes. Effectively, this passes parameter values into the ode 
             generator. If unspecified, will default to the values for the first 
-            agent in the props of the swarm provided.
+            agent in the props of the Swarm provided.
         t_bound : float, optional
             if solving ode or tracer particles, this is the bound on
             the RK45 integration step size. Defaults to dt/100.
-        swrm : swarm object, optional 
-            swarm object with user-defined movement rules as 
-            specified by the get_positions method. This allows for arbitrary 
+        swrm : Swarm object, optional 
+            Swarm object with user-defined movement rules as 
+            specified by the apply_agent_model method. This allows for arbitrary 
             FTLE calculations through subclassing and overriding this method. 
             Steps of length dt will be taken until the integration length T 
-            is reached. The swarm object itself will not be altered; a shallow 
+            is reached. The Swarm object itself will not be altered; a shallow 
             copy will be created for the purpose of calculating the FTLE on 
             a grid.
-        params : dict, optional 
-            params to be passed to supplied swarm object's get_positions method.
 
         Returns
         -------
-        swarm object
+        Swarm object
             used to calculuate the FTLE
         list
             list of dt integration steps
@@ -3109,7 +2977,7 @@ class environment:
         '''
 
         ###########################################################
-        ######              Setup swarm object               ######
+        ######              Setup Swarm object               ######
         ###########################################################
         if grid_dim is None:
             grid_dim = tuple(len(pts) for pts in self.flow_points)
@@ -3118,13 +2986,13 @@ class environment:
             print("Warning: FTLE has not been well tested for 3D cases!")
 
         if swrm is None:
-            s = planktos.swarm(envir=self, shared_props=props, init='grid', 
+            s = planktos.Swarm(envir=self, shared_props=props, init='grid', 
                       grid_dim=grid_dim, testdir=testdir)
-            # NOTE: swarm has been appended to this environment!
+            # NOTE: Swarm has been appended to this environment!
         else:
-            # Get a shallow copy of the swarm passed in
+            # Get a shallow copy of the Swarm passed in
             s = copy.copy(swrm)
-            # Add swarm to environment and re-initialize swarm positions
+            # Add Swarm to Environment and re-initialize swarm positions
             self.add_swarm(s)
             s.positions = s.grid_init(*grid_dim, testdir=testdir)
             s.pos_history = []
@@ -3151,7 +3019,7 @@ class environment:
         ######              Solve for positions              ######
         ###########################################################
 
-        ###### OPTION A: Solve ODEs if no swarm object was passed in ######
+        ###### OPTION A: Solve ODEs if no Swarm object was passed in ######
 
         prnt_str = "Solving for positions from time {} to time {}:".format(t0,T)
         # NOTE: the scipy.integrate solvers convert masked arrays into ndarrays, 
@@ -3160,7 +3028,7 @@ class environment:
         if swrm is None:
             ### SETUP SOLVER ###
             if ode_gen is None:
-                ode_fun = planktos.motion.tracer_particles(s, incl_dvdt=False)
+                ode_fun = motion.tracer_particles(s, incl_dvdt=False)
                 print("Finding {}D FTLE based on tracer particles.".format(len(grid_dim)))
             else:
                 ode_fun = ode_gen(s)
@@ -3168,7 +3036,7 @@ class environment:
             print(prnt_str)
 
             # keep a list of all times solved for 
-            #   (time history normally stored in environment class)
+            #   (time history normally stored in Environment class)
             current_time = t0
             time_list = [] 
 
@@ -3189,7 +3057,7 @@ class environment:
                                             s.velocities[~s.velocities[:,0].mask,:]))
                 try:
                     # solve
-                    y_new = planktos.motion.RK45(ode_fun, current_time, y, new_time, first_step=t_bound)
+                    y_new = motion.RK45(ode_fun, current_time, y, new_time, first_step=t_bound)
                 except Exception as err:
                     print('RK45 solver returned an error at time {} with step_size {}.'.format(
                           current_time, dt))
@@ -3199,7 +3067,7 @@ class environment:
                 old_positions = s.positions.copy()
                 old_velocities = s.velocities.copy()
 
-                # pull solution into swarm object's position/velocity attributes
+                # pull solution into Swarm object's position/velocity attributes
                 if ode_gen is None:
                     s.positions[~ma.getmaskarray(s.positions[:,0]),:] = y_new
                 else:
@@ -3241,15 +3109,15 @@ class environment:
 
             # DONE SOLVING
 
-        ###### OPTION B: Run get_positions on supplied swarm object ######
+        ###### OPTION B: Run apply_agent_model on supplied Swarm object ######
 
         else:
-            print("Finding {}D FTLE based on supplied swarm object.".format(len(grid_dim)))
+            print("Finding {}D FTLE based on supplied Swarm object.".format(len(grid_dim)))
             print(prnt_str)
             # save this environment's time history
             envir_time = self.time
             envir_time_history = list(self.time_history)
-            # now track this swarm's time
+            # now track this Swarm's time
             self.time = t0
             self.time_history = []
 
@@ -3262,7 +3130,7 @@ class environment:
                     old_props = s.props.copy()
                 
                 # Update positions
-                s.positions[:,:] = s.get_positions(dt, params)
+                s.positions[:,:] = s.apply_agent_model(dt)
 
                 # Update history
                 s.pos_history.append(old_positions)
@@ -3556,7 +3424,7 @@ class environment:
         if time_history:
             for cyc, time in enumerate(self.time_history):
                 vort = self.get_2D_vorticity(t_indx=cyc)
-                dataio.write_vtk_2D_rectilinear_grid_scalars(path, name, vort, self.L, cyc, time)
+                _dataio.write_vtk_2D_rectilinear_grid_scalars(path, name, vort, self.L, cyc, time)
             cycle = len(self.time_history)
         else:
             cycle = None
@@ -3567,10 +3435,10 @@ class environment:
                 out_name = name
             for cyc, time in enumerate(self.flow_times):
                 vort = self.get_2D_vorticity(t_n=cyc)
-                dataio.write_vtk_2D_rectilinear_grid_scalars(path, out_name, vort, self.L, cyc, time)
+                _dataio.write_vtk_2D_rectilinear_grid_scalars(path, out_name, vort, self.L, cyc, time)
         if time_history or not flow_times:
             vort = self.get_2D_vorticity(time=self.time)
-            dataio.write_vtk_2D_rectilinear_grid_scalars(path, name, vort, self.L, cycle, self.time)
+            _dataio.write_vtk_2D_rectilinear_grid_scalars(path, name, vort, self.L, cycle, self.time)
 
 
 
@@ -3596,7 +3464,7 @@ class environment:
         if time_history:
             for cyc, time in enumerate(self.time_history):
                 flow = self.interpolate_temporal_flow(t_index=cyc)
-                dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, self.L, cyc, time)
+                _dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, self.L, cyc, time)
             cycle = len(self.time_history)
         else:
             cycle = None
@@ -3607,10 +3475,10 @@ class environment:
                 out_name = name
             for cyc, time in enumerate(self.flow_times):
                 flow = self.interpolate_temporal_flow(time=time)
-                dataio.write_vtk_rectilinear_grid_vectors(path, out_name, flow, self.L, cyc, time)
+                _dataio.write_vtk_rectilinear_grid_vectors(path, out_name, flow, self.L, cyc, time)
         if time_history or not flow_times:
             flow = self.interpolate_temporal_flow(time=self.time)
-            dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, self.L, cycle, self.time)
+            _dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, self.L, cycle, self.time)
 
 
 
@@ -3652,10 +3520,14 @@ class environment:
             return [np.zeros_like(f) for f in self.flow]
         else:
             # temporal flow.
-            # If PPoly derivatives do not exist, create them.
-            if self.dt_interp is None:
-                self._create_dt_interpolations()
-            return [dfdt(time) for dfdt in self.dt_interp]
+            # Create temporary PPoly objects for dudt.
+            if not all([type(f) == fluid.fCubicSpline for f in self.flow]):
+                self.flow = fluid.create_temporal_interpolations(self.flow_times, self.flow)
+            dudt_list = []
+            for ppoly in self.flow:
+                dfdt = ppoly.derivative()
+                dudt_list.append(dfdt(time))
+            return dudt_list
 
 
 
@@ -3722,8 +3594,8 @@ class environment:
 
     def reset(self, rm_swarms=False):
         '''Resets environment to time=0. Swarm history will be lost, and all
-        swarms will maintain their last position and velocities. 
-        If rm_swarms=True, remove all swarms.'''
+        Swarms will maintain their last position and velocities. 
+        If rm_swarms=True, remove all Swarms.'''
 
         self.time = 0.0
         self.time_history = []
@@ -3744,7 +3616,7 @@ class environment:
 
 
 
-    def __reset_flow_variables(self, incl_rho_mu_U=False):
+    def _reset_flow_variables(self, incl_rho_mu_U=False):
         '''To be used when the fluid flow changes. Resets all the helper
         parameters and reports new domain.'''
 
@@ -3753,7 +3625,7 @@ class environment:
         self.orig_L = None
         self.plot_structs = []
         self.plot_structs_args = []
-        self.__reset_flow_deriv()
+        self._reset_flow_deriv()
         if incl_rho_mu_U:
             self.mu = None
             self.rho = None
@@ -3762,12 +3634,11 @@ class environment:
 
 
 
-    def __reset_flow_deriv(self):
+    def _reset_flow_deriv(self):
         '''Reset properties that are derived from the flow velocity.'''
 
         self.mag_grad = None
         self.mag_grad_time = None
-        self.dt_interp = None
         self.DuDt = None
         self.DuDt_time = None
 
@@ -4377,585 +4248,4 @@ class environment:
         cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])
         plt.colorbar(pcm, cax=cbaxes)
         plt.show()
-
-
-
-    #######################################################################
-    #####               FLUID INTERPOLATION OBJECTS                   #####
-    #######################################################################
-
-
-
-class fCubicSpline(interpolate.CubicSpline):
-    '''
-    Extends Scipy's CubicSpline object to get info about original fluid data.
-    '''
-
-    def __init__(self, flow_times, flow, dydx=None, extrapolate=(True, True), 
-                 bc_type='not-a-knot'):
-        '''
-        Creates a PPoly instance spline instance with some additional info 
-        and capabilities. Will throw a custom error if times are requested 
-        outside of spline time bounds and extrapolate is False on that side.
-
-        If dydx is None then use CubicSpline to construct the object. Otherwise,
-        use CubicHermiteSpline and ignore bc_type.
-        '''
-        if dydx is None:
-            super(fCubicSpline, self).__init__(flow_times, flow, axis=0, 
-                                               extrapolate=True, bc_type=bc_type)
-        else:
-            interpolate.CubicHermiteSpline.__init__(self, flow_times, flow, dydx, 
-                                                    axis=0, extrapolate=True)
-
-        self.shape = flow.shape
-        self.data_max = flow.max()
-        self.data_min = flow.min()
-        self.extrapolate = extrapolate
-
-    def __call__(self, val):
-        if (val < self.x[0] and not self.extrapolate[0]) \
-              or (val > self.x[-1] and not self.extrapolate[1]):
-            raise SplineRangeError('Out of range without extrapolation.')
-        super().__call__(val)
-
-    def __getitem__(self, pos):
-        '''
-        Allows indexing into the interpolator at original time mesh points.
-        '''
-        if type(pos) == int:
-            return self.__call__(self.x[pos])
-        elif type(pos) == slice:
-            start = pos.start; stop = pos.stop; step = pos.step
-            if start is None: start = 0
-            if stop is None: stop = len(self.x)
-            if step is None: step = 1
-            return np.stack([self.__call__(self.x[n]) for 
-                             n in range(start,stop,step)])
-        elif type(pos) == tuple:
-            if type(pos[0]) == int:
-                return self.__call__(self.x[pos[0]])[pos[1:]]
-            elif type(pos[0]) == slice:
-                start = pos[0].start; stop = pos[0].stop; step = pos[0].step
-                if start is None: start = 0
-                if stop is None: stop = len(self.x)
-                if step is None: step = 1
-                return np.stack([self.__call__(self.x[n])[pos[1:]] for 
-                                 n in range(start,stop,step)])
-            else:
-                raise IndexError('Only integers or slices supported in fCubicSpline.')
-        else:
-            raise IndexError('Only integers or slices supported in fCubicSpline.')
-
-    def __setitem__(self, pos, val):
-        raise RuntimeError("Cannot assign to spline object. "+
-                           "Use regenerate_data to recreate original data first.")
-
-    def max(self):
-        return self.data_max
-
-    def min(self):
-        return self.data_min
-
-    def absmax(self):
-        return np.abs(np.array([self.data_max, self.data_min])).max()
-
-    def regenerate_data(self):
-        '''
-        Rebuild the original data.
-        '''
-        return np.stack([self.__call__(val) for val in self.x])
-    
-
-
-class SplineRangeError(ValueError):
-    """
-    Exception raised for asking for a value outside of interpolation range.
-    """
-    def __init__(self, message="Value is outside of valid interpolation range."):
-        self.message = message
-        super().__init__(self.message)
-    
-
-
-class FluidData:
-
-    def __init__(self, path, data_type, d_start, d_finish, INUM=7,
-                 flow_times=None, title=None, vector_data=None):
-        '''
-        Class file for dynamically loading time-varying fluid data and splining it.
-
-        This object must be called with a time (float). It will then provide a 
-        list of fluid ndarrays corresponding to the fluid velocity field at grid 
-        points at that time. This interface is purposefully different from the 
-        others so that the FluidData object can catch times that are outside of 
-        the currently loaded times and dynamically load/spline the data needed. 
-        It will hopefully also raise errors where only the old format is 
-        supported to aid in debugging.
-
-        Parameters
-        ----------
-        path : string
-            path to vtk data
-        data_type : string
-            options are: 'IB2d'
-        d_start : int
-            file number to start with for full set. Usually 0.
-        d_finish : int
-            file number to end with for full set.
-        INUM : int, default=7
-            max number of splined intervals at any one time. Must be odd.
-        flow_times : 1D ndarray
-            time mesh for the fluid velocity field for IB2d data
-        title : string, optional
-            the title of the data files - e.g., the string before the dump 
-            number sequence. Not used for IB2d since it's standardized.
-        vector_data : bool, optional
-            whether or not VTK is vector data
-        '''
-        assert INUM % 2 != 0, "INUM must be odd."
-        self.INUM = INUM # This is how many intervals to use when initiating 
-                         #  the spline object.
-
-        self.path = path
-        self.data_type = data_type
-        self.d_start = round(d_start)
-        if d_finish <= d_start + self.INUM:
-            raise RuntimeError("Not enough data files for dynamic splining.")
-        self.d_finish = round(d_finish)
-        self.flow_times = None # to be set below, copy of envir.flow_times
-
-        # Depending on the data type, load the first bit and spline.
-        if self.data_type == 'IB2d':
-            assert vector_data is not None, "vector_data must be specified for IB2d"
-            self.vector_data = vector_data
-            assert flow_times is not None, "flow_times must be specified for IB2d"
-            self.flow_times = flow_times
-
-            flow, x, y = self.read_IB2d_dumpfiles(path, d_start, 
-                                                  d_start + self.INUM,
-                                                  vector_data)
-            # shift domain to quadrant 1
-            self.orig_flow_points = (x-x[0], y-y[0])
-            self.fluid_domain_LLC = (x[0], y[0])
-
-            ### Convert environment dimensions and add back the periodic gridpoints ###
-            # IB2d always has periodic BC and returns a VTK with fluid specified 
-            #     at grid points but lacking the grid points at the end of the 
-            #     domain (since it's a duplicate). Make the fluid periodic within 
-            #     Planktos and to fill out the domain by adding back these last points
-            flow, self.flow_points, self.L = self.wrap_flow(
-                flow, self.orig_flow_points, periodic_dim=(True, True))
-        else:
-            raise NotImplementedError("This data_type is unknown.")
-            
-        ### Create initial spline ###
-        load_times = self.flow_times[0:self.INUM+1]
-        
-        bc_type = ('natural', 'not-a-knot')
-        for n, f in enumerate(flow):
-            flow[n] = fCubicSpline(load_times, f, extrapolate=(True, False), 
-                                   bc_type=bc_type)
-            # Only half the initially splined data sets will be conisidered 
-            #   "valid", because beyond that the splines are more affected by the
-            #   right boundary condition which lacks information about the
-            #   remainder of the dataset.
-            # So, delete the portion of the splined data that we won't use.
-            flow[n].c = flow[n].c[:, 0:(int(self.INUM/2)+1), ...]
-            flow[n].x = flow[n].x[0:(int(self.INUM/2)+2)]
-        self.flow = flow
-        # record the bounds of the dump numbers currently being used
-        self.loaded_dump_bnds = (d_start, d_start+int(self.INUM/2)+1)
-        # same, but based off of zero to correspond with flow_times indices
-        self.loaded_idx_bnds = (0,int(self.INUM/2)+1) 
-
-    def __call__(self, time):
-        '''Retrieve fluid data at the requested time and update the spline 
-        dynamically as needed.
-        '''
-        try:
-            return [fspline(time) for fspline in self.flow]
-        except SplineRangeError:
-            self.update_spline(time)
-            return [fspline(time) for fspline in self.flow]
-    
-    def __len__(self):
-        '''Returns the len of the fluid list.'''
-        return len(self.flow)
-    
-
-
-    def update_spline(self, time):
-        '''The workhorse function for dynamically loading data.'''
-
-        # NOTE: fCubicSpline.c has shape (4,num_of_splines,...) where "..." is 
-        #   the array dimensions of the velocity grid.
-        while time > self.flow[0].x[-1] and not self.flow[0].extrapolate[1]:
-            ### spline forward ###
-            # get info about what we will be loading
-            d_start = self.loaded_dump_bnds[1]+1 # first dump to load
-            idx_start = self.loaded_idx_bnds[1]-1 # first index in new spline
-            if self.loaded_dump_bnds[1]-1 + self.INUM > self.d_finish:
-                # We are at the end of the dataset.
-                d_finish = self.d_finish
-                idx_finish = len(self.flow_times)
-                extrapolate = (False, True)
-            else:
-                # We are contained in the middle of the dataset.
-                d_finish = self.loaded_dump_bnds[1]-1 + self.INUM
-                idx_finish = self.loaded_idx_bnds[1]-1 + self.INUM
-                extrapolate = (False, False)
-            load_times = self.flow_times[idx_start:idx_finish+1]
-
-            dydx0 = []; dydx1 = []
-            for n in range(len(self.flow)):
-                # drop unneeded coefficients to save space
-                self.flow[n].c = self.flow[n].c[:,-1,...]
-                # Extract derivative info for next spline
-                dydx0.append(self.flow[n].c[2,0,...])
-                dx = load_times[1] - load_times[0]
-                dydx1.append(3*self.flow[n].c[0,1,...]*dx**2
-                             + 2*self.flow[n].c[1,1,...]*dx
-                             + self.flow[n].c[2,1,...])
-                
-            # load new data
-            if self.data_type == 'IB2d':
-                flow, x, y = self.read_IB2d_dumpfiles(self.path, d_start, 
-                                                      d_finish, self.vector_data)
-                flow, flow_points, L = self.wrap_flow(
-                    flow, self.orig_flow_points, periodic_dim=(True, True))    
-            else:
-                raise NotImplementedError
-            
-            # add old spline data
-            for n,f in enumerate(flow):
-                flow[n] = np.concatenate((self.flow[n].c[3,0,...],
-                                            self.flow[n](load_times[1]), f))
-            # Remove the rest of the spline data
-            self.flow = [0 for n in range(len(flow))]
-
-            # Spline it
-            self._set_new_splines(load_times, flow, dydx0, dydx1, extrapolate, 
-                                  direction='right')
-            self.loaded_dump_bnds = (self.loaded_dump_bnds[1]-1,d_finish)
-            self.loaded_idx_bnds = (idx_start, idx_finish)
-            
-        while time < self.flow[0].x[0] and not self.flow[0].extrapolate[0]:
-            ### spline backward ###
-            # get info about what we will be loading
-            d_finish = self.loaded_dump_bnds[0]-1 # last dump to load
-            idx_finish = self.loaded_idx_bnds[0]+1 # last index in new spline
-            if self.loaded_dump_bnds[0]+1 - self.INUM < self.d_start:
-                # We are at the beginning of the dataset.
-                d_start = self.d_start
-                idx_start = 0
-                extrapolate = (True, False)
-            else:
-                # We are contained in the middle of the dataset.
-                d_start = self.loaded_dump_bnds[0]+1 - self.INUM
-                idx_start = self.loaded_idx_bnds[0]+1 - self.INUM
-                extrapolate = (False, False)
-            load_times = self.flow_times[idx_start:idx_finish+1]
-
-            dydx0 = []; dydx1 = []
-            for n in range(len(self.flow)):
-                # drop unneeded coefficients to save space
-                self.flow[n].c = self.flow[n].c[:,0,...]
-                # Extract derivative info for next spline
-                dydx0.append(self.flow[n].c[2,0,...])
-                dx = load_times[1] - load_times[0]
-                dydx1.append(3*self.flow[n].c[0,1,...]*dx**2
-                             + 2*self.flow[n].c[1,1,...]*dx
-                             + self.flow[n].c[2,1,...])
-                
-            # load new data
-            if self.data_type == 'IB2d':
-                flow, x, y = self.read_IB2d_dumpfiles(self.path, d_start, 
-                                                      d_finish, self.vector_data)
-                flow, flow_points, L = self.wrap_flow(
-                    flow, self.orig_flow_points, periodic_dim=(True, True))    
-            else:
-                raise NotImplementedError
-            
-            # add old spline data
-            for n,f in enumerate(flow):
-                flow[n] = np.concatenate((f, self.flow[n].c[3,0,...],
-                                          self.flow[n](load_times[1])))
-            # Remove the rest of the spline data
-            self.flow = [0 for n in range(len(flow))]
-
-            # Spline it
-            self._set_new_splines(load_times, flow, dydx0, dydx1, extrapolate, 
-                                  direction='left')
-            self.loaded_dump_bnds = (d_start, self.loaded_dump_bnds[0]+1)
-            self.loaded_idx_bnds = (idx_start, idx_finish)
-    
-
-
-    def _set_new_splines(self, x, flow, dydx0, dydx1, extrapolate, direction='right'):
-        '''Set new splines in self.flow based on derivative data from an old spline.
-
-        Parameters
-        ----------
-        x : ndarray
-            time points corresponding to the flow data
-        flow : list of ndarray
-            fluid velocity data.
-        dydx0 : list of ndarray
-            derivatives at first time point
-        dydx1 : list of ndarray
-            derivatievs at second time point
-        extrapolate : 2-tuple of bool
-            to be passed on to PPoly. Should be True whenever we have reached the
-            end of the time series on one side or another. Otherwise False.
-        dir : 'right' or 'left'
-            if 'right', dydx0 and dydx1 are construed to be at the first and second
-            time points respectively (e.g., we are extending a spline to the right).
-            Otherwise, they are construed to be the next-to-last and last times 
-            (e.g., we are extending a spline to the left).
-
-        Notes
-        -----
-        This implemenation is largely based on the source code scipy.interploate._cubic.py
-        '''
-        
-        n = len(x)
-        dx = np.diff(x)
-        if np.any(dx <= 0):
-            raise ValueError("flow times must be a strictly increasing sequence.")
-        dxr = dx.reshape([dx.shape[0]] + [1] * (flow[0].ndim - 1))
-        
-        for dim, y in enumerate(flow):
-            slope = np.diff(y, axis=0) / dxr
-            # Find derivative values at each x[i] by solving a tridiagonal system.
-            A = np.zeros((3, n))  # This is a banded matrix representation.
-            b = np.empty((n,) + y.shape[1:], dtype=y.dtype)
-
-            if direction == 'right':
-                # Filling the system for i=2..n-1
-                #                         (x[i] - x[i-1]) * s[i-2] +\
-                # 2 * ((x[i-1] - x[i-2]) + (x[i] - x[i-1])) * s[i-1]   +\
-                #                         (x[i-1] - x[i-2]) * s[i] =\
-                #       3 * ((x[i] - x[i-1])*(y[i-1] - y[i-2])/(x[i-1] - x[i-2]) +\
-                #           (x[i-1] - x[i-2])*(y[i] - y[i-1])/(x[i] - x[i-1]))
-
-                A[-1, :-2] = dx[1:]                  # The lower lower diagonal
-                A[1, 1:-1] = 2 * (dx[:-1] + dx[1:])  # The lower diagonal
-                A[0, 2:] = dx[:-1]                   # The diagonal
-
-                b[2:] = 3 * (dxr[1:] * slope[:-1] + dxr[:-1] * slope[1:])
-
-                A[0,0] = 1; A[0,1] = 1
-                b[0] = dydx0[dim]; b[1] = dydx1[dim]
-                A[1,0] = 0 # derivative of second point is specified.
-                l_and_u = (2,0)
-            elif direction == 'left':
-                # Filling the system for i=0..n-3
-                #                         (x[i+2] - x[i+1]) * s[i] +\
-                # 2 * ((x[i+1] - x[i]) + (x[i+2] - x[i+1])) * s[i+1]   +\
-                #                         (x[i+1] - x[i]) * s[i+2] =\
-                #       3 * ((x[i+2] - x[i+1])*(y[i+1] - y[i])/(x[i+1] - x[i]) +\
-                #           (x[i+1] - x[i])*(y[i+2] - y[i+1])/(x[i+2] - x[i+1]))
-
-                A[-1, :-2] = dx[1:]                  # The diagonal
-                A[1, 1:-1] = 2 * (dx[:-1] + dx[1:])  # The upper diagonal
-                A[0, 2:] = dx[:-1]                   # The upper upper diagonal
-                
-                b[0:-3] = 3 * (dxr[1:] * slope[:-1] + dxr[:-1] * slope[1:])
-
-                A[-1,-2] = 1; A[-1,-1] = 1
-                b[-2] = dydx0[dim]; b[-1] = dydx1[dim]
-                A[1,-1] = 0 # derivative of next-to-last point is specified
-                l_and_u = (0,2)
-
-            # Solve the system
-            m = b.shape[0]
-            # s is the derivatives of the spline at all data points
-            s = solve_banded(l_and_u, A, b.reshape(m,-1), overwrite_ab=True, 
-                             overwrite_b=True, check_finite=False)
-            s = s.reshape(b.shape)
-
-            # Create the PPoly
-            self.flow[dim] = fCubicSpline(x, y, s, extrapolate=extrapolate)
-            # Remove data
-            flow[dim] = 0
-
-
-
-    @staticmethod
-    def read_IB2d_dumpfiles(path, d_start, d_finish, vector_data):
-        '''
-        Load IB2d data at path starting with dump d_start and ending with dump
-        d_end. This can read just one or many dump files.
-
-        Parameters
-        ----------
-        path : string
-            path to vtk data
-        d_start : int
-            first dump file to load
-        d_finish : int
-            last dump file to load
-        vector_data : bool
-            whether the data is vector velocity data (u) or not. The other 
-            choice being x and y directed velocity magnitude (uX, uY)
-
-        Returns
-        -------
-        fluid : list of ndarray
-        x : x-coordinate mesh, 1D ndarray
-        y : y-coordinate mesh, 1D ndarray
-        '''
-        X_vel = []
-        Y_vel = []
-        for n in range(d_start, d_finish+1):
-            # Points to desired data viz_IB2d data file
-            if n < 10:
-                numSim = '000'+str(n)
-            elif n < 100:
-                numSim = '00'+str(n)
-            elif n < 1000:
-                numSim = '0'+str(n)
-            else:
-                numSim = str(n)
-
-            # Imports (x,y) grid values and ALL Eulerian Data %
-            #                      DEFINITIONS
-            #          x: x-grid                y: y-grid
-            #       Omega: vorticity           P: pressure
-            #    uMag: mag. of velocity
-            #    uX: mag. of x-Velocity   uY: mag. of y-Velocity
-            #    u: velocity vector
-            #    Fx: x-directed Force     Fy: y-directed Force
-            #
-            #  Note: U(j,i): j-corresponds to y-index, i to the x-index
-            
-            if vector_data:
-                # read in vector velocity data
-                strChoice = 'u'; xy = True
-                uX, uY, x, y = dataio.read_2DEulerian_Data_From_vtk(path, numSim,
-                                                                    strChoice,xy)
-                X_vel.append(uX.T) # (y,x) -> (x,y) coordinates
-                Y_vel.append(uY.T) # (y,x) -> (x,y) coordinates
-            else:
-                # read in x-directed Velocity Magnitude #
-                strChoice = 'uX'; xy = True
-                uX,x,y = dataio.read_2DEulerian_Data_From_vtk(path,numSim,
-                                                            strChoice,xy)
-                X_vel.append(uX.T) # (y,x) -> (x,y) coordinates
-
-                # read in y-directed Velocity Magnitude #
-                strChoice = 'uY'
-                uY = dataio.read_2DEulerian_Data_From_vtk(path,numSim,
-                                                        strChoice)
-                Y_vel.append(uY.T) # (y,x) -> (x,y) coordinates
-
-            ##### The following is just for reference! ######
-            # read in Vorticity #
-            # strChoice = 'Omega'; first = 0
-            # Omega = dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
-            #                                               strChoice,first)
-            # read in Pressure #
-            # strChoice = 'P'; first = 0
-            # P = dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
-            #                                           strChoice,first)
-            # read in Velocity Magnitude #
-            # strChoice = 'uMag'; first = 0
-            # uMag = dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
-            #                                              strChoice,first)
-            # read in x-directed Forces #
-            # strChoice = 'Fx'; first = 0
-            # Fx = dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
-            #                                            strChoice,first)
-            # read in y-directed Forces #
-            # strChoice = 'Fy'; first = 0
-            # Fy = dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
-            #                                            strChoice,first)
-            ###################################################
-
-        ### Return data ###
-        if d_start != d_finish:
-            return [np.transpose(np.dstack(X_vel),(2,0,1)), 
-                    np.transpose(np.dstack(Y_vel),(2,0,1))] , x, y
-        else:
-            return [X_vel[0], Y_vel[0]], x, y
-
-
-
-    @staticmethod
-    def wrap_flow(flow, flow_points, periodic_dim=(True, True, False)):
-        '''In some cases, software may print out fluid velocity data that omits 
-        the velocities at the right boundaries in spatial dimensions that are 
-        meant to be periodic. This helper function restores that data by copying 
-        everything over. 3rd dimension will automatically be ignored if 2D.
-
-        Parameters
-        ----------
-        flow : list of ndarrays
-            This will be overwritten to save space!
-        flow_points : tuple of mesh coordinates (x,y,[z])
-        periodic_dim : list of 3 bool, default=[True, True, False]
-            True if that spatial dimension is periodic, otherwise False
-
-        Returns
-        -------
-        flow : list of ndarrays
-        flow_points : tuple of mesh coordinates (ndarrays)
-        L : list of dimension lengths
-        '''
-
-        dim = len(flow_points)
-        if dim == len(flow[0].shape):
-            TIME_DEP = False
-        else:
-            TIME_DEP = True
-                
-        dx = np.array([flow_points[d][-1]-flow_points[d][-2] 
-                       for d in range(dim)])
-        
-        # find new flow field shape
-        new_flow_shape = np.array(flow[0].shape)
-        if not TIME_DEP:
-            new_flow_shape += 1*np.array(periodic_dim)
-        else:
-            new_flow_shape[1:] += 1*np.array(periodic_dim)
-
-        # create new flow field, putting old data in lower left corner
-        new_flow = [np.zeros(new_flow_shape) for d in range(dim)]
-        if TIME_DEP:
-            old_shape = flow[0].shape[1:]
-        else:
-            old_shape = flow[0].shape
-        for d in range(dim):
-            if dim == 2:
-                new_flow[d][...,:old_shape[0],:old_shape[1]] = flow[d]
-            else:
-                new_flow[d][...,:old_shape[0],:old_shape[1],:old_shape[2]] = flow[d]
-        # replace old flow field
-        flow = new_flow
-
-        # fill in the new edges and update flow points
-        flow_points_new = []
-        for d in range(dim):
-            if periodic_dim[d]:
-                flow_points_new.append(np.append(flow_points[d], 
-                                   flow_points[d][-1]+dx[d]))
-                for dd in range(dim):
-                    if d == 0 and not TIME_DEP:
-                        flow[dd][-1,...] = flow[dd][0,...]
-                    elif d == 0 and TIME_DEP:
-                        flow[dd][:,-1,...] = flow[dd][:,0,...]
-                    elif d == 1 and not TIME_DEP:
-                        flow[dd][:,-1,...] = flow[dd][:,0,...]
-                    elif d == 1 and TIME_DEP:
-                        flow[dd][:,:,-1,...] = flow[dd][:,:,0,...]
-                    else:
-                        flow[dd][...,-1] = flow[dd][...,0]
-            else:
-                flow_points_new.append(flow_points[d])
-
-        flow_pts = tuple(flow_points_new)
-        # return flow, flow_points, L
-        return flow, flow_pts, [flow_pts[d][-1] for d in range(dim)]
-
 

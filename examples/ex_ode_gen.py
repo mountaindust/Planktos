@@ -16,24 +16,24 @@ import planktos
 #   in the current time and state variables and returns the derivatives as given
 #   by the equations. In Planktos, there is one wrinkle to this: the equations
 #   of motion are often parameterized by the fluid velocity field or information
-#   about the swarm and its properties. So, the equations need access to the
-#   swarm object so that they can get this information. This requires an ODE
+#   about the Swarm and its properties. So, the equations need access to the
+#   Swarm object so that they can get this information. This requires an ODE
 #   generator, where an ODE function is created with access to the swarm. It
 #   works like this:
 
 def my_ode_generator(swarm):
-    '''The ODE generator takes in the swarm object as a parameter and returns
+    '''The ODE generator takes in the Swarm object as a parameter and returns
     a function which defines the ODEs'''
 
     def ODEs(t,x):
         '''Because this function is defined inside my_ode_generator, it has
-        access to all the variables in that outer scope... including the swarm
+        access to all the variables in that outer scope... including the Swarm
         that was passed in! This means that the call signature can be the 
-        required (t,x), and yet the swarm is still accessible.
+        required (t,x), and yet the Swarm is still accessible.
 
         Both the RK45 and Euler_brownian_motion solvers expect that x will be
         2NxD in shape, where N is the number of agents (programmatically easy
-        to find via swarm.positions.shape[0]) and D is the spatial dimension of
+        to find via Swarm.positions.shape[0]) and D is the spatial dimension of
         the system. The reason it is 2N instead of N is so that equations giving
         both velocity and acceleration can be specified. If this is not needed,
         just set the second N equations equal to zero.
@@ -61,12 +61,12 @@ def my_ode_generator(swarm):
     # the generator then returns the ODE function
     return ODEs
 
-# Now we follow ex_agent_behavior and override get_positions with this new
+# Now we follow ex_agent_behavior and override apply_agent_model with this new
 #   behavior!
 
-class myswarm(planktos.swarm):
+class myswarm(planktos.Swarm):
 
-    def get_positions(self, dt, params=None):
+    def apply_agent_model(self, dt):
 
         # All we have to do now is use the generator to get the ODEs...
         swrm_odes = my_ode_generator(self)
@@ -76,9 +76,9 @@ class myswarm(planktos.swarm):
         #   swarm covariance matrix.
         return planktos.motion.Euler_brownian_motion(self, dt, ode=swrm_odes)
 
-# Now we create the environment/swarm and run it!
+# Now we create the Environment/Swarm and run it!
 
-envir = planktos.environment(Lx=20, Ly=5, Lz=10, y_bndry=['noflux', 'noflux'],
+envir = planktos.Environment(Lx=20, Ly=5, Lz=10, y_bndry=['noflux', 'noflux'],
                              rho=1000, mu=1000)
 envir.set_brinkman_flow(alpha=66, h_p=1.5, U=1, dpdx=1, res=101)
 swrm = myswarm(envir=envir)

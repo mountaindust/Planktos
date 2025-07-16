@@ -13,7 +13,7 @@ import pytest
 import numpy as np
 import numpy.ma as ma
 import planktos
-from planktos import dataio
+from planktos import _dataio
 
 ############                    Decorators                ############
 
@@ -30,10 +30,10 @@ from planktos import dataio
 def test_IBAMR_load():
     '''Test loading IBAMR fluid data into the environment'''
     pathname = 'tests/IBAMR_test_data'
-    envir = planktos.environment() # default environment, 2D.
+    envir = planktos.Environment() # default environment, 2D.
 
     ##### Load only the final recorded flow #####
-    envir.read_IBAMR3d_vtk_dataset(pathname, start=5, finish=None)
+    envir.read_IBAMR3d_vtk_data(pathname, d_start=5, d_finish=None)
     envir.set_boundary_conditions(('zero','zero'), ('zero','zero'), ('noflux','noflux'))
 
     # test properties
@@ -79,7 +79,7 @@ def test_IBAMR_load():
                    "zero bndry not respected"
 
     ##### Load all three IBAMR test files #####
-    envir.read_IBAMR3d_vtk_dataset(pathname, start=3, finish=None)
+    envir.read_IBAMR3d_vtk_data(pathname, d_start=3, d_finish=None)
     # Remove swarms
     envir.reset(rm_swarms=True)
 
@@ -132,9 +132,9 @@ def test_IBAMR_load():
 
 @pytest.mark.vtk
 def test_point_load():
-    '''Test loading singleton mesh points from an Unstructured Grid VTK in dataio'''
+    '''Test loading singleton mesh points from an Unstructured Grid VTK in _dataio'''
     filename = 'tests/IBAMR_test_data/mesh_db.vtk'
-    points, bounds = dataio.read_vtk_Unstructured_Grid_Points(filename)
+    points, bounds = _dataio.read_vtk_Unstructured_Grid_Points(filename)
 
 
 @pytest.mark.vtu
@@ -143,7 +143,7 @@ def test_vtu_load():
     pathname = 'tests/data/comsol/vtu_test_data.txt'
     path = Path(pathname)
     assert path.is_file(), "Comsol data {} not found!".format(pathname)
-    envir = planktos.environment() # default environment, 2D.
+    envir = planktos.Environment() # default environment, 2D.
 
     envir.read_comsol_vtu_data(pathname, vel_conv=1000)
     envir.set_boundary_conditions(('zero','zero'), ('zero','zero'), ('noflux','noflux'))

@@ -11,7 +11,7 @@ of all three dimensions this time (in meters). We'll plan on using Brinkman
 flow again, so let's also go ahead and specify the fluid density and 
 dynamic viscosity::
 
-    envir = planktos.environment(Lx=20, Ly=10, Lz=4, rho=1000, mu=1000)
+    envir = planktos.Environment(Lx=20, Ly=10, Lz=4, rho=1000, mu=1000)
 
 Now let's set the Brinkman flow. It automatically gets translated into all
 available spatial dimensions::
@@ -20,7 +20,7 @@ available spatial dimensions::
 
 If you decide later you want a bigger spatial domain (or you loaded fluid data
 with periodic boundary conditions but want a bigger domain than the CFD
-data was generated on), you can tile the environment in the x and y 
+data was generated on), you can tile the Environment in the x and y 
 directions using the tile_flow method (this also works in 2D). You can also
 extend the domain in the x or y direction by just holding the flow on the
 boundary constant and translating it (extend method).
@@ -38,10 +38,10 @@ are only available in 2D. ::
 
 .. image:: ../_static/basic_ex_3d_envir.png
 
-Now let's repeat the steps from basic_ex_2d.py, creating a default swarm,
+Now let's repeat the steps from basic_ex_2d.py, creating a default Swarm,
 changing the covariance, running the simulation, and plotting. ::
 
-    swrm = planktos.swarm(envir=envir)
+    swrm = planktos.Swarm(envir=envir)
     swrm.shared_props['cov'] = swrm.shared_props['cov'] * 0.01
 
     print('Moving swarm...')

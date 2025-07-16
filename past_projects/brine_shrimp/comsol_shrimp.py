@@ -40,14 +40,14 @@ parser.add_argument("-t", "--time", type=int, default=600,
 ############################################################################
 
 def main(swarm_size=1000, time=600, data='', D=None, seed=1, create_movie=False, prefix=''):
-    '''Add swarm and simulate dispersal. Future: run this in loop while altering
+    '''Add Swarm and simulate dispersal. Future: run this in loop while altering
     something to see the effect.
     
     D is diffusivity in mm**2/sec. Default is 2.5; see below
     '''
 
     # Intialize environment
-    envir = planktos.environment(x_bndry=['noflux', 'noflux'])
+    envir = planktos.Environment(x_bndry=['noflux', 'noflux'])
 
     ############     Import COMSOL data on flow     ############
 
@@ -68,7 +68,7 @@ def main(swarm_size=1000, time=600, data='', D=None, seed=1, create_movie=False,
     model_bounds = (2.5,77.5,85,235,0,20.5)
     print('-------------------------------------------')
 
-    # Add swarm right in front of model
+    # Add Swarm right in front of model
     s = envir.add_swarm(swarm_s=swarm_size, init='point', pos=(40,84,3), seed=seed)
 
     # Specify amount of jitter (mean, covariance)
@@ -123,7 +123,7 @@ def main(swarm_size=1000, time=600, data='', D=None, seed=1, create_movie=False,
         b_cross_frac=b_cross_frac, b_mean=b_mean, b_median=b_median, b_mode=b_mode,
         b_std=b_std, b_skew=b_skew, b_kurt=b_kurt)
 
-    # write out the swarm object for later data inspection
+    # write out the Swarm object for later data inspection
     with open(prefix+'obj.pickle', 'w+b') as f:
         pickle.dump(s, f)
 

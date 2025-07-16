@@ -7,11 +7,11 @@ import sys
 sys.path.append('..')
 import planktos
 
-envir = planktos.environment(1,1)
+envir = planktos.Environment(1,1)
 envir.read_IB2d_fluid_data('wobbly_beam/viz_IB2d', 5.0e-5, 10)
 envir.read_IB2d_mesh_data('wobbly_beam/viz_IB2d', 5.0e-5, 10)
 
-swrm = planktos.swarm(envir=envir, ib_condition='sticky', seed=1)
+swrm = planktos.Swarm(envir=envir, ib_condition='sticky', seed=1)
 swrm.shared_props['cov'] *= 0.01
 
 # swrm.plot()

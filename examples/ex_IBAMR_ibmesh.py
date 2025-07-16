@@ -10,15 +10,15 @@ Agents should not be able to move through the cylinder boundaries.'''
 
 import planktos
 
-# Let's begin by creating a default environment.
-envir = planktos.environment()
+# Let's begin by creating a default Environment.
+envir = planktos.Environment()
 
 # Now, load the VTK data. This is just an excerpt from the larger data set, and
 #   only file dumps 3-5 are included. So we will start at 3 and go until there
 #   are none left. This is just a bit of data which originally came from IBAMR 
 #   that we use for testing purposes, thus it's location in the tests folder. 
 #   All other information is pulled from the VTK headers!
-envir.read_IBAMR3d_vtk_dataset('../tests/IBAMR_test_data', start=3, finish=None)
+envir.read_IBAMR3d_vtk_data('../tests/IBAMR_test_data', d_start=3, d_finish=None)
 
 # Now we read in the vertex data. Unlike the ib2d_ibmesh example, here we will
 #   use a convex hull algorithm to create a solid object out of the vertex 
@@ -37,12 +37,12 @@ envir.tile_flow(3,3)
 # Now we can see the effect - notice that the cylinder mesh got tiled too!!
 envir.plot_flow()
 
-# Let's add a swarm with 100 agents all positioned somewhat behind the 
+# Let's add a Swarm with 100 agents all positioned somewhat behind the 
 #   center left-most cylinder with respect to the flow (which is in the 
 #   y-direction in this example). Remember that we can do this by specifying a 
-#   point to the init argument of the swarm class, and that we can get the 
+#   point to the init argument of the Swarm class, and that we can get the 
 #   length of the domain in each direction with the envir.L attribute. 
-swrm = planktos.swarm(envir=envir, init=(envir.L[0]*0.5, 0.04, envir.L[2]*0.1))
+swrm = planktos.Swarm(envir=envir, init=(envir.L[0]*0.5, 0.04, envir.L[2]*0.1))
 
 # adjust the amount of jitter (variance)...
 swrm.shared_props['cov'] *= 0.0001

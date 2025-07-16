@@ -17,7 +17,7 @@ def add_cylinders_toplot(envir, filename):
     the envir object to be plotted as a surface. If the environment has been
     tiled, automatically tile the cylinder too.'''
 
-    points, bounds = planktos.dataio.read_vtk_Unstructured_Grid_Points(filename)
+    points, bounds = planktos._dataio.read_vtk_Unstructured_Grid_Points(filename)
     # shift to first quadrant
     for dim in range(3):
         bounds[dim*2:dim*2+2] -= envir.fluid_domain_LLC[dim]
@@ -55,8 +55,8 @@ def _plot_cylinders(ax3d, bounds):
 
     ax3d.plot_surface(x, y, z, color='g')
 
-envir = planktos.environment()
-envir.read_IBAMR3d_vtk_dataset('../tests/IBAMR_test_data', start=5, finish=None)
+envir = planktos.Environment()
+envir.read_IBAMR3d_vtk_data('../tests/IBAMR_test_data', d_start=5, d_finish=None)
 # tile flow in a 3,3 grid
 envir.tile_flow(3,3)
 

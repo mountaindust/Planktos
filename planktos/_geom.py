@@ -1,6 +1,6 @@
 '''Utility functions for calculating geometric quantities. These are the 
 workhorses of agent interaction with immersed boundaries. Prior to 0.7, they 
-were static methods of swarm.
+were static methods of Swarm.
 
 Created: Thurs September 19 2024
 
@@ -14,8 +14,7 @@ __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
 import numpy as np
-import decimal
-# from scipy.spatial import distance # used in _project_and_slide
+
 
 def closest_dist_btwn_line_and_pts(startpt, endpt, pt_list):
     '''

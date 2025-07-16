@@ -31,7 +31,7 @@ import planktos
 
 ##### Begin by loading the fluid and mesh. #####
 # with just this line, we get an empty domain with no flow to test things out
-envir = planktos.environment(Lx=1, Ly=0.25, x_bndry='periodic', y_bndry='periodic')
+envir = planktos.Environment(Lx=1, Ly=0.25, x_bndry='periodic', y_bndry='periodic')
 
 
 ##### Load your fluid data and mesh data here! #####
@@ -53,7 +53,7 @@ SWARM_SIZE = 500
 #   speed that does not vary between particles. Other parameter will follow the 
 #   Vicsek paper as well. One can easily explore the effects of individual 
 #   variation by using props instead of shared_props.
-class vicsek(planktos.swarm):
+class vicsek(planktos.Swarm):
     def __init__(self, *args, **kwargs):
         super(vicsek, self).__init__(*args, **kwargs)
 
@@ -124,7 +124,7 @@ class vicsek(planktos.swarm):
         return dist
 
 
-    def get_positions(self, dt, params):
+    def apply_agent_model(self, dt):
         # Note that the time-step matters: the angle noise and averaging happens
         #   every dt according to the Vicsek model
 
@@ -151,18 +151,18 @@ class vicsek(planktos.swarm):
         return self.positions + new_vel*dt
 
 
-# create a swarm with initial conditions behind the cylinder
+# create a Swarm with initial conditions behind the cylinder
 x_center = 0.1 # +/- 0.025
 y_center = 0.125 # +/- 0.075
 IC_pos = np.zeros((SWARM_SIZE,2))
 IC_pos[:,0] = (np.random.rand(SWARM_SIZE)-0.5)*0.05 + x_center
 IC_pos[:,1] = (np.random.rand(SWARM_SIZE)-0.5)*0.15 + y_center
 
-# create Vicsek swarm
+# create Vicsek Swarm
 swrm = vicsek(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
 
 # passive particles for comparsion
-# swrm = planktos.swarm(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
+# swrm = planktos.Swarm(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
 # swrm.shared_props['cov'] *= 0.02**2
 
 # conduct simulation

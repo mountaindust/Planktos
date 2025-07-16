@@ -36,12 +36,11 @@ instead of the version information, FFmpeg is not properly installed.
 Installing Package Dependencies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Installing dependencies using Anaconda Python is highly recommended. Even better 
-is Miniforge, since this library heavily depends upon packages only available 
+Using Miniforge as your Python distribution (instead of Anaconda Python) is 
+highly recommended since this library heavily depends upon packages only available 
 through the conda-forge package repository, and conda-forge has largely become 
 incompatible with packages provided in the default Anaconda channel. In either 
-case, make sure you have the most updated version of conda before starting or 
-things might break.
+case, make sure you have the most updated version of conda before installing.
 
 If Planktos crashes on import or when plotting, the problem almost always stems 
 from the following places:
@@ -53,11 +52,14 @@ proper video rendering.
 This is especially true on MacOS - Apple's operating system has always had 
 terrible issues with plotting libraries in Python. My best advice is to avoid 
 Python 3.12 and use Python 3.11 instead, use VTK 9.2 instead of the newer 
-versions (or older ones, which are incompatible with newer versions of numpy), 
+versions (don't use older ones, which are incompatible with newer versions of numpy), 
 and make sure you are using only PyQt5 and do not have any PyQt6 or Pyside6 
 libraries installed.
 
-The dependencies are as follows:
+The dependencies are as follows. If you are using Miniforge, conda-forge is the 
+default channel and you can install vtk with just the command `conda install vtk`. 
+Otherwise, it is recommened to install as much as possible using the 
+conda-forge channel via the command `conda install conda-forge::<pkg name>`.
 
 - Python 3.8+ 
 - numpy/scipy
@@ -69,19 +71,21 @@ The dependencies are as follows:
 
 - pyvista (from conda-forge. Note: pyvista may install vtk as a dependency, but 
     the version could be years old and broken in modern versions of numpy. This 
-    may be an issue related to conda-forge and default Anaconda channel 
-    incompatiblity)
+    may be an instance of conda-forge and default Anaconda channel incompatiblity).
 - numpy-stl (if loading stl data). Again, get it from conda-forge.
 - netCDF4 (if loading netCDF data)
 - pytest (if running tests)
 
 If you get _image DLL errors from pillow when trying to load matplotlib.pyplot, 
-try using pip to reinstall using `pip install -U pillow`.
+try using pip to reinstall pillow using `pip install -U pillow`.
+
+It is also highly recommended to install the jupyter package, which includes 
+ipython and the necessary libraries to use jupyter lab.
 
 Installing Planktos
 ~~~~~~~~~~~~~~~~~~~
 
-Once FFmpeg is installed, Planktos can be installed from source using `pip` on 
+Once these are installed, Planktos can be installed from source using `pip` on 
 Python >= 3.8 from the Planktos directory. Navigate to the Planktos directory in 
 a terminal and use the command: ::
 
@@ -109,11 +113,21 @@ section above for troubleshooting.
 Getting started
 ---------------
 
+If you use this software in your research, please cite it via the following paper: 
+
+Strickland, W.C., Battista, N.A., Hamlet, C.L., Miller, L.A. (2022), 
+Planktos: An agent-based modeling framework for small organism movement and 
+dispersal in a fluid environment with immersed structures. 
+*Bulletin of Mathematical Biology*, 84(72). 
+
+A suggested BibTeX entry is included in the file 
+:download:`Planktos.bib <../Planktos.bib>`.
+
 There are several working examples in the examples folder, including a 2D 
 simulation, a 2D simulation demonstrating individual variation, a 3D simulation, 
 a simulation utilizing VTK data obtained from IBAMR (pulled from the 
 tests/IBAMR_test_data folder), and simulations demonstrating subclassing of the 
-get_positions method for user-defined agent behavior. There are also examples 
+apply_agent_model method for user-defined agent behavior. There are also examples 
 demonstrating how to import vertex data (from IB2d and IBAMR), automatically
 create immersed boundaries out of this data, and then simulate agent movement 
 with these meshes as solid boundaries which the agents respect. More examples 
@@ -125,9 +139,9 @@ of the boundary do not cross except at vertices. This is to keep computational
 speed up and numerical complexity down. So, especially if you are auto-creating
 boundaries from vertex data, be sure and check that boundary segments are not
 intersecting each other away from specified vertices! A quick way to do this is
-to call environment.plot_envir() after the mesh import is done to zoom in and 
+to call Environment.plot_envir() after the mesh import is done to zoom in and 
 visually check that the boundary formed correctly and doesn't cross itself in 
-unexpected ways. There is also a method of the environment class called 
+unexpected ways. There is also a method of the Environment class called 
 add_vertices_to_2D_ibmesh which will add vertices at all 2D mesh crossing points, 
 however it's use is discouraged because it results in complex vertices that 
 attach more than two mesh segments and leftover segments that do not contribute 
@@ -136,16 +150,6 @@ undergone rigorous testing, and running the method will add significant
 computational overhead due to the need to search for collisions with each 
 additional line segment. Finally, avoid mesh structures that intersect with a 
 periodic boundary (w.r.t. agents); behavior related to this is not implemented.
-
-If you use this software in your research, please cite it via the following paper: 
-
-Strickland, W.C., Battista, N.A., Hamlet, C.L., Miller, L.A. (2022), 
-Planktos: An agent-based modeling framework for small organism movement and 
-dispersal in a fluid environment with immersed structures. 
-*Bulletin of Mathematical Biology*, 84(72). 
-
-A suggested BibTeX entry is included in the file 
-:download:`Planktos.bib <../Planktos.bib>`.
 
 Research that utilizes this framework can be seen in:  
 
@@ -158,40 +162,61 @@ Overview
 
 Currently, Planktos has built-in capabilities to load either time-independent or 
 time-dependent 2D or 3D fluid velocity data specified on a regular mesh. ASCII 
-vtk format is supported, as well as ASCII vtu files from COMSOL (single-time vtu
-data only) and NetCDF. More regular grid formats, especially if part of  
-open-source formats, may be supported in the future; please contact the author 
-(cstric12@utk.edu) if you have a format you would like to see supported. A few 
-analytical, 1D flow fields are also available and can be generated in either 2D 
-or 3D environments; these include Brinkman flow, two layer channel flow, and 
-canopy flow. Flow fields can also be extended and tiled in simple ways as 
-appropriate. Mesh data must be time-invariant and loaded via IB2d/IBAMR-style 
-vertex data (2D) or via stl file in 3D. Again, more (open source) formats may be 
-considered if requested. Mesh data should never intersect any of the domain 
-boundaries. This will not be checked, but is essential for correct preformance.
+vtk format is supported, as well as one single-time ASCII vtu files from COMSOL 
+and NetCDF. A few analytical 1D flow fields are also available and can be 
+generated in either 2D or 3D environments; these include Brinkman flow, two layer 
+channel flow, and canopy flow. Flow fields can also be extended and tiled in simple 
+ways as appropriate. Mesh data must be time-invariant in 3D but can be time-varying 
+in 2D. They are loaded via IB2d/IBAMR-style vertex data (2D) or via stl file in 3D. 
+More (open source) formats may be considered if requested. Mesh data should never 
+intersect any of the domain boundaries. This will not be checked, but is essential 
+for correct preformance.
 
-For agents, there is support for multiple species (swarms) along with individual 
-variation though a pandas Dataframe property of the swarm class (swarm.props). 
-Individual agents have access to the local flow field through interpolation of 
-the spatial-temporal fluid velocity grid - specifically, Planktos implements a 
-cubic spline in time with linear interpolation in space. In addition to more 
-custom behavior, included in Planktos is an Ito SDE solver 
-(Euler-Maruyama method) for movement specified as an SDE of the type 
+For agents, there is support for individual variation though a pandas Dataframe 
+property of the Swarm class (Swarm.props). Individual agents have access to the 
+local flow field through interpolation of the spatial-temporal fluid velocity grid. 
+Specifically, Planktos implements a cubic spline in time with linear interpolation 
+in space. In addition to more custom behavior, an Ito SDE solver 
+(Euler-Maruyama method) is included for movement specified as an SDE of the type 
 
 .. math::
     dX_t = \mu dt + \sigma dW_t 
 
-and an inertial particle behavior for dynamics described by the linearized 
+and inertial particle behavior for dynamics described by the linearized 
 Maxey-Riley equation [1]_. These two may be combined, and other, user-supplied 
 ODEs can also be fed into the drift term of the Ito SDE. Finally, agents will 
 treat immersed boundary meshes as solid barriers. Upon encountering an immersed 
-mesh boundary, any remaining movement will be projected onto the mesh. Both 
-concanve and convex mesh joints are supported, and pains have been taken to make 
-the projection algorithm as numerically stable as possible.
+mesh boundary, any remaining movement can be treated using either a frictionless 
+condition or a sticky condition (friction approaches infinity). Elastic boundary 
+conditions are not currently supported. There is interest in supporting multiple 
+agent species (Swarms) in the same environment, but due to lack of use this 
+should be considered broken for the time being. Please create an issue if you 
+would like to see this supported again for a specific project.
 
-Single-time and animation plotting of results is available in 2D and 3D; support 
-for plotting multiple agent species together has not yet been implemented, but 
-is a TODO.
+Single-time and animation plotting of results is available in 2D and 3D.
 
 .. [1] Haller, G. and Sapsis, T. (2008). Where do inertial particles go in
    fluid flows? Physica D: Nonlinear Phenomena, 237(5), 573-583.
+
+Workflow
+--------
+
+This is outlined in more detail within the tutorial examples, but briefly, the 
+following workflow is used to create simulatinos in Planktos:
+1. Create an Environment object and load the fluid velocity data and any 
+immersed mesh structures into it. Specify boundary conditions. Verify everything 
+looks correct by plotting the environment.
+2. Create a class for the agents you would like to simulate by subclassing 
+planktos.Swarm. Create a model for your agents by implementing a method within 
+your class called apply_agent_model. This method must expect the size of the 
+time step as an argument and return the new positions of the agents as given 
+by whatever model the user implements within the method. Boundary conditions will 
+be automatically handled by Planktos after this method returns and therefore the 
+user should NOT set the agent positions manually. apply_agent_model should also 
+update agent states in any way necessary for the model. If such an update requires 
+knowledge of the agents' final position after boundary interactions, the after_move 
+method can be used, which is called only after everything else within the timestep 
+has been done.
+3. Create a Swarm object from your class and call it's move method in a loop to 
+run the simulation.
+4. Plot the results or export the data to examine elsewhere.
