@@ -61,12 +61,12 @@ def my_ode_generator(swarm):
     # the generator then returns the ODE function
     return ODEs
 
-# Now we follow ex_agent_behavior and override get_positions with this new
+# Now we follow ex_agent_behavior and override apply_agent_model with this new
 #   behavior!
 
 class myswarm(planktos.Swarm):
 
-    def get_positions(self, dt, params=None):
+    def apply_agent_model(self, dt, params=None):
 
         # All we have to do now is use the generator to get the ODEs...
         swrm_odes = my_ode_generator(self)

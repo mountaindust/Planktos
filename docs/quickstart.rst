@@ -117,7 +117,7 @@ There are several working examples in the examples folder, including a 2D
 simulation, a 2D simulation demonstrating individual variation, a 3D simulation, 
 a simulation utilizing VTK data obtained from IBAMR (pulled from the 
 tests/IBAMR_test_data folder), and simulations demonstrating subclassing of the 
-get_positions method for user-defined agent behavior. There are also examples 
+apply_agent_model method for user-defined agent behavior. There are also examples 
 demonstrating how to import vertex data (from IB2d and IBAMR), automatically
 create immersed boundaries out of this data, and then simulate agent movement 
 with these meshes as solid boundaries which the agents respect. More examples 

@@ -15,9 +15,9 @@ envir.read_IB2d_mesh_data('data/leaf_data/leaf.vertex', 1.45)
 envir.add_vertices_to_static_2D_ibmesh()
 
 class permstick(planktos.Swarm):
-    def get_positions(self, dt, params):
+    def apply_agent_model(self, dt, params):
         stick = self.get_prop('stick')
-        return np.expand_dims(~stick,1)*super().get_positions(dt, params=params) +\
+        return np.expand_dims(~stick,1)*super().apply_agent_model(dt, params=params) +\
                np.expand_dims(stick,1)*self.positions
 
 ### Test for boundary crossings ###

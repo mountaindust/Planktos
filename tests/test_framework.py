@@ -23,7 +23,7 @@ from planktos import motion
 
 class highRe_massive_swarm(planktos.Swarm):
 
-    def get_positions(self, dt, params=None):
+    def apply_agent_model(self, dt, params=None):
         '''Uses projectile motion'''
 
         # Get drift/drag/inertia due to fluid using high Reynolds number equation
@@ -38,7 +38,7 @@ class highRe_massive_swarm(planktos.Swarm):
 
 class lowRe_massive_swarm(planktos.Swarm):
 
-    def get_positions(self, dt, params=None):
+    def apply_agent_model(self, dt, params=None):
         '''Uses Haller and Sapsis'''
 
         # Get drift/drag/inertia due to fluid using high Reynolds number equation

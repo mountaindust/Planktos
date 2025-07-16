@@ -49,7 +49,7 @@ class Swarm:
     for other initial conditions.
 
     NOTE: To customize agent behavior, subclass this class and re-implement the
-    method get_positions (do not change the call signature).
+    method apply_agent_model (do not change the call signature).
 
     Parameters
     ----------
@@ -201,12 +201,12 @@ class Swarm:
 
     In order to accomodate general, user-defined behavior algorithms, all other 
     agent behaviors should be explicitly specified by subclassing this Swarm 
-    class and overriding the get_positions method. This is easy, and takes the 
+    class and overriding the apply_agent_model method. This is easy, and takes the 
     following form: ::
 
         class myagents(planktos.Swarm):
             
-            def get_positions(self, dt, params=None):
+            def apply_agent_model(self, dt, params=None):
                 #
                 # Put any calculations here that are necessary to determine
                 #   where the agents should end up after a time step of length 
@@ -902,7 +902,7 @@ class Swarm:
     def move(self, dt=1.0, params=None, ib_collisions='default', 
              update_time=True, silent=False):
         '''Move all organisms in the swarm over one time step of length dt.
-        DO NOT override this method when subclassing; override get_positions
+        DO NOT override this method when subclassing; override apply_agent_model
         instead!!!
 
         Performs a lot of utility tasks such as updating the positions and 
@@ -914,7 +914,7 @@ class Swarm:
         dt : float
             length of time step to move all agents
         params : any, optional
-            parameters to pass along to get_positions, if necessary
+            parameters to pass along to apply_agent_model, if necessary
         ib_collisions : {None, 'default', 'sliding', 'sticky'}
             Boundary condition for immersed boundaries. If 'default', use the 
             default found in self.ib_condition. If None, turn off all 
@@ -932,7 +932,7 @@ class Swarm:
 
         See Also
         --------
-        get_positions : 
+        apply_agent_model : 
             method that returns (but does not assign) the new positions of the 
             swarm after the time step dt, which Planktos users override in order 
             to specify their own, custom agent behavior.
@@ -952,7 +952,7 @@ class Swarm:
         # Check that something is left in the domain to move, and move it.
         if not np.all(self.positions.mask):
             # Update positions, preserving mask
-            self.positions[:,:] = self.get_positions(dt, params)
+            self.positions[:,:] = self.apply_agent_model(dt, params)
 
         # Update history
         self.pos_history.append(old_positions)
@@ -992,7 +992,7 @@ class Swarm:
 
 
 
-    def get_positions(self, dt, params=None):
+    def apply_agent_model(self, dt, params=None):
         '''Returns the new agent positions after a time step of dt.
 
         THIS IS THE METHOD TO OVERRIDE IF YOU WANT DIFFERENT MOVEMENT! Do not 
@@ -1082,7 +1082,7 @@ class Swarm:
 
     def after_move(self, dt, params=None):
         '''This method is called after the Swarm's spatial positions have been 
-        updated via get_positions, but before the environment time has been 
+        updated via apply_agent_model, but before the environment time has been 
         updated to the new time (prev time + dt).
 
         By default it does nothing, but you can override it in order to update 
@@ -1323,7 +1323,7 @@ class Swarm:
         
         There is no reason for a user to call this method directly; it is 
         automatically called by self.move after updating agent positions 
-        according to the algorithm found in self.get_positions.
+        according to the algorithm found in self.apply_agent_model.
 
         This method compares current agent positions (self.positions) to the
         previous agent positions (last entry in self.pos_history) in order to

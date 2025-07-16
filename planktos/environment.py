@@ -2325,7 +2325,7 @@ class Environment:
         dt : float
             length of time step to move all agents
         params : any, optional
-            parameters to pass along to get_positions, if necessary
+            parameters to pass along to apply_agent_model, if necessary
         ib_collisions : {None, 'sliding' (default), 'sticky'}
             Type of interaction with immersed boundaries. If None, turn off all 
             interaction with immersed boundaries. In sliding collisions, 
@@ -2882,7 +2882,7 @@ class Environment:
         be conducted with respect to the fluid velocity field loaded in this 
         environment and either tracer particle movement (default), an ode specifying
         deterministic equations of motion, or other arbitrary particle movement 
-        as specified by a Swarm object's get_positions method and updated in 
+        as specified by a Swarm object's apply_agent_model method and updated in 
         discrete time intervals of length dt.
 
         This method will set the following Environment attributes:
@@ -2902,7 +2902,7 @@ class Environment:
 
         If passing in a set of ode or finding the FTLE field for tracer particles, 
         an RK45 solver will be used. Otherwise, integration will be via the 
-        Swarm object's get_positions method.
+        Swarm object's apply_agent_model method.
 
         If both ode and swrm arguments are None, the default is to calculate the 
         FTLE based on massless tracer particles.
@@ -2955,14 +2955,14 @@ class Environment:
             the RK45 integration step size. Defaults to dt/100.
         swrm : Swarm object, optional 
             Swarm object with user-defined movement rules as 
-            specified by the get_positions method. This allows for arbitrary 
+            specified by the apply_agent_model method. This allows for arbitrary 
             FTLE calculations through subclassing and overriding this method. 
             Steps of length dt will be taken until the integration length T 
             is reached. The Swarm object itself will not be altered; a shallow 
             copy will be created for the purpose of calculating the FTLE on 
             a grid.
         params : dict, optional 
-            params to be passed to supplied Swarm object's get_positions method.
+            params to be passed to supplied Swarm object's apply_agent_model method.
 
         Returns
         -------
@@ -3108,7 +3108,7 @@ class Environment:
 
             # DONE SOLVING
 
-        ###### OPTION B: Run get_positions on supplied Swarm object ######
+        ###### OPTION B: Run apply_agent_model on supplied Swarm object ######
 
         else:
             print("Finding {}D FTLE based on supplied Swarm object.".format(len(grid_dim)))
@@ -3129,7 +3129,7 @@ class Environment:
                     old_props = s.props.copy()
                 
                 # Update positions
-                s.positions[:,:] = s.get_positions(dt, params)
+                s.positions[:,:] = s.apply_agent_model(dt, params)
 
                 # Update history
                 s.pos_history.append(old_positions)

@@ -68,7 +68,7 @@ class imsearch(planktos.Swarm):
         #   circular target, as defined outside the class.
         return np.linalg.norm(positions-target_center, axis=1) < target_rad
 
-    def get_positions(self, dt, params):
+    def apply_agent_model(self, dt, params):
 
         # Get an array that will code the proprotion of [t,t+dt] at which the 
         #   agents switched state. -1 will mean they didn't switch.

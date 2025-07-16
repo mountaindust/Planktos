@@ -7,7 +7,7 @@ agent behavior. ::
     import numpy as np
     import planktos
 
-Agent movement is defined by the get_positions method of the Swarm class.
+Agent movement is defined by the apply_agent_model method of the Swarm class.
 By default, the only thing this method does is call
 planktos.motion.Euler_brownian_motion, which uses an Euler method to solve
 an Ito SDE describing, by default, basic drift-diffusion. However, you can
@@ -18,11 +18,11 @@ do whatever you like, including:
 - Write some code to do other things, or some combination of these three.
 
 To accomplish this, you need to subclass the Swarm class and override the
-get_positions method. We'll walk through this below.
+apply_agent_model method. We'll walk through this below.
 
 Boundary conditions (including collisions with immersed mesh structures) and
 updating the positions, velocities, and accelerations properties of the 
-Swarm will be handled automatically after the get_positions method returns.
+Swarm will be handled automatically after the apply_agent_model method returns.
 So all you need to concentrate on is returning the new agent positions from
 this function, assuming no boundary or mesh interactions occur.
 
@@ -44,22 +44,22 @@ where 80% of the agents move toward the mean position of the Swarm (biased
 random walk), while 20% do not (unbiased random walk).
 
 First, we create a new Swarm class which inherits everything from the original, 
-and then we write a new get_positions method for this class. The call signature 
+and then we write a new apply_agent_model method for this class. The call signature 
 must remain the same as the original.  If you've never written a class method 
 before, the first parameter in the call signature must always be "self". This 
 refers to the Swarm object itself and is *implicitly passed* whenever 
-get_positions is called. In other words, you would call this method via 
-swrm.get_positions(dt), and NOT "swrm.get_positions(swrm, dt)". This detail 
+apply_agent_model is called. In other words, you would call this method via 
+swrm.apply_agent_model(dt), and NOT "swrm.apply_agent_model(swrm, dt)". This detail 
 doesn't matter so much here; the swrm.move method is how we update Swarms, and 
-it will do the business of calling get_positions for us. The main thing to 
+it will do the business of calling apply_agent_model for us. The main thing to 
 remember  is that if you need any Swarm attributes or methods, you should access
 them via "self.<method or attribute here>". For example, you can get the 
 gradient of the fluid speed (magnitude of velocity) using self.get_fluid_gradient(). ::
 
     class myswarm(planktos.Swarm):
 
-        def get_positions(self, dt, params=None):
-            '''New get_positions method that moves 80% of the agents toward the
+        def apply_agent_model(self, dt, params=None):
+            '''New apply_agent_model method that moves 80% of the agents toward the
             mean position of the Swarm.'''
 
             # First, get the mean position of the Swarm. 

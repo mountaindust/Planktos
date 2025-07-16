@@ -26,7 +26,7 @@ envir.read_IB2d_mesh_data('ib2d_data/channel.vertex', method='proximity')
 # To do this, we need to define some new agent behavior. It will rely on a 
 #   user-defined agent property, which we will call 'stick'.
 class permstick(planktos.Swarm):
-    def get_positions(self, dt, params):
+    def apply_agent_model(self, dt, params):
         # first, we will get the value of the 'stick' property. It is expected
         #   to be different across agents, and to have boolean value. If it is
         #   False, we aren't sticking. If it is True, we will stay put!
@@ -86,7 +86,7 @@ swrm.props['color'] = np.full(100, swrm.shared_props['color'])
 #   whenever an agent runs into an immersed structure, it will stop its movement 
 #   for that time step at the point of intersection. It would be free to move in 
 #   the next time step however, which is why our after_move updates a property
-#   for us that is then used in get_positions.
+#   for us that is then used in apply_agent_model.
 
 for ii in range(50):
     swrm.move(0.025, ib_collisions='sticky')
