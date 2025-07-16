@@ -99,7 +99,7 @@ envir.read_IB2d_fluid_data('ib2d_data', 5.0e-5, 1000, d_start=20, d_finish=None)
 ##############     FTLE with passed in Swarm     ##############
 class ftle_swrm(planktos.Swarm):
     
-    def apply_agent_model(self, dt, params=None):
+    def apply_agent_model(self, dt):
        return self.positions + self.get_fluid_drift()*dt
 
 swrm = ftle_swrm(envir=envir)

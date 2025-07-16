@@ -66,7 +66,7 @@ def my_ode_generator(swarm):
 
 class myswarm(planktos.Swarm):
 
-    def apply_agent_model(self, dt, params=None):
+    def apply_agent_model(self, dt):
 
         # All we have to do now is use the generator to get the ODEs...
         swrm_odes = my_ode_generator(self)

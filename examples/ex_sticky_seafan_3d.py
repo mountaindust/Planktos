@@ -34,13 +34,13 @@ envir.tile_flow(x=13)
 
 # See ex_ib2d_sticky for details about this "sticky" behavior!
 class permstick(planktos.Swarm):
-    def apply_agent_model(self, dt, params):
+    def apply_agent_model(self, dt):
         stick = self.get_prop('stick')
         all_move = planktos.motion.Euler_brownian_motion(self, dt)
         return np.expand_dims(~stick,1)*all_move +\
                np.expand_dims(stick,1)*self.positions
 
-    def after_move(self, dt, params):
+    def after_move(self, dt):
         swrm.props.loc[swrm.ib_collision, 'stick'] = True
         # Let's also color the agents that get stuck!
         self.props.loc[self.ib_collision, 'color'] = 'yellow'

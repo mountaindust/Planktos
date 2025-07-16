@@ -23,7 +23,7 @@ from planktos import motion
 
 class highRe_massive_swarm(planktos.Swarm):
 
-    def apply_agent_model(self, dt, params=None):
+    def apply_agent_model(self, dt):
         '''Uses projectile motion'''
 
         # Get drift/drag/inertia due to fluid using high Reynolds number equation
@@ -38,7 +38,7 @@ class highRe_massive_swarm(planktos.Swarm):
 
 class lowRe_massive_swarm(planktos.Swarm):
 
-    def apply_agent_model(self, dt, params=None):
+    def apply_agent_model(self, dt):
         '''Uses Haller and Sapsis'''
 
         # Get drift/drag/inertia due to fluid using high Reynolds number equation
@@ -391,7 +391,7 @@ def test_massive_physics():
     sw = highRe_massive_swarm(diam=0.2, m=0.01, Cd=0.47, cross_sec=np.pi*0.1**2)
     envir.add_swarm(sw)
     for ii in range(10):
-        sw.move(0.5, (np.zeros(3), 0.3*np.eye(3), True))
+        sw.move(0.5)
     assert len(sw.pos_history) == 10, "all movements not recorded"
     assert envir.time == 5, "incorrect final time"
     assert len(envir.time_history) == 10, "all times not recorded"

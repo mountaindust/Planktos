@@ -26,7 +26,7 @@ envir.read_IB2d_mesh_data('ib2d_data/channel.vertex', method='proximity')
 # To do this, we need to define some new agent behavior. It will rely on a 
 #   user-defined agent property, which we will call 'stick'.
 class permstick(planktos.Swarm):
-    def apply_agent_model(self, dt, params):
+    def apply_agent_model(self, dt):
         # first, we will get the value of the 'stick' property. It is expected
         #   to be different across agents, and to have boolean value. If it is
         #   False, we aren't sticking. If it is True, we will stay put!
@@ -55,7 +55,7 @@ class permstick(planktos.Swarm):
     #   dynamically update our 'stick' property after the move is over.
     # To do this, we will override after_move, a method that gets called 
     #   after all the agents have moved.
-    def after_move(self, dt, params):
+    def after_move(self, dt):
         swrm.props.loc[swrm.ib_collision, 'stick'] = True
         # Let's also color the agents that get stuck!
         self.props.loc[self.ib_collision, 'color'] = 'yellow'

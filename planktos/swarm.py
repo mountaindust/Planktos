@@ -206,7 +206,7 @@ class Swarm:
 
         class myagents(planktos.Swarm):
             
-            def apply_agent_model(self, dt, params=None):
+            def apply_agent_model(self, dt):
                 #
                 # Put any calculations here that are necessary to determine
                 #   where the agents should end up after a time step of length 
@@ -899,7 +899,7 @@ class Swarm:
 
 
 
-    def move(self, dt=1.0, params=None, ib_collisions='default', 
+    def move(self, dt=1.0, ib_collisions='default', 
              update_time=True, silent=False):
         '''Move all organisms in the swarm over one time step of length dt.
         DO NOT override this method when subclassing; override apply_agent_model
@@ -913,8 +913,6 @@ class Swarm:
         ----------
         dt : float
             length of time step to move all agents
-        params : any, optional
-            parameters to pass along to apply_agent_model, if necessary
         ib_collisions : {None, 'default', 'sliding', 'sticky'}
             Boundary condition for immersed boundaries. If 'default', use the 
             default found in self.ib_condition. If None, turn off all 
@@ -952,7 +950,7 @@ class Swarm:
         # Check that something is left in the domain to move, and move it.
         if not np.all(self.positions.mask):
             # Update positions, preserving mask
-            self.positions[:,:] = self.apply_agent_model(dt, params)
+            self.positions[:,:] = self.apply_agent_model(dt)
 
         # Update history
         self.pos_history.append(old_positions)
@@ -967,7 +965,7 @@ class Swarm:
         # Apply boundary conditions (if anything was moving)
         if not np.all(self.positions.mask):
             self.apply_boundary_conditions(dt, ib_collisions=ib_collisions)
-            self.after_move(dt, params)
+            self.after_move(dt)
 
         # Record new time
         if update_time:
@@ -992,7 +990,7 @@ class Swarm:
 
 
 
-    def apply_agent_model(self, dt, params=None):
+    def apply_agent_model(self, dt):
         '''Returns the new agent positions after a time step of dt.
 
         THIS IS THE METHOD TO OVERRIDE IF YOU WANT DIFFERENT MOVEMENT! Do not 
@@ -1020,8 +1018,6 @@ class Swarm:
         ----------
         dt : float
             length of time step
-        params : any, optional
-            any other parameters necessary
 
         Returns
         -------
@@ -1080,7 +1076,7 @@ class Swarm:
 
 
 
-    def after_move(self, dt, params=None):
+    def after_move(self, dt):
         '''This method is called after the Swarm's spatial positions have been 
         updated via apply_agent_model, but before the environment time has been 
         updated to the new time (prev time + dt).
@@ -1095,8 +1091,6 @@ class Swarm:
         ----------
         dt : float
             length of time step
-        params : any, optional
-            any other parameters necessary
         '''
         pass
 

@@ -73,11 +73,11 @@ class Bshrimp(planktos.Swarm):
         self.shared_props['cov'] = 25*np.eye(3)
         # set advection portion below
 
-    def apply_agent_model(self, dt, params=None):
+    def apply_agent_model(self, dt):
         '''Use the new get_fluid_gradient method to advect the brine shrimp
         in the direction of slowest flow'''
         if self.envir.flow is None:
-            super(Bshrimp, self).apply_agent_model(dt, params)
+            super(Bshrimp, self).apply_agent_model(dt)
         else:
             
             # get unit vector in direction of greatest descent

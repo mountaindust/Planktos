@@ -58,7 +58,7 @@ gradient of the fluid speed (magnitude of velocity) using self.get_fluid_gradien
 
     class myswarm(planktos.Swarm):
 
-        def apply_agent_model(self, dt, params=None):
+        def apply_agent_model(self, dt):
             '''New apply_agent_model method that moves 80% of the agents toward the
             mean position of the Swarm.'''
 

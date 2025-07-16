@@ -2316,7 +2316,7 @@ class Environment:
             
 
 
-    def move_swarms(self, dt=1.0, params=None, ib_collisions='sliding', 
+    def move_swarms(self, dt=1.0, ib_collisions='sliding', 
                     silent=False):
         '''Move all Swarms in the Environment.
 
@@ -2337,7 +2337,7 @@ class Environment:
         '''
 
         for s in self.swarms:
-            s.move(dt, params, ib_collisions, update_time=False)
+            s.move(dt, ib_collisions, update_time=False)
 
         # update time
         self.time_history.append(self.time)
@@ -2875,8 +2875,7 @@ class Environment:
 
 
     def calculate_FTLE(self, grid_dim=None, testdir=None, t0=0, T=0.1, dt=0.001, 
-                       ode_gen=None, props=None, t_bound=None, swrm=None, 
-                       params=None):
+                       ode_gen=None, props=None, t_bound=None, swrm=None):
         '''Calculate the FTLE field at the given time(s) t0 with integration 
         length T on a discrete grid with given dimensions. The calculation will 
         be conducted with respect to the fluid velocity field loaded in this 
@@ -2961,8 +2960,6 @@ class Environment:
             is reached. The Swarm object itself will not be altered; a shallow 
             copy will be created for the purpose of calculating the FTLE on 
             a grid.
-        params : dict, optional 
-            params to be passed to supplied Swarm object's apply_agent_model method.
 
         Returns
         -------
@@ -3129,7 +3126,7 @@ class Environment:
                     old_props = s.props.copy()
                 
                 # Update positions
-                s.positions[:,:] = s.apply_agent_model(dt, params)
+                s.positions[:,:] = s.apply_agent_model(dt)
 
                 # Update history
                 s.pos_history.append(old_positions)

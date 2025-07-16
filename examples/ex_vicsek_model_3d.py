@@ -145,7 +145,7 @@ class vicsek3d(planktos.Swarm):
             
         return dist
 
-    def apply_agent_model(self, dt, params):
+    def apply_agent_model(self, dt):
         # Note that the time-step matters: the angle noise and averaging happens
         #   every dt according to the Vicsek model
 

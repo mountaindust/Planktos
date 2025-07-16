@@ -57,7 +57,7 @@ class myswarm(planktos.Swarm):
     #   them via "self.<method or attribute here>". For example, you can get 
     #   the gradient of the fluid speed (magnitude of velocity) using 
     #   self.get_fluid_mag_gradient().
-    def apply_agent_model(self, dt, params=None):
+    def apply_agent_model(self, dt):
         '''New apply_agent_model method that moves 80% of the agents toward the
         mean position of the swarm.'''
 
