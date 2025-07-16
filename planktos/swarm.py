@@ -801,28 +801,28 @@ class Swarm:
             if DIM2:
                 data = np.zeros((self.positions[~ma.getmaskarray(self.positions[:,0]),:].shape[0],3))
                 data[:,:2] = self.positions[~ma.getmaskarray(self.positions[:,0]),:]
-                _dataio._write_vtk_point_data(path, name, data)
+                _dataio.write_vtk_point_data(path, name, data)
             else:
-                _dataio._write_vtk_point_data(path, name, self.positions[~ma.getmaskarray(self.positions[:,0]),:])
+                _dataio.write_vtk_point_data(path, name, self.positions[~ma.getmaskarray(self.positions[:,0]),:])
         else:
             for cyc, time in enumerate(self.envir.time_history):
                 if DIM2:
                     data = np.zeros((self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:].shape[0],3))
                     data[:,:2] = self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:].squeeze()
-                    _dataio._write_vtk_point_data(path, name, data, 
+                    _dataio.write_vtk_point_data(path, name, data, 
                                                  cycle=cyc, time=time)
                 else:
-                    _dataio._write_vtk_point_data(path, name, 
+                    _dataio.write_vtk_point_data(path, name, 
                         self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:].squeeze(), 
                         cycle=cyc, time=time)
             cyc = len(self.envir.time_history)
             if DIM2:
                 data = np.zeros((self.positions[~ma.getmaskarray(self.positions[:,0]),:].shape[0],3))
                 data[:,:2] = self.positions[~ma.getmaskarray(self.positions[:,0]),:]
-                _dataio._write_vtk_point_data(path, name, data, cycle=cyc,
+                _dataio.write_vtk_point_data(path, name, data, cycle=cyc,
                                              time=self.envir.time)
             else:
-                _dataio._write_vtk_point_data(path, name, 
+                _dataio.write_vtk_point_data(path, name, 
                     self.positions[~ma.getmaskarray(self.positions[:,0]),:],
                     cycle=cyc, time=self.envir.time)
 

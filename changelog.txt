@@ -7,7 +7,7 @@ Moving immersed boundaries are now supported in 2D!
 - reworked _apply_internal_static_BC for 2D and 3D cases, important bug fixes
 - TODO: include/test sticking particles (maybe they don't move with bndry?)
 - Swarm and Environment classes are now capitalized.
-- TODO: clean up Swarm and Environment by kicking static methods and loaders to external module
+- Cleans up Swarm and Environment by kicking static methods and loaders to external module. Adds leading underscores to make API cleaner.
 - TODO: combine Swarm and Environment classes into common.py because they heavily depend on each other.
     change imports in __init__.py and in headings.
 - Changes the name of get_positions to apply_agent_model, removes params argument.

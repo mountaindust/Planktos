@@ -78,11 +78,11 @@ def netcdf_dep(func):
 #############################################################################
 
 
-def _read_vtk_Structured_Points(filename):
+def read_vtk_Structured_Points(filename):
     '''Read in either Scalar or Vector data from an ascii VTK Structured Points 
     file using the VTK Python library.
 
-    Used by _read_2DEulerian_Data_From_vtk.
+    Used by read_2DEulerian_Data_From_vtk.
 
     Note: if the file has both scalar and vector data, only the scalar data
     will be returned.
@@ -133,7 +133,7 @@ def _read_vtk_Structured_Points(filename):
 
 
 
-def _read_vtk_Rectilinear_Grid_Vector(filename):
+def read_vtk_Rectilinear_Grid_Vector(filename):
     '''Reads an ascii VTK file with Rectilinear Grid Vector data and TIME info
     using the VTK Python library.
 
@@ -212,7 +212,7 @@ def _read_vtk_Rectilinear_Grid_Vector(filename):
 
 
 
-def _read_vtk_Unstructured_Grid_Points(filename):
+def read_vtk_Unstructured_Grid_Points(filename):
     '''Read immersed mesh data from an ascii Unstructured Grid VTK file, such as
     those exported from VisIt. Uses the VTK Python library. The mesh should 
     contain only singleton points (vertices).
@@ -284,7 +284,7 @@ def _read_vtk_Unstructured_Grid_Points(filename):
 
 
 
-def _read_2DEulerian_Data_From_vtk(path, simNum, strChoice, xy=False):
+def read_2DEulerian_Data_From_vtk(path, simNum, strChoice, xy=False):
     '''Reads ascii Structured Points VTK files using the Python VTK library,
     where the file contains 2D IB2d data, either scalar or vector. 
     
@@ -312,7 +312,7 @@ def _read_2DEulerian_Data_From_vtk(path, simNum, strChoice, xy=False):
     '''
 
     filename = Path(path) / (strChoice + '.' + str(simNum) + '.vtk')
-    data = _read_vtk_Structured_Points(str(filename))
+    data = read_vtk_Structured_Points(str(filename))
 
     if xy:
         # reconstruct mesh
@@ -338,7 +338,7 @@ def _read_2DEulerian_Data_From_vtk(path, simNum, strChoice, xy=False):
 
 
 
-def _read_vtu_mesh_velocity(filename):
+def read_vtu_mesh_velocity(filename):
     '''Reads ascii COMSOL velocity data in a vtu or equivalent text file. It is 
     assumed that the data is on a regular grid. Currently, there is no support 
     for multiple time points, so the file must contain data from only a single 
@@ -441,7 +441,7 @@ def _read_vtu_mesh_velocity(filename):
 
 
 @stl_dep
-def _read_stl_mesh(filename, unit_conv=None):
+def read_stl_mesh(filename, unit_conv=None):
     '''Import a mesh from an stl file and return the vertex information as
     an Nx3x3 array along with the maximum vector length. Uses the numpy-stl 
     library.
@@ -478,7 +478,7 @@ def _read_stl_mesh(filename, unit_conv=None):
 
 
 
-def _read_IB2d_vertices(filename):
+def read_IB2d_vertices(filename):
     '''Import a Lagrangian mesh from an IB2d ascii vertex file.
     
     Parameters
@@ -504,7 +504,7 @@ def _read_IB2d_vertices(filename):
 
 
 @netcdf_dep
-def _load_netcdf(filename):
+def load_netcdf(filename):
     '''Load a NetCDF file. Does not automatically read in any data.
     
     Parameters
@@ -526,7 +526,7 @@ def _load_netcdf(filename):
 #############################################################################
 
 
-def _write_vtk_point_data(path, title, data, cycle=None, time=None):
+def write_vtk_point_data(path, title, data, cycle=None, time=None):
     '''Write point data to an ascii VTK file, such as agent positions. 
     
     The call 
@@ -567,7 +567,7 @@ def _write_vtk_point_data(path, title, data, cycle=None, time=None):
 
 
 
-def _write_vtk_2D_rectilinear_grid_scalars(path, title, data, grid_points, 
+def write_vtk_2D_rectilinear_grid_scalars(path, title, data, grid_points, 
                                           cycle=None, time=None, binary=True):
     '''Write scalar data to an ascii VTK Rectilinear Grid file (e.g. vorticity). 
     Expects data to be on a 2D rectilinear grid. Uses the pyvista library. 
@@ -618,7 +618,7 @@ def _write_vtk_2D_rectilinear_grid_scalars(path, title, data, grid_points,
 
 
 
-def _write_vtk_rectilinear_grid_vectors(path, title, data, grid_points, 
+def write_vtk_rectilinear_grid_vectors(path, title, data, grid_points, 
                                        cycle=None, time=None, binary=True):
     '''Write vector data on a 2D or 3D uniform grid (e.g. fluid velocity). Uses 
     the pyvista library. 

@@ -134,7 +134,7 @@ def test_IBAMR_load():
 def test_point_load():
     '''Test loading singleton mesh points from an Unstructured Grid VTK in _dataio'''
     filename = 'tests/IBAMR_test_data/mesh_db.vtk'
-    points, bounds = _dataio._read_vtk_Unstructured_Grid_Points(filename)
+    points, bounds = _dataio.read_vtk_Unstructured_Grid_Points(filename)
 
 
 @pytest.mark.vtu

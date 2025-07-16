@@ -17,7 +17,7 @@ def add_cylinders_toplot(envir, filename):
     the envir object to be plotted as a surface. If the environment has been
     tiled, automatically tile the cylinder too.'''
 
-    points, bounds = planktos._dataio._read_vtk_Unstructured_Grid_Points(filename)
+    points, bounds = planktos._dataio.read_vtk_Unstructured_Grid_Points(filename)
     # shift to first quadrant
     for dim in range(3):
         bounds[dim*2:dim*2+2] -= envir.fluid_domain_LLC[dim]

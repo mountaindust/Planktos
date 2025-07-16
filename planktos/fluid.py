@@ -64,43 +64,43 @@ def _read_IB2d_dumpfiles(path, d_start, d_finish, vector_data):
         if vector_data:
             # read in vector velocity data
             strChoice = 'u'; xy = True
-            uX, uY, x, y = _dataio._read_2DEulerian_Data_From_vtk(path, numSim,
+            uX, uY, x, y = _dataio.read_2DEulerian_Data_From_vtk(path, numSim,
                                                                 strChoice,xy)
             X_vel.append(uX.T) # (y,x) -> (x,y) coordinates
             Y_vel.append(uY.T) # (y,x) -> (x,y) coordinates
         else:
             # read in x-directed Velocity Magnitude #
             strChoice = 'uX'; xy = True
-            uX,x,y = _dataio._read_2DEulerian_Data_From_vtk(path,numSim,
+            uX,x,y = _dataio.read_2DEulerian_Data_From_vtk(path,numSim,
                                                         strChoice,xy)
             X_vel.append(uX.T) # (y,x) -> (x,y) coordinates
 
             # read in y-directed Velocity Magnitude #
             strChoice = 'uY'
-            uY = _dataio._read_2DEulerian_Data_From_vtk(path,numSim,
+            uY = _dataio.read_2DEulerian_Data_From_vtk(path,numSim,
                                                     strChoice)
             Y_vel.append(uY.T) # (y,x) -> (x,y) coordinates
 
         ##### The following is just for reference! ######
         # read in Vorticity #
         # strChoice = 'Omega'; first = 0
-        # Omega = _dataio._read_2DEulerian_Data_From_vtk(pathViz,numSim,
+        # Omega = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
         #                                               strChoice,first)
         # read in Pressure #
         # strChoice = 'P'; first = 0
-        # P = _dataio._read_2DEulerian_Data_From_vtk(pathViz,numSim,
+        # P = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
         #                                           strChoice,first)
         # read in Velocity Magnitude #
         # strChoice = 'uMag'; first = 0
-        # uMag = _dataio._read_2DEulerian_Data_From_vtk(pathViz,numSim,
+        # uMag = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
         #                                              strChoice,first)
         # read in x-directed Forces #
         # strChoice = 'Fx'; first = 0
-        # Fx = _dataio._read_2DEulerian_Data_From_vtk(pathViz,numSim,
+        # Fx = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
         #                                            strChoice,first)
         # read in y-directed Forces #
         # strChoice = 'Fy'; first = 0
-        # Fy = _dataio._read_2DEulerian_Data_From_vtk(pathViz,numSim,
+        # Fy = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
         #                                            strChoice,first)
         ###################################################
 
@@ -145,7 +145,7 @@ def _read_IBAMR3d_vtkfiles(path, d_start=0, d_finish=None,
 
     path = Path(path)
     if path.is_file():
-        flow, mesh, time = _dataio._read_vtk_Rectilinear_Grid_Vector(path)
+        flow, mesh, time = _dataio.read_vtk_Rectilinear_Grid_Vector(path)
         flow_times = None
     
     elif path.is_dir():
@@ -175,7 +175,7 @@ def _read_IBAMR3d_vtkfiles(path, d_start=0, d_finish=None,
             else:
                 num = str(n)
             this_file = path / ('IBAMR_db_'+num+'.vtk')
-            data, mesh, time = _dataio._read_vtk_Rectilinear_Grid_Vector(str(this_file))
+            data, mesh, time = _dataio.read_vtk_Rectilinear_Grid_Vector(str(this_file))
             for dim in range(3):
                 flow[dim].append(data[dim])
             flow_times.append(time)
