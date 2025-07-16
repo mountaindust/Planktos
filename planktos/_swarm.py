@@ -21,8 +21,8 @@ import matplotlib.pyplot as plt
 from matplotlib import animation, colors
 from matplotlib.path import Path as mPath
 
-from planktos import Environment
-from . import _dataio, motion, _geom, _ibc
+from ._environment import Environment
+from . import _dataio, _geom, _ibc, motion
 
 __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"

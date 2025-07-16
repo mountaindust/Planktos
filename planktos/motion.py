@@ -17,7 +17,6 @@ __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
-import warnings
 import numpy as np
 import numpy.ma as ma
 from scipy.integrate import solve_ivp

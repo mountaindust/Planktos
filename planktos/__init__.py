@@ -14,7 +14,7 @@ __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2025, Christopher Strickland"
 __version__ = '1.0.0'
 
-from .environment import Environment
-from .swarm import Swarm
+from ._environment import Environment
+from ._swarm import Swarm
 
-__all__ = ["Environment", "Swarm", "motion", "fluid"]
+__all__ = [s for s in dir() if not s.startswith('_')]

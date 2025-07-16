@@ -28,7 +28,7 @@ from mpl_toolkits import mplot3d
 from matplotlib.collections import LineCollection
 
 import planktos
-from . import _dataio, _geom, fluid
+from . import _dataio, _geom, fluid, motion
 
 if _dataio.NETCDF:
     from cftime import date2num
@@ -3024,7 +3024,7 @@ class Environment:
         if swrm is None:
             ### SETUP SOLVER ###
             if ode_gen is None:
-                ode_fun = planktos.motion.tracer_particles(s, incl_dvdt=False)
+                ode_fun = motion.tracer_particles(s, incl_dvdt=False)
                 print("Finding {}D FTLE based on tracer particles.".format(len(grid_dim)))
             else:
                 ode_fun = ode_gen(s)
@@ -3053,7 +3053,7 @@ class Environment:
                                             s.velocities[~s.velocities[:,0].mask,:]))
                 try:
                     # solve
-                    y_new = planktos.motion.RK45(ode_fun, current_time, y, new_time, first_step=t_bound)
+                    y_new = motion.RK45(ode_fun, current_time, y, new_time, first_step=t_bound)
                 except Exception as err:
                     print('RK45 solver returned an error at time {} with step_size {}.'.format(
                           current_time, dt))
