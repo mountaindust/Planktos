@@ -8,7 +8,7 @@ the Swarm class, which is a collection of agents sharing a similar motion model.
 Planktos provides:
     1. An Environment class for agent Swarms to move around in
     2. A Swarm class for agents
-    3. Supporting functions to handle data I/O, solving eqns of motion, etc.
+    3. Supporting functions to solve eqns of motion, etc.
 
 .. toctree::
     :maxdepth: 2
@@ -17,4 +17,3 @@ Planktos provides:
     Environment
     Swarm
     motion
-    dataio

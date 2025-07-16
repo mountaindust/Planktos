@@ -28,9 +28,9 @@ from mpl_toolkits import mplot3d
 from matplotlib.collections import LineCollection
 
 import planktos
-from . import dataio, fluid
+from . import _dataio, fluid
 
-if dataio.NETCDF:
+if _dataio.NETCDF:
     from cftime import date2num
 
 __author__ = "Christopher Strickland"
@@ -1134,7 +1134,7 @@ class Environment:
         if not path.is_file(): 
             raise FileNotFoundError("File {} not found!".format(str(filename)))
 
-        data, mesh = dataio.read_vtu_mesh_velocity(filename)
+        data, mesh = _dataio._read_vtu_mesh_velocity(filename)
 
         if vel_conv is not None:
             print("Converting vel units by a factor of {}.".format(vel_conv))
@@ -1185,7 +1185,7 @@ class Environment:
         if not path.is_file(): 
             raise FileNotFoundError("File {} not found!".format(str(filename)))
 
-        self.netcdf = dataio.load_netcdf(filename)
+        self.netcdf = _dataio._load_netcdf(filename)
 
 
 
@@ -1690,7 +1690,7 @@ class Environment:
         if not path.is_file(): 
             raise FileNotFoundError("File {} not found!".format(filename))
 
-        ibmesh, self.max_meshpt_dist = dataio.read_stl_mesh(filename, unit_conv)
+        ibmesh, self.max_meshpt_dist = _dataio._read_stl_mesh(filename, unit_conv)
 
         # shift coordinates to match any shift that happened in flow data
         if self.fluid_domain_LLC is not None:
@@ -1786,10 +1786,10 @@ class Environment:
         def _read_single_file(path_obj):
             filename = str(path_obj)
             if filename.strip()[-4:] == '.vtk':
-                points, bounds = dataio.read_vtk_Unstructured_Grid_Points(filename)
+                points, bounds = _dataio._read_vtk_Unstructured_Grid_Points(filename)
                 points = points[:,:2] # remove z-direction
             elif filename.strip()[-7:] == '.vertex':
-                points = dataio.read_IB2d_vertices(filename)
+                points = _dataio._read_IB2d_vertices(filename)
             else:
                 raise RuntimeError("File extension for {} not recognized.".format(filename))
             return points
@@ -1821,7 +1821,7 @@ class Environment:
                     numSim = str(n)
 
                 filename = path / ('lagsPts.' + str(numSim) + '.vtk')
-                points, bounds = dataio.read_vtk_Unstructured_Grid_Points(filename)
+                points, bounds = _dataio._read_vtk_Unstructured_Grid_Points(filename)
                 # trim z-direction and store
                 mesh_list.append(points[:,:2])
 
@@ -2023,9 +2023,9 @@ class Environment:
             raise FileNotFoundError("File {} not found!".format(filename))
 
         if filename.strip()[-4:] == '.vtk':
-            points, bounds = dataio.read_vtk_Unstructured_Grid_Points(filename)
+            points, bounds = _dataio._read_vtk_Unstructured_Grid_Points(filename)
         elif filename.strip()[-7:] == '.vertex':
-            points = dataio.read_IB2d_vertices(filename)
+            points = _dataio._read_IB2d_vertices(filename)
         else:
             raise RuntimeError("File extension for {} not recognized.".format(filename))
 
@@ -3420,7 +3420,7 @@ class Environment:
         if time_history:
             for cyc, time in enumerate(self.time_history):
                 vort = self.get_2D_vorticity(t_indx=cyc)
-                dataio.write_vtk_2D_rectilinear_grid_scalars(path, name, vort, self.L, cyc, time)
+                _dataio._write_vtk_2D_rectilinear_grid_scalars(path, name, vort, self.L, cyc, time)
             cycle = len(self.time_history)
         else:
             cycle = None
@@ -3431,10 +3431,10 @@ class Environment:
                 out_name = name
             for cyc, time in enumerate(self.flow_times):
                 vort = self.get_2D_vorticity(t_n=cyc)
-                dataio.write_vtk_2D_rectilinear_grid_scalars(path, out_name, vort, self.L, cyc, time)
+                _dataio._write_vtk_2D_rectilinear_grid_scalars(path, out_name, vort, self.L, cyc, time)
         if time_history or not flow_times:
             vort = self.get_2D_vorticity(time=self.time)
-            dataio.write_vtk_2D_rectilinear_grid_scalars(path, name, vort, self.L, cycle, self.time)
+            _dataio._write_vtk_2D_rectilinear_grid_scalars(path, name, vort, self.L, cycle, self.time)
 
 
 
@@ -3460,7 +3460,7 @@ class Environment:
         if time_history:
             for cyc, time in enumerate(self.time_history):
                 flow = self.interpolate_temporal_flow(t_index=cyc)
-                dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, self.L, cyc, time)
+                _dataio._write_vtk_rectilinear_grid_vectors(path, name, flow, self.L, cyc, time)
             cycle = len(self.time_history)
         else:
             cycle = None
@@ -3471,10 +3471,10 @@ class Environment:
                 out_name = name
             for cyc, time in enumerate(self.flow_times):
                 flow = self.interpolate_temporal_flow(time=time)
-                dataio.write_vtk_rectilinear_grid_vectors(path, out_name, flow, self.L, cyc, time)
+                _dataio._write_vtk_rectilinear_grid_vectors(path, out_name, flow, self.L, cyc, time)
         if time_history or not flow_times:
             flow = self.interpolate_temporal_flow(time=self.time)
-            dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, self.L, cycle, self.time)
+            _dataio._write_vtk_rectilinear_grid_vectors(path, name, flow, self.L, cycle, self.time)
 
 
 

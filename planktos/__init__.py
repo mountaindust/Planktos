@@ -17,4 +17,4 @@ __version__ = '1.0.0'
 from .environment import Environment
 from .swarm import Swarm
 
-__all__ = ["Environment", "Swarm", "motion", "dataio", "fluid"]
+__all__ = ["Environment", "Swarm", "motion", "fluid"]

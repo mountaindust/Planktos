@@ -2,8 +2,8 @@
 
 import pytest
 from pathlib import Path
-from planktos import dataio
-VTK = dataio.VTK
+from planktos import _dataio
+VTK = _dataio.VTK
 
 def pytest_addoption(parser):
     '''Adds parser options'''

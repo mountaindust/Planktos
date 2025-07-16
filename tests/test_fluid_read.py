@@ -13,7 +13,7 @@ import pytest
 import numpy as np
 import numpy.ma as ma
 import planktos
-from planktos import dataio
+from planktos import _dataio
 
 ############                    Decorators                ############
 
@@ -132,9 +132,9 @@ def test_IBAMR_load():
 
 @pytest.mark.vtk
 def test_point_load():
-    '''Test loading singleton mesh points from an Unstructured Grid VTK in dataio'''
+    '''Test loading singleton mesh points from an Unstructured Grid VTK in _dataio'''
     filename = 'tests/IBAMR_test_data/mesh_db.vtk'
-    points, bounds = dataio.read_vtk_Unstructured_Grid_Points(filename)
+    points, bounds = _dataio._read_vtk_Unstructured_Grid_Points(filename)
 
 
 @pytest.mark.vtu
