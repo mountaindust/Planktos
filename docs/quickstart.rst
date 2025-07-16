@@ -113,6 +113,16 @@ section above for troubleshooting.
 Getting started
 ---------------
 
+If you use this software in your research, please cite it via the following paper: 
+
+Strickland, W.C., Battista, N.A., Hamlet, C.L., Miller, L.A. (2022), 
+Planktos: An agent-based modeling framework for small organism movement and 
+dispersal in a fluid environment with immersed structures. 
+*Bulletin of Mathematical Biology*, 84(72). 
+
+A suggested BibTeX entry is included in the file 
+:download:`Planktos.bib <../Planktos.bib>`.
+
 There are several working examples in the examples folder, including a 2D 
 simulation, a 2D simulation demonstrating individual variation, a 3D simulation, 
 a simulation utilizing VTK data obtained from IBAMR (pulled from the 
@@ -141,16 +151,6 @@ computational overhead due to the need to search for collisions with each
 additional line segment. Finally, avoid mesh structures that intersect with a 
 periodic boundary (w.r.t. agents); behavior related to this is not implemented.
 
-If you use this software in your research, please cite it via the following paper: 
-
-Strickland, W.C., Battista, N.A., Hamlet, C.L., Miller, L.A. (2022), 
-Planktos: An agent-based modeling framework for small organism movement and 
-dispersal in a fluid environment with immersed structures. 
-*Bulletin of Mathematical Biology*, 84(72). 
-
-A suggested BibTeX entry is included in the file 
-:download:`Planktos.bib <../Planktos.bib>`.
-
 Research that utilizes this framework can be seen in:  
 
 - Ozalp, Miller, Dombrowski, Braye, Dix, Pongracz, Howell, Klotsa, Pasour, 
@@ -162,40 +162,61 @@ Overview
 
 Currently, Planktos has built-in capabilities to load either time-independent or 
 time-dependent 2D or 3D fluid velocity data specified on a regular mesh. ASCII 
-vtk format is supported, as well as ASCII vtu files from COMSOL (single-time vtu
-data only) and NetCDF. More regular grid formats, especially if part of  
-open-source formats, may be supported in the future; please contact the author 
-(cstric12@utk.edu) if you have a format you would like to see supported. A few 
-analytical, 1D flow fields are also available and can be generated in either 2D 
-or 3D environments; these include Brinkman flow, two layer channel flow, and 
-canopy flow. Flow fields can also be extended and tiled in simple ways as 
-appropriate. Mesh data must be time-invariant and loaded via IB2d/IBAMR-style 
-vertex data (2D) or via stl file in 3D. Again, more (open source) formats may be 
-considered if requested. Mesh data should never intersect any of the domain 
-boundaries. This will not be checked, but is essential for correct preformance.
+vtk format is supported, as well as one single-time ASCII vtu files from COMSOL 
+and NetCDF. A few analytical 1D flow fields are also available and can be 
+generated in either 2D or 3D environments; these include Brinkman flow, two layer 
+channel flow, and canopy flow. Flow fields can also be extended and tiled in simple 
+ways as appropriate. Mesh data must be time-invariant in 3D but can be time-varying 
+in 2D. They are loaded via IB2d/IBAMR-style vertex data (2D) or via stl file in 3D. 
+More (open source) formats may be considered if requested. Mesh data should never 
+intersect any of the domain boundaries. This will not be checked, but is essential 
+for correct preformance.
 
-For agents, there is support for multiple species (Swarms) along with individual 
-variation though a pandas Dataframe property of the Swarm class (Swarm.props). 
-Individual agents have access to the local flow field through interpolation of 
-the spatial-temporal fluid velocity grid - specifically, Planktos implements a 
-cubic spline in time with linear interpolation in space. In addition to more 
-custom behavior, included in Planktos is an Ito SDE solver 
-(Euler-Maruyama method) for movement specified as an SDE of the type 
+For agents, there is support for individual variation though a pandas Dataframe 
+property of the Swarm class (Swarm.props). Individual agents have access to the 
+local flow field through interpolation of the spatial-temporal fluid velocity grid. 
+Specifically, Planktos implements a cubic spline in time with linear interpolation 
+in space. In addition to more custom behavior, an Ito SDE solver 
+(Euler-Maruyama method) is included for movement specified as an SDE of the type 
 
 .. math::
     dX_t = \mu dt + \sigma dW_t 
 
-and an inertial particle behavior for dynamics described by the linearized 
+and inertial particle behavior for dynamics described by the linearized 
 Maxey-Riley equation [1]_. These two may be combined, and other, user-supplied 
 ODEs can also be fed into the drift term of the Ito SDE. Finally, agents will 
 treat immersed boundary meshes as solid barriers. Upon encountering an immersed 
-mesh boundary, any remaining movement will be projected onto the mesh. Both 
-concanve and convex mesh joints are supported, and pains have been taken to make 
-the projection algorithm as numerically stable as possible.
+mesh boundary, any remaining movement can be treated using either a frictionless 
+condition or a sticky condition (friction approaches infinity). Elastic boundary 
+conditions are not currently supported. There is interest in supporting multiple 
+agent species (Swarms) in the same environment, but due to lack of use this 
+should be considered broken for the time being. Please create an issue if you 
+would like to see this supported again for a specific project.
 
-Single-time and animation plotting of results is available in 2D and 3D; support 
-for plotting multiple agent species together has not yet been implemented, but 
-is a TODO.
+Single-time and animation plotting of results is available in 2D and 3D.
 
 .. [1] Haller, G. and Sapsis, T. (2008). Where do inertial particles go in
    fluid flows? Physica D: Nonlinear Phenomena, 237(5), 573-583.
+
+Workflow
+--------
+
+This is outlined in more detail within the tutorial examples, but briefly, the 
+following workflow is used to create simulatinos in Planktos:
+1. Create an Environment object and load the fluid velocity data and any 
+immersed mesh structures into it. Specify boundary conditions. Verify everything 
+looks correct by plotting the environment.
+2. Create a class for the agents you would like to simulate by subclassing 
+planktos.Swarm. Create a model for your agents by implementing a method within 
+your class called apply_agent_model. This method must expect the size of the 
+time step as an argument and return the new positions of the agents as given 
+by whatever model the user implements within the method. Boundary conditions will 
+be automatically handled by Planktos after this method returns and therefore the 
+user should NOT set the agent positions manually. apply_agent_model should also 
+update agent states in any way necessary for the model. If such an update requires 
+knowledge of the agents' final position after boundary interactions, the after_move 
+method can be used, which is called only after everything else within the timestep 
+has been done.
+3. Create a Swarm object from your class and call it's move method in a loop to 
+run the simulation.
+4. Plot the results or export the data to examine elsewhere.
