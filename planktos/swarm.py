@@ -22,7 +22,7 @@ from matplotlib import animation, colors
 from matplotlib.path import Path as mPath
 
 from planktos import Environment
-from . import _dataio, motion, geom, _ibc
+from . import _dataio, motion, _geom, _ibc
 
 __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
@@ -544,10 +544,10 @@ class Swarm:
 
             # Get intersections
             if DIM == 2:
-                intersections = geom.seg_intersect_2D(pt, endpt,
+                intersections = _geom.seg_intersect_2D(pt, endpt,
                     close_mesh[:,0,:], close_mesh[:,1,:], get_all=True)
             else:
-                intersections = geom.seg_intersect_3D_triangles(pt, endpt,
+                intersections = _geom.seg_intersect_3D_triangles(pt, endpt,
                     close_mesh[:,0,:], close_mesh[:,1,:], close_mesh[:,2,:], get_all=True)
 
             # For completeness, we should also worry about edge cases where 

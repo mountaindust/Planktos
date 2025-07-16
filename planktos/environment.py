@@ -28,7 +28,7 @@ from mpl_toolkits import mplot3d
 from matplotlib.collections import LineCollection
 
 import planktos
-from . import _dataio, fluid
+from . import _dataio, _geom, fluid
 
 if _dataio.NETCDF:
     from cftime import date2num
@@ -1959,7 +1959,7 @@ class Environment:
                 axis=1)<self.max_meshpt_dist*2
             pt_bool = pt_bool.reshape((forward_meshes.shape[0],forward_meshes.shape[1]))
             close_mesh = forward_meshes[np.any(pt_bool,axis=1)]
-            intersections = planktos.geom.seg_intersect_2D(seg[0,:], seg[1,:], 
+            intersections = _geom.seg_intersect_2D(seg[0,:], seg[1,:], 
                 close_mesh[:,0,:], close_mesh[:,1,:], get_all=True)
             if intersections is None:
                 # Nothing to do; increment counter and continue

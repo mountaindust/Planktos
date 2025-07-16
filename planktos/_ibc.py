@@ -10,7 +10,7 @@ Email: cstric12@utk.edu
 
 import numpy as np
 from scipy import integrate, optimize
-from . import geom
+from . import _geom
 
 
 def _apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist, 
@@ -100,10 +100,10 @@ def _apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist,
 
     # Get intersections
     if DIM == 2:
-        intersection = geom.seg_intersect_2D(startpt, endpt,
+        intersection = _geom.seg_intersect_2D(startpt, endpt,
             close_mesh[:,0,:], close_mesh[:,1,:])
     else:
-        intersection = geom.seg_intersect_3D_triangles(startpt, endpt,
+        intersection = _geom.seg_intersect_3D_triangles(startpt, endpt,
             close_mesh[:,0,:], close_mesh[:,1,:], close_mesh[:,2,:])
 
     # Return endpt we already have if None.
@@ -155,7 +155,7 @@ def _get_eligible_static_mesh_elements(startpt, endpt, mesh, search_rad):
     points within search_rad of the trajectory segment startpt,endpt.
     '''
     
-    pt_bool = geom.closest_dist_btwn_line_and_pts(startpt, endpt, 
+    pt_bool = _geom.closest_dist_btwn_line_and_pts(startpt, endpt, 
         mesh.reshape((mesh.shape[0]*mesh.shape[1],mesh.shape[2])))<=search_rad
     pt_bool = pt_bool.reshape((mesh.shape[0],mesh.shape[1]))
     return mesh[np.any(pt_bool,axis=1)]
@@ -214,7 +214,7 @@ def _apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
     if DIM == 2:
         # find interesections between line segment of motion and 
         #   quadrilateral in 3D (t,x,y) space
-        intersection = geom.seg_intersect_2D_multilinear_poly(startpt, endpt,
+        intersection = _geom.seg_intersect_2D_multilinear_poly(startpt, endpt,
                             close_mesh_start[:,0,:], close_mesh_start[:,1,:],
                             close_mesh_end[:,0,:], close_mesh_end[:,1,:])
     else:
@@ -350,7 +350,7 @@ def _get_eligible_moving_mesh_elements(startpt, endpt, start_mesh, end_mesh,
     outer_bool = np.any(dist_array, axis=0)
 
     # anything within the outer radius gets a better check
-    dist_list = geom.closest_dist_btwn_two_lines(startpt, endpt,
+    dist_list = _geom.closest_dist_btwn_two_lines(startpt, endpt,
         start_mesh_r[outer_bool,:], end_mesh_r[outer_bool,:])
     inner_bool = dist_list < search_rad
 
@@ -411,7 +411,7 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
     DIM = len(startpt)
 
     if DIM == 2:
-        # intersection comes from geom.seg_intersect_2D
+        # intersection comes from _geom.seg_intersect_2D
         x = intersection[0]    # (x,y) coordinates of intersection
         t_I = intersection[1]  # btwn 0 & 1, fraction of movement traveled so far
         Q0 = intersection[2]   # edge of mesh element intersected
@@ -443,7 +443,7 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
         proj_vec_u = proj_vec/np.linalg.norm(proj_vec)
 
     elif DIM == 3:
-        # intersection comes from geom.seg_intersect_3D_triangles
+        # intersection comes from _geom.seg_intersect_3D_triangles
         x = intersection[0]     # (x,y,z) coordinates of intersection
         t_I = intersection[1]   # btwn 0 & 1, fraction of movement traveled so far
         Q0 = intersection[2]    # first vertex of mesh element intersected
@@ -517,7 +517,7 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
         # Construct lists of first and second points for the line segments
         Q0_list = np.array(intersection[2:5]) # Q0,Q1,Q2
         Q1_list = Q0_list[(1,2,0),:] # Q1,Q2,Q0
-        tri_intersect = geom.seg_intersect_2D(x, slide_pt, Q0_list, Q1_list)
+        tri_intersect = _geom.seg_intersect_2D(x, slide_pt, Q0_list, Q1_list)
         if tri_intersect is None:
             t_edge = None
         else:
@@ -700,11 +700,11 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
                                                                 newendpt, mesh, 
                                                                 max_meshpt_dist*2/3)
         if DIM == 2:
-            intersection_n = geom.seg_intersect_2D(newstartpt, newendpt,
+            intersection_n = _geom.seg_intersect_2D(newstartpt, newendpt,
                                                     close_mesh[:,0,:], 
                                                     close_mesh[:,1,:])
         elif DIM == 3:
-            intersection_n = geom.seg_intersect_3D_triangles(newstartpt, newendpt,
+            intersection_n = _geom.seg_intersect_3D_triangles(newstartpt, newendpt,
                             close_mesh[:,0,:], close_mesh[:,1,:], close_mesh[:,2,:])
         if intersection_n is None:
             return newendpt
@@ -1138,7 +1138,7 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
         _get_eligible_moving_mesh_elements(newstartpt, newendpt, 
                                                     mesh_now, mesh_end, max_mov, 
                                                     max_meshpt_dist*2/3)
-    intersection_n = geom.seg_intersect_2D_multilinear_poly(newstartpt, newendpt,
+    intersection_n = _geom.seg_intersect_2D_multilinear_poly(newstartpt, newendpt,
                             close_mesh_start[:,0,:], close_mesh_start[:,1,:],
                             close_mesh_end[:,0,:], close_mesh_end[:,1,:])
     if intersection_n is None:
