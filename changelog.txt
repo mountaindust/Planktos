@@ -10,8 +10,8 @@ Moving immersed boundaries are now supported in 2D!
 - TODO: clean up Swarm and Environment by kicking static methods and loaders to external module
 - TODO: combine Swarm and Environment classes into common.py because they heavily depend on each other.
     change imports in __init__.py and in headings.
-- TODO: chane the name of get_positions to agent_model
-- TODO: update installation instructions
+- TODO: change the name of get_positions to agent_model
+- Updated installation instructions
 
 
 Geometry module added to collect workhorse mathematical functions. Explanation of the mathematics and implementation has been added and cleaned up.

@@ -36,12 +36,11 @@ instead of the version information, FFmpeg is not properly installed.
 Installing Package Dependencies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Installing dependencies using Anaconda Python is highly recommended. Even better 
-is Miniforge, since this library heavily depends upon packages only available 
+Using Miniforge as your Python distribution (instead of Anaconda Python) is 
+highly recommended since this library heavily depends upon packages only available 
 through the conda-forge package repository, and conda-forge has largely become 
 incompatible with packages provided in the default Anaconda channel. In either 
-case, make sure you have the most updated version of conda before starting or 
-things might break.
+case, make sure you have the most updated version of conda before installing.
 
 If Planktos crashes on import or when plotting, the problem almost always stems 
 from the following places:
@@ -53,11 +52,14 @@ proper video rendering.
 This is especially true on MacOS - Apple's operating system has always had 
 terrible issues with plotting libraries in Python. My best advice is to avoid 
 Python 3.12 and use Python 3.11 instead, use VTK 9.2 instead of the newer 
-versions (or older ones, which are incompatible with newer versions of numpy), 
+versions (don't use older ones, which are incompatible with newer versions of numpy), 
 and make sure you are using only PyQt5 and do not have any PyQt6 or Pyside6 
 libraries installed.
 
-The dependencies are as follows:
+The dependencies are as follows. If you are using Miniforge, conda-forge is the 
+default channel and you can install vtk with just the command `conda install vtk`. 
+Otherwise, it is recommened to install as much as possible using the 
+conda-forge channel via the command `conda install conda-forge::<pkg name>`.
 
 - Python 3.8+ 
 - numpy/scipy
@@ -69,19 +71,21 @@ The dependencies are as follows:
 
 - pyvista (from conda-forge. Note: pyvista may install vtk as a dependency, but 
     the version could be years old and broken in modern versions of numpy. This 
-    may be an issue related to conda-forge and default Anaconda channel 
-    incompatiblity)
+    may be an instance of conda-forge and default Anaconda channel incompatiblity).
 - numpy-stl (if loading stl data). Again, get it from conda-forge.
 - netCDF4 (if loading netCDF data)
 - pytest (if running tests)
 
 If you get _image DLL errors from pillow when trying to load matplotlib.pyplot, 
-try using pip to reinstall using `pip install -U pillow`.
+try using pip to reinstall pillow using `pip install -U pillow`.
+
+It is also highly recommended to install the jupyter package, which includes 
+ipython and the necessary libraries to use jupyter lab.
 
 Installing Planktos
 ~~~~~~~~~~~~~~~~~~~
 
-Once FFmpeg is installed, Planktos can be installed from source using `pip` on 
+Once these are installed, Planktos can be installed from source using `pip` on 
 Python >= 3.8 from the Planktos directory. Navigate to the Planktos directory in 
 a terminal and use the command: ::
 
