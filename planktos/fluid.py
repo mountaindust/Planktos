@@ -339,9 +339,11 @@ class fCubicSpline(interpolate.CubicSpline):
                                                     axis=0, extrapolate=True)
 
         self.shape = flow.shape
-        self.data_max = flow.max()
-        self.data_min = flow.min()
         self.extrapolate = extrapolate
+        # These are inaccurate and should only be used for plotting!
+        self.data_max = flow.max()
+        self.data_min = flow.min() 
+        
 
     def __call__(self, val):
         if (val < self.x[0] and not self.extrapolate[0]) \
@@ -380,11 +382,21 @@ class fCubicSpline(interpolate.CubicSpline):
     def __setitem__(self, pos, val):
         raise RuntimeError("Cannot assign to spline object. "+
                            "Use regenerate_data to recreate original data first.")
+    
+    def trim_end(self, last_x_idx):
+        '''This is used to remove the end of the spline.
+        x points up to last_x_idx will be retained.
+        '''
+        self.c = self.c[:, 0:last_x_idx, ...]
+        self.x = self.x[0:last_x_idx+1]
+        self.shape = (len(self.x), *self.shape[1:])
 
     def max(self):
+        '''This will return a data max based on the data used to build the spline.'''
         return self.data_max
 
     def min(self):
+        '''This will return a data min based on the data used to build the spline.'''
         return self.data_min
 
     def absmax(self):
@@ -490,10 +502,10 @@ class FluidData:
             #   right boundary condition which lacks information about the
             #   remainder of the dataset.
             # So, delete the portion of the splined data that we won't use.
-            flow[n].c = flow[n].c[:, 0:(int(self.INUM/2)+1), ...]
-            flow[n].x = flow[n].x[0:(int(self.INUM/2)+2)]
+            #   Avoid fencepost error: there are +1 x points versus intervals.
+            flow[n].trim_end(int(self.INUM/2)+1)
         self._flow = flow
-        # record the bounds of the dump numbers currently being used
+        # record the inclusive bounds of the dump numbers currently being used
         self.loaded_dump_bnds = (d_start, d_start+int(self.INUM/2)+1)
         # same, but based off of zero to correspond with flow_times indices
         self.loaded_idx_bnds = (0,int(self.INUM/2)+1) 
@@ -543,9 +555,11 @@ class FluidData:
                 extrapolate = (False, False)
             load_times = self._flow_times[idx_start:idx_finish+1]
 
-            dydx0 = []; dydx1 = []
+            dydx0 = []; dydx1 = []; last_flow = []
             for n in range(len(self._flow)):
-                # drop unneeded coefficients to save space
+                # grab flow at final loaded time from current spline
+                last_flow[n] = np.array(self._flow[n](load_times[1]))
+                # drop unneeded coefficients to save space before replacement
                 self._flow[n].c = self._flow[n].c[:,-1,...]
                 # Extract derivative info for next spline
                 dydx0.append(self._flow[n].c[2,0,...])
@@ -566,7 +580,7 @@ class FluidData:
             # add old spline data
             for n,f in enumerate(flow):
                 flow[n] = np.concatenate((self._flow[n].c[3,0,...],
-                                            self._flow[n](load_times[1]), f))
+                                          last_flow[n], f))
             # Remove the rest of the spline data
             self._flow = [0 for n in range(len(flow))]
 
@@ -595,7 +609,10 @@ class FluidData:
 
             dydx0 = []; dydx1 = []
             for n in range(len(self._flow)):
-                # drop unneeded coefficients to save space
+                # grab flow at second loaded time from current spline.
+                #   this will become the final loaded flow.
+                last_flow[n] = np.array(self._flow[n](load_times[-1]))
+                # drop unneeded coefficients to save space before replacement
                 self._flow[n].c = self._flow[n].c[:,0,...]
                 # Extract derivative info for next spline
                 dydx0.append(self._flow[n].c[2,0,...])
@@ -616,7 +633,7 @@ class FluidData:
             # add old spline data
             for n,f in enumerate(flow):
                 flow[n] = np.concatenate((f, self._flow[n].c[3,0,...],
-                                          self._flow[n](load_times[1])))
+                                          last_flow[n]))
             # Remove the rest of the spline data
             self._flow = [0 for n in range(len(flow))]
 

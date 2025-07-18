@@ -3973,7 +3973,10 @@ class Environment:
 
         ########## 2D Plot #########
         if len(self.L) == 2:
-            max_u = self.flow[0].max(); max_v = self.flow[1].max()
+            if isinstance(self.flow, list):
+                max_u = self.flow[0].max(); max_v = self.flow[1].max()
+            else:
+                raise NotImplementedError("Need to handle max/min for FluidData object.")
             max_mag = np.linalg.norm(np.array([max_u,max_v]))
             if len(self.L) == len(self.flow[0].shape) or t is not None:
                 # Single-time plot.
@@ -4004,8 +4007,11 @@ class Environment:
         else:
             x, y, z = np.meshgrid(self.flow_points[0][::M], self.flow_points[1][::M], 
                                   self.flow_points[2][::M], indexing='ij')
-            max_u = self.flow[0].max(); max_v = self.flow[1].max()
-            max_w = self.flow[2].max()
+            if isinstance(self.flow, list):
+                max_u = self.flow[0].max(); max_v = self.flow[1].max()
+                max_w = self.flow[2].max()
+            else:
+                raise NotImplementedError("Need to handle max/min for FluidData object.")
             max_mag = np.linalg.norm(np.array([max_u,max_v,max_w]))
             if len(self.L) == len(self.flow[0].shape) or t is not None:
                 # Single-time plot.
