@@ -453,19 +453,19 @@ class FluidData:
         if d_finish <= d_start + self.INUM:
             raise RuntimeError("Not enough data files for dynamic splining.")
         self.d_finish = round(d_finish)
-        self.flow_times = None # to be set below, copy of envir.flow_times
+        self._flow_times = None # to be set below, copy of envir.flow_times
 
         # Depending on the data type, load the first bit and spline.
         if self.data_type == 'IB2d':
             assert vector_data is not None, "vector_data must be specified for IB2d"
             self.vector_data = vector_data
             assert flow_times is not None, "flow_times must be specified for IB2d"
-            self.flow_times = flow_times
+            self._flow_times = flow_times
 
             flow, x, y = _read_IB2d_dumpfiles(path, d_start, d_start + self.INUM,
                                               vector_data)
             # shift domain to quadrant 1
-            self.orig_flow_points = (x-x[0], y-y[0])
+            self._orig_flow_points = (x-x[0], y-y[0])
             self.fluid_domain_LLC = (x[0], y[0])
 
             ### Convert environment dimensions and add back the periodic gridpoints ###
@@ -473,13 +473,13 @@ class FluidData:
             #     at grid points but lacking the grid points at the end of the 
             #     domain (since it's a duplicate). Make the fluid periodic within 
             #     Planktos and to fill out the domain by adding back these last points
-            flow, self.flow_points, self.L = _wrap_flow(flow, self.orig_flow_points, 
+            flow, self.flow_points, self.L = _wrap_flow(flow, self._orig_flow_points, 
                                                         periodic_dim=(True, True))
         else:
             raise NotImplementedError("This data_type is unknown.")
             
         ### Create initial spline ###
-        load_times = self.flow_times[0:self.INUM+1]
+        load_times = self._flow_times[0:self.INUM+1]
         
         bc_type = ('natural', 'not-a-knot')
         for n, f in enumerate(flow):
@@ -492,7 +492,7 @@ class FluidData:
             # So, delete the portion of the splined data that we won't use.
             flow[n].c = flow[n].c[:, 0:(int(self.INUM/2)+1), ...]
             flow[n].x = flow[n].x[0:(int(self.INUM/2)+2)]
-        self.flow = flow
+        self._flow = flow
         # record the bounds of the dump numbers currently being used
         self.loaded_dump_bnds = (d_start, d_start+int(self.INUM/2)+1)
         # same, but based off of zero to correspond with flow_times indices
@@ -503,14 +503,21 @@ class FluidData:
         dynamically as needed.
         '''
         try:
-            return [fspline(time) for fspline in self.flow]
+            return [fspline(time) for fspline in self._flow]
         except SplineRangeError:
             self.update_spline(time)
-            return [fspline(time) for fspline in self.flow]
+            return [fspline(time) for fspline in self._flow]
     
     def __len__(self):
         '''Returns the len of the fluid list.'''
-        return len(self.flow)
+        return len(self._flow)
+    
+    def __getitem__(self, pos):
+        '''
+        Allows indexing into the interpolator at original time mesh points.
+        '''
+        raise TypeError('FluidData object must be called with a time to return '+
+                        'a list of fluid velocity fields.')
     
 
 
@@ -519,7 +526,7 @@ class FluidData:
 
         # NOTE: fCubicSpline.c has shape (4,num_of_splines,...) where "..." is 
         #   the array dimensions of the velocity grid.
-        while time > self.flow[0].x[-1] and not self.flow[0].extrapolate[1]:
+        while time > self._flow[0].x[-1] and not self._flow[0].extrapolate[1]:
             ### spline forward ###
             # get info about what we will be loading
             d_start = self.loaded_dump_bnds[1]+1 # first dump to load
@@ -527,41 +534,41 @@ class FluidData:
             if self.loaded_dump_bnds[1]-1 + self.INUM > self.d_finish:
                 # We are at the end of the dataset.
                 d_finish = self.d_finish
-                idx_finish = len(self.flow_times)
+                idx_finish = len(self._flow_times)
                 extrapolate = (False, True)
             else:
                 # We are contained in the middle of the dataset.
                 d_finish = self.loaded_dump_bnds[1]-1 + self.INUM
                 idx_finish = self.loaded_idx_bnds[1]-1 + self.INUM
                 extrapolate = (False, False)
-            load_times = self.flow_times[idx_start:idx_finish+1]
+            load_times = self._flow_times[idx_start:idx_finish+1]
 
             dydx0 = []; dydx1 = []
-            for n in range(len(self.flow)):
+            for n in range(len(self._flow)):
                 # drop unneeded coefficients to save space
-                self.flow[n].c = self.flow[n].c[:,-1,...]
+                self._flow[n].c = self._flow[n].c[:,-1,...]
                 # Extract derivative info for next spline
-                dydx0.append(self.flow[n].c[2,0,...])
+                dydx0.append(self._flow[n].c[2,0,...])
                 dx = load_times[1] - load_times[0]
-                dydx1.append(3*self.flow[n].c[0,1,...]*dx**2
-                             + 2*self.flow[n].c[1,1,...]*dx
-                             + self.flow[n].c[2,1,...])
+                dydx1.append(3*self._flow[n].c[0,1,...]*dx**2
+                             + 2*self._flow[n].c[1,1,...]*dx
+                             + self._flow[n].c[2,1,...])
                 
             # load new data
             if self.data_type == 'IB2d':
                 flow, x, y = _read_IB2d_dumpfiles(self.path, d_start, d_finish, 
                                                   self.vector_data)
-                flow, flow_points, L = _wrap_flow(flow, self.orig_flow_points, 
+                flow, flow_points, L = _wrap_flow(flow, self._orig_flow_points, 
                                                   periodic_dim=(True, True))    
             else:
                 raise NotImplementedError
             
             # add old spline data
             for n,f in enumerate(flow):
-                flow[n] = np.concatenate((self.flow[n].c[3,0,...],
-                                            self.flow[n](load_times[1]), f))
+                flow[n] = np.concatenate((self._flow[n].c[3,0,...],
+                                            self._flow[n](load_times[1]), f))
             # Remove the rest of the spline data
-            self.flow = [0 for n in range(len(flow))]
+            self._flow = [0 for n in range(len(flow))]
 
             # Spline it
             self._set_new_splines(load_times, flow, dydx0, dydx1, extrapolate, 
@@ -569,7 +576,7 @@ class FluidData:
             self.loaded_dump_bnds = (self.loaded_dump_bnds[1]-1,d_finish)
             self.loaded_idx_bnds = (idx_start, idx_finish)
             
-        while time < self.flow[0].x[0] and not self.flow[0].extrapolate[0]:
+        while time < self._flow[0].x[0] and not self._flow[0].extrapolate[0]:
             ### spline backward ###
             # get info about what we will be loading
             d_finish = self.loaded_dump_bnds[0]-1 # last dump to load
@@ -584,34 +591,34 @@ class FluidData:
                 d_start = self.loaded_dump_bnds[0]+1 - self.INUM
                 idx_start = self.loaded_idx_bnds[0]+1 - self.INUM
                 extrapolate = (False, False)
-            load_times = self.flow_times[idx_start:idx_finish+1]
+            load_times = self._flow_times[idx_start:idx_finish+1]
 
             dydx0 = []; dydx1 = []
-            for n in range(len(self.flow)):
+            for n in range(len(self._flow)):
                 # drop unneeded coefficients to save space
-                self.flow[n].c = self.flow[n].c[:,0,...]
+                self._flow[n].c = self._flow[n].c[:,0,...]
                 # Extract derivative info for next spline
-                dydx0.append(self.flow[n].c[2,0,...])
+                dydx0.append(self._flow[n].c[2,0,...])
                 dx = load_times[1] - load_times[0]
-                dydx1.append(3*self.flow[n].c[0,1,...]*dx**2
-                             + 2*self.flow[n].c[1,1,...]*dx
-                             + self.flow[n].c[2,1,...])
+                dydx1.append(3*self._flow[n].c[0,1,...]*dx**2
+                             + 2*self._flow[n].c[1,1,...]*dx
+                             + self._flow[n].c[2,1,...])
                 
             # load new data
             if self.data_type == 'IB2d':
                 flow, x, y = _read_IB2d_dumpfiles(self.path, d_start, d_finish, 
                                                   self.vector_data)
-                flow, flow_points, L = _wrap_flow(flow, self.orig_flow_points, 
+                flow, flow_points, L = _wrap_flow(flow, self._orig_flow_points, 
                                                   periodic_dim=(True, True))    
             else:
                 raise NotImplementedError
             
             # add old spline data
             for n,f in enumerate(flow):
-                flow[n] = np.concatenate((f, self.flow[n].c[3,0,...],
-                                          self.flow[n](load_times[1])))
+                flow[n] = np.concatenate((f, self._flow[n].c[3,0,...],
+                                          self._flow[n](load_times[1])))
             # Remove the rest of the spline data
-            self.flow = [0 for n in range(len(flow))]
+            self._flow = [0 for n in range(len(flow))]
 
             # Spline it
             self._set_new_splines(load_times, flow, dydx0, dydx1, extrapolate, 
@@ -622,7 +629,7 @@ class FluidData:
 
 
     def _set_new_splines(self, x, flow, dydx0, dydx1, extrapolate, direction='right'):
-        '''Set new splines in self.flow based on derivative data from an old spline.
+        '''Set new splines in self._flow based on derivative data from an old spline.
 
         Parameters
         ----------
@@ -705,7 +712,7 @@ class FluidData:
             s = s.reshape(b.shape)
 
             # Create the PPoly
-            self.flow[dim] = fCubicSpline(x, y, s, extrapolate=extrapolate)
+            self._flow[dim] = fCubicSpline(x, y, s, extrapolate=extrapolate)
             # Remove data
             flow[dim] = 0
 
