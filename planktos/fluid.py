@@ -321,20 +321,25 @@ class fCubicSpline(interpolate.CubicSpline):
     Extends Scipy's CubicSpline object to get info about original fluid data.
     '''
 
-    def __init__(self, flow_times, flow, dydx=None, extrapolate=(True, True), 
-                 bc_type='not-a-knot'):
+    def __init__(self, flow_times, flow, dydx0=None, dydx1=None, 
+                 extrapolate=(True, True), bc_type='not-a-knot', direction=None):
         '''
         Creates a PPoly instance spline instance with some additional info 
         and capabilities. Will throw a custom error if times are requested 
         outside of spline time bounds and extrapolate is False on that side.
 
-        If dydx is None then use CubicSpline to construct the object. Otherwise,
-        use CubicHermiteSpline and ignore bc_type.
+        If dydx0 is None then use CubicSpline to construct the object. Otherwise,
+        dydx0 and dydx1 specify derivatives that will be used to extend an
+        old spline to either the left or the right; see _extend_prev_spline
+        for further info. bc_type will be ignored.
         '''
-        if dydx is None:
+        if dydx0 is None:
             super(fCubicSpline, self).__init__(flow_times, flow, axis=0, 
                                                extrapolate=True, bc_type=bc_type)
         else:
+            assert dydx1 is not None, "dydx1 must be specified with dydx0"
+            assert direction is not None, "extension direction must be specified with dydx0"
+            dydx = self._extend_prev_spline(flow_times, flow, dydx0, dydx1, direction)
             interpolate.CubicHermiteSpline.__init__(self, flow_times, flow, dydx, 
                                                     axis=0, extrapolate=True)
 
@@ -342,7 +347,86 @@ class fCubicSpline(interpolate.CubicSpline):
         self.extrapolate = extrapolate
         # These are inaccurate and should only be used for plotting!
         self.data_max = flow.max()
-        self.data_min = flow.min() 
+        self.data_min = flow.min()
+
+    def _extend_prev_spline(self, x, y, dydx0, dydx1, direction='right'):
+        '''Set new spline based on derivative data from an old spline.
+
+        Parameters
+        ----------
+        x : ndarray
+            time points corresponding to the flow data
+        flow : ndarray
+            flow data points
+        dydx0 : ndarray
+            derivatives at first time point
+        dydx1 : ndarray
+            derivatievs at second time point
+        dir : 'right' or 'left'
+            if 'right', dydx0 and dydx1 are construed to be at the first and second
+            time points respectively (e.g., we are extending a spline to the right).
+            Otherwise, they are construed to be the next-to-last and last times 
+            (e.g., we are extending a spline to the left).
+
+        Notes
+        -----
+        This implemenation is largely based on the source code scipy.interploate._cubic.py
+        '''
+        n = len(x)
+        dx = np.diff(x)
+        if np.any(dx <= 0):
+            raise ValueError("flow times must be a strictly increasing sequence.")
+        dxr = dx.reshape([dx.shape[0]] + [1] * (y.ndim - 1))
+
+        slope = np.diff(y, axis=0) / dxr
+        # Find derivative values at each x[i] by solving a tridiagonal system.
+        A = np.zeros((3, n))  # This is a banded matrix representation.
+        b = np.empty((n,) + y.shape[1:], dtype=y.dtype)
+        if direction == 'right':
+            # Filling the system for i=2..n-1
+            #                         (x[i] - x[i-1]) * s[i-2] +\
+            # 2 * ((x[i-1] - x[i-2]) + (x[i] - x[i-1])) * s[i-1]   +\
+            #                         (x[i-1] - x[i-2]) * s[i] =\
+            #       3 * ((x[i] - x[i-1])*(y[i-1] - y[i-2])/(x[i-1] - x[i-2]) +\
+            #           (x[i-1] - x[i-2])*(y[i] - y[i-1])/(x[i] - x[i-1]))
+
+            A[-1, :-2] = dx[1:]                  # The lower lower diagonal
+            A[1, 1:-1] = 2 * (dx[:-1] + dx[1:])  # The lower diagonal
+            A[0, 2:] = dx[:-1]                   # The diagonal
+
+            b[2:] = 3 * (dxr[1:] * slope[:-1] + dxr[:-1] * slope[1:])
+
+            A[0,0] = 1; A[0,1] = 1
+            b[0] = dydx0; b[1] = dydx1
+            A[1,0] = 0 # derivative of second point is specified.
+            l_and_u = (2,0)
+        elif direction == 'left':
+            # Filling the system for i=0..n-3
+            #                         (x[i+2] - x[i+1]) * s[i] +\
+            # 2 * ((x[i+1] - x[i]) + (x[i+2] - x[i+1])) * s[i+1]   +\
+            #                         (x[i+1] - x[i]) * s[i+2] =\
+            #       3 * ((x[i+2] - x[i+1])*(y[i+1] - y[i])/(x[i+1] - x[i]) +\
+            #           (x[i+1] - x[i])*(y[i+2] - y[i+1])/(x[i+2] - x[i+1]))
+
+            A[-1, :-2] = dx[1:]                  # The diagonal
+            A[1, 1:-1] = 2 * (dx[:-1] + dx[1:])  # The upper diagonal
+            A[0, 2:] = dx[:-1]                   # The upper upper diagonal
+            
+            b[0:-3] = 3 * (dxr[1:] * slope[:-1] + dxr[:-1] * slope[1:])
+
+            A[-1,-2] = 1; A[-1,-1] = 1
+            b[-2] = dydx0; b[-1] = dydx1
+            A[1,-1] = 0 # derivative of next-to-last point is specified
+            l_and_u = (0,2)
+        
+        # Solve the system
+        m = b.shape[0]
+        # s is the derivatives of the spline at all data points
+        s = solve_banded(l_and_u, A, b.reshape(m,-1), overwrite_ab=True, 
+                            overwrite_b=True, check_finite=False)
+        s = s.reshape(b.shape)
+
+        return s
         
 
     def __call__(self, val):
@@ -446,7 +530,10 @@ class FluidData:
         d_finish : int
             file number to end with for full set.
         INUM : int, default=7
-            max number of splined intervals at any one time. Must be odd.
+            max number of splined intervals at any one time. Must be odd and 
+            at least 5.
+            TODO: or None. Create dyload attribute. All (splined) time-varying 
+            fluid data will be held in a FluidData object.
         flow_times : 1D ndarray
             time mesh for the fluid velocity field for IB2d data
         title : string, optional
@@ -585,8 +672,10 @@ class FluidData:
             self._flow = [0 for n in range(len(flow))]
 
             # Spline it
-            self._set_new_splines(load_times, flow, dydx0, dydx1, extrapolate, 
-                                  direction='right')
+            for n in range(len(flow)):
+                self._flow[n] = fCubicSpline(load_times, flow[n], dydx0[n], 
+                                             dydx1[n], extrapolate, direction='right')
+                flow[n] = 0
             self.loaded_dump_bnds = (self.loaded_dump_bnds[1]-1,d_finish)
             self.loaded_idx_bnds = (idx_start, idx_finish)
             
@@ -638,98 +727,10 @@ class FluidData:
             self._flow = [0 for n in range(len(flow))]
 
             # Spline it
-            self._set_new_splines(load_times, flow, dydx0, dydx1, extrapolate, 
-                                  direction='left')
+            for n in range(len(flow)):
+                self._flow[n] = fCubicSpline(load_times, flow[n], dydx0[n], 
+                                             dydx1[n], extrapolate, direction='left')
+                flow[n] = 0
             self.loaded_dump_bnds = (d_start, self.loaded_dump_bnds[0]+1)
             self.loaded_idx_bnds = (idx_start, idx_finish)
     
-
-
-    def _set_new_splines(self, x, flow, dydx0, dydx1, extrapolate, direction='right'):
-        '''Set new splines in self._flow based on derivative data from an old spline.
-
-        Parameters
-        ----------
-        x : ndarray
-            time points corresponding to the flow data
-        flow : list of ndarray
-            fluid velocity data.
-        dydx0 : list of ndarray
-            derivatives at first time point
-        dydx1 : list of ndarray
-            derivatievs at second time point
-        extrapolate : 2-tuple of bool
-            to be passed on to PPoly. Should be True whenever we have reached the
-            end of the time series on one side or another. Otherwise False.
-        dir : 'right' or 'left'
-            if 'right', dydx0 and dydx1 are construed to be at the first and second
-            time points respectively (e.g., we are extending a spline to the right).
-            Otherwise, they are construed to be the next-to-last and last times 
-            (e.g., we are extending a spline to the left).
-
-        Notes
-        -----
-        This implemenation is largely based on the source code scipy.interploate._cubic.py
-        '''
-        
-        n = len(x)
-        dx = np.diff(x)
-        if np.any(dx <= 0):
-            raise ValueError("flow times must be a strictly increasing sequence.")
-        dxr = dx.reshape([dx.shape[0]] + [1] * (flow[0].ndim - 1))
-        
-        for dim, y in enumerate(flow):
-            slope = np.diff(y, axis=0) / dxr
-            # Find derivative values at each x[i] by solving a tridiagonal system.
-            A = np.zeros((3, n))  # This is a banded matrix representation.
-            b = np.empty((n,) + y.shape[1:], dtype=y.dtype)
-
-            if direction == 'right':
-                # Filling the system for i=2..n-1
-                #                         (x[i] - x[i-1]) * s[i-2] +\
-                # 2 * ((x[i-1] - x[i-2]) + (x[i] - x[i-1])) * s[i-1]   +\
-                #                         (x[i-1] - x[i-2]) * s[i] =\
-                #       3 * ((x[i] - x[i-1])*(y[i-1] - y[i-2])/(x[i-1] - x[i-2]) +\
-                #           (x[i-1] - x[i-2])*(y[i] - y[i-1])/(x[i] - x[i-1]))
-
-                A[-1, :-2] = dx[1:]                  # The lower lower diagonal
-                A[1, 1:-1] = 2 * (dx[:-1] + dx[1:])  # The lower diagonal
-                A[0, 2:] = dx[:-1]                   # The diagonal
-
-                b[2:] = 3 * (dxr[1:] * slope[:-1] + dxr[:-1] * slope[1:])
-
-                A[0,0] = 1; A[0,1] = 1
-                b[0] = dydx0[dim]; b[1] = dydx1[dim]
-                A[1,0] = 0 # derivative of second point is specified.
-                l_and_u = (2,0)
-            elif direction == 'left':
-                # Filling the system for i=0..n-3
-                #                         (x[i+2] - x[i+1]) * s[i] +\
-                # 2 * ((x[i+1] - x[i]) + (x[i+2] - x[i+1])) * s[i+1]   +\
-                #                         (x[i+1] - x[i]) * s[i+2] =\
-                #       3 * ((x[i+2] - x[i+1])*(y[i+1] - y[i])/(x[i+1] - x[i]) +\
-                #           (x[i+1] - x[i])*(y[i+2] - y[i+1])/(x[i+2] - x[i+1]))
-
-                A[-1, :-2] = dx[1:]                  # The diagonal
-                A[1, 1:-1] = 2 * (dx[:-1] + dx[1:])  # The upper diagonal
-                A[0, 2:] = dx[:-1]                   # The upper upper diagonal
-                
-                b[0:-3] = 3 * (dxr[1:] * slope[:-1] + dxr[:-1] * slope[1:])
-
-                A[-1,-2] = 1; A[-1,-1] = 1
-                b[-2] = dydx0[dim]; b[-1] = dydx1[dim]
-                A[1,-1] = 0 # derivative of next-to-last point is specified
-                l_and_u = (0,2)
-
-            # Solve the system
-            m = b.shape[0]
-            # s is the derivatives of the spline at all data points
-            s = solve_banded(l_and_u, A, b.reshape(m,-1), overwrite_ab=True, 
-                             overwrite_b=True, check_finite=False)
-            s = s.reshape(b.shape)
-
-            # Create the PPoly
-            self._flow[dim] = fCubicSpline(x, y, s, extrapolate=extrapolate)
-            # Remove data
-            flow[dim] = 0
-
