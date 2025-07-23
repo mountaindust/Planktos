@@ -8,7 +8,12 @@ dudt too.
 All time-varying fluid data will now be held within a FluidData object.
 Fix broken self.flow[0].shape calls that remain, and also [for f in self.flow]
 
-All fluid reading and domain manipulation needs to happen in fluid.py.
+All fluid reading and domain manipulation needs to happen in fluid.py. Maybe the
+thing to do is to copy how CubicSpline is a child of CubicHermiteSpline and 
+make different sources of data different children of FluidData.
+
+In that case, we need to get rid of self.fluid being a list altogether. It's 
+always a FluidData instance.
 
 - 3D time-varying data has not been loaded into Planktos for some time.
 - The pipeline was:

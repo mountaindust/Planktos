@@ -15,104 +15,6 @@ from scipy.linalg import solve_banded
 from pathlib import Path
 from . import _dataio
 
-def _read_IB2d_dumpfiles(path, d_start, d_finish, vector_data):
-    '''
-    Load IB2d data at path starting with dump d_start and ending with dump
-    d_end. This can read just one or many dump files.
-
-    Parameters
-    ----------
-    path : string
-        path to vtk data
-    d_start : int
-        first dump file to load
-    d_finish : int
-        last dump file to load
-    vector_data : bool
-        whether the data is vector velocity data (u) or not. The other 
-        choice being x and y directed velocity magnitude (uX, uY)
-
-    Returns
-    -------
-    fluid : list of ndarray
-    x : x-coordinate mesh, 1D ndarray
-    y : y-coordinate mesh, 1D ndarray
-    '''
-    X_vel = []
-    Y_vel = []
-    for n in range(d_start, d_finish+1):
-        # Points to desired data viz_IB2d data file
-        if n < 10:
-            numSim = '000'+str(n)
-        elif n < 100:
-            numSim = '00'+str(n)
-        elif n < 1000:
-            numSim = '0'+str(n)
-        else:
-            numSim = str(n)
-
-        # Imports (x,y) grid values and ALL Eulerian Data %
-        #                      DEFINITIONS
-        #          x: x-grid                y: y-grid
-        #       Omega: vorticity           P: pressure
-        #    uMag: mag. of velocity
-        #    uX: mag. of x-Velocity   uY: mag. of y-Velocity
-        #    u: velocity vector
-        #    Fx: x-directed Force     Fy: y-directed Force
-        #
-        #  Note: U(j,i): j-corresponds to y-index, i to the x-index
-        
-        if vector_data:
-            # read in vector velocity data
-            strChoice = 'u'; xy = True
-            uX, uY, x, y = _dataio.read_2DEulerian_Data_From_vtk(path, numSim,
-                                                                strChoice,xy)
-            X_vel.append(uX.T) # (y,x) -> (x,y) coordinates
-            Y_vel.append(uY.T) # (y,x) -> (x,y) coordinates
-        else:
-            # read in x-directed Velocity Magnitude #
-            strChoice = 'uX'; xy = True
-            uX,x,y = _dataio.read_2DEulerian_Data_From_vtk(path,numSim,
-                                                        strChoice,xy)
-            X_vel.append(uX.T) # (y,x) -> (x,y) coordinates
-
-            # read in y-directed Velocity Magnitude #
-            strChoice = 'uY'
-            uY = _dataio.read_2DEulerian_Data_From_vtk(path,numSim,
-                                                    strChoice)
-            Y_vel.append(uY.T) # (y,x) -> (x,y) coordinates
-
-        ##### The following is just for reference! ######
-        # read in Vorticity #
-        # strChoice = 'Omega'; first = 0
-        # Omega = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
-        #                                               strChoice,first)
-        # read in Pressure #
-        # strChoice = 'P'; first = 0
-        # P = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
-        #                                           strChoice,first)
-        # read in Velocity Magnitude #
-        # strChoice = 'uMag'; first = 0
-        # uMag = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
-        #                                              strChoice,first)
-        # read in x-directed Forces #
-        # strChoice = 'Fx'; first = 0
-        # Fx = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
-        #                                            strChoice,first)
-        # read in y-directed Forces #
-        # strChoice = 'Fy'; first = 0
-        # Fy = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
-        #                                            strChoice,first)
-        ###################################################
-
-    ### Return data ###
-    if d_start != d_finish:
-        return [np.transpose(np.dstack(X_vel),(2,0,1)), 
-                np.transpose(np.dstack(Y_vel),(2,0,1))] , x, y
-    else:
-        return [X_vel[0], Y_vel[0]], x, y
-
-
 
 def _read_IBAMR3d_vtkfiles(path, d_start=0, d_finish=None, 
                           vel_conv=None, grid_conv=None):
@@ -588,9 +490,44 @@ class SplineRangeError(ValueError):
 
 
 class FluidData:
+    '''
+    Container class for fluid velocity data and its temporal interpolations.
 
-    def __init__(self, path, data_type, d_start, d_finish, INUM=7,
-                 flow_times=None, title=None, vector_data=None):
+    Routines for manipulating the fluid velocity field should find their way 
+    into here from the Environment class.
+
+    The fluid velocity field can be accessed by calling an instance of this 
+    class as a function with the desired simulation time as the sole argument. 
+    The result will be a list of ndarrays with the following format:
+    [x-vel field ndarray (i,j,[k]), y-vel field ndarray (i,j,[k]),
+    z-vel field ndarray (if 3D)]. i is x index, j is y index, etc., with the 
+    value of x,y, and z increasing as the corresponding index increases.
+
+    If the fluid is not being dynamically loaded from disk, an instance of 
+    FluidData will also act as a container object for the raw data arrays. 
+    Just access them as though FluidData were a list. If the fluid velocity 
+    field is not time-varying, the result will be an ndarray in each direction. 
+    If the fluid is time varying, the data is stored as part of an a 
+    fCubicSpline object in each direction that can still behave as if it were
+    [x-vel field ndarray ([t],i,j,[k]), y-vel field ndarray ([t],i,j,[k]),
+    z-vel field ndarray (if 3D)].
+
+    FluidData is subclassed for loading data from particular types of sources.
+
+    Attributes
+    ----------
+    flow_points : tuple (len==dimension) of 1D ndarrays
+        points defining the spatial grid for the fluid velocity data
+    flow_times : ndarray of floats or None
+        if specified, the time stamp for each index t in the flow arrays (time 
+        varying fluid velocity fields only)
+    fshape : shape of each component of the fluid velocity field ([t],i,j,[k])
+        as an ndarray of raw data.
+    INUM : Number of intervals loaded at any given time when dynamically 
+        loading data.
+    '''
+
+    def __init__(self, flow, flow_points, flow_times=None, INUM=None):
         '''
         Class file for dynamically loading time-varying fluid data and splining it.
 
@@ -604,85 +541,52 @@ class FluidData:
 
         Parameters
         ----------
-        path : string
-            path to vtk data
-        data_type : string
-            options are: 'IB2d'
-        d_start : int
-            file number to start with for full set. Usually 0.
-        d_finish : int
-            file number to end with for full set.
-        INUM : int (default=7), or None
-            max number of splined intervals at any one time. Must be odd and 
-            at least 5. If it is given as None then all the time-varying
-            fluid data will be splined and held in the FluidData object.
-        flow_times : 1D ndarray, optional
-            time mesh for the fluid velocity field for IB2d data
-        title : string, optional
-            the title of the data files - e.g., the string before the dump 
-            number sequence. Not used for IB2d since it's standardized.
-        vector_data : bool, optional
-            whether or not VTK is vector data
+        flow : list of ndarrays
+            [x-vel field ndarray ([t],i,j,[k]), y-vel field ndarray ([t],i,j,[k]),
+            z-vel field ndarray (if 3D)]. i is x index, j is y index, with the 
+            value of x and y increasing as the index increases.
+        flow_points : tuple (len==dimension) of 1D ndarrays
+            points defining the spatial grid for the fluid velocity data
+        flow_times : ndarray of floats
+            if specified, the time stamp for each index t in the flow arrays (time 
+            varying fluid velocity fields only)
+        INUM : int, optional
+            Used by subclasses to dynamically load data from storage.
         '''
         if INUM is not None:
             assert INUM % 2 != 0, "INUM must be odd."
         self.INUM = INUM # This is how many intervals to use when initiating 
                          #  the spline object.
 
-        self.path = path
-        self.data_type = data_type
-        self.d_start = round(d_start)
-        if self.INUM is not None and d_finish <= d_start + self.INUM:
+        if INUM is not None and len(flow_times) <= INUM:
             raise RuntimeError("Not enough data files for dynamic splining.")
-        self.d_finish = round(d_finish)
-        self._flow_times = None # to be set below, copy of envir.flow_times
 
-        # Depending on the data type, load the first bit and spline.
-        if self.data_type == 'IB2d':
-            assert vector_data is not None, "vector_data must be specified for IB2d"
-            self.vector_data = vector_data
-            assert flow_times is not None, "flow_times must be specified for IB2d"
-            self._flow_times = flow_times
-
-            flow, x, y = _read_IB2d_dumpfiles(path, d_start, d_start + self.INUM,
-                                              vector_data)
-            # shift domain to quadrant 1
-            self._orig_flow_points = (x-x[0], y-y[0])
-            self.fluid_domain_LLC = (x[0], y[0])
-
-            ### Convert environment dimensions and add back the periodic gridpoints ###
-            # IB2d always has periodic BC and returns a VTK with fluid specified 
-            #     at grid points but lacking the grid points at the end of the 
-            #     domain (since it's a duplicate). Make the fluid periodic within 
-            #     Planktos and to fill out the domain by adding back these last points
-            flow, self.flow_points, self.L = _wrap_flow(flow, self._orig_flow_points, 
-                                                        periodic_dim=(True, True))
-        else:
-            raise NotImplementedError("This data_type is unknown.")
+        self.flow_points = flow_points
+        self.flow_times = flow_times
         
-        # record shape of the fluid data
-        self.fshape = (len(self._flow_times), *flow[n].shape[1:])
+        if self.flow_times is not None:
+            # record shape of the fluid data
+            self.fshape = (len(self.flow_times), *flow[n].shape[1:])
             
-        if self.INUM is not None and self.INUM < len(self._flow_times)-1:
-            ### Create initial spline ###
-            load_times = self._flow_times[0:self.INUM+1]
-            for n, f in enumerate(flow):
-                flow[n] = fCubicSpline(load_times, f, extrapolate=(True, False), 
-                                    bc_type='left')
-            # record the inclusive bounds of the dump numbers currently being used
-            self.loaded_dump_bnds = (d_start, d_start+self.INUM)
-            # same, but based off of zero to correspond with flow_times indices
-            self.loaded_idx_bnds = (0,self.INUM)
+            if self.INUM is not None and self.INUM < len(self.flow_times)-1:
+                ### Create initial spline ###
+                load_times = self.flow_times[0:self.INUM+1]
+                for n, f in enumerate(flow):
+                    flow[n] = fCubicSpline(load_times, f, extrapolate=(True, False), 
+                                           bc_type='left')
+            else:
+                ### Spline all data with not-a-knot ###
+                if self.INUM >= len(self.flow_times)-1:
+                    warnings.warn(f'{self.INUM} spline intervals with {self.flow_times} '+
+                                'time points results in all data being splined. '+
+                                'INUM will be set to None in FluidData object.')
+                    self.INUM = None
+                for n, f in enumerate(flow):
+                    flow[n] = fCubicSpline(self.flow_times, f, extrapolate=(True, True))
+            self._flow = flow
         else:
-            ### Spline all data with not-a-knot ###
-            if self.INUM >= len(self._flow_times)-1:
-                warnings.warn(f'{self.INUM} spline intervals with {self._flow_times} '+
-                              'time points results in all data being splined. '+
-                              'INUM will be set to None in FluidData object.')
-                self.INUM = None
-            for n, f in enumerate(flow):
-                flow[n] = fCubicSpline(self._flow_times, f, extrapolate=(True, True))
-        self._flow = flow
+            # Time-invariant flow. Just save it as-is.
+            self._flow = flow
 
 
     def __call__(self, time):
@@ -715,6 +619,11 @@ class FluidData:
                             'must be called as a function with a simulation '+
                             'time passed as an argument in order to return a '+
                             'list of fluid velocity field ndarrays.')
+        
+    def load_dumpfiles(self, d_start, d_finish):
+        '''Subclasses should implement this method to load additional data.'''
+        raise NotImplementedError('The subclass for this type of data must '+
+                                  'implement its own data loaders.')
     
 
 
@@ -731,14 +640,14 @@ class FluidData:
             if self.loaded_dump_bnds[1]-1 + self.INUM > self.d_finish:
                 # We are at the end of the dataset.
                 d_finish = self.d_finish
-                idx_finish = len(self._flow_times)
+                idx_finish = len(self.flow_times)
                 extrapolate = (False, True)
             else:
                 # We are contained in the middle of the dataset.
                 d_finish = self.loaded_dump_bnds[1]-1 + self.INUM
                 idx_finish = self.loaded_idx_bnds[1]-1 + self.INUM
                 extrapolate = (False, False)
-            load_times = self._flow_times[idx_start:idx_finish+1]
+            load_times = self.flow_times[idx_start:idx_finish+1]
 
             dydx0 = []; dydx1 = []; last_flow = []
             for n in range(len(self._flow)):
@@ -754,13 +663,7 @@ class FluidData:
                              + self._flow[n].c[2,1,...])
                 
             # load new data
-            if self.data_type == 'IB2d':
-                flow, x, y = _read_IB2d_dumpfiles(self.path, d_start, d_finish, 
-                                                  self.vector_data)
-                flow, flow_points, L = _wrap_flow(flow, self._orig_flow_points, 
-                                                  periodic_dim=(True, True))    
-            else:
-                raise NotImplementedError
+            flow = self.load_dumpfiles(d_start, d_finish)
             
             # add old spline data
             for n,f in enumerate(flow):
@@ -792,7 +695,7 @@ class FluidData:
                 d_start = self.loaded_dump_bnds[0]+1 - self.INUM
                 idx_start = self.loaded_idx_bnds[0]+1 - self.INUM
                 extrapolate = (False, False)
-            load_times = self._flow_times[idx_start:idx_finish+1]
+            load_times = self.flow_times[idx_start:idx_finish+1]
 
             dydx0 = []; dydx1 = []
             for n in range(len(self._flow)):
@@ -809,13 +712,7 @@ class FluidData:
                              + self._flow[n].c[2,1,...])
                 
             # load new data
-            if self.data_type == 'IB2d':
-                flow, x, y = _read_IB2d_dumpfiles(self.path, d_start, d_finish, 
-                                                  self.vector_data)
-                flow, flow_points, L = _wrap_flow(flow, self._orig_flow_points, 
-                                                  periodic_dim=(True, True))    
-            else:
-                raise NotImplementedError
+            flow = self.load_dumpfiles(d_start, d_finish)
             
             # add old spline data
             for n,f in enumerate(flow):
@@ -832,3 +729,223 @@ class FluidData:
             self.loaded_dump_bnds = (d_start, self.loaded_dump_bnds[0]+1)
             self.loaded_idx_bnds = (idx_start, idx_finish)
     
+
+
+class IB2dData(FluidData):
+
+    def __init__(self, path, dt, print_dump, d_start=0, d_finish=None, INUM=7):
+        '''Reads in vtk flow velocity data generated by IB2d and creates a 
+        FluidData instance out of it. Time will be shifted to start at t=0 
+        regardless of d_start.
+
+        Can read in vector data with filenames u.####.vtk or scalar data
+        with filenames uX.####.vtk and uY.####.vtk.
+
+        If INUM (interval number) is set to an odd integer >=5, then the data 
+        will be dynamically loaded as needed with INUM intervals between the 
+        temporal data sets available at any given time.
+
+        IB2d is an Immersed Boundary (IB) code for solving fully coupled
+        fluid-structure interaction models in Python and MATLAB. The code is 
+        hosted at https://github.com/nickabattista/IB2d
+
+        Parameters
+        ----------
+        path : str
+            path to folder with vtk data
+        dt : float
+            dt in input2d
+        print_dump : int
+            print_dump in input2d
+        d_start : int, default=0
+            number of first vtk dump to read in
+        d_finish : int, optional
+            number of last vtk dump to read in, or None to read to end
+        INUM : odd int >=5 or None (default)
+            max number of splined intervals at any one time. Must be odd and 
+            at least 5. If it is given as None then all the time-varying
+            fluid data will be splined at once. Note the number of time points 
+            needed is 1+INUM.
+        '''
+
+        ##### Parse parameters and read in data #####
+        self.path = path
+        d_start = round(d_start)
+
+        path = Path(path)
+        if not path.is_dir(): 
+            raise FileNotFoundError("Directory {} not found!".format(str(path)))
+
+        #infer d_finish
+        file_names = [x.name for x in path.iterdir() if x.is_file()]
+        if 'u.' in [x[:2] for x in file_names]:
+            u_nums = sorted([int(f[2:6]) for f in file_names if f[:2] == 'u.'])
+            if d_finish is None:
+                d_finish = u_nums[-1]
+            self.vector_data = True
+        else:
+            assert 'uX.' in [x[:3] for x in file_names],\
+                "Could not find u.####.vtk or uX.####.vtk files in {}.".format(str(path))
+            u_nums = sorted([int(f[3:7]) for f in file_names if f[:3] == 'uX.'])
+            if d_finish is None:
+                d_finish = u_nums[-1]
+            self.vector_data = False
+
+        # Save time data
+        if d_start != d_finish:
+            flow_times = np.arange(d_start,d_finish+1)*print_dump*dt
+            # shift time so that flow starts at t=0
+            flow_times -= self.flow_times[0]
+        else:
+            flow_times = None
+
+        # Save dump bounds
+        self.d_start = d_start
+        self.d_finish = d_finish
+
+        ### Load fluid data ###
+        if INUM is None:
+            print('Reading vtk fluid data...')
+            flow, x, y = self._read_IB2d_dumpfiles(self.path, d_start, d_finish, 
+                                                   self.vector_data)
+            print('Done!')
+            
+            # shift domain to quadrant 1
+            self._orig_flow_points = (x-x[0], y-y[0])
+            self.fluid_domain_LLC = (x[0], y[0])
+
+            ### Convert environment dimensions and add back the periodic gridpoints ###
+            # IB2d always has periodic BC and returns a VTK with fluid specified 
+            #     at grid points but lacking the grid points at the end of the 
+            #     domain (since it's a duplicate). Make the fluid periodic within 
+            #     Planktos and to fill out the domain by adding back these last points
+            flow, flow_points, self.L = _wrap_flow(flow, self._orig_flow_points, 
+                                                   periodic_dim=(True, True))
+        else:
+            flow, x, y = self._read_IB2d_dumpfiles(self.path, d_start, d_start+self.INUM, 
+                                                   self.vector_data)
+            # shift domain to quadrant 1
+            self._orig_flow_points = (x-x[0], y-y[0])
+            self.fluid_domain_LLC = (x[0], y[0])
+
+            ### Convert environment dimensions and add back the periodic gridpoints ###
+            flow, flow_points, self.L = _wrap_flow(flow, self._orig_flow_points, 
+                                                   periodic_dim=(True, True))
+            # record the inclusive bounds of the starting dump numbers to be used
+            self.loaded_dump_bnds = (self.d_start, self.d_start+self.INUM)
+            # same, but based off of zero to correspond with flow_times indices
+            self.loaded_idx_bnds = (0,self.INUM)
+
+        # pass to parent to spline the data.
+        super().__init__(flow, flow_points, flow_times, INUM)
+
+
+
+    def load_dumpfiles(self, d_start, d_finish):
+        '''
+        Dynamically load additional IB2d data.
+        '''
+        flow, x, y = self._read_IB2d_dumpfiles(self.path, d_start, d_finish, 
+                                               self.vector_data)
+        flow, flow_points, L = _wrap_flow(flow, self._orig_flow_points, 
+                                          periodic_dim=(True, True))
+        return flow
+
+
+
+    def _read_IB2d_dumpfiles(self, path, d_start, d_finish, vector_data):
+        '''
+        Load IB2d data at path starting with dump d_start and ending with dump
+        d_end. This can read just one or many dump files.
+
+        Parameters
+        ----------
+        path : string
+            path to vtk data
+        d_start : int
+            first dump file to load
+        d_finish : int
+            last dump file to load
+        vector_data : bool
+            whether the data is vector velocity data (u) or not. The other 
+            choice being x and y directed velocity magnitude (uX, uY)
+
+        Returns
+        -------
+        fluid : list of ndarray
+        x : x-coordinate mesh, 1D ndarray
+        y : y-coordinate mesh, 1D ndarray
+        '''
+        X_vel = []
+        Y_vel = []
+        for n in range(d_start, d_finish+1):
+            # Points to desired data viz_IB2d data file
+            if n < 10:
+                numSim = '000'+str(n)
+            elif n < 100:
+                numSim = '00'+str(n)
+            elif n < 1000:
+                numSim = '0'+str(n)
+            else:
+                numSim = str(n)
+
+            # Imports (x,y) grid values and ALL Eulerian Data %
+            #                      DEFINITIONS
+            #          x: x-grid                y: y-grid
+            #       Omega: vorticity           P: pressure
+            #    uMag: mag. of velocity
+            #    uX: mag. of x-Velocity   uY: mag. of y-Velocity
+            #    u: velocity vector
+            #    Fx: x-directed Force     Fy: y-directed Force
+            #
+            #  Note: U(j,i): j-corresponds to y-index, i to the x-index
+            
+            if vector_data:
+                # read in vector velocity data
+                strChoice = 'u'; xy = True
+                uX, uY, x, y = _dataio.read_2DEulerian_Data_From_vtk(path, numSim,
+                                                                    strChoice,xy)
+                X_vel.append(uX.T) # (y,x) -> (x,y) coordinates
+                Y_vel.append(uY.T) # (y,x) -> (x,y) coordinates
+            else:
+                # read in x-directed Velocity Magnitude #
+                strChoice = 'uX'; xy = True
+                uX,x,y = _dataio.read_2DEulerian_Data_From_vtk(path,numSim,
+                                                            strChoice,xy)
+                X_vel.append(uX.T) # (y,x) -> (x,y) coordinates
+
+                # read in y-directed Velocity Magnitude #
+                strChoice = 'uY'
+                uY = _dataio.read_2DEulerian_Data_From_vtk(path,numSim,
+                                                        strChoice)
+                Y_vel.append(uY.T) # (y,x) -> (x,y) coordinates
+
+            ##### The following is just for reference! ######
+            # read in Vorticity #
+            # strChoice = 'Omega'; first = 0
+            # Omega = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
+            #                                               strChoice,first)
+            # read in Pressure #
+            # strChoice = 'P'; first = 0
+            # P = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
+            #                                           strChoice,first)
+            # read in Velocity Magnitude #
+            # strChoice = 'uMag'; first = 0
+            # uMag = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
+            #                                              strChoice,first)
+            # read in x-directed Forces #
+            # strChoice = 'Fx'; first = 0
+            # Fx = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
+            #                                            strChoice,first)
+            # read in y-directed Forces #
+            # strChoice = 'Fy'; first = 0
+            # Fy = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
+            #                                            strChoice,first)
+            ###################################################
+
+        ### Return data ###
+        if d_start != d_finish:
+            return [np.transpose(np.dstack(X_vel),(2,0,1)), 
+                    np.transpose(np.dstack(Y_vel),(2,0,1))] , x, y
+        else:
+            return [X_vel[0], Y_vel[0]], x, y
