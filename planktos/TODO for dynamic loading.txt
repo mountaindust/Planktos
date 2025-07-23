@@ -1,6 +1,16 @@
 TODO for dynamic loading of fluid data
 
-- 2D and 3D time-varying data has not been loaded into Planktos for some time.
+center_cell_regrid needs to be folded into new FluidData object, because this 
+will have to be done on-the-fly as part of dynamic loading.
+
+dudt too.
+
+All time-varying fluid data will now be held within a FluidData object.
+Fix broken self.flow[0].shape calls that remain, and also [for f in self.flow]
+
+All fluid reading and domain manipulation needs to happen in fluid.py.
+
+- 3D time-varying data has not been loaded into Planktos for some time.
 - The pipeline was:
     1. Generate data in IBAMR
     2. Batch process samrai data using VisIt. This had to be done in Python 2.x
@@ -12,17 +22,3 @@ TODO for dynamic loading of fluid data
     and folded into planktos proper.
 - VTU (e.g. from COMSOL) was never loaded with time-varying data. This will need
     to be supported.
-- An object needs to be created to handle on-demand dynamic loading. This object 
-    will first need to gather time information about the entire dataset and then 
-    load the first bit, splining.
-- We will need to respline a lot, but most of the data will be the same. I think 
-    it's faster to regenerate than to reload.
-
-*** We will have to manually add on to the existing spline (PPoly object) with 
-    new intervals while dropping old ones. Resplining the interval is not an 
-    option because the new data will create polynomials that are slightly 
-    different from the old ones, and that will cause strange things to happen at 
-    the breakpoints (e.g., the first derivative will be discontinuous).
-
-- There needs to be a choice about how many to have loaded at any time. 6 is 
-probably a minimum. More = more accurate. Let's go with 8.

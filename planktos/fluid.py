@@ -659,6 +659,9 @@ class FluidData:
                                                         periodic_dim=(True, True))
         else:
             raise NotImplementedError("This data_type is unknown.")
+        
+        # record shape of the fluid data
+        self.fshape = (len(self._flow_times), *flow[n].shape[1:])
             
         if self.INUM is not None and self.INUM < len(self._flow_times)-1:
             ### Create initial spline ###
