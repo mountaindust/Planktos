@@ -612,12 +612,11 @@ class FluidData:
             file number to start with for full set. Usually 0.
         d_finish : int
             file number to end with for full set.
-        INUM : int, default=7
+        INUM : int (default=7), or None
             max number of splined intervals at any one time. Must be odd and 
-            at least 5.
-            TODO: or None. Create dyload attribute. All (splined) time-varying 
-            fluid data will be held in a FluidData object.
-        flow_times : 1D ndarray
+            at least 5. If it is given as None then all the time-varying
+            fluid data will be splined and held in the FluidData object.
+        flow_times : 1D ndarray, optional
             time mesh for the fluid velocity field for IB2d data
         title : string, optional
             the title of the data files - e.g., the string before the dump 
@@ -625,14 +624,15 @@ class FluidData:
         vector_data : bool, optional
             whether or not VTK is vector data
         '''
-        assert INUM % 2 != 0, "INUM must be odd."
+        if INUM is not None:
+            assert INUM % 2 != 0, "INUM must be odd."
         self.INUM = INUM # This is how many intervals to use when initiating 
                          #  the spline object.
 
         self.path = path
         self.data_type = data_type
         self.d_start = round(d_start)
-        if d_finish <= d_start + self.INUM:
+        if self.INUM is not None and d_finish <= d_start + self.INUM:
             raise RuntimeError("Not enough data files for dynamic splining.")
         self.d_finish = round(d_finish)
         self._flow_times = None # to be set below, copy of envir.flow_times
@@ -660,25 +660,27 @@ class FluidData:
         else:
             raise NotImplementedError("This data_type is unknown.")
             
-        ### Create initial spline ###
-        load_times = self._flow_times[0:self.INUM+1]
-        
-        bc_type = ('natural', 'not-a-knot')
-        for n, f in enumerate(flow):
-            flow[n] = fCubicSpline(load_times, f, extrapolate=(True, False), 
-                                   bc_type=bc_type)
-            # Only half the initially splined data sets will be conisidered 
-            #   "valid", because beyond that the splines are more affected by the
-            #   right boundary condition which lacks information about the
-            #   remainder of the dataset.
-            # So, delete the portion of the splined data that we won't use.
-            #   Avoid fencepost error: there are +1 x points versus intervals.
-            flow[n].trim_end(int(self.INUM/2)+1)
+        if self.INUM is not None and self.INUM < len(self._flow_times)-1:
+            ### Create initial spline ###
+            load_times = self._flow_times[0:self.INUM+1]
+            for n, f in enumerate(flow):
+                flow[n] = fCubicSpline(load_times, f, extrapolate=(True, False), 
+                                    bc_type='left')
+            # record the inclusive bounds of the dump numbers currently being used
+            self.loaded_dump_bnds = (d_start, d_start+self.INUM)
+            # same, but based off of zero to correspond with flow_times indices
+            self.loaded_idx_bnds = (0,self.INUM)
+        else:
+            ### Spline all data with not-a-knot ###
+            if self.INUM >= len(self._flow_times)-1:
+                warnings.warn(f'{self.INUM} spline intervals with {self._flow_times} '+
+                              'time points results in all data being splined. '+
+                              'INUM will be set to None in FluidData object.')
+                self.INUM = None
+            for n, f in enumerate(flow):
+                flow[n] = fCubicSpline(self._flow_times, f, extrapolate=(True, True))
         self._flow = flow
-        # record the inclusive bounds of the dump numbers currently being used
-        self.loaded_dump_bnds = (d_start, d_start+int(self.INUM/2)+1)
-        # same, but based off of zero to correspond with flow_times indices
-        self.loaded_idx_bnds = (0,int(self.INUM/2)+1) 
+
 
     def __call__(self, time):
         '''Retrieve fluid data at the requested time and update the spline 
@@ -696,10 +698,20 @@ class FluidData:
     
     def __getitem__(self, pos):
         '''
-        Allows indexing into the interpolator at original time mesh points.
+        Allows direct access to the component fCubicSpline objects and therefore 
+        indexing into the interpolators at the original time mesh points as if 
+        they were ndarrays. However, behavior is only consistent if all the fluid 
+        data has been splined (otherwise, the time index will refer to a shifting 
+        time point based on what data is currently loaded and splined). So, allow 
+        this if all the data is splined and otherwise return an error.
         '''
-        raise TypeError('FluidData object must be called with a time to return '+
-                        'a list of fluid velocity fields.')
+        if self.INUM is None:
+            return self._flow[pos]
+        else:
+            raise TypeError('A FluidData object with dynamically loaded data '+
+                            'must be called as a function with a simulation '+
+                            'time passed as an argument in order to return a '+
+                            'list of fluid velocity field ndarrays.')
     
 
 
