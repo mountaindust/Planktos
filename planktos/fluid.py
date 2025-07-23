@@ -328,14 +328,26 @@ class fCubicSpline(interpolate.CubicSpline):
         and capabilities. Will throw a custom error if times are requested 
         outside of spline time bounds and extrapolate is False on that side.
 
-        If dydx0 is None then use CubicSpline to construct the object. Otherwise,
-        dydx0 and dydx1 specify derivatives that will be used to extend an
-        old spline to either the left or the right; see _extend_prev_spline
-        for further info. bc_type will be ignored.
+        If dydx0 is None then use CubicSpline to construct the object. If 
+        bc_type is given as 'left', construct a CubicSpline using not-a-knot 
+        and natural BC on the starting side. This is ideal dynamic loading of 
+        data when only the first few time points of the data set are currently 
+        being splined. If bc_type is something else, it will be passed to 
+        scipy.interpolate.CubicSpline.
+        
+        If dydx0 isn't None, then dydx0 and dydx1 specify derivatives that 
+        will be used to extend an old spline either to the left or the right 
+        according to the direction argument; see _extend_prev_spline for 
+        further info. bc_type will be ignored.
         '''
         if dydx0 is None:
-            super(fCubicSpline, self).__init__(flow_times, flow, axis=0, 
-                                               extrapolate=True, bc_type=bc_type)
+            if bc_type == 'left':
+                dydx = self._left_based_cspline(flow_times, flow)
+                interpolate.CubicHermiteSpline.__init__(self, flow_times, flow, dydx, 
+                                                        axis=0, extrapolate=True)
+            else:
+                super(fCubicSpline, self).__init__(flow_times, flow, axis=0, 
+                                                   extrapolate=True, bc_type=bc_type)
         else:
             assert dydx1 is not None, "dydx1 must be specified with dydx0"
             assert direction is not None, "extension direction must be specified with dydx0"
@@ -356,7 +368,7 @@ class fCubicSpline(interpolate.CubicSpline):
         ----------
         x : ndarray
             time points corresponding to the flow data
-        flow : ndarray
+        y : ndarray
             flow data points
         dydx0 : ndarray
             derivatives at first time point
@@ -368,6 +380,10 @@ class fCubicSpline(interpolate.CubicSpline):
             Otherwise, they are construed to be the next-to-last and last times 
             (e.g., we are extending a spline to the left).
 
+        Returns
+        -------
+        ndarray of derivatives to be passed to CubicHermiteSpline
+
         Notes
         -----
         This implemenation is largely based on the source code scipy.interploate._cubic.py
@@ -377,8 +393,8 @@ class fCubicSpline(interpolate.CubicSpline):
         if np.any(dx <= 0):
             raise ValueError("flow times must be a strictly increasing sequence.")
         dxr = dx.reshape([dx.shape[0]] + [1] * (y.ndim - 1))
-
         slope = np.diff(y, axis=0) / dxr
+
         # Find derivative values at each x[i] by solving a tridiagonal system.
         A = np.zeros((3, n))  # This is a banded matrix representation.
         b = np.empty((n,) + y.shape[1:], dtype=y.dtype)
@@ -427,6 +443,73 @@ class fCubicSpline(interpolate.CubicSpline):
         s = s.reshape(b.shape)
 
         return s
+    
+    def _left_based_cspline(self, x, y):
+        '''Create a cubic spline where both boundary conditions are specified
+        at the left (natural and 'not-a-knot'). This is extremely useful when 
+        only the first part of a fluid data set will be loaded.
+        
+        Parameters
+        ----------
+        x : ndarray
+            time points corresponding to the flow data
+        y : ndarray
+            flow data points
+
+        Returns
+        -------
+        ndarray of derivatives to be passed to CubicHermiteSpline
+
+        Notes
+        -----
+        This implemenation is largely based on the source code scipy.interploate._cubic.py
+        '''
+        n = len(x)
+        assert n>3, "At least 3 data points are needed for left-based spline."
+        dx = np.diff(x)
+        if np.any(dx <= 0):
+            raise ValueError("flow times must be a strictly increasing sequence.")
+        dxr = dx.reshape([dx.shape[0]] + [1] * (y.ndim - 1))
+        slope = np.diff(y, axis=0) / dxr
+
+        # Find derivative values at each x[i] by solving a tridiagonal system.
+        A = np.zeros((3, n))  # This is a banded matrix representation.
+        b = np.empty((n,) + y.shape[1:], dtype=y.dtype)
+
+        # Filling the system for i=2..n-1
+        #                         (x[i] - x[i-1]) * s[i-2] +\
+        # 2 * ((x[i-1] - x[i-2]) + (x[i] - x[i-1])) * s[i-1]   +\
+        #                         (x[i-1] - x[i-2]) * s[i] =\
+        #       3 * ((x[i] - x[i-1])*(y[i-1] - y[i-2])/(x[i-1] - x[i-2]) +\
+        #           (x[i-1] - x[i-2])*(y[i] - y[i-1])/(x[i] - x[i-1]))
+
+        A[-1, :-2] = dx[1:]                  # The lower lower diagonal
+        A[1, 1:-1] = 2 * (dx[:-1] + dx[1:])  # The lower diagonal
+        A[0, 2:] = dx[:-1]                   # The diagonal
+
+        b[2:] = 3 * (dxr[1:] * slope[:-1] + dxr[:-1] * slope[1:])
+
+        d = x[2] - x[0]
+        slp = (y[2]-y[0])/d
+        # 'not-a-knot' at the start
+        A[0, 1] = d
+        A[1, 0] = dx[1]
+        b[1] = ((dxr[0] + 2*d) * dxr[1] * slope[0] +
+                dxr[0]**2 * slope[1]) / d
+        # natural bc at the start
+        A[0, 0] = dx[0]**2 - d**2
+        b[0] = slp*dx[0]**2 - slope[0]*d**2
+        l_and_u = (2,0)
+
+        # Solve the system
+        m = b.shape[0]
+        # s is the derivatives of the spline at all data points
+        s = solve_banded(l_and_u, A, b.reshape(m,-1), overwrite_ab=True, 
+                            overwrite_b=True, check_finite=False)
+        s = s.reshape(b.shape)
+
+        return s
+        
         
 
     def __call__(self, val):
