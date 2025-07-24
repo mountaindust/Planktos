@@ -27,3 +27,10 @@ always a FluidData instance.
     and folded into planktos proper.
 - VTU (e.g. from COMSOL) was never loaded with time-varying data. This will need
     to be supported.
+
+Support for rectilinear grids needs to update the following methods:
+- center_cell_regrid
+- calculate_FTLE
+
+Periodicity in the fluid should be recorded in FluidData and properly used 
+instead of extrapolation.

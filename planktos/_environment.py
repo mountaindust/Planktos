@@ -82,8 +82,8 @@ class Environment:
         [x-vel field ndarray ([t],i,j,[k]), y-vel field ndarray ([t],i,j,[k]),
         z-vel field ndarray if 3D].
         Note! i is x index, j is y index, with the value of x and y increasing
-        as the index increases. It is assumed that the flow mesh is equally 
-        spaced and includes values on the domain boundary. A keyword argument 
+        as the index increases. It is assumed that the flow mesh is rectilinear 
+        and includes values on the domain boundary. A keyword argument 
         'flow_points' must also be specified as a tuple (len==dimension) of 1D 
         arrays specifying the mesh points along each direction. If the velocity 
         field is time varying, the argument 'flow_points' must also be 
@@ -134,12 +134,8 @@ class Environment:
         current environment time
     time_history : list of floats
         list of past time states
-    flow : list of ndarrays or fCubicSpline objects
-        [x-vel field ndarray ([t],i,j,[k]), y-vel field ndarray ([t],i,j,[k]),
-            z-vel field ndarray (if 3D)]. i is x index, j is y index, with the 
-            value of x and y increasing as the index increases. Arrays get 
-            replaced by fCubicSpline objects (if the fluid velocity is 
-            temporally varying) when they are first needed.
+    flow : FluidData object
+        The fluid velocity field, any temporal interpolation, and attributes
     flow_times : ndarray of floats or None
         if specified, the time stamp for each index t in the flow arrays (time 
         varying fluid velocity fields only)
@@ -2403,13 +2399,10 @@ class Environment:
         TODO: If self.flow contains raw time-varying fluid data, then this will 
         also trigger splining of that data.
         '''
-        if isinstance(self.flow, fluid.FluidData):
-            return True
-        elif len(self.flow[0].shape) != len(self.L):
-            #TODO: create FluidData object.
-            return True
-        else:
+        if self.flow.flow_times is None:
             return False
+        else:
+            return True
 
 
 
@@ -2484,8 +2477,7 @@ class Environment:
         '''
 
         if flow is None:
-            if isinstance(self.flow, fluid.FluidData) or \
-                len(self.flow[0].shape) != len(self.L):
+            if self.is_flow_time_varying():
                 # time-varying flow
                 flow = self.interpolate_temporal_flow(time=time)
             else:
