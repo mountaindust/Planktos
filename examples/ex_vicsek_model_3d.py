@@ -34,10 +34,10 @@ envir = planktos.Environment(Lx=0.21, Ly=2.5, Lz=0.2, x_bndry='noflux',
 
 ##### Load fluid data #####
 try:
-    # envir.read_comsol_vtu_data('comsol_data/WindTunnel-p22mps.vtu')
-    # envir.center_cell_regrid()
-    envir.read_comsol_vtu_data('comsol_data/PeriodicWindTunnel-p22mps.vtu')
-    envir.center_cell_regrid(periodic_dim=(False, True, False))
+    # envir.read_comsol_vtu_data('comsol_data/WindTunnel-p22mps.vtu',
+    #                             periodic_dim=(False, True, False))
+    envir.read_comsol_vtu_data('comsol_data/PeriodicWindTunnel-p22mps.vtu',
+                               periodic_dim=(False, True, False))
 except:
     print('Running null model (without flow)')
 

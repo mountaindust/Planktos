@@ -1034,10 +1034,14 @@ class Environment:
                               periodic_dim=(True, True, False), vel_conv=None):
         '''Reads in one or more vtk Rectilinear Grid Vector files. If path
         refers to a single file, the resulting flow will be time invarient.
-        Otherwise, this method will assume that files are named IBAMR_db_###.vtk 
+        Otherwise, this method will assume that files are named <title>###.vtk 
         where ### is the dump number, and that the mesh is the same in each vtk.
         Also, imported times will be translated backward so that the first time 
         loaded corresponds to a Planktos environment time of 0.0.
+
+        If INUM (interval number) is set to an odd integer >=5, then the data 
+        will be dynamically loaded as needed with INUM intervals between the 
+        temporal data sets available at any given time.
 
         All environment variables will be reset.
 
@@ -1072,7 +1076,8 @@ class Environment:
 
 
 
-    def read_comsol_vtu_data(self, filename, vel_conv=None, grid_conv=None):
+    def read_comsol_vtu_data(self, filename, vel_conv=None, grid_conv=None,
+                             periodic_dim=(True, True, False)):
         '''Reads in vtu flow data from a single source and sets environment
         variables accordingly. The resulting flow will be time invarient.
         It is assumed this data is on a regular grid and that a grid section
@@ -1088,6 +1093,9 @@ class Environment:
         object, but it dies immediately because the vtu I've got isn't xml at 
         all. We need to fix this.
 
+        center_cell_regrid is getting called directly in here too for the 
+        time being. It also needs to be fixed so that it is robust.
+
         Parameters
         ----------
         filename : string
@@ -1096,6 +1104,8 @@ class Environment:
             scalar to multiply the velocity by in order to convert units
         grid_conv : float, optional
             scalar to multiply the grid by in order to convert units
+        periodic_dim : list of 2 or 3 bool, default=(True, True, False)
+            True if that spatial dimension is periodic, otherwise False
         '''
         path = Path(filename)
         if not path.is_file(): 
@@ -1112,18 +1122,21 @@ class Environment:
             for ii, m in enumerate(mesh):
                 mesh[ii] = m*grid_conv
 
-        self.flow = data
         self.flow_times = None
-
         # shift domain to quadrant 1
         self.flow_points = (mesh[0]-mesh[0][0], mesh[1]-mesh[1][0],
                             mesh[2]-mesh[2][0])
+        # create FluidData object
+        self.flow = fluid.FluidData(data, self.flow_points, periodic_dim=periodic_dim)
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(3)]
-        self._reset_flow_variables()
         # record the original lower left corner (can be useful for later imports)
         self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
+
+        ### Regrid ###
+        self.center_cell_regrid()
+        self._reset_flow_variables()
 
 
 
@@ -1360,7 +1373,7 @@ class Environment:
 
 
 
-    def center_cell_regrid(self, periodic_dim=(False, False, False)):
+    def center_cell_regrid(self):
         '''Re-grids data that was specified at the center of cells instead of
         at the corners.
 
@@ -1449,13 +1462,13 @@ class Environment:
         else:
             startdim = 1
         for ii in range(2):
-            if periodic_dim[ii]:
+            if self.flow.periodic_dim[ii]:
                 flowshape[startdim+ii] += 2
                 idx.append([1,flowshape[startdim+ii]-1])
             else:
                 idx.append([0,flowshape[startdim+ii]])
         if DIM3:
-            if periodic_dim[2]:
+            if self.flow.periodic_dim[2]:
                 flowshape[startdim+2] += 2
                 idx.append([1,flowshape[startdim+2]-1])
             else:
@@ -1466,7 +1479,7 @@ class Environment:
             flow_points = []
             for ii in range(3):
                 flow[ii][...,idx[0][0]:idx[0][1],idx[1][0]:idx[1][1],idx[2][0]:idx[2][1]] = self.flow[ii]
-            if periodic_dim[0]:
+            if self.flow.periodic_dim[0]:
                 for ii in range(3):
                     flow[ii][...,0,:,:] = flow[ii][...,-2,:,:]
                     flow[ii][...,-1,:,:] = flow[ii][...,1,:,:]
@@ -1475,7 +1488,7 @@ class Environment:
                                              [-dx,self.flow_points[0][-1]+dx])) # vals
             else:
                 flow_points.append(self.flow_points[0])
-            if periodic_dim[1]:
+            if self.flow.periodic_dim[1]:
                 for ii in range(3):
                     flow[ii][...,0,:] = flow[ii][...,-2,:]
                     flow[ii][...,-1,:] = flow[ii][...,1,:]
@@ -1484,7 +1497,7 @@ class Environment:
                                              [-dy,self.flow_points[1][-1]+dy]))
             else:
                 flow_points.append(self.flow_points[1])
-            if periodic_dim[2]:
+            if self.flow.periodic_dim[2]:
                 for ii in range(3):
                     flow[ii][...,0] = flow[ii][...,-2]
                     flow[ii][...,-1] = flow[ii][...,1]
@@ -1498,7 +1511,7 @@ class Environment:
             flow_points = []
             for ii in range(2):
                 flow[ii][...,idx[0][0]:idx[0][1],idx[1][0]:idx[1][1]] = self.flow[ii]
-            if periodic_dim[0]:
+            if self.flow.periodic_dim[0]:
                 for ii in range(2):
                     flow[ii][...,0,:] = flow[ii][...,-2,:]
                     flow[ii][...,-1,:] = flow[ii][...,1,:]
@@ -1507,7 +1520,7 @@ class Environment:
                                              [-dx,self.flow_points[0][-1]+dx])) # vals
             else:
                 flow_points.append(self.flow_points[0])
-            if periodic_dim[1]:
+            if self.flow.periodic_dim[1]:
                 for ii in range(2):
                     flow[ii][...,0] = flow[ii][...,-2]
                     flow[ii][...,-1] = flow[ii][...,1]
@@ -1624,7 +1637,8 @@ class Environment:
 
         ### Replace fluid and update domain ###
         self.flow_points = tuple(flow_points)
-        self.flow = flow
+        self.flow = fluid.FluidData(flow, self.flow_points, self.flow_times, 
+                                    periodic_dim=self.flow.periodic_dim)
         self.L = [self.flow_points[d][-1] for d in range(len(flow_points))]
         self.fluid_domain_LLC = tuple(np.array(self.fluid_domain_LLC)-np.array(intervals)*0.5)
         self._reset_flow_variables()
