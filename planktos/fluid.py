@@ -602,14 +602,37 @@ class FluidData:
         '''Retrieve fluid data at the requested time and update the spline 
         dynamically as needed.
         '''
-        try:
-            return [fspline(time) for fspline in self._flow]
-        except SplineRangeError:
-            self.update_spline(time)
-            return [fspline(time) for fspline in self._flow]
-        except TypeError:
-            print('Cannot pass time to time-invarient flow.')
-            raise
+        # Enforce constant extrapolation
+        if time <= self.flow_times[0]:
+            start_time = self.flow_times[0]
+            try:
+                return [fspline(start_time) for fspline in self._flow]
+            except SplineRangeError:
+                self.update_spline(start_time)
+                return [fspline(start_time) for fspline in self._flow]
+            except TypeError:
+                print('Cannot pass time to time-invarient flow.')
+                raise
+        elif time >= self.flow_times[-1]:
+            end_time = self.flow_times[-1]
+            try:
+                return [fspline(end_time) for fspline in self._flow]
+            except SplineRangeError:
+                self.update_spline(end_time)
+                return [fspline(end_time) for fspline in self._flow]
+            except TypeError:
+                print('Cannot pass time to time-invarient flow.')
+                raise
+        else:
+            # interpolate
+            try:
+                return [fspline(time) for fspline in self._flow]
+            except SplineRangeError:
+                self.update_spline(time)
+                return [fspline(time) for fspline in self._flow]
+            except TypeError:
+                print('Cannot pass time to time-invarient flow.')
+                raise
     
     def __len__(self):
         '''Returns the len of the fluid list.'''

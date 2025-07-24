@@ -90,8 +90,8 @@ class Environment:
         given, which should in this case be an interable of times at which the 
         fluid velocity is specified (as indexed by t in the first dimension of 
         each of the fluid ndarrays).
-    flow_times : [float, float] or increasing iterable of floats, optional
-        [tstart, tend] or iterable of times at which the fluid velocity 
+    flow_times : (float, float) or increasing iterable of floats, optional
+        (tstart, tend) or iterable of times at which the fluid velocity 
         is specified or scalar dt; required if flow is time-dependent.
     rho : float, optional
         fluid density of environment, kg/m**3 (optional, m here meaning length units).
