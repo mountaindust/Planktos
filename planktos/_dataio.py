@@ -344,6 +344,11 @@ def read_vtu_mesh_velocity(filename):
     for multiple time points, so the file must contain data from only a single 
     time.
 
+    This is a work-around for the weird vtu ascii file that COMSOL is spitting 
+    out. VTU is supposed to be a VTK XML file extension, which should be 
+    readable using a vtk.vtkXMLUnstructuredGridReader object, but it dies 
+    immediately because the vtu I've got isn't xml at all. We need to fix this.
+
     Parameters
     ----------
     filename : string

@@ -530,9 +530,12 @@ class FluidData:
         as an ndarray of raw data.
     INUM : Number of intervals loaded at any given time when dynamically 
         loading data.
+    periodic_dim : tuple of bool
+        Whether or not the fluid data is periodic in each spatial dimension
     '''
 
-    def __init__(self, flow, flow_points, flow_times=None, INUM=None):
+    def __init__(self, flow, flow_points, flow_times=None, INUM=None, 
+                 periodic_dim=True):
         '''
         Class file for dynamically loading time-varying fluid data and splining it.
 
@@ -550,7 +553,7 @@ class FluidData:
             [x-vel field ndarray ([t],i,j,[k]), y-vel field ndarray ([t],i,j,[k]),
             z-vel field ndarray (if 3D)]. i is x index, j is y index, with the 
             value of x and y increasing as the index increases.
-        flow_points : tuple (len==dimension) of 1D ndarrays
+        flow_points : tuple (len == spatial dimension) of 1D ndarrays
             points defining the spatial grid for the fluid velocity data. These do 
             not have to be evenly spaced, but should have the same length as each 
             spatial dimension of the flow data. It is assumed that endpoints lie 
@@ -560,9 +563,11 @@ class FluidData:
             varying fluid velocity fields only)
         INUM : int, optional
             Used by subclasses to dynamically load data from storage.
+        periodic_dim : bool (default=True), or tuple of bool
+            Whether or not the fluid data is periodic in each spatial dimension
+            TODO: have the spatial interpolator use this
         '''
-        if INUM is not None:
-            assert INUM % 2 != 0, "INUM must be odd."
+        
         self.INUM = INUM # This is how many intervals to use when initiating 
                          #  the spline object.
 
@@ -571,6 +576,10 @@ class FluidData:
 
         self.flow_points = flow_points
         self.flow_times = flow_times
+        if isinstance(periodic_dim, tuple):
+            self.periodic_dim = periodic_dim
+        else:
+            self.periodic_dim = (periodic_dim,)*len(flow)
         
         if self.flow_times is not None:
             # record shape of the fluid data
@@ -797,9 +806,9 @@ class IB2dData(FluidData):
             number of first vtk dump to read in
         d_finish : int, optional
             number of last vtk dump to read in, or None to read to end
-        INUM : odd int >=5 or None (default)
-            max number of splined intervals at any one time. Must be odd and 
-            at least 5. If it is given as None then all the time-varying
+        INUM : int > 3 or None (default)
+            max number of splined intervals at any one time. Must be 
+            at least 4. If it is given as None then all the time-varying
             fluid data will be splined at once. Note the number of time points 
             needed is 1+INUM.
         '''
@@ -842,8 +851,8 @@ class IB2dData(FluidData):
         ### Load fluid data ###
         if INUM is None:
             print('Reading vtk fluid data...')
-            flow, x, y = self._read_IB2d_dumpfiles(self.path, d_start, d_finish, 
-                                                   self.vector_data)
+            flow, x, y = self._read_IB2d_dumpfiles(self.path, self.d_start, 
+                                                   self.d_finish, self.vector_data)
             print('Done!')
             
             # shift domain to quadrant 1
@@ -858,7 +867,9 @@ class IB2dData(FluidData):
             flow, flow_points, self.L = _wrap_flow(flow, self._orig_flow_points, 
                                                    periodic_dim=(True, True))
         else:
-            flow, x, y = self._read_IB2d_dumpfiles(self.path, d_start, d_start+self.INUM, 
+            assert INUM > 3, 'INUM must be at least 4.'
+            flow, x, y = self._read_IB2d_dumpfiles(self.path, self.d_start, 
+                                                   self.d_start+INUM, 
                                                    self.vector_data)
             # shift domain to quadrant 1
             self._orig_flow_points = (x-x[0], y-y[0])
@@ -868,12 +879,12 @@ class IB2dData(FluidData):
             flow, flow_points, self.L = _wrap_flow(flow, self._orig_flow_points, 
                                                    periodic_dim=(True, True))
             # record the inclusive bounds of the starting dump numbers to be used
-            self.loaded_dump_bnds = (self.d_start, self.d_start+self.INUM)
+            self.loaded_dump_bnds = (self.d_start, self.d_start+INUM)
             # same, but based off of zero to correspond with flow_times indices
-            self.loaded_idx_bnds = (0,self.INUM)
+            self.loaded_idx_bnds = (0,INUM)
 
         # pass to parent to spline the data.
-        super().__init__(flow, flow_points, flow_times, INUM)
+        super().__init__(flow, flow_points, flow_times, INUM, periodic_dim=True)
 
 
 
@@ -1002,3 +1013,181 @@ class IB2dData(FluidData):
                 return [X_vel[0], Y_vel[0]], x, y
             else:
                 return [X_vel[0], Y_vel[0]]
+            
+
+
+class VTK3dData(FluidData):
+
+    def __init__(self, path, title='IBAMR_db_', d_start=0, d_finish=None, 
+                 INUM=7, periodic_dim=(True, True, False), vel_conv=None):
+        '''Reads in one or more vtk Rectilinear Grid Vector files. If path
+        refers to a single file, the resulting flow will be time invarient.
+        Otherwise, this method will assume that files are named <title>###.vtk 
+        where ### is the dump number, and that the mesh is the same in each vtk.
+        Also, imported times will be translated backward so that the first time 
+        loaded corresponds to a Planktos environment time of 0.0.
+
+        If INUM (interval number) is set to an odd integer >=5, then the data 
+        will be dynamically loaded as needed with INUM intervals between the 
+        temporal data sets available at any given time.
+
+        It is assumed that the fluid spatial grid includes all domain boundaries.
+
+        Parameters
+        ----------
+        path : string
+            path to vtk data. This can either be a directory or a single file.
+            If it is a single file, other parameters except vel_conv are ignored.
+        title : string, default='IBAMR_db_'
+            The name of each vtk before the dump number
+        d_start : int, default=0
+            vtk dump number to start with.
+        d_finish : int, optional
+            vtk dump number to end with. If None, end with last one.
+        INUM : int > 3 or None (default)
+            max number of splined intervals at any one time. Must be  
+            at least 4. If it is given as None then all the time-varying
+            fluid data will be splined at once. Note the number of time points 
+            needed is 1+INUM.
+        periodic_dim : list of 2 or 3 bool, default=(True, True, False)
+            True if that spatial dimension is periodic, otherwise False
+        vel_conv : float, optional
+            scalar to multiply the velocity by in order to convert units to 
+            match the spatial grid units
+        '''
+
+        ##### Parse parameters and read in data #####
+        self.path = path
+        self.title = title
+        self.vel_conv = vel_conv
+
+        path = Path(path)
+        if path.is_file():
+            flow, mesh, time = _dataio.read_vtk_Rectilinear_Grid_Vector(path)
+            flow_times = None
+        
+        elif path.is_dir():
+            tlen = len(title)
+            file_names = [x.name for x in path.iterdir() if x.is_file() and
+                      x.name[:tlen] == title]
+            # get number width
+            self.nwidth = len(file_names[0])-len(title)-len('.vtk')
+            # get file numbers and store d_start, d_finish.
+            file_nums = sorted([int(f[tlen:-4]) for f in file_names])
+            if d_start is None:
+                self.d_start = file_nums[0]
+            else:
+                self.d_start = round(d_start)
+                assert d_start in file_nums, "d_start number not found!"
+            if d_finish is None:
+                self.d_finish = file_nums[-1]
+            else:
+                self.d_finish = round(d_finish)
+                assert d_finish in file_nums, "d_finish number not found!"
+            
+            ### Load fluid data ###
+            if INUM is None:
+                print('Reading vtk fluid data...')
+                flow, mesh, flow_times = self._read_vtkfiles(self.path, self.title,  
+                                                             self.d_start, 
+                                                             self.d_finish)
+                print('Done!')
+            else:
+                assert INUM > 3, 'INUM must be at least 4.'
+                flow, mesh, flow_times = self._read_vtkfiles(self.path, self.title,  
+                                                             self.d_start, 
+                                                             self.d_start+INUM)
+                # record the inclusive bounds of the starting dump numbers to be used
+                self.loaded_dump_bnds = (self.d_start, self.d_start+INUM)
+                # same, but based off of zero to correspond with flow_times indices
+                self.loaded_idx_bnds = (0,INUM)
+        else:
+            raise FileNotFoundError("Directory {} not found!".format(str(path)))
+    
+        # shift domain to quadrant 1
+        flow_points = (mesh[0]-mesh[0][0], mesh[1]-mesh[1][0],
+                        mesh[2]-mesh[2][0])
+        self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
+        # It is assumed that the fluid spatial grid includes all 
+        # domain boundaries.
+        self.L = [flow_points[0][-1], flow_points[1][-1], flow_points[2][-1]]
+        
+        if self.vel_conv is not None:
+            print("Converting vel units by a factor of {}.".format(self.vel_conv))
+            for ii, d in enumerate(flow):
+                flow[ii] = d*self.vel_conv
+
+        super().__init__(flow, flow_points, flow_times, INUM, periodic_dim)
+        
+
+
+    def load_dumpfiles(self, d_start, d_finish):
+        '''
+        Dynamically load additional data.
+        '''
+        flow, mesh, flow_times = self._read_vtkfiles(self.path, self.title,
+                                                     d_start, d_finish)
+        if self.vel_conv is not None:
+            for ii, d in enumerate(flow):
+                flow[ii] = d*self.vel_conv
+        return flow
+
+
+    
+    def _read_vtkfiles(self, path, title, d_start, d_finish):
+        '''Reads in one or more vtk Rectilinear Grid Vector files. If path
+        refers to a single file, the resulting flow will be time invarient.
+        Otherwise, this method will assume that files are named IBAMR_db_###.vtk 
+        where ### is the dump number, and that the mesh is the same in each vtk.
+        Also, imported times will be translated backward so that the first time 
+        loaded corresponds to a Planktos environment time of 0.0.
+
+        Parameters
+        ----------
+        path : string
+            path to vtk data, incl. file extension if a single file
+        title : string
+            The name of each vtk before the dump number
+        d_start : int, default=0
+            vtk dump number to start with.
+        d_finish : int, optional
+            vtk dump number to end with. If None, end with last one.
+
+        Returns
+        -------
+        flow : list of ndarray (fluid data)
+        mesh : list of 1D arrays of grid points in x, y, and z directions
+        flow_times : None or ndarray of times at which the fluid velocity is
+            specified.
+        '''
+
+        path = Path(path)
+
+        ### Gather data ###
+        flow = [[], [], []]
+        flow_times = []
+
+        for n in range(d_start, d_finish+1):
+            num = str(n).zfill(self.nwidth)
+            this_file = path / (title+num+'.vtk')
+            data, mesh, time = _dataio.read_vtk_Rectilinear_Grid_Vector(str(this_file))
+            for dim in range(3):
+                flow[dim].append(data[dim])
+            flow_times.append(time)
+
+        flow = [np.array(flow[0]).squeeze(), np.array(flow[1]).squeeze(),
+                np.array(flow[2]).squeeze()]
+        # parse time information
+        if None not in flow_times and len(flow_times) > 1:
+            # shift time so that the first time is 0.
+            flow_times = np.array(flow_times) - min(flow_times)
+        elif None in flow_times and len(flow_times) > 1:
+            # could not parse time information
+            warnings.warn("Could not retrieve time information from at least"+
+                        " one vtk file. Assuming unit time-steps...", UserWarning)
+            flow_times = np.arange(len(flow_times))
+        else:
+            flow_times = None
+
+        return flow, mesh, flow_times
+

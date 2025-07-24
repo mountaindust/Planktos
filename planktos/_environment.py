@@ -1029,8 +1029,9 @@ class Environment:
 
 
 
-    def read_IBAMR3d_vtk_data(self, path, d_start=0, d_finish=None,
-                              vel_conv=None, grid_conv=None):
+    def read_IBAMR3d_vtk_data(self, path, title='IBAMR_db_', d_start=0, 
+                              d_finish=None, INUM=None, 
+                              periodic_dim=(True, True, False), vel_conv=None):
         '''Reads in one or more vtk Rectilinear Grid Vector files. If path
         refers to a single file, the resulting flow will be time invarient.
         Otherwise, this method will assume that files are named IBAMR_db_###.vtk 
@@ -1044,28 +1045,30 @@ class Environment:
         ----------
         path : string
             path to vtk data, incl. file extension if a single file
+        title : string, default='IBAMR_db_'
+            The name of each vtk before the dump number
         d_start : int, default=0
             vtk dump number to start with.
         d_finish : int, optional
             vtk dump number to end with. If None, end with last one.
+        INUM : int > 3 or None (default)
+            max number of splined intervals at any one time. Must be  
+            at least 4. If it is given as None then all the time-varying
+            fluid data will be splined at once. Note the number of time points 
+            needed is 1+INUM.
+        periodic_dim : list of 2 or 3 bool, default=(True, True, False)
+            True if that spatial dimension is periodic, otherwise False
         vel_conv : float, optional
-            scalar to multiply the velocity by in order to convert units
-        grid_conv : float, optional
-            scalar to multiply the grid by in order to convert units
+            scalar to multiply the velocity by in order to convert units to 
+            match the spatial grid units
         '''
 
-        self.flow, mesh, self.flow_times = fluid._read_IBAMR3d_vtkfiles(path,
-                                                d_start, d_finish, 
-                                                vel_conv, grid_conv)
-        # shift domain to quadrant 1
-        self.flow_points = (mesh[0]-mesh[0][0], mesh[1]-mesh[1][0],
-                            mesh[2]-mesh[2][0])
-
-        ### Convert environment dimensions and reset simulation time ###
-        self.L = [self.flow_points[dim][-1] for dim in range(3)]
+        self.flow = fluid.VTK3dData(path, title, d_start, d_finish, INUM,
+                                    periodic_dim, vel_conv)
+        self.flow_times = self.flow.flow_times
+        self.flow_points = self.flow.flow_points
+        self.L = self.flow.L
         self._reset_flow_variables()
-        # record the original lower left corner (can be useful for later imports)
-        self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
 
 
 
@@ -1078,6 +1081,12 @@ class Environment:
         FOR NOW, THIS IS TIME INVARIANT ONLY.
 
         All environment variables will be reset.
+
+        The associated reader is a work-around for the weird vtu ascii file 
+        that COMSOL is spitting out. VTU is supposed to be a VTK XML file 
+        extension, which should be readable using a vtk.vtkXMLUnstructuredGridReader 
+        object, but it dies immediately because the vtu I've got isn't xml at 
+        all. We need to fix this.
 
         Parameters
         ----------
