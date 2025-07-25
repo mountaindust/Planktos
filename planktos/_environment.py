@@ -1130,13 +1130,16 @@ class Environment:
         # shift domain to quadrant 1
         self.flow_points = (mesh[0]-mesh[0][0], mesh[1]-mesh[1][0],
                             mesh[2]-mesh[2][0])
+        # record the original lower left corner (can be useful for later imports)
+        fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
+        self.fluid_domain_LLC = fluid_domain_LLC
+
         # create FluidData object
-        self.flow = fluid.FluidData(data, self.flow_points, periodic_dim=periodic_dim)
+        self.flow = fluid.FluidData(data, self.flow_points, periodic_dim=periodic_dim,
+                                    fluid_domain_LLC=fluid_domain_LLC)
 
         ### Convert environment dimensions and reset simulation time ###
         self.L = [self.flow_points[dim][-1] for dim in range(3)]
-        # record the original lower left corner (can be useful for later imports)
-        self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
 
         ### Regrid ###
         if regrid:
@@ -1156,6 +1159,9 @@ class Environment:
         See the documentation/tutorial for netCDF4 on ways to read the metadata
         for the loaded Dataset. See read_NetCDF_flow for reading in data from a 
         loaded NetCDF dataset.
+
+        Note: dynamic loading of fluid data is not currently supported for 
+        NetCDF format.
 
         Parameters
         ----------
@@ -1179,6 +1185,9 @@ class Environment:
                          time_name=None, conv_time=False):
         '''Read NetCDF fluid data into the environment. Must first have loaded a 
         NetCDF dataset with load_NetCDF.
+
+        Note: dynamic loading of fluid data is not currently supported for 
+        NetCDF format.
 
         The default expectation is that the x, y, and z components of the fluid 
         velocity data are specified in separate Variables. If that is not the 
@@ -1355,27 +1364,32 @@ class Environment:
                                       calendar=self.netcdf[time_name].calendar)
             else:
                 flow_times = self.netcdf[time_name][:]
+        else:
+            flow_times = None
         
         # Set environment variables and reset LLC to origin
-        self.flow = flow
         if s_units is not None:
             self.units = s_units
         if s_dim == 2:
-            self.flow_points = (flow_points_x-flow_points_x[0], 
-                                flow_points_y-flow_points_y[0])
+            flow_points = (flow_points_x-flow_points_x[0], 
+                           flow_points_y-flow_points_y[0])
         else:
-            self.flow_points = (flow_points_x-flow_points_x[0], 
-                                flow_points_y-flow_points_y[0],
-                                flow_points_z-flow_points_z[0])
+            flow_points = (flow_points_x-flow_points_x[0], 
+                           flow_points_y-flow_points_y[0],
+                           flow_points_z-flow_points_z[0])
         self.L = [self.flow_points[dim][-1] for dim in range(s_dim)]
         if time_dep:
             self.flow_times = flow_times
-        self._reset_flow_variables()
         if s_dim == 2:
-            self.fluid_domain_LLC = (flow_points_x[0], flow_points_y[0])
+            fluid_domain_LLC = (flow_points_x[0], flow_points_y[0])
         else:
-            self.fluid_domain_LLC = (flow_points_x[0], flow_points_y[0], flow_points_z[0])
-
+            fluid_domain_LLC = (flow_points_x[0], flow_points_y[0], flow_points_z[0])
+        self.fluid_domain_LLC = fluid_domain_LLC
+        self.flow = fluid.FluidData(flow, flow_points, flow_times, INUM=None,
+                                    periodic_dim=False, 
+                                    fluid_domain_LLC=fluid_domain_LLC)
+        self._reset_flow_variables()
+        
 
 
     def center_cell_regrid(self):
@@ -1644,10 +1658,14 @@ class Environment:
 
         ### Replace fluid and update domain ###
         self.flow_points = tuple(flow_points)
+        fluid_domain_LLC = tuple(np.array(self.flow.fluid_domain_LLC)
+                                 -np.array(intervals)*0.5)
+        self.fluid_domain_LLC = fluid_domain_LLC
         self.flow = fluid.FluidData(flow, self.flow_points, self.flow_times, 
-                                    periodic_dim=self.flow.periodic_dim)
+                                    periodic_dim=self.flow.periodic_dim,
+                                    fluid_domain_LLC=fluid_domain_LLC)
         self.L = [self.flow_points[d][-1] for d in range(len(flow_points))]
-        self.fluid_domain_LLC = tuple(np.array(self.fluid_domain_LLC)-np.array(intervals)*0.5)
+        
         self._reset_flow_variables()
 
 

@@ -532,10 +532,13 @@ class FluidData:
         loading data.
     periodic_dim : tuple of bool
         Whether or not the fluid data is periodic in each spatial dimension
+    fluid_domain_LLC : tuple
+        If the fluid velocity came from data and was translated in space so that 
+        the LLC was in the lower left corner, this stores the original LLC.
     '''
 
     def __init__(self, flow, flow_points, flow_times=None, INUM=None, 
-                 periodic_dim=True):
+                 periodic_dim=True, fluid_domain_LLC=None):
         '''
         Class file for dynamically loading time-varying fluid data and splining it.
 
@@ -566,10 +569,14 @@ class FluidData:
         periodic_dim : bool (default=True), or tuple of bool
             Whether or not the fluid data is periodic in each spatial dimension
             TODO: have the spatial interpolator use this
+        fluid_domain_LLC : tuple, optional
+            If the fluid velocity came from data and was translated in space so 
+            that the LLC was in the lower left corner, this stores the original LLC.
         '''
         
         self.INUM = INUM # This is how many intervals to use when initiating 
                          #  the spline object.
+        self.fluid_domain_LLC = fluid_domain_LLC
 
         if INUM is not None and len(flow_times) <= INUM:
             raise RuntimeError("Not enough data files for dynamic splining.")
@@ -873,7 +880,7 @@ class IB2dData(FluidData):
                                                    self.vector_data)
             # shift domain to quadrant 1
             self._orig_flow_points = (x-x[0], y-y[0])
-            self.fluid_domain_LLC = (x[0], y[0])
+            fluid_domain_LLC = (x[0], y[0])
 
             ### Convert environment dimensions and add back the periodic gridpoints ###
             flow, flow_points, self.L = _wrap_flow(flow, self._orig_flow_points, 
@@ -884,7 +891,8 @@ class IB2dData(FluidData):
             self.loaded_idx_bnds = (0,INUM)
 
         # pass to parent to spline the data.
-        super().__init__(flow, flow_points, flow_times, INUM, periodic_dim=True)
+        super().__init__(flow, flow_points, flow_times, INUM, periodic_dim=True,
+                         fluid_domain_LLC=fluid_domain_LLC)
 
 
 
@@ -1107,7 +1115,7 @@ class VTK3dData(FluidData):
         # shift domain to quadrant 1
         flow_points = (mesh[0]-mesh[0][0], mesh[1]-mesh[1][0],
                         mesh[2]-mesh[2][0])
-        self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
+        fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
         # It is assumed that the fluid spatial grid includes all 
         # domain boundaries.
         self.L = [flow_points[0][-1], flow_points[1][-1], flow_points[2][-1]]
@@ -1117,7 +1125,8 @@ class VTK3dData(FluidData):
             for ii, d in enumerate(flow):
                 flow[ii] = d*self.vel_conv
 
-        super().__init__(flow, flow_points, flow_times, INUM, periodic_dim)
+        super().__init__(flow, flow_points, flow_times, INUM, periodic_dim,
+                         fluid_domain_LLC=fluid_domain_LLC)
         
 
 
