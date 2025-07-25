@@ -3,6 +3,8 @@
 Dynamic loading of 2D and 3D fluid velocity data!
 This allows simulations with a highly resolved fluid where RAM constraints
 are a major issue.
+- New FluidData class with subclasses for different data sources
+- ALL fluid data is now a FluidData instance
 
 
 1.0.0

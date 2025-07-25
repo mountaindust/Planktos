@@ -535,6 +535,10 @@ class FluidData:
     fluid_domain_LLC : tuple
         If the fluid velocity came from data and was translated in space so that 
         the LLC was in the lower left corner, this stores the original LLC.
+    fmin : tuple
+        Minimum velocity in all the data seen so far
+    fmax : tuple
+        Maximum velocity in all the data seen so far
     '''
 
     def __init__(self, flow, flow_points, flow_times=None, INUM=None, 
@@ -613,6 +617,9 @@ class FluidData:
             self.fshape = flow[0].shape
             self._flow = flow
 
+        self.fmin = (f.min() for f in self._flow)
+        self.fmax = (f.max() for f in self._flow)
+
 
     def __call__(self, time):
         '''Retrieve fluid data at the requested time and update the spline 
@@ -670,7 +677,15 @@ class FluidData:
                             'must be called as a function with a simulation '+
                             'time passed as an argument in order to return a '+
                             'list of fluid velocity field ndarrays.')
-        
+
+
+
+    def get_raw_loaded_data(self):
+        '''Get the ndarrays that the current splines are based on.'''
+        return [flow.regenerate_data() for flow in self._flow]
+
+
+
     def load_dumpfiles(self, d_start, d_finish):
         '''Subclasses should implement this method to load additional data.'''
         raise NotImplementedError('The subclass for this type of data must '+

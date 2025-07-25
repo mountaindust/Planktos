@@ -2080,7 +2080,7 @@ class Environment:
 
         if not TIME_DEP:
             # no time dependence
-            flow_shape = self.flow[0].shape
+            flow_shape = self.flow.fshape
             new_flow_shape = np.array(flow_shape)
             # get new dimensions
             for dim in range(len(flow_shape)):
@@ -2105,10 +2105,7 @@ class Environment:
         else:
             # time dependent flow
             tile_num_time = [1]+list(tile_num) # prepend a 1; do not tile time
-            if isinstance(self.flow, list):
-                flow_shape = self.flow[0].shape
-            else:
-                flow_shape = self.flow.fshape
+            flow_shape = self.flow.fshape
             new_flow_shape = np.array(flow_shape)
             # get new dimensions
             for dim in range(1,len(flow_shape)):
@@ -2592,8 +2589,7 @@ class Environment:
 
         DIM3 = (len(self.L) == 3)
 
-        if isinstance(self.flow, fluid.FluidData) or \
-            len(self.flow[0].shape) != len(self.L):
+        if self.is_flow_time_varying():
             # temporal flow. interpolate in time, and then in space.
             flow_now = self.interpolate_temporal_flow()
         else:
@@ -3354,18 +3350,13 @@ class Environment:
             warnings.warn("Warning: flow is time invarient but time arg passed into get_2D_vorticity.",
                           RuntimeWarning)
 
-        if isinstance(self.flow, fluid.FluidData):
+        if self.is_flow_time_varying():
             grid_dim = self.flow.fshape[1:]
-            grid_loc_iter = np.ndindex(grid_dim)
-            TIMEVAR = True
-        elif len(self.flow[0].shape) > len(self.L):
-            grid_dim = self.flow[0].shape[1:]
-            grid_loc_iter = np.ndindex(grid_dim)
             TIMEVAR = True
         else:
-            grid_dim = self.flow[0].shape
-            grid_loc_iter = np.ndindex(grid_dim)
+            grid_dim = self.flow.fshape
             TIMEVAR = False
+        grid_loc_iter = np.ndindex(grid_dim)
 
         if TIMEVAR:
             if t_indx is not None or time is not None:
@@ -3521,10 +3512,9 @@ class Environment:
         elif t_indx is not None:
             time = self.time_history[t_indx]
 
-        if (not DIM3 and len(self.flow[0].shape) == 2) or \
-            (DIM3 and len(self.flow[0].shape) == 3):
+        if not self.is_flow_time_varying():
             # temporally constant flow
-            return [np.zeros_like(f) for f in self.flow]
+            return [np.zeros(self.flow.fshape) for ii in len(self.flow)]
         else:
             # temporal flow.
             dudt_list = []
@@ -3610,15 +3600,6 @@ class Environment:
         else:
             for sw in self.swarms:
                 sw.pos_history = []
-
-
-
-    def regenerate_flow_data(self):
-        '''Regenerates the original fluid velocity data from temporal spline 
-        objects.
-        '''
-        for n, flow in enumerate(self.flow):
-            self.flow[n] = flow.regenerate_data()
 
 
 
@@ -3887,10 +3868,9 @@ class Environment:
 
 
 
-    def plot_flow(self, t=None, downsamp=5, interval=500, figsize=None, **kwargs):
+    def plot_flow(self, time=None, downsamp=5, interval=500, figsize=None, **kwargs):
         '''Plot the velocity field of the fluid at a given time t or at all
-        times if t is None. If t is not in self.flow.flow_times, the nearest time
-        will be shown without interpolation.
+        times if t is None.
 
         For densely sampled velocity fields, specify an int for downsamp to plot
         every nth vector in each direction.
@@ -3908,18 +3888,6 @@ class Environment:
             self.plot_envir(figsize=figsize)
             return
 
-        # Locate the flow field that will need plotting, or None if not
-        #   time-dependent or we are going to plot all of them.
-        if t is not None and self.flow.flow_times is not None:
-            loc = np.searchsorted(self.flow.flow_times, t)
-            if loc == len(self.flow.flow_times):
-                loc = -1
-            elif t < self.flow.flow_times[loc]:
-                if (self.flow.flow_times[loc]-t) > (t-self.flow.flow_times[loc-1]):
-                    loc -= 1
-        else:
-            loc = None
-
         if downsamp is None:
             M = 1
         else:
@@ -3928,26 +3896,28 @@ class Environment:
             M = downsamp
 
         def animate(n, quiver, kwargs):
-            time_text.set_text('time = {:.2f}'.format(self.flow.flow_times[n]))
+            time = self.flow.flow_times[n]
+            time_text.set_text('time = {:.2f}'.format(time))
             if len(self.L) == 2:
-                quiver.set_UVC(self.flow[0][n][::M,::M].T,
-                               self.flow[1][n][::M,::M].T)
+                quiver.set_UVC(self.flow(time)[0][::M,::M].T,
+                               self.flow(time)[1][::M,::M].T)
             else:
-                quiver = ax.quiver(x,y,z,self.flow[0][n][::M,::M,::M],
-                                         self.flow[1][n][::M,::M,::M],
-                                         self.flow[2][n][::M,::M,::M], **kwargs)
+                quiver = ax.quiver(x,y,z,self.flow(time)[0][::M,::M,::M],
+                                         self.flow(time)[1][::M,::M,::M],
+                                         self.flow(time)[2][::M,::M,::M], **kwargs)
                 fig.canvas.draw()
             return [quiver, time_text]
         
         def animate_mvib(n, quiver, mesh_col, kwargs):
-            time_text.set_text('time = {:.2f}'.format(self.flow.flow_times[n]))
+            time = self.flow.flow_times[n]
+            time_text.set_text('time = {:.2f}'.format(time))
             if len(self.L) == 2:
-                quiver.set_UVC(self.flow[0][n][::M,::M].T,
-                               self.flow[1][n][::M,::M].T)
+                quiver.set_UVC(self.flow(time)[0][::M,::M].T,
+                               self.flow(time)[1][::M,::M].T)
             else:
-                quiver = ax.quiver(x,y,z,self.flow[0][n][::M,::M,::M],
-                                         self.flow[1][n][::M,::M,::M],
-                                         self.flow[2][n][::M,::M,::M], **kwargs)
+                quiver = ax.quiver(x,y,z,self.flow(time)[0][::M,::M,::M],
+                                         self.flow(time)[1][::M,::M,::M],
+                                         self.flow(time)[2][::M,::M,::M], **kwargs)
                 fig.canvas.draw()
             ibmesh = self.interpolate_temporal_mesh(time=self.flow.flow_times[n])
             mesh_col.set_segments(ibmesh)
@@ -3979,32 +3949,29 @@ class Environment:
 
         ########## 2D Plot #########
         if len(self.L) == 2:
-            if isinstance(self.flow, list):
-                max_u = self.flow[0].max(); max_v = self.flow[1].max()
-            else:
-                raise NotImplementedError("Need to handle max/min for FluidData object.")
+            max_u, max_v = self.flow.fmax
             max_mag = np.linalg.norm(np.array([max_u,max_v]))
-            if not self.is_flow_time_varying() or t is not None:
-                # Single-time plot.
-                if loc is None:
-                    ax.quiver(self.flow.flow_points[0][::M], self.flow.flow_points[1][::M],
-                              self.flow[0][::M,::M].T, self.flow[1][::M,::M].T, 
-                              scale=max_mag*5, **kwargs)
-                else:
-                    ax.quiver(self.flow.flow_points[0][::M], self.flow.flow_points[1][::M],
-                              self.flow[0][loc][::M,::M].T,
-                              self.flow[1][loc][::M,::M].T, 
-                              scale=max_mag*5, **kwargs)
+            if not self.is_flow_time_varying():
+                # Single-time plot of time-invarient flow
+                ax.quiver(self.flow.flow_points[0][::M], self.flow.flow_points[1][::M],
+                          self.flow[0][::M,::M].T, self.flow[1][::M,::M].T, 
+                          scale=max_mag*5, **kwargs)
+            elif time is not None:
+                # Single-time plot with time specified
+                ax.quiver(self.flow.flow_points[0][::M], self.flow.flow_points[1][::M],
+                            self.flow(time)[0][::M,::M].T,
+                            self.flow(time)[1][::M,::M].T, 
+                            scale=max_mag*5, **kwargs)
                 # Check for moving immersed boundary
                 if mesh_col is not None and self.ibmesh.ndim == 4:
-                        ibmesh = self.interpolate_temporal_mesh(time=t)
+                        ibmesh = self.interpolate_temporal_mesh(time=time)
                         mesh_col.set_segments(ibmesh)
             else:
                 # Animation plot
                 # create quiver object
                 quiver = ax.quiver(self.flow.flow_points[0][::M], self.flow.flow_points[1][::M], 
-                                   self.flow[0][0][::M,::M].T,
-                                   self.flow[1][0][::M,::M].T, 
+                                   self.flow(self.flow.flow_times[0])[0][::M,::M].T,
+                                   self.flow(self.flow.flow_times[0])[1][::M,::M].T, 
                                    scale=max_mag*5, **kwargs)
                 # textual info
                 time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
@@ -4013,29 +3980,25 @@ class Environment:
         else:
             x, y, z = np.meshgrid(self.flow.flow_points[0][::M], self.flow.flow_points[1][::M], 
                                   self.flow.flow_points[2][::M], indexing='ij')
-            if isinstance(self.flow, list):
-                max_u = self.flow[0].max(); max_v = self.flow[1].max()
-                max_w = self.flow[2].max()
-            else:
-                raise NotImplementedError("Need to handle max/min for FluidData object.")
+            max_u, max_v, max_w = self.flow.fmax
             max_mag = np.linalg.norm(np.array([max_u,max_v,max_w]))
-            if not self.is_flow_time_varying() or t is not None:
-                # Single-time plot.
-                if loc is None:
-                    ax.quiver(x,y,z,self.flow[0][::M,::M,::M],
-                                    self.flow[1][::M,::M,::M],
-                                    self.flow[2][::M,::M,::M], 
-                                    **kwargs)
-                else:
-                    ax.quiver(x,y,z,self.flow[0][loc][::M,::M,::M],
-                                    self.flow[1][loc][::M,::M,::M],
-                                    self.flow[2][loc][::M,::M,::M],
+            if not self.is_flow_time_varying():
+                # Single-time plot of time-invarient flow
+                ax.quiver(x,y,z,self.flow[0][::M,::M,::M],
+                                self.flow[1][::M,::M,::M],
+                                self.flow[2][::M,::M,::M], 
+                                **kwargs)
+            elif time is not None:
+                # Single-time plot with time specified
+                    ax.quiver(x,y,z,self.flow(time)[0][::M,::M,::M],
+                                    self.flow(time)[1][::M,::M,::M],
+                                    self.flow(time)[2][::M,::M,::M],
                                     **kwargs)
             else:
                 # Animation plot
-                quiver = ax.quiver(x,y,z,self.flow[0][0][::M,::M,::M],
-                                         self.flow[1][0][::M,::M,::M],
-                                         self.flow[2][0][::M,::M,::M],
+                quiver = ax.quiver(x,y,z,self.flow(self.flow.flow_times[0])[0][::M,::M,::M],
+                                         self.flow(self.flow.flow_times[0])[1][::M,::M,::M],
+                                         self.flow(self.flow.flow_times[0])[2][::M,::M,::M],
                                          **kwargs)
                 # textual info
                 time_text = ax.text2D(0.02, 1, 'time = {:.2f}'.format(
@@ -4043,7 +4006,7 @@ class Environment:
                                   transform=ax.transAxes, animated=True,
                                   verticalalignment='top', fontsize=12)
 
-        if self.is_flow_time_varying() and t is None:
+        if self.is_flow_time_varying() and time is None:
             frames = range(len(self.flow.flow_times))
             if mesh_col is not None and self.ibmesh.ndim == 4:
                 anim = animation.FuncAnimation(fig, animate_mvib, frames=frames,
@@ -4147,7 +4110,7 @@ class Environment:
             # create pcolormesh object
             # vort = self.get_2D_vorticity(t_n=0)
             pc = ax.pcolormesh([self.flow.flow_points[0]], self.flow.flow_points[1], 
-                           np.zeros(self.flow[0].shape[1:]).T, shading='gouraud',
+                           np.zeros(self.flow.fshape[1:]).T, shading='gouraud',
                            cmap='RdBu', norm=norm)
             axbbox = ax.get_position().get_points()
             cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])
