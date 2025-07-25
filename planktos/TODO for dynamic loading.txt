@@ -1,9 +1,9 @@
 TODO for dynamic loading of fluid data
 
+dudt needs to be part of FluidData class.
+
 center_cell_regrid needs to be folded into new FluidData object, because this 
 will have to be done on-the-fly as part of dynamic loading.
-
-dudt too.
 
 All time-varying fluid data will now be held within a FluidData object.
 Fix broken self.flow[0].shape calls that remain, and also [for f in self.flow]

@@ -2487,22 +2487,13 @@ class Environment:
         # If fCubicSplines do not exist, create them.
         if self.flow is None:
             raise RuntimeError("Cannot temporally interpolate None flow.")
-        if any([type(f) == np.ndarray for f in self.flow]):
-            self.flow = fluid.create_temporal_interpolations(self.flow_times, self.flow)
 
         if t_index is None and time is None:
             time = self.time
         elif t_index is not None:
             time = self.time_history[t_index]
 
-        # Enforce constant extrapolation
-        if time <= self.flow_times[0]:
-            return [f[0, ...] for f in self.flow]
-        elif time >= self.flow_times[-1]:
-            return [f[-1, ...] for f in self.flow]
-        else:
-            # interpolate
-            return [f(time) for f in self.flow]
+        return self.flow(time)
 
 
 
@@ -3557,12 +3548,11 @@ class Environment:
             return [np.zeros_like(f) for f in self.flow]
         else:
             # temporal flow.
-            # Create temporary PPoly objects for dudt.
-            if not all([type(f) == fluid.fCubicSpline for f in self.flow]):
-                self.flow = fluid.create_temporal_interpolations(self.flow_times, self.flow)
             dudt_list = []
             for ppoly in self.flow:
+                # Create temporary PPoly objects for dudt
                 dfdt = ppoly.derivative()
+                # Evaluate
                 dudt_list.append(dfdt(time))
             return dudt_list
 
