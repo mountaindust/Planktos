@@ -76,20 +76,19 @@ class Environment:
         This only needs to be specified if you already have a fluid velocity field 
         loaded as a list of numpy arrays and wish to add it to the environment 
         directly. Otherwise, the fluid velocity field will be assumed to be zero 
-        everywhere until something is loaded or created via a method of this class. 
+        everywhere until something is loaded or created via a method of this class 
+        or by assigning a FluidData object to the flow attribute of this class. 
         If you specify a fluid velocity field here, it should be of the following 
         format:  
         [x-vel field ndarray ([t],i,j,[k]), y-vel field ndarray ([t],i,j,[k]),
         z-vel field ndarray if 3D].
         Note! i is x index, j is y index, with the value of x and y increasing
-        as the index increases. It is assumed that the flow mesh is rectilinear 
-        and includes values on the domain boundary. A keyword argument 
-        'flow_points' must also be specified as a tuple (len==dimension) of 1D 
-        arrays specifying the mesh points along each direction. If the velocity 
-        field is time varying, the argument 'flow_points' must also be 
-        given, which should in this case be an interable of times at which the 
-        fluid velocity is specified (as indexed by t in the first dimension of 
-        each of the fluid ndarrays).
+        as the index increases. The velocity field mesh will be inferred from 
+        the shape of the ndarrays under the assumption that the mesh is regular
+        and includes values on the domain boundary. If the velocity field is time 
+        varying, the parameter 'flow_times' must also be given as an interable of 
+        times at which the fluid velocity is specified (as indexed by t in the 
+        first dimension of each of the fluid ndarrays).
     flow_times : (float, float) or increasing iterable of floats, optional
         (tstart, tend) or iterable of times at which the fluid velocity 
         is specified or scalar dt; required if flow is time-dependent.
@@ -136,13 +135,6 @@ class Environment:
         list of past time states
     flow : FluidData object
         The fluid velocity field, any temporal interpolation, and attributes
-    flow_times : ndarray of floats or None
-        if specified, the time stamp for each index t in the flow arrays (time 
-        varying fluid velocity fields only)
-    flow_points : tuple (len==dimension) of 1D ndarrays
-        points defining the spatial grid for the fluid velocity data
-    fluid_domain_LLC : tuple (len==dimension) of floats
-        original lower-left corner of domain (if from data)
     tiling : tuple (x,y) of floats 
         how much tiling was done in the x and y direction
     orig_L : tuple (Lx,Ly) of floats
@@ -243,9 +235,6 @@ class Environment:
         self.set_boundary_conditions(x_bndry, y_bndry, z_bndry)
 
         ##### Fluid velocity field variables #####
-        self.flow_times = None
-        self.flow_points = None # tuple (len==dim) of 1D arrays specifying the mesh
-        self.fluid_domain_LLC = None # original lower-left corner, if fluid comes from data
         self.tiling = None # (x,y) tiling amount
         self.orig_L = None # (Lx,Ly) before tiling/extending
         self.mag_grad = None
@@ -375,20 +364,6 @@ class Environment:
 
 
     @property
-    def fluid_domain_LLC(self):
-        return self._fluid_domain_LLC
-
-    @fluid_domain_LLC.setter
-    def fluid_domain_LLC(self, LLC):
-        if LLC is not None and self.ibmesh is not None:
-            # move any ibmesh to match the LLC shift
-            for ii in range(len(LLC)):
-                self.ibmesh[:,:,ii] -= LLC[ii]
-        self._fluid_domain_LLC = LLC
-
-
-
-    @property
     def mu(self):
         return self._mu
 
@@ -402,7 +377,6 @@ class Environment:
         elif self.rho is not None and self.nu is not None:
             warnings.warn("Both nu and rho are already set. "+
                 "Skipping auto-update, please verify all values for consistency!")
-
         
 
     @property
@@ -421,7 +395,6 @@ class Environment:
                 "Skipping auto-update, please verify all values for consistency!")
 
 
-
     @property
     def rho(self):
         return self._rho
@@ -436,6 +409,20 @@ class Environment:
         elif self.mu is not None and self.nu is not None:
             warnings.warn("Both mu and nu are already set. "+
                 "Skipping auto-update, please verify all values for consistency!")
+
+
+
+    def shift_ibmesh_to_match_LLC(self):
+        '''If the fluid position was translated to the origin but the 
+        ibmesh wasn't (possibly b/c the ibmesh was loaded first), 
+        this method will shift the ibmesh based on the original 
+        location of the fluid LLC.'''
+
+        assert self.flow is not None, "No fluid velocity field loaded."
+        assert self.flow.fluid_domain_LLC is not None, "No orig LLC info."
+        # move any ibmesh to match the LLC shift
+        for ii in range(len(self.flow.fluid_domain_LLC)):
+            self.ibmesh[:,:,ii] -= self.flow.fluid_domain_LLC[ii]
 
 
     #######################################################################
@@ -1036,8 +1023,6 @@ class Environment:
         '''
 
         self.flow = fluid.IB2dData(path, dt, print_dump, d_start, d_finish, INUM)
-        self.flow_times = self.flow.flow_times
-        self.flow_points = self.flow.flow_points
         self.L = self.flow.L
         self._reset_flow_variables()
 
@@ -1083,8 +1068,6 @@ class Environment:
 
         self.flow = fluid.VTK3dData(path, title, d_start, d_finish, INUM,
                                     periodic_dim, vel_conv)
-        self.flow_times = self.flow.flow_times
-        self.flow_points = self.flow.flow_points
         self.L = self.flow.L
         self._reset_flow_variables()
 
@@ -1140,20 +1123,18 @@ class Environment:
             for ii, m in enumerate(mesh):
                 mesh[ii] = m*grid_conv
 
-        self.flow_times = None
         # shift domain to quadrant 1
-        self.flow_points = (mesh[0]-mesh[0][0], mesh[1]-mesh[1][0],
-                            mesh[2]-mesh[2][0])
+        flow_points = (mesh[0]-mesh[0][0], mesh[1]-mesh[1][0],
+                       mesh[2]-mesh[2][0])
         # record the original lower left corner (can be useful for later imports)
         fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
-        self.fluid_domain_LLC = fluid_domain_LLC
 
         # create FluidData object
-        self.flow = fluid.FluidData(data, self.flow_points, periodic_dim=periodic_dim,
+        self.flow = fluid.FluidData(data, flow_points, periodic_dim=periodic_dim,
                                     fluid_domain_LLC=fluid_domain_LLC)
 
         ### Convert environment dimensions and reset simulation time ###
-        self.L = [self.flow_points[dim][-1] for dim in range(3)]
+        self.L = [flow_points[dim][-1] for dim in range(3)]
 
         ### Regrid ###
         if regrid:
@@ -1391,14 +1372,11 @@ class Environment:
             flow_points = (flow_points_x-flow_points_x[0], 
                            flow_points_y-flow_points_y[0],
                            flow_points_z-flow_points_z[0])
-        self.L = [self.flow_points[dim][-1] for dim in range(s_dim)]
-        if time_dep:
-            self.flow_times = flow_times
+        self.L = [flow_points[dim][-1] for dim in range(s_dim)]
         if s_dim == 2:
             fluid_domain_LLC = (flow_points_x[0], flow_points_y[0])
         else:
             fluid_domain_LLC = (flow_points_x[0], flow_points_y[0], flow_points_z[0])
-        self.fluid_domain_LLC = fluid_domain_LLC
         self.flow = fluid.FluidData(flow, flow_points, flow_times, INUM=None,
                                     periodic_dim=False, 
                                     fluid_domain_LLC=fluid_domain_LLC)
@@ -1671,14 +1649,14 @@ class Environment:
                 flow[dim][...,1:-1,1:-1] = self.flow[dim]
 
         ### Replace fluid and update domain ###
-        self.flow_points = tuple(flow_points)
+        flow_points = tuple(flow_points)
         fluid_domain_LLC = tuple(np.array(self.flow.fluid_domain_LLC)
                                  -np.array(intervals)*0.5)
-        self.fluid_domain_LLC = fluid_domain_LLC
-        self.flow = fluid.FluidData(flow, self.flow_points, self.flow_times, 
+        self.flow = fluid.FluidData(flow, flow_points, 
+                                    self.flow.flow_times, 
                                     periodic_dim=self.flow.periodic_dim,
                                     fluid_domain_LLC=fluid_domain_LLC)
-        self.L = [self.flow_points[d][-1] for d in range(len(flow_points))]
+        self.L = [flow_points[d][-1] for d in range(len(flow_points))]
         
         self._reset_flow_variables()
 
@@ -1713,9 +1691,9 @@ class Environment:
         ibmesh, self.max_meshpt_dist = _dataio.read_stl_mesh(filename, unit_conv)
 
         # shift coordinates to match any shift that happened in flow data
-        if self.fluid_domain_LLC is not None:
+        if self.flow is not None and self.flow.fluid_domain_LLC is not None:
             for ii in range(3):
-                ibmesh[:,:,ii] -= self.fluid_domain_LLC[ii]
+                ibmesh[:,:,ii] -= self.flow.fluid_domain_LLC[ii]
         
         self.ibmesh = ibmesh.astype(np.float64)
 
@@ -1894,8 +1872,9 @@ class Environment:
             ### proximity method
             elif method == 'proximity':
                 if res is None:
-                    assert self.flow_points is not None, "Must import flow data first!"
-                    dists = np.concatenate([self.flow_points[ii][2:-1]-self.flow_points[ii][1:-2]
+                    assert self.flow is not None, "Must import flow data first!"
+                    dists = np.concatenate([self.flow.flow_points[ii][2:-1]
+                                            -self.flow.flow_points[ii][1:-2]
                                             for ii in range(2)])
                     Eulerian_res = dists.min()
                 else:
@@ -1905,9 +1884,9 @@ class Environment:
                 print("Processing vertex file for pair-wise connections within {}.".format(
                     res_factor*Eulerian_res))
                 # shift coordinates to match any shift that happened in flow data
-                if self.fluid_domain_LLC is not None:
+                if self.flow.fluid_domain_LLC is not None:
                     for ii in range(2):
-                        vertices[:,ii] -= self.fluid_domain_LLC[ii]
+                        vertices[:,ii] -= self.flow.fluid_domain_LLC[ii]
                 dist_mat_test = distance.pdist(vertices)<=res_factor*Eulerian_res
                 idx = np.array(list(combinations(range(vertices.shape[0]),2)))
                 self.ibmesh = np.array([vertices[idx[dist_mat_test,0],:],
@@ -1920,9 +1899,9 @@ class Environment:
             elif method == 'hull':
                 vertices = _read_single_file(path)
                 # shift coordinates to match any shift that happened in flow data
-                if self.fluid_domain_LLC is not None:
+                if self.flow.fluid_domain_LLC is not None:
                     for ii in range(2):
-                        vertices[:,ii] -= self.fluid_domain_LLC[ii]
+                        vertices[:,ii] -= self.flow.fluid_domain_LLC[ii]
                 hull = ConvexHull(vertices)
                 self.ibmesh = np.array(vertices[hull.simplices], dtype=np.float64)
 
@@ -2055,9 +2034,9 @@ class Environment:
         # shift to first quadrant
 
         hull = ConvexHull(points)
-        if self.fluid_domain_LLC is not None:
+        if self.flow is not None and self.flow.fluid_domain_LLC is not None:
             for ii in range(DIM):
-                points[:,ii] -= self.fluid_domain_LLC[ii]
+                points[:,ii] -= self.flow.fluid_domain_LLC[ii]
         self.ibmesh = points[hull.simplices].astype(np.float64)
         max_len = np.concatenate(tuple(
                   np.linalg.norm(self.ibmesh[:,ii,:]-self.ibmesh[:,(ii+1)%DIM,:], axis=1)
@@ -2157,12 +2136,12 @@ class Environment:
         self.orig_L = tuple(self.L[:2])
         for n in range(2):
             self.L[n] *= tile_num[n]
-            new_points.append(np.concatenate([self.flow_points[n]]+
-                [x*self.flow_points[n][-1]+self.flow_points[n][1:] for
+            new_points.append(np.concatenate([self.flow.flow_points[n]]+
+                [x*self.flow.flow_points[n][-1]+self.flow.flow_points[n][1:] for
                 x in range(1,tile_num[n])]))
         if DIM3:
-            new_points.append(self.flow_points[2])
-        self.flow_points = tuple(new_points)
+            new_points.append(self.flow.flow_points[2])
+        self.flow.flow_points = tuple(new_points)
         self.tiling = (x,y)
 
         # tile Lagrangian meshes
@@ -2204,8 +2183,8 @@ class Environment:
         assert x_minus>=0 and x_plus>=0 and y_minus>=0 and y_plus>=0,\
             "arguments must be nonnegative"
 
-        res_x = np.max(self.flow_points[0][1:]-self.flow_points[0][:-1])
-        res_y = np.max(self.flow_points[1][1:]-self.flow_points[1][:-1])
+        res_x = np.max(self.flow.flow_points[0][1:]-self.flow.flow_points[0][:-1])
+        res_y = np.max(self.flow.flow_points[1][1:]-self.flow.flow_points[1][:-1])
         if not TIME_DEP:
             for dim in range(len(self.L)):
                 # first, extend in x direction
@@ -2282,30 +2261,30 @@ class Environment:
         self.L[1] += res_y*(y_minus+y_plus)
         if x_minus+x_plus > 0:
             new_points.append(np.concatenate(
-                [self.flow_points[0][0]-res_x*np.arange(x_minus,0,-1)]+
-                [self.flow_points[0]]+
-                [self.flow_points[0][-1]+res_x*np.arange(1,x_plus+1)]))
+                [self.flow.flow_points[0][0]-res_x*np.arange(x_minus,0,-1)]+
+                [self.flow.flow_points[0]]+
+                [self.flow.flow_points[0][-1]+res_x*np.arange(1,x_plus+1)]))
         else:
-            new_points.append(self.flow_points[0])
+            new_points.append(self.flow.flow_points[0])
         if y_minus+y_plus > 0:
             new_points.append(np.concatenate(
-                [self.flow_points[1][0]-res_y*np.arange(y_minus,0,-1)]+
-                [self.flow_points[1]]+
-                [self.flow_points[1][-1]+res_y*np.arange(1,y_plus+1)]))
+                [self.flow.flow_points[1][0]-res_y*np.arange(y_minus,0,-1)]+
+                [self.flow.flow_points[1]]+
+                [self.flow.flow_points[1][-1]+res_y*np.arange(1,y_plus+1)]))
         else:
-            new_points.append(self.flow_points[1])
+            new_points.append(self.flow.flow_points[1])
 
         if DIM3:
-            new_points.append(self.flow_points[2])
+            new_points.append(self.flow.flow_points[2])
             # shift domain to quadrant 1
-            self.flow_points = (new_points[0]-new_points[0][0], new_points[1]-new_points[1][0],
+            self.flow.flow_points = (new_points[0]-new_points[0][0], new_points[1]-new_points[1][0],
                                 new_points[2]-new_points[2][0])
             # update environment dimensions
-            self.L = [self.flow_points[dim][-1] for dim in range(3)]
+            self.L = [self.flow.flow_points[dim][-1] for dim in range(3)]
         else:
             # 2D shifting and environment updating
-            self.flow_points = (new_points[0]-new_points[0][0], new_points[1]-new_points[1][0])
-            self.L = [self.flow_points[dim][-1] for dim in range(2)]
+            self.flow.flow_points = (new_points[0]-new_points[0][0], new_points[1]-new_points[1][0])
+            self.L = [self.flow.flow_points[dim][-1] for dim in range(2)]
 
         self._reset_flow_deriv()
 
@@ -2538,7 +2517,7 @@ class Environment:
                 flow = self.flow
 
         if flow_points is None:
-            flow_points = self.flow_points
+            flow_points = self.flow.flow_points
         
         if method == 'splinef2d':
             raise RuntimeError('Extrapolation is not supported in splinef2d.'+
@@ -2641,13 +2620,13 @@ class Environment:
         if not TIME_DEP:
             flow_grad = np.gradient(np.sqrt(
                             np.sum(np.array(self.flow)**2, axis=0)
-                            ), *self.flow_points, edge_order=2)
+                            ), *self.flow.flow_points, edge_order=2)
         else:
             # first, interpolate flow in time. Then calculate gradient.
             flow_grad = np.gradient(
                             np.sqrt(np.sum(
                             np.array(self.interpolate_temporal_flow())**2,
-                            axis=0)), *self.flow_points, edge_order=2)
+                            axis=0)), *self.flow.flow_points, edge_order=2)
         # save the newly calculuate gradient
         self.mag_grad = flow_grad
         self.mag_grad_time = self.time
@@ -2953,7 +2932,7 @@ class Environment:
             behavior is to set t0=0.
             TODO: Interable to calculate at many times. Default then becomes 
             t0=0 for time invariant flows and calculate FTLE at all times 
-            the flow field was specified at (self.flow_times) 
+            the flow field was specified at (self.flow.flow_times) 
             for time varying flows?
         T : float, default=0.1
             integration time. Default is 1, but longer is better (up to a point),
@@ -3004,7 +2983,7 @@ class Environment:
         ######              Setup Swarm object               ######
         ###########################################################
         if grid_dim is None:
-            grid_dim = tuple(len(pts) for pts in self.flow_points)
+            grid_dim = tuple(len(pts) for pts in self.flow.flow_points)
 
         if len(grid_dim) == 3:
             print("Warning: FTLE has not been well tested for 3D cases!")
@@ -3363,7 +3342,7 @@ class Environment:
         time : float
             time
         t_n : int
-            integer time index into self.flow_times[t_n]
+            integer time index into self.flow.flow_times[t_n]
 
         Returns
         -------
@@ -3371,7 +3350,7 @@ class Environment:
 
         '''
         assert len(self.L) == 2, "Fluid velocity field must be 2D!"
-        if (t_indx is not None or time is not None or t_n is not None) and self.flow_times is None:
+        if (t_indx is not None or time is not None or t_n is not None) and self.flow.flow_times is None:
             warnings.warn("Warning: flow is time invarient but time arg passed into get_2D_vorticity.",
                           RuntimeWarning)
 
@@ -3417,10 +3396,10 @@ class Environment:
                     diff_list[dim*2+1,:] *= 0
             neigh_list = np.array(grid_loc, dtype=int) + diff_list
             # get stencil spacing
-            dx1 = self.flow_points[0][grid_loc[0]] - self.flow_points[0][neigh_list[0,0]]
-            dx2 = self.flow_points[0][neigh_list[1,0]] - self.flow_points[0][grid_loc[0]]
-            dy1 = self.flow_points[1][grid_loc[1]] - self.flow_points[1][neigh_list[2,1]]
-            dy2 = self.flow_points[1][neigh_list[3,1]] - self.flow_points[1][grid_loc[1]]
+            dx1 = self.flow.flow_points[0][grid_loc[0]] - self.flow.flow_points[0][neigh_list[0,0]]
+            dx2 = self.flow.flow_points[0][neigh_list[1,0]] - self.flow.flow_points[0][grid_loc[0]]
+            dy1 = self.flow.flow_points[1][grid_loc[1]] - self.flow.flow_points[1][neigh_list[2,1]]
+            dy2 = self.flow.flow_points[1][neigh_list[3,1]] - self.flow.flow_points[1][grid_loc[1]]
             # central differencing
             dvydx = (v_y[tuple(neigh_list[1,:])]-v_y[tuple(neigh_list[0,:])])/(dx1+dx2)
             dvxdy = (v_x[tuple(neigh_list[3,:])]-v_x[tuple(neigh_list[2,:])])/(dy1+dy2)
@@ -3461,7 +3440,7 @@ class Environment:
                 out_name = 'omega'
             else:
                 out_name = name
-            for cyc, time in enumerate(self.flow_times):
+            for cyc, time in enumerate(self.flow.flow_times):
                 vort = self.get_2D_vorticity(t_n=cyc)
                 _dataio.write_vtk_2D_rectilinear_grid_scalars(path, out_name, vort, self.L, cyc, time)
         if time_history or not flow_times:
@@ -3501,7 +3480,7 @@ class Environment:
                 out_name = 'U'
             else:
                 out_name = name
-            for cyc, time in enumerate(self.flow_times):
+            for cyc, time in enumerate(self.flow.flow_times):
                 flow = self.interpolate_temporal_flow(time=time)
                 _dataio.write_vtk_rectilinear_grid_vectors(path, out_name, flow, self.L, cyc, time)
         if time_history or not flow_times:
@@ -3594,7 +3573,7 @@ class Environment:
             flow = self.interpolate_temporal_flow(t_index=t_indx, time=time)
             
         flow_grad = np.gradient(np.array(flow),
-                    *self.flow_points, edge_order=2, axis=axis_tuple)
+                    *self.flow.flow_points, edge_order=2, axis=axis_tuple)
 
         # Take dot product
         DuDt = []
@@ -3910,7 +3889,7 @@ class Environment:
 
     def plot_flow(self, t=None, downsamp=5, interval=500, figsize=None, **kwargs):
         '''Plot the velocity field of the fluid at a given time t or at all
-        times if t is None. If t is not in self.flow_times, the nearest time
+        times if t is None. If t is not in self.flow.flow_times, the nearest time
         will be shown without interpolation.
 
         For densely sampled velocity fields, specify an int for downsamp to plot
@@ -3931,12 +3910,12 @@ class Environment:
 
         # Locate the flow field that will need plotting, or None if not
         #   time-dependent or we are going to plot all of them.
-        if t is not None and self.flow_times is not None:
-            loc = np.searchsorted(self.flow_times, t)
-            if loc == len(self.flow_times):
+        if t is not None and self.flow.flow_times is not None:
+            loc = np.searchsorted(self.flow.flow_times, t)
+            if loc == len(self.flow.flow_times):
                 loc = -1
-            elif t < self.flow_times[loc]:
-                if (self.flow_times[loc]-t) > (t-self.flow_times[loc-1]):
+            elif t < self.flow.flow_times[loc]:
+                if (self.flow.flow_times[loc]-t) > (t-self.flow.flow_times[loc-1]):
                     loc -= 1
         else:
             loc = None
@@ -3949,7 +3928,7 @@ class Environment:
             M = downsamp
 
         def animate(n, quiver, kwargs):
-            time_text.set_text('time = {:.2f}'.format(self.flow_times[n]))
+            time_text.set_text('time = {:.2f}'.format(self.flow.flow_times[n]))
             if len(self.L) == 2:
                 quiver.set_UVC(self.flow[0][n][::M,::M].T,
                                self.flow[1][n][::M,::M].T)
@@ -3961,7 +3940,7 @@ class Environment:
             return [quiver, time_text]
         
         def animate_mvib(n, quiver, mesh_col, kwargs):
-            time_text.set_text('time = {:.2f}'.format(self.flow_times[n]))
+            time_text.set_text('time = {:.2f}'.format(self.flow.flow_times[n]))
             if len(self.L) == 2:
                 quiver.set_UVC(self.flow[0][n][::M,::M].T,
                                self.flow[1][n][::M,::M].T)
@@ -3970,7 +3949,7 @@ class Environment:
                                          self.flow[1][n][::M,::M,::M],
                                          self.flow[2][n][::M,::M,::M], **kwargs)
                 fig.canvas.draw()
-            ibmesh = self.interpolate_temporal_mesh(time=self.flow_times[n])
+            ibmesh = self.interpolate_temporal_mesh(time=self.flow.flow_times[n])
             mesh_col.set_segments(ibmesh)
             return [quiver, mesh_col, time_text]
 
@@ -4008,11 +3987,11 @@ class Environment:
             if not self.is_flow_time_varying() or t is not None:
                 # Single-time plot.
                 if loc is None:
-                    ax.quiver(self.flow_points[0][::M], self.flow_points[1][::M],
+                    ax.quiver(self.flow.flow_points[0][::M], self.flow.flow_points[1][::M],
                               self.flow[0][::M,::M].T, self.flow[1][::M,::M].T, 
                               scale=max_mag*5, **kwargs)
                 else:
-                    ax.quiver(self.flow_points[0][::M], self.flow_points[1][::M],
+                    ax.quiver(self.flow.flow_points[0][::M], self.flow.flow_points[1][::M],
                               self.flow[0][loc][::M,::M].T,
                               self.flow[1][loc][::M,::M].T, 
                               scale=max_mag*5, **kwargs)
@@ -4023,7 +4002,7 @@ class Environment:
             else:
                 # Animation plot
                 # create quiver object
-                quiver = ax.quiver(self.flow_points[0][::M], self.flow_points[1][::M], 
+                quiver = ax.quiver(self.flow.flow_points[0][::M], self.flow.flow_points[1][::M], 
                                    self.flow[0][0][::M,::M].T,
                                    self.flow[1][0][::M,::M].T, 
                                    scale=max_mag*5, **kwargs)
@@ -4032,8 +4011,8 @@ class Environment:
                                     fontsize=12)
         ########## 3D Plot #########        
         else:
-            x, y, z = np.meshgrid(self.flow_points[0][::M], self.flow_points[1][::M], 
-                                  self.flow_points[2][::M], indexing='ij')
+            x, y, z = np.meshgrid(self.flow.flow_points[0][::M], self.flow.flow_points[1][::M], 
+                                  self.flow.flow_points[2][::M], indexing='ij')
             if isinstance(self.flow, list):
                 max_u = self.flow[0].max(); max_v = self.flow[1].max()
                 max_w = self.flow[2].max()
@@ -4060,12 +4039,12 @@ class Environment:
                                          **kwargs)
                 # textual info
                 time_text = ax.text2D(0.02, 1, 'time = {:.2f}'.format(
-                                  self.flow_times[0]),
+                                  self.flow.flow_times[0]),
                                   transform=ax.transAxes, animated=True,
                                   verticalalignment='top', fontsize=12)
 
         if self.is_flow_time_varying() and t is None:
-            frames = range(len(self.flow_times))
+            frames = range(len(self.flow.flow_times))
             if mesh_col is not None and self.ibmesh.ndim == 4:
                 anim = animation.FuncAnimation(fig, animate_mvib, frames=frames,
                                             fargs=(quiver,mesh_col,kwargs),
@@ -4097,7 +4076,7 @@ class Environment:
 
         def animate(n, pc, time_text):
             vort = self.get_2D_vorticity(t_n=n)
-            time_text.set_text('time = {:.3f}'.format(self.flow_times[n]))
+            time_text.set_text('time = {:.3f}'.format(self.flow.flow_times[n]))
             pc.set_array(vort.T)
             pc.changed()
             pc.autoscale()
@@ -4107,8 +4086,8 @@ class Environment:
         
         def animate_mvib(n, pc, mesh_col, time_text):
             vort = self.get_2D_vorticity(t_n=n)
-            time_text.set_text('time = {:.3f}'.format(self.flow_times[n]))
-            ibmesh = self.interpolate_temporal_mesh(time=self.flow_times[n])
+            time_text.set_text('time = {:.3f}'.format(self.flow.flow_times[n]))
+            ibmesh = self.interpolate_temporal_mesh(time=self.flow.flow_times[n])
             mesh_col.set_segments(ibmesh)
             pc.set_array(vort.T)
             pc.changed()
@@ -4147,7 +4126,7 @@ class Environment:
         if not self.is_flow_time_varying():
             # Single-time plot from single-time flow
             vort = self.get_2D_vorticity()
-            pc = ax.pcolormesh(self.flow_points[0], self.flow_points[1],
+            pc = ax.pcolormesh(self.flow.flow_points[0], self.flow.flow_points[1],
                           vort.T, shading='gouraud', cmap='RdBu', norm=norm)
             axbbox = ax.get_position().get_points()
             cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])
@@ -4157,7 +4136,7 @@ class Environment:
                 ibmesh = self.interpolate_temporal_mesh(time=t)
                 mesh_col.set_segments(ibmesh)
             vort = self.get_2D_vorticity(time=t)
-            pc = ax.pcolormesh(self.flow_points[0], self.flow_points[1],
+            pc = ax.pcolormesh(self.flow.flow_points[0], self.flow.flow_points[1],
                           vort.T, shading='gouraud', cmap='RdBu', norm=norm)
             ax.text(0.02, 0.95, 'time = {:.3f}'.format(t), transform=ax.transAxes, fontsize=12)
             axbbox = ax.get_position().get_points()
@@ -4167,7 +4146,7 @@ class Environment:
             # Animation plot
             # create pcolormesh object
             # vort = self.get_2D_vorticity(t_n=0)
-            pc = ax.pcolormesh([self.flow_points[0]], self.flow_points[1], 
+            pc = ax.pcolormesh([self.flow.flow_points[0]], self.flow.flow_points[1], 
                            np.zeros(self.flow[0].shape[1:]).T, shading='gouraud',
                            cmap='RdBu', norm=norm)
             axbbox = ax.get_position().get_points()
@@ -4176,7 +4155,7 @@ class Environment:
             # textual info
             time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
                                 fontsize=12)
-            frames = range(len(self.flow_times))
+            frames = range(len(self.flow.flow_times))
             if mesh_col is not None and self.ibmesh.ndim == 4:
                 anim = animation.FuncAnimation(fig, animate_mvib, frames=frames,
                                             fargs=(pc,mesh_col,time_text),
