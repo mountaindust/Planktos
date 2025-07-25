@@ -252,7 +252,6 @@ class Environment:
         self.mag_grad_time = None
         self.DuDt = None
         self.DuDt_time = None
-        self.flow = flow
 
         if flow is not None:
             try:
@@ -267,22 +266,25 @@ class Environment:
             if Lz is not None:
                 # 3D flow
                 assert len(flow) == 3, 'Must specify flow in x, y and z direction'
-                if max([len(f.shape) for f in flow]) > 3:
+                assert flow[0].shape[0] == flow[1].shape[0] == flow[2].shape[0]
+                if len(flow[0].shape)==4:
                     # time-dependent flow
-                    assert flow[0].shape[0] == flow[1].shape[0] == flow[2].shape[0]
                     assert flow_times is not None, "Must provide flow_times"
-                    self._set_flow_variables(flow_times)
                 else:
-                    self._set_flow_variables()
+                    assert flow_times is None, "flow_times provided but fluid data is not time varying"
             else:
                 # 2D flow
-                if max([len(f.shape) for f in flow]) > 2:
+                assert flow[0].shape[0] == flow[1].shape[0]
+                if len(flow[0].shape) == 3:
                     # time-dependent flow
-                    assert flow[0].shape[0] == flow[1].shape[0]
                     assert flow_times is not None, "Must provide flow_times"
-                    self._set_flow_variables(flow_times)
                 else:
-                    self._set_flow_variables()
+                    assert flow_times is None, "flow_times provided but fluid data is not time varying"
+            flow_points, flow_times = self._get_flow_variables(flow[0].shape,
+                                                               flow_times)
+            self.flow = fluid.FluidData(flow, flow_points, flow_times)
+        else:
+            self.flow = None
 
         ##### swarm list #####
 
@@ -601,36 +603,38 @@ class Environment:
             if len(flow.shape) == 2:
                 # no time; (y,x) -> (x,y) coordinates
                 flow = flow.T
-                self.flow = [flow, np.zeros_like(flow)] #x-direction, y-direction
-                self._set_flow_variables()
+                flow_points, flow_times = self._get_flow_variables(flow.shape)
+                self.flow = fluid.FluidData([flow, np.zeros_like(flow)],
+                                            flow_points, flow_times)
             else:
                 #time-dependent; (t,y,x)-> (t,x,y) coordinates
                 flow = np.transpose(flow, axes=(0, 2, 1))
-                self.flow = [flow, np.zeros_like(flow)]
                 if tspan is None:
-                    self._set_flow_variables(tspan=1)
+                    flow_points, flow_times = self._get_flow_variables(flow.shape, tspan=1)
                 else:
-                    self._set_flow_variables(tspan=tspan)
+                    flow_points, flow_times = self._get_flow_variables(flow.shape, tspan=tspan)
+                self.flow = fluid.FluidData([flow, np.zeros_like(flow)],
+                                            flow_points, flow_times)
+                
         else:
             # 3D
             if len(flow.shape) == 2:
                 # (z,x) -> (x,y,z) coordinates
                 flow = np.broadcast_to(flow, (res, res, res)) #(y,z,x)
                 flow = np.transpose(flow, axes=(2, 0, 1)) #(x,y,z)
-                self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
-
-                self._set_flow_variables()
-
+                flow_points, flow_times = self._get_flow_variables(flow.shape)
+                self.flow = fluid.FluidData([flow, np.zeros_like(flow), np.zeros_like(flow)],
+                                            flow_points, flow_times)
             else:
                 # (t,z,x) -> (t,z,y,x) coordinates
                 flow = np.broadcast_to(flow, (res,flow.shape[0],res,res)) #(y,t,z,x)
                 flow = np.transpose(flow, axes=(1, 3, 0, 2)) #(t,x,y,z)
-                self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
-
                 if tspan is None:
-                    self._set_flow_variables(tspan=1)
+                    flow_points, flow_times = self._get_flow_variables(flow.shape, tspan=1)
                 else:
-                    self._set_flow_variables(tspan=tspan)
+                    flow_points, flow_times = self._get_flow_variables(flow.shape, tspan=tspan)
+                self.flow = fluid.FluidData([flow, np.zeros_like(flow), np.zeros_like(flow)],
+                                            flow_points, flow_times)
         self._reset_flow_variables()
         self.h_p = h_p
 
@@ -716,19 +720,21 @@ class Environment:
         # get flow velocity profile for surface layer
         u[h_p_index:] = u_star/chi*np.log((y_mesh[h_p_index:]-d)/z_0)
 
+        flow_points, flow_times = self._get_flow_variables((res,res))
+
         # broadcast to flow
         if len(self.L) == 2:
             # 2D
-            self.flow = [np.broadcast_to(u,(res,res)), np.zeros((res,res))]
+            self.flow = fluid.FluidData([np.broadcast_to(u,(res,res)), np.zeros((res,res))],
+                                        flow_points, flow_times)
         else:
             # 3D
-            self.flow = [np.broadcast_to(u,(res,res,res)), np.zeros((res,res,res)),
-                         np.zeros((res,res,res))]
+            self.flow = fluid.FluidData([np.broadcast_to(u,(res,res,res)), 
+                                         np.zeros((res,res,res)), np.zeros((res,res,res))],
+                                         flow_points, flow_times)
 
         # housekeeping
-        self._set_flow_variables()
         self._reset_flow_variables()
-        self.fluid_domain_LLC = None
         self.h_p = h_p
 
 
@@ -906,83 +912,91 @@ class Environment:
             # time independent
             if len(self.L) == 2:
                 # 2D
+                flow_points, flow_times = self._get_flow_variables((res,res))
                 flow = np.broadcast_to(U_B,(res,res))
-                self.flow = [flow, np.zeros_like(flow)]
+                self.flow = fluid.FluidData([flow, np.zeros_like(flow)],
+                                            flow_points, flow_times)
             else:
                 # 3D
+                flow_points, flow_times = self._get_flow_variables((res,res,res))
                 flow = np.broadcast_to(U_B,(res,res,res))
-                self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
-            self._set_flow_variables()
+                self.flow = fluid.FluidData([flow, np.zeros_like(flow), np.zeros_like(flow)],
+                                            flow_points, flow_times)
         else:
             # time dependent
+            if tspan is None:
+                tspan = 1
             if len(self.L) == 2:
                 # 2D
                 # broadcast from (t,y) -> (x,t,y)
                 flow = np.broadcast_to(U_B, (res, iter_length, res))
                 # transpose: (x,t,y) -> (t,x,y)
                 flow = np.transpose(flow, axes=(1, 0, 2))
-                self.flow = [flow, np.zeros_like(flow)]
+                flow_points, flow_times = self._get_flow_variables(flow.shape,tspan)
+                self.flow = fluid.FluidData([flow, np.zeros_like(flow)],
+                                            flow_points, flow_times)
             else:
                 # 3D
                 # broadcast from (t,y) -> (x,y,t,z)
                 flow = np.broadcast_to(U_B, (res, res, iter_length, res))
                 # transpose: (x,y,t,z) -> (t,x,y,z)
                 flow = np.transpose(flow, axes=(2,0,1,3))
-                self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
-            if tspan is None:
-                self._set_flow_variables(tspan=1)
-            else:
-                self._set_flow_variables(tspan=tspan)
+                flow_points, flow_times = self._get_flow_variables(flow.shape,tspan)
+                self.flow = fluid.FluidData([flow, np.zeros_like(flow), np.zeros_like(flow)],
+                                            flow_points, flow_times)
 
 
         # housekeeping
         self._reset_flow_variables()
-        self.fluid_domain_LLC = None
         self.h_p = h
 
 
 
-    def _set_flow_variables(self, tspan=None):
-        '''Store points at which flow is specified, and time information.
+    def _get_flow_variables(self, fshape, tspan=None):
+        '''Return points at which flow is specified, and time information.
 
         Parameters
         ----------
             tspan : float, floats [tstart, tend], or iterable, optional
                 times at which flow is specified or scalar dt. Required if flow 
-                is time-dependent; None will be interpreted as non time-dependent 
+                is time-dependent; None will be interpreted as steady-state 
                 flow.
+            fshape : tuple, FluidData.fshape
+
+        Returns
+        -------
+            flow_points
+            flow_times
         '''
 
         # Get points defining the spatial grid for flow data
         points = []
         if tspan is None:
             # no time-dependent flow
-            for dim, mesh_size in enumerate(self.flow[0].shape[::-1]):
+            for dim, mesh_size in enumerate(fshape[::-1]):
                 points.append(np.linspace(0, self.L[dim], mesh_size))
         else:
             # time-dependent flow
-            if isinstance(self.flow, list):
-                bshape = self.flow[0].shape[:0:-1]
-                tlen = self.flow[0].shape[0]
-            else:
-                bshape = self.flow.fshape[:0:-1]
-                tlen = self.flow.fshape[0]
+            bshape = fshape[:0:-1]
+            tlen = fshape[0]
             for dim, mesh_size in enumerate(bshape):
                 points.append(np.linspace(0, self.L[dim], mesh_size))
-        self.flow_points = tuple(points)
+        flow_points = tuple(points)
 
         # set time
         if tspan is not None:
             if not hasattr(tspan, '__iter__'):
                 # set flow_times based off zero
-                self.flow_times = np.arange(0, tspan*tlen, tspan)
+                flow_times = np.arange(0, tspan*tlen, tspan)
             elif len(tspan) == 2:
-                self.flow_times = np.linspace(tspan[0], tspan[1], tlen)
+                flow_times = np.linspace(tspan[0], tspan[1], tlen)
             else:
                 assert len(tspan) == tlen
-                self.flow_times = np.array(tspan)
+                flow_times = np.array(tspan)
         else:
-            self.flow_times = None
+            flow_times = None
+
+        return flow_points, flow_times
 
 
     #######################################################################
