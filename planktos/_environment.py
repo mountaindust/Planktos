@@ -2067,7 +2067,7 @@ class Environment:
         '''
 
         DIM3 = len(self.L) == 3
-        TIME_DEP = self.is_flow_time_varying()
+        TIME_DEP = self.flow.flow_times is not None
 
         if x is None:
             x = 1
@@ -2175,7 +2175,7 @@ class Environment:
         '''
 
         DIM3 = len(self.L) == 3
-        TIME_DEP = self.is_flow_time_varying()
+        TIME_DEP = self.flow.flow_times is not None
 
         assert x_minus>=0 and x_plus>=0 and y_minus>=0 and y_plus>=0,\
             "arguments must be nonnegative"
@@ -2431,19 +2431,6 @@ class Environment:
     #######################################################################
 
 
-    def is_flow_time_varying(self):
-        '''Return True or False based on if fluid flow is time-varying.
-        
-        TODO: If self.flow contains raw time-varying fluid data, then this will 
-        also trigger splining of that data.
-        '''
-        if self.flow.flow_times is None:
-            return False
-        else:
-            return True
-
-
-
     def interpolate_temporal_flow(self, t_index=None, time=None):
         '''Interpolate flow in time using a cubic spline. Defaults to 
         interpolating at the current time, given by self.time.
@@ -2506,12 +2493,12 @@ class Environment:
         '''
 
         if flow is None:
-            if self.is_flow_time_varying():
-                # time-varying flow
-                flow = self.interpolate_temporal_flow(time=time)
-            else:
+            if self.flow.flow_times is None:
                 # non time-varying flow
                 flow = self.flow
+            else:
+                # time-varying flow
+                flow = self.interpolate_temporal_flow(time=time)
 
         if flow_points is None:
             flow_points = self.flow.flow_points
@@ -2589,12 +2576,12 @@ class Environment:
 
         DIM3 = (len(self.L) == 3)
 
-        if self.is_flow_time_varying():
-            # temporal flow. interpolate in time, and then in space.
-            flow_now = self.interpolate_temporal_flow()
-        else:
+        if self.flow.flow_times is None:
             # temporally constant flow
             flow_now = self.flow
+        else:
+            # temporal flow. interpolate in time, and then in space.
+            flow_now = self.interpolate_temporal_flow()
 
         if DIM3:
             fluid_speed = np.sqrt(flow_now[0]**2+flow_now[1]**2+flow_now[2]**2)
@@ -2612,7 +2599,7 @@ class Environment:
         (using numpy) with second order accuracy at the boundaries and saved in 
         case it is needed again.'''
 
-        TIME_DEP = self.is_flow_time_varying()
+        TIME_DEP = self.flow.flow_times is not None
         if not TIME_DEP:
             flow_grad = np.gradient(np.sqrt(
                             np.sum(np.array(self.flow)**2, axis=0)
@@ -3350,12 +3337,12 @@ class Environment:
             warnings.warn("Warning: flow is time invarient but time arg passed into get_2D_vorticity.",
                           RuntimeWarning)
 
-        if self.is_flow_time_varying():
-            grid_dim = self.flow.fshape[1:]
-            TIMEVAR = True
-        else:
+        if self.flow.flow_times is None:
             grid_dim = self.flow.fshape
             TIMEVAR = False
+        else:
+            grid_dim = self.flow.fshape[1:]
+            TIMEVAR = True
         grid_loc_iter = np.ndindex(grid_dim)
 
         if TIMEVAR:
@@ -3512,7 +3499,7 @@ class Environment:
         elif t_indx is not None:
             time = self.time_history[t_indx]
 
-        if not self.is_flow_time_varying():
+        if self.flow.flow_times is None:
             # temporally constant flow
             return [np.zeros(self.flow.fshape) for ii in len(self.flow)]
         else:
@@ -3549,7 +3536,7 @@ class Environment:
 
         DIM3 = (len(self.L) == 3)
 
-        TIME_DEP = self.is_flow_time_varying()
+        TIME_DEP = self.flow.flow_times is not None
 
         if DIM3:
             axis_tuple = (1,2,3)
@@ -3951,7 +3938,7 @@ class Environment:
         if len(self.L) == 2:
             max_u, max_v = self.flow.fmax
             max_mag = np.linalg.norm(np.array([max_u,max_v]))
-            if not self.is_flow_time_varying():
+            if self.flow.flow_times is None:
                 # Single-time plot of time-invarient flow
                 ax.quiver(self.flow.flow_points[0][::M], self.flow.flow_points[1][::M],
                           self.flow[0][::M,::M].T, self.flow[1][::M,::M].T, 
@@ -3982,7 +3969,7 @@ class Environment:
                                   self.flow.flow_points[2][::M], indexing='ij')
             max_u, max_v, max_w = self.flow.fmax
             max_mag = np.linalg.norm(np.array([max_u,max_v,max_w]))
-            if not self.is_flow_time_varying():
+            if self.flow.flow_times is None:
                 # Single-time plot of time-invarient flow
                 ax.quiver(x,y,z,self.flow[0][::M,::M,::M],
                                 self.flow[1][::M,::M,::M],
@@ -4006,7 +3993,7 @@ class Environment:
                                   transform=ax.transAxes, animated=True,
                                   verticalalignment='top', fontsize=12)
 
-        if self.is_flow_time_varying() and time is None:
+        if self.flow.flow_times is not None and time is None:
             frames = range(len(self.flow.flow_times))
             if mesh_col is not None and self.ibmesh.ndim == 4:
                 anim = animation.FuncAnimation(fig, animate_mvib, frames=frames,
@@ -4086,7 +4073,7 @@ class Environment:
         else:
             norm = None
 
-        if not self.is_flow_time_varying():
+        if self.flow.flow_times is None:
             # Single-time plot from single-time flow
             vort = self.get_2D_vorticity()
             pc = ax.pcolormesh(self.flow.flow_points[0], self.flow.flow_points[1],
