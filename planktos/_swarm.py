@@ -1248,7 +1248,7 @@ class Swarm:
         if positions is None:
             positions = self.positions
 
-        TIME_DEP = len(self.envir.flow[0].shape) != len(self.envir.L)
+        TIME_DEP = self.envir.flow.flow_times is not None
         flow_grad = None
 
         # If available, use the already calculuated gradient (if it's at the
@@ -1690,7 +1690,7 @@ class Swarm:
         if not DIM3:
             # 2D flow
             # get current fluid flow info
-            if len(self.envir.flow[0].shape) == 2:
+            if self.envir.flow.flow_times is None:
                 # temporally constant flow
                 flow = self.envir.flow
             else:
@@ -1705,7 +1705,7 @@ class Swarm:
 
         else:
             # 3D flow
-            if len(self.envir.flow[0].shape) == 3:
+            if self.envir.flow.flow_times is None:
                 # temporally constant flow
                 flow = self.envir.flow
             else:
@@ -1839,7 +1839,7 @@ class Swarm:
                     norm = colors.Normalize(-abs(clip),abs(clip),clip=True)
                 else:
                     norm = None
-                ax.pcolormesh(self.envir.flow_points[0], self.envir.flow_points[1], 
+                ax.pcolormesh(self.envir.flow.flow_points[0], self.envir.flow.flow_points[1], 
                               vort.T, shading='gouraud', cmap='RdBu',
                               norm=norm, alpha=0.9, antialiased=True)
             elif fluid == 'quiver' and self.envir.flow is not None:
@@ -1851,16 +1851,16 @@ class Swarm:
                 # use about 4.15/inch density of arrows
                 x_num = round(4.15*wdth_inch)
                 y_num = round(4.15*height_inch)
-                M = int(round(len(self.envir.flow_points[0])/x_num))
-                N = int(round(len(self.envir.flow_points[1])/y_num))
+                M = int(round(len(self.envir.flow.flow_points[0])/x_num))
+                N = int(round(len(self.envir.flow.flow_points[1])/y_num))
                 # get worse case max velocity vector for scaling
-                max_u = self.envir.flow[0].max(); max_v = self.envir.flow[1].max()
+                max_u, max_v = self.envir.flow.fmax
                 max_mag = np.linalg.norm(np.array([max_u,max_v]))
-                if len(self.envir.flow[0].shape) > 2:
+                if self.envir.flow.flow_times is not None:
                     flow = self.envir.interpolate_temporal_flow(t_index=loc)
                 else:
                     flow = self.envir.flow
-                ax.quiver(self.envir.flow_points[0][::M], self.envir.flow_points[1][::N],
+                ax.quiver(self.envir.flow.flow_points[0][::M], self.envir.flow.flow_points[1][::N],
                           flow[0][::M,::N].T, flow[1][::M,::N].T, 
                           scale=max_mag*5, alpha=0.2)
 
@@ -2275,8 +2275,8 @@ class Swarm:
                     norm = colors.Normalize(-abs(clip),abs(clip),clip=True)
                 else:
                     norm = None
-                fld = ax.pcolormesh([self.envir.flow_points[0]], self.envir.flow_points[1], 
-                           np.zeros(self.envir.flow[0].shape[1:]).T, shading='gouraud',
+                fld = ax.pcolormesh([self.envir.flow.flow_points[0]], self.envir.flow.flow_points[1], 
+                           np.zeros(self.envir.flow.fshape[1:]).T, shading='gouraud',
                            cmap='RdBu', norm=norm, alpha=0.9)
             elif fluid == 'quiver' and self.envir.flow is not None:
                 # get dimensions of axis to estimate a decent quiver density
@@ -2287,13 +2287,13 @@ class Swarm:
                 # use about 4.15/inch density of arrows
                 x_num = round(4.15*wdth_inch)
                 y_num = round(4.15*height_inch)
-                M = round(len(self.envir.flow_points[0])/x_num)
-                N = round(len(self.envir.flow_points[1])/y_num)
+                M = round(len(self.envir.flow.flow_points[0])/x_num)
+                N = round(len(self.envir.flow.flow_points[1])/y_num)
                 # get worse case max velocity vector for scaling
-                max_u = self.envir.flow[0].max(); max_v = self.envir.flow[1].max()
+                max_u, max_v = self.envir.flow.fmax
                 max_mag = np.linalg.norm(np.array([max_u,max_v]))
-                x_pts = self.envir.flow_points[0][::M]
-                y_pts = self.envir.flow_points[1][::N]
+                x_pts = self.envir.flow.flow_points[0][::M]
+                y_pts = self.envir.flow.flow_points[1][::N]
                 fld = ax.quiver(x_pts, y_pts, np.zeros((len(y_pts),len(x_pts))),
                                 np.zeros((len(y_pts),len(x_pts))), 
                                 scale=max_mag*5, alpha=0.2)
@@ -2613,7 +2613,7 @@ class Swarm:
                         fld.changed()
                         fld.autoscale()
                     elif fluid == 'quiver' and self.envir.flow is not None:
-                        if self.envir.flow_times is not None:
+                        if self.envir.flow.flow_times is not None:
                             flow = self.envir.interpolate_temporal_flow(t_index=n)
                             fld.set_UVC(flow[0][::M,::N].T, flow[1][::M,::N].T)
                         else:
@@ -2901,7 +2901,7 @@ class Swarm:
                         fld.changed()
                         fld.autoscale()
                     elif fluid == 'quiver' and self.envir.flow is not None:
-                        if self.envir.flow_times is not None:
+                        if self.envir.flow.flow_times is not None:
                             flow = self.envir.interpolate_temporal_flow()
                             fld.set_UVC(flow[0][::M,::N].T, flow[1][::M,::N].T)
                         else:
