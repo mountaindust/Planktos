@@ -572,7 +572,6 @@ class FluidData:
             Used by subclasses to dynamically load data from storage.
         periodic_dim : bool (default=True), or tuple of bool
             Whether or not the fluid data is periodic in each spatial dimension
-            TODO: have the spatial interpolator use this
         fluid_domain_LLC : tuple, optional
             If the fluid velocity came from data and was translated in space so 
             that the LLC was in the lower left corner, this stores the original LLC.

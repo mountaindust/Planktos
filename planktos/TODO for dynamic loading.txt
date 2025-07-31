@@ -9,12 +9,10 @@ calculate_DuDt
 center_cell_regrid needs to be folded into new FluidData object, because this 
 will have to be done on-the-fly as part of dynamic loading.
 
-All time-varying fluid data will now be held within a FluidData object.
-Fix broken self.flow[0].shape calls that remain, and also [for f in self.flow]
+Support for rectilinear grids needs to update the following methods:
+- center_cell_regrid
+- calculate_FTLE
 
-
-In that case, we need to get rid of self.fluid being a list altogether. It's 
-always a FluidData instance.
 
 - 3D time-varying data has not been loaded into Planktos for some time.
 - The pipeline was:
@@ -28,10 +26,3 @@ always a FluidData instance.
     and folded into planktos proper.
 - VTU (e.g. from COMSOL) was never loaded with time-varying data. This will need
     to be supported.
-
-Support for rectilinear grids needs to update the following methods:
-- center_cell_regrid
-- calculate_FTLE
-
-Periodicity in the fluid should be recorded in FluidData and properly used 
-instead of extrapolation.

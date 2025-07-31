@@ -2450,6 +2450,8 @@ class Environment:
         # If fCubicSplines do not exist, create them.
         if self.flow is None:
             raise RuntimeError("Cannot temporally interpolate None flow.")
+        if self.flow.flow_times is None:
+            raise RuntimeError("Cannot temporally interpolate steady-state flow.")
 
         if t_index is None and time is None:
             time = self.time
@@ -2466,6 +2468,10 @@ class Environment:
         at the supplied positions. If flow is None and self.flow is time-varying,
         the flow field will be interpolated in time first, using the current 
         environmental time, or a different time if provided.
+
+        Assumes the edge of the fluid grid in all dimensions lies on the domain 
+        boundary, and that the lower-left corner of the domain is always the 
+        origin.
 
         Parameters
         ----------
@@ -2492,6 +2498,11 @@ class Environment:
 
         '''
 
+        if method == 'splinef2d':
+            raise RuntimeError('Extrapolation is not supported in splinef2d.'+
+                               ' This is needed for RK4 solvers, and so is not'+
+                               ' a supported method in interpolate_flow.')
+        
         if flow is None:
             if self.flow.flow_times is None:
                 # non time-varying flow
@@ -2500,23 +2511,28 @@ class Environment:
                 # time-varying flow
                 flow = self.interpolate_temporal_flow(time=time)
 
-        if flow_points is None:
-            flow_points = self.flow.flow_points
-        
-        if method == 'splinef2d':
-            raise RuntimeError('Extrapolation is not supported in splinef2d.'+
-                               ' This is needed for RK4 solvers, and so is not'+
-                               ' a supported method in interpolate_flow.')
+        flow_points = self.flow.flow_points
 
+        # Treat potential periodicity in fluid domain
+        if any(self.flow.periodic_dim):
+            mod_positions = np.array(positions)
+            for n,dim_bool in enumerate(self.flow.periodic_dim):
+                if dim_bool:
+                    # Assumes left side is 0, and domain edge == fluid grid edge
+                    mod_positions[:,n] = positions[:,n] % self.flow.flow_points[n,-1]
+        else:
+            mod_positions = positions
+        
+        # interpolate positions not outside periodic bounds
         x_vel = interpolate.interpn(flow_points, flow[0],
-                                    positions, method=method, 
+                                    mod_positions, method=method, 
                                     bounds_error=False, fill_value=None)
         y_vel = interpolate.interpn(flow_points, flow[1],
-                                    positions, method=method, 
+                                    mod_positions, method=method, 
                                     bounds_error=False, fill_value=None)
         if len(flow) == 3:
             z_vel = interpolate.interpn(flow_points, flow[2],
-                                        positions, method=method, 
+                                        mod_positions, method=method, 
                                         bounds_error=False, fill_value=None)
             return np.array([x_vel, y_vel, z_vel]).T
         else:
