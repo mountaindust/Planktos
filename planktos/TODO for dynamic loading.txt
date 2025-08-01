@@ -1,8 +1,8 @@
 TODO for dynamic loading of fluid data
 
 dudt needs to be part of FluidData class.
-tile_flow too
-extend too
+tile_flow (this is needed for ex_IBAMR_ibmesh example)
+extend
 get_2D_vorticity
 calculate_DuDt
 
@@ -13,6 +13,8 @@ Support for rectilinear grids needs to update the following methods:
 - center_cell_regrid
 - calculate_FTLE
 
+Need option for linearly interpolating fluid data in time because it is much 
+cheaper in memory.
 
 - 3D time-varying data has not been loaded into Planktos for some time.
 - The pipeline was:

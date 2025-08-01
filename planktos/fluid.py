@@ -16,100 +16,6 @@ from pathlib import Path
 from . import _dataio
 
 
-def _read_IBAMR3d_vtkfiles(path, d_start=0, d_finish=None, 
-                          vel_conv=None, grid_conv=None):
-    '''Reads in one or more vtk Rectilinear Grid Vector files. If path
-    refers to a single file, the resulting flow will be time invarient.
-    Otherwise, this method will assume that files are named IBAMR_db_###.vtk 
-    where ### is the dump number, and that the mesh is the same in each vtk.
-    Also, imported times will be translated backward so that the first time 
-    loaded corresponds to a Planktos environment time of 0.0.
-
-    Parameters
-    ----------
-    path : string
-        path to vtk data, incl. file extension if a single file
-    d_start : int, default=0
-        vtk dump number to start with.
-    d_finish : int, optional
-        vtk dump number to end with. If None, end with last one.
-    vel_conv : float, optional
-        scalar to multiply the velocity by in order to convert units
-    grid_conv : float, optional
-        scalar to multiply the grid by in order to convert units
-
-    Returns
-    -------
-    flow : list of ndarray (fluid data)
-    mesh : list of 1D arrays of grid points in x, y, and z directions
-    flow_times : None or ndarray of times at which the fluid velocity is
-        specified.
-    '''
-
-    path = Path(path)
-    if path.is_file():
-        flow, mesh, time = _dataio.read_vtk_Rectilinear_Grid_Vector(path)
-        flow_times = None
-    
-    elif path.is_dir():
-        file_names = [x.name for x in path.iterdir() if x.is_file() and
-                      x.name[:9] == 'IBAMR_db_']
-        file_nums = sorted([int(f[9:12]) for f in file_names])
-        if d_start is None:
-            d_start = file_nums[0]
-        else:
-            d_start = int(d_start)
-            assert d_start in file_nums, "d_start number not found!"
-        if d_finish is None:
-            d_finish = file_nums[-1]
-        else:
-            d_finish = int(d_finish)
-            assert d_finish in file_nums, "d_finish number not found!"
-
-        ### Gather data ###
-        flow = [[], [], []]
-        flow_times = []
-
-        for n in range(d_start, d_finish+1):
-            if n < 10:
-                num = '00'+str(n)
-            elif n < 100:
-                num = '0'+str(n)
-            else:
-                num = str(n)
-            this_file = path / ('IBAMR_db_'+num+'.vtk')
-            data, mesh, time = _dataio.read_vtk_Rectilinear_Grid_Vector(str(this_file))
-            for dim in range(3):
-                flow[dim].append(data[dim])
-            flow_times.append(time)
-
-        flow = [np.array(flow[0]).squeeze(), np.array(flow[1]).squeeze(),
-                np.array(flow[2]).squeeze()]
-        # parse time information
-        if None not in flow_times and len(flow_times) > 1:
-            # shift time so that the first time is 0.
-            flow_times = np.array(flow_times) - min(flow_times)
-        elif None in flow_times and len(flow_times) > 1:
-            # could not parse time information
-            warnings.warn("Could not retrieve time information from at least"+
-                          " one vtk file. Assuming unit time-steps...", UserWarning)
-            flow_times = np.arange(len(flow_times))
-        else:
-            flow_times = None
-
-    if vel_conv is not None:
-        print("Converting vel units by a factor of {}.".format(vel_conv))
-        for ii, d in enumerate(flow):
-            flow[ii] = d*vel_conv
-    if grid_conv is not None:
-        print("Converting grid units by a factor of {}.".format(grid_conv))
-        for ii, m in enumerate(mesh):
-            mesh[ii] = m*grid_conv
-
-    return flow, mesh, flow_times
-
-
-
 def _wrap_flow(flow, flow_points, periodic_dim=(True, True, False)):
     '''In some cases, software may print out fluid velocity data that omits 
     the velocities at the right boundaries in spatial dimensions that are 
@@ -593,7 +499,7 @@ class FluidData:
         
         if self.flow_times is not None:
             # record shape of the fluid data
-            self.fshape = (len(self.flow_times), *flow[n].shape[1:])
+            self.fshape = (len(self.flow_times), *flow[0].shape[1:])
             
             if self.INUM is not None and self.INUM < len(self.flow_times)-1:
                 ### Create initial spline ###
@@ -603,7 +509,7 @@ class FluidData:
                                            bc_type='left')
             else:
                 ### Spline all data with not-a-knot ###
-                if self.INUM >= len(self.flow_times)-1:
+                if self.INUM is not None and self.INUM >= len(self.flow_times)-1:
                     warnings.warn(f'{self.INUM} spline intervals with {self.flow_times} '+
                                 'time points results in all data being splined. '+
                                 'INUM will be set to None in FluidData object.')
@@ -881,7 +787,7 @@ class IB2dData(FluidData):
         if d_start != d_finish:
             flow_times = np.arange(d_start,d_finish+1)*print_dump*dt
             # shift time so that flow starts at t=0
-            flow_times -= self.flow_times[0]
+            flow_times -= flow_times[0]
         else:
             flow_times = None
 
@@ -898,7 +804,7 @@ class IB2dData(FluidData):
             
             # shift domain to quadrant 1
             self._orig_flow_points = (x-x[0], y-y[0])
-            self.fluid_domain_LLC = (x[0], y[0])
+            fluid_domain_LLC = (x[0], y[0])
 
             ### Convert environment dimensions and add back the periodic gridpoints ###
             # IB2d always has periodic BC and returns a VTK with fluid specified 

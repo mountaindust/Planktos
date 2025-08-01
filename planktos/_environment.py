@@ -2519,7 +2519,7 @@ class Environment:
             for n,dim_bool in enumerate(self.flow.periodic_dim):
                 if dim_bool:
                     # Assumes left side is 0, and domain edge == fluid grid edge
-                    mod_positions[:,n] = positions[:,n] % self.flow.flow_points[n,-1]
+                    mod_positions[:,n] = positions[:,n] % self.flow.flow_points[n][-1]
         else:
             mod_positions = positions
         
