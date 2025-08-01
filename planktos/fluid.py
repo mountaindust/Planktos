@@ -681,7 +681,10 @@ class FluidData:
 
     def get_raw_loaded_data(self):
         '''Get the ndarrays that the current splines are based on.'''
-        return [flow.regenerate_data() for flow in self._flow]
+        if isinstance(self._flow[0], fCubicSpline):
+            return [flow.regenerate_data() for flow in self._flow]
+        else:
+            return self._flow
 
 
 
@@ -693,13 +696,19 @@ class FluidData:
 
 
     def update_spline(self, time):
-        '''The workhorse function for dynamically loading data.'''
+        '''The workhorse function for dynamically loading data.
+        
+        For cubic splines, two control points on the end of the last time 
+        interval are retained so that their location plus the derivatives at 
+        their locations will uniquely determine the spline for all new data.
+        '''
 
         # NOTE: fCubicSpline.c has shape (4,num_of_splines,...) where "..." is 
         #   the array dimensions of the velocity grid.
         while time > self._flow[0].x[-1] and not self._flow[0].extrapolate[1]:
-            ### spline forward ###
-            # get info about what we will be loading
+            # spline forward
+
+            ####### get info about what we will be loading #######
             d_start = self.loaded_dump_bnds[1]+1 # first dump to load
             idx_start = self.loaded_idx_bnds[1]-1 # first index in new spline
             if self.loaded_dump_bnds[1]-1 + self.INUM > self.d_finish:
@@ -714,6 +723,7 @@ class FluidData:
                 extrapolate = (False, False)
             load_times = self.flow_times[idx_start:idx_finish+1]
 
+            ####### retain only the necessary current data #######
             dydx0 = []; dydx1 = []; last_flow = []
             for n in range(len(self._flow)):
                 # grab flow at final loaded time from current spline
@@ -729,7 +739,7 @@ class FluidData:
                 
             # load new data
             flow = self.load_dumpfiles(d_start, d_finish)
-            
+
             # add old spline data
             for n,f in enumerate(flow):
                 flow[n] = np.concatenate((self._flow[n].c[3,0,...],
@@ -737,17 +747,22 @@ class FluidData:
             # Remove the rest of the spline data
             self._flow = [0 for n in range(len(flow))]
 
-            # Spline it
+            ####### Spline it #######
             for n in range(len(flow)):
                 self._flow[n] = fCubicSpline(load_times, flow[n], dydx0[n], 
                                              dydx1[n], extrapolate, direction='right')
                 flow[n] = 0
             self.loaded_dump_bnds = (self.loaded_dump_bnds[1]-1,d_finish)
             self.loaded_idx_bnds = (idx_start, idx_finish)
+
+            # Update fmin/fmax
+            self.fmin = (min(self.fmin[n],f.min()) for n,f in enumerate(self._flow))
+            self.fmax = (max(self.fmax[n],f.max()) for n,f in enumerate(self._flow))
             
         while time < self._flow[0].x[0] and not self._flow[0].extrapolate[0]:
-            ### spline backward ###
-            # get info about what we will be loading
+            # spline backward
+
+            ####### get info about what we will be loading #######
             d_finish = self.loaded_dump_bnds[0]-1 # last dump to load
             idx_finish = self.loaded_idx_bnds[0]+1 # last index in new spline
             if self.loaded_dump_bnds[0]+1 - self.INUM < self.d_start:
@@ -762,6 +777,7 @@ class FluidData:
                 extrapolate = (False, False)
             load_times = self.flow_times[idx_start:idx_finish+1]
 
+            ####### retain only the necessary current data #######
             dydx0 = []; dydx1 = []
             for n in range(len(self._flow)):
                 # grab flow at second loaded time from current spline.
@@ -786,13 +802,17 @@ class FluidData:
             # Remove the rest of the spline data
             self._flow = [0 for n in range(len(flow))]
 
-            # Spline it
+            ####### Spline it #######
             for n in range(len(flow)):
                 self._flow[n] = fCubicSpline(load_times, flow[n], dydx0[n], 
                                              dydx1[n], extrapolate, direction='left')
                 flow[n] = 0
             self.loaded_dump_bnds = (d_start, self.loaded_dump_bnds[0]+1)
             self.loaded_idx_bnds = (idx_start, idx_finish)
+
+            # Update fmin/fmax
+            self.fmin = (min(self.fmin[n],f.min()) for n,f in enumerate(self._flow))
+            self.fmax = (max(self.fmax[n],f.max()) for n,f in enumerate(self._flow))
     
 
 
