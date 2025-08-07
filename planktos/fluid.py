@@ -126,6 +126,68 @@ def create_temporal_interpolations(flow_times, flow_data):
 
 
 
+class FlowArray(np.ndarray):
+    '''
+    Extends NumPy's ndarray to provide memory-saving views onto data when 
+    tiling or extending the domain.
+
+    tiling is the shape of the tile. It is None if there has been no tiling.
+    Otherwise, it is an (x,y) tuple of integers. (1,1) is functionally the 
+    same as no tiling.
+    '''
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.tiling = None
+        self.dshape = self.shape
+
+    def __getitem__(self, pos):
+        if self.tiling is not None:
+            if type(pos) == int:
+                if pos > self.dshape[0]-1 or pos < -self.dshape[0]:
+                    tnum = pos//self.dshape[0]
+                    if tnum > self.tiling[0]-1 or tnum < -self.tiling[0]:
+                        raise IndexError(f"index {pos} is out of bounds for axis 0 with size {self.shape[0]}")
+                    pos = pos % self.dshape[0]
+                    return super().__getitem__(pos)
+            elif type(pos) == slice:
+                start = pos.start; stop = pos.stop; step = pos.step
+                if step is None: step = 1
+                if start is not None and start < 0: start = max(0,self.shape[0]+start)
+                if stop is not None and stop < 0: stop = max(0,self.shape[0]+stop)
+                if step >= 0:
+                    if start is None: start = 0
+                    if stop is None: stop = self.shape[0]
+                else:
+                    if start is None: start = self.shape[0]-1
+                    if stop is None: stop = -1
+
+                # truncate ranges
+                if start > self.shape[0]: start = self.shape[0]
+                if stop > self.shape[0]: stop = self.shape[0]
+                # get indices
+                pos = np.arange(start,stop,step) % self.shape[0]
+                return super().__getitem__(pos)
+            elif type(pos) == tuple:
+                # use ndarrays to pull from each dimension one-at-a-time, 
+                #   left to right
+                idx_list = []
+                for p in pos:
+                    if type(p) == int:
+                        pass
+                    elif type(p) == slice:
+                        pass
+                    else:
+                        raise IndexError('Only integers or slices supported in FlowArray.')
+                # return super().__getitem__(idx_list[0])[:,idx_list[1]][:,:,idx_list[2]]
+                   
+            else:
+                raise IndexError('Only integers or slices supported in FlowArray.')
+                
+
+
+
+
 class fCubicSpline(interpolate.CubicSpline):
     '''
     Extends Scipy's CubicSpline object to get info about original fluid data.
@@ -336,9 +398,13 @@ class fCubicSpline(interpolate.CubicSpline):
             return self.__call__(self.x[pos])
         elif type(pos) == slice:
             start = pos.start; stop = pos.stop; step = pos.step
-            if start is None: start = 0
-            if stop is None: stop = len(self.x)
             if step is None: step = 1
+            if step >= 0:
+                if start is None: start = 0
+                if stop is None: stop = len(self.x)
+            else:
+                if start is None: start = len(self.x)-1
+                if stop is None: stop = -1
             return np.stack([self.__call__(self.x[n]) for 
                              n in range(start,stop,step)])
         elif type(pos) == tuple:
@@ -346,9 +412,13 @@ class fCubicSpline(interpolate.CubicSpline):
                 return self.__call__(self.x[pos[0]])[pos[1:]]
             elif type(pos[0]) == slice:
                 start = pos[0].start; stop = pos[0].stop; step = pos[0].step
-                if start is None: start = 0
-                if stop is None: stop = len(self.x)
                 if step is None: step = 1
+                if step >= 0:
+                    if start is None: start = 0
+                    if stop is None: stop = len(self.x)
+                else:
+                    if start is None: start = len(self.x)-1
+                    if stop is None: stop = -1
                 return np.stack([self.__call__(self.x[n])[pos[1:]] for 
                                  n in range(start,stop,step)])
             else:

@@ -136,7 +136,7 @@ class Environment:
     flow : FluidData object
         The fluid velocity field, any temporal interpolation, and attributes
     tiling : tuple (x,y) of floats 
-        how much tiling was done in the x and y direction
+        tiling of the original fluid environment in the x- and y-directions
     orig_L : tuple (Lx,Ly) of floats
         length of the domain in x and y direction (Lx,Ly) before tiling occured
     h_p : float
@@ -3367,8 +3367,10 @@ class Environment:
                 v_x = flow[0]
                 v_y = flow[1]
             elif t_n is not None:
-                v_x = self.flow[0][t_n]
-                v_y = self.flow[1][t_n]
+                time=self.flow.flow_times[t_n]
+                flow = self.interpolate_temporal_flow(time=time)
+                v_x = self.flow[0]
+                v_y = self.flow[1]
             else:
                 flow = self.interpolate_temporal_flow()
                 v_x = flow[0]
