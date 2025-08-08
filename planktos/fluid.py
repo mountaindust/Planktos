@@ -136,13 +136,14 @@ class FlowArray(np.ndarray):
     same as no tiling.
     '''
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __array_finalize__(self, obj):
         self.tiling = None
-        self.dshape = self.shape
+        self.dshape = obj.shape
 
     def __getitem__(self, pos):
-        if self.tiling is not None:
+        if self.tiling is None:
+            return super().__getitem__(pos)
+        else:
             if type(pos) == int:
                 if pos > self.dshape[0]-1 or pos < -self.dshape[0]:
                     tnum = pos//self.dshape[0]
@@ -474,7 +475,7 @@ class fCubicSpline(interpolate.CubicSpline):
         if self.tiling is None:
             return farray
         elif type(pos) != tuple:
-            farray = FlowArray(farray)
+            farray = farray.view(FlowArray)
             farray.tiling = self.tiling
             farray.shape = self.shape[1:]
             return farray
@@ -684,7 +685,7 @@ class FluidData:
         else:
             # Time-invariant flow. Just save it as-is.
             self.fshape = flow[0].shape
-            self._flow = [FlowArray(f) for f in flow]
+            self._flow = [f.view(FlowArray) for f in flow]
 
         self.fmin = (f.min() for f in self._flow)
         self.fmax = (f.max() for f in self._flow)
