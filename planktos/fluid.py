@@ -172,20 +172,56 @@ class FlowArray(np.ndarray):
                 # use ndarrays to pull from each dimension one-at-a-time, 
                 #   left to right
                 idx_list = []
-                for p in pos:
+                for n,p in enumerate(pos):
                     if type(p) == int:
-                        pass
+                        if p > self.dshape[n]-1 or p < -self.dshape[n]:
+                            tnum = p//self.dshape[n]
+                            if tnum > self.tiling[n]-1 or tnum < -self.tiling[n]:
+                                raise IndexError(f"index {p} is out of bounds for axis 0 with size {self.shape[n]}")
+                            idx_list.append(p % self.dshape[n])
+                        else:
+                            idx_list.append(p)
                     elif type(p) == slice:
-                        pass
+                        start = p.start; stop = p.stop; step = p.step
+                        if step is None: step = 1
+                        if start is not None and start < 0: start = max(0,self.shape[n]+start)
+                        if stop is not None and stop < 0: stop = max(0,self.shape[n]+stop)
+                        if step >= 0:
+                            if start is None: start = 0
+                            if stop is None: stop = self.shape[n]
+                        else:
+                            if start is None: start = self.shape[n]-1
+                            if stop is None: stop = -1
+                        # truncate ranges
+                        if start > self.shape[n]: start = self.shape[n]
+                        if stop > self.shape[n]: stop = self.shape[n]
+                        # get indices
+                        idx_list.append(np.arange(start,stop,step) % self.shape[n])
                     else:
                         raise IndexError('Only integers or slices supported in FlowArray.')
-                # return super().__getitem__(idx_list[0])[:,idx_list[1]][:,:,idx_list[2]]
-                   
+                if len(pos) == 2:
+                    return super().__getitem__(idx_list[0])[:,idx_list[1]]
+                elif len(pos) == 3:
+                    return super().__getitem__(idx_list[0])[:,idx_list[1]][:,:,idx_list[2]]
+                else:
+                    raise IndexError('Unrecognized number of dimensions in FlowArray.')
             else:
                 raise IndexError('Only integers or slices supported in FlowArray.')
+            
+    def min(self):
+        fshape = self.shape
+        self.shape = self.dshape
+        dmin = super().min()
+        self.shape = fshape
+        return dmin
+    
+    def max(self):
+        fshape = self.shape
+        self.shape = self.dshape
+        dmax = super().max()
+        self.shape = fshape
+        return dmax
                 
-
-
 
 
 class fCubicSpline(interpolate.CubicSpline):
@@ -228,6 +264,8 @@ class fCubicSpline(interpolate.CubicSpline):
                                                     axis=0, extrapolate=True)
 
         self.shape = flow.shape
+        self.dshape = flow.shape
+        self.tiling = None
         self.extrapolate = extrapolate
         # These are inaccurate and should only be used for plotting!
         self.data_max = flow.max()
@@ -395,7 +433,7 @@ class fCubicSpline(interpolate.CubicSpline):
         Allows indexing into the interpolator at original time mesh points.
         '''
         if type(pos) == int:
-            return self.__call__(self.x[pos])
+            farray = self.__call__(self.x[pos])
         elif type(pos) == slice:
             start = pos.start; stop = pos.stop; step = pos.step
             if step is None: step = 1
@@ -405,11 +443,14 @@ class fCubicSpline(interpolate.CubicSpline):
             else:
                 if start is None: start = len(self.x)-1
                 if stop is None: stop = -1
-            return np.stack([self.__call__(self.x[n]) for 
-                             n in range(start,stop,step)])
+            farray = np.stack([self.__call__(self.x[n]) for 
+                               n in range(start,stop,step)])
         elif type(pos) == tuple:
             if type(pos[0]) == int:
-                return self.__call__(self.x[pos[0]])[pos[1:]]
+                if self.tiling is None:
+                    farray = self.__call__(self.x[pos[0]])[pos[1:]]
+                else:
+                    farray = self.__call__(self.x[pos[0]])
             elif type(pos[0]) == slice:
                 start = pos[0].start; stop = pos[0].stop; step = pos[0].step
                 if step is None: step = 1
@@ -419,12 +460,62 @@ class fCubicSpline(interpolate.CubicSpline):
                 else:
                     if start is None: start = len(self.x)-1
                     if stop is None: stop = -1
-                return np.stack([self.__call__(self.x[n])[pos[1:]] for 
-                                 n in range(start,stop,step)])
+                if self.tiling is None:
+                    farray = np.stack([self.__call__(self.x[n])[pos[1:]] for 
+                                       n in range(start,stop,step)])
+                else:
+                    farray = np.stack([self.__call__(self.x[n]) for 
+                                       n in range(start,stop,step)])
             else:
                 raise IndexError('Only integers or slices supported in fCubicSpline.')
         else:
             raise IndexError('Only integers or slices supported in fCubicSpline.')
+        
+        if self.tiling is None:
+            return farray
+        elif type(pos) != tuple:
+            farray = FlowArray(farray)
+            farray.tiling = self.tiling
+            farray.shape = self.shape[1:]
+            return farray
+        else:
+            idx_list = []
+            for n,p in enumerate(pos[1:]):
+                n += 1
+                if type(p) == int:
+                    if p > self.dshape[n]-1 or p < -self.dshape[n]:
+                        tnum = p//self.dshape[n]
+                        if tnum > self.tiling[n-1]-1 or tnum < -self.tiling[n-1]:
+                            raise IndexError(f"index {p} is out of bounds for axis 0 with size {self.shape[n]}")
+                        idx_list.append(p % self.dshape[n])
+                    else:
+                        idx_list.append(p)
+                elif type(p) == slice:
+                    start = p.start; stop = p.stop; step = p.step
+                    if step is None: step = 1
+                    if start is not None and start < 0: start = max(0,self.shape[n]+start)
+                    if stop is not None and stop < 0: stop = max(0,self.shape[n]+stop)
+                    if step >= 0:
+                        if start is None: start = 0
+                        if stop is None: stop = self.shape[n]
+                    else:
+                        if start is None: start = self.shape[n]-1
+                        if stop is None: stop = -1
+                    # truncate ranges
+                    if start > self.shape[n]: start = self.shape[n]
+                    if stop > self.shape[n]: stop = self.shape[n]
+                    # get indices
+                    idx_list.append(np.arange(start,stop,step) % self.shape[n])
+                else:
+                    raise IndexError('Only integers or slices supported in fCubicSpline.')
+            if len(pos) == 2:
+                return farray[idx_list[0]]
+            elif len(pos) == 3:
+                return farray[idx_list[0]][:,idx_list[1]]
+            elif len(pos) == 4:
+                return farray[idx_list[0]][:,idx_list[1]][:,:,idx_list[2]]
+            else:
+                raise IndexError('Unrecognized number of dimensions in fCubicSpline.')         
 
     def __setitem__(self, pos, val):
         raise RuntimeError("Cannot assign to spline object. "+
@@ -515,6 +606,8 @@ class FluidData:
         Minimum velocity in all the data seen so far
     fmax : tuple
         Maximum velocity in all the data seen so far
+    tiling : None, or tuple of int
+        an (x,y) tuple of integers. (1,1) is functionally the same as no tiling.
     '''
 
     def __init__(self, flow, flow_points, flow_times=None, INUM=None, 
@@ -556,6 +649,7 @@ class FluidData:
         self.INUM = INUM # This is how many intervals to use when initiating 
                          #  the spline object.
         self.fluid_domain_LLC = fluid_domain_LLC
+        self.tiling = None
 
         if INUM is not None and len(flow_times) <= INUM:
             raise RuntimeError("Not enough data files for dynamic splining.")
@@ -590,7 +684,7 @@ class FluidData:
         else:
             # Time-invariant flow. Just save it as-is.
             self.fshape = flow[0].shape
-            self._flow = flow
+            self._flow = [FlowArray(f) for f in flow]
 
         self.fmin = (f.min() for f in self._flow)
         self.fmax = (f.max() for f in self._flow)
@@ -728,6 +822,9 @@ class FluidData:
                 self._flow[n] = fCubicSpline(load_times, flow[n], dydx0[n], 
                                              dydx1[n], extrapolate, direction='right')
                 flow[n] = 0
+                if self.tiling is not None:
+                    self._flow[n].tiling = self.tiling
+                    self._flow[n].shape = (self._flow[n].shape[0], *self.fshape[1:])
             self.loaded_dump_bnds = (self.loaded_dump_bnds[1]-1,d_finish)
             self.loaded_idx_bnds = (idx_start, idx_finish)
 
@@ -783,6 +880,9 @@ class FluidData:
                 self._flow[n] = fCubicSpline(load_times, flow[n], dydx0[n], 
                                              dydx1[n], extrapolate, direction='left')
                 flow[n] = 0
+                if self.tiling is not None:
+                    self._flow[n].tiling = self.tiling
+                    self._flow[n].shape = (self._flow[n].shape[0], *self.fshape[1:])
             self.loaded_dump_bnds = (d_start, self.loaded_dump_bnds[0]+1)
             self.loaded_idx_bnds = (idx_start, idx_finish)
 
