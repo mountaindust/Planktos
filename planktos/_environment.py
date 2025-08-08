@@ -135,10 +135,6 @@ class Environment:
         list of past time states
     flow : FluidData object
         The fluid velocity field, any temporal interpolation, and attributes
-    tiling : tuple (x,y) of floats 
-        tiling of the original fluid environment in the x- and y-directions
-    orig_L : tuple (Lx,Ly) of floats
-        length of the domain in x and y direction (Lx,Ly) before tiling occured
     h_p : float
         height of porous region in analytic flows, e.g. Brinkman
     g : float
@@ -235,8 +231,6 @@ class Environment:
         self.set_boundary_conditions(x_bndry, y_bndry, z_bndry)
 
         ##### Fluid velocity field variables #####
-        self.tiling = None # (x,y) tiling amount
-        self.orig_L = None # (Lx,Ly) before tiling/extending
         self.mag_grad = None
         self.mag_grad_time = None
         self.DuDt = None
@@ -2051,7 +2045,7 @@ class Environment:
     #######################################################################
 
 
-    def tile_flow(self, x=2, y=1):
+    def tile_domain(self, x=1, y=1):
         '''Tile fluid flow and immersed meshes a number of times in the x and/or 
         y directions. While obviously this works best if the fluid is periodic 
         in the direction(s) being tiled, this will not be enforced. Instead, it 
@@ -2060,97 +2054,32 @@ class Environment:
 
         Parameters
         ----------
-        x : int, default=2
+        x : int, default=1
             number of tiles in the x direction (counting the one already there)
         y : int, default=1
             number of tiles in the y direction (counting the one already there)
         '''
 
-        DIM3 = len(self.L) == 3
-        TIME_DEP = self.flow.flow_times is not None
+        tile_num = (x,y)
 
-        if x is None:
-            x = 1
-        if y is None:
-            y = 1
-        if DIM3:
-            tile_num = (x,y,1)
-        else:
-            tile_num = (x,y)
-
-        if not TIME_DEP:
-            # no time dependence
-            flow_shape = self.flow.fshape
-            new_flow_shape = np.array(flow_shape)
-            # get new dimensions
-            for dim in range(len(flow_shape)):
-                new_flow_shape[dim] += (flow_shape[dim]-1)*(tile_num[dim]-1)
-
-            for n, flow in enumerate(self.flow):
-                new_flow = np.zeros(new_flow_shape)
-                # copy bottom-left corner
-                new_flow[0,0,...] = flow[0,0,...]
-                # tile first row/column
-                if DIM3:
-                    r_tile_num = (x,1)
-                    c_tile_num = (y,1)
-                else:
-                    r_tile_num = x
-                    c_tile_num = y
-                new_flow[1:,0,...] = np.tile(flow[1:,0,...], r_tile_num)
-                new_flow[0,1:,...] = np.tile(flow[0,1:,...], c_tile_num)
-                # tile interior
-                new_flow[1:,1:,...] = np.tile(flow[1:,1:,...], tile_num)
-                self.flow[n] = new_flow
-        else:
-            # time dependent flow
-            tile_num_time = [1]+list(tile_num) # prepend a 1; do not tile time
-            flow_shape = self.flow.fshape
-            new_flow_shape = np.array(flow_shape)
-            # get new dimensions
-            for dim in range(1,len(flow_shape)):
-                new_flow_shape[dim] += (flow_shape[dim]-1)*(tile_num_time[dim]-1)
-
-            for n, flow in enumerate(self.flow):
-                new_flow = np.zeros(new_flow_shape)
-                # copy bottom-left corner
-                new_flow[:,0,0,...] = flow[:,0,0,...]
-                # tile first row/column
-                if DIM3:
-                    r_tile_num = (1,x,1)
-                    c_tile_num = (1,y,1)
-                else:
-                    r_tile_num = (1,x)
-                    c_tile_num = (1,y)
-                new_flow[:,1:,0,...] = np.tile(flow[:,1:,0,...], r_tile_num)
-                new_flow[:,0,1:,...] = np.tile(flow[:,0,1:,...], c_tile_num)
-                # tile interior
-                new_flow[:,1:,1:,...] = np.tile(flow[:,1:,1:,...], tile_num_time)
-                self.flow[n] = new_flow
-            
-        # update environment dimensions and Eulerian meshes
-        new_points = []
-        self.orig_L = tuple(self.L[:2])
-        for n in range(2):
-            self.L[n] *= tile_num[n]
-            new_points.append(np.concatenate([self.flow.flow_points[n]]+
-                [x*self.flow.flow_points[n][-1]+self.flow.flow_points[n][1:] for
-                x in range(1,tile_num[n])]))
-        if DIM3:
-            new_points.append(self.flow.flow_points[2])
-        self.flow.flow_points = tuple(new_points)
-        self.tiling = (x,y)
+        if self.flow is not None:
+            self.flow.tile_flow(x,y)
 
         # tile Lagrangian meshes
         if self.ibmesh is not None:
             newmeshs = [self.ibmesh]
-            for ii in range(self.tiling[0]):
-                for jj in range(self.tiling[1]):
+            for ii in range(tile_num[0]):
+                for jj in range(tile_num[1]):
                     new_mesh = np.array(self.ibmesh)
-                    new_mesh[:,:,0] += self.orig_L[0]*ii
-                    new_mesh[:,:,1] += self.orig_L[1]*jj
+                    new_mesh[:,:,0] += self.L[0]*ii
+                    new_mesh[:,:,1] += self.L[1]*jj
                     newmeshs.append(new_mesh)
             self.ibmesh = np.concatenate(newmeshs).astype(np.float64)
+
+        # update environment dimensions
+        for n in range(2):
+            self.L[n] *= tile_num[n]
+        
         print("Fluid tiled. Planktos domain size is now {}.".format(self.L))
         self._reset_flow_deriv()
 
@@ -2253,7 +2182,6 @@ class Environment:
 
         # update environment dimensions and meshes
         new_points = []
-        self.orig_L = tuple(self.L[:2])
         self.L[0] += res_x*(x_minus+x_plus)
         self.L[1] += res_y*(y_minus+y_plus)
         if x_minus+x_plus > 0:
@@ -3613,8 +3541,6 @@ class Environment:
         parameters and reports new domain.'''
 
         self.h_p = None
-        self.tiling = None
-        self.orig_L = None
         self.plot_structs = []
         self.plot_structs_args = []
         self._reset_flow_deriv()

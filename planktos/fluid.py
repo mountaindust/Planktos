@@ -149,7 +149,7 @@ class FlowArray(np.ndarray):
                     tnum = pos//self.dshape[0]
                     if tnum > self.tiling[0]-1 or tnum < -self.tiling[0]:
                         raise IndexError(f"index {pos} is out of bounds for axis 0 with size {self.shape[0]}")
-                    pos = pos % self.dshape[0]
+                    pos = pos % (self.dshape[0]-1) # periodic; last item is a duplicate
                     return super().__getitem__(pos)
             elif type(pos) == slice:
                 start = pos.start; stop = pos.stop; step = pos.step
@@ -167,7 +167,7 @@ class FlowArray(np.ndarray):
                 if start > self.shape[0]: start = self.shape[0]
                 if stop > self.shape[0]: stop = self.shape[0]
                 # get indices
-                pos = np.arange(start,stop,step) % self.shape[0]
+                pos = np.arange(start,stop,step) % (self.dshape[0]-1)
                 return super().__getitem__(pos)
             elif type(pos) == tuple:
                 # use ndarrays to pull from each dimension one-at-a-time, 
@@ -197,7 +197,7 @@ class FlowArray(np.ndarray):
                         if start > self.shape[n]: start = self.shape[n]
                         if stop > self.shape[n]: stop = self.shape[n]
                         # get indices
-                        idx_list.append(np.arange(start,stop,step) % self.shape[n])
+                        idx_list.append(np.arange(start,stop,step) % (self.dshape[n]-1))
                     else:
                         raise IndexError('Only integers or slices supported in FlowArray.')
                 if len(pos) == 2:
@@ -488,7 +488,7 @@ class fCubicSpline(interpolate.CubicSpline):
                         tnum = p//self.dshape[n]
                         if tnum > self.tiling[n-1]-1 or tnum < -self.tiling[n-1]:
                             raise IndexError(f"index {p} is out of bounds for axis 0 with size {self.shape[n]}")
-                        idx_list.append(p % self.dshape[n])
+                        idx_list.append(p % (self.dshape[n]-1)) # periodic; last item is a duplicate
                     else:
                         idx_list.append(p)
                 elif type(p) == slice:
@@ -506,7 +506,7 @@ class fCubicSpline(interpolate.CubicSpline):
                     if start > self.shape[n]: start = self.shape[n]
                     if stop > self.shape[n]: stop = self.shape[n]
                     # get indices
-                    idx_list.append(np.arange(start,stop,step) % self.shape[n])
+                    idx_list.append(np.arange(start,stop,step) % (self.dshape[n]-1))
                 else:
                     raise IndexError('Only integers or slices supported in fCubicSpline.')
             if len(pos) == 2:
@@ -890,6 +890,54 @@ class FluidData:
             # Update fmin/fmax
             self.fmin = (min(self.fmin[n],f.min()) for n,f in enumerate(self._flow))
             self.fmax = (max(self.fmax[n],f.max()) for n,f in enumerate(self._flow))
+    
+
+
+    def tile_flow(self, x=1, y=1):
+        '''Tile fluid flow and immersed meshes a number of times in the x and/or 
+        y directions. While obviously this works best if the fluid is periodic 
+        in the direction(s) being tiled, this will not be enforced. Instead, it 
+        will just be assumed that the domain edges are equivalent, and only the
+        right/upper domain edge will be used in tiling.
+
+        Parameters
+        ----------
+        x : int, default=1
+            number of tiles in the x direction (counting the one already there)
+        y : int, default=1
+            number of tiles in the y direction (counting the one already there)
+        '''
+
+        TIME_DEP = self.flow_times is not None
+
+        self.tiling = (x,y)
+        new_flow_shape = np.array(self.fshape)
+
+        # get new dimensions and pass to flow objects
+        if not TIME_DEP:
+            for dim,tnum in enumerate(self.tiling):
+                new_flow_shape[dim] += (self.fshape[dim]-1)*(tnum-1)
+            self.fshape = tuple(new_flow_shape)
+            for f in self._flow:
+                f.shape = self.fshape
+                f.tiling = self.tiling
+        else:
+            for dim,tnum in enumerate(self.tiling):
+                new_flow_shape[dim+1] += (self.fshape[dim+1]-1)*(tnum-1)
+            self.fshape = (self.fshape[0], *new_flow_shape)
+            for f in self._flow:
+                f.shape = (f.shape[0], *self.fshape[1:])
+                f.tiling = self.tiling
+
+        # extend flow_points
+        flow_points = []
+        for d,fp in enumerate(self.flow_points[:2]):
+            flow_points.append(np.concatenate(
+                [fp] + [fp[1:]+fp[-1]*n for n in range(1,self.tiling[d])]
+                ))
+        if len(self.flow_points) == 3:
+            flow_points.append(self.flow_points[2])
+        self.flow_points = tuple(flow_points)
     
 
 

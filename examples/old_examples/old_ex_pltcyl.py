@@ -58,7 +58,7 @@ def _plot_cylinders(ax3d, bounds):
 envir = planktos.Environment()
 envir.read_IBAMR3d_vtk_data('../tests/IBAMR_test_data', d_start=5, d_finish=None)
 # tile flow in a 3,3 grid
-envir.tile_flow(3,3)
+envir.tile_domain(3,3)
 
 # plot cylinder in each tile
 add_cylinders_toplot(envir, '../tests/IBAMR_test_data/mesh_db.vtk')

@@ -27,7 +27,7 @@ envir.units = 'mm'
 envir.read_stl_mesh_data('comsol_data/seafan_cylinder.stl')
 # Tile the fluid and cylinder in the x-direction so that the length of the x- 
 #   and z-dimensions are roughly the same.
-envir.tile_flow(x=13)
+envir.tile_domain(x=13)
 
 # See ex_ib2d_sticky for details about this "sticky" behavior!
 class permstick(planktos.Swarm):

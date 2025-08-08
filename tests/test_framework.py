@@ -142,7 +142,7 @@ def test_brinkman_2D():
     assert len(envir.time_history) == 0, "time history not reset"
 
     # tile flow
-    envir.tile_flow(3,3)
+    envir.tile_domain(3,3)
     assert envir.flow[0][100,0] == envir.flow[0][200,0] == envir.flow[0][300,0]
     assert envir.flow[0][0,100] == envir.flow[0][0,200] == envir.flow[0][0,300]
     assert envir.flow[0][100,50] == envir.flow[0][200,50] == envir.flow[0][300,50]
@@ -213,7 +213,7 @@ def test_brinkman_2D():
     assert np.isclose(envir.flow[0][-1,50,-1],.5), "flow should end at .5"
 
     # tile flow
-    envir.tile_flow(2,1)
+    envir.tile_domain(2,1)
     assert envir.flow[0][1,100,0] == envir.flow[0][1,200,0]
     assert envir.flow[0][1,100,50] == envir.flow[0][1,200,50]
     assert envir.flow[1][1,100,0] == envir.flow[1][1,200,0]
@@ -283,7 +283,7 @@ def test_brinkman_3D():
     assert len(envir.flow[0].shape) == 3, "Flow vector should be 3D"
 
     # tile flow
-    envir.tile_flow(2,2)
+    envir.tile_domain(2,2)
     assert len(envir.flow_points[0]) == len(envir.flow_points[1])
     assert len(envir.flow_points[0]) > len(envir.flow_points[2])
     assert len(envir.flow_points[0]) == envir.flow[0].shape[0]
@@ -333,7 +333,7 @@ def test_brinkman_3D():
     envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(20)*0.22306,
                             tspan=[0, 40], res=50)
     # tile flow
-    envir.tile_flow(2,1)
+    envir.tile_domain(2,1)
     assert len(envir.flow_points[0]) > len(envir.flow_points[1])
     assert len(envir.flow_points[0]) == envir.flow[0].shape[1]
 

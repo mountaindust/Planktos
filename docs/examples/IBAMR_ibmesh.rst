@@ -34,7 +34,7 @@ can tile our environment if we like, getting a bigger domain for the agents!
 In this case, let's tile the environment to a 3x3 grid with respect to its
 original size. ::
 
-    envir.tile_flow(3,3)
+    envir.tile_domain(3,3)
     envir.plot_flow()
 
 .. image:: ../_static/IBAMR_tiled.png

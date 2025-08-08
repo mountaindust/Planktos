@@ -241,7 +241,7 @@ class Swarm:
 
     >>> envir = planktos.Environment()
     >>> envir.read_IBAMR3d_vtk_data('../tests/IBAMR_test_data', d_start=5, d_finish=None)
-    >>> envir.tile_flow(3,3)
+    >>> envir.tile_domain(3,3)
     >>> swrm = Swarm(envir=envir)
 
     '''

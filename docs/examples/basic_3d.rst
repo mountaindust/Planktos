@@ -21,7 +21,7 @@ available spatial dimensions::
 If you decide later you want a bigger spatial domain (or you loaded fluid data
 with periodic boundary conditions but want a bigger domain than the CFD
 data was generated on), you can tile the Environment in the x and y 
-directions using the tile_flow method (this also works in 2D). You can also
+directions using the tile_domain method (this also works in 2D). You can also
 extend the domain in the x or y direction by just holding the flow on the
 boundary constant and translating it (extend method).
 

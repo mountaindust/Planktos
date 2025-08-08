@@ -210,7 +210,7 @@ Class: Environment
     - `read_vertex_data_to_convex_hull` Read in 2D or 3D vertex data from a vtk file or a .vertex file and create a structure by computing the convex hull. Only static meshes are supported.
     - `add_vertices_to_2D_ibmesh` Try to repair 2D mesh segments which intersect away from 
     specified vertices by adding vertices at the intersections.
-    - `tile_flow` Tile the current fluid flow in the x and/or y directions. It is assumed that the flow is roughly periodic in the direction(s) specified - no checking will be done, and no errors thrown if not.
+    - `tile_domain` Tile the current fluid flow and immersed mesh in the x and/or y directions. It is assumed that the flow is roughly periodic in the direction(s) specified - no checking will be done, and no errors thrown if not.
     - `extend` Extend the domain by duplicating the boundary flow a number of times in a given (or multiple) directions. Good when there is fully resolved fluid \
     flow before/after or on the sides of a structure.
     - `add_swarm` Add or initialize a Swarm into the Environment
