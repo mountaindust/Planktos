@@ -3943,12 +3943,12 @@ class Environment:
                 anim = animation.FuncAnimation(fig, animate_mvib, frames=frames,
                                             fargs=(quiver,mesh_col,kwargs),
                                             interval=interval, repeat=False,
-                                            blit=True, save_count=len(frames))
+                                            blit=True)
             else:
                 anim = animation.FuncAnimation(fig, animate, frames=frames,
                                             fargs=(quiver,kwargs),
                                             interval=interval, repeat=False,
-                                            blit=True, save_count=len(frames))
+                                            blit=True)
 
         plt.show()
 

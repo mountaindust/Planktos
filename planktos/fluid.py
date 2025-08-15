@@ -136,9 +136,49 @@ class FlowArray(np.ndarray):
     same as no tiling.
     '''
 
+    @property
+    def shape(self):
+        # Custom getter for shape property
+        return getattr(self, '_shape', super().shape)
+
+    @shape.setter
+    def shape(self, value):
+        # Make this property read-only
+        raise AttributeError("shape is read-only in FlowArray")
+
+    @property
+    def tiling(self):
+        return getattr(self, '_tiling', None)
+
+    @tiling.setter
+    def tiling(self, value):
+        if value is not None:
+            # Check if value is iterable and length 2
+            try:
+                v = tuple(value)
+            except TypeError:
+                raise ValueError("tiling must be an iterable of length 2 or None")
+            if len(v) != 2:
+                raise ValueError("tiling must be an iterable of length 2")
+            for i in v:
+                if not isinstance(i, int) or i < 1:
+                    raise ValueError("Each tiling value must be an integer >= 1")
+            self._tiling = v
+            new_shape = list(self._shape)
+            new_shape[0] = (new_shape[0]-1) * v[0] + 1
+            new_shape[1] = (new_shape[1]-1) * v[1] + 1
+            self._shape = tuple(new_shape)
+        else:
+            self._tiling = None
+
+
+
     def __array_finalize__(self, obj):
         self.tiling = None
         self.dshape = obj.shape
+        # Ensure _shape is initialized
+        self._shape = obj.shape
+
 
     def __getitem__(self, pos):
         if self.tiling is None:
@@ -169,6 +209,12 @@ class FlowArray(np.ndarray):
                 # get indices
                 pos = np.arange(start,stop,step) % (self.dshape[0]-1)
                 return super().__getitem__(pos)
+            elif type(pos) == np.ndarray:
+                p_min = pos.min(); p_max = pos.max()
+                if p_max > self.shape[0]-1 or p_min < -self.shape[0]:
+                    raise IndexError(f"index {pos} is out of bounds for axis 0 with size {self.shape[0]}")
+                pos = pos % (self.dshape[0]-1)
+                return super().__getitem__(pos)
             elif type(pos) == tuple:
                 # use ndarrays to pull from each dimension one-at-a-time, 
                 #   left to right
@@ -179,7 +225,7 @@ class FlowArray(np.ndarray):
                             tnum = p//self.dshape[n]
                             if tnum > self.tiling[n]-1 or tnum < -self.tiling[n]:
                                 raise IndexError(f"index {p} is out of bounds for axis 0 with size {self.shape[n]}")
-                            idx_list.append(p % self.dshape[n])
+                            idx_list.append(p % self.dshape[n]-1)
                         else:
                             idx_list.append(p)
                     elif type(p) == slice:
@@ -198,8 +244,13 @@ class FlowArray(np.ndarray):
                         if stop > self.shape[n]: stop = self.shape[n]
                         # get indices
                         idx_list.append(np.arange(start,stop,step) % (self.dshape[n]-1))
+                    elif type(p) == np.ndarray:
+                        p_min = p.min(); p_max = p.max()
+                        if p_max > self.shape[n]-1 or p_min < -self.shape[n]:
+                            raise IndexError(f"index {p} is out of bounds for axis {n} with size {self.shape[n]}")
+                        idx_list.append(p % (self.dshape[n]-1))
                     else:
-                        raise IndexError('Only integers or slices supported in FlowArray.')
+                        raise IndexError('Only integers, slices, or arrays supported in FlowArray.')
                 if len(pos) == 2:
                     return super().__getitem__(idx_list[0])[:,idx_list[1]]
                 elif len(pos) == 3:
@@ -207,20 +258,22 @@ class FlowArray(np.ndarray):
                 else:
                     raise IndexError('Unrecognized number of dimensions in FlowArray.')
             else:
-                raise IndexError('Only integers or slices supported in FlowArray.')
-            
+                raise IndexError('Only integers, slices, tuples, or arrays supported in FlowArray.')
+
+
     def min(self):
-        fshape = self.shape
-        self.shape = self.dshape
+        full_shape = self.shape
+        self._shape = self.dshape # temporarily change shape back
         dmin = super().min()
-        self.shape = fshape
+        self._shape = full_shape
         return dmin
     
+    
     def max(self):
-        fshape = self.shape
-        self.shape = self.dshape
+        full_shape = self.shape
+        self._shape = self.dshape
         dmax = super().max()
-        self.shape = fshape
+        self._shape = full_shape
         return dmax
                 
 
@@ -264,13 +317,49 @@ class fCubicSpline(interpolate.CubicSpline):
             interpolate.CubicHermiteSpline.__init__(self, flow_times, flow, dydx, 
                                                     axis=0, extrapolate=True)
 
-        self.shape = flow.shape
+        self._shape = flow.shape
         self.dshape = flow.shape
-        self.tiling = None
         self.extrapolate = extrapolate
         # These are inaccurate and should only be used for plotting!
         self.data_max = flow.max()
         self.data_min = flow.min()
+
+    @property
+    def shape(self):
+        # Custom getter for shape property
+        return self._shape
+
+    @shape.setter
+    def shape(self, value):
+        # Make this property read-only
+        raise AttributeError("shape is read-only in fCubicSpline")
+
+    @property
+    def tiling(self):
+        return getattr(self, '_tiling', None)
+
+    @tiling.setter
+    def tiling(self, value):
+        if value is not None:
+            # Check if value is iterable and length 2
+            try:
+                v = tuple(value)
+            except TypeError:
+                raise ValueError("tiling must be an iterable of length 2 or None")
+            if len(v) != 2:
+                raise ValueError("tiling must be an iterable of length 2")
+            for i in v:
+                if not isinstance(i, int) or i < 1:
+                    raise ValueError("Each tiling value must be an integer >= 1")
+            self._tiling = v
+            new_shape = list(self.shape)
+            new_shape[1] = (new_shape[1]-1) * v[0] + 1
+            new_shape[2] = (new_shape[2]-1) * v[1] + 1
+            self._shape = tuple(new_shape)
+        else:
+            self._tiling = None
+
+
 
     def _extend_prev_spline(self, x, y, dydx0, dydx1, direction='right'):
         '''Set new spline based on derivative data from an old spline.
@@ -355,6 +444,8 @@ class fCubicSpline(interpolate.CubicSpline):
 
         return s
     
+
+
     def _left_based_cspline(self, x, y):
         '''Create a cubic spline where both boundary conditions are specified
         at the left (natural and 'not-a-knot'). This is extremely useful when 
@@ -427,7 +518,10 @@ class fCubicSpline(interpolate.CubicSpline):
         if (val < self.x[0] and not self.extrapolate[0]) \
               or (val > self.x[-1] and not self.extrapolate[1]):
             raise SplineRangeError('Out of range without extrapolation.')
-        return super().__call__(val)
+        farray = super().__call__(val)
+        farray = farray.view(FlowArray)
+        farray.tiling = self.tiling
+        return farray
 
     def __getitem__(self, pos):
         '''
@@ -477,7 +571,6 @@ class fCubicSpline(interpolate.CubicSpline):
         elif type(pos) != tuple:
             farray = farray.view(FlowArray)
             farray.tiling = self.tiling
-            farray.shape = self.shape[1:]
             return farray
         else:
             idx_list = []
@@ -528,7 +621,7 @@ class fCubicSpline(interpolate.CubicSpline):
         '''
         self.c = self.c[:, 0:last_x_idx, ...]
         self.x = self.x[0:last_x_idx+1]
-        self.shape = (len(self.x), *self.shape[1:])
+        self._shape = (len(self.x), *self._shape[1:])
 
     def max(self):
         '''This will return a data max based on the data used to build the spline.'''
@@ -695,7 +788,7 @@ class FluidData:
         '''Retrieve fluid data at the requested time and update the spline 
         dynamically as needed.
         '''
-        # Enforce constant extrapolation
+        # Enforce constant extrapolation beyond full time bounds
         if time <= self.flow_times[0]:
             start_time = self.flow_times[0]
             try:
@@ -717,7 +810,7 @@ class FluidData:
                 print('Cannot pass time to time-invarient flow.')
                 raise
         else:
-            # interpolate
+            # interpolate within full time bounds
             try:
                 return [fspline(time) for fspline in self._flow]
             except SplineRangeError:
@@ -825,7 +918,8 @@ class FluidData:
                 flow[n] = 0
                 if self.tiling is not None:
                     self._flow[n].tiling = self.tiling
-                    self._flow[n].shape = (self._flow[n].shape[0], *self.fshape[1:])
+                    assert self._flow[n].shape[1:] == self.fshape[1:], \
+                        "Tiling did not propagate correctly"
             self.loaded_dump_bnds = (self.loaded_dump_bnds[1]-1,d_finish)
             self.loaded_idx_bnds = (idx_start, idx_finish)
 
@@ -883,7 +977,8 @@ class FluidData:
                 flow[n] = 0
                 if self.tiling is not None:
                     self._flow[n].tiling = self.tiling
-                    self._flow[n].shape = (self._flow[n].shape[0], *self.fshape[1:])
+                    assert self._flow[n].shape[1:] == self.fshape[1:], \
+                        "Tiling did not propagate correctly"
             self.loaded_dump_bnds = (d_start, self.loaded_dump_bnds[0]+1)
             self.loaded_idx_bnds = (idx_start, idx_finish)
 
@@ -911,23 +1006,24 @@ class FluidData:
         TIME_DEP = self.flow_times is not None
 
         self.tiling = (x,y)
-        new_flow_shape = np.array(self.fshape)
+        new_flow_shape = list(self.fshape)
 
         # get new dimensions and pass to flow objects
         if not TIME_DEP:
             for dim,tnum in enumerate(self.tiling):
                 new_flow_shape[dim] += (self.fshape[dim]-1)*(tnum-1)
             self.fshape = tuple(new_flow_shape)
+            # Update tiling of FlowArray objects
             for f in self._flow:
-                f.shape = self.fshape
                 f.tiling = self.tiling
         else:
             for dim,tnum in enumerate(self.tiling):
                 new_flow_shape[dim+1] += (self.fshape[dim+1]-1)*(tnum-1)
-            self.fshape = (self.fshape[0], *new_flow_shape)
+            self.fshape = tuple(new_flow_shape)
+            # Update tiling of fCubicSpline objects
             for f in self._flow:
-                f.shape = (f.shape[0], *self.fshape[1:])
                 f.tiling = self.tiling
+                assert f.shape[1:] == self.fshape[1:], "Tiling did not propagate correctly"
 
         # extend flow_points
         flow_points = []

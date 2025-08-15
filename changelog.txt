@@ -4,7 +4,10 @@ Dynamic loading of 2D and 3D fluid velocity data!
 This allows simulations with a highly resolved fluid where RAM constraints
 are a major issue.
 - New FluidData class with subclasses for different data sources
-- ALL fluid data is now a FluidData instance
+- ALL loaded fluid data is now a FluidData instance
+- New FlowArray subclass of ndarray provides memory-efficient view on periodic flows
+- All of this has been kicked out of Environment and into new fluid library
+- tile_flow is now tile_domain in Environment, with main implementation now a method of FluidData
 
 
 1.0.0
