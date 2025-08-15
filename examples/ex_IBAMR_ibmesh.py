@@ -25,6 +25,7 @@ envir.read_IBAMR3d_vtk_data('../tests/IBAMR_test_data', d_start=3, d_finish=None
 #   points. This way, we don't end up with a cylinder without a top on it!
 envir.read_3D_vertex_data_to_convex_hull('../tests/IBAMR_test_data/mesh_db.vtk')
 # Plot to see what we have:
+print(f'Flow shape is {envir.flow.fshape}.')
 envir.plot_flow()
 
 # This data was generated with periodic boundary conditions in the x and y
@@ -35,6 +36,7 @@ envir.plot_flow()
 envir.tile_domain(3,3)
 
 # Now we can see the effect - notice that the cylinder mesh got tiled too!!
+print(f'Flow shape is now {envir.flow.fshape}.')
 envir.plot_flow()
 
 # Let's add a Swarm with 100 agents all positioned somewhat behind the 

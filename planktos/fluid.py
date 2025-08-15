@@ -128,23 +128,33 @@ def create_temporal_interpolations(flow_times, flow_data):
 
 class FlowArray(np.ndarray):
     '''
-    Extends NumPy's ndarray to provide memory-saving views onto data when 
-    tiling or extending the domain.
+    Establishes a view on NumPy's ndarray to save memory when tiling or 
+    extending the domain.
 
     tiling is the shape of the tile. It is None if there has been no tiling.
     Otherwise, it is an (x,y) tuple of integers. (1,1) is functionally the 
     same as no tiling.
     '''
 
+    def __array_finalize__(self, obj):
+        if type(obj) is not FlowArray:
+            self.array = obj
+        else:
+            self.array = obj.array
+        self._tiling = None
+
+    @property
+    def dshape(self):
+        # Custom getter for shape property
+        return self.array.shape
+
     @property
     def shape(self):
-        # Custom getter for shape property
-        return getattr(self, '_shape', super().shape)
-
-    @shape.setter
-    def shape(self, value):
-        # Make this property read-only
-        raise AttributeError("shape is read-only in FlowArray")
+        if self.tiling is not None:
+            return ((self.array.shape[0]-1) * self.tiling[0] + 1, 
+                    (self.array.shape[1]-1) * self.tiling[1] + 1,
+                    *self.array.shape[2:])
+        return self.array.shape
 
     @property
     def tiling(self):
@@ -164,25 +174,13 @@ class FlowArray(np.ndarray):
                 if not isinstance(i, int) or i < 1:
                     raise ValueError("Each tiling value must be an integer >= 1")
             self._tiling = v
-            new_shape = list(self._shape)
-            new_shape[0] = (new_shape[0]-1) * v[0] + 1
-            new_shape[1] = (new_shape[1]-1) * v[1] + 1
-            self._shape = tuple(new_shape)
         else:
             self._tiling = None
 
 
-
-    def __array_finalize__(self, obj):
-        self.tiling = None
-        self.dshape = obj.shape
-        # Ensure _shape is initialized
-        self._shape = obj.shape
-
-
     def __getitem__(self, pos):
         if self.tiling is None:
-            return super().__getitem__(pos)
+            return self.array[pos]
         else:
             if type(pos) == int:
                 if pos > self.dshape[0]-1 or pos < -self.dshape[0]:
@@ -190,7 +188,7 @@ class FlowArray(np.ndarray):
                     if tnum > self.tiling[0]-1 or tnum < -self.tiling[0]:
                         raise IndexError(f"index {pos} is out of bounds for axis 0 with size {self.shape[0]}")
                     pos = pos % (self.dshape[0]-1) # periodic; last item is a duplicate
-                    return super().__getitem__(pos)
+                    return self.array[pos]
             elif type(pos) == slice:
                 start = pos.start; stop = pos.stop; step = pos.step
                 if step is None: step = 1
@@ -208,17 +206,18 @@ class FlowArray(np.ndarray):
                 if stop > self.shape[0]: stop = self.shape[0]
                 # get indices
                 pos = np.arange(start,stop,step) % (self.dshape[0]-1)
-                return super().__getitem__(pos)
+                return self.array[pos]
             elif type(pos) == np.ndarray:
                 p_min = pos.min(); p_max = pos.max()
                 if p_max > self.shape[0]-1 or p_min < -self.shape[0]:
                     raise IndexError(f"index {pos} is out of bounds for axis 0 with size {self.shape[0]}")
                 pos = pos % (self.dshape[0]-1)
-                return super().__getitem__(pos)
+                return self.array[pos]
             elif type(pos) == tuple:
                 # use ndarrays to pull from each dimension one-at-a-time, 
                 #   left to right
                 idx_list = []
+                spec_len = []
                 for n,p in enumerate(pos):
                     if type(p) == int:
                         if p > self.dshape[n]-1 or p < -self.dshape[n]:
@@ -228,6 +227,7 @@ class FlowArray(np.ndarray):
                             idx_list.append(p % self.dshape[n]-1)
                         else:
                             idx_list.append(p)
+                        spec_len.append(1)
                     elif type(p) == slice:
                         start = p.start; stop = p.stop; step = p.step
                         if step is None: step = 1
@@ -244,17 +244,40 @@ class FlowArray(np.ndarray):
                         if stop > self.shape[n]: stop = self.shape[n]
                         # get indices
                         idx_list.append(np.arange(start,stop,step) % (self.dshape[n]-1))
+                        spec_len.append(None)
                     elif type(p) == np.ndarray:
                         p_min = p.min(); p_max = p.max()
                         if p_max > self.shape[n]-1 or p_min < -self.shape[n]:
                             raise IndexError(f"index {p} is out of bounds for axis {n} with size {self.shape[n]}")
                         idx_list.append(p % (self.dshape[n]-1))
+                        spec_len.append(p.size)
                     else:
                         raise IndexError('Only integers, slices, or arrays supported in FlowArray.')
                 if len(pos) == 2:
-                    return super().__getitem__(idx_list[0])[:,idx_list[1]]
+                    if spec_len[0] is None or (spec_len[1] is None and spec_len[0] > 1):
+                        return self.array[idx_list[0]][:,idx_list[1]]
+                    else:
+                        return self.array[idx_list[0],idx_list[1]]
                 elif len(pos) == 3:
-                    return super().__getitem__(idx_list[0])[:,idx_list[1]][:,:,idx_list[2]]
+                    if spec_len[0] is None:
+                        if spec_len[1] is None or (spec_len[2] is None and spec_len[1] > 1):
+                            return self.array[idx_list[0]][:,idx_list[1]][:,:,idx_list[2]]
+                        else:
+                            return self.array[idx_list[0]][:,idx_list[1],idx_list[2]]
+                    elif spec_len[0] == 1:
+                        if spec_len[1] is None or (spec_len[2] is None and spec_len[1] > 1):
+                            return self.array[idx_list[0],idx_list[1]][:,idx_list[2]]
+                        else:
+                            return self.array[idx_list[0],idx_list[1],idx_list[2]]
+                    else:
+                        if spec_len[1] is None and spec_len[2] is None:
+                            return self.array[idx_list[0]][:,idx_list[1]][:,:,idx_list[2]]
+                        elif spec_len[1] is None:
+                            return self.array[idx_list[0],:,idx_list[2]][:,idx_list[1]]
+                        elif spec_len[2] is None:
+                            return self.array[idx_list[0],idx_list[1]][:,idx_list[2]]
+                        else:
+                            return self.array[idx_list[0],idx_list[1],idx_list[2]]
                 else:
                     raise IndexError('Unrecognized number of dimensions in FlowArray.')
             else:
@@ -262,20 +285,10 @@ class FlowArray(np.ndarray):
 
 
     def min(self):
-        full_shape = self.shape
-        self._shape = self.dshape # temporarily change shape back
-        dmin = super().min()
-        self._shape = full_shape
-        return dmin
-    
+        return self.array.min()
     
     def max(self):
-        full_shape = self.shape
-        self._shape = self.dshape
-        dmax = super().max()
-        self._shape = full_shape
-        return dmax
-                
+        return self.array.max()
 
 
 class fCubicSpline(interpolate.CubicSpline):
@@ -574,6 +587,7 @@ class fCubicSpline(interpolate.CubicSpline):
             return farray
         else:
             idx_list = []
+            spec_len = []
             for n,p in enumerate(pos[1:]):
                 n += 1
                 if type(p) == int:
@@ -584,6 +598,7 @@ class fCubicSpline(interpolate.CubicSpline):
                         idx_list.append(p % (self.dshape[n]-1)) # periodic; last item is a duplicate
                     else:
                         idx_list.append(p)
+                        spec_len.append(1)
                 elif type(p) == slice:
                     start = p.start; stop = p.stop; step = p.step
                     if step is None: step = 1
@@ -600,14 +615,42 @@ class fCubicSpline(interpolate.CubicSpline):
                     if stop > self.shape[n]: stop = self.shape[n]
                     # get indices
                     idx_list.append(np.arange(start,stop,step) % (self.dshape[n]-1))
+                    spec_len.append(None)
+                elif type(p) == np.ndarray:
+                    p_min = p.min(); p_max = p.max()
+                    if p_max > self.shape[n]-1 or p_min < -self.shape[n]:
+                        raise IndexError(f"index {p} is out of bounds for axis {n} with size {self.shape[n]}")
+                    idx_list.append(p % (self.dshape[n]-1))
+                    spec_len.append(p.size)
                 else:
-                    raise IndexError('Only integers or slices supported in fCubicSpline.')
+                    raise IndexError('Only integers, slices, and arrays supported in fCubicSpline.')
             if len(pos) == 2:
                 return farray[idx_list[0]]
             elif len(pos) == 3:
-                return farray[idx_list[0]][:,idx_list[1]]
+                if spec_len[0] is None or (spec_len[1] is None and spec_len[0] > 1):
+                    return farray[idx_list[0]][:,idx_list[1]]
+                else:
+                    return farray[idx_list[0],idx_list[1]]
             elif len(pos) == 4:
-                return farray[idx_list[0]][:,idx_list[1]][:,:,idx_list[2]]
+                if spec_len[0] is None:
+                    if spec_len[1] is None or (spec_len[2] is None and spec_len[1] > 1):
+                        return farray[idx_list[0]][:,idx_list[1]][:,:,idx_list[2]]
+                    else:
+                        return farray[idx_list[0]][:,idx_list[1],idx_list[2]]
+                elif spec_len[0] == 1:
+                    if spec_len[1] is None or (spec_len[2] is None and spec_len[1] > 1):
+                        return farray[idx_list[0],idx_list[1]][:,idx_list[2]]
+                    else:
+                        return farray[idx_list[0],idx_list[1],idx_list[2]]
+                else:
+                    if spec_len[1] is None and spec_len[2] is None:
+                        return farray[idx_list[0]][:,idx_list[1]][:,:,idx_list[2]]
+                    elif spec_len[1] is None:
+                        return farray[idx_list[0],:,idx_list[2]][:,idx_list[1]]
+                    elif spec_len[2] is None:
+                        return farray[idx_list[0],idx_list[1]][:,idx_list[2]]
+                    else:
+                        return farray[idx_list[0],idx_list[1],idx_list[2]]
             else:
                 raise IndexError('Unrecognized number of dimensions in fCubicSpline.')         
 
