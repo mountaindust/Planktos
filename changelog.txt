@@ -13,7 +13,7 @@ are a major issue.
     fluid by setting the tiling property of FluidData. But then you need to make Environment.L and 
     similar stuff dynamically update off of FluidData.
 - TODO: test dynamic loading
-TODO: fix vorticity, Environment.extend
+TODO: Environment.extend
 
 
 1.0.0

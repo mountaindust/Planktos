@@ -3307,7 +3307,7 @@ class Environment:
             v_x = self.flow[0]
             v_y = self.flow[1]
 
-        vort = np.zeros_like(v_x)
+        vort = np.zeros(v_x.shape)
 
         ### LOOP OVER ALL GRID POINTS ###
         for grid_loc in grid_loc_iter:

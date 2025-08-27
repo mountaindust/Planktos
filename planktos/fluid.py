@@ -95,35 +95,8 @@ def _wrap_flow(flow, flow_points, periodic_dim=(True, True, False)):
 
 
 #######################################################################
-#####           FLUID TEMPORAL INTERPOLATION ROUTINES             #####
+#####                BASE-LEVEL FLUID DATA CLASSES                #####
 #######################################################################
-
-
-def create_temporal_interpolations(flow_times, flow_data):
-    '''This function controls how temporal interpolations of the fluid
-    velocity data will be created for the Environment class.
-
-    Parameters
-    ----------
-    flow_times : 1D array of time points
-    flow_data : list of ndarrays with fluid velocity field data.
-        This data should be expected to be overwritten to save space.
-
-    Returns
-    -------
-    list of interpolation objects (PPoly)
-    '''
-
-    for n, flow in enumerate(flow_data):
-        # Defaults to axis=0 along which data is varying, which is t axis
-        # Defaults to not-a-knot boundary condition, resulting in first
-        #   and second segments at curve ends being the same polynomial
-        # Defaults to extrapolating out-of-bounds points based on first
-        #   and last intervals. This will be overriden by this method
-        #   to use constant extrapolation instead.
-        flow_data[n] = fCubicSpline(flow_times, flow)
-    return flow_data
-
 
 
 class FlowArray(np.ndarray):
@@ -289,6 +262,7 @@ class FlowArray(np.ndarray):
     
     def max(self):
         return self.array.max()
+
 
 
 class fCubicSpline(interpolate.CubicSpline):
@@ -693,6 +667,10 @@ class SplineRangeError(ValueError):
         self.message = message
         super().__init__(self.message)
     
+
+#######################################################################
+#####    CONTAINER CLASSES FOR LOADING AND HANDLING FLUID DATA    #####
+#######################################################################
 
 
 class FluidData:

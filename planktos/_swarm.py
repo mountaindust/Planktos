@@ -2275,7 +2275,7 @@ class Swarm:
                     norm = colors.Normalize(-abs(clip),abs(clip),clip=True)
                 else:
                     norm = None
-                fld = ax.pcolormesh([self.envir.flow.flow_points[0]], self.envir.flow.flow_points[1], 
+                fld = ax.pcolormesh(self.envir.flow.flow_points[0], self.envir.flow.flow_points[1], 
                            np.zeros(self.envir.flow.fshape[1:]).T, shading='gouraud',
                            cmap='RdBu', norm=norm, alpha=0.9)
             elif fluid == 'quiver' and self.envir.flow is not None:
