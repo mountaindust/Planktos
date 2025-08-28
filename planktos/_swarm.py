@@ -1834,7 +1834,7 @@ class Swarm:
 
             # fluid visualization
             if fluid == 'vort' and self.envir.flow is not None:
-                vort = self.envir.get_2D_vorticity(t_indx=loc)
+                vort = self.envir.get_vorticity(t_indx=loc)
                 if clip is not None:
                     norm = colors.Normalize(-abs(clip),abs(clip),clip=True)
                 else:
@@ -2608,7 +2608,7 @@ class Swarm:
                     y_text.set_text(r'Fluid $\overline{v}_y$'+': {:.2g} \n'.format(avg_spd_y)+
                          r'Agent $\overline{v}_y$'+': {:.2g}'.format(avg_swrm_vel[1]))
                     if fluid == 'vort' and self.envir.flow is not None:
-                        vort = self.envir.get_2D_vorticity(t_indx=n)
+                        vort = self.envir.get_vorticity(t_indx=n)
                         fld.set_array(vort.T)
                         fld.changed()
                         fld.autoscale()
@@ -2896,7 +2896,7 @@ class Swarm:
                     y_text.set_text(r'Fluid $\overline{v}_y$'+': {:.2g} \n'.format(avg_spd_y)+
                          r'Agent $\overline{v}_y$'+': {:.2g}'.format(avg_swrm_vel[1]))
                     if fluid == 'vort' and self.envir.flow is not None:
-                        vort = self.envir.get_2D_vorticity()
+                        vort = self.envir.get_vorticity()
                         fld.set_array(vort.T)
                         fld.changed()
                         fld.autoscale()

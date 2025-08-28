@@ -3255,7 +3255,7 @@ class Environment:
 
 
 
-    def get_2D_vorticity(self, t_indx=None, time=None, t_n=None):
+    def get_vorticity(self, t_indx=None, time=None, t_n=None):
         '''Calculuate the vorticity of the fluid velocity field at a given time.
 
         If all time arguments are None but the flow is time-varying, the vorticity
@@ -3276,61 +3276,14 @@ class Environment:
         vorticity as an ndarray
 
         '''
-        assert len(self.L) == 2, "Fluid velocity field must be 2D!"
-        if (t_indx is not None or time is not None or t_n is not None) and self.flow.flow_times is None:
-            warnings.warn("Warning: flow is time invarient but time arg passed into get_2D_vorticity.",
-                          RuntimeWarning)
 
-        if self.flow.flow_times is None:
-            grid_dim = self.flow.fshape
-            TIMEVAR = False
-        else:
-            grid_dim = self.flow.fshape[1:]
-            TIMEVAR = True
-        grid_loc_iter = np.ndindex(grid_dim)
+        if t_indx is not None:
+            time = self.envir.time_history[t_indx]
+        elif t_indx is None and time is None and t_n is None:
+            if self.flow.flow_times is not None:
+                time = self.time
 
-        if TIMEVAR:
-            if t_indx is not None or time is not None:
-                flow = self.interpolate_temporal_flow(t_index=t_indx, time=time)
-                v_x = flow[0]
-                v_y = flow[1]
-            elif t_n is not None:
-                time=self.flow.flow_times[t_n]
-                flow = self.interpolate_temporal_flow(time=time)
-                v_x = self.flow[0]
-                v_y = self.flow[1]
-            else:
-                flow = self.interpolate_temporal_flow()
-                v_x = flow[0]
-                v_y = flow[1]
-        else:
-            v_x = self.flow[0]
-            v_y = self.flow[1]
-
-        vort = np.zeros(v_x.shape)
-
-        ### LOOP OVER ALL GRID POINTS ###
-        for grid_loc in grid_loc_iter:
-            diff_list = np.array([[-1,0],[1,0],[0,-1],[0,1]], dtype=int)
-            # first, deal with edge of domain cases
-            for dim, loc in enumerate(grid_loc):
-                if loc == 0:
-                    diff_list[dim*2,:] *= 0
-                elif loc == grid_dim[dim]-1:
-                    diff_list[dim*2+1,:] *= 0
-            neigh_list = np.array(grid_loc, dtype=int) + diff_list
-            # get stencil spacing
-            dx1 = self.flow.flow_points[0][grid_loc[0]] - self.flow.flow_points[0][neigh_list[0,0]]
-            dx2 = self.flow.flow_points[0][neigh_list[1,0]] - self.flow.flow_points[0][grid_loc[0]]
-            dy1 = self.flow.flow_points[1][grid_loc[1]] - self.flow.flow_points[1][neigh_list[2,1]]
-            dy2 = self.flow.flow_points[1][neigh_list[3,1]] - self.flow.flow_points[1][grid_loc[1]]
-            # central differencing
-            dvydx = (v_y[tuple(neigh_list[1,:])]-v_y[tuple(neigh_list[0,:])])/(dx1+dx2)
-            dvxdy = (v_x[tuple(neigh_list[3,:])]-v_x[tuple(neigh_list[2,:])])/(dy1+dy2)
-            # vorticity
-            vort[grid_loc] = dvydx - dvxdy
-
-        return vort
+        return self.flow.get_vorticity(time, t_n)
 
 
 
@@ -3354,7 +3307,7 @@ class Environment:
 
         if time_history:
             for cyc, time in enumerate(self.time_history):
-                vort = self.get_2D_vorticity(t_indx=cyc)
+                vort = self.get_vorticity(t_indx=cyc)
                 _dataio.write_vtk_2D_rectilinear_grid_scalars(path, name, vort, self.L, cyc, time)
             cycle = len(self.time_history)
         else:
@@ -3365,10 +3318,10 @@ class Environment:
             else:
                 out_name = name
             for cyc, time in enumerate(self.flow.flow_times):
-                vort = self.get_2D_vorticity(t_n=cyc)
+                vort = self.get_vorticity(t_n=cyc)
                 _dataio.write_vtk_2D_rectilinear_grid_scalars(path, out_name, vort, self.L, cyc, time)
         if time_history or not flow_times:
-            vort = self.get_2D_vorticity(time=self.time)
+            vort = self.get_vorticity(time=self.time)
             _dataio.write_vtk_2D_rectilinear_grid_scalars(path, name, vort, self.L, cycle, self.time)
 
 
@@ -3969,7 +3922,7 @@ class Environment:
         assert len(self.L) == 2, "Flow field must be 2D!"
 
         def animate(n, pc, time_text):
-            vort = self.get_2D_vorticity(t_n=n)
+            vort = self.get_vorticity(t_n=n)
             time_text.set_text('time = {:.3f}'.format(self.flow.flow_times[n]))
             pc.set_array(vort.T)
             pc.changed()
@@ -3979,7 +3932,7 @@ class Environment:
             return [pc, time_text]
         
         def animate_mvib(n, pc, mesh_col, time_text):
-            vort = self.get_2D_vorticity(t_n=n)
+            vort = self.get_vorticity(t_n=n)
             time_text.set_text('time = {:.3f}'.format(self.flow.flow_times[n]))
             ibmesh = self.interpolate_temporal_mesh(time=self.flow.flow_times[n])
             mesh_col.set_segments(ibmesh)
@@ -4019,7 +3972,7 @@ class Environment:
 
         if self.flow.flow_times is None:
             # Single-time plot from single-time flow
-            vort = self.get_2D_vorticity()
+            vort = self.get_vorticity()
             pc = ax.pcolormesh(self.flow.flow_points[0], self.flow.flow_points[1],
                           vort.T, shading='gouraud', cmap='RdBu', norm=norm)
             axbbox = ax.get_position().get_points()
@@ -4029,7 +3982,7 @@ class Environment:
             if mesh_col is not None and self.ibmesh.ndim == 4:
                 ibmesh = self.interpolate_temporal_mesh(time=t)
                 mesh_col.set_segments(ibmesh)
-            vort = self.get_2D_vorticity(time=t)
+            vort = self.get_vorticity(time=t)
             pc = ax.pcolormesh(self.flow.flow_points[0], self.flow.flow_points[1],
                           vort.T, shading='gouraud', cmap='RdBu', norm=norm)
             ax.text(0.02, 0.95, 'time = {:.3f}'.format(t), transform=ax.transAxes, fontsize=12)
@@ -4039,7 +3992,7 @@ class Environment:
         else:
             # Animation plot
             # create pcolormesh object
-            # vort = self.get_2D_vorticity(t_n=0)
+            # vort = self.get_vorticity(t_n=0)
             pc = ax.pcolormesh([self.flow.flow_points[0]], self.flow.flow_points[1], 
                            np.zeros(self.flow.fshape[1:]).T, shading='gouraud',
                            cmap='RdBu', norm=norm)

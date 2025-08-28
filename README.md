@@ -223,8 +223,7 @@ Class: Environment
     - `reset` Resets Environment to time=0. Swarm history will be lost, and all Swarms will maintain their last position. This is typically called automatically if the fluid flow has been altered by another method. If rm_swarms=True, remove all Swarms.
     - `regenerate_flow_data` Regenerate the original fluid data from fCubicSpline objects
     - `save_fluid` Save the fluid velocity field as one or more vtk files (one for each time point).
-    - `get_2D_vorticity` Calculate and return the vorticity of a 2D flow field, 
-    potentially interpolated in time.
+    - `get_vorticity` Calculate and return the vorticity of a flow field, potentially interpolated in time.
     - `save_2D_vorticity` Calculate and save (as VTK) the vorticity of a flow field 
     at one or more (possibly interpolated) points in time.
     - `calculate_FTLE` Calculate an FTLE (finite-time Lyapunov exponent) field 

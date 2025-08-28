@@ -10,6 +10,7 @@ Email: cstric12@utk.edu
 
 import warnings
 import numpy as np
+import numpy._core.numeric as _nx
 from scipy import interpolate
 from scipy.linalg import solve_banded
 from pathlib import Path
@@ -710,6 +711,8 @@ class FluidData:
         varying fluid velocity fields only)
     fshape : shape of each component of the fluid velocity field ([t],i,j,[k])
         as an ndarray of raw data.
+    ndim : int
+        Number of dimensions of the fluid velocity field (2 or 3)
     INUM : Number of intervals loaded at any given time when dynamically 
         loading data.
     periodic_dim : tuple of bool
@@ -862,6 +865,11 @@ class FluidData:
                             'time passed as an argument in order to return a '+
                             'list of fluid velocity field ndarrays.')
 
+    @property
+    def ndim(self):
+        '''Returns the number of dimensions of the fluid velocity field.'''
+        return len(self.flow_points)
+    
 
 
     def get_raw_loaded_data(self):
@@ -1056,6 +1064,69 @@ class FluidData:
             flow_points.append(self.flow_points[2])
         self.flow_points = tuple(flow_points)
     
+
+
+    def get_vorticity(self, time=None, t_idx=None):
+        '''Compute the vorticity field from the fluid velocity field.
+
+        If the flow is time-varying, the vorticity will be computed at 
+        the specified time or time index.
+
+        Parameters
+        ----------
+        time : float, optional
+            The time at which to compute the vorticity.
+        t_idx : int, optional
+            The time index at which to compute the vorticity.
+        '''
+
+        if self.flow_times is not None:
+            if time is None and t_idx is not None:
+                time = self.flow_times[t_idx]
+            elif time is None and t_idx is None:
+                raise ValueError("Either time or t_idx must be specified.")
+            flow = self(time)
+        else:
+            if time is not None or t_idx is not None:
+                warnings.warn("Flow is time-invariant; ignoring time and t_idx.")
+            flow = self
+
+        v_x = flow[0]
+        v_y = flow[1]
+        grid_shape = v_x.shape
+        grid_loc_iter = np.ndindex(grid_shape)
+        vort = np.zeros(grid_shape)
+
+        if self.ndim == 2:
+            # Compute the vorticity components by looping through grid points
+            # FUTURE: use np.gradient once you can pass both varargs and axis.
+            for grid_loc in grid_loc_iter:
+                diff_list = np.array([[-1,0],[1,0],[0,-1],[0,1]], dtype=int)
+                # first, deal with edge of domain cases
+                for dim, loc in enumerate(grid_loc):
+                    if loc == 0:
+                        diff_list[dim*2,:] *= 0
+                    elif loc == grid_shape[dim]-1:
+                        diff_list[dim*2+1,:] *= 0
+                neigh_list = np.array(grid_loc, dtype=int) + diff_list
+                # get stencil spacing
+                dx1 = self.flow_points[0][grid_loc[0]] - self.flow_points[0][neigh_list[0,0]]
+                dx2 = self.flow_points[0][neigh_list[1,0]] - self.flow_points[0][grid_loc[0]]
+                dy1 = self.flow_points[1][grid_loc[1]] - self.flow_points[1][neigh_list[2,1]]
+                dy2 = self.flow_points[1][neigh_list[3,1]] - self.flow_points[1][grid_loc[1]]
+                # central differencing
+                dvydx = (v_y[tuple(neigh_list[1,:])]-v_y[tuple(neigh_list[0,:])])/(dx1+dx2)
+                dvxdy = (v_x[tuple(neigh_list[3,:])]-v_x[tuple(neigh_list[2,:])])/(dy1+dy2)
+                # vorticity
+                vort[grid_loc] = dvydx - dvxdy
+        else:
+            # Handle 3D case
+            grd_vx = np.gradient(flow[0][:], *self.flow_points)
+            grd_vy = np.gradient(flow[1][:], *self.flow_points)
+            grd_vz = np.gradient(flow[2][:], *self.flow_points)
+            vort = (grd_vz[1] - grd_vy[2], grd_vx[2] - grd_vz[0], grd_vy[0] - grd_vx[1])
+
+        return vort
 
 
 class IB2dData(FluidData):
@@ -1475,4 +1546,7 @@ class VTK3dData(FluidData):
             flow_times = None
 
         return flow, mesh, flow_times
+
+
+    ######### Temporary fix function ###########
 
