@@ -1091,40 +1091,21 @@ class FluidData:
                 warnings.warn("Flow is time-invariant; ignoring time and t_idx.")
             flow = self
 
-        v_x = flow[0]
-        v_y = flow[1]
-        grid_shape = v_x.shape
-        grid_loc_iter = np.ndindex(grid_shape)
-        vort = np.zeros(grid_shape)
-
         if self.ndim == 2:
-            # Compute the vorticity components by looping through grid points
-            # FUTURE: use np.gradient once you can pass both varargs and axis.
-            for grid_loc in grid_loc_iter:
-                diff_list = np.array([[-1,0],[1,0],[0,-1],[0,1]], dtype=int)
-                # first, deal with edge of domain cases
-                for dim, loc in enumerate(grid_loc):
-                    if loc == 0:
-                        diff_list[dim*2,:] *= 0
-                    elif loc == grid_shape[dim]-1:
-                        diff_list[dim*2+1,:] *= 0
-                neigh_list = np.array(grid_loc, dtype=int) + diff_list
-                # get stencil spacing
-                dx1 = self.flow_points[0][grid_loc[0]] - self.flow_points[0][neigh_list[0,0]]
-                dx2 = self.flow_points[0][neigh_list[1,0]] - self.flow_points[0][grid_loc[0]]
-                dy1 = self.flow_points[1][grid_loc[1]] - self.flow_points[1][neigh_list[2,1]]
-                dy2 = self.flow_points[1][neigh_list[3,1]] - self.flow_points[1][grid_loc[1]]
-                # central differencing
-                dvydx = (v_y[tuple(neigh_list[1,:])]-v_y[tuple(neigh_list[0,:])])/(dx1+dx2)
-                dvxdy = (v_x[tuple(neigh_list[3,:])]-v_x[tuple(neigh_list[2,:])])/(dy1+dy2)
-                # vorticity
-                vort[grid_loc] = dvydx - dvxdy
+            dvydx = np.gradient(flow[1][:], self.flow_points[0], axis=0)
+            dvxdy = np.gradient(flow[0][:], self.flow_points[1], axis=1)
+
+            vort = dvydx - dvxdy
         else:
             # Handle 3D case
-            grd_vx = np.gradient(flow[0][:], *self.flow_points)
-            grd_vy = np.gradient(flow[1][:], *self.flow_points)
-            grd_vz = np.gradient(flow[2][:], *self.flow_points)
-            vort = (grd_vz[1] - grd_vy[2], grd_vx[2] - grd_vz[0], grd_vy[0] - grd_vx[1])
+            dvxdy = np.gradient(flow[0][:], self.flow_points[1], axis=1)
+            dvxdz = np.gradient(flow[0][:], self.flow_points[2], axis=2)
+            dvydx = np.gradient(flow[1][:], self.flow_points[0], axis=0)
+            dvydz = np.gradient(flow[1][:], self.flow_points[2], axis=2)
+            dvzdx = np.gradient(flow[2][:], self.flow_points[0], axis=0)
+            dvzdy = np.gradient(flow[2][:], self.flow_points[1], axis=1)
+
+            vort = (dvzdy - dvydz, dvxdz - dvzdx, dvydx - dvxdy)
 
         return vort
 
