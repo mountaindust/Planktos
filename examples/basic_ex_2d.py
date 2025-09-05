@@ -23,7 +23,7 @@ envir.rho = 1000 # fluid density
 envir.mu = 1000 # dynamic viscosity
 
 # Now let's specify some Brinkman flow. See the docstring for set_brinkman_flow 
-#   in planktos/environment.py for information on each of these parameters!
+#   in planktos/_environment.py for information on each of these parameters!
 envir.set_brinkman_flow(alpha=66, h_p=1.5, U=1, dpdx=1, res=101)
 
 # Since this is a 2D fluid field, we can quickly visualize it to make sure 
