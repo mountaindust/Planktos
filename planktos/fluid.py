@@ -500,7 +500,7 @@ class fCubicSpline(interpolate.CubicSpline):
 
         return s
         
-        
+
 
     def __call__(self, val):
         if (val < self.x[0] and not self.extrapolate[0]) \
@@ -821,7 +821,7 @@ class FluidData:
                 self.update_spline(start_time)
                 return [fspline(start_time) for fspline in self._flow]
             except TypeError:
-                print('Cannot pass time to time-invarient flow.')
+                print('Cannot pass time to time-invariant flow.')
                 raise
         elif time >= self.flow_times[-1]:
             end_time = self.flow_times[-1]
@@ -831,7 +831,7 @@ class FluidData:
                 self.update_spline(end_time)
                 return [fspline(end_time) for fspline in self._flow]
             except TypeError:
-                print('Cannot pass time to time-invarient flow.')
+                print('Cannot pass time to time-invariant flow.')
                 raise
         else:
             # interpolate within full time bounds
@@ -841,7 +841,7 @@ class FluidData:
                 self.update_spline(time)
                 return [fspline(time) for fspline in self._flow]
             except TypeError:
-                print('Cannot pass time to time-invarient flow.')
+                print('Cannot pass time to time-invariant flow.')
                 raise
     
     def __len__(self):
@@ -1108,6 +1108,60 @@ class FluidData:
             vort = (dvzdy - dvydz, dvxdz - dvzdx, dvydx - dvxdy)
 
         return vort
+    
+
+
+    def get_dudt(self, time=None, t_idx=None):
+        '''Compute the derivative of the fluid velocity with respect to time.
+        Defaults to interpolating at the current time, given by self.time.
+
+        If the flow is time-varying, the material derivative will be computed 
+        at the specified time or time index.
+
+        Parameters
+        ----------
+        time : float, optional
+            The time at which to compute the derivative.
+        t_idx : int, optional
+            The time index at which to compute the derivative.
+
+        Returns
+        -------
+        list of ndarrays
+            The time derivative of the fluid velocity field.
+        '''
+
+        if self.flow_times is not None:
+            if time is None and t_idx is not None:
+                time = self.flow_times[t_idx]
+            elif time is None and t_idx is None:
+                raise ValueError("Either time or t_idx must be specified.")
+        else:
+            # temporally constant flow
+            warnings.warn("Flow is time-invariant; returning zero derivative.")
+            return [np.zeros(self.fshape) for ii in range(len(self))]
+        
+        # Constant extrapolation beyond full time bounds
+        if time <= self.flow_times[0] or time >= self.flow_times[-1]:
+            return [np.zeros(self.fshape) for ii in range(len(self))]
+        else:
+            dudt_list = []
+            # ensure the relevant data is loaded
+            try:
+                self._flow[0](time)
+            except SplineRangeError:
+                self.update_spline(time)
+            except TypeError:
+                print('Cannot pass time to time-invariant flow.')
+                raise
+            for fspline in self._flow:
+                dudt = fspline.derivative()(time)
+                dudt = dudt.view(FlowArray)
+                if self.tiling is not None:
+                    dudt.tiling = self.tiling
+                dudt_list.append(dudt)
+
+        return dudt_list
 
 
 class IB2dData(FluidData):

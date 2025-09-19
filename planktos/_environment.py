@@ -198,8 +198,6 @@ class Environment:
         material derivative cache
     DuDt_time : float
         simulation time at which material derivative was calculated
-    dt_interp : list of PPoly objects
-        Used for temporal derivative interpolation. Set by dudt method.
 
     Examples
     --------
@@ -3265,7 +3263,7 @@ class Environment:
         Parameters
         ----------
         t_indx : int
-            integer time index into self.envir.time_history[t_indx]
+            integer time index into self.time_history[t_indx]
         time : float
             time
         t_n : int
@@ -3278,7 +3276,7 @@ class Environment:
         '''
 
         if t_indx is not None:
-            time = self.envir.time_history[t_indx]
+            time = self.time_history[t_indx]
         elif t_indx is None and time is None and t_n is None:
             if self.flow.flow_times is not None:
                 time = self.time
@@ -3375,7 +3373,7 @@ class Environment:
 
 
 
-    def dudt(self, t_indx=None, time=None):
+    def get_dudt(self, t_indx=None, time=None):
         '''Return the derivative of the fluid velocity with respect to time.
         Defaults to interpolating at the current time, given by self.time.
 
@@ -3391,25 +3389,12 @@ class Environment:
         List of ndarrays
         '''
 
-        DIM3 = (len(self.L) == 3)
-
         if t_indx is None and time is None:
             time = self.time
         elif t_indx is not None:
             time = self.time_history[t_indx]
 
-        if self.flow.flow_times is None:
-            # temporally constant flow
-            return [np.zeros(self.flow.fshape) for ii in len(self.flow)]
-        else:
-            # temporal flow.
-            dudt_list = []
-            for ppoly in self.flow:
-                # Create temporary PPoly objects for dudt
-                dfdt = ppoly.derivative()
-                # Evaluate
-                dudt_list.append(dfdt(time))
-            return dudt_list
+        return self.flow.get_dudt(time)
 
 
 
@@ -3458,7 +3443,7 @@ class Environment:
         DuDt = np.sum(DuDt, axis=0)
 
         # Add dudt
-        DuDt += np.array(self.dudt(t_indx, time))
+        DuDt += np.array(self.get_dudt(t_indx, time))
 
         self.DuDt = [u for u in DuDt]
         if t_indx is None and time is None:
