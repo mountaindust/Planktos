@@ -1113,10 +1113,9 @@ class FluidData:
 
     def get_dudt(self, time=None, t_idx=None):
         '''Compute the derivative of the fluid velocity with respect to time.
-        Defaults to interpolating at the current time, given by self.time.
 
         If the flow is time-varying, the material derivative will be computed 
-        at the specified time or time index.
+        at the specified time or time index, one of which must be provided.
 
         Parameters
         ----------
@@ -1162,6 +1161,66 @@ class FluidData:
                 dudt_list.append(dudt)
 
         return dudt_list
+    
+
+
+    def calculate_DuDt(self, time=None, t_idx=None):
+        '''Compute the material derivative of the fluid velocity field. 
+        Gradient is calculated via second order accurate central differences 
+        (using numpy) with second order accuracy at the boundaries.
+
+        If the flow is time-varying, the material derivative will be computed 
+        at the specified time or time index, one of which must be provided.
+
+        The material derivative is given by
+        .. math::
+        \\frac{D\\mathbf{u}}{Dt} = \\mathbf{u}_t + 
+        (\\nabla\\mathbf{u})\\mathbf{u}
+
+        Parameters
+        ----------
+        time : float, optional
+            The time at which to compute the material derivative.
+        t_idx : int, optional
+            The time index at which to compute the material derivative.
+
+        Returns
+        -------
+        list of ndarrays
+            The material derivative of the fluid velocity field.
+        '''
+
+        if self.flow_times is not None:
+            if time is None and t_idx is not None:
+                time = self.flow_times[t_idx]
+            elif time is None and t_idx is None:
+                raise ValueError("Either time or t_idx must be specified.")
+            flow = self(time)
+        else:
+            if time is not None or t_idx is not None:
+                warnings.warn("Flow is time-invariant; ignoring time and t_idx.")
+            # temporally constant flow
+            flow = self
+
+        if self.ndim == 3:
+            axis_tuple = (1,2,3)
+        else:
+            axis_tuple = (1,2)
+
+        flow_grad = np.gradient(np.array(flow), *self.flow_points, edge_order=2, 
+                                axis=axis_tuple)
+
+        # Take dot product
+        DuDt = []
+        for g,f in zip(flow_grad,flow):
+            DuDt.append(g*f)
+        DuDt = np.sum(DuDt, axis=0)
+
+        # Add dudt
+        DuDt += np.array(self.get_dudt(time))
+
+        return [u for u in DuDt]
+
 
 
 class IB2dData(FluidData):

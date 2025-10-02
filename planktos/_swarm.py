@@ -1299,14 +1299,11 @@ class Swarm:
             positions = self.positions
 
         if time is None:
-            time = self.envir.time
-
-        # Calculate if necessary, otherwise use cached copy
-        if self.envir.DuDt is None or self.envir.DuDt_time != time:
-            self.envir.calculate_DuDt(time=time)            
+            time = self.envir.time         
 
         # Interpolate at agent positions and return
-        return self.envir.interpolate_flow(positions, self.envir.DuDt, 
+        return self.envir.interpolate_flow(positions, 
+                                           self.envir.calculate_DuDt(time=time), 
                                            method='linear')
 
 

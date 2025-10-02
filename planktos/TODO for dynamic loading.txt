@@ -1,8 +1,6 @@
 TODO for dynamic loading of fluid data
 
-dudt needs to be part of FluidData class.
-extend
-calculate_DuDt
+extend needs to be part of FluidData class.
 
 center_cell_regrid needs to be folded into new FluidData object, because this 
 will have to be done on-the-fly as part of dynamic loading.

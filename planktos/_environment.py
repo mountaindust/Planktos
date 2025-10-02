@@ -194,10 +194,6 @@ class Environment:
         acts as a cache for the gradient of magnitude of the fluid velocity
     mag_grad_time : float
         simulation time at which magnitude gradient above was calculated
-    DuDt : list of ndarrays
-        material derivative cache
-    DuDt_time : float
-        simulation time at which material derivative was calculated
 
     Examples
     --------
@@ -231,8 +227,6 @@ class Environment:
         ##### Fluid velocity field variables #####
         self.mag_grad = None
         self.mag_grad_time = None
-        self.DuDt = None
-        self.DuDt_time = None
 
         if flow is not None:
             try:
@@ -3403,7 +3397,6 @@ class Environment:
         respect to time. Defaults to interpolating at the current time, given by 
         self.time. Gradient is calculated via second order accurate central 
         differences (using numpy) with second order accuracy at the boundaries.
-        The material derivative is saved in case it is needed again.
 
         The material derivative is given by
         .. math::
@@ -3418,40 +3411,12 @@ class Environment:
             Interpolate at a specific time. default is current time.
         '''
 
-        DIM3 = (len(self.L) == 3)
-
-        TIME_DEP = self.flow.flow_times is not None
-
-        if DIM3:
-            axis_tuple = (1,2,3)
-        else:
-            axis_tuple = (1,2)
-
-        if not TIME_DEP:
-            flow = self.flow
-        else:
-            # first, interpolate flow in time.
-            flow = self.interpolate_temporal_flow(t_index=t_indx, time=time)
-            
-        flow_grad = np.gradient(np.array(flow),
-                    *self.flow.flow_points, edge_order=2, axis=axis_tuple)
-
-        # Take dot product
-        DuDt = []
-        for g,f in zip(flow_grad,flow):
-            DuDt.append(g*f)
-        DuDt = np.sum(DuDt, axis=0)
-
-        # Add dudt
-        DuDt += np.array(self.get_dudt(t_indx, time))
-
-        self.DuDt = [u for u in DuDt]
         if t_indx is None and time is None:
-            self.DuDt_time = self.time
+            time = self.time
         elif t_indx is not None:
-            self.DuDt_time = self.time_history[t_indx]
-        else:
-            self.DuDt_time = time
+            time = self.time_history[t_indx]
+
+        return self.flow.calculate_DuDt(time)
 
 
     #######################################################################
@@ -3495,8 +3460,6 @@ class Environment:
 
         self.mag_grad = None
         self.mag_grad_time = None
-        self.DuDt = None
-        self.DuDt_time = None
 
 
     #######################################################################
