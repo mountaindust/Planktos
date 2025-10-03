@@ -1,6 +1,6 @@
 TODO for dynamic loading of fluid data
 
-extend needs to be part of FluidData class.
+Removed extend method in favor of extrapolation as a future feature.
 
 center_cell_regrid needs to be folded into new FluidData object, because this 
 will have to be done on-the-fly as part of dynamic loading.

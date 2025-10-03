@@ -108,9 +108,9 @@ formats, may be supported in the future; please contact the author (cstric12@utk
 if you have a format you would like to see supported. A few analytical, 1D flow 
 fields are also available and can be generated in either 2D or 3D environments; 
 these include Brinkman flow, two layer channel flow, and canopy flow. Flow fields 
-can also be extended and tiled in simple ways as appropriate. Mesh data must be 
-time-invariant and loaded via IB2d/IBAMR-style vertex data (2D) or via stl file 
-in 3D. Again, more (open source) formats may be considered if requested.
+can also be tiled. Mesh data must be time-invariant and loaded via IB2d/IBAMR-style 
+vertex data (2D) or via stl file in 3D. Again, more (open source) formats may be 
+considered if requested.
 
 For agents, there is support for multiple species (Swarms) along with individual 
 variation though a Pandas Dataframe property of the Swarm class (Swarm.props). 

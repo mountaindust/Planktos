@@ -45,7 +45,7 @@ print('-------------------------------------------')
 
 # Extend domain downstream so Y is 440mm total length
 # Need to extend flow mesh by 120mm/(5/16)=384 mesh units
-envir.extend(y_plus=384)
+envir.extend(y_plus=384) # NOT SUPPORTED ANYMORE
 print('Domain extended to {} mm'.format(envir.L))
 print('Flow mesh is {}.'.format(envir.flow[0].shape))
 # NOW:

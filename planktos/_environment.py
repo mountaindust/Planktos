@@ -2052,16 +2052,14 @@ class Environment:
             number of tiles in the y direction (counting the one already there)
         '''
 
-        tile_num = (x,y)
-
         if self.flow is not None:
             self.flow.tile_flow(x,y)
 
         # tile Lagrangian meshes
         if self.ibmesh is not None:
             newmeshs = [self.ibmesh]
-            for ii in range(tile_num[0]):
-                for jj in range(tile_num[1]):
+            for ii in range(x):
+                for jj in range(y):
                     new_mesh = np.array(self.ibmesh)
                     new_mesh[:,:,0] += self.L[0]*ii
                     new_mesh[:,:,1] += self.L[1]*jj
@@ -2069,140 +2067,9 @@ class Environment:
             self.ibmesh = np.concatenate(newmeshs).astype(np.float64)
 
         # update environment dimensions
-        for n in range(2):
-            self.L[n] *= tile_num[n]
+        self.L[0] *= x; self.L[1] *= y
         
         print("Fluid tiled. Planktos domain size is now {}.".format(self.L))
-        self._reset_flow_deriv()
-
-
-
-    def extend(self, x_minus=0, x_plus=0, y_minus=0, y_plus=0):
-        '''Duplicate the boundary of the fluid flow a number of times in 
-        the x (+ or -) and/or y (+ or -) directions, thus extending the domain
-        with constant fluid velocity. Good for extending domains with resolved
-        fluid flow before/after and on the sides of a structure.
-
-        Parameters
-        ----------
-        x_minus : int
-            number of times to duplicate bndry in the x- direction
-        x_plus : int
-            number of times to duplicate bndry in the x+ direction
-        y_minus : int
-            number of times to duplicate bndry in the y- direction
-        y_plus : int
-            number of times to duplicate bndry in the y+ direction
-        '''
-
-        DIM3 = len(self.L) == 3
-        TIME_DEP = self.flow.flow_times is not None
-
-        assert x_minus>=0 and x_plus>=0 and y_minus>=0 and y_plus>=0,\
-            "arguments must be nonnegative"
-
-        res_x = np.max(self.flow.flow_points[0][1:]-self.flow.flow_points[0][:-1])
-        res_y = np.max(self.flow.flow_points[1][1:]-self.flow.flow_points[1][:-1])
-        if not TIME_DEP:
-            for dim in range(len(self.L)):
-                # first, extend in x direction
-                if x_minus+x_plus > 0:
-                    self.flow[dim] = np.concatenate(tuple(
-                        np.array([self.flow[dim][0,...]]) for ii in range(x_minus)
-                        ) + (self.flow[dim][:],) + tuple(
-                        np.array([self.flow[dim][-1,...]]) for jj in range(x_plus)
-                        ), axis=0)
-                # next, extend in y direction. This requires a shuffling
-                #   (tranpose) of dimensions...
-                if DIM3 and y_minus+y_plus > 0:
-                    self.flow[dim] = np.concatenate(tuple(
-                        np.array([self.flow[dim][:,0,:]]).transpose(1,0,2)
-                        for ii in range(y_minus)
-                        ) + (self.flow[dim][:],) + tuple(
-                        np.array([self.flow[dim][:,-1,:]]).transpose(1,0,2)
-                        for jj in range(y_plus)
-                        ), axis=1)
-                elif y_minus+y_plus > 0:
-                    self.flow[dim] = np.concatenate(tuple(
-                        np.array([self.flow[dim][:,0]]).T
-                        for ii in range(y_minus)
-                        ) + (self.flow[dim][:],) + tuple(
-                        np.array([self.flow[dim][:,-1]]).T
-                        for jj in range(y_plus)
-                        ), axis=1)
-
-        else:
-            for dim in range(len(self.L)):
-                if DIM3:
-                    # first, extend in x direction
-                    if x_minus+x_plus > 0:
-                        self.flow[dim] = np.concatenate(tuple(
-                            np.array([self.flow[dim][:,0,...]]).transpose(1,0,2,3) 
-                            for ii in range(x_minus)
-                            ) + (self.flow[dim][:],) + tuple(
-                            np.array([self.flow[dim][:,-1,...]]).transpose(1,0,2,3) 
-                            for jj in range(x_plus)
-                            ), axis=1)
-                    # next, extend in y direction
-                    if y_minus+y_plus > 0:
-                        self.flow[dim] = np.concatenate(tuple(
-                            np.array([self.flow[dim][:,:,0,:]]).transpose(1,2,0,3)
-                            for ii in range(y_minus)
-                            ) + (self.flow[dim][:],) + tuple(
-                            np.array([self.flow[dim][:,:,-1,:]]).transpose(1,2,0,3)
-                            for jj in range(y_plus)
-                            ), axis=2)
-                else:
-                    # first, extend in x direction
-                    if x_minus+x_plus > 0:
-                        self.flow[dim] = np.concatenate(tuple(
-                            np.array([self.flow[dim][:,0,:]]).transpose(1,0,2) 
-                            for ii in range(x_minus)
-                            ) + (self.flow[dim][:],) + tuple(
-                            np.array([self.flow[dim][:,-1,:]]).transpose(1,0,2) 
-                            for jj in range(x_plus)
-                            ), axis=1)
-                    # next, extend in y direction
-                    if y_minus+y_plus > 0:
-                        self.flow[dim] = np.concatenate(tuple(
-                            np.array([self.flow[dim][:,:,0]]).tranpsose(1,2,0)
-                            for ii in range(y_minus)
-                            ) + (self.flow[dim][:],) + tuple(
-                            np.array([self.flow[dim][:,:,-1]]).transpose(1,2,0)
-                            for jj in range(y_plus)
-                            ), axis=2)
-
-        # update environment dimensions and meshes
-        new_points = []
-        self.L[0] += res_x*(x_minus+x_plus)
-        self.L[1] += res_y*(y_minus+y_plus)
-        if x_minus+x_plus > 0:
-            new_points.append(np.concatenate(
-                [self.flow.flow_points[0][0]-res_x*np.arange(x_minus,0,-1)]+
-                [self.flow.flow_points[0]]+
-                [self.flow.flow_points[0][-1]+res_x*np.arange(1,x_plus+1)]))
-        else:
-            new_points.append(self.flow.flow_points[0])
-        if y_minus+y_plus > 0:
-            new_points.append(np.concatenate(
-                [self.flow.flow_points[1][0]-res_y*np.arange(y_minus,0,-1)]+
-                [self.flow.flow_points[1]]+
-                [self.flow.flow_points[1][-1]+res_y*np.arange(1,y_plus+1)]))
-        else:
-            new_points.append(self.flow.flow_points[1])
-
-        if DIM3:
-            new_points.append(self.flow.flow_points[2])
-            # shift domain to quadrant 1
-            self.flow.flow_points = (new_points[0]-new_points[0][0], new_points[1]-new_points[1][0],
-                                new_points[2]-new_points[2][0])
-            # update environment dimensions
-            self.L = [self.flow.flow_points[dim][-1] for dim in range(3)]
-        else:
-            # 2D shifting and environment updating
-            self.flow.flow_points = (new_points[0]-new_points[0][0], new_points[1]-new_points[1][0])
-            self.L = [self.flow.flow_points[dim][-1] for dim in range(2)]
-
         self._reset_flow_deriv()
 
 

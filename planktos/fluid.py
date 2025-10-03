@@ -102,8 +102,7 @@ def _wrap_flow(flow, flow_points, periodic_dim=(True, True, False)):
 
 class FlowArray(np.ndarray):
     '''
-    Establishes a view on NumPy's ndarray to save memory when tiling or 
-    extending the domain.
+    Establishes a view on NumPy's ndarray to save memory when tiling.
 
     tiling is the shape of the tile. It is None if there has been no tiling.
     Otherwise, it is an (x,y) tuple of integers. (1,1) is functionally the 

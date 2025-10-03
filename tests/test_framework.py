@@ -159,49 +159,49 @@ def test_brinkman_2D():
 
     # extend flow
     # note: currently flow is 301 points over length 30 domain in both directions
-    flow_shape_old = envir.flow[0].shape
-    envir.extend(x_minus=3, x_plus=2, y_minus=1, y_plus=5)
-    assert envir.flow[0].shape == envir.flow[1].shape
-    assert envir.flow[0].shape[0] == flow_shape_old[0]+5
-    assert envir.flow[0].shape[1] == flow_shape_old[1]+6
+    # flow_shape_old = envir.flow[0].shape
+    # envir.extend(x_minus=3, x_plus=2, y_minus=1, y_plus=5)
+    # assert envir.flow[0].shape == envir.flow[1].shape
+    # assert envir.flow[0].shape[0] == flow_shape_old[0]+5
+    # assert envir.flow[0].shape[1] == flow_shape_old[1]+6
 
-    assert envir.flow[0][0,50] == envir.flow[0][3,50]
-    assert envir.flow[1][0,50] == envir.flow[1][3,50]
-    assert envir.flow[0][-1,50] == envir.flow[0][-3,50]
-    assert envir.flow[1][-1,50] == envir.flow[1][-3,50]
+    # assert envir.flow[0][0,50] == envir.flow[0][3,50]
+    # assert envir.flow[1][0,50] == envir.flow[1][3,50]
+    # assert envir.flow[0][-1,50] == envir.flow[0][-3,50]
+    # assert envir.flow[1][-1,50] == envir.flow[1][-3,50]
 
-    assert envir.flow[0][50,0] == envir.flow[0][50,1]
-    assert envir.flow[1][50,0] == envir.flow[1][50,1]
-    assert envir.flow[0][50,-1] == envir.flow[0][50,-6]
-    assert envir.flow[1][50,-1] == envir.flow[1][50,-6]
+    # assert envir.flow[0][50,0] == envir.flow[0][50,1]
+    # assert envir.flow[1][50,0] == envir.flow[1][50,1]
+    # assert envir.flow[0][50,-1] == envir.flow[0][50,-6]
+    # assert envir.flow[1][50,-1] == envir.flow[1][50,-6]
 
-    assert np.all(np.isclose(envir.L,[30.5, 30.6], rtol=0.0)) # added total of .5 in x, .6 in y
-    assert np.isclose(envir.flow_points[0][-1],30.5, rtol=0.0)
-    assert np.isclose(envir.flow_points[1][-1],30.6, rtol=0.0)
-    assert len(envir.flow_points[0]) == 100*3+1+5
-    assert len(envir.flow_points[1]) == 100*3+1+6
-    assert len(envir.flow_points[0]) == envir.flow[0].shape[0]
-    assert len(envir.flow_points[1]) == envir.flow[0].shape[1]
+    # assert np.all(np.isclose(envir.L,[30.5, 30.6], rtol=0.0)) # added total of .5 in x, .6 in y
+    # assert np.isclose(envir.flow_points[0][-1],30.5, rtol=0.0)
+    # assert np.isclose(envir.flow_points[1][-1],30.6, rtol=0.0)
+    # assert len(envir.flow_points[0]) == 100*3+1+5
+    # assert len(envir.flow_points[1]) == 100*3+1+6
+    # assert len(envir.flow_points[0]) == envir.flow[0].shape[0]
+    # assert len(envir.flow_points[1]) == envir.flow[0].shape[1]
     
 
-    envir.add_swarm(swarm_size=110, init='random')
-    sw = envir.swarms[0]
-    for ii in range(20):
-        envir.move_swarms(0.5)
-    assert len(sw.pos_history) == 20, "all movements not recorded"
-    assert envir.time == 10, "incorrect final time"
-    assert len(envir.time_history) == 20, "all times not recorded"
+    # envir.add_swarm(swarm_size=110, init='random')
+    # sw = envir.swarms[0]
+    # for ii in range(20):
+    #     envir.move_swarms(0.5)
+    # assert len(sw.pos_history) == 20, "all movements not recorded"
+    # assert envir.time == 10, "incorrect final time"
+    # assert len(envir.time_history) == 20, "all times not recorded"
 
-    # Check boundary conditions
-    for pos in sw.positions:
-        if pos[0] is ma.masked:
-            assert pos[1] is ma.masked, "All dimensions not masked"
-            assert pos.data[0] < 0 or pos.data[0] > envir.L[0] or \
-                   pos.data[1] > envir.L[1], "unknown reason for mask"
-        else:
-            assert pos[1] >= 0, "noflux not respected"
-            assert 0 <= pos[0] <= envir.L[0] and pos[1] <= envir.L[1], \
-                   "zero bndry not respected"
+    # # Check boundary conditions
+    # for pos in sw.positions:
+    #     if pos[0] is ma.masked:
+    #         assert pos[1] is ma.masked, "All dimensions not masked"
+    #         assert pos.data[0] < 0 or pos.data[0] > envir.L[0] or \
+    #                pos.data[1] > envir.L[1], "unknown reason for mask"
+    #     else:
+    #         assert pos[1] >= 0, "noflux not respected"
+    #         assert 0 <= pos[0] <= envir.L[0] and pos[1] <= envir.L[1], \
+    #                "zero bndry not respected"
 
     ########## Single Swarm, time-dependent flow ##########
     envir = planktos.Environment(rho=1000, mu=20000)
@@ -227,25 +227,25 @@ def test_brinkman_2D():
     assert len(envir.swarms) == 1, "too many Swarms in envir"
 
     # extend flow
-    flow_shape_old = envir.flow[0].shape
-    L_old = list(envir.L)
-    envir.extend(y_plus=5)
-    assert envir.flow[0].shape == envir.flow[1].shape
-    assert envir.flow[0].shape[2] == flow_shape_old[2]+5
-    assert envir.flow[1].shape[1] == flow_shape_old[1]
-    assert envir.flow[0][1,100,-1] == envir.flow[0][1,100,-6]
-    assert envir.flow[1][5,100,-1] == envir.flow[1][5,100,-6]
-    assert envir.L[0] == L_old[0]
-    assert envir.L[1] != L_old[1]
-    assert len(envir.flow_points[0]) == envir.flow[0].shape[1]
-    assert len(envir.flow_points[1]) == envir.flow[0].shape[2]
+    # flow_shape_old = envir.flow[0].shape
+    # L_old = list(envir.L)
+    # envir.extend(y_plus=5)
+    # assert envir.flow[0].shape == envir.flow[1].shape
+    # assert envir.flow[0].shape[2] == flow_shape_old[2]+5
+    # assert envir.flow[1].shape[1] == flow_shape_old[1]
+    # assert envir.flow[0][1,100,-1] == envir.flow[0][1,100,-6]
+    # assert envir.flow[1][5,100,-1] == envir.flow[1][5,100,-6]
+    # assert envir.L[0] == L_old[0]
+    # assert envir.L[1] != L_old[1]
+    # assert len(envir.flow_points[0]) == envir.flow[0].shape[1]
+    # assert len(envir.flow_points[1]) == envir.flow[0].shape[2]
 
-    # test movement beyond final flow time (should maintain last flow)
-    for ii in range(20):
-        sw.move(0.5)
-    assert len(sw.pos_history) == 20, "all movements not recorded"
-    assert envir.time == 10, "incorrect final time"
-    assert len(envir.time_history) == 20, "all times not recorded"
+    # # test movement beyond final flow time (should maintain last flow)
+    # for ii in range(20):
+    #     sw.move(0.5)
+    # assert len(sw.pos_history) == 20, "all movements not recorded"
+    # assert envir.time == 10, "incorrect final time"
+    # assert len(envir.time_history) == 20, "all times not recorded"
 
 
     
@@ -289,19 +289,19 @@ def test_brinkman_3D():
     assert len(envir.flow_points[0]) == envir.flow[0].shape[0]
 
     # extend flow
-    flow_shape_old = envir.flow[0].shape
-    L_old = list(envir.L)
-    envir.extend(x_minus=5, y_plus=3)
-    assert envir.flow[0].shape == envir.flow[1].shape
-    assert envir.flow[1].shape == envir.flow[2].shape
-    assert envir.L[0] != L_old[0]
-    assert envir.L[1] != L_old[1]
-    assert envir.L[2] == L_old[2]
-    assert len(envir.flow_points[0]) == envir.flow[0].shape[0]
-    assert len(envir.flow_points[1]) == envir.flow[0].shape[1]
-    assert len(envir.flow_points[0]) == flow_shape_old[0] + 5
-    assert len(envir.flow_points[1]) == flow_shape_old[1] + 3
-    assert envir.flow[1].shape[2] == flow_shape_old[2]
+    # flow_shape_old = envir.flow[0].shape
+    # L_old = list(envir.L)
+    # envir.extend(x_minus=5, y_plus=3)
+    # assert envir.flow[0].shape == envir.flow[1].shape
+    # assert envir.flow[1].shape == envir.flow[2].shape
+    # assert envir.L[0] != L_old[0]
+    # assert envir.L[1] != L_old[1]
+    # assert envir.L[2] == L_old[2]
+    # assert len(envir.flow_points[0]) == envir.flow[0].shape[0]
+    # assert len(envir.flow_points[1]) == envir.flow[0].shape[1]
+    # assert len(envir.flow_points[0]) == flow_shape_old[0] + 5
+    # assert len(envir.flow_points[1]) == flow_shape_old[1] + 3
+    # assert envir.flow[1].shape[2] == flow_shape_old[2]
     
 
     envir.add_swarm()
@@ -338,19 +338,19 @@ def test_brinkman_3D():
     assert len(envir.flow_points[0]) == envir.flow[0].shape[1]
 
     # extend flow
-    flow_shape_old = envir.flow[0].shape
-    L_old = list(envir.L)
-    envir.extend(x_minus=5, y_plus=3)
-    assert envir.flow[0].shape == envir.flow[1].shape
-    assert envir.flow[1].shape == envir.flow[2].shape
-    assert envir.L[0] != L_old[0]
-    assert envir.L[1] != L_old[1]
-    assert envir.L[2] == L_old[2]
-    assert len(envir.flow_points[0]) == envir.flow[0].shape[1]
-    assert len(envir.flow_points[1]) == envir.flow[0].shape[2]
-    assert len(envir.flow_points[0]) == flow_shape_old[1] + 5
-    assert len(envir.flow_points[1]) == flow_shape_old[2] + 3
-    assert envir.flow[1].shape[3] == flow_shape_old[3]
+    # flow_shape_old = envir.flow[0].shape
+    # L_old = list(envir.L)
+    # envir.extend(x_minus=5, y_plus=3)
+    # assert envir.flow[0].shape == envir.flow[1].shape
+    # assert envir.flow[1].shape == envir.flow[2].shape
+    # assert envir.L[0] != L_old[0]
+    # assert envir.L[1] != L_old[1]
+    # assert envir.L[2] == L_old[2]
+    # assert len(envir.flow_points[0]) == envir.flow[0].shape[1]
+    # assert len(envir.flow_points[1]) == envir.flow[0].shape[2]
+    # assert len(envir.flow_points[0]) == flow_shape_old[1] + 5
+    # assert len(envir.flow_points[1]) == flow_shape_old[2] + 3
+    # assert envir.flow[1].shape[3] == flow_shape_old[3]
 
     # replace original flow for speed
     envir = planktos.Environment(Lz=10, rho=1000, mu=1000)
