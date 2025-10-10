@@ -38,9 +38,9 @@ class permstick(planktos.Swarm):
                np.expand_dims(stick,1)*self.positions
 
     def after_move(self, dt):
-        swrm.props.loc[swrm.ib_collision, 'stick'] = True
+        self.props.loc[self.ib_collision_idx >= 0, 'stick'] = True
         # Let's also color the agents that get stuck!
-        self.props.loc[self.ib_collision, 'color'] = 'yellow'
+        self.props.loc[self.ib_collision_idx >= 0, 'color'] = 'yellow'
 
 # Set the swarm size
 SWARM_SIZE = 1000

@@ -13,8 +13,8 @@ from scipy import integrate, optimize
 from . import _geom
 
 
-def _apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist, 
-                                ib_collisions='sliding'):
+def apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist, 
+                             ib_collisions='sliding'):
     '''Apply internal boundaries to a trajectory starting and ending at
     startpt and endpt, returning a new endpt (or the original one) as
     appropriate.
@@ -54,6 +54,9 @@ def _apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist,
     dx : length 2 or 3 array, or None
         change in position for agent after IB collision - based on first
         collision point and final location. If no IB collision, None.
+    idx : int or None
+        index into mesh that yielded the first intersection. If no IB 
+        collision, None.
 
     Acknowledgements
     ---------------
@@ -108,7 +111,9 @@ def _apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist,
 
     # Return endpt we already have if None.
     if intersection is None:
-        return endpt, None
+        return endpt, None, None
+    else:
+        idx = intersection[-1]
     
     # If we do have an intersection:
     if ib_collisions == 'sliding':
@@ -132,7 +137,7 @@ def _apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist,
         #   as necessary until we have a final result.
         new_pos = _project_and_slide_static(startpt, endpt, intersection, 
                                                     close_mesh, max_meshpt_dist)
-        return new_pos, new_pos - intersection[0]
+        return new_pos, new_pos - intersection[0], idx
     
     elif ib_collisions == 'sticky':
         # Return the point of intersection
@@ -145,7 +150,7 @@ def _apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist,
         EPS = 10**(coord_mag-7)
 
         back_vec = (startpt-endpt)/np.linalg.norm(endpt-startpt)
-        return intersection[0] + back_vec*EPS, np.zeros((DIM))
+        return intersection[0] + back_vec*EPS, np.zeros((DIM)), idx
 
 
 
@@ -162,9 +167,9 @@ def _get_eligible_static_mesh_elements(startpt, endpt, mesh, search_rad):
     
 
 
-def _apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh, 
-                                max_meshpt_dist, max_mov, 
-                                ib_collisions='sliding'):
+def apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh, 
+                             max_meshpt_dist, max_mov, 
+                             ib_collisions='sliding'):
     '''Apply internal boundaries to a trajectory starting and ending at
     startpt and endpt, returning a new endpt (or the original one) as
     appropriate.
@@ -196,6 +201,9 @@ def _apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
     dx : length 2 or 3 array, or None
         change in position for agent after IB collision - based on first
         collision point and final location. If no IB collision, None.
+    idx : int or None
+        index into mesh that yielded the first intersection. If no IB 
+        collision, None.
     '''
 
     if len(startpt) == 2:
@@ -225,7 +233,9 @@ def _apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
 
     # Return endpt we already have if None.
     if intersection is None:
-        return endpt, None
+        return endpt, None, None
+    else:
+        idx = intersection[-1]
     
     # If we have an intersection with this agent, apply boundary condition
     if ib_collisions == 'sticky':
@@ -243,7 +253,6 @@ def _apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
             t_I = intersection[1]
             Q0 = intersection[2]   # edge of mesh element at time of intersection
             Q1 = intersection[3]   # edge of mesh element at time of intersection
-            idx = intersection[4]  # index into close_mesh_start/end above
 
             # Vector for agent travel
             vec = endpt - startpt
@@ -253,6 +262,7 @@ def _apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
             s_I = max((x[0]-Q0[0])/(Q1[0]-Q0[0]),(x[1]-Q0[1])/(Q1[1]-Q0[1]))
             if idx is None:
                 dt_elem = close_mesh_end
+                idx = 0
             else:
                 dt_elem = close_mesh_end[idx]
             # Translate to final position of mesh element in this time step
@@ -280,7 +290,7 @@ def _apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
             # Now, perturb perpendicular from the end position of the element
             perp_vec = np.array([dt_elem[1,1]-dt_elem[0,1],dt_elem[0,0]-dt_elem[1,0]])
             perp_vec *= side_signum/np.linalg.norm(perp_vec)
-            return new_pos + perp_vec*EPS, new_pos - x
+            return new_pos + perp_vec*EPS, new_pos - x, idx
         else:
             raise NotImplementedError("3D moving meshes not currently supported.")
     else:
@@ -315,7 +325,7 @@ def _apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
             new_pos = _project_and_slide_moving(startpt, endpt, intersection, 
                                             close_mesh_start, close_mesh_end, 
                                             max_meshpt_dist, max_mov)
-            return new_pos, new_pos - intersection[0]
+            return new_pos, new_pos - intersection[0], idx
 
         else:
             raise NotImplementedError("3D moving meshes not currently supported.")
@@ -323,7 +333,7 @@ def _apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
 
 
 def _get_eligible_moving_mesh_elements(startpt, endpt, start_mesh, end_mesh, 
-                                        max_mov, search_rad):
+                                       max_mov, search_rad):
     '''
     From starting and ending points for the mesh, find all elements that 
     have vertex points which passed within search_rad of the trajectory 
@@ -363,7 +373,7 @@ def _get_eligible_moving_mesh_elements(startpt, endpt, start_mesh, end_mesh,
 
 
 def _project_and_slide_static(startpt, endpt, intersection, mesh, 
-                                max_meshpt_dist, prev_idx=None):
+                              max_meshpt_dist, prev_idx=None):
     '''Once we have an intersection point with an immersed mesh, slide the 
     agent along the mesh for its remaining movement (frictionless 
     boundary interaction), and then determine what happens if we fall off 
@@ -387,7 +397,7 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
         max distance between two points on a mesh element (used to determine 
         how far away from startpt to search for mesh elements). 
         Passed-through here solely in case of recursion with 
-        _apply_internal_moving_BC.
+        apply_internal_moving_BC.
     prev_idx : int, optional
         in recursion with adjoining mesh elements, this prevents an infinite 
         recusion with, e.g., mesh elements in an acute angle.
@@ -725,8 +735,8 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
 
 
 def _project_and_slide_moving(startpt, endpt, intersection, mesh_start, 
-                                mesh_end, max_meshpt_dist, max_mov, 
-                                prev_idx=None):
+                              mesh_end, max_meshpt_dist, max_mov, 
+                              prev_idx=None):
     '''Once we have an intersection point with an immersed mesh, slide the 
     agent along the moving mesh for its remaining movement (frictionless 
     boundary interaction), and then determine what happens if we fall off 
@@ -754,10 +764,10 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
         max distance between two points on a mesh element (used to determine 
         how far away from startpt to search for mesh elements). 
         Passed-through here solely in case of recursion with 
-        _apply_internal_moving_BC.
+        apply_internal_moving_BC.
     max_mov : float
         maximum distance any mesh vertex moved. Passed-through here solely 
-        in case of recursion with _apply_internal_moving_BC.
+        in case of recursion with apply_internal_moving_BC.
     prev_idx : int, optional
         in recursion with adjoining mesh elements, this prevents an infinite 
         recusion with, e.g., mesh elements in an acute angle.
