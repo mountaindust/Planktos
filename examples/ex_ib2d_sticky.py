@@ -49,16 +49,17 @@ class permstick(planktos.Swarm):
     
     # After an agent runs into an immersed structure, we want it to stop moving 
     #   for all future times. There is an attribute of the Swarm object called 
-    #   ib_collision which is an array of bool, one for each agent. If the agent 
+    #   ib_collision_idx which is an array of int, one for each agent. If the agent 
     #   collided with an immersed structure in the most recent move, it is set 
-    #   to True for that agent. Otherwise, it is False. We'll use that to 
-    #   dynamically update our 'stick' property after the move is over.
+    #   to the index of the mesh element that the agent encountered. Otherwise, 
+    #   it is -1. We'll use that to dynamically update our 'stick' property after 
+    #   the move is over.
     # To do this, we will override after_move, a method that gets called 
     #   after all the agents have moved.
     def after_move(self, dt):
-        swrm.props.loc[swrm.ib_collision, 'stick'] = True
+        self.props.loc[self.ib_collision_idx >= 0, 'stick'] = True
         # Let's also color the agents that get stuck!
-        self.props.loc[self.ib_collision, 'color'] = 'yellow'
+        self.props.loc[self.ib_collision_idx >= 0, 'color'] = 'yellow'
 
 # Now we create the Swarm similar to ex_ib2d_ibmesh.py.
 # We will set store_prop_history=True because we want to keep track of agent 
@@ -90,7 +91,7 @@ swrm.props['color'] = np.full(100, swrm.shared_props['color'])
 
 for ii in range(50):
     swrm.move(0.025, ib_collisions='sticky')
-    # if np.any(swrm.ib_collision): # uncomment to display whenever something is getting stuck!
+    # if np.any(swrm.ib_collision_idx>=0): # uncomment to display whenever something is getting stuck!
     #     swrm.plot()
     
 
@@ -102,5 +103,5 @@ swrm.plot_all(movie_filename='channel_flow_sticky.mp4', fps=3, fluid='vort',
 # Note that you can make use of the for-loop to update the Swarm object in all 
 #   kinds of ways, or just to collect data about the Swarm dynamically. For 
 #   instance, if you want to record every time that an agent encounters an 
-#   immersed boundary, you could check swarm.ib_collision in the for-loop and 
-#   then record the time and boolean data by appending to a list.
+#   immersed boundary, you could check swarm.ib_collision_idx in the for-loop and 
+#   then record the time and data by appending to a list.

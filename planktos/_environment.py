@@ -3004,8 +3004,8 @@ class Environment:
             for prop in s.props:
                 new_props[prop] = [s.props[prop][0] for ii in range(s.positions.shape[0])]
             s.props = new_props
-            # Re-initialize ib_collision
-            s.ib_collision = np.full(s.positions.shape[0], False)
+            # Re-initialize ib_collision_idx
+            s.ib_collision_idx = np.full(s.positions.shape[0], -1)
 
         # get an array to record the corresponding last time for these positions
         last_time = ma.masked_array(np.ones(s.positions.shape[0])*t0, mask=s.positions[:,0].mask.copy())

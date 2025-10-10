@@ -163,9 +163,9 @@ class Swarm:
     accelerations : masked array, shape Nx2 (2D) or Nx3 (3D)
         accelerations of all the agents in the swarm. same masking properties as 
         positions
-    ib_collision : 1D array of bool with length equal to the swarm size
-        For each agent, True if the agent collided with an immersed boundary in
-        the most recent time it moved. False otherwise.
+    ib_collision_idx : 1D array of int with length equal to the swarm size
+        For each agent, the index of the mesh element that the agent collided with
+        in the most recent time it moved. -1 if no collision.
     props : pandas DataFrame
         Pandas dataframe of individual agent properties that vary between agents. 
         This is the method by which individual variation among the agents should 
@@ -335,7 +335,7 @@ class Swarm:
         self.vel_history = []
 
         # Initialize IB collision detection
-        self.ib_collision = np.full(swarm_size, False)
+        self.ib_collision_idx = np.full(swarm_size, -1) # will be set to mesh index if collision occurs
         self.ib_condition = ib_condition
 
         # initialize Dataframe of non-shared properties
@@ -1399,16 +1399,16 @@ class Swarm:
 
         if self.envir.ibmesh.ndim == 3:
             # static mesh
-            new_loc, dx = _ibc._apply_internal_static_BC(startpt, endpt, 
+            new_loc, dx, mesh_idx = _ibc.apply_internal_static_BC(startpt, endpt, 
                     self.envir.ibmesh, self.envir.max_meshpt_dist,
                     ib_collisions=ib_collisions)
             self.positions[idx] = new_loc
             if dx is not None:
                 self.accelerations[idx] = (dx/dt - self.velocities[idx])/dt
                 self.velocities[idx] = dx/dt
-                self.ib_collision[idx] = True
+                self.ib_collision_idx[idx] = mesh_idx
             else:
-                self.ib_collision[idx] = False
+                self.ib_collision_idx[idx] = -1
 
         else:
             # moving mesh. first get necessary info about it
@@ -1430,15 +1430,15 @@ class Swarm:
                 for ii  in range(DIM))).max()
             
             # now apply BC
-            new_loc, dx = _ibc._apply_internal_moving_BC(startpt, endpt, start_mesh, 
+            new_loc, dx, mesh_idx = _ibc.apply_internal_moving_BC(startpt, endpt, start_mesh, 
                     end_mesh, max_meshpt_dist, max_mov, ib_collisions=ib_collisions)
             self.positions[idx] = new_loc
             if dx is not None:
                 self.accelerations[idx] = (dx/dt - self.velocities[idx])/dt
                 self.velocities[idx] = dx/dt
-                self.ib_collision[idx] = True
+                self.ib_collision_idx[idx] = mesh_idx
             else:
-                self.ib_collision[idx] = False
+                self.ib_collision_idx[idx] = -1
 
 
 

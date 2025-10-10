@@ -27,7 +27,7 @@ s = envir.swarms[0]
 s.positions[89,:] = (0.05, 0.075)
 s.positions[95,:] = (0.17, 0.1)
 s.shared_props['cov'] *= 0.001
-# s.props['stick'] = s.ib_collision.copy()
+# s.props['stick'] = s.ib_collision_idx >= 0
 #######
 
 ### This is the incorrect mesh for the fluid. Use only for init_grid testing ###
@@ -49,7 +49,7 @@ s.shared_props['cov'] *= 0.001
 # print('Moving swarm...')
 # for ii in range(300): # 500
 #     s.move(0.0005, ib_collisions='sticky')
-#     s.props['stick'] = np.logical_or(s.props['stick'],s.ib_collision)
+#     s.props['stick'] = np.logical_or(s.props['stick'],s.ib_collision_idx>=0)
     
 # s.plot_all(movie_filename='leaf_2d_vort_sticky.mp4', figsize=(6,9), fps=30, fluid='vort')
 
