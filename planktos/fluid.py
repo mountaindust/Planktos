@@ -919,7 +919,7 @@ class FluidData:
             dydx0 = []; dydx1 = []; last_flow = []
             for n in range(len(self._flow)):
                 # grab flow at final loaded time from current spline
-                last_flow[n] = np.array(self._flow[n](load_times[1]))
+                last_flow.append(np.array(self._flow[n](load_times[1])))
                 # drop unneeded coefficients to save space before replacement
                 self._flow[n].c = self._flow[n].c[:,-1,...]
                 # Extract derivative info for next spline
@@ -934,8 +934,8 @@ class FluidData:
 
             # add old spline data
             for n,f in enumerate(flow):
-                flow[n] = np.concatenate((self._flow[n].c[3,0,...],
-                                          last_flow[n], f))
+                flow[n] = np.concatenate((self._flow[n].c[np.newaxis,-1,...],
+                                          last_flow[n][np.newaxis,...], f))
             # Remove the rest of the spline data
             self._flow = [0 for n in range(len(flow))]
 
@@ -974,11 +974,11 @@ class FluidData:
             load_times = self.flow_times[idx_start:idx_finish+1]
 
             ####### retain only the necessary current data #######
-            dydx0 = []; dydx1 = []
+            dydx0 = []; dydx1 = []; last_flow = []
             for n in range(len(self._flow)):
                 # grab flow at second loaded time from current spline.
                 #   this will become the final loaded flow.
-                last_flow[n] = np.array(self._flow[n](load_times[-1]))
+                last_flow.append(np.array(self._flow[n](load_times[-1])))
                 # drop unneeded coefficients to save space before replacement
                 self._flow[n].c = self._flow[n].c[:,0,...]
                 # Extract derivative info for next spline
@@ -993,8 +993,8 @@ class FluidData:
             
             # add old spline data
             for n,f in enumerate(flow):
-                flow[n] = np.concatenate((f, self._flow[n].c[3,0,...],
-                                          last_flow[n]))
+                flow[n] = np.concatenate((f, self._flow[n].c[np.newaxis,-1,...],
+                                          last_flow[n][np.newaxis,...]))
             # Remove the rest of the spline data
             self._flow = [0 for n in range(len(flow))]
 
