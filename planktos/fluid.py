@@ -958,61 +958,70 @@ class FluidData:
         while time < self._flow[0].x[0] and not self._flow[0].extrapolate[0]:
             # spline backward
 
-            ####### get info about what we will be loading #######
-            d_finish = self.loaded_dump_bnds[0]-1 # last dump to load
-            idx_finish = self.loaded_idx_bnds[0]+1 # last index in new spline
-            if self.loaded_dump_bnds[0]+1 - self.INUM < self.d_start:
-                # We are at the beginning of the dataset.
-                d_start = self.d_start
-                idx_start = 0
-                extrapolate = (True, False)
+            ####### if the beginning is requested, jump there #######
+            if time <= self.flow_times[self.INUM]:
+                self._flow = None
+                self._flow = self.load_dumpfiles(self.d_start, self.d_start + self.INUM)
+                self.loaded_dump_bnds = (self.d_start, self.d_start + self.INUM)
+                self.loaded_idx_bnds = (0, self.INUM)
+                for n in range(len(self._flow)):
+                    self._flow[n] = fCubicSpline(
+                        self.flow_times[0:self.INUM+1], self._flow[n],
+                        extrapolate=(True, False), bc_type='left')
+                    if self.tiling is not None:
+                        self._flow[n].tiling = self.tiling
+                        assert self._flow[n].shape[1:] == self.fshape[1:], \
+                            "Tiling did not propagate correctly"
             else:
-                # We are contained in the middle of the dataset.
+            ####### We are contained in the middle of the dataset. #######
+                ####### get info about what we will be loading #######
+                d_finish = self.loaded_dump_bnds[0]-1 # last dump to load
+                idx_finish = self.loaded_idx_bnds[0]+1 # last index in new spline
                 d_start = self.loaded_dump_bnds[0]+1 - self.INUM
                 idx_start = self.loaded_idx_bnds[0]+1 - self.INUM
                 extrapolate = (False, False)
-            load_times = self.flow_times[idx_start:idx_finish+1]
+                load_times = self.flow_times[idx_start:idx_finish+1]
 
-            ####### retain only the necessary current data #######
-            dydx0 = []; dydx1 = []; last_flow = []
-            for n in range(len(self._flow)):
-                # grab flow at second loaded time from current spline.
-                #   this will become the final loaded flow.
-                last_flow.append(np.array(self._flow[n](load_times[-1])))
-                # drop unneeded coefficients to save space before replacement
-                self._flow[n].c = self._flow[n].c[:,0,...]
-                # Extract derivative info for next spline
-                dydx0.append(self._flow[n].c[2,0,...])
-                dx = load_times[1] - load_times[0]
-                dydx1.append(3*self._flow[n].c[0,1,...]*dx**2
-                             + 2*self._flow[n].c[1,1,...]*dx
-                             + self._flow[n].c[2,1,...])
+                ####### retain only the necessary current data #######
+                dydx0 = []; dydx1 = []; last_flow = []
+                for n in range(len(self._flow)):
+                    # grab flow at second loaded time from current spline.
+                    #   this will become the final loaded flow.
+                    last_flow.append(np.array(self._flow[n](load_times[-1])))
+                    # drop unneeded coefficients to save space before replacement
+                    self._flow[n].c = self._flow[n].c[:,0,...]
+                    # Extract derivative info for next spline
+                    dydx0.append(self._flow[n].c[2,0,...])
+                    dx = load_times[1] - load_times[0]
+                    dydx1.append(3*self._flow[n].c[0,1,...]*dx**2
+                                + 2*self._flow[n].c[1,1,...]*dx
+                                + self._flow[n].c[2,1,...])
+                    
+                # load new data
+                flow = self.load_dumpfiles(d_start, d_finish)
                 
-            # load new data
-            flow = self.load_dumpfiles(d_start, d_finish)
-            
-            # add old spline data
-            for n,f in enumerate(flow):
-                flow[n] = np.concatenate((f, self._flow[n].c[np.newaxis,-1,...],
-                                          last_flow[n][np.newaxis,...]))
-            # Remove the rest of the spline data
-            self._flow = [0 for n in range(len(flow))]
+                # add old spline data
+                for n,f in enumerate(flow):
+                    flow[n] = np.concatenate((f, self._flow[n].c[np.newaxis,-1,...],
+                                            last_flow[n][np.newaxis,...]))
+                # Remove the rest of the spline data
+                self._flow = [0 for n in range(len(flow))]
 
-            ####### Spline it #######
-            for n in range(len(flow)):
-                self._flow[n] = fCubicSpline(load_times, flow[n], dydx0[n], 
-                                             dydx1[n], extrapolate, direction='left')
-                flow[n] = 0
-                if self.tiling is not None:
-                    self._flow[n].tiling = self.tiling
-                    assert self._flow[n].shape[1:] == self.fshape[1:], \
-                        "Tiling did not propagate correctly"
-            self.loaded_dump_bnds = (d_start, self.loaded_dump_bnds[0]+1)
-            self.loaded_idx_bnds = (idx_start, idx_finish)
+                ####### Spline it #######
+                for n in range(len(flow)):
+                    self._flow[n] = fCubicSpline(load_times, flow[n], dydx0[n], 
+                                                dydx1[n], extrapolate, direction='left')
+                    flow[n] = 0
+                    if self.tiling is not None:
+                        self._flow[n].tiling = self.tiling
+                        assert self._flow[n].shape[1:] == self.fshape[1:], \
+                            "Tiling did not propagate correctly"
+                self.loaded_dump_bnds = (d_start, self.loaded_dump_bnds[0]+1)
+                self.loaded_idx_bnds = (idx_start, idx_finish)
 
-            # Update fmin/fmax
-            self.fmin = (min(self.fmin[n],f.min()) for n,f in enumerate(self._flow))
-            self.fmax = (max(self.fmax[n],f.max()) for n,f in enumerate(self._flow))
+                # Update fmin/fmax
+                self.fmin = (min(self.fmin[n],f.min()) for n,f in enumerate(self._flow))
+                self.fmax = (max(self.fmax[n],f.max()) for n,f in enumerate(self._flow))
     
 
 
