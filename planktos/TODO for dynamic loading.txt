@@ -1,5 +1,8 @@
 TODO for dynamic loading of fluid data
 
+One-sided cubic spline is unstable.
+Implement linear interpolation instead.
+
 Removed extend method in favor of extrapolation as a future feature.
 
 center_cell_regrid needs to be folded into new FluidData object, because this 

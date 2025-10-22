@@ -279,7 +279,7 @@ class fCubicSpline(interpolate.CubicSpline):
 
         If dydx0 is None then use CubicSpline to construct the object. If 
         bc_type is given as 'left', construct a CubicSpline using not-a-knot 
-        and natural BC on the starting side. This is ideal dynamic loading of 
+        and natural BC on the starting side. This is for dynamic loading of 
         data when only the first few time points of the data set are currently 
         being splined. If bc_type is something else, it will be passed to 
         scipy.interpolate.CubicSpline.
@@ -434,7 +434,10 @@ class fCubicSpline(interpolate.CubicSpline):
 
 
     def _left_based_cspline(self, x, y):
-        '''Create a cubic spline where both boundary conditions are specified
+        '''
+        THIS APPEARS TO NOT WORK. REPLACE WITH LINEAR INTERPOLATION.
+        
+        Create a cubic spline where both boundary conditions are specified
         at the left (natural and 'not-a-knot'). This is extremely useful when 
         only the first part of a fluid data set will be loaded.
         
@@ -461,8 +464,38 @@ class fCubicSpline(interpolate.CubicSpline):
         dxr = dx.reshape([dx.shape[0]] + [1] * (y.ndim - 1))
         slope = np.diff(y, axis=0) / dxr
 
-        # Find derivative values at each x[i] by solving a tridiagonal system.
-        A = np.zeros((3, n))  # This is a banded matrix representation.
+        ##### Old implementation #####
+        # # Find derivative values at each x[i] by solving a tridiagonal system.
+        # A = np.zeros((3, n))  # This is a banded matrix representation.
+        # b = np.empty((n,) + y.shape[1:], dtype=y.dtype)
+
+        # # Filling the system for i=2..n-1
+        # #                         (x[i] - x[i-1]) * s[i-2] +\
+        # # 2 * ((x[i-1] - x[i-2]) + (x[i] - x[i-1])) * s[i-1]   +\
+        # #                         (x[i-1] - x[i-2]) * s[i] =\
+        # #       3 * ((x[i] - x[i-1])*(y[i-1] - y[i-2])/(x[i-1] - x[i-2]) +\
+        # #           (x[i-1] - x[i-2])*(y[i] - y[i-1])/(x[i] - x[i-1]))
+
+        # A[-1, :-2] = dx[1:]                  # The lower lower diagonal
+        # A[1, 1:-1] = 2 * (dx[:-1] + dx[1:])  # The lower diagonal
+        # A[0, 2:] = dx[:-1]                   # The diagonal
+
+        # b[2:] = 3 * (dxr[1:] * slope[:-1] + dxr[:-1] * slope[1:])
+
+        # d = x[2] - x[0]
+        # slp = (y[2]-y[0])/d
+        # # 'not-a-knot' at the start
+        # A[0, 1] = d
+        # A[1, 0] = dx[1]
+        # b[1] = ((dxr[0] + 2*d) * dxr[1] * slope[0] +
+        #         dxr[0]**2 * slope[1]) / d
+        # # natural bc at the start
+        # A[0, 0] = dx[0]**2 - d**2
+        # b[0] = slp*dx[0]**2 - slope[0]*d**2
+        # l_and_u = (2,0)
+        ##################################
+
+        A = np.zeros((4, n))  # This is a banded matrix representation.
         b = np.empty((n,) + y.shape[1:], dtype=y.dtype)
 
         # Filling the system for i=2..n-1
@@ -473,22 +506,19 @@ class fCubicSpline(interpolate.CubicSpline):
         #           (x[i-1] - x[i-2])*(y[i] - y[i-1])/(x[i] - x[i-1]))
 
         A[-1, :-2] = dx[1:]                  # The lower lower diagonal
-        A[1, 1:-1] = 2 * (dx[:-1] + dx[1:])  # The lower diagonal
-        A[0, 2:] = dx[:-1]                   # The diagonal
+        A[2, 1:-1] = 2 * (dx[:-1] + dx[1:])  # The lower diagonal
+        A[1, 2:] = dx[:-1]                   # The diagonal
 
         b[2:] = 3 * (dxr[1:] * slope[:-1] + dxr[:-1] * slope[1:])
 
-        d = x[2] - x[0]
-        slp = (y[2]-y[0])/d
-        # 'not-a-knot' at the start
-        A[0, 1] = d
-        A[1, 0] = dx[1]
-        b[1] = ((dxr[0] + 2*d) * dxr[1] * slope[0] +
-                dxr[0]**2 * slope[1]) / d
-        # natural bc at the start
-        A[0, 0] = dx[0]**2 - d**2
-        b[0] = slp*dx[0]**2 - slope[0]*d**2
-        l_and_u = (2,0)
+        # 'not-a-knot' and natural bc at the start
+        A[1, 0] = 2
+        A[0, 1] = 1 # only thing in the upper diagonal
+        b[0] = 3*slope[0]
+        A[2, 0] = -(3*dx[1]*dx[0]+dx[1]**2)
+        A[1, 1] = 3*dx[0]**2 + 3*dx[0]*dx[1] + dx[1]**2
+        b[1] = 3*slope[1]*dx[0]**2
+        l_and_u = (2,1)
 
         # Solve the system
         m = b.shape[0]
@@ -1003,14 +1033,14 @@ class FluidData:
                 # add old spline data
                 for n,f in enumerate(flow):
                     flow[n] = np.concatenate((f, self._flow[n].c[np.newaxis,-1,...],
-                                            last_flow[n][np.newaxis,...]))
+                                              last_flow[n][np.newaxis,...]))
                 # Remove the rest of the spline data
                 self._flow = [0 for n in range(len(flow))]
 
                 ####### Spline it #######
                 for n in range(len(flow)):
                     self._flow[n] = fCubicSpline(load_times, flow[n], dydx0[n], 
-                                                dydx1[n], extrapolate, direction='left')
+                                                 dydx1[n], extrapolate, direction='left')
                     flow[n] = 0
                     if self.tiling is not None:
                         self._flow[n].tiling = self.tiling
