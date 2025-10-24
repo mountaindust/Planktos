@@ -265,6 +265,214 @@ class FlowArray(np.ndarray):
 
 
 
+class LinearSpline:
+    '''
+    Handles dynamic loading and tiling for linear interpolation of one 
+    dimension of fluid data.
+    '''
+
+    def __init__(self, flow_times, flow, extrapolate=(True, True)):
+        '''
+        Creates a linear interpolation instance with some additional info 
+        and capabilities. Will throw a custom error if times are requested 
+        outside of spline time bounds and extrapolate is False on that side.
+        '''
+        self.flow_times = flow_times
+        self.flow = flow
+        self.extrapolate = extrapolate
+        self._shape = flow.shape
+        self.dshape = flow.shape
+
+    @property
+    def shape(self):
+        # Custom getter for shape property
+        return self._shape
+
+    @shape.setter
+    def shape(self, value):
+        # Make this property read-only
+        raise AttributeError("shape is read-only in LinearSpline")
+
+    @property
+    def tiling(self):
+        return getattr(self, '_tiling', None)
+
+    @tiling.setter
+    def tiling(self, value):
+        if value is not None:
+            # Check if value is iterable and length 2
+            try:
+                v = tuple(value)
+            except TypeError:
+                raise ValueError("tiling must be an iterable of length 2 or None")
+            if len(v) != 2:
+                raise ValueError("tiling must be an iterable of length 2")
+            for i in v:
+                if not isinstance(i, int) or i < 1:
+                    raise ValueError("Each tiling value must be an integer >= 1")
+            self._tiling = v
+            new_shape = list(self.shape)
+            new_shape[1] = (new_shape[1]-1) * v[0] + 1
+            new_shape[2] = (new_shape[2]-1) * v[1] + 1
+            self._shape = tuple(new_shape)
+        else:
+            self._tiling = None
+
+    def __call__(self, val):
+        if (val < self.flow_times[0] and not self.extrapolate[0]) \
+              or (val > self.flow_times[-1] and not self.extrapolate[1]):
+            raise SplineRangeError('Out of range without extrapolation.')
+        if val <= self.flow_times[0]:
+            farray = self.flow[0]
+            farray = farray.view(FlowArray)
+            farray.tiling = self.tiling
+            return farray
+        if val >= self.flow_times[-1]:
+            farray = self.flow[-1]
+            farray = farray.view(FlowArray)
+            farray.tiling = self.tiling
+            return farray
+        idx = np.searchsorted(self.flow_times, val) - 1
+        t0 = self.flow_times[idx]
+        t1 = self.flow_times[idx+1]
+        f0 = self.flow[idx]
+        f1 = self.flow[idx+1]
+        farray = f0 + (f1 - f0) * (val - t0) / (t1 - t0)
+        farray = farray.view(FlowArray)
+        farray.tiling = self.tiling
+        return farray
+    
+    def __getitem__(self, pos):
+        '''
+        Allows indexing into the interpolator at original time mesh points.
+        '''
+        if type(pos) == int:
+            farray = self.__call__(self.flow_times[pos])
+        elif type(pos) == slice:
+            start = pos.start; stop = pos.stop; step = pos.step
+            if step is None: step = 1
+            if step >= 0:
+                if start is None: start = 0
+                if stop is None: stop = len(self.flow_times)
+            else:
+                if start is None: start = len(self.flow_times)-1
+                if stop is None: stop = -1
+            farray = np.stack([self.__call__(self.flow_times[n]) for 
+                               n in range(start,stop,step)])
+        elif type(pos) == tuple:
+            if type(pos[0]) == int:
+                if self.tiling is None:
+                    farray = self.__call__(self.flow_times[pos[0]])[pos[1:]]
+                else:
+                    farray = self.__call__(self.flow_times[pos[0]])
+            elif type(pos[0]) == slice:
+                start = pos[0].start; stop = pos[0].stop; step = pos[0].step
+                if step is None: step = 1
+                if step >= 0:
+                    if start is None: start = 0
+                    if stop is None: stop = len(self.flow_times)
+                else:
+                    if start is None: start = len(self.flow_times)-1
+                    if stop is None: stop = -1
+                if self.tiling is None:
+                    farray = np.stack([self.__call__(self.flow_times[n])[pos[1:]] for 
+                                       n in range(start,stop,step)])
+                else:
+                    farray = np.stack([self.__call__(self.flow_times[n]) for 
+                                       n in range(start,stop,step)])
+            else:
+                raise IndexError('Only integers or slices supported in LinearSpline.')
+        else:
+            raise IndexError('Only integers or slices supported in LinearSpline.')
+        
+        if self.tiling is None:
+            return farray
+        elif type(pos) != tuple:
+            farray = farray.view(FlowArray)
+            farray.tiling = self.tiling
+            return farray
+        else:
+            idx_list = []
+            spec_len = []
+            for n,p in enumerate(pos[1:]):
+                n += 1
+                if type(p) == int:
+                    if p > self.dshape[n]-1 or p < -self.dshape[n]:
+                        tnum = p//self.dshape[n]
+                        if tnum > self.tiling[n]-1 or tnum < -self.tiling[n]:
+                            raise IndexError(f"index {p} is out of bounds for axis 0 with size {self.shape[n]}")
+                        idx_list.append(p % (self.dshape[n]-1))
+                    else:
+                        idx_list.append(p)
+                        spec_len.append(1)
+                elif type(p) == slice:
+                    start = p.start; stop = p.stop; step = p.step
+                    if step is None: step = 1
+                    if start is not None and start < 0: start = max(0,self.shape[n]+start)
+                    if stop is not None and stop < 0: stop = max(0,self.shape[n]+stop)
+                    if step >= 0:
+                        if start is None: start = 0
+                        if stop is None: stop = self.shape[n]
+                    else:
+                        if start is None: start = self.shape[n]-1
+                        if stop is None: stop = -1
+                    # truncate ranges
+                    if start > self.shape[n]: start = self.shape[n]
+                    if stop > self.shape[n]: stop = self.shape[n]
+                    # get indices
+                    idx_list.append(np.arange(start,stop,step) % (self.dshape[n]-1))
+                    spec_len.append(None)
+                elif type(p) == np.ndarray:
+                    p_min = p.min(); p_max = p.max()
+                    if p_max > self.shape[n]-1 or p_min < -self.shape[n]:
+                        raise IndexError(f"index {p} is out of bounds for axis {n} with size {self.shape[n]}")
+                    idx_list.append(p % (self.dshape[n]-1))
+                    spec_len.append(p.size)
+                else:
+                    raise IndexError('Only integers, slices, and arrays supported in LinearSpline.')
+            if len(pos) == 2:
+                return farray[idx_list[0]]
+            elif len(pos) == 3:
+                if spec_len[0] is None or (spec_len[1] is None and spec_len[0] > 1):
+                    return farray[idx_list[0]][:,idx_list[1]]
+                else:
+                    return farray[idx_list[0],idx_list[1]]
+            elif len(pos) == 4:
+                if spec_len[0] is None:
+                    if spec_len[1] is None or (spec_len[2] is None and spec_len[1] > 1):
+                        return farray[idx_list[0]][:,idx_list[1]][:,:,idx_list[2]]
+                    else:
+                        return farray[idx_list[0]][:,idx_list[1],idx_list[2]]
+                elif spec_len[0] == 1:
+                    if spec_len[1] is None or (spec_len[2] is None and spec_len[1] > 1):
+                        return farray[idx_list[0],idx_list[1]][:,idx_list[2]]
+                    else:
+                        return farray[idx_list[0],idx_list[1],idx_list[2]]
+                else:
+                    if spec_len[1] is None and spec_len[2] is None:
+                        return farray[idx_list[0]][:,idx_list[1]][:,:,idx_list[2]]
+                    elif spec_len[1] is None:
+                        return farray[idx_list[0],:,idx_list[2]][:,idx_list[1]]
+                    elif spec_len[2] is None:
+                        return farray[idx_list[0],idx_list[1]][:,idx_list[2]]
+                    else:
+                        return farray[idx_list[0],idx_list[1],idx_list[2]]
+            else:
+                raise IndexError('Unrecognized number of dimensions in LinearSpline.')
+            
+    def __setitem__(self, pos, val):
+        self.flow[pos] = val
+
+    def max(self):
+        return self.flow.max()
+    
+    def min(self):
+        return self.flow.min()
+    
+    def absmax(self):
+        return np.abs(self.flow).max()
+
+
 class fCubicSpline(interpolate.CubicSpline):
     '''
     Extends Scipy's CubicSpline object to get info about original fluid data.
