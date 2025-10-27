@@ -471,6 +471,23 @@ class LinearSpline:
     
     def absmax(self):
         return np.abs(self.flow).max()
+    
+    def derivative(self, val):
+        '''
+        Returns time derivative at the specified time.
+        Note: this is a simple finite difference derivative and piecewise
+        constant on left closed intervals.
+        '''
+        if (val < self.flow_times[0] and not self.extrapolate[0]) \
+              or (val >= self.flow_times[-1] and not self.extrapolate[1]):
+            raise SplineRangeError('Out of range without extrapolation.')
+        elif val == self.flow_times[0]:
+            idx = 0
+        elif val < self.flow_times[0] or val >= self.flow_times[-1]:
+            return np.zeros_like(self.flow[0]) # constant exrapolation
+        else:
+            idx = np.searchsorted(self.flow_times, val) - 1
+        return (self.flow[idx+1] - self.flow[idx]) / (self.flow_times[idx+1] - self.flow_times[idx])
 
 
 
@@ -1343,8 +1360,8 @@ class FluidData:
     def get_dudt(self, time=None, t_idx=None):
         '''Compute the derivative of the fluid velocity with respect to time.
 
-        If the flow is time-varying, the material derivative will be computed 
-        at the specified time or time index, one of which must be provided.
+        If the flow is time-varying, the derivative will be computed at the
+        specified time or time index, one of which must be provided.
 
         Parameters
         ----------
@@ -1383,7 +1400,11 @@ class FluidData:
                 print('Cannot pass time to time-invariant flow.')
                 raise
             for fspline in self._flow:
-                dudt = fspline.derivative()(time)
+                if isinstance(fspline, fCubicSpline):
+                    dudt = fspline.derivative()(time)
+                else:
+                    # LinearSpline
+                    dudt = fspline.derivative(time)
                 dudt = dudt.view(FlowArray)
                 if self.tiling is not None:
                     dudt.tiling = self.tiling
