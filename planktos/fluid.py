@@ -473,6 +473,7 @@ class LinearSpline:
         return np.abs(self.flow).max()
 
 
+
 class fCubicSpline(interpolate.CubicSpline):
     '''
     Extends Scipy's CubicSpline object to get info about original fluid data.
@@ -993,7 +994,10 @@ class FluidData:
             if specified, the time stamp for each index t in the flow arrays (time 
             varying fluid velocity fields only)
         INUM : int, optional
-            Used by subclasses to dynamically load data from storage.
+            Used by subclasses to dynamically load data from storage. It corresponds
+            to the number of intervals loaded at any given time when dynamically 
+            loading data and linearly splining. True results in linearly splining 
+            all data, None results in cubic splining all data.
         periodic_dim : bool (default=True), or tuple of bool
             Whether or not the fluid data is periodic in each spatial dimension
         fluid_domain_LLC : tuple, optional
@@ -1020,19 +1024,18 @@ class FluidData:
             # record shape of the fluid data
             self.fshape = (len(self.flow_times), *flow[0].shape[1:])
             
-            if self.INUM is not None and self.INUM < len(self.flow_times)-1:
-                ### Create initial spline ###
-                load_times = self.flow_times[0:self.INUM+1]
-                for n, f in enumerate(flow):
-                    flow[n] = fCubicSpline(load_times, f, extrapolate=(True, False), 
-                                           bc_type='left')
+            if self.INUM is not None and self.INUM is not False:
+                if self.INUM is True or self.INUM >= len(self.flow_times)-1:
+                    for n, f in enumerate(flow):
+                        flow[n] = LinearSpline(self.flow_times, f, extrapolate=(True, True))
+                elif self.INUM < len(self.flow_times)-1:
+                    ### Create initial spline ###
+                    load_times = self.flow_times[0:self.INUM+1]
+                    for n, f in enumerate(flow):
+                        flow[n] = LinearSpline(load_times, f, extrapolate=(True, False))
             else:
                 ### Spline all data with not-a-knot ###
-                if self.INUM is not None and self.INUM >= len(self.flow_times)-1:
-                    warnings.warn(f'{self.INUM} spline intervals with {self.flow_times} '+
-                                'time points results in all data being splined. '+
-                                'INUM will be set to None in FluidData object.')
-                    self.INUM = None
+                self.INUM = None
                 for n, f in enumerate(flow):
                     flow[n] = fCubicSpline(self.flow_times, f, extrapolate=(True, True))
             self._flow = flow
@@ -1126,15 +1129,11 @@ class FluidData:
 
 
     def update_spline(self, time):
-        '''The workhorse function for dynamically loading data.
-        
-        For cubic splines, two control points on the end of the last time 
-        interval are retained so that their location plus the derivatives at 
-        their locations will uniquely determine the spline for all new data.
+        '''The workhorse function for dynamically loading data. Responds to
+        requests for times outside of the currently loaded time interval by 
+        loading new data and creating a new spline that includes the new data.
         '''
 
-        # NOTE: fCubicSpline.c has shape (4,num_of_splines,...) where "..." is 
-        #   the array dimensions of the velocity grid.
         while time > self._flow[0].x[-1] and not self._flow[0].extrapolate[1]:
             # spline forward
 
@@ -1154,34 +1153,26 @@ class FluidData:
             load_times = self.flow_times[idx_start:idx_finish+1]
 
             ####### retain only the necessary current data #######
-            dydx0 = []; dydx1 = []; last_flow = []
+            last_flow_0 = []; last_flow_1 = []
             for n in range(len(self._flow)):
+                # grab flow at holdover times
+                last_flow_0.append(np.array(self._flow[n](load_times[0])))
                 # grab flow at final loaded time from current spline
-                last_flow.append(np.array(self._flow[n](load_times[1])))
-                # drop unneeded coefficients to save space before replacement
-                self._flow[n].c = self._flow[n].c[:,-1,...]
-                # Extract derivative info for next spline
-                dydx0.append(self._flow[n].c[2,0,...])
-                dx = load_times[1] - load_times[0]
-                dydx1.append(3*self._flow[n].c[0,1,...]*dx**2
-                             + 2*self._flow[n].c[1,1,...]*dx
-                             + self._flow[n].c[2,1,...])
+                last_flow_1.append(np.array(self._flow[n](load_times[1])))
+                # free up memory
+                self._flow[n] = None
                 
             # load new data
             flow = self.load_dumpfiles(d_start, d_finish)
 
             # add old spline data
             for n,f in enumerate(flow):
-                flow[n] = np.concatenate((self._flow[n].c[np.newaxis,-1,...],
-                                          last_flow[n][np.newaxis,...], f))
-            # Remove the rest of the spline data
-            self._flow = [0 for n in range(len(flow))]
+                flow[n] = np.concatenate((last_flow_0[n][np.newaxis,...],
+                                          last_flow_1[n][np.newaxis,...], f))
 
             ####### Spline it #######
             for n in range(len(flow)):
-                self._flow[n] = fCubicSpline(load_times, flow[n], dydx0[n], 
-                                             dydx1[n], extrapolate, direction='right')
-                flow[n] = 0
+                self._flow[n] = LinearSpline(load_times, flow[n], extrapolate)
                 if self.tiling is not None:
                     self._flow[n].tiling = self.tiling
                     assert self._flow[n].shape[1:] == self.fshape[1:], \
@@ -1203,9 +1194,9 @@ class FluidData:
                 self.loaded_dump_bnds = (self.d_start, self.d_start + self.INUM)
                 self.loaded_idx_bnds = (0, self.INUM)
                 for n in range(len(self._flow)):
-                    self._flow[n] = fCubicSpline(
+                    self._flow[n] = LinearSpline(
                         self.flow_times[0:self.INUM+1], self._flow[n],
-                        extrapolate=(True, False), bc_type='left')
+                        extrapolate=(True, False))
                     if self.tiling is not None:
                         self._flow[n].tiling = self.tiling
                         assert self._flow[n].shape[1:] == self.fshape[1:], \
@@ -1221,35 +1212,27 @@ class FluidData:
                 load_times = self.flow_times[idx_start:idx_finish+1]
 
                 ####### retain only the necessary current data #######
-                dydx0 = []; dydx1 = []; last_flow = []
+                last_flow_0 = []; last_flow_1 = []
                 for n in range(len(self._flow)):
                     # grab flow at second loaded time from current spline.
                     #   this will become the final loaded flow.
-                    last_flow.append(np.array(self._flow[n](load_times[-1])))
-                    # drop unneeded coefficients to save space before replacement
-                    self._flow[n].c = self._flow[n].c[:,0,...]
-                    # Extract derivative info for next spline
-                    dydx0.append(self._flow[n].c[2,0,...])
-                    dx = load_times[1] - load_times[0]
-                    dydx1.append(3*self._flow[n].c[0,1,...]*dx**2
-                                + 2*self._flow[n].c[1,1,...]*dx
-                                + self._flow[n].c[2,1,...])
+                    last_flow_1.append(np.array(self._flow[n](load_times[-1])))
+                    # grab flow at first loaded time, will be next to last flow.
+                    last_flow_0.append(np.array(self._flow[n](load_times[-2])))
+                    # free up memory
+                    self._flow[n] = None
                     
                 # load new data
                 flow = self.load_dumpfiles(d_start, d_finish)
                 
                 # add old spline data
                 for n,f in enumerate(flow):
-                    flow[n] = np.concatenate((f, self._flow[n].c[np.newaxis,-1,...],
-                                              last_flow[n][np.newaxis,...]))
-                # Remove the rest of the spline data
-                self._flow = [0 for n in range(len(flow))]
+                    flow[n] = np.concatenate((f, last_flow_0[n][np.newaxis,...],
+                                              last_flow_1[n][np.newaxis,...]))
 
                 ####### Spline it #######
                 for n in range(len(flow)):
-                    self._flow[n] = fCubicSpline(load_times, flow[n], dydx0[n], 
-                                                 dydx1[n], extrapolate, direction='left')
-                    flow[n] = 0
+                    self._flow[n] = LinearSpline(load_times, flow[n], extrapolate)
                     if self.tiling is not None:
                         self._flow[n].tiling = self.tiling
                         assert self._flow[n].shape[1:] == self.fshape[1:], \
@@ -1257,9 +1240,9 @@ class FluidData:
                 self.loaded_dump_bnds = (d_start, self.loaded_dump_bnds[0]+1)
                 self.loaded_idx_bnds = (idx_start, idx_finish)
 
-                # Update fmin/fmax
-                self.fmin = (min(self.fmin[n],f.min()) for n,f in enumerate(self._flow))
-                self.fmax = (max(self.fmax[n],f.max()) for n,f in enumerate(self._flow))
+            # Update fmin/fmax
+            self.fmin = (min(self.fmin[n],f.min()) for n,f in enumerate(self._flow))
+            self.fmax = (max(self.fmax[n],f.max()) for n,f in enumerate(self._flow))
     
 
 
@@ -1471,7 +1454,7 @@ class FluidData:
 
 class IB2dData(FluidData):
 
-    def __init__(self, path, dt, print_dump, d_start=0, d_finish=None, INUM=7):
+    def __init__(self, path, dt, print_dump, d_start=0, d_finish=None, INUM=None):
         '''Reads in vtk flow velocity data generated by IB2d and creates a 
         FluidData instance out of it. Time will be shifted to start at t=0 
         regardless of d_start. Note that the Eulerian grid for IB2d is always 
@@ -1501,9 +1484,10 @@ class IB2dData(FluidData):
         d_finish : int, optional
             number of last vtk dump to read in, or None to read to end
         INUM : int > 3 or None (default)
-            max number of splined intervals at any one time. Must be 
-            at least 4. If it is given as None then all the time-varying
-            fluid data will be splined at once. Note the number of time points 
+            max number of linearly splined intervals at any one time. Must be 
+            at least 4. If it is given as True, then all time-varying
+            fluid data will be linearly splined at once. If None, all will be 
+            cubically splined instead. Note the number of data sets 
             needed is 1+INUM.
         '''
 
