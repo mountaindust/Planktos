@@ -50,13 +50,13 @@ s1.shared_props['cov'] *= 0.001
 # for ii in range(300): # 500
 #     s.move(0.0005, ib_collisions='sticky')
 #     s.props['stick'] = np.logical_or(s.props['stick'],s.ib_collision_idx>=0)
-    
-# s.plot_all(movie_filename='leaf_2d_vort_sticky.mp4', figsize=(6,9), fps=30, fluid='vort')
 
 print('Moving orig swarm...')
-for ii in range(30):
+for ii in range(500):
     s1.move(0.0005)
-# s1.plot()
+s1.plot()
+
+# s1.plot_all(movie_filename='leaf_2d_vort_sticky.mp4', figsize=(6,9), fps=30, fluid='vort')
 
 envir2 = planktos.Environment()
 envir2.read_IB2d_fluid_data('data/leaf_data', 1.0e-5, 100, d_start=1, INUM=15)
@@ -74,26 +74,26 @@ s2.shared_props['cov'] *= 0.001
 
 print('Moving new swarm...')
 
-for ii in range(30):
+for ii in range(500):
     s2.move(0.0005)
     # compare maximum difference between fluid velocity fields
-    v1 = envir1.flow(envir2.time)
-    v2 = envir2.flow(envir2.time)
-    rel = np.abs(v1[0][:,:])
-    rel[rel == 0] = 1.0
-    max_diff = np.max(np.abs(v1[0][:,:]-v2[0][:,:])) + \
-        np.max(np.abs(v1[1][:,:]-v2[1][:,:]))
-    # where is the max difference?
-    max_diff_idx = np.unravel_index(np.argmax(np.abs(v1[0][:,:]-v2[0][:,:])), v1[0].shape)
-    # find the value of v1 at that location
-    v1_max_diff = (np.abs(v1[0][max_diff_idx]), np.abs(v1[1][max_diff_idx]))
-    # if it is very small, set rel diff to zero
-    if v1_max_diff[0] < 1.0e-10 and v1_max_diff[1] < 1.0e-10:
-        max_rel_diff = 0.0
-    else:
-        max_rel_diff = max_diff / (v1_max_diff[0] + v1_max_diff[1])
-    print(f'Time: {envir2.time:.5f}, Max fluid vel difference: {max_diff:.5e}')
-    print(f'Time: {envir2.time:.5f}, Rel fluid vel difference: {max_rel_diff:.5e}')
+    # v1 = envir1.flow(envir2.time)
+    # v2 = envir2.flow(envir2.time)
+    # rel = np.abs(v1[0][:,:])
+    # rel[rel == 0] = 1.0
+    # max_diff = np.max(np.abs(v1[0][:,:]-v2[0][:,:])) + \
+    #     np.max(np.abs(v1[1][:,:]-v2[1][:,:]))
+    # # where is the max difference?
+    # max_diff_idx = np.unravel_index(np.argmax(np.abs(v1[0][:,:]-v2[0][:,:])), v1[0].shape)
+    # # find the value of v1 at that location
+    # v1_max_diff = (np.abs(v1[0][max_diff_idx]), np.abs(v1[1][max_diff_idx]))
+    # # if it is very small, set rel diff to zero
+    # if v1_max_diff[0] < 1.0e-10 and v1_max_diff[1] < 1.0e-10:
+    #     max_rel_diff = 0.0
+    # else:
+    #     max_rel_diff = max_diff / (v1_max_diff[0] + v1_max_diff[1])
+    # print(f'Time: {envir2.time:.5f}, Max fluid vel difference: {max_diff:.5e}')
+    # print(f'Time: {envir2.time:.5f}, Rel fluid vel difference: {max_rel_diff:.5e}')
 # s2.plot()
 
 # for ii in range(500): # 500
@@ -104,5 +104,5 @@ for ii in range(30):
 #     s.move(0.0005)
 #     s.plot()
 
-# s.plot()
-# s.plot_all(movie_filename='leaf_2d_vort_dyload.mp4', figsize=(6,9), fps=30, fluid='vort')
+s2.plot()
+# s2.plot_all(movie_filename='leaf_2d_vort_dyload.mp4', figsize=(6,9), fps=30, fluid='vort')

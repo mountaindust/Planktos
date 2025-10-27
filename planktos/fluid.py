@@ -318,6 +318,10 @@ class LinearSpline:
         else:
             self._tiling = None
 
+    @property
+    def x(self):
+        return self.flow_times   
+    
     def __call__(self, val):
         if (val < self.flow_times[0] and not self.extrapolate[0]) \
               or (val > self.flow_times[-1] and not self.extrapolate[1]):
@@ -1548,7 +1552,7 @@ class IB2dData(FluidData):
         self.d_finish = d_finish
 
         ### Load fluid data ###
-        if INUM is None:
+        if INUM is None or INUM is True:
             print('Reading vtk fluid data...')
             flow, x, y = self._read_IB2d_dumpfiles(self.path, self.d_start, 
                                                    self.d_finish, self.vector_data)
@@ -1786,7 +1790,7 @@ class VTK3dData(FluidData):
                 assert d_finish in file_nums, "d_finish number not found!"
             
             ### Load fluid data ###
-            if INUM is None:
+            if INUM is None or INUM is True:
                 print('Reading vtk fluid data...')
                 flow, mesh, flow_times = self._read_vtkfiles(self.path, self.title,  
                                                              self.d_start, 
