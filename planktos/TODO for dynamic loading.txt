@@ -1,16 +1,13 @@
 TODO for dynamic loading of fluid data
 
 Removed extend method in favor of extrapolation as a future feature.
+Removed non-conforming COMSOL vtu load
+center_cell_regrid moved to fluid.py and commented in case it is needed later
 
-center_cell_regrid needs to be folded into new FluidData object, because this 
-will have to be done on-the-fly as part of dynamic loading.
+Need to load COMSOL mphtxt data for immersed boundary mesh.
 
 Support for rectilinear grids needs to update the following methods:
-- center_cell_regrid
 - calculate_FTLE
-
-Need option for linearly interpolating fluid data in time because it is much 
-cheaper in memory.
 
 - 3D time-varying data has not been loaded into Planktos for some time.
 - The pipeline was:
@@ -22,5 +19,3 @@ cheaper in memory.
         can be loaded using an environment method.
 - Python 3 is now supported since VisIt 3.2, so this script can now be ported 
     and folded into planktos proper.
-- VTU (e.g. from COMSOL) was never loaded with time-varying data. This will need
-    to be supported.

@@ -284,6 +284,51 @@ def read_vtk_Unstructured_Grid_Points(filename):
 
 
 
+def read_vtu_Unstructured_Grid_Points_FEM(filename):
+    '''Read fluid velocity data from an xml Unstructured Grid VTU file, as 
+    results from a comsol finite element mesh. Uses the VTK Python library.
+    
+    Parameters
+    ----------
+    filename : string
+        path and filename of the VTK file
+
+    Returns
+    -------
+    points : Nx3 array
+        each row is the 3D coords of a vertex in the FEM mesh
+    data : list of arrays
+        each array is velocity data at all mesh points for a given time
+    data_names : list of strings
+        names of each data array in data
+    '''
+
+    reader = vtk.vtkXMLUnstructuredGridReader()
+    reader.SetFileName(filename)
+    reader.Update()
+    vtk_data = reader.GetOutput()
+
+    # Get location of FEM meshpoints
+    vtkpoints = vtk_data.GetPoints()
+    points = numpy_support.vtk_to_numpy(vtkpoints.GetData()) #Nx3 array
+    # Get point data
+    vtkpoint_data = vtk_data.GetPointData()
+    # Get number of DataArrays correspoinding to point data
+    data_size = vtkpoint_data.GetNumberOfArrays()
+    # In COMSOL, each three arrays correspond to the x, y, z components of velocity
+    #   at each mesh point, with each array being length N where N is the
+    #   number of mesh points. Each set of three is a different time point.
+    #   So total number of time points is data_size/3.
+    data = []; data_names = []
+    for n in range(data_size):
+        data_array = vtkpoint_data.GetArray(n)
+        data.append(numpy_support.vtk_to_numpy(data_array))
+        data_names.append(vtkpoint_data.GetArrayName(n))
+        
+    return points, data, data_names
+
+
+
 def read_2DEulerian_Data_From_vtk(path, simNum, strChoice, xy=False):
     '''Reads ascii Structured Points VTK files using the Python VTK library,
     where the file contains 2D IB2d data, either scalar or vector. 

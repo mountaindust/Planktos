@@ -973,7 +973,8 @@ class FluidData:
     ndim : int
         Number of dimensions of the fluid velocity field (2 or 3)
     INUM : Number of intervals loaded at any given time when dynamically 
-        loading data.
+        loading data. None results in cubic splining all data. True results in 
+        linearly splining all data.
     periodic_dim : tuple of bool
         Whether or not the fluid data is periodic in each spatial dimension
     fluid_domain_LLC : tuple
@@ -1897,5 +1898,410 @@ class VTK3dData(FluidData):
         return flow, mesh, flow_times
 
 
-    ######### Temporary fix function ###########
 
+class ComsolVTUData(FluidData):
+
+    def __init__(self, path, periodic_dim=(False, False, False), res=101,
+                 linear_interp=False, vel_conv=None):
+        '''Reads in one or more vtu Rectilinear Grid Vector files exported from 
+        COMSOL Multiphysics. It is assumed that the fluid spatial grid includes 
+        all domain boundaries.
+
+        Parameters
+        ----------
+        path : string
+            path to folder with vtu data.
+        time_points : list or ndarray
+            list of times corresponding to each vtu file.
+        periodic_dim : list of 2 or 3 bool, default=(False, False, False)
+            True if that spatial dimension is periodic, otherwise False
+        res : int, default=101
+            number of grid points in each dimension for regridding from FEM mesh
+        linear_interp : bool, default=False
+            whether to use linear interpolation (True) or cubic spline (False) for
+            temporal interpolation of the fluid data.
+        vel_conv : float, optional
+            scalar to multiply the velocity by in order to convert units to 
+            match the spatial grid units
+        '''
+
+        ##### Parse parameters and read in data #####
+        self.path = path
+        self.vel_conv = vel_conv
+
+        path = Path(path)
+        if not path.is_dir(): 
+            raise FileNotFoundError("Directory {} not found!".format(str(path)))
+
+        ### Load fluid data ###
+        print('Reading vtu fluid data...')
+        flow, mesh, flow_times = self._read_vtufile(self.path, res=res)
+        print('Done!')
+
+        # shift domain to quadrant 1
+        flow_points = (mesh[0]-mesh[0][0], mesh[1]-mesh[1][0],
+                        mesh[2]-mesh[2][0])
+        fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
+        # It is assumed that the fluid spatial grid includes all 
+        # domain boundaries.
+        self.L = [flow_points[0][-1], flow_points[1][-1], flow_points[2][-1]]
+
+        if self.vel_conv is not None:
+            print("Converting vel units by a factor of {}.".format(self.vel_conv))
+            for ii, d in enumerate(flow):
+                flow[ii] = d*self.vel_conv
+        
+        if not linear_interp:
+            linear_interp = None
+        super().__init__(flow, flow_points, flow_times, linear_interp, periodic_dim,
+                         fluid_domain_LLC=fluid_domain_LLC)
+        
+
+
+    def _read_vtufile(self, path, res=101):
+        '''Reads in one vtu file with fluid velocity data on the FEM mesh at 
+        multiple time points exported from COMSOL Multiphysics. Regrids this 
+        data onto a regular grid with resolution res in each dimension.
+
+        Parameters
+        ----------
+        path : string
+            path to vtu data, incl. file extension
+        res : int, default=101
+            number of grid points in each dimension for regridding
+
+        Returns
+        -------
+        flow : list of ndarray (fluid data)
+        mesh : list of 1D arrays of grid points in x, y, and z directions
+        flow_times : ndarray of times at which the fluid velocity is specified
+        '''
+
+        ### Gather data ###
+        flow = [[], [], []]
+        flow_times = []
+
+        points, data, data_names = _dataio.read_vtu_Unstructured_Grid_Points_FEM(path)
+
+        # Create regular grid
+        x = np.linspace(points[:,0].min(), points[:,0].max(), res)
+        y = np.linspace(points[:,1].min(), points[:,1].max(), res)
+        if points[:,2].max() == points[:,2].min():
+            # 2D case
+            z_dir = False
+            point_list = np.array([[px,py] for px in x for py in y])
+            points = points[:,:2]
+            mesh = [x, y]
+        else:
+            z = np.linspace(points[:,2].min(), points[:,2].max(), res)
+            z_dir = True
+            point_list = np.array([[px,py,pz] for px in x for py in y for pz in z])
+            mesh = [x, y, z]
+
+        # In COMSOL, each three arrays correspond to the x, y, z components of velocity
+        #   at each mesh point, with each array being length N where N is the
+        #   number of mesh points. Each set of three is a different time point.
+        #   So total number of time points is data_size/3.
+        for n in range(0, len(data), 3):
+            interp = interpolate.LinearNDInterpolator(points, data[n])
+            flow[0].append(interp(point_list))
+            interp = interpolate.LinearNDInterpolator(points, data[n+1])
+            flow[1].append(interp(point_list))
+            if z_dir:
+                interp = interpolate.LinearNDInterpolator(points, data[n+2])
+                flow[2].append(interp(point_list).reshape((res,res,res)))
+                flow[0][-1] = flow[0][-1].reshape((res,res,res))
+                flow[1][-1] = flow[1][-1].reshape((res,res,res))
+            else:
+                flow[0][-1] = flow[0][-1].reshape((res,res))
+                flow[1][-1] = flow[1][-1].reshape((res,res))
+            # get flow time
+            flow_times.append(float(data_names[n][data_names[n].rfind('t=')+2:]))
+
+        flow = [np.array(flow[0]).squeeze(), np.array(flow[1]).squeeze(),
+                np.array(flow[2]).squeeze()]
+
+        return flow, mesh, flow_times
+
+
+
+######## Legacy function for regridding fluid velocity data ########
+# This was in the Environment class, but is no longer used.
+# It's here in case we need to port it later.
+# Also, it is not robust to rectilinear grids.
+
+# def center_cell_regrid(self):
+#     '''Re-grids data that was specified at the center of cells instead of
+#     at the corners.
+
+#     NOTE! This needs to be called *before* any immersed meshes are loaded.
+#     It will NOT look for and properly shift these meshes.
+    
+#     Software has a tendency to output data files where the fluid mesh is 
+#     specified at the center of cells rather than at the corners. This will 
+#     be readily apparent if Planktos loads your fluid velocity data and 
+#     reports spacial dimensions one dx, dy, and dz smaller than you were 
+#     expecting. To fix this, Planktos will interpolate/extrapolate the fluid 
+#     velocity mesh using the default method to get additional grid points on 
+#     the edge of the domain.
+
+#     Periodicity can be enforced in specified dimensions.
+
+#     Parameters
+#     ----------
+#     periodic_dim : list-like of 2 or 3 bool, default=(True, True, False)
+#         True if that spatial dimension is periodic, otherwise False.
+#         The 3rd entry will be ignored in the 2D case.
+#     '''
+    
+#     fpoints = self.flow.flow_points
+
+#     # Detect cell width in each dimension based on the first two coordinates 
+#     #   in each spatial dimension
+#     dx = fpoints[0][1] - fpoints[0][0]
+#     dy = fpoints[1][1] - fpoints[1][0]
+#     if len(self.L) > 2:
+#         dz = fpoints[2][1] - fpoints[2][0]
+#         DIM3 = True
+#     else:
+#         DIM3 = False
+
+#     ### Create a list of positions at which we need to extrapolate the ###
+#     ###   velocity field                                               ###
+#     x_ends = [-dx/2, fpoints[0][-1]+dx/2]
+#     y_ends = [-dy/2, fpoints[1][-1]+dy/2]
+#     bndry_list = []
+#     if not DIM3:
+#         # edges
+#         bndry_list += [[x, y_ends[0]] for x in fpoints[0]]
+#         bndry_list += [[x, y_ends[1]] for x in fpoints[0]]
+#         bndry_list += [[x_ends[0], y] for y in fpoints[1]]
+#         bndry_list += [[x_ends[1], y] for y in fpoints[1]]
+#         # points
+#         bndry_list += [[x_ends[0],y_ends[0]],[x_ends[0],y_ends[1]],
+#                         [x_ends[1],y_ends[0]],[x_ends[1],y_ends[1]]]
+#     else:
+#         z_ends = [-dz/2, fpoints[2][-1]+dz/2]
+#         # sides
+#         bndry_list += [[x,y,z_ends[0]] for x in fpoints[0] for y in fpoints[1]]
+#         bndry_list += [[x,y,z_ends[1]] for x in fpoints[0] for y in fpoints[1]]
+#         bndry_list += [[x,y_ends[0],z] for x in fpoints[0] for z in fpoints[2]]
+#         bndry_list += [[x,y_ends[1],z] for x in fpoints[0] for z in fpoints[2]]
+#         bndry_list += [[x_ends[0],y,z] for y in fpoints[1] for z in fpoints[2]]
+#         bndry_list += [[x_ends[1],y,z] for y in fpoints[1] for z in fpoints[2]]
+#         # edges
+#         bndry_list += [[x, y_ends[0], z_ends[0]] for x in fpoints[0]]
+#         bndry_list += [[x, y_ends[0], z_ends[1]] for x in fpoints[0]]
+#         bndry_list += [[x, y_ends[1], z_ends[0]] for x in fpoints[0]]
+#         bndry_list += [[x, y_ends[1], z_ends[1]] for x in fpoints[0]]
+#         bndry_list += [[x_ends[0], y, z_ends[0]] for y in fpoints[1]]
+#         bndry_list += [[x_ends[0], y, z_ends[1]] for y in fpoints[1]]
+#         bndry_list += [[x_ends[1], y, z_ends[0]] for y in fpoints[1]]
+#         bndry_list += [[x_ends[1], y, z_ends[1]] for y in fpoints[1]]
+#         bndry_list += [[x_ends[0], y_ends[0], z] for z in fpoints[2]]
+#         bndry_list += [[x_ends[0], y_ends[1], z] for z in fpoints[2]]
+#         bndry_list += [[x_ends[1], y_ends[0], z] for z in fpoints[2]]
+#         bndry_list += [[x_ends[1], y_ends[1], z] for z in fpoints[2]]
+#         # points
+#         bndry_list += [[x_ends[0],y_ends[0],z_ends[0]],
+#                         [x_ends[0],y_ends[0],z_ends[1]],
+#                         [x_ends[0],y_ends[1],z_ends[0]],
+#                         [x_ends[1],y_ends[0],z_ends[1]],
+#                         [x_ends[0],y_ends[1],z_ends[1]],
+#                         [x_ends[1],y_ends[0],z_ends[1]],
+#                         [x_ends[1],y_ends[1],z_ends[0]],
+#                         [x_ends[1],y_ends[1],z_ends[1]]]
+
+#     ### Include periodicity, if applicable, by extending out the fluid field ###
+#     flowshape = np.array(self.flow.fshape)
+#     idx = []
+#     if len(self.flow.fshape) == len(self.L):
+#         # non time-varying flow
+#         startdim = 0
+#     else:
+#         startdim = 1
+#     for ii in range(2):
+#         if self.flow.periodic_dim[ii]:
+#             flowshape[startdim+ii] += 2
+#             idx.append([1,flowshape[startdim+ii]-1])
+#         else:
+#             idx.append([0,flowshape[startdim+ii]])
+#     if DIM3:
+#         if self.flow.periodic_dim[2]:
+#             flowshape[startdim+2] += 2
+#             idx.append([1,flowshape[startdim+2]-1])
+#         else:
+#             idx.append([0,flowshape[startdim+2]])
+    
+#     if DIM3:
+#         flow = [np.zeros(flowshape) for ii in range(3)]
+#         flow_points = []
+#         for ii in range(3):
+#             flow[ii][...,idx[0][0]:idx[0][1],idx[1][0]:idx[1][1],idx[2][0]:idx[2][1]] = self.flow[ii]
+#         if self.flow.periodic_dim[0]:
+#             for ii in range(3):
+#                 flow[ii][...,0,:,:] = flow[ii][...,-2,:,:]
+#                 flow[ii][...,-1,:,:] = flow[ii][...,1,:,:]
+#             flow_points.append(np.insert(fpoints[0], # what
+#                                             [0,len(fpoints[0])], # loc
+#                                             [-dx,fpoints[0][-1]+dx])) # vals
+#         else:
+#             flow_points.append(fpoints[0])
+#         if self.flow.periodic_dim[1]:
+#             for ii in range(3):
+#                 flow[ii][...,0,:] = flow[ii][...,-2,:]
+#                 flow[ii][...,-1,:] = flow[ii][...,1,:]
+#             flow_points.append(np.insert(fpoints[1],
+#                                             [0,len(fpoints[1])],
+#                                             [-dy,fpoints[1][-1]+dy]))
+#         else:
+#             flow_points.append(fpoints[1])
+#         if self.flow.periodic_dim[2]:
+#             for ii in range(3):
+#                 flow[ii][...,0] = flow[ii][...,-2]
+#                 flow[ii][...,-1] = flow[ii][...,1]
+#             flow_points.append(np.insert(fpoints[2],
+#                                             [0,len(fpoints[2])],
+#                                             [-dz,fpoints[2][-1]+dz]))
+#         else:
+#             flow_points.append(fpoints[2])
+#     else:
+#         flow = [np.zeros(flowshape) for ii in range(2)]
+#         flow_points = []
+#         for ii in range(2):
+#             flow[ii][...,idx[0][0]:idx[0][1],idx[1][0]:idx[1][1]] = self.flow[ii]
+#         if self.flow.periodic_dim[0]:
+#             for ii in range(2):
+#                 flow[ii][...,0,:] = flow[ii][...,-2,:]
+#                 flow[ii][...,-1,:] = flow[ii][...,1,:]
+#             flow_points.append(np.insert(fpoints[0], # what
+#                                             [0,len(fpoints[0])], # loc
+#                                             [-dx,fpoints[0][-1]+dx])) # vals
+#         else:
+#             flow_points.append(fpoints[0])
+#         if self.flow.periodic_dim[1]:
+#             for ii in range(2):
+#                 flow[ii][...,0] = flow[ii][...,-2]
+#                 flow[ii][...,-1] = flow[ii][...,1]
+#             flow_points.append(np.insert(fpoints[1],
+#                                             [0,len(fpoints[1])],
+#                                             [-dy,fpoints[1][-1]+dy]))
+#         else:
+#             flow_points.append(fpoints[1])
+
+#     ### Interpolate the new points ###
+#     if startdim == 0:
+#         # non time-varying flow
+#         new_vecs = self.interpolate_flow(bndry_list, flow, flow_points)
+#     else:
+#         new_vecs = []
+#         for t_idx in range(self.flow.fshape[0]):
+#             this_flow = [flow[ii][t_idx,...] for ii in range(len(flow))]
+#             new_vecs.append(self.interpolate_flow(bndry_list, this_flow, flow_points))
+
+#     ### Incorporate the new points into the fluid field and mesh ###
+#     if DIM3:
+#         intervals = [dx,dy,dz]
+#     else:
+#         intervals = [dx,dy]
+#     flow_points = [np.insert(fpoints[ii]+interval/2,
+#                                 [0,len(fpoints[ii])],
+#                                 [0,fpoints[ii][-1]+interval])
+#                                 for ii,interval in enumerate(intervals)]
+#     flowshape = np.array(self.flow.fshape)
+#     if startdim == 0:
+#         flowshape += 2
+#     else:
+#         flowshape[1:] += 2
+#     shp = [len(points) for points in fpoints]
+
+#     def bndry_add3d(fshape, shp, this_vecs):
+#         f = [np.zeros(fshape) for ii in range(3)]
+#         for dim in range(3):
+#             # sides
+#             f[dim][1:-1,1:-1,0] = np.reshape(this_vecs[:shp[0]*shp[1],dim],(shp[0],shp[1]))
+#             s = shp[0]*shp[1]
+#             f[dim][1:-1,1:-1,-1] = np.reshape(this_vecs[s:s+shp[0]*shp[1],dim],(shp[0],shp[1]))
+#             s += shp[0]*shp[1]
+#             f[dim][1:-1,0,1:-1] = np.reshape(this_vecs[s:s+shp[0]*shp[2],dim],(shp[0],shp[2]))
+#             s += shp[0]*shp[2]
+#             f[dim][1:-1,-1,1:-1] = np.reshape(this_vecs[s:s+shp[0]*shp[2],dim],(shp[0],shp[2]))
+#             s += shp[0]*shp[2]
+#             f[dim][0,1:-1,1:-1] = np.reshape(this_vecs[s:s+shp[1]*shp[2],dim],(shp[1],shp[2]))
+#             s += shp[1]*shp[2]
+#             f[dim][-1,1:-1,1:-1] = np.reshape(this_vecs[s:s+shp[1]*shp[2],dim],(shp[1],shp[2]))
+#             s += shp[1]*shp[2]
+#             # edges
+#             f[dim][1:-1,0,0] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
+#             f[dim][1:-1,0,-1] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
+#             f[dim][1:-1,-1,0] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
+#             f[dim][1:-1,-1,-1] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
+#             f[dim][0,1:-1,0] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
+#             f[dim][0,1:-1,-1] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
+#             f[dim][-1,1:-1,0] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
+#             f[dim][-1,1:-1,-1] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
+#             f[dim][0,0,1:-1] = this_vecs[s:s+shp[2],dim]; s+=shp[2]
+#             f[dim][0,-1,1:-1] = this_vecs[s:s+shp[2],dim]; s+=shp[2]
+#             f[dim][-1,0,1:-1] = this_vecs[s:s+shp[2],dim]; s+=shp[2]
+#             f[dim][-1,-1,1:-1] = this_vecs[s:s+shp[2],dim]; s+=shp[2]
+#             # points
+#             f[dim][0,0,0] = this_vecs[s,dim]
+#             f[dim][0,0,-1] = this_vecs[s+1,dim]
+#             f[dim][0,-1,0] = this_vecs[s+2,dim]
+#             f[dim][-1,0,0] = this_vecs[s+3,dim]
+#             f[dim][0,-1,-1] = this_vecs[s+4,dim]
+#             f[dim][-1,0,-1] = this_vecs[s+5,dim]
+#             f[dim][-1,-1,0] = this_vecs[s+6,dim]
+#             f[dim][-1,-1,-1] = this_vecs[s+7,dim]
+#         return f
+
+#     def bndry_add2d(fshape, shp, this_vecs):
+#         f = [np.zeros(fshape) for ii in range(2)]
+#         for dim in range(2):
+#             s=0
+#             # edges
+#             f[dim][1:-1,0] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
+#             f[dim][1:-1,-1] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
+#             f[dim][0,1:-1] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
+#             f[dim][-1,1:-1] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
+#             # points
+#             f[dim][0,0] = this_vecs[s,dim]
+#             f[dim][0,-1] = this_vecs[s+1,dim]
+#             f[dim][-1,0] = this_vecs[s+2,dim]
+#             f[dim][-1,-1] = this_vecs[s+3,dim]
+#         return f
+
+#     if DIM3 and startdim == 0:
+#         # time invariant, 3D
+#         flow = bndry_add3d(flowshape, shp, new_vecs)
+#     elif DIM3 and startdim == 1:
+#         flow = [np.zeros(flowshape) for ii in range(3)]
+#         for n, this_vecs in enumerate(new_vecs):
+#             f = bndry_add3d(flowshape[1:], shp, this_vecs)
+#             flow[0][n,...]=f[0]; flow[1][n,...]=f[1]; flow[2][n,...]=f[2]
+#     elif not DIM3 and startdim == 0:
+#         flow = bndry_add2d(flowshape, shp, new_vecs)
+#     else:
+#         flow = [np.zeros(flowshape) for ii in range(2)]
+#         for n, this_vecs in enumerate(new_vecs):
+#             f = bndry_add2d(flowshape[1:], shp, this_vecs)
+#             flow[0][n,...]=f[0]; flow[1][n,...]=f[1]
+
+#     ### Add back the original fluid data ###
+#     for dim in range(len(flow)):
+#         if DIM3:
+#             flow[dim][...,1:-1,1:-1,1:-1] = self.flow[dim]
+#         else:
+#             flow[dim][...,1:-1,1:-1] = self.flow[dim]
+
+#     ### Replace fluid and update domain ###
+#     flow_points = tuple(flow_points)
+#     fluid_domain_LLC = tuple(np.array(self.flow.fluid_domain_LLC)
+#                                 -np.array(intervals)*0.5)
+#     self.flow = fluid.FluidData(flow, flow_points, 
+#                                 self.flow.flow_times, 
+#                                 periodic_dim=self.flow.periodic_dim,
+#                                 fluid_domain_LLC=fluid_domain_LLC)
+#     self.L = [flow_points[d][-1] for d in range(len(flow_points))]
+    
+#     self._reset_flow_variables()
