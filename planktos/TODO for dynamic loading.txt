@@ -9,6 +9,8 @@ Need to load COMSOL mphtxt data for immersed boundary mesh.
 Support for rectilinear grids needs to update the following methods:
 - calculate_FTLE
 
+New fluid data structures may allow for FEM point mesh instead of rectilinear?
+
 - 3D time-varying data has not been loaded into Planktos for some time.
 - The pipeline was:
     1. Generate data in IBAMR
