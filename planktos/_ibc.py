@@ -98,8 +98,8 @@ def apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist,
 
     # Find all mesh elements that have vertex points within search_rad of 
     #   the trajectory segment.
-    close_mesh = _get_eligible_static_mesh_elements(startpt, endpt, mesh, 
-                                                            search_rad)
+    close_mesh, mesh_idx = _get_eligible_static_mesh_elements(startpt, endpt, mesh, 
+                                                              search_rad)
 
     # Get intersections
     if DIM == 2:
@@ -137,7 +137,7 @@ def apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist,
         #   as necessary until we have a final result.
         new_pos = _project_and_slide_static(startpt, endpt, intersection, 
                                                     close_mesh, max_meshpt_dist)
-        return new_pos, new_pos - intersection[0], idx
+        return new_pos, new_pos - intersection[0], mesh_idx[idx]
     
     elif ib_collisions == 'sticky':
         # Return the point of intersection
@@ -150,7 +150,7 @@ def apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist,
         EPS = 10**(coord_mag-7)
 
         back_vec = (startpt-endpt)/np.linalg.norm(endpt-startpt)
-        return intersection[0] + back_vec*EPS, np.zeros((DIM)), idx
+        return intersection[0] + back_vec*EPS, np.zeros((DIM)), mesh_idx[idx]
 
 
 
@@ -158,12 +158,15 @@ def _get_eligible_static_mesh_elements(startpt, endpt, mesh, search_rad):
     '''
     From a list of mesh elements (mesh), find all elements that have vertex 
     points within search_rad of the trajectory segment startpt,endpt.
+
+    Return both the eligible mesh elements and a list of their indices.
     '''
     
     pt_bool = _geom.closest_dist_btwn_line_and_pts(startpt, endpt, 
         mesh.reshape((mesh.shape[0]*mesh.shape[1],mesh.shape[2])))<=search_rad
     pt_bool = pt_bool.reshape((mesh.shape[0],mesh.shape[1]))
-    return mesh[np.any(pt_bool,axis=1)]
+    mesh_bool = np.any(pt_bool,axis=1)
+    return mesh[mesh_bool], mesh_bool.nonzero()[0]
     
 
 
@@ -214,7 +217,7 @@ def apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
     # See static case for derivation of the 2/3 argument
     search_rad = max_meshpt_dist*2/3
 
-    close_mesh_start, close_mesh_end = \
+    close_mesh_start, close_mesh_end, mesh_idx = \
         _get_eligible_moving_mesh_elements(startpt, endpt, start_mesh, 
                                                     end_mesh, max_mov, search_rad)
     
@@ -290,7 +293,7 @@ def apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
             # Now, perturb perpendicular from the end position of the element
             perp_vec = np.array([dt_elem[1,1]-dt_elem[0,1],dt_elem[0,0]-dt_elem[1,0]])
             perp_vec *= side_signum/np.linalg.norm(perp_vec)
-            return new_pos + perp_vec*EPS, new_pos - x, idx
+            return new_pos + perp_vec*EPS, new_pos - x, mesh_idx[idx]
         else:
             raise NotImplementedError("3D moving meshes not currently supported.")
     else:
@@ -325,7 +328,7 @@ def apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
             new_pos = _project_and_slide_moving(startpt, endpt, intersection, 
                                             close_mesh_start, close_mesh_end, 
                                             max_meshpt_dist, max_mov)
-            return new_pos, new_pos - intersection[0], idx
+            return new_pos, new_pos - intersection[0], mesh_idx[idx]
 
         else:
             raise NotImplementedError("3D moving meshes not currently supported.")
@@ -338,6 +341,8 @@ def _get_eligible_moving_mesh_elements(startpt, endpt, start_mesh, end_mesh,
     From starting and ending points for the mesh, find all elements that 
     have vertex points which passed within search_rad of the trajectory 
     segment startpt,endpt. Return a tuple of the start and end eligible meshes.
+
+    Return both the eligible mesh elements and a list of their indices.
     '''
 
     #Unfortunately, finding the closest distance between two lines is likely 
@@ -368,7 +373,8 @@ def _get_eligible_moving_mesh_elements(startpt, endpt, start_mesh, end_mesh,
     outer_bool[outer_bool] = inner_bool
 
     pt_bool = outer_bool.reshape((start_mesh.shape[0], start_mesh.shape[1]))
-    return (start_mesh[np.any(pt_bool,axis=1)], end_mesh[np.any(pt_bool,axis=1)])
+    mesh_bool = np.any(pt_bool,axis=1)
+    return (start_mesh[mesh_bool], end_mesh[mesh_bool], mesh_bool.nonzero()[0])
 
 
 
@@ -706,9 +712,9 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
         # recursion on prev. eligible mesh elements and treating t_edge 
         #   as the start time. Only look for intersections with subset
         #   of full eligible mesh.
-        close_mesh = _get_eligible_static_mesh_elements(newstartpt, 
-                                                                newendpt, mesh, 
-                                                                max_meshpt_dist*2/3)
+        close_mesh, _ = _get_eligible_static_mesh_elements(newstartpt, 
+                                                           newendpt, mesh, 
+                                                           max_meshpt_dist*2/3)
         if DIM == 2:
             intersection_n = _geom.seg_intersect_2D(newstartpt, newendpt,
                                                     close_mesh[:,0,:], 
@@ -1144,7 +1150,7 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
     # recursion on prev. eligible mesh elements and treating t_rot or t_edge 
     #   as the start time. Only look for intersections with subset of full 
     #   eligible mesh.
-    close_mesh_start, close_mesh_end = \
+    close_mesh_start, close_mesh_end, _ = \
         _get_eligible_moving_mesh_elements(newstartpt, newendpt, 
                                                     mesh_now, mesh_end, max_mov, 
                                                     max_meshpt_dist*2/3)
