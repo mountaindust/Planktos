@@ -147,7 +147,7 @@ boundaries from vertex data, be sure and check that boundary segments are not
 intersecting each other away from specified vertices! A quick way to do this is
 to call Environment.plot_envir() after the mesh import is done to visually check 
 that the boundary formed correctly and doesn't cross itself in unexpected ways. 
-There is also a method of the Environment class called add_vertices_to_2D_ibmesh 
+There is also a method of the Environment class called add_vertices_to_static_2D_ibmesh 
 which will add vertices at all 2D mesh crossing points, however it's use is
 discouraged because it results in complex vertices that attach more than two
 mesh segments and leftover segments that do not contribute to the dynamics at all. 
@@ -157,7 +157,7 @@ need to search for crossings.
 
 When experimenting with different agent behavior than what is prescribed in the
 Swarm class by default (e.g. different movement rules), it is strongly suggested 
-that you subclass Swarm (found in framework.py) in an appropriate subfolder. That 
+that you subclass Swarm (found in the planktos package) in an appropriate subfolder. That 
 way, you can keep track of everything you have tried and its outcome. 
 
 Research that utilizes this framework can be seen in:  
@@ -200,15 +200,15 @@ Class: Environment
     - `set_brinkman_flow` Given several (possibly time-dependent) fluid variables, calculate Brinkman flow on a regular grid with a given resolution and set that as the Environment's fluid velocity. Capable of handling both 2D and 3D domains.
     - `set_two_layer_channel_flow` Apply wide-channel flow with vegetation layer according to the two-layer model described in Defina and Bixio (2005) "Vegetated Open Channel Flow".
     - `set_canopy_flow` Apply flow within and above a uniform homogenous canopy according to the model described in Finnigan and Belcher (2004), "Flow over a hill covered with a plant canopy".
-    - `read_IB2d_vtk_data` Read in 2D fluid velocity data from IB2d and set the Environment's flow variable.
-    - `read_IBAMR3d_vtk_data` Read in 3D fluid velocity data from vtk files obtained from IBAMR. See read_IBAMR3d_py27.py for converting IBAMR data to vtk format using VisIt.
+    - `read_IB2d_fluid_data` Read in 2D fluid velocity data from one or more IB2d vtk dumps and set the Environment's flow variable (time-varying if multiple dumps are read).
+    - `read_IBAMR3d_vtk_data` Read in 3D fluid velocity data from one or more vtk files obtained from IBAMR. If multiple files are read (naming scheme IBAMR_db_###.vtk, the automatic format from read_IBAMR3d_py27.py), the resulting flow is time-varying. See read_IBAMR3d_py27.py for converting IBAMR data to vtk format using VisIt.
     - `read_comsol_vtu_data` Read in 2D or 3D fluid velocity data from vtu files (either .vtu or .txt) obtained from COMSOL. This data must be on a regular grid and include a Grid specification at the top.
     - `load_NetCDF` Load a NetCDF file with fluid velocity data in it. Does not read in the data in case inspection is necessary; see read_NetCDF_flow.
     - `read_NetCDF_flow` Read in fluid velocity data from a loaded NetCDF file.
     - `read_stl_mesh_data` Reads in 3D immersed boundary data from an ascii or binary stl file. Only static meshes are supported.
-    - `read_IB2d_vertex_data` Read in 2D immersed boundary data from a .vertex file used in IB2d. Will assume that vertices closer than half (+ epsilon) the Eulerian mesh resolution are connected linearly. Only static meshes are supported.
-    - `read_vertex_data_to_convex_hull` Read in 2D or 3D vertex data from a vtk file or a .vertex file and create a structure by computing the convex hull. Only static meshes are supported.
-    - `add_vertices_to_2D_ibmesh` Try to repair 2D mesh segments which intersect away from 
+    - `read_IB2d_mesh_data` Read in 2D immersed boundary data from IB2d. Reads a directory of lagsPts.####.vtk files for a moving (time-varying) mesh, or a single .vtk/.vertex file for a static mesh. Several methods are available for associating vertices into mesh segments; see the docstring.
+    - `read_3D_vertex_data_to_convex_hull` Read in static 3D vertex data from a vtk file or a .vertex file and create a structure by computing the convex hull. Only static meshes are supported.
+    - `add_vertices_to_static_2D_ibmesh` Try to repair static 2D mesh segments which intersect away from 
     specified vertices by adding vertices at the intersections.
     - `tile_domain` Tile the current fluid flow and immersed mesh in the x and/or y directions. It is assumed that the flow is roughly periodic in the direction(s) specified - no checking will be done, and no errors thrown if not.
     - `extend` Extend the domain by duplicating the boundary flow a number of times in a given (or multiple) directions. Good when there is fully resolved fluid \
@@ -273,9 +273,9 @@ Class: Swarm
     - `get_prop` return the property requested as either a single value (if shared) or a numpy array (if varying by individual)
     - `add_prop` add a new property and check that it isn't in both props and shared_props
     - `get_fluid_drift` get the fluid velocity at each agent's position via interpolation
-    - `get_fluid_gradient` get the gradient of the magnitude of the fluid velocity
+    - `get_fluid_mag_gradient` get the gradient of the magnitude of the fluid velocity
     at each agent's position via interpolation
-    - `apply_boundary_condition` method used to enforce the boundary conditions during a move
+    - `apply_boundary_conditions` method used to enforce the boundary conditions during a move
     - `plot` plot the Swarm's current position or a previous position at the time provided
     - `plot_all` plot all of the Swarm's positions up to the current time. can also be 
     used to save a video
