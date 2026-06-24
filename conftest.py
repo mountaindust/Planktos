@@ -3,7 +3,10 @@
 import pytest
 from pathlib import Path
 from planktos import _dataio
-VTK = _dataio.VTK
+# vtk is a mandatory dependency (see setup.cfg) that _dataio imports
+# unconditionally, so it is present whenever planktos imports. Fall back to True
+# if _dataio does not expose an explicit VTK availability flag.
+VTK = getattr(_dataio, 'VTK', True)
 
 def pytest_addoption(parser):
     '''Adds parser options'''

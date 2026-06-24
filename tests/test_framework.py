@@ -540,8 +540,10 @@ def test_intersection_methods():
     intersection = planktos._geom.seg_intersect_2D(p0, p1, Q0_list, Q1_list)
     assert np.all(intersection[0] == np.array([1.,2.]))
     assert intersection[1] == 2./5.
-    intsec = np.array([3.,0.])
-    assert np.all(intersection[2] == intsec/np.linalg.norm(intsec))
+    # seg_intersect_2D returns (x, s_I, Q0, Q1, idx); indices 2 and 3 are the
+    #   endpoints of the struck segment, here [0,2]-[3,2].
+    assert np.all(intersection[2] == np.array([0., 2.]))
+    assert np.all(intersection[3] == np.array([3., 2.]))
 
     ### 2D in 3D ###
     # No bndry intersection
@@ -599,8 +601,10 @@ def test_intersection_methods():
     assert intersection is not None
     assert np.all(np.isclose(intersection[0], np.array([1.25, 1.25, 1.])))
     assert np.isclose(intersection[1], 0.5)
-    assert np.isclose(np.dot(intersection[2],tri1-tri0), 0),\
-        "vector not normal"
+    # seg_intersect_3D_triangles returns (x, s_I, Q0, Q1, Q2, idx); indices 2-4
+    #   are the vertices of the struck triangle.
+    assert np.all(intersection[2] == tri0) and np.all(intersection[3] == tri1)\
+        and np.all(intersection[4] == tri2), "wrong triangle vertices returned"
 
     # Many triangles, no intersection except in a parallel case
     seg0 = np.array([0.5, 0.5, 1.]); seg1 = np.array([2.5, 2.5, 1.])
@@ -618,8 +622,9 @@ def test_intersection_methods():
     assert intersection is not None
     assert np.all(np.isclose(intersection[0], np.array([1.25, 1.25, 1.])))
     assert np.isclose(intersection[1], 0.5)
-    assert np.isclose(np.dot(intersection[2],tri1[0,:]-tri0[0,:]), 0),\
-        "vector not normal"
+    # closest intersection is with triangle index 0; indices 2-4 are its vertices
+    assert np.all(intersection[2] == tri0[0,:]) and np.all(intersection[3] == tri1[0,:])\
+        and np.all(intersection[4] == tri2[0,:]), "wrong triangle vertices returned"
 
     # Many triangles, many intersections
     seg0 = np.array([0.5, 0.5, 0.5]); seg1 = np.array([2., 2., 1.5])
@@ -633,5 +638,6 @@ def test_intersection_methods():
     assert intersection is not None
     assert np.all(np.isclose(intersection[0], np.array([1.25, 1.25, 1.])))
     assert np.isclose(intersection[1], 0.5)
-    assert np.isclose(np.dot(intersection[2],tri1[0,:]-tri0[0,:]), 0),\
-        "vector not normal"
+    # closest intersection (s_I=0.5, z=1.0) is with triangle index 2
+    assert np.all(intersection[2] == tri0[2,:]) and np.all(intersection[3] == tri1[2,:])\
+        and np.all(intersection[4] == tri2[2,:]), "wrong triangle vertices returned"
