@@ -8,6 +8,7 @@ Author: Christopher Strickland
 Email: cstric12@utk.edu
 '''
 
+import functools
 import numpy as np
 from scipy import integrate, optimize
 from . import _geom
@@ -332,10 +333,105 @@ def apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
 
         else:
             raise NotImplementedError("3D moving meshes not currently supported.")
-            
 
 
-def _get_eligible_moving_mesh_elements(startpt, endpt, start_mesh, end_mesh, 
+
+#############################################################################
+#####          PARALLEL DISPATCH WORKERS FOR POOL.MAP                    #####
+#############################################################################
+# These module-level workers let Swarm.apply_boundary_conditions dispatch the
+# per-agent IB collision check through a user-supplied worker pool. They take a
+# single packed argument (so they work with the one-argument calling convention
+# of pool.map / the builtin map) and are picklable by qualified name, which is
+# required for process pools on spawn-based platforms. Shared per-timestep mesh
+# data is bound in once via functools.partial (see make_ib_worker), keeping each
+# per-agent argument tiny and avoiding re-pickling the mesh for every agent.
+
+
+def _ib_worker_static(arg, mesh, max_meshpt_dist, ib_collisions):
+    '''Per-agent static-mesh IB collision worker for pool.map.
+
+    Parameters
+    ----------
+    arg : tuple (idx, startpt, endpt)
+        idx is the agent index; startpt/endpt are length-D ndarrays.
+    mesh : ndarray
+        static immersed boundary mesh (Nx2x2 or Nx3x3)
+    max_meshpt_dist : float
+    ib_collisions : {'sliding', 'sticky'}
+
+    Returns
+    -------
+    tuple (idx, (new_loc, dx, mesh_idx))
+        idx is echoed back so results can be applied independent of ordering.
+    '''
+    idx, startpt, endpt = arg
+    res = apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist,
+                                   ib_collisions=ib_collisions)
+    return idx, res
+
+
+def _ib_worker_moving(arg, start_mesh, end_mesh, max_meshpt_dist, max_mov,
+                      ib_collisions):
+    '''Per-agent moving-mesh IB collision worker for pool.map.
+
+    Parameters
+    ----------
+    arg : tuple (idx, startpt, endpt)
+        idx is the agent index; startpt/endpt are length-D ndarrays.
+    start_mesh, end_mesh : ndarray
+        immersed boundary mesh interpolated at the start and end of the step.
+    max_meshpt_dist : float
+    max_mov : float
+        maximum distance any mesh vertex moved during the step.
+    ib_collisions : {'sliding', 'sticky'}
+
+    Returns
+    -------
+    tuple (idx, (new_loc, dx, mesh_idx))
+    '''
+    idx, startpt, endpt = arg
+    res = apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
+                                   max_meshpt_dist, max_mov,
+                                   ib_collisions=ib_collisions)
+    return idx, res
+
+
+def make_ib_worker(shared):
+    '''Bind per-timestep shared mesh data into a one-argument callable for map().
+
+    Parameters
+    ----------
+    shared : tuple
+        Output of Swarm._precompute_ib_shared. shared[0] is a tag, either
+        'static' -> ('static', mesh, max_meshpt_dist, ib_collisions) or
+        'moving' -> ('moving', start_mesh, end_mesh, max_meshpt_dist, max_mov,
+        ib_collisions).
+
+    Returns
+    -------
+    callable
+        A functools.partial taking a single (idx, startpt, endpt) argument and
+        returning (idx, (new_loc, dx, mesh_idx)). Picklable for process pools
+        because it wraps a module-level function with picklable bound arguments.
+    '''
+    tag = shared[0]
+    if tag == 'static':
+        _, mesh, max_meshpt_dist, ib_collisions = shared
+        return functools.partial(_ib_worker_static, mesh=mesh,
+                                 max_meshpt_dist=max_meshpt_dist,
+                                 ib_collisions=ib_collisions)
+    elif tag == 'moving':
+        _, start_mesh, end_mesh, max_meshpt_dist, max_mov, ib_collisions = shared
+        return functools.partial(_ib_worker_moving, start_mesh=start_mesh,
+                                 end_mesh=end_mesh,
+                                 max_meshpt_dist=max_meshpt_dist,
+                                 max_mov=max_mov, ib_collisions=ib_collisions)
+    raise ValueError("Unknown IB shared-data tag: {}".format(tag))
+
+
+
+def _get_eligible_moving_mesh_elements(startpt, endpt, start_mesh, end_mesh,
                                        max_mov, search_rad):
     '''
     From starting and ending points for the mesh, find all elements that 
