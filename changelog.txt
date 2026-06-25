@@ -12,6 +12,10 @@ and otherwise gives the index of the first mesh element encountered.
 - Cleans up Swarm and Environment by kicking static methods and loaders to external module. Adds leading underscores to make API cleaner.
 - Changes the name of get_positions to apply_agent_model, removes params argument.
 - Updated installation instructions and added workflow.
+- Optional parallelization of immersed-boundary collision detection: attach any worker pool exposing .map (multiprocessing.Pool, ProcessPoolExecutor, or ThreadPoolExecutor) to a Swarm via the new pool attribute/kwarg. Defaults to serial (pool=None), behavior unchanged.
+- get_2D_vorticity vectorized via np.gradient: identical to the old loop on uniform grids, more accurate on non-uniform grids.
+- New single-file tutorial for sticky moving boundaries.
+- Bug fixes: corrected ib_collision_idx for some collisions; fixed flow_points axis ordering for non-square grids passed directly to Environment(); repaired pytest collection and updated stale intersection/vorticity tests.
 
 
 Geometry module added to collect workhorse mathematical functions. Explanation of the mathematics and implementation has been added and cleaned up.

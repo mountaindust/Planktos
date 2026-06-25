@@ -59,6 +59,7 @@ class Swarm:
         Environment with all of the defaults.
     init : {'random', 'grid', ndarray}, default='random'
         Method for initalizing agent positions.
+
         * 'random': Uniform random distribution throughout the domain
         * 'grid': Uniform grid on interior of the domain, including capability
           to leave out closed immersed structures. In this case, swarm_size 
@@ -71,6 +72,7 @@ class Swarm:
           case, swarm_size is ignored.
     ib_condition : {None, 'sliding' (default), 'sticky'}
         Boundary condition for immersed boundaries
+
         * None: Will turn off all interactions with immersed boundaries
         * 'sliding': (default) No flux in the direction normal to the boundary; 
           any movement across the boundary will be subject to vector projection 
@@ -88,8 +90,10 @@ class Swarm:
         to an array of zeros with length matching the spatial dimension, and 
         'cov' will be set to an identity matrix of appropriate size according to 
         the spatial dimension. This allows the default agent behavior to be 
-        unbiased brownian motion.  
-        Examples:  
+        unbiased brownian motion.
+
+        Examples:
+
         * diam: diameter of the particles
         * m: mass of the particles
         * Cd: drag coefficient of the particles

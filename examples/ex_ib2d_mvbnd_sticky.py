@@ -69,12 +69,13 @@ if __name__ == '__main__':
                 np.expand_dims(stick,1)*self.positions
         
         # After an agent runs into an immersed structure, we want it to be removed from the plot
-        #   for all future times. There is an attribute of the Swarm object called 
-        #   ib_collision which is an array of bool, one for each agent. If the agent 
-        #   collided with an immersed structure in the most recent move, it is set 
-        #   to True for that agent. Otherwise, it is False. We'll use that to 
+        #   for all future times. There is an attribute of the Swarm object called
+        #   ib_collision_idx which is an int array, one entry per agent. It is -1 if
+        #   the agent did not collide with an immersed structure in the most recent
+        #   move, and otherwise the index of the first mesh element it struck (so
+        #   any value >= 0 indicates a collision). We'll use that to
         #   dynamically update our 'stick' property after the move is over.
-        #   We also will use that to mask the positions of the particles that have 
+        #   We also will use that to mask the positions of the particles that have
         #   stuck to the jellyfish. This will remove the stuck particles from the plot.
         
         # To do this, we will override after_move, a method that gets called 
@@ -82,7 +83,7 @@ if __name__ == '__main__':
 
         def after_move(self, dt):
             self.props.loc[self.ib_collision_idx >= 0, 'stick'] = True
-            self.positions[self.ib_collision_idx >0] = ma.masked
+            self.positions[self.ib_collision_idx >= 0] = ma.masked
 
     # Now we create the Swarm similar to ex_ib2d_sticky.py.
     # We will set store_prop_history=True because we want to keep track of agent 

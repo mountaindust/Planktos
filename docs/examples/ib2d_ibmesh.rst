@@ -36,23 +36,23 @@ of length 5.0e-5*1000 = 0.05.
 
 Read in ib2d vtk data with dt=5.0e-5, print_dump=1000. ::
 
-    envir.read_IB2d_vtk_data('ib2d_data', 5.0e-5, 1000)
+    envir.read_IB2d_fluid_data('ib2d_data', 5.0e-5, 1000)
 
 Now we read in the vertex data to get an immersed mesh. These data include 
 points for two lines (the sides of the channel) and a circle representing 
 the cylinder. Since the geometry is fairly simple, we should be able to 
 create mesh structures out of these points by associating nearby points 
 within a radius. That is, if two points are within a certain distance of 
-each other, we draw a line between them. This is what the 
-read_IB2d_vertex_data function does, with a default radius of approx.
-half the resolution of the Eulerian, fluid velocity mesh. ::
+each other, we draw a line between them. This is what the
+read_IB2d_mesh_data function does under the 'proximity' method, with a default
+radius of approx. half the resolution of the Eulerian, fluid velocity mesh. ::
 
-    envir.read_IB2d_vertex_data('ib2d_data/channel.vertex')
+    envir.read_IB2d_mesh_data('ib2d_data/channel.vertex', method='proximity')
 
 For more complex vertex structures, this may attach too many points, causing 
 problems. You can try to adjust the radius, but if the structure has concave 
-features, this over-attachement can be unavoidable. In that case, try using 
-add_vertices_to_2D_ibmesh, which simply adds a vertex whever mesh lines are 
+features, this over-attachement can be unavoidable. In that case, try using
+add_vertices_to_static_2D_ibmesh, which simply adds a vertex whever mesh lines are
 crossing. It may not be ideal, but it's often good enough in a pinch! One 
 thing you absolutely don't want are mesh lines crossing without a vertex 
 at every crossing point. This can cause issues with the algorithm that 
@@ -92,12 +92,15 @@ automatically checks if any agent crossed any immersed boundary element
 after each time step. Even in this simple example, the number of mesh 
 elements is typically large (and the number of agents can be too). Even 
 though we can reduce the number of mesh elements we check per agent given
-how far the agent travelled in a given time step, this is still an expensive 
-search-and-check, and if there is a boundary crossing, we have to 
-recursively check for further crossings of different sorts after the 
-vector projection of the sliding collision. For now, these are just things 
-to keep in mind... in the future, we may parallelize this part of the code
-in one way or another, or rewrite all the vector algebra in C.
+how far the agent travelled in a given time step, this is still an expensive
+search-and-check, and if there is a boundary crossing, we have to
+recursively check for further crossings of different sorts after the
+vector projection of the sliding collision. This per-agent collision check is
+the main bottleneck, and it can optionally be parallelized: attach any worker
+pool exposing a .map method (e.g. multiprocessing.Pool, or a
+concurrent.futures ProcessPoolExecutor or ThreadPoolExecutor) to the Swarm via
+its pool attribute (or the pool keyword of the constructor), and Planktos will
+dispatch the check across workers. By default (pool=None) it runs serially.
 
 Planktos will create a movie if you just pass a filename with an
 appropriate extension to the plot_all method of the searm object. By 

@@ -141,8 +141,8 @@ boundaries from vertex data, be sure and check that boundary segments are not
 intersecting each other away from specified vertices! A quick way to do this is
 to call Environment.plot_envir() after the mesh import is done to zoom in and 
 visually check that the boundary formed correctly and doesn't cross itself in 
-unexpected ways. There is also a method of the Environment class called 
-add_vertices_to_2D_ibmesh which will add vertices at all 2D mesh crossing points, 
+unexpected ways. There is also a method of the Environment class called
+add_vertices_to_static_2D_ibmesh which will add vertices at all 2D mesh crossing points,
 however it's use is discouraged because it results in complex vertices that 
 attach more than two mesh segments and leftover segments that do not contribute 
 to the dynamics at all. Do not expect meshes resulting from this method to have 
