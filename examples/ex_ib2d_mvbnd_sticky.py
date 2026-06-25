@@ -107,6 +107,38 @@ swrm.props['stick'] = np.full(N, False) # creates a length 100 array of False
 # An equivalent way to do this: swrm.add_prop('stick', np.full(100, False), shared=False)
 
 
+# ---------------------------------------------------------------------------
+# OPTIONAL: parallelize the immersed-boundary collision detection.
+#
+# Checking each agent against the (moving) jellyfish mesh every time step is the
+#   main computational bottleneck, and it is embarrassingly parallel across
+#   agents. You can speed it up by attaching a worker pool to the Swarm via the
+#   swrm.pool attribute. Any object with a .map(func, iterable) method works:
+#   multiprocessing.Pool, concurrent.futures.ProcessPoolExecutor, or
+#   ThreadPoolExecutor. The default (swrm.pool = None) runs serially and is
+#   exactly the behavior above.
+#
+# A PROCESS-based pool is recommended for MOVING boundaries: this is precisely
+#   the expensive case where parallelism pays off (each moving-mesh collision
+#   solves an ODE / root-find per agent). Thread pools, and cheap static-mesh
+#   problems, can actually be SLOWER than serial due to per-agent dispatch
+#   overhead -- so benchmark for your problem before relying on it (see
+#   tests/bench_ib_parallel.py).
+#
+# To try it, uncomment the block below. IMPORTANT: with a process pool, guard
+#   the script body with `if __name__ == '__main__':` (everything from the pool
+#   creation down) so that on spawn-based platforms (Windows/macOS) the worker
+#   processes do not re-run this whole script. On Linux (fork) the guard is not
+#   strictly required. You own the pool, so shut it down when finished.
+#
+# from concurrent.futures import ProcessPoolExecutor
+# import os
+# swrm.pool = ProcessPoolExecutor(max_workers=os.cpu_count())
+# ...run the move loop and plotting...
+# swrm.pool.shutdown()
+# ---------------------------------------------------------------------------
+
+
 # Now we move the swarm. We'll use the 'sticky' option for immersed boundary
 #   collisions instead of the default sliding option. This means that 
 #   whenever an agent runs into an immersed structure, it will stop its movement 
