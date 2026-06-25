@@ -3,14 +3,26 @@
 Guidance for working in the Planktos repository. Keep this file current; it is
 loaded into every session.
 
-## Git policy (strict)
+## Git policy (strict — this has repeatedly been mishandled; read carefully)
 
-- **Never `git commit` automatically, and never `git push` automatically.**
-- **Commit only when the user explicitly asks for a commit, each time.** A prior
-  commit request does NOT authorize future commits.
+**Commits and pushes require explicit, per-action authorization in the user's
+most recent message. Authorization NEVER carries forward.**
+
+- **Never `git commit` or `git push` automatically or on your own initiative.**
+- **Each commit needs its own fresh green light.** A commit request authorizes
+  exactly ONE commit, right then. The next commit requires a new, explicit
+  request. Past authorizations do not propagate forward — not across turns, and
+  not within a single multi-step task.
+- **"Do X, then commit, then do Y" authorizes committing X only.** It does NOT
+  authorize committing Y or any later/again work. Map each commit authorization
+  to the one specific step it was attached to, and nothing else.
+- **Do not move toward a commit without authorization.** Running `git add`/staging
+  as a prelude to an unauthorized commit counts as moving toward it — don't do it.
+  (Read-only git — `status`, `diff`, `log` — is always fine.)
 - **A request to commit is NOT a request to push.** Push only when the user
-  explicitly and separately asks to push.
-- When in doubt, stage and show the diff and ask, rather than committing.
+  explicitly and separately asks to push, each time.
+- **When in doubt, do not commit.** Show the diff, summarize, and ask. Leaving
+  changes uncommitted in the working tree is always the safe default.
 
 ## Versioning & changelog (the user wants active reminders here)
 
