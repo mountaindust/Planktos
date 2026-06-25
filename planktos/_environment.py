@@ -958,16 +958,16 @@ class Environment:
                 flow.
         '''
 
-        # Get points defining the spatial grid for flow data
-        points = []
-        if tspan is None:
-            # no time-dependent flow
-            for dim, mesh_size in enumerate(self.flow[0].shape[::-1]):
-                points.append(np.linspace(0, self.L[dim], mesh_size))
-        else:
-            # time-dependent flow
-            for dim, mesh_size in enumerate(self.flow[0].shape[:0:-1]):
-                points.append(np.linspace(0, self.L[dim], mesh_size))
+        # Get points defining the spatial grid for flow data. flow_points[i] is
+        #   the coordinate array for spatial axis i over domain length L[i] -- the
+        #   same convention the data loaders use and that interpolate_flow,
+        #   get_2D_vorticity, and plotting assume. Spatial axes are all of the
+        #   flow shape for static flow, or all but the leading time axis when the
+        #   flow is time-dependent.
+        spatial_shape = self.flow[0].shape if tspan is None \
+            else self.flow[0].shape[1:]
+        points = [np.linspace(0, self.L[dim], mesh_size)
+                  for dim, mesh_size in enumerate(spatial_shape)]
         self.flow_points = tuple(points)
 
         # set time
