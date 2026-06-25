@@ -173,6 +173,17 @@ Algorithm/derivation notes are in `docs/notes/` (Markdown with LaTeX):
 
 ## Tests
 
+> ⚠️ **The test suite lags significantly behind the code and needs a full
+> evaluation and major update.** Tests have not been kept current as the code
+> evolved, so absence of failures does not imply coverage — much is stale or
+> missing. Known examples found so far: `pytest` collection was silently broken
+> for a long time (`conftest.py` referenced a nonexistent `_dataio.VTK`; fixed on
+> `mvbnd`/`dyload`); `test_intersection_methods` asserted an outdated
+> `seg_intersect_*` return format; and on `dyload` several `test_framework.py`
+> tests still reference `Environment` attributes removed by the FluidData refactor
+> (`flow_times`, `flow_points`, …). Treat a green run with healthy skepticism and
+> budget a dedicated pass to audit and rewrite the suite against the current API.
+
 - Run `pytest` from the repository root. Main suite: `tests/test_framework.py`;
   fluid I/O: `tests/test_fluid_read.py`.
 - Markers: `@pytest.mark.slow` (only with `--runslow`), `@pytest.mark.vtk`

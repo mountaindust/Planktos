@@ -110,9 +110,28 @@ class Swarm:
     color : matplotlib color format 
         Default plotting color for swarm 
         (see https://matplotlib.org/stable/tutorials/colors/colors.html).
-        Stored in shared_props. Can be overridden by supplying individual (and 
-        even time varying!) agent colors in a 'color' column of the props 
+        Stored in shared_props. Can be overridden by supplying individual (and
+        even time varying!) agent colors in a 'color' column of the props
         DataFrame.
+    pool : object with a .map method, optional
+        Worker pool used to parallelize per-agent immersed-boundary collision
+        detection (the main runtime bottleneck when immersed meshes are present).
+        Any object exposing ``.map(func, iterable)`` works, including
+        ``multiprocessing.Pool``, ``concurrent.futures.ProcessPoolExecutor``, and
+        ``concurrent.futures.ThreadPoolExecutor``; choose threads (shares memory,
+        no pickling) or processes (true multi-core) just by which one you attach.
+        Defaults to None, which runs serially and reproduces the unparallelized
+        behavior exactly. The pool is created and owned by the user (Planktos does
+        not shut it down). A process-based pool (e.g. ProcessPoolExecutor) is
+        recommended and is mainly beneficial for the expensive moving-boundary
+        case; for cheap static-mesh collisions, or for thread-based pools, the
+        per-agent dispatch overhead can outweigh the work and reduce performance,
+        so benchmark before relying on it. The pool is also accessible as
+        ``self.pool``
+        inside apply_agent_model for user subclasses, but the default agent model
+        does not use it; note that parallelizing a custom stochastic agent model
+        requires independent per-worker RNG streams (e.g.
+        ``np.random.SeedSequence().spawn()``) to avoid shared-RNG contention.
     **kwargs : dict, optional
         keyword arguments to be used in the 'grid' initialization method or
         values to be set as a Swarm object property. In the latter case, these 
@@ -246,10 +265,10 @@ class Swarm:
 
     '''
 
-    def __init__(self, swarm_size=100, envir=None, init='random', 
-                 ib_condition='sliding', seed=None, shared_props=None, 
-                 props=None, store_prop_history=False, name='organism', 
-                 color='darkgreen', **kwargs):
+    def __init__(self, swarm_size=100, envir=None, init='random',
+                 ib_condition='sliding', seed=None, shared_props=None,
+                 props=None, store_prop_history=False, name='organism',
+                 color='darkgreen', pool=None, **kwargs):
 
         # use a new, 3D default Environment if one was not given. Or infer
         #   dimension from init if possible.
@@ -337,6 +356,15 @@ class Swarm:
         # Initialize IB collision detection
         self.ib_collision_idx = np.full(swarm_size, -1) # will be set to mesh index if collision occurs
         self.ib_condition = ib_condition
+
+        # Optional worker pool for parallelizing immersed-boundary collision
+        #   detection. Any object exposing a .map(func, iterable) method works
+        #   (e.g. multiprocessing.Pool, concurrent.futures.ProcessPoolExecutor,
+        #   or ThreadPoolExecutor). None (default) runs serially. See
+        #   apply_boundary_conditions. Also accessible as self.pool inside
+        #   apply_agent_model for user subclasses, though the default agent model
+        #   does not use it.
+        self.pool = pool
 
         # initialize Dataframe of non-shared properties
         if props is None:
@@ -1346,23 +1374,40 @@ class Swarm:
         ##### Immersed mesh boundaries go first #####
         if self.envir.ibmesh is not None and ib_collisions is not None:
 
-            # if there are any masked agents, skip them in the loop
-            if np.any(self.positions.mask):
-                for n, startpt, endpt in \
-                    zip(np.arange(self.N)[~ma.getmaskarray(self.positions[:,0])],
-                        self.pos_history[-1][~ma.getmaskarray(self.positions[:,0]),:].copy(),
-                        self.positions[~ma.getmaskarray(self.positions[:,0]),:].copy()
-                        ):
-                    self._IBC_routine(n, dt, startpt, endpt, ib_collisions)
-            # if all are masked, skip all boundary checks
-            elif np.all(self.positions.mask):
+            # if all agents are masked (exited the domain), skip all IB checks
+            if np.all(self.positions.mask):
                 return
-            # no masked agents: go through all of them
+            # otherwise, gather the indices of agents still in the domain
+            if np.any(self.positions.mask):
+                active = np.arange(self.N)[~ma.getmaskarray(self.positions[:,0])]
             else:
-                for n in range(self.N):
-                    startpt = self.pos_history[-1][n,:].copy()
-                    endpt = self.positions[n,:].copy()
-                    self._IBC_routine(n, dt, startpt, endpt, ib_collisions)
+                active = np.arange(self.N)
+
+            if len(active) > 0:
+                # Precompute the shared mesh data ONCE for this time step (for a
+                #   moving mesh this avoids redundant per-agent interpolation).
+                shared = self._precompute_ib_shared(dt, ib_collisions)
+                # Build one small (idx, startpt, endpt) argument per active agent.
+                #   Cast to plain ndarrays so masked arrays are not handed to a
+                #   worker pool; .copy() matches the previous per-agent semantics.
+                prev_pos = self.pos_history[-1]
+                args = [(int(n),
+                         np.asarray(prev_pos[n,:]).copy(),
+                         np.asarray(self.positions[n,:]).copy())
+                        for n in active]
+                # Dispatch: a user-supplied pool (any object with .map)
+                #   parallelizes this embarrassingly-parallel work; otherwise the
+                #   builtin map runs it serially. Both call the same pure worker,
+                #   so the results are identical.
+                worker = _ibc.make_ib_worker(shared)
+                if self.pool is None:
+                    results = map(worker, args)
+                else:
+                    results = self.pool.map(worker, args)
+                # Apply results to swarm state in the parent process, keyed on the
+                #   returned idx so correctness does not depend on result order.
+                for idx, result in results:
+                    self._apply_ib_result(idx, dt, result)
 
         ##### Environment Boundary Conditions #####
         self._domain_BC_loop(dt, ib_collisions=ib_collisions)
@@ -1374,8 +1419,12 @@ class Swarm:
 
 
     def _IBC_routine(self, idx, dt, startpt, endpt, ib_collisions='sliding'):
-        '''Routine for checking IB conditions.
-        
+        '''Serial single-agent IB check (used by the domain-boundary recursion).
+
+        Delegates to the same precompute/worker/apply helpers used by the
+        (optionally parallelized) per-agent loop in apply_boundary_conditions, so
+        this path stays numerically identical to that loop.
+
         Parameters
         ----------
         idx : int
@@ -1394,24 +1443,43 @@ class Swarm:
             intersection.
         '''
 
+        shared = self._precompute_ib_shared(dt, ib_collisions)
+        worker = _ibc.make_ib_worker(shared)
+        _, result = worker((idx, startpt, endpt))
+        self._apply_ib_result(idx, dt, result)
+
+
+    def _precompute_ib_shared(self, dt, ib_collisions):
+        '''Compute the immersed-boundary data shared by all agents this step.
+
+        Returns a tuple consumed by _ibc.make_ib_worker. For a static mesh this
+        is cheap; for a moving mesh it interpolates the mesh at the start and end
+        of the step and computes the max inter-vertex distance and the max vertex
+        displacement once for the whole swarm (previously recomputed per agent).
+
+        Parameters
+        ----------
+        dt : float
+            Length of time step
+        ib_collisions : {'sliding', 'sticky'}
+            Type of interaction with immersed boundaries.
+
+        Returns
+        -------
+        tuple
+            ('static', mesh, max_meshpt_dist, ib_collisions) or
+            ('moving', start_mesh, end_mesh, max_meshpt_dist, max_mov,
+            ib_collisions)
+        '''
         if self.envir.ibmesh.ndim == 3:
             # static mesh
-            new_loc, dx, mesh_idx = _ibc.apply_internal_static_BC(startpt, endpt, 
-                    self.envir.ibmesh, self.envir.max_meshpt_dist,
-                    ib_collisions=ib_collisions)
-            self.positions[idx] = new_loc
-            if dx is not None:
-                self.accelerations[idx] = (dx/dt - self.velocities[idx])/dt
-                self.velocities[idx] = dx/dt
-                self.ib_collision_idx[idx] = mesh_idx
-            else:
-                self.ib_collision_idx[idx] = -1
-
+            return ('static', self.envir.ibmesh, self.envir.max_meshpt_dist,
+                    ib_collisions)
         else:
             # moving mesh. first get necessary info about it
             start_mesh = self.envir.interpolate_temporal_mesh()
             end_mesh = self.envir.interpolate_temporal_mesh(time=self.envir.time+dt)
-            # The maximum distance between meshpoints will change in time. 
+            # The maximum distance between meshpoints will change in time.
             #   Calculate them here and pass it along.
             DIM = start_mesh.shape[1]
             max_meshpt_dist_start = np.concatenate(tuple(
@@ -1425,17 +1493,31 @@ class Swarm:
             max_mov = np.concatenate(tuple(
                 np.linalg.norm(end_mesh[:,ii,:]-start_mesh[:,ii,:], axis=1)
                 for ii  in range(DIM))).max()
-            
-            # now apply BC
-            new_loc, dx, mesh_idx = _ibc.apply_internal_moving_BC(startpt, endpt, start_mesh, 
-                    end_mesh, max_meshpt_dist, max_mov, ib_collisions=ib_collisions)
-            self.positions[idx] = new_loc
-            if dx is not None:
-                self.accelerations[idx] = (dx/dt - self.velocities[idx])/dt
-                self.velocities[idx] = dx/dt
-                self.ib_collision_idx[idx] = mesh_idx
-            else:
-                self.ib_collision_idx[idx] = -1
+            return ('moving', start_mesh, end_mesh, max_meshpt_dist, max_mov,
+                    ib_collisions)
+
+
+    def _apply_ib_result(self, idx, dt, result):
+        '''Apply one agent's IB collision result to swarm state.
+
+        Parameters
+        ----------
+        idx : int
+            Agent index
+        dt : float
+            Length of time step
+        result : tuple (new_loc, dx, mesh_idx)
+            Output of apply_internal_static_BC / apply_internal_moving_BC. dx is
+            None if the agent did not collide with the mesh during this step.
+        '''
+        new_loc, dx, mesh_idx = result
+        self.positions[idx] = new_loc
+        if dx is not None:
+            self.accelerations[idx] = (dx/dt - self.velocities[idx])/dt
+            self.velocities[idx] = dx/dt
+            self.ib_collision_idx[idx] = mesh_idx
+        else:
+            self.ib_collision_idx[idx] = -1
 
 
 
