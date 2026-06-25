@@ -215,8 +215,6 @@ class Environment:
         material derivative cache
     DuDt_time : float
         simulation time at which material derivative was calculated
-    dt_interp : list of PPoly objects
-        Used for temporal derivative interpolation. Set by dudt method.
 
     Examples
     --------
