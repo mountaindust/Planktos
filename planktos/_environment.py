@@ -3347,14 +3347,8 @@ class Environment:
             warnings.warn("Warning: flow is time invarient but time arg passed into get_2D_vorticity.",
                           RuntimeWarning)
 
-        if len(self.flow[0].shape) > len(self.L):
-            grid_dim = self.flow[0].shape[1:]
-            grid_loc_iter = np.ndindex(grid_dim)
-            TIMEVAR = True
-        else:
-            grid_dim = self.flow[0].shape
-            grid_loc_iter = np.ndindex(grid_dim)
-            TIMEVAR = False
+        # Is the flow time-varying? (an extra leading time axis is present)
+        TIMEVAR = len(self.flow[0].shape) > len(self.L)
 
         if TIMEVAR:
             if t_indx is not None or time is not None:
@@ -3372,30 +3366,14 @@ class Environment:
             v_x = self.flow[0]
             v_y = self.flow[1]
 
-        vort = np.zeros_like(v_x)
+        # Vorticity = d(v_y)/dx - d(v_x)/dy. Use np.gradient over the grid
+        #   coordinates: second-order central differences in the interior and
+        #   one-sided differences at the edges. This matches dyload's
+        #   FluidData.get_vorticity and replaces a per-grid-point Python loop.
+        dvydx = np.gradient(v_y, self.flow_points[0], axis=0)
+        dvxdy = np.gradient(v_x, self.flow_points[1], axis=1)
 
-        ### LOOP OVER ALL GRID POINTS ###
-        for grid_loc in grid_loc_iter:
-            diff_list = np.array([[-1,0],[1,0],[0,-1],[0,1]], dtype=int)
-            # first, deal with edge of domain cases
-            for dim, loc in enumerate(grid_loc):
-                if loc == 0:
-                    diff_list[dim*2,:] *= 0
-                elif loc == grid_dim[dim]-1:
-                    diff_list[dim*2+1,:] *= 0
-            neigh_list = np.array(grid_loc, dtype=int) + diff_list
-            # get stencil spacing
-            dx1 = self.flow_points[0][grid_loc[0]] - self.flow_points[0][neigh_list[0,0]]
-            dx2 = self.flow_points[0][neigh_list[1,0]] - self.flow_points[0][grid_loc[0]]
-            dy1 = self.flow_points[1][grid_loc[1]] - self.flow_points[1][neigh_list[2,1]]
-            dy2 = self.flow_points[1][neigh_list[3,1]] - self.flow_points[1][grid_loc[1]]
-            # central differencing
-            dvydx = (v_y[tuple(neigh_list[1,:])]-v_y[tuple(neigh_list[0,:])])/(dx1+dx2)
-            dvxdy = (v_x[tuple(neigh_list[3,:])]-v_x[tuple(neigh_list[2,:])])/(dy1+dy2)
-            # vorticity
-            vort[grid_loc] = dvydx - dvxdy
-
-        return vort
+        return dvydx - dvxdy
 
 
 
