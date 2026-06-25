@@ -232,15 +232,13 @@ for the full-simulation parallelization checks (~30s).
 
 ### Known defects pinned as strict xfail
 
-The overhaul uncovered four latent bugs. **Two are fixed** (sticky moving-boundary
-NaN on axis-aligned elements in `_ibc`, and the zero-length-segment `ValueError` in
-`_geom.closest_dist_btwn_lines_and_pt`) and now have passing regression tests. The
-**two remaining** are pinned as `xfail(strict=True)` so they flip to failures
+The overhaul uncovered four latent bugs. **Three are fixed** (sticky
+moving-boundary NaN on axis-aligned elements in `_ibc`; the zero-length-segment
+`ValueError` in `_geom.closest_dist_btwn_lines_and_pt`; and `save_fluid`/
+`save_2D_vorticity` on modern pyvista) and now have passing regression tests. The
+**one remaining** is pinned as `xfail(strict=True)` so it flips to a failure
 (prompting marker removal) once fixed (full detail in `TODO.md`):
 
-- **save_fluid broken on modern pyvista** —
-  `_dataio.write_vtk_rectilinear_grid_vectors` (and the scalar writer) set
-  `.origin` on a `RectilinearGrid`, now disallowed by pyvista.
 - **backward-time FTLE missing/incorrect** — `calculate_FTLE` only integrates
   forward (`T<0` raises `IndexError` on empty `pos_history`), and the documented
   "negate `FTLE_smallest`" shortcut is mathematically wrong (it is identically

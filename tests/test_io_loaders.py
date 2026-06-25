@@ -154,14 +154,69 @@ def test_vtu_load():
 
 
 # --------------------------------------------------------------------------- #
-#            fluid save round-trip (known defect on modern pyvista)           #
+#            fluid / vorticity save round-trips                               #
 # --------------------------------------------------------------------------- #
+# Regression for BUG-SAVEFLUID (fixed): the writers no longer set the invalid
+# .origin/.dimensions on a RectilinearGrid, the save methods pass coordinate
+# arrays (flow_points) rather than domain lengths, and static flows are handled.
+# Saved coordinates are origin-centered (lower-left corner at 0), per the
+# Planktos convention. Round-trips go through _dataio.read_vtk_Rectilinear_Grid_Vector.
 
-@pytest.mark.xfail(strict=True, reason="BUG-SAVEFLUID: write_vtk_rectilinear_grid_vectors "
-                   "sets grid.origin on a pyvista RectilinearGrid, which newer pyvista "
-                   "forbids (PyVistaAttributeError). save_fluid is therefore broken.")
-def test_save_fluid_roundtrips(tmp_path):
-    envir = planktos.Environment(Lx=10, Ly=10, rho=1000, mu=5000)
+def _read_scalar_vtk(filename):
+    '''Read a 2D scalar RectilinearGrid vtk back as an (nx, ny) array.'''
+    import vtk
+    from vtk.util import numpy_support
+    reader = vtk.vtkRectilinearGridReader()
+    reader.SetFileName(str(filename)); reader.ReadAllScalarsOn(); reader.Update()
+    vd = reader.GetOutput()
+    arr = numpy_support.vtk_to_numpy(vd.GetPointData().GetScalars())
+    return arr.reshape(vd.GetDimensions()[::-1]).T.squeeze()
+
+
+def test_save_fluid_static_2D_roundtrips(tmp_path):
+    envir = planktos.Environment(Lx=10, Ly=8, rho=1000, mu=5000)
     envir.set_brinkman_flow(alpha=66, h_p=1.5, U=0.5, dpdx=0.22306, res=11)
-    envir.save_fluid(str(tmp_path), 'flow_out')
-    assert any(tmp_path.iterdir()), "save_fluid wrote nothing"
+    envir.save_fluid(str(tmp_path), 'flow')
+    assert (tmp_path / 'flow.vtk').is_file()                      # single static file
+    data, mesh, _ = _dataio.read_vtk_Rectilinear_Grid_Vector(str(tmp_path / 'flow.vtk'))
+    assert np.allclose(data[0][:, :, 0], envir.flow[0])          # u, orientation preserved
+    assert np.allclose(data[1][:, :, 0], envir.flow[1])          # v
+    assert np.allclose(mesh[0], envir.flow_points[0])            # origin-centered coords
+    assert np.allclose(mesh[1], envir.flow_points[1])
+    assert mesh[0][0] == 0.0 and mesh[1][0] == 0.0
+
+
+def test_save_fluid_time_varying_2D_roundtrips(tmp_path):
+    envir = planktos.Environment(Lx=10, Ly=8, rho=1000, mu=20000)
+    envir.set_brinkman_flow(alpha=66, h_p=1.5, U=0.1 * np.arange(-2, 6),
+                            dpdx=np.ones(8) * 0.22306, res=11, tspan=[0, 10])
+    envir.save_fluid(str(tmp_path), 'flow', time_history=False, flow_times=True)
+    files = sorted(tmp_path.glob('flow_*.vtk'))
+    assert len(files) == len(envir.flow_times)                   # one file per flow time
+    data, _, t = _dataio.read_vtk_Rectilinear_Grid_Vector(str(tmp_path / 'flow_0003.vtk'))
+    expect = envir.interpolate_temporal_flow(time=envir.flow_times[3])
+    assert np.allclose(data[0][:, :, 0], expect[0])
+    assert np.isclose(t, envir.flow_times[3])
+
+
+def test_save_fluid_static_3D_roundtrips(tmp_path):
+    envir = planktos.Environment(Lx=20, Ly=20, Lz=20, rho=1000, mu=250000)
+    envir.set_brinkman_flow(alpha=66, h_p=6, U=5, dpdx=0.22306, res=9)
+    envir.save_fluid(str(tmp_path), 'flow3d')
+    data, mesh, _ = _dataio.read_vtk_Rectilinear_Grid_Vector(str(tmp_path / 'flow3d.vtk'))
+    assert all(np.allclose(data[i], envir.flow[i]) for i in range(3))
+    assert all(np.allclose(mesh[i], envir.flow_points[i]) for i in range(3))
+
+
+def test_save_2D_vorticity_static_roundtrips(tmp_path):
+    # Solid-body rotation v = (-y, x): vorticity = 2 everywhere.
+    n = 15
+    x = np.linspace(0, 10, n); y = np.linspace(0, 8, n)
+    X, Y = np.meshgrid(x, y, indexing='ij')
+    envir = planktos.Environment(Lx=10, Ly=8, flow=[-Y, X])
+    envir.flow_points = (x, y)
+    envir.save_2D_vorticity(str(tmp_path), 'vort')
+    assert (tmp_path / 'vort.vtk').is_file()
+    vort = _read_scalar_vtk(tmp_path / 'vort.vtk')
+    assert vort.shape == (n, n)
+    assert np.allclose(vort, 2.0, atol=1e-9)

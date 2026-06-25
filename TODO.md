@@ -3,12 +3,12 @@
 Context: the `tests/` suite was overhauled on branch **`mvbnd`** (2026-06) into
 fast, deterministic modules. Default `pytest` run ≈1s; `pytest --runslow` adds the
 parallelization checks (~30s). See the **Tests** section of `CLAUDE.md` for the
-module map. Writing tests uncovered four latent defects; **two are now fixed**
-(below), and the **two remaining** are each pinned as a strict `xfail` so it flips
-to a failure (forcing marker removal) the moment it is fixed.
+module map. Writing tests uncovered four latent defects; **three are now fixed**
+(below), and the **one remaining** is pinned as a strict `xfail` so it flips to a
+failure (forcing marker removal) the moment it is fixed.
 
-Run a single bug's tracker, e.g.:
-`pytest tests/test_io_loaders.py::test_save_fluid_roundtrips -rx`
+Run the remaining bug's tracker, e.g.:
+`pytest tests/test_analysis.py::test_backward_FTLE_produces_a_field -rx`
 
 ---
 
@@ -26,24 +26,21 @@ Run a single bug's tracker, e.g.:
   (`seg_lengths_2[~z_check] = seg_lengths_2` → `seg_lengths_2 = seg_lengths_2[~z_check]`).
   Regression tests: `tests/test_geom.py::test_closest_dist_lines_and_pt_mixed_zero_length`
   and `::test_closest_dist_lines_and_pt_all_zero_length`.
+- **BUG-SAVEFLUID** — `Environment.save_fluid` / `save_2D_vorticity` were broken on
+  modern pyvista, three layers deep: the writers set the now-forbidden
+  `.origin`/`.dimensions` on a `RectilinearGrid`; the save methods passed `self.L`
+  (domain lengths) where coordinate arrays were needed; and static flows
+  (`flow_times is None`) died in `interpolate_temporal_flow`. Fixed by removing the
+  invalid grid attributes (a RectilinearGrid's geometry is its coordinate arrays),
+  passing `self.flow_points`, and short-circuiting static flow to write `self.flow`
+  directly. Saved coordinates are origin-centered (LLC convention untouched).
+  Regression tests: `tests/test_io_loaders.py::test_save_fluid_static_2D_roundtrips`,
+  `::test_save_fluid_time_varying_2D_roundtrips`, `::test_save_fluid_static_3D_roundtrips`,
+  `::test_save_2D_vorticity_static_roundtrips`.
 
 ---
 
-## Bug 1 — fluid/scalar save is broken on modern pyvista
-
-- **Where:** `planktos/_dataio.py:664` (`write_vtk_rectilinear_grid_vectors`) and
-  `planktos/_dataio.py:608` (`write_vtk_2D_rectilinear_grid_scalars`); both do
-  `grid.origin = (0,0,0)` on a `pyvista.RectilinearGrid`.
-- **Root cause:** newer pyvista forbids setting `.origin` on a `RectilinearGrid`
-  (only `ImageData`/`UniformGrid` has an origin) → `PyVistaAttributeError`.
-- **Public impact:** `Environment.save_fluid` (uses the vector writer, lines
-  ~3441/3452/3455) is broken; `Environment.save_2D_vorticity` likely also broken
-  via the scalar writer.
-- **Fix:** drop the `grid.origin = (0,0,0)` lines (a `RectilinearGrid` already
-  carries its coordinates), or guard them; verify against the installed pyvista.
-- **Tracker (xfail):** `tests/test_io_loaders.py::test_save_fluid_roundtrips`
-
-## Bug 2 — backward-time FTLE is missing and the documented workaround is wrong
+## Bug 1 — backward-time FTLE is missing and the documented workaround is wrong
 
 - **Where:** `planktos/_environment.py`, `calculate_FTLE` (def at ~2877).
 - **State today (verified):** forward FTLE works and is correct — steady-flow tests

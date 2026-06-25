@@ -17,6 +17,7 @@ and otherwise gives the index of the first mesh element encountered.
 - New single-file tutorial for sticky moving boundaries.
 - Bug fixes: corrected ib_collision_idx for some collisions; fixed flow_points axis ordering for non-square grids passed directly to Environment(); repaired pytest collection and updated stale intersection/vorticity tests.
 - Bug fixes (collision math, surfaced by the new test suite): sticky moving-boundary collisions no longer return NaN for perfectly axis-aligned (vertical/horizontal) mesh elements (_ibc contact parameter now uses the largest-extent axis instead of max() over a 0/0); closest_dist_btwn_lines_and_pt no longer raises on a mix of zero-length and normal segments (_geom).
+- Bug fix: Environment.save_fluid and save_2D_vorticity work again on modern pyvista. The rectilinear-grid writers no longer set the now-forbidden .origin/.dimensions on a RectilinearGrid; the save methods now pass coordinate arrays (flow_points) rather than domain lengths; and static (time-invariant) flows are handled. Saved coordinates are origin-centered (lower-left corner at 0), consistent with the load-time convention.
 
 
 Geometry module added to collect workhorse mathematical functions. Explanation of the mathematics and implementation has been added and cleaned up.
@@ -33,11 +34,10 @@ parallelization checks are gated behind `--runslow`. Exploratory/visual scripts
 moved to tests/manual/ (not collected). Tiny committed fixtures in
 tests/fixtures/ (regenerable via tests/fixtures/_gen_fixtures.py) give the first
 automated coverage of the moving immersed-boundary import. The new tests
-uncovered four latent bugs; two are now fixed (the sticky moving-boundary NaN and
-the closest_dist zero-length crash, listed above), and two remain pinned as strict
-xfails until fixed (see TODO.md):
-  - Environment.save_fluid is broken on modern pyvista (sets .origin on a
-    RectilinearGrid, which is now disallowed).
+uncovered four latent bugs; three are now fixed (the sticky moving-boundary NaN,
+the closest_dist zero-length crash, and the save_fluid/save_2D_vorticity pyvista
+breakage, all listed above), and one remains pinned as a strict xfail until fixed
+(see TODO.md):
   - backward-time FTLE is not implemented (calculate_FTLE integrates forward
     only; T<0 raises) and the documented "negate FTLE_smallest" workaround is
     mathematically incorrect. Forward FTLE is correct.
