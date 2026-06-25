@@ -173,43 +173,69 @@ Algorithm/derivation notes are in `docs/notes/` (Markdown with LaTeX):
 
 ## Tests
 
-> ⚠️ **The test suite lags significantly behind the code and needs a full
-> evaluation and major update.** Tests have not been kept current as the code
-> evolved, so absence of failures does not imply coverage — much is stale or
-> missing. Known examples found so far: `pytest` collection was silently broken
-> for a long time (`conftest.py` referenced a nonexistent `_dataio.VTK`; fixed on
-> `mvbnd`/`dyload`); `test_intersection_methods` asserted an outdated
-> `seg_intersect_*` return format; and on `dyload` several `test_framework.py`
-> tests still reference `Environment` attributes removed by the FluidData refactor
-> (`flow_times`, `flow_points`, …). Treat a green run with healthy skepticism and
-> budget a dedicated pass to audit and rewrite the suite against the current API.
+The suite was overhauled (2026-06) into focused, deterministic, fast modules.
+Run `pytest` from the repository root. The default run is ~1s; add `--runslow`
+for the full-simulation parallelization checks (~30s).
 
-- Run `pytest` from the repository root. Main suite: `tests/test_framework.py`;
-  fluid I/O: `tests/test_fluid_read.py`.
-- Markers: `@pytest.mark.slow` (only with `--runslow`), `@pytest.mark.vtk`
-  (skipped if vtk import fails), `@pytest.mark.vtu` (skipped if COMSOL test data
-  absent). Configured in `conftest.py` / `pytest.ini`.
-- `tests/` also holds non-pytest visual/manual scripts (`visualtest_2d.py`,
-  `mvib2d.py`, `rubberband.py`, `.ipynb` notebooks) — these are exploratory, not
-  part of the automated suite.
+- **Run** the whole thing with `pytest`; a specific area with e.g.
+  `pytest tests/test_collisions_static.py`.
+- **Modules** (all self-contained / analytic-answer unless noted):
+  - `test_geom.py` — `_geom` intersection & closest-distance functions.
+  - `test_collisions_static.py` / `test_collisions_moving.py` — call
+    `_ibc.apply_internal_static_BC` / `apply_internal_moving_BC` directly on
+    single trajectories across a geometry × movement matrix; assert no-penetration
+    and exact post-collision positions.
+  - `test_flow_generation.py` — brinkman/channel/canopy, `tile_flow`, `extend`,
+    `flow_points` axis order.
+  - `test_temporal_interp.py` — `fluid.fCubicSpline` / `create_temporal_interpolations`.
+  - `test_agent_models.py` — `apply_agent_model`/`after_move` overrides and
+    `motion` generators.
+  - `test_swarm_lifecycle.py` — `move()` bookkeeping, mask contract, domain BCs.
+  - `test_analysis.py` — `get_2D_vorticity`, FTLE (closed-form answers).
+  - `test_io_loaders.py` — IB2d moving/static mesh import (committed fixtures),
+    IBAMR vtk (`@vtk`), COMSOL vtu (`@vtu`).
+  - `test_parallel_ib.py` — serial == threads == processes (`@slow`).
+- **Helpers / fixtures**: `tests/_ib_harness.py` (mesh builders + invariant
+  assertions, also drives the parallel scenarios); `tests/fixtures/` holds tiny
+  committed IB2d fixtures, regenerable via `tests/fixtures/_gen_fixtures.py`.
+- **Markers** (registered in `pytest.ini`): `slow` (only with `--runslow`),
+  `vtk` (skipped if vtk data absent), `vtu` (skipped if COMSOL data absent).
+- **Non-automated** visual/exploratory scripts live in `tests/manual/`
+  (`visualtest_*.py`, `mvib2d.py`, `rubberband.py`, the `.ipynb`, the perf
+  benchmark) — excluded from collection via `collect_ignore` in `conftest.py`.
 
-### Testing goals (active priority)
+### Known defects pinned as strict xfail
 
-Test coverage is the known weak spot and an explicit area where help is wanted.
-Verification of boundary interactions has so far been **mostly visual/manual**,
-which is slow and computationally expensive. The goal going forward:
+The overhaul uncovered four latent bugs, pinned as `xfail(strict=True)` so they
+flip to failures (prompting marker removal) once fixed (full detail in `TODO.md`):
 
-- Build **robust, deterministic, computationally cheap** automated tests that
-  fully vet agent–boundary interactions across a matrix of **geometry × movement**
-  assumptions: convex vs concave joints, near-tangent hits, glancing/grazing
-  approaches, multi-element joints, moving vs static boundaries, sliding vs sticky.
-- The key property to assert is the **no-penetration invariant** (agents end on
-  the correct side of every boundary) plus correctness of the resulting position
-  (e.g. projected onto the expected element). Favor small, exact analytic setups
-  with known answers over large simulations.
-- Pin the current trusted moving-boundary behavior with regression tests before
-  any refactor, since the existing implementation is believed correct but lightly
-  covered by automation.
+- **sticky moving collision NaN** — `_ibc.apply_internal_moving_BC` computes the
+  contact parameter as `max((x0-Q0x)/(Q1x-Q0x), (x1-Q0y)/(Q1y-Q0y))`; for an
+  axis-aligned moving element one denominator is 0 → `0/0` → `max(NaN, .)` = NaN.
+  Fix: pick the component with the nonzero denominator. (Real IB2d meshes are
+  ~never axis-aligned, so the showcase example dodges it.)
+- **zero-length-segment ValueError** — `_geom.closest_dist_btwn_lines_and_pt` has
+  `seg_lengths_2[~z_check] = seg_lengths_2` where it must be
+  `seg_lengths_2 = seg_lengths_2[~z_check]`; any mix of zero-length and normal
+  segments raises. Reached by a stationary agent vs a deforming, pinned-vertex
+  moving mesh.
+- **save_fluid broken on modern pyvista** —
+  `_dataio.write_vtk_rectilinear_grid_vectors` (and the scalar writer) set
+  `.origin` on a `RectilinearGrid`, now disallowed by pyvista.
+- **backward-time FTLE missing/incorrect** — `calculate_FTLE` only integrates
+  forward (`T<0` raises `IndexError` on empty `pos_history`), and the documented
+  "negate `FTLE_smallest`" shortcut is mathematically wrong (it is identically
+  `−FTLE_largest` for incompressible flow). Forward FTLE is correct.
+
+### Testing goals (ongoing)
+
+- Favor small, exact analytic setups with known answers over large simulations;
+  keep the default run fast and deterministic.
+- The key property is the **no-penetration invariant** (agents end on the correct
+  side of every boundary) plus correctness of the resulting position. Extend the
+  geometry × movement matrix (convex/concave joints, grazing, multi-element,
+  moving vs static, sliding vs sticky) in `test_collisions_*`.
+- Pin trusted moving-boundary behavior with regression locks before refactors.
 
 ## Conventions & gotchas
 

@@ -20,6 +20,28 @@ Better code organization, including consolidation of IB2d mesh loading
 
 Critical bug fixes in agent-mesh interaction; extensive testing.
 
+Test suite overhaul. The automated tests were reorganized into focused, fast,
+deterministic modules under tests/ (geometry, static/moving collisions, flow
+generation, temporal interpolation, agent models, swarm lifecycle, analysis, and
+I/O loaders). The default `pytest` run is ~1s; the slower full-simulation
+parallelization checks are gated behind `--runslow`. Exploratory/visual scripts
+moved to tests/manual/ (not collected). Tiny committed fixtures in
+tests/fixtures/ (regenerable via tests/fixtures/_gen_fixtures.py) give the first
+automated coverage of the moving immersed-boundary import. Four latent bugs the
+new tests uncovered are pinned as strict xfails until fixed (see TODO.md):
+  - sticky moving-boundary collisions return NaN for perfectly axis-aligned
+    (vertical/horizontal) mesh elements (_ibc.py: max() over a 0/0 in the contact
+    parameter). Real IB2d meshes are essentially never axis-aligned, so this was
+    not seen in practice.
+  - closest_dist_btwn_lines_and_pt raises ValueError when some segments are
+    zero-length (_geom.py: a shape-mismatched self-assignment), reachable from a
+    stationary agent against a deforming, pinned-vertex moving mesh.
+  - Environment.save_fluid is broken on modern pyvista (sets .origin on a
+    RectilinearGrid, which is now disallowed).
+  - backward-time FTLE is not implemented (calculate_FTLE integrates forward
+    only; T<0 raises) and the documented "negate FTLE_smallest" workaround is
+    mathematically incorrect. Forward FTLE is correct.
+
 
 0.7.0
 -----------------------

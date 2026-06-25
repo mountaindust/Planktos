@@ -7,7 +7,7 @@ plus the hard invariant that no agent ever penetrates to the far side of a
 boundary. Each test computes both the serial and the parallel results fresh and
 compares them, so no stored reference data is needed. Since pool=None reproduces
 the unparallelized behavior, pinning the parallel paths to it is sufficient. The
-deterministic scenarios are defined in _ib_scenarios.py.
+deterministic scenarios are defined in _ib_harness.py.
 
 These tests are self-contained (no external data) and small/fast by design.
 '''
@@ -21,7 +21,14 @@ import pytest
 
 # Ensure the scenario helper (a non-test module in this dir) is importable.
 sys.path.insert(0, str(Path(__file__).parent))
-import _ib_scenarios as scen
+import _ib_harness as scen
+
+# These full-simulation parallelization checks are the suite's slowest tests
+# (process spawn + GIL-bound ODE work on the moving mesh). The no-penetration
+# property they assert is also covered cheaply by the direct unit tests in
+# test_collisions_static/moving, so they are gated behind --runslow to keep the
+# default run fast.
+pytestmark = pytest.mark.slow
 
 
 def _assert_traj_equal(a, b):

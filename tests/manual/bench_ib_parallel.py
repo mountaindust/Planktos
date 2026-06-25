@@ -7,10 +7,10 @@ speedup. This is a manual perf tool, NOT a pytest test (filename does not match
 test_*), so it is not collected by the suite.
 
 Usage (from repo root):
-    PYTHONPATH=. python tests/bench_ib_parallel.py
+    PYTHONPATH=. python tests/manual/bench_ib_parallel.py
 
 The scenarios here are intentionally larger than (and independent of) the
-correctness scenarios in _ib_scenarios.py, whose parameters are pinned to the
+correctness scenarios in _ib_harness.py, whose parameters are pinned to the
 golden baseline and must not change.
 '''
 

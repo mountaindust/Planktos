@@ -3,6 +3,11 @@
 import pytest
 from pathlib import Path
 from planktos import _dataio
+
+# Exploratory / visual scripts and the perf benchmark live here. They are not
+# automated tests (and several need external data or produce plots/videos), so
+# keep them out of collection entirely.
+collect_ignore = ['tests/manual']
 # vtk is a mandatory dependency (see setup.cfg) that _dataio imports
 # unconditionally, so it is present whenever planktos imports. Fall back to True
 # if _dataio does not expose an explicit VTK availability flag.
