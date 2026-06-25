@@ -12,6 +12,20 @@ loaded into every session.
   explicitly and separately asks to push.
 - When in doubt, stage and show the diff and ask, rather than committing.
 
+## Versioning & changelog (the user wants active reminders here)
+
+The user has explicitly asked for help **remembering to maintain the version
+number and the changelog** — these are easy to forget. Be proactive about it:
+
+- The version lives in `planktos/__init__.py` (`__version__`); `setup.cfg` reads
+  it via `attr: planktos.__version__`. The current development version is `1.0.0`.
+- `changelog.txt` is hand-maintained, terse, and grouped by version. When a
+  change is user-facing, prompt to add an entry under the appropriate version.
+- When work looks release-worthy (or a user-facing change lands) but the version
+  or changelog hasn't been touched, **say so** and confirm the right action.
+- Do NOT bump the version or rewrite the changelog silently — surface the need
+  and let the user decide (a version bump is a semver judgment call).
+
 ## What Planktos is
 
 Planktos is an **agent-based modeling framework** for simulating the movement and

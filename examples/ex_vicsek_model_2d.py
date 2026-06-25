@@ -41,9 +41,9 @@ envir.read_IB2d_mesh_data('vicsek_mesh/channel.vertex', method='proximity',
                           res=0.001953125)
 
 ### To load both IB2d flow data and mesh. Need to generate flow data first! ###
-# envir.read_IB2d_vtk_data('air_cylinder', 5.0e-5, 2000)
+# envir.read_IB2d_fluid_data('air_cylinder', 5.0e-5, 2000)
 # # domain is now 1 x 0.25 m
-# envir.read_IB2d_vertex_data('vicsek_mesh/channel.vertex')
+# envir.read_IB2d_mesh_data('vicsek_mesh/channel.vertex', method='proximity')
 
 # Set the swarm size
 SWARM_SIZE = 500

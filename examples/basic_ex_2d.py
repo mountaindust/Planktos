@@ -13,7 +13,7 @@ import planktos
 # The default environment is a 10 meter by 10 meter 2D rectangle in which agents 
 #   can exit out of any side (after which they cease to be simulated). The fluid 
 #   velocity is zero everywhere until you set it to something else. See the 
-#   docstring of the Environment class in planktos/environment.py to see all the 
+#   docstring of the Environment class in planktos/_environment.py to see all the
 #   options!
 envir = planktos.Environment()
 
