@@ -261,9 +261,13 @@ def apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
             # Vector for agent travel
             vec = endpt - startpt
 
-            # Get the relative position of intersection within the mesh element
-            # Use max in case the element is vertical or horizontal
-            s_I = max((x[0]-Q0[0])/(Q1[0]-Q0[0]),(x[1]-Q0[1])/(Q1[1]-Q0[1]))
+            # Get the relative position of intersection within the mesh element.
+            # x lies on the segment, so either component gives the same s_I; pick
+            # the axis with the largest extent to avoid a 0/0 when the element is
+            # vertical or horizontal (a plain max() would return the NaN).
+            dQ = Q1 - Q0
+            ax = np.argmax(np.abs(dQ))
+            s_I = (x[ax]-Q0[ax])/dQ[ax]
             if idx is None:
                 dt_elem = close_mesh_end
                 idx = 0

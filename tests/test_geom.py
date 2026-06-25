@@ -211,21 +211,23 @@ def test_closest_dist_lines_and_pt():
     assert np.allclose(_geom.closest_dist_btwn_lines_and_pt(Q0, Q1, pt), [0., 1.])
 
 
-@pytest.mark.xfail(strict=True, reason="BUG-ZEROLEN-SEG: _geom.py:79 reads "
-                   "`seg_lengths_2[~z_check] = seg_lengths_2` (a shape-mismatched "
-                   "self-assignment) where it must be "
-                   "`seg_lengths_2 = seg_lengths_2[~z_check]`. Any mix of "
-                   "zero-length and normal segments raises ValueError. This routes "
-                   "in from a stationary agent meeting a deforming (pinned-vertex) "
-                   "moving mesh.")
 def test_closest_dist_lines_and_pt_mixed_zero_length():
-    # One zero-length segment (a point at (5,0)) and one real segment. Distances
-    # to (5,5) should be [5, 1]; instead the buggy line raises ValueError.
+    # A zero-length segment (the point (5,0)) mixed with a normal segment.
+    # Regression for BUG-ZEROLEN-SEG (fixed): _geom previously did a
+    # shape-mismatched `seg_lengths_2[~z_check] = seg_lengths_2` and raised
+    # ValueError whenever some -- but not all -- segments were zero-length.
+    # Distances to (5,5): point (5,0) -> 5; segment (0,1)-(10,1) -> 4.
     Q0 = np.array([[5., 0.], [0., 1.]])
     Q1 = np.array([[5., 0.], [10., 1.]])
     pt = np.array([5., 5.])
-    d = _geom.closest_dist_btwn_lines_and_pt(Q0, Q1, pt)
-    assert np.allclose(d, [5.0, 4.0])
+    assert np.allclose(_geom.closest_dist_btwn_lines_and_pt(Q0, Q1, pt), [5.0, 4.0])
+
+
+def test_closest_dist_lines_and_pt_all_zero_length():
+    # Every segment degenerate to a point: distances are point-to-point.
+    Q0 = np.array([[1., 1.], [2., 2.]])
+    d = _geom.closest_dist_btwn_lines_and_pt(Q0, Q0.copy(), np.array([1., 1.]))
+    assert np.allclose(d, [0.0, np.sqrt(2)])
 
 
 def test_closest_dist_two_lines_3D_skew():

@@ -232,19 +232,12 @@ for the full-simulation parallelization checks (~30s).
 
 ### Known defects pinned as strict xfail
 
-The overhaul uncovered four latent bugs, pinned as `xfail(strict=True)` so they
-flip to failures (prompting marker removal) once fixed (full detail in `TODO.md`):
+The overhaul uncovered four latent bugs. **Two are fixed** (sticky moving-boundary
+NaN on axis-aligned elements in `_ibc`, and the zero-length-segment `ValueError` in
+`_geom.closest_dist_btwn_lines_and_pt`) and now have passing regression tests. The
+**two remaining** are pinned as `xfail(strict=True)` so they flip to failures
+(prompting marker removal) once fixed (full detail in `TODO.md`):
 
-- **sticky moving collision NaN** — `_ibc.apply_internal_moving_BC` computes the
-  contact parameter as `max((x0-Q0x)/(Q1x-Q0x), (x1-Q0y)/(Q1y-Q0y))`; for an
-  axis-aligned moving element one denominator is 0 → `0/0` → `max(NaN, .)` = NaN.
-  Fix: pick the component with the nonzero denominator. (Real IB2d meshes are
-  ~never axis-aligned, so the showcase example dodges it.)
-- **zero-length-segment ValueError** — `_geom.closest_dist_btwn_lines_and_pt` has
-  `seg_lengths_2[~z_check] = seg_lengths_2` where it must be
-  `seg_lengths_2 = seg_lengths_2[~z_check]`; any mix of zero-length and normal
-  segments raises. Reached by a stationary agent vs a deforming, pinned-vertex
-  moving mesh.
 - **save_fluid broken on modern pyvista** —
   `_dataio.write_vtk_rectilinear_grid_vectors` (and the scalar writer) set
   `.origin` on a `RectilinearGrid`, now disallowed by pyvista.

@@ -76,7 +76,7 @@ def closest_dist_btwn_lines_and_pt(Q0_list, Q1_list, pt):
 
     Q0 = Q0_list[~z_check]
     Q1 = Q1_list[~z_check]
-    seg_lengths_2[~z_check] = seg_lengths_2
+    seg_lengths_2 = seg_lengths_2[~z_check]
 
     # For the rest, follow the same math as in closest_dist_btwn_line_and_pts
     # First, find the projection of the point onto the line and clamp to segments

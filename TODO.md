@@ -3,59 +3,33 @@
 Context: the `tests/` suite was overhauled on branch **`mvbnd`** (2026-06) into
 fast, deterministic modules. Default `pytest` run ≈1s; `pytest --runslow` adds the
 parallelization checks (~30s). See the **Tests** section of `CLAUDE.md` for the
-module map. Writing tests uncovered four latent defects, each pinned as a strict
-`xfail` so it flips to a failure (forcing marker removal) the moment it is fixed.
+module map. Writing tests uncovered four latent defects; **two are now fixed**
+(below), and the **two remaining** are each pinned as a strict `xfail` so it flips
+to a failure (forcing marker removal) the moment it is fixed.
 
 Run a single bug's tracker, e.g.:
-`pytest tests/test_collisions_moving.py::test_sticky_moving_axis_aligned_wall_should_not_nan -rx`
+`pytest tests/test_io_loaders.py::test_save_fluid_roundtrips -rx`
 
 ---
 
-## Bug 1 — sticky moving-boundary collisions return NaN for axis-aligned elements
+## Fixed (2026-06)
 
-- **Where:** `planktos/_ibc.py:266`, in `apply_internal_moving_BC`, the
-  `ib_collisions == 'sticky'` branch.
-- **Code:**
-  ```python
-  s_I = max((x[0]-Q0[0])/(Q1[0]-Q0[0]), (x[1]-Q0[1])/(Q1[1]-Q0[1]))
-  ```
-- **Root cause:** for a perfectly vertical moving element `Q1[0]-Q0[0] == 0`
-  (horizontal: `Q1[1]-Q0[1] == 0`), so one ratio is `0/0 → NaN`, and
-  `max(NaN, valid)` returns `NaN` (order-dependent). The intent (per the comment
-  "Use max in case the element is vertical or horizontal") was to dodge the
-  degenerate axis, but `max` does not skip a NaN. Result: `new_pos` is NaN, the
-  agent is masked. Real IB2d meshes are essentially never perfectly axis-aligned,
-  so the showcase `ex_ib2d_mvbnd_sticky.py` never hits it.
-- **Repro:** `_ib_harness.call_moving([4.8,5],[6.3,5], wall_segments(20,5.0),
-  wall_segments(20,6.0), 'sticky')` → `(nan, nan)`.
-- **Fix:** choose the contact-parameter component whose denominator is non-zero
-  (e.g. compute both ratios but pick the one with `abs(denom) > tol`, or use
-  `np.divide` with a where-mask and `nanmax`). The sliding path already works.
-- **Tracker (xfail):**
-  `tests/test_collisions_moving.py::test_sticky_moving_axis_aligned_wall_should_not_nan`
-- **Note:** the non-degenerate (tilted) sticky cases in that file already pass and
-  exercise the same code, so a fix should keep them green.
+- **BUG-STICKY-AXIS** — sticky moving-boundary collisions returned NaN for
+  perfectly axis-aligned (vertical/horizontal) moving elements. `_ibc.py`
+  computed the contact parameter as `max(ratio_x, ratio_y)`; for a degenerate
+  axis one ratio was `0/0 → NaN` and `max` propagated it. Fixed by taking the
+  ratio on the axis with the largest extent (`np.argmax(np.abs(Q1-Q0))`).
+  Regression test: `tests/test_collisions_moving.py::`
+  `test_sticky_moving_axis_aligned_wall_stops_on_wall` (vertical + horizontal).
+- **BUG-ZEROLEN-SEG** — `_geom.closest_dist_btwn_lines_and_pt` raised
+  `ValueError` on any mix of zero-length and normal segments
+  (`seg_lengths_2[~z_check] = seg_lengths_2` → `seg_lengths_2 = seg_lengths_2[~z_check]`).
+  Regression tests: `tests/test_geom.py::test_closest_dist_lines_and_pt_mixed_zero_length`
+  and `::test_closest_dist_lines_and_pt_all_zero_length`.
 
-## Bug 2 — `closest_dist_btwn_lines_and_pt` raises on mixed zero-length segments
+---
 
-- **Where:** `planktos/_geom.py:79`, in `closest_dist_btwn_lines_and_pt`.
-- **Code:** `seg_lengths_2[~z_check] = seg_lengths_2`  ← shape-mismatched self-assign.
-- **Root cause:** `Q0`/`Q1` are filtered to the non-degenerate segments
-  (`[~z_check]`) but `seg_lengths_2` is not, so the subsequent
-  `dot/seg_lengths_2` would be misaligned. The line was clearly meant to be
-  `seg_lengths_2 = seg_lengths_2[~z_check]`. As written, when `z_check` has any
-  `True` (some zero-length segments) the assignment target is smaller than the RHS
-  → `ValueError`.
-- **Reachability:** the moving-BC eligibility search routes here from a
-  **stationary agent** (`startpt == endpt` → `magA≈0` in
-  `closest_dist_btwn_two_lines`, line ~136) meeting a **deforming mesh with a
-  pinned vertex** (some element-motion segments are zero-length, others not). A
-  real anchored/flapping moving boundary against a momentarily-still agent.
-- **Fix:** `seg_lengths_2 = seg_lengths_2[~z_check]`.
-- **Tracker (xfail):**
-  `tests/test_geom.py::test_closest_dist_lines_and_pt_mixed_zero_length`
-
-## Bug 3 — fluid/scalar save is broken on modern pyvista
+## Bug 1 — fluid/scalar save is broken on modern pyvista
 
 - **Where:** `planktos/_dataio.py:664` (`write_vtk_rectilinear_grid_vectors`) and
   `planktos/_dataio.py:608` (`write_vtk_2D_rectilinear_grid_scalars`); both do
@@ -69,7 +43,7 @@ Run a single bug's tracker, e.g.:
   carries its coordinates), or guard them; verify against the installed pyvista.
 - **Tracker (xfail):** `tests/test_io_loaders.py::test_save_fluid_roundtrips`
 
-## Bug 4 — backward-time FTLE is missing and the documented workaround is wrong
+## Bug 2 — backward-time FTLE is missing and the documented workaround is wrong
 
 - **Where:** `planktos/_environment.py`, `calculate_FTLE` (def at ~2877).
 - **State today (verified):** forward FTLE works and is correct — steady-flow tests

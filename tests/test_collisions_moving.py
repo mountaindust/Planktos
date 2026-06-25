@@ -115,15 +115,32 @@ def test_tilted_wall_sliding_stays_on_near_side():
 
 
 # --------------------------------------------------------------------------- #
-#            known defect: axis-aligned sticky-moving returns NaN             #
+#            axis-aligned sticky-moving walls (regression: BUG-STICKY-AXIS)    #
 # --------------------------------------------------------------------------- #
 
-@pytest.mark.xfail(strict=True, reason="BUG-STICKY-AXIS: _ibc.py:266 max() over a "
-                   "0/0 NaN for axis-aligned moving elements yields NaN. Fix: pick "
-                   "the contact-parameter component with nonzero denominator.")
-def test_sticky_moving_axis_aligned_wall_should_not_nan():
-    start_mesh = h.wall_segments(20, 5.0); end_mesh = h.wall_segments(20, 6.0)
-    start = np.array([4.8, 5.0]); end = np.array([6.3, 5.0])
+def _horizontal_wall(M, y, x_lo=0.0, x_hi=10.0):
+    xs = np.linspace(x_lo, x_hi, M + 1)
+    mesh = np.zeros((M, 2, 2))
+    mesh[:, 0, 0] = xs[:-1]; mesh[:, 0, 1] = y
+    mesh[:, 1, 0] = xs[1:];  mesh[:, 1, 1] = y
+    return mesh
+
+
+@pytest.mark.parametrize('orient', ['vertical', 'horizontal'])
+def test_sticky_moving_axis_aligned_wall_stops_on_wall(orient):
+    # A perfectly axis-aligned moving element used to trip a 0/0 in the sticky
+    # contact parameter and return NaN (BUG-STICKY-AXIS, now fixed). The agent
+    # should stick to the wall and ride it to its final position.
+    if orient == 'vertical':
+        start_mesh = h.wall_segments(20, 5.0); end_mesh = h.wall_segments(20, 6.0)
+        start = np.array([4.8, 5.0]); end = np.array([6.3, 5.0])
+        expected, axis = [6.0, 5.0], 0
+    else:
+        start_mesh = _horizontal_wall(20, 5.0); end_mesh = _horizontal_wall(20, 6.0)
+        start = np.array([5.0, 4.8]); end = np.array([5.0, 6.3])
+        expected, axis = [5.0, 6.0], 1
     newend, dx, idx = h.call_moving(start, end, start_mesh, end_mesh, 'sticky')
     assert not np.isnan(newend).any()
-    assert newend[0] <= 6.0 + POS_ATOL
+    assert idx is not None
+    assert newend[axis] <= 6.0 + POS_ATOL, "penetrated past the wall's final position"
+    assert np.allclose(newend, expected, atol=POS_ATOL)
