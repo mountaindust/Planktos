@@ -233,12 +233,15 @@ for the full-simulation parallelization checks (~30s).
 
 ### Resolved defects & FTLE notes
 
-The overhaul uncovered four latent bugs; **all four are now fixed** with regression
-tests (the suite has no remaining xfails): sticky moving-boundary NaN on
-axis-aligned elements in `_ibc`; the zero-length-segment `ValueError` in
-`_geom.closest_dist_btwn_lines_and_pt`; `save_fluid`/`save_2D_vorticity` on modern
-pyvista; and backward-time FTLE. See `TODO.md` for details and the remaining
-non-blocking follow-ups.
+The test overhaul and its follow-ups have uncovered a series of latent bugs,
+**all now fixed** with regression tests (the suite has no remaining xfails) — see
+`changelog.txt` for the full list. The original four from the overhaul: sticky
+moving-boundary NaN on axis-aligned elements in `_ibc`; the zero-length-segment
+`ValueError` in `_geom.closest_dist_btwn_lines_and_pt`; `save_fluid`/
+`save_2D_vorticity` on modern pyvista; and backward-time FTLE. Found since:
+`motion.highRe_massive_drift` in 2D; 3D sliding sticking at shared triangle edges;
+and `Swarm.save_pos_to_vtk(all=True)` crashing on any unmasked history step. See
+`TODO.md` for the remaining non-blocking follow-ups.
 
 FTLE specifics worth knowing (`calculate_FTLE`):
 - `FTLE_smallest` is the smallest-eigenvalue (contraction) exponent, **not**

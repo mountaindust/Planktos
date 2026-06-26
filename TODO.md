@@ -43,15 +43,15 @@ The items below are **non-blocking follow-ups** — relative priority only.
 
 ### Remaining test-coverage gaps (from the pre-3D triage)
 
-- **3D vorticity** `Environment.get_vorticity` (the 3D vector form) is untested;
-  `test_analysis.py` only covers `get_2D_vorticity`. Solid-body rotation about an
-  axis gives a known constant vorticity vector.
+- **3D vorticity has no implementation on `mvbnd`.** There is no
+  `Environment.get_vorticity` here — `get_2D_vorticity` hard-asserts 2D, and the
+  only 3D vorticity (per the `get_2D_vorticity` comment) lives on `dyload`'s
+  `FluidData.get_vorticity`. When `dyload` merges, add a known-answer test (solid-
+  body rotation about an axis gives a constant vorticity vector). Not a test gap
+  on this branch — there is nothing to test.
 - **Periodic boundary × immersed boundary.** `_domain_BC_loop` re-checks IB
   collisions after wrapping an agent across a periodic boundary — a subtle
   interaction with no test (agent wraps and immediately meets a wall on the far side).
-- **Swarm data-save round-trips.** `Swarm.save_data` / `save_pos_to_csv` /
-  `save_pos_to_vtk` are untested (we round-tripped `Environment.save_fluid`). Easy
-  write→read checks.
 - **3D / mixed domain boundary conditions.** `test_swarm_lifecycle.py` tests
   zero/noflux/periodic in 2D only; 3D and mixed combinations (e.g. periodic-x,
   noflux-y) are exercised only indirectly via the IBAMR loader test.
