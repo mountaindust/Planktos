@@ -43,11 +43,6 @@ The items below are **non-blocking follow-ups** — relative priority only.
 
 ### Remaining test-coverage gaps (from the pre-3D triage)
 
-- **Deeper recursive 2D sliding.** `test_collisions_static.py` covers a single
-  convex L-corner and a concave V (one recursion each). Add a multi-element case —
-  an agent driven into a narrowing wedge/corridor where the move vector is
-  exhausted only after sliding across 3+ elements — to exercise the recursive
-  project-and-slide more thoroughly (CLAUDE.md flags this as the most delicate path).
 - **3D vorticity** `Environment.get_vorticity` (the 3D vector form) is untested;
   `test_analysis.py` only covers `get_2D_vorticity`. Solid-body rotation about an
   axis gives a known constant vorticity vector.

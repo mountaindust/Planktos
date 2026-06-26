@@ -160,14 +160,18 @@ def test_concave_vertex_no_penetration_no_infinite_bounce(ib):
 #                 multi-element slide & grazing                               #
 # --------------------------------------------------------------------------- #
 
-def test_slide_crosses_element_boundary(vwall):
-    # The diagonal hit lands on element 10 even though contact spans several
-    # small elements -- the reported idx is the struck element, and the slide
-    # crosses element seams without penetrating.
-    start = np.array([4.9, 5.0]); end = np.array([5.3, 5.4])
+def test_slide_crosses_element_seams_reports_first_struck_idx(vwall):
+    # 20 elements over y in [0,10] (0.5 tall each): element i spans [0.5i, 0.5(i+1)].
+    # The hit lands at y=5.35 (element 10); the slide then carries the agent up
+    # past the seams at y=5.5 and y=6.0, ending at y=6.4 in element 12. The
+    # reported idx must be the FIRST element struck (10), not the element the agent
+    # ends on (12), and the slide must cross the seams without penetrating.
+    start = np.array([4.9, 5.0]); end = np.array([5.3, 6.4])
     newend, dx, idx = h.call_static(start, end, vwall, 'sliding')
-    assert idx == 10
-    assert newend[0] <= 5.0 + 1e-9
+    assert idx == 10, "idx should report the first-struck element, not the final one"
+    assert int(newend[1] / 0.5) == 12, "slide should end two seams higher, in element 12"
+    assert newend[0] <= 5.0 + 1e-9, "slide penetrated the wall"
+    assert np.allclose(newend, [5.0, 6.4], atol=POS_ATOL)
 
 
 def test_grazing_hit_stays_outside(vwall):
@@ -177,3 +181,77 @@ def test_grazing_hit_stays_outside(vwall):
     assert idx is not None
     assert newend[0] <= 5.0 + 1e-9, "grazing hit penetrated"
     assert newend[1] == pytest.approx(7.0, abs=POS_ATOL)     # tangential motion completes
+
+
+# --------------------------------------------------------------------------- #
+#            deep recursive sliding across 3+ elements                        #
+# --------------------------------------------------------------------------- #
+# The convex-L and concave-V cases above recurse only once. These drive the
+# recursive project-and-slide across many elements: first across collinear
+# element seams (exact answers), then across a finely faceted concave arc
+# (angled joints -- the most delicate path). Each seam/facet boundary is one
+# recursion onto the adjacent element. CLAUDE.md flags this recursion as the
+# riskiest path; the load-bearing property remains no penetration.
+
+def test_deep_slide_up_finely_segmented_vertical_wall():
+    # Wall at x=5 as 40 elements (0.25 tall each). A diagonal hit low on the wall
+    # slides up across ~15 element seams -- each seam a recursion onto the
+    # collinear neighbour -- until the tangential motion is exhausted at y=6.
+    wall = h.wall_segments(40, 5.0)
+    start = np.array([4.9, 1.0]); end = np.array([5.3, 6.0])
+    newend, dx, idx = h.call_static(start, end, wall, 'sliding')
+    assert newend[0] <= 5.0 + 1e-9, "penetrated past the wall"
+    assert np.allclose(newend, [5.0, 6.0], atol=POS_ATOL)    # x clamped, full slide in y
+    h.assert_not_penetrated_2D(start, newend, [5., 0.], [5., 10.])
+
+
+def test_deep_slide_along_finely_segmented_diagonal_wall():
+    # Wall along y=x split into 20 collinear segments; agent comes from the x<y
+    # side. The slide crosses ~4 element seams to the exact landing point (6,6),
+    # exercising the recursion on a non-axis-aligned wall.
+    t = np.linspace(0.0, 10.0, 21)
+    pts = np.stack([t, t], axis=1)
+    mesh = np.stack([pts[:-1], pts[1:]], axis=1)
+    start = np.array([2.0, 4.0]); end = np.array([8.0, 4.0])
+    newend, dx, idx = h.call_static(start, end, mesh, 'sliding')
+    assert np.allclose(newend, [6.0, 6.0], atol=POS_ATOL)
+    assert newend[0] - newend[1] <= POS_ATOL, "crossed to the far (x>y) side"
+    h.assert_not_penetrated_2D(start, newend, [0., 0.], [10., 10.])
+
+
+def _concave_arc(center=(5.0, 12.0), R=11.0, deg0=248.0, deg1=292.0, n=13):
+    '''A faceted concave arc (a chain of n-1 segments) sampled on a circle. The
+    interior (toward the center) is the agent side; x is strictly increasing, so
+    the boundary is single-valued in x. Returns (arc_points, mesh).'''
+    th = np.linspace(np.deg2rad(deg0), np.deg2rad(deg1), n)
+    arc = np.stack([center[0] + R * np.cos(th), center[1] + R * np.sin(th)], axis=1)
+    return arc, np.stack([arc[:-1], arc[1:]], axis=1)
+
+
+def test_deep_recursive_slide_across_concave_arc():
+    # An agent driven from inside the circle, through the arc toward the far side,
+    # slides along many angled facets before its motion is exhausted. The checks
+    # are independent of the collision arithmetic: it must stay on the interior
+    # (center) side of the boundary -- no penetration -- and must have swept
+    # across several facet joints (deep recursion through angled, non-collinear
+    # elements, unlike the single-recursion L/V cases).
+    center = np.array([5.0, 12.0]); R = 11.0
+    arc, mesh = _concave_arc(tuple(center), R)
+    curve_y = lambda x: np.interp(x, arc[:, 0], arc[:, 1])
+    sdist = lambda p: np.linalg.norm(np.asarray(p, float) - center) - R  # <0 inside
+
+    start = np.array([1.0, 2.0]); end = np.array([8.5, -1.5])
+    assert sdist(start) < -1e-3, "start must be strictly inside (the agent side)"
+
+    newend, dx, idx = h.call_static(start, end, mesh, 'sliding')
+    assert idx is not None, "expected a collision"
+    # no penetration: ends inside-or-on the circle AND above the faceted boundary
+    assert sdist(newend) <= POS_ATOL, "penetrated to outside the arc"
+    assert newend[1] >= curve_y(newend[0]) - POS_ATOL, "dropped below the boundary"
+
+    # deep recursion: count interior facet vertices swept between first contact
+    # (recovered exactly via the sticky stop) and the final slide position.
+    contact, _, _ = h.call_static(start, end, mesh, 'sticky')
+    assert sdist(contact) <= POS_ATOL, "sticky contact penetrated"
+    swept = int(np.sum((arc[1:-1, 0] > contact[0]) & (arc[1:-1, 0] < newend[0])))
+    assert swept >= 4, f"expected a deep multi-facet slide; swept only {swept}"
