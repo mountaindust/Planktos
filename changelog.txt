@@ -18,6 +18,7 @@ and otherwise gives the index of the first mesh element encountered.
 - Bug fixes: corrected ib_collision_idx for some collisions; fixed flow_points axis ordering for non-square grids passed directly to Environment(); repaired pytest collection and updated stale intersection/vorticity tests.
 - Bug fixes (collision math, surfaced by the new test suite): sticky moving-boundary collisions no longer return NaN for perfectly axis-aligned (vertical/horizontal) mesh elements (_ibc contact parameter now uses the largest-extent axis instead of max() over a 0/0); closest_dist_btwn_lines_and_pt no longer raises on a mix of zero-length and normal segments (_geom).
 - Bug fix: Environment.save_fluid and save_2D_vorticity work again on modern pyvista. The rectilinear-grid writers no longer set the now-forbidden .origin/.dimensions on a RectilinearGrid; the save methods now pass coordinate arrays (flow_points) rather than domain lengths; and static (time-invariant) flows are handled. Saved coordinates are origin-centered (lower-left corner at 0), consistent with the load-time convention.
+- New: backward-time FTLE. Environment.calculate_FTLE gains a backward=True option that computes the true backward-time field (attracting LCS) by integrating the reversed flow, stored in FTLE_largest. This replaces the previous, mathematically incorrect guidance to negate FTLE_smallest (which for incompressible flow is just -FTLE_largest); the FTLE_smallest docstring and plot_2D_FTLE text are corrected. Backward is tracer-only (reverse-time integration of dissipative inertial/custom dynamics is ill-posed). FTLE now raises NotImplementedError for moving immersed boundaries (which it cannot advance in time) and for a non-positive integration extent, rather than silently producing wrong output. Forward FTLE (tracer, inertial via ode_gen, and custom swarms) is unchanged.
 
 
 Geometry module added to collect workhorse mathematical functions. Explanation of the mathematics and implementation has been added and cleaned up.
@@ -34,13 +35,12 @@ parallelization checks are gated behind `--runslow`. Exploratory/visual scripts
 moved to tests/manual/ (not collected). Tiny committed fixtures in
 tests/fixtures/ (regenerable via tests/fixtures/_gen_fixtures.py) give the first
 automated coverage of the moving immersed-boundary import. The new tests
-uncovered four latent bugs; three are now fixed (the sticky moving-boundary NaN,
-the closest_dist zero-length crash, and the save_fluid/save_2D_vorticity pyvista
-breakage, all listed above), and one remains pinned as a strict xfail until fixed
-(see TODO.md):
-  - backward-time FTLE is not implemented (calculate_FTLE integrates forward
-    only; T<0 raises) and the documented "negate FTLE_smallest" workaround is
-    mathematically incorrect. Forward FTLE is correct.
+uncovered four latent bugs; all four are now fixed with regression tests (the
+sticky moving-boundary NaN, the closest_dist zero-length crash, the
+save_fluid/save_2D_vorticity pyvista breakage, and backward-time FTLE, all listed
+above), so the suite has no remaining xfails. A few non-blocking follow-ups remain
+(see TODO.md), e.g. full moving-immersed-boundary support in FTLE and the
+3D-only motion.highRe_massive_drift.
 
 
 0.7.0

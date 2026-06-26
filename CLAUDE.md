@@ -230,19 +230,25 @@ for the full-simulation parallelization checks (~30s).
   (`visualtest_*.py`, `mvib2d.py`, `rubberband.py`, the `.ipynb`, the perf
   benchmark) — excluded from collection via `collect_ignore` in `conftest.py`.
 
-### Known defects pinned as strict xfail
+### Resolved defects & FTLE notes
 
-The overhaul uncovered four latent bugs. **Three are fixed** (sticky
-moving-boundary NaN on axis-aligned elements in `_ibc`; the zero-length-segment
-`ValueError` in `_geom.closest_dist_btwn_lines_and_pt`; and `save_fluid`/
-`save_2D_vorticity` on modern pyvista) and now have passing regression tests. The
-**one remaining** is pinned as `xfail(strict=True)` so it flips to a failure
-(prompting marker removal) once fixed (full detail in `TODO.md`):
+The overhaul uncovered four latent bugs; **all four are now fixed** with regression
+tests (the suite has no remaining xfails): sticky moving-boundary NaN on
+axis-aligned elements in `_ibc`; the zero-length-segment `ValueError` in
+`_geom.closest_dist_btwn_lines_and_pt`; `save_fluid`/`save_2D_vorticity` on modern
+pyvista; and backward-time FTLE. See `TODO.md` for details and the remaining
+non-blocking follow-ups.
 
-- **backward-time FTLE missing/incorrect** — `calculate_FTLE` only integrates
-  forward (`T<0` raises `IndexError` on empty `pos_history`), and the documented
-  "negate `FTLE_smallest`" shortcut is mathematically wrong (it is identically
-  `−FTLE_largest` for incompressible flow). Forward FTLE is correct.
+FTLE specifics worth knowing (`calculate_FTLE`):
+- `FTLE_smallest` is the smallest-eigenvalue (contraction) exponent, **not**
+  backward-time FTLE (the old "negate it" guidance was wrong). For attracting LCS,
+  call `calculate_FTLE(..., backward=True)` — it integrates the reversed flow and
+  stores the backward field in `FTLE_largest`. Backward is **tracer-only** (reverse-
+  time inertial/custom dynamics are dissipative/ill-posed). Forward works for
+  tracer, `ode_gen` (inertial/custom), and user-`swrm` models.
+- FTLE respects **static** immersed boundaries but **not moving** ones (it doesn't
+  advance `envir.time`, so a moving mesh would be frozen) — a moving mesh now raises
+  `NotImplementedError`. `motion.highRe_massive_drift` is currently 3D-only.
 
 ### Testing goals (ongoing)
 

@@ -3,12 +3,10 @@
 Context: the `tests/` suite was overhauled on branch **`mvbnd`** (2026-06) into
 fast, deterministic modules. Default `pytest` run ≈1s; `pytest --runslow` adds the
 parallelization checks (~30s). See the **Tests** section of `CLAUDE.md` for the
-module map. Writing tests uncovered four latent defects; **three are now fixed**
-(below), and the **one remaining** is pinned as a strict `xfail` so it flips to a
-failure (forcing marker removal) the moment it is fixed.
-
-Run the remaining bug's tracker, e.g.:
-`pytest tests/test_analysis.py::test_backward_FTLE_produces_a_field -rx`
+module map. Writing tests uncovered four latent defects; **all four are now
+fixed** (below) with regression tests, so the suite has **no remaining xfails**.
+A few non-blocking follow-ups (some surfaced while fixing the four) are listed at
+the end.
 
 ---
 
@@ -37,40 +35,34 @@ Run the remaining bug's tracker, e.g.:
   Regression tests: `tests/test_io_loaders.py::test_save_fluid_static_2D_roundtrips`,
   `::test_save_fluid_time_varying_2D_roundtrips`, `::test_save_fluid_static_3D_roundtrips`,
   `::test_save_2D_vorticity_static_roundtrips`.
-
----
-
-## Bug 1 — backward-time FTLE is missing and the documented workaround is wrong
-
-- **Where:** `planktos/_environment.py`, `calculate_FTLE` (def at ~2877).
-- **State today (verified):** forward FTLE works and is correct — steady-flow tests
-  pin uniform→0 and simple-shear→`ln(φ)/T`; time-dependent forward also runs.
-- **Two problems with "backward" FTLE:**
-  1. **No working backward integration.** The solver is `while current_time < T:`
-     starting at `current_time = t0` (line ~3040), i.e. forward only. Passing
-     `T < 0` (the natural request) runs zero steps → `pos_history` is empty →
-     `IndexError` at `self.FTLE_loc = s.pos_history[0]` (line ~3310). There is no
-     `direction`/backward parameter.
-  2. **The documented shortcut is mathematically incorrect.** Comments at
-     `_environment.py:199` and `:371` say to negate `FTLE_smallest` for a
-     "backward-time picture". But `FTLE_smallest = ln(√λ_min(C))/T` from the
-     **forward** Cauchy-Green tensor `C = φᵀφ` (lines ~3297-3305). For an
-     incompressible flow `det φ = 1 ⟹ λ_min = 1/λ_max ⟹ FTLE_smallest ≡
-     −FTLE_largest` (verified exactly for the shear case), so negating it just
-     returns the forward field — zero independent backward information. In general
-     the smallest forward exponent is a contraction rate, **not** the backward-time
-     FTLE (whose ridges are attracting LCS and live in different places).
-- **Correct fix:** integrate the flow map backward in time (reverse the velocity
-  field / integrate `t0 → t0−T`) and compute the FTLE from that backward flow
-  map's Cauchy-Green tensor. Then remove/replace the "negate FTLE_smallest" guidance.
-- **Tracker (xfail):** `tests/test_analysis.py::test_backward_FTLE_produces_a_field`
-- **Also seen:** when no integration steps run (`t0 >= T`), the method crashes with
-  the same empty-`pos_history` `IndexError` rather than erroring cleanly — worth a
-  guard regardless of the backward-FTLE work.
+- **BUG-FTLE-BACKWARD** — `Environment.calculate_FTLE` only integrated forward
+  (`T<0` raised `IndexError`), and the documented "negate `FTLE_smallest` for
+  backward time" was mathematically wrong (it is identically `−FTLE_largest` for
+  incompressible flow). Added a `backward=True` option that computes the true
+  backward-time field as the forward integration of the reversed flow (wrap the ODE
+  to sample velocity at the mirrored time `2*t0−t` and negate), reusing the existing
+  trajectory/eigenvalue machinery; corrected the `FTLE_smallest` docstrings and the
+  `plot_2D_FTLE` text. Scoped to tracer particles (reverse-time inertial/custom
+  dynamics are dissipative and ill-posed); moving meshes and `T≤t0` now raise
+  clearly. Regression tests: `tests/test_analysis.py::test_backward_FTLE_*` and
+  `::test_FTLE_forward_vs_backward_differ_time_dependent_shear` (direction-discriminating,
+  closed-form) plus the guard tests.
 
 ---
 
 ## Broader follow-ups (not blocking, lower priority)
+
+- **Full moving-immersed-boundary support in FTLE.** `calculate_FTLE` never advances
+  `self.envir.time`, so a moving mesh would be frozen at its t0 position; it now
+  raises `NotImplementedError`. A real fix threads the integration time into
+  `interpolate_temporal_mesh` (forward, and backward for the reversed case) — a
+  delicate change in the collision path. Static meshes already work in both directions.
+- **`motion.highRe_massive_drift` is 3D-only.** It hardcodes three spatial dims
+  (`np.stack((diff, diff, diff))` ~`motion.py:502`) and raises in 2D. Generalize to
+  the environment's dimension.
+- **Backward FTLE for non-tracer models** is intentionally unsupported (dissipative
+  reverse-time integration blows up). If ever wanted, it needs a stabilized/adjoint
+  approach, not naive negation.
 
 - **conftest marker registration is duplicated.** `pytest.ini` now registers
   `slow`/`vtk`/`vtu`; `conftest.py::pytest_configure` still re-registers `vtk`/`vtu`.
@@ -98,8 +90,5 @@ Run the remaining bug's tracker, e.g.:
 
 - Fast loop: `pytest` (≈1s, skips `slow`/`vtk`-absent/`vtu`-absent).
 - Full: `pytest --runslow`.
-- See the xfail reasons: add `-rx`. A fixed bug will turn its xfail into an
-  unexpected pass (XPASS) → suite failure (strict), signalling "remove the marker
-  and keep the now-passing assertions."
 - Regenerate IB2d fixtures after editing the generator:
   `python tests/fixtures/_gen_fixtures.py`.

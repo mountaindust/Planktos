@@ -13,6 +13,15 @@ import numpy as np
 import pytest
 
 import planktos
+from planktos import motion
+
+
+def _shear_FTLE(A, T=1.0):
+    '''Largest FTLE of a shear flow whose accumulated shear is A: the flow-map
+    gradient is [[1, A],[0,1]], so lam_max = (2+A^2 + sqrt((2+A^2)^2-4))/2 and
+    FTLE = ln(sqrt(lam_max))/T.'''
+    lam = (2 + A**2 + np.sqrt((2 + A**2)**2 - 4)) / 2
+    return np.log(np.sqrt(lam)) / T
 
 
 # --------------------------------------------------------------------------- #
@@ -106,20 +115,105 @@ def test_FTLE_simple_shear_closed_form():
     assert np.nanmax(envir.FTLE_largest) == pytest.approx(expected, abs=1e-3)
 
 
-@pytest.mark.xfail(strict=True, reason="BUG-FTLE-BACKWARD: backward-time FTLE is "
-                   "not implemented. calculate_FTLE integrates only forward "
-                   "(while current_time < T from current_time=t0), so T<0 runs no "
-                   "steps and raises IndexError on empty pos_history. The "
-                   "documented workaround -- negating FTLE_smallest -- is also "
-                   "mathematically wrong: for incompressible flow FTLE_smallest is "
-                   "identically -FTLE_largest (no independent backward info); in "
-                   "general the smallest forward-time exponent is a contraction "
-                   "rate, not the backward-time FTLE. A correct fix integrates the "
-                   "flow map backward in time.")
-def test_backward_FTLE_produces_a_field():
-    a, n = 1.0, 21
+# --------------------------------------------------------------------------- #
+#                          backward-time FTLE                                  #
+# --------------------------------------------------------------------------- #
+# Backward FTLE is the forward integration of the reversed flow; FTLE_largest
+# then holds the backward (attracting-LCS) field.
+
+def test_backward_FTLE_uniform_flow_is_zero():
+    envir = planktos.Environment(Lx=10, Ly=10,
+                                 flow=[np.full((11, 11), 1.0), np.full((11, 11), 0.5)])
+    envir.calculate_FTLE(grid_dim=(8, 8), T=0.5, dt=0.05, backward=True)
+    assert np.nanmax(np.abs(envir.FTLE_largest)) < 1e-8
+    assert envir.FTLE_backward is True
+
+
+def test_backward_FTLE_steady_shear_closed_form():
+    # Steady shear is symmetric in time, so backward FTLE equals forward: ln(phi)/T.
+    a, T, n = 1.0, 1.0, 21
     x = np.linspace(0, 10, n); y = np.linspace(0, 10, n)
     X, Y = np.meshgrid(x, y, indexing='ij')
     envir = planktos.Environment(Lx=10, Ly=10, flow=[a * Y, np.zeros_like(Y)])
-    envir.calculate_FTLE(grid_dim=(8, 8), t0=0, T=-1.0, dt=0.05)
-    assert np.isfinite(np.asarray(envir.FTLE_largest)).any(), "no backward FTLE field produced"
+    envir.calculate_FTLE(grid_dim=(8, 8), T=T, dt=0.05, backward=True)
+    assert np.nanmax(envir.FTLE_largest) == pytest.approx(_shear_FTLE(a * T), abs=1e-3)
+
+
+def test_FTLE_forward_vs_backward_differ_time_dependent_shear():
+    # Time-dependent shear u = ((1+t)*y, 0) on flow_times spanning [-1, 1] so both
+    # the forward [0,1] and backward [0,-1] real-time ranges are in-range. The
+    # accumulated shear differs by direction, so forward and backward FTLE DIFFER:
+    #   forward  A = \int_0^1 (1+t) dt = 1.5  -> ln(2)        ~ 0.693
+    #   backward A = \int_{-1}^0 (1+t) dt = 0.5 -> ln(sqrt(lam(0.5))) ~ 0.248
+    # Matching both closed forms (and that they differ) proves the backward path
+    # genuinely integrates the reversed flow rather than re-deriving forward.
+    n = 21
+    x = np.linspace(0, 10, n); y = np.linspace(0, 10, n)
+    X, Y = np.meshgrid(x, y, indexing='ij')
+    times = np.linspace(-1.0, 1.0, 9)
+    u = np.stack([(1.0 + t) * Y for t in times])
+    v = np.zeros_like(u)
+
+    def envir():
+        return planktos.Environment(Lx=10, Ly=10, flow=[u.copy(), v.copy()],
+                                    flow_times=times.copy())
+
+    ef = envir(); ef.calculate_FTLE(grid_dim=(8, 8), t0=0, T=1.0, dt=0.02)
+    eb = envir(); eb.calculate_FTLE(grid_dim=(8, 8), t0=0, T=1.0, dt=0.02, backward=True)
+    fwd = np.nanmax(ef.FTLE_largest); bwd = np.nanmax(eb.FTLE_largest)
+
+    assert fwd == pytest.approx(_shear_FTLE(1.5), abs=1e-2)
+    assert bwd == pytest.approx(_shear_FTLE(0.5), abs=1e-2)
+    assert abs(fwd - bwd) > 0.3, "forward and backward FTLE should differ here"
+
+
+def test_backward_FTLE_with_static_wall_runs():
+    # Static immersed boundaries are respected in both time directions.
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent))
+    import _ib_harness as h
+    n = 11
+    x = np.linspace(0, 10, n); y = np.linspace(0, 10, n)
+    X, Y = np.meshgrid(x, y, indexing='ij')
+    envir = planktos.Environment(Lx=10, Ly=10, flow=[np.ones_like(Y), np.zeros_like(Y)])
+    envir.ibmesh = h.wall_segments(20, 5.0)
+    envir.max_meshpt_dist = h.max_meshpt_dist(envir.ibmesh)
+    envir.calculate_FTLE(grid_dim=(10, 10), T=0.5, dt=0.05, backward=True)
+    assert np.isfinite(np.asarray(envir.FTLE_largest)).any()
+
+
+# --------------------------------------------------------------------------- #
+#                          FTLE scope guards                                  #
+# --------------------------------------------------------------------------- #
+
+def test_backward_FTLE_rejects_non_tracer():
+    # Reverse-time integration of dissipative inertial dynamics is ill-posed.
+    n = 11
+    x = np.linspace(0, 10, n); y = np.linspace(0, 10, n)
+    X, Y = np.meshgrid(x, y, indexing='ij')
+    envir = planktos.Environment(Lx=10, Ly=10, flow=[Y, np.zeros_like(Y)])
+    with pytest.raises(NotImplementedError):
+        envir.calculate_FTLE(grid_dim=(8, 8), T=1.0, dt=0.05, backward=True,
+                             ode_gen=motion.inertial_particles, props={'R': 2/3, 'diam': 0.01})
+
+
+@pytest.mark.parametrize('backward', [False, True])
+def test_FTLE_rejects_moving_mesh(backward):
+    n = 11
+    x = np.linspace(0, 10, n); y = np.linspace(0, 10, n)
+    X, Y = np.meshgrid(x, y, indexing='ij')
+    envir = planktos.Environment(Lx=10, Ly=10, flow=[Y, np.zeros_like(Y)])
+    envir.ibmesh = np.zeros((3, 5, 2, 2))            # 4D -> moving mesh
+    envir.ibmesh_times = np.array([0.0, 0.5, 1.0])
+    with pytest.raises(NotImplementedError):
+        envir.calculate_FTLE(grid_dim=(8, 8), T=0.5, dt=0.05, backward=backward)
+
+
+def test_FTLE_rejects_nonpositive_extent():
+    n = 11
+    x = np.linspace(0, 10, n); y = np.linspace(0, 10, n)
+    X, Y = np.meshgrid(x, y, indexing='ij')
+    envir = planktos.Environment(Lx=10, Ly=10, flow=[Y, np.zeros_like(Y)])
+    with pytest.raises(ValueError):
+        envir.calculate_FTLE(grid_dim=(8, 8), t0=0, T=-1.0, dt=0.05, backward=True)
