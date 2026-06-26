@@ -498,8 +498,10 @@ def highRe_massive_drift(swarm):
         N = round(x.shape[0]/2)
         fluid_vel = swarm.get_fluid_drift(t,x[:N])
 
+        # ||u - v|| per agent, broadcast across the spatial dimension (D-agnostic;
+        #   diff[:,None] replaces a previously hardcoded 3-component stack).
         diff = np.linalg.norm(x[N:]-fluid_vel,axis=1)
-        dvdt = (rho*Cd*cross_sec/m**2)*(fluid_vel-x[N:])*np.stack((diff,diff,diff)).T
+        dvdt = (rho*Cd*cross_sec/m**2)*(fluid_vel-x[N:])*diff[:,None]
 
         return ma.concatenate((x[N:],dvdt))
 

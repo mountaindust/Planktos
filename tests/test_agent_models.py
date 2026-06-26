@@ -141,14 +141,20 @@ def test_brownian_diffusion_statistics():
 #                 massive-particle generators (deterministic smoke)           #
 # --------------------------------------------------------------------------- #
 
+@pytest.mark.parametrize('dim', [2, 3])
 @pytest.mark.parametrize('cls,kwargs', [
     (LowReSwarm, dict(diam=0.002, R=2 / 3)),
     (HighReSwarm, dict(diam=0.2, m=0.01, Cd=0.47, cross_sec=np.pi * 0.1 ** 2)),
 ])
-def test_massive_particle_models_run_deterministically(cls, kwargs):
+def test_massive_particle_models_run_deterministically(cls, kwargs, dim):
     # Time-dependent Brinkman flow so the inertial/drag terms are non-trivial.
+    # Both 2D and 3D: highRe_massive_drift previously hardcoded 3 spatial
+    # components and raised in 2D (now uses a dimension-agnostic broadcast).
     def build():
-        envir = planktos.Environment(Lz=10, rho=1000, mu=1000, char_L=10)
+        env_kw = dict(Lx=20, Ly=20, rho=1000, mu=1000, char_L=10)
+        if dim == 3:
+            env_kw['Lz'] = 20
+        envir = planktos.Environment(**env_kw)
         U = 0.1 * np.arange(0, 8)
         envir.set_brinkman_flow(alpha=66, h_p=1.5, U=U, dpdx=np.ones(8) * 0.22306,
                                 res=21, tspan=[0, 8])
@@ -158,5 +164,6 @@ def test_massive_particle_models_run_deterministically(cls, kwargs):
             swrm.move(0.2)
         return np.asarray(swrm.full_pos_history[-1])
     a = build(); b = build()
+    assert a.shape[1] == dim
     assert np.isfinite(a[~np.isnan(a)]).all(), "produced non-finite positions"
     assert np.array_equal(a, b, equal_nan=True), "not reproducible under a fixed seed"

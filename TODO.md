@@ -47,6 +47,11 @@ the end.
   clearly. Regression tests: `tests/test_analysis.py::test_backward_FTLE_*` and
   `::test_FTLE_forward_vs_backward_differ_time_dependent_shear` (direction-discriminating,
   closed-form) plus the guard tests.
+- **HIGHRE-2D** — `motion.highRe_massive_drift` hardcoded three spatial components
+  (`np.stack((diff, diff, diff)).T`) and raised in 2D. Fixed with a
+  dimension-agnostic broadcast (`diff[:, None]`); identical output in 3D.
+  Regression test: `tests/test_agent_models.py::test_massive_particle_models_run_deterministically`
+  now parametrized over 2D and 3D.
 
 ---
 
@@ -57,9 +62,6 @@ the end.
   raises `NotImplementedError`. A real fix threads the integration time into
   `interpolate_temporal_mesh` (forward, and backward for the reversed case) — a
   delicate change in the collision path. Static meshes already work in both directions.
-- **`motion.highRe_massive_drift` is 3D-only.** It hardcodes three spatial dims
-  (`np.stack((diff, diff, diff))` ~`motion.py:502`) and raises in 2D. Generalize to
-  the environment's dimension.
 - **Backward FTLE for non-tracer models** is intentionally unsupported (dissipative
   reverse-time integration blows up). If ever wanted, it needs a stabilized/adjoint
   approach, not naive negation.

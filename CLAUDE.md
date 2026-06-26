@@ -248,7 +248,7 @@ FTLE specifics worth knowing (`calculate_FTLE`):
   tracer, `ode_gen` (inertial/custom), and user-`swrm` models.
 - FTLE respects **static** immersed boundaries but **not moving** ones (it doesn't
   advance `envir.time`, so a moving mesh would be frozen) — a moving mesh now raises
-  `NotImplementedError`. `motion.highRe_massive_drift` is currently 3D-only.
+  `NotImplementedError`.
 
 ### Testing goals (ongoing)
 
