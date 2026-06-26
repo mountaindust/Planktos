@@ -56,10 +56,44 @@ def polyline(points):
 
 
 def max_meshpt_dist(mesh):
-    '''Max distance between the two vertices of any element. Accepts a static
-    (M,2,2) mesh or one time-slice of a moving (T,M,2,2) mesh.'''
+    '''Longest edge of any element. Vertex-count agnostic: for 2D segments
+    (M,2,2) this is |v0-v1|; for 3D triangles (M,3,3) it is the longest of the
+    three edges (matching read_stl_mesh). Accepts a leading time axis too.'''
     m = np.asarray(mesh, dtype=float)
-    return float(np.linalg.norm(m[..., 0, :] - m[..., 1, :], axis=-1).max())
+    nv = m.shape[-2]
+    return max(float(np.linalg.norm(m[..., i, :] - m[..., j, :], axis=-1).max())
+               for i in range(nv) for j in range(i + 1, nv))
+
+
+# --------------------------- 3D triangle helpers ---------------------------
+# A 3D static mesh is an (M, 3, 3) array: M triangles, each [[P0],[P1],[P2]].
+
+def triangle(P0, P1, P2):
+    '''A single triangle as a (1, 3, 3) mesh.'''
+    return np.array([[P0, P1, P2]], dtype=float)
+
+
+def tri_unit_normal(P0, P1, P2):
+    '''Unit normal of the triangle (right-hand rule on P0->P1->P2).'''
+    n = np.cross(np.asarray(P1, float) - P0, np.asarray(P2, float) - P1)
+    return n / np.linalg.norm(n)
+
+
+def signed_dist_to_plane(P, P0, n):
+    '''Signed distance from P to the plane through P0 with unit normal n.'''
+    return float(np.dot(np.asarray(P, float) - P0, n))
+
+
+def assert_not_penetrated_3D(start, end, P0, P1, P2, atol=POS_ATOL):
+    '''Given a trajectory that started off the plane of triangle (P0,P1,P2),
+    assert the end point did not cross to the far side of that plane (it may sit
+    on it within atol). Use for full-span faces the agent cannot go around.'''
+    n = tri_unit_normal(P0, P1, P2)
+    s0 = signed_dist_to_plane(start, P0, n)
+    s1 = signed_dist_to_plane(end, P0, n)
+    assert abs(s0) > atol, "start point lies on the plane; pick a start off it"
+    assert np.sign(s1) == np.sign(s0) or abs(s1) <= atol, (
+        f"penetration: start side {s0:.2e}, end side {s1:.2e}")
 
 
 def translating_wall(M, x0, x1, T):

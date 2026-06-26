@@ -207,10 +207,11 @@ for the full-simulation parallelization checks (~30s).
   `pytest tests/test_collisions_static.py`.
 - **Modules** (all self-contained / analytic-answer unless noted):
   - `test_geom.py` — `_geom` intersection & closest-distance functions.
-  - `test_collisions_static.py` / `test_collisions_moving.py` — call
-    `_ibc.apply_internal_static_BC` / `apply_internal_moving_BC` directly on
-    single trajectories across a geometry × movement matrix; assert no-penetration
-    and exact post-collision positions.
+  - `test_collisions_static.py` / `test_collisions_moving.py` /
+    `test_collisions_static_3d.py` — call `_ibc.apply_internal_static_BC` /
+    `apply_internal_moving_BC` directly on single trajectories across a
+    geometry × movement matrix (2D segments and 3D triangle meshes); assert
+    no-penetration and exact post-collision positions.
   - `test_flow_generation.py` — brinkman/channel/canopy, `tile_flow`, `extend`,
     `flow_points` axis order.
   - `test_temporal_interp.py` — `fluid.fCubicSpline` / `create_temporal_interpolations`.

@@ -52,6 +52,17 @@ the end.
   dimension-agnostic broadcast (`diff[:, None]`); identical output in 3D.
   Regression test: `tests/test_agent_models.py::test_massive_particle_models_run_deterministically`
   now parametrized over 2D and 3D.
+- **BUG-3D-SLIDE-STICK** — found while adding 3D collision tests. In the 3D
+  project-and-slide, agents stuck at a shared triangle edge instead of sliding onto
+  the adjacent triangle (broke coplanar tiled surfaces and concave folds; no
+  penetration, but wrong sliding). Cause: when recursing onto the neighbour the
+  edge-detector re-reported the just-crossed edge (seg_intersect_2D returns the
+  start-on-edge touch) and `prev_idx` then stopped the agent — a 3D-only asymmetry
+  (2D uses a distance test that ignores the endpoint it sits on). Fixed by deciding
+  off `slide_pt` (did it overshoot the triangle? via `_point_in_triangle`) and
+  taking the *last* edge crossed, mirroring 2D. Audited independently for
+  no-penetration across single-triangle/ridge/corner/groove/coplanar/fold cases;
+  2D path untouched. New tests: `tests/test_collisions_static_3d.py`.
 
 ---
 
@@ -72,10 +83,11 @@ the end.
 - **COMSOL vtu test is skipped** (no committed data): `test_io_loaders.py::test_vtu_load`
   needs `tests/data/comsol/vtu_test_data.txt`. Either commit a tiny COMSOL fixture
   or leave gated.
-- **3D immersed-boundary collisions** (`apply_internal_static_BC` 3D path,
-  `seg_intersect_3D_triangles` is unit-tested in `test_geom.py`, but the 3D
-  collision/slide response in `_ibc` has no direct no-penetration tests). Add a 3D
-  analogue of `test_collisions_static.py` (STL/convex-hull mesh, known answers).
+- **3D collision coverage via real STL meshes.** `test_collisions_static_3d.py`
+  now covers the 3D project-and-slide on hand-built triangle meshes (known answers +
+  no-penetration). Still untested: loading an actual STL and running agents against
+  it end-to-end (the seafan/convex-hull path), and 3D *moving* meshes (not
+  implemented — the moving entry raises in 3D).
 - **`motion.RK45` direct calling convention** is fragile (shape mismatch when used
   outside the swarm path). The agent-model tests use the documented
   `Euler_brownian_motion(self, dt, ode=...)` pattern instead. If `RK45` is meant to
@@ -87,6 +99,32 @@ the end.
 - **Diffusion statistics test** (`test_agent_models.py::test_brownian_diffusion_statistics`)
   uses 20k agents with a fixed seed and ~10% tolerance. If it ever proves flaky,
   tighten the seed/agent count rather than the tolerance.
+
+### Remaining test-coverage gaps (from the pre-3D triage)
+
+- **Deeper recursive 2D sliding.** `test_collisions_static.py` covers a single
+  convex L-corner and a concave V (one recursion each). Add a multi-element case —
+  an agent driven into a narrowing wedge/corridor where the move vector is
+  exhausted only after sliding across 3+ elements — to exercise the recursive
+  project-and-slide more thoroughly (CLAUDE.md flags this as the most delicate path).
+- **Material derivative** `Swarm.get_DuDt` / `get_dudt` have no known-answer test,
+  yet inertial particles and FTLE depend on them. For a steady linear flow (e.g.
+  `u=(a*y,0)`) `Du/Dt` has a closed form — add an exact check.
+- **3D vorticity** `Environment.get_vorticity` (the 3D vector form) is untested;
+  `test_analysis.py` only covers `get_2D_vorticity`. Solid-body rotation about an
+  axis gives a known constant vorticity vector.
+- **Periodic boundary × immersed boundary.** `_domain_BC_loop` re-checks IB
+  collisions after wrapping an agent across a periodic boundary — a subtle
+  interaction with no test (agent wraps and immediately meets a wall on the far side).
+- **Swarm data-save round-trips.** `Swarm.save_data` / `save_pos_to_csv` /
+  `save_pos_to_vtk` are untested (we round-tripped `Environment.save_fluid`). Easy
+  write→read checks.
+- **3D / mixed domain boundary conditions.** `test_swarm_lifecycle.py` tests
+  zero/noflux/periodic in 2D only; 3D and mixed combinations (e.g. periodic-x,
+  noflux-y) are exercised only indirectly via the IBAMR loader test.
+- **Plotting smoke tests.** None of the `plot_*` methods are tested. A few
+  Agg-backend "runs without error" smokes would cheaply catch the most common
+  breakage (shallow, but plotting bugs are common).
 
 ## How to run
 
