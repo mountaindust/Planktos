@@ -1,72 +1,16 @@
-# TODO — follow-ups from the test-suite overhaul
+# TODO — loose ends from the test-suite overhaul
 
 Context: the `tests/` suite was overhauled on branch **`mvbnd`** (2026-06) into
 fast, deterministic modules. Default `pytest` run ≈1s; `pytest --runslow` adds the
 parallelization checks (~30s). See the **Tests** section of `CLAUDE.md` for the
-module map. Writing tests uncovered four latent defects; **all four are now
-fixed** (below) with regression tests, so the suite has **no remaining xfails**.
-A few non-blocking follow-ups (some surfaced while fixing the four) are listed at
-the end.
+module map and for the four latent defects that the overhaul found and fixed
+(all now have regression tests; the suite has no xfails).
+
+The items below are **non-blocking follow-ups** — relative priority only.
 
 ---
 
-## Fixed (2026-06)
-
-- **BUG-STICKY-AXIS** — sticky moving-boundary collisions returned NaN for
-  perfectly axis-aligned (vertical/horizontal) moving elements. `_ibc.py`
-  computed the contact parameter as `max(ratio_x, ratio_y)`; for a degenerate
-  axis one ratio was `0/0 → NaN` and `max` propagated it. Fixed by taking the
-  ratio on the axis with the largest extent (`np.argmax(np.abs(Q1-Q0))`).
-  Regression test: `tests/test_collisions_moving.py::`
-  `test_sticky_moving_axis_aligned_wall_stops_on_wall` (vertical + horizontal).
-- **BUG-ZEROLEN-SEG** — `_geom.closest_dist_btwn_lines_and_pt` raised
-  `ValueError` on any mix of zero-length and normal segments
-  (`seg_lengths_2[~z_check] = seg_lengths_2` → `seg_lengths_2 = seg_lengths_2[~z_check]`).
-  Regression tests: `tests/test_geom.py::test_closest_dist_lines_and_pt_mixed_zero_length`
-  and `::test_closest_dist_lines_and_pt_all_zero_length`.
-- **BUG-SAVEFLUID** — `Environment.save_fluid` / `save_2D_vorticity` were broken on
-  modern pyvista, three layers deep: the writers set the now-forbidden
-  `.origin`/`.dimensions` on a `RectilinearGrid`; the save methods passed `self.L`
-  (domain lengths) where coordinate arrays were needed; and static flows
-  (`flow_times is None`) died in `interpolate_temporal_flow`. Fixed by removing the
-  invalid grid attributes (a RectilinearGrid's geometry is its coordinate arrays),
-  passing `self.flow_points`, and short-circuiting static flow to write `self.flow`
-  directly. Saved coordinates are origin-centered (LLC convention untouched).
-  Regression tests: `tests/test_io_loaders.py::test_save_fluid_static_2D_roundtrips`,
-  `::test_save_fluid_time_varying_2D_roundtrips`, `::test_save_fluid_static_3D_roundtrips`,
-  `::test_save_2D_vorticity_static_roundtrips`.
-- **BUG-FTLE-BACKWARD** — `Environment.calculate_FTLE` only integrated forward
-  (`T<0` raised `IndexError`), and the documented "negate `FTLE_smallest` for
-  backward time" was mathematically wrong (it is identically `−FTLE_largest` for
-  incompressible flow). Added a `backward=True` option that computes the true
-  backward-time field as the forward integration of the reversed flow (wrap the ODE
-  to sample velocity at the mirrored time `2*t0−t` and negate), reusing the existing
-  trajectory/eigenvalue machinery; corrected the `FTLE_smallest` docstrings and the
-  `plot_2D_FTLE` text. Scoped to tracer particles (reverse-time inertial/custom
-  dynamics are dissipative and ill-posed); moving meshes and `T≤t0` now raise
-  clearly. Regression tests: `tests/test_analysis.py::test_backward_FTLE_*` and
-  `::test_FTLE_forward_vs_backward_differ_time_dependent_shear` (direction-discriminating,
-  closed-form) plus the guard tests.
-- **HIGHRE-2D** — `motion.highRe_massive_drift` hardcoded three spatial components
-  (`np.stack((diff, diff, diff)).T`) and raised in 2D. Fixed with a
-  dimension-agnostic broadcast (`diff[:, None]`); identical output in 3D.
-  Regression test: `tests/test_agent_models.py::test_massive_particle_models_run_deterministically`
-  now parametrized over 2D and 3D.
-- **BUG-3D-SLIDE-STICK** — found while adding 3D collision tests. In the 3D
-  project-and-slide, agents stuck at a shared triangle edge instead of sliding onto
-  the adjacent triangle (broke coplanar tiled surfaces and concave folds; no
-  penetration, but wrong sliding). Cause: when recursing onto the neighbour the
-  edge-detector re-reported the just-crossed edge (seg_intersect_2D returns the
-  start-on-edge touch) and `prev_idx` then stopped the agent — a 3D-only asymmetry
-  (2D uses a distance test that ignores the endpoint it sits on). Fixed by deciding
-  off `slide_pt` (did it overshoot the triangle? via `_point_in_triangle`) and
-  taking the *last* edge crossed, mirroring 2D. Audited independently for
-  no-penetration across single-triangle/ridge/corner/groove/coplanar/fold cases;
-  2D path untouched. New tests: `tests/test_collisions_static_3d.py`.
-
----
-
-## Broader follow-ups (not blocking, lower priority)
+## Broader follow-ups
 
 - **Full moving-immersed-boundary support in FTLE.** `calculate_FTLE` never advances
   `self.envir.time`, so a moving mesh would be frozen at its t0 position; it now
@@ -77,9 +21,6 @@ the end.
   reverse-time integration blows up). If ever wanted, it needs a stabilized/adjoint
   approach, not naive negation.
 
-- **conftest marker registration is duplicated.** `pytest.ini` now registers
-  `slow`/`vtk`/`vtu`; `conftest.py::pytest_configure` still re-registers `vtk`/`vtu`.
-  Harmless but redundant — drop the conftest copies for a single source of truth.
 - **COMSOL vtu test is skipped** (no committed data): `test_io_loaders.py::test_vtu_load`
   needs `tests/data/comsol/vtu_test_data.txt`. Either commit a tiny COMSOL fixture
   or leave gated.
@@ -107,9 +48,6 @@ the end.
   an agent driven into a narrowing wedge/corridor where the move vector is
   exhausted only after sliding across 3+ elements — to exercise the recursive
   project-and-slide more thoroughly (CLAUDE.md flags this as the most delicate path).
-- **Material derivative** `Swarm.get_DuDt` / `get_dudt` have no known-answer test,
-  yet inertial particles and FTLE depend on them. For a steady linear flow (e.g.
-  `u=(a*y,0)`) `Du/Dt` has a closed form — add an exact check.
 - **3D vorticity** `Environment.get_vorticity` (the 3D vector form) is untested;
   `test_analysis.py` only covers `get_2D_vorticity`. Solid-body rotation about an
   axis gives a known constant vorticity vector.

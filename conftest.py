@@ -40,13 +40,6 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "vtu" in item.keywords:
                 item.add_marker(skip_vtu)
-    
-def pytest_configure(config):
-    config.addinivalue_line(
-        "markers",
-        "vtk: mark test as requiring vtk data"
-    )
-    config.addinivalue_line(
-        "markers",
-        "vtu: mark test as requiring vtu data"
-    )
+
+# Note: the slow/vtk/vtu markers are registered in pytest.ini (single source of
+# truth). Do not re-register them here.
