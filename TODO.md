@@ -33,10 +33,6 @@ The items below are **non-blocking follow-ups** — relative priority only.
   outside the swarm path). The agent-model tests use the documented
   `Euler_brownian_motion(self, dt, ode=...)` pattern instead. If `RK45` is meant to
   be public, give it a clear contract + a unit test; otherwise underscore it.
-- **Golden trajectory locks for moving boundaries.** Current moving-collision
-  coverage is invariant + single-step known answers. Consider one small pinned
-  multi-step trajectory (extend `_ib_harness`) as a drift detector, per the hybrid
-  plan.
 - **Diffusion statistics test** (`test_agent_models.py::test_brownian_diffusion_statistics`)
   uses 20k agents with a fixed seed and ~10% tolerance. If it ever proves flaky,
   tighten the seed/agent count rather than the tolerance.
