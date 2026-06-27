@@ -45,9 +45,6 @@ The items below are **non-blocking follow-ups** — relative priority only.
   `FluidData.get_vorticity`. When `dyload` merges, add a known-answer test (solid-
   body rotation about an axis gives a constant vorticity vector). Not a test gap
   on this branch — there is nothing to test.
-- **3D / mixed domain boundary conditions.** `test_swarm_lifecycle.py` tests
-  zero/noflux/periodic in 2D only; 3D and mixed combinations (e.g. periodic-x,
-  noflux-y) are exercised only indirectly via the IBAMR loader test.
 - **Plotting smoke tests.** None of the `plot_*` methods are tested. A few
   Agg-backend "runs without error" smokes would cheaply catch the most common
   breakage (shallow, but plotting bugs are common).

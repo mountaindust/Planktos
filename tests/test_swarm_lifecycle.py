@@ -27,6 +27,21 @@ def _drift_swarm(envir, init, mu=(2.0, 0.0), seed=1):
     return swrm
 
 
+class _PerAgentDriftSwarm(planktos.Swarm):
+    '''Each agent advances by its own fixed velocity (self._drift) each step,
+    ignoring flow and diffusion. Lets one move() send different agents toward
+    different faces so a single test can check every dimension at once.'''
+    def apply_agent_model(self, dt):
+        return self.positions + self._drift * dt
+
+
+def _pa_swarm(envir, init, drift):
+    swrm = _PerAgentDriftSwarm(swarm_size=len(init), envir=envir,
+                               init=np.asarray(init, float), seed=1)
+    swrm._drift = np.asarray(drift, float)
+    return swrm
+
+
 # --------------------------------------------------------------------------- #
 #                          history bookkeeping                                #
 # --------------------------------------------------------------------------- #
@@ -80,6 +95,91 @@ def test_periodic_bc_wraps():
     swrm.move(0.1)                                     # 1.1 -> wraps to 0.1
     assert np.isclose(float(swrm.positions[0, 0]), 0.1)
     assert not np.any(swrm.positions.mask)
+
+
+# --------------------------------------------------------------------------- #
+#                 3D and mixed-per-dimension boundary conditions              #
+# --------------------------------------------------------------------------- #
+# The cases above are 2D with the same condition on all sides. These cover all
+# three conditions in 3D and mixed-per-dimension combinations -- previously only
+# exercised indirectly via the IBAMR loader test. Each move sends one agent
+# toward each face so every dimension is checked at once.
+
+def _envir3d(bc, L=1.0):
+    '''Cubic domain with the same condition on all six faces, no flow.'''
+    return planktos.Environment(Lx=L, Ly=L, Lz=L, x_bndry=(bc, bc),
+                                y_bndry=(bc, bc), z_bndry=(bc, bc),
+                                flow=[np.zeros((3, 3, 3)) for _ in range(3)])
+
+
+def test_3d_zero_bc_masks_leavers_in_each_dim():
+    envir = _envir3d('zero')
+    swrm = _pa_swarm(envir,
+                     [[0.9, 0.5, 0.5], [0.5, 0.9, 0.5], [0.5, 0.5, 0.9], [0.5, 0.5, 0.5]],
+                     [[2, 0, 0], [0, 2, 0], [0, 0, 2], [0, 0, 0]])
+    swrm.move(0.1)                                     # each leaver overshoots its face
+    mask = ma.getmaskarray(swrm.positions)
+    assert np.all(mask[:3]), "a leaver (in x, y, or z) was not masked"
+    assert not np.any(mask[3]), "interior agent wrongly masked"
+
+
+def test_3d_noflux_bc_clips_in_each_dim():
+    envir = _envir3d('noflux')
+    swrm = _pa_swarm(envir,
+                     [[0.9, 0.5, 0.5], [0.5, 0.9, 0.5], [0.5, 0.5, 0.9]],
+                     [[2, 0, 0], [0, 2, 0], [0, 0, 2]])
+    swrm.move(0.1)
+    pos = np.asarray(swrm.positions)
+    assert np.isclose(pos[0, 0], 1.0)                  # clipped to the +x face
+    assert np.isclose(pos[1, 1], 1.0)                  # clipped to the +y face
+    assert np.isclose(pos[2, 2], 1.0)                  # clipped to the +z face
+    assert not np.any(ma.getmaskarray(swrm.positions)), "noflux agent was masked"
+
+
+def test_3d_periodic_bc_wraps_in_each_dim():
+    envir = _envir3d('periodic')
+    # x, y exit the high face (1.1 -> 0.1); z exits the low face (-0.15 -> 0.85)
+    swrm = _pa_swarm(envir,
+                     [[0.9, 0.5, 0.5], [0.5, 0.9, 0.5], [0.5, 0.5, 0.05]],
+                     [[2, 0, 0], [0, 2, 0], [0, 0, -2]])
+    swrm.move(0.1)
+    pos = np.asarray(swrm.positions)
+    assert np.isclose(pos[0, 0], 0.1)
+    assert np.isclose(pos[1, 1], 0.1)
+    assert np.isclose(pos[2, 2], 0.85)
+    assert not np.any(ma.getmaskarray(swrm.positions))
+
+
+def test_3d_mixed_bc_applies_per_dimension():
+    # periodic in x, noflux in y, zero in z -- one agent exits each high face.
+    envir = planktos.Environment(Lx=1, Ly=1, Lz=1,
+                                 x_bndry=('periodic', 'periodic'),
+                                 y_bndry=('noflux', 'noflux'),
+                                 z_bndry=('zero', 'zero'),
+                                 flow=[np.zeros((3, 3, 3)) for _ in range(3)])
+    swrm = _pa_swarm(envir,
+                     [[0.9, 0.5, 0.5], [0.5, 0.9, 0.5], [0.5, 0.5, 0.9]],
+                     [[2, 0, 0], [0, 2, 0], [0, 0, 2]])
+    swrm.move(0.1)
+    mask = ma.getmaskarray(swrm.positions)
+    pos = np.asarray(swrm.positions)
+    assert np.isclose(pos[0, 0], 0.1) and not mask[0, 0], "periodic-x did not wrap"
+    assert np.isclose(pos[1, 1], 1.0) and not mask[1, 1], "noflux-y did not clip"
+    assert np.all(mask[2]), "zero-z leaver was not masked"
+
+
+def test_2d_mixed_bc_periodic_x_noflux_y():
+    # The TODO's explicit example: periodic in x, noflux in y.
+    envir = planktos.Environment(Lx=1, Ly=1,
+                                 x_bndry=('periodic', 'periodic'),
+                                 y_bndry=('noflux', 'noflux'),
+                                 flow=[np.zeros((3, 3)), np.zeros((3, 3))])
+    swrm = _pa_swarm(envir, [[0.9, 0.5], [0.5, 0.9]], [[2, 0], [0, 2]])
+    swrm.move(0.1)
+    pos = np.asarray(swrm.positions)
+    assert np.isclose(pos[0, 0], 0.1)                  # periodic-x wrap
+    assert np.isclose(pos[1, 1], 1.0)                  # noflux-y clip
+    assert not np.any(ma.getmaskarray(swrm.positions))
 
 
 # --------------------------------------------------------------------------- #
