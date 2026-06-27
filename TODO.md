@@ -24,11 +24,11 @@ The items below are **non-blocking follow-ups** — relative priority only.
 - **COMSOL vtu test is skipped** (no committed data): `test_io_loaders.py::test_vtu_load`
   needs `tests/data/comsol/vtu_test_data.txt`. Either commit a tiny COMSOL fixture
   or leave gated.
-- **3D collision coverage via real STL meshes.** `test_collisions_static_3d.py`
-  now covers the 3D project-and-slide on hand-built triangle meshes (known answers +
-  no-penetration). Still untested: loading an actual STL and running agents against
-  it end-to-end (the seafan/convex-hull path), and 3D *moving* meshes (not
-  implemented — the moving entry raises in 3D).
+- **3D *moving* meshes are not implemented** (the moving entry raises in 3D —
+  blocked on `dyload`, per CLAUDE.md), so there is nothing to test there yet.
+  Static 3D coverage is in place: the project-and-slide on hand-built triangle
+  meshes (`test_collisions_static_3d.py`) and the end-to-end load-an-STL-and-run-
+  agents path (`test_collisions_stl_3d.py`, generated cube fixture).
 - **`motion.RK45` direct calling convention** is fragile (shape mismatch when used
   outside the swarm path). The agent-model tests use the documented
   `Euler_brownian_motion(self, dt, ode=...)` pattern instead. If `RK45` is meant to
