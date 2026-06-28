@@ -69,6 +69,16 @@ Biology* 84(72). Docs: https://planktos.readthedocs.io
 (3D dynamic fluid loading) working first, because of the data-size problem above.
 Moving boundaries are currently **2D only**.
 
+**3D fluid data sources (terse, for future reference).** The 3D flows come from
+either **IBFE** (fluid solved over the *entire* domain, including inside immersed
+objects, as SAMRAI files on an adaptive rectangular mesh) or **OpenFOAM** (fluid only
+*outside* objects, on a 3D FEM point mesh). For now, in both cases the field is
+interpolated to a **rectilinear grid** externally (VisIt/ParaView → vtk) and that vtk
+is what Planktos loads — i.e. **assume a rectilinear fluid grid for the time being.**
+Source-specific ingestion (porting the old VisIt SAMRAI→vtk script, reading
+OpenFOAM/COMSOL directly, etc.) is intentionally **out of scope for `dyload`**: it is
+lower priority than getting 3D moving boundaries working.
+
 When making cross-cutting changes (like this CLAUDE.md), expect them to be
 merged from `mvbnd` into `dyload` later.
 
@@ -154,9 +164,10 @@ lives in the pandas DataFrame `Swarm.props`; shared values in `Swarm.shared_prop
 - **Mesh assumption:** segments must not cross except at shared vertices. Verify
   imported meshes with `Environment.plot_envir()`. `add_vertices_to_static_2D_ibmesh`
   exists to repair crossings but is discouraged.
-- Static 3D meshes load from STL; 2D meshes (static or **moving**) load from
-  IB2d data via `read_IB2d_mesh_data` (directory of `lagsPts.####.vtk` → moving;
-  single `.vtk`/`.vertex` → static).
+- **3D immersed boundaries are STL triangular (FEM) surface meshes** — this is now
+  the norm; **3D vertex-point input is deprecated** (2D vertex points are still used).
+  2D meshes (static or **moving**) load from IB2d data via `read_IB2d_mesh_data`
+  (directory of `lagsPts.####.vtk` → moving; single `.vtk`/`.vertex` → static).
 
 ## Correctness invariants & development priorities
 
