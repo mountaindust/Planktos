@@ -199,9 +199,10 @@ Algorithm/derivation notes are in `docs/notes/` (Markdown with LaTeX):
 
 ## Tests
 
-The suite was overhauled (2026-06) into focused, deterministic, fast modules.
-Run `pytest` from the repository root. The default run is ~1s; add `--runslow`
-for the full-simulation parallelization checks (~30s).
+The suite is organized into focused, deterministic, fast modules (overhauled
+2026-06). Run `pytest` from the repository root. The default run is ~2s; add
+`--runslow` for the slower checks — the full-simulation parallelization tests
+(~30s) and the plotting smokes.
 
 - **Run** the whole thing with `pytest`; a specific area with e.g.
   `pytest tests/test_collisions_static.py`.
@@ -209,41 +210,46 @@ for the full-simulation parallelization checks (~30s).
   - `test_geom.py` — `_geom` intersection & closest-distance functions.
   - `test_collisions_static.py` / `test_collisions_moving.py` /
     `test_collisions_static_3d.py` — call `_ibc.apply_internal_static_BC` /
-    `apply_internal_moving_BC` directly on single trajectories across a
-    geometry × movement matrix (2D segments and 3D triangle meshes); assert
-    no-penetration and exact post-collision positions.
+    `apply_internal_moving_BC` directly across a geometry × movement matrix (2D
+    segments, 3D triangle meshes; convex/concave joints, grazing, deep recursive
+    multi-element slides); assert no-penetration and exact post-collision
+    positions. `test_collisions_moving.py` also pins a deterministic multi-step
+    `Swarm.move()` trajectory (golden drift detector).
+  - `test_collisions_stl_3d.py` — end-to-end 3D: load a generated STL via
+    `Environment.read_stl_mesh_data` and drive agents into it with `Swarm.move()`
+    (needs the optional numpy-stl; module skips otherwise).
   - `test_flow_generation.py` — brinkman/channel/canopy, `tile_flow`, `extend`,
     `flow_points` axis order.
   - `test_temporal_interp.py` — `fluid.fCubicSpline` / `create_temporal_interpolations`.
-  - `test_agent_models.py` — `apply_agent_model`/`after_move` overrides and
-    `motion` generators.
-  - `test_swarm_lifecycle.py` — `move()` bookkeeping, mask contract, domain BCs.
-  - `test_analysis.py` — `get_2D_vorticity`, FTLE (closed-form answers).
+  - `test_agent_models.py` — `apply_agent_model`/`after_move` overrides, the
+    `motion` generators, and the public `motion.RK45` solver contract.
+  - `test_material_derivative.py` — `Swarm.get_DuDt` / `get_dudt` (closed-form).
+  - `test_swarm_lifecycle.py` — `move()` bookkeeping, mask contract, and domain
+    BCs (zero/noflux/periodic) in 2D, 3D, and mixed-per-dimension combinations.
+  - `test_periodic_ib.py` — periodic domain boundary × immersed boundary (an
+    agent wraps across the domain and immediately meets a wall on the far side).
+  - `test_swarm_save.py` — round-trips for `save_pos_to_csv` / `save_data` /
+    `save_pos_to_vtk`.
+  - `test_analysis.py` — `get_2D_vorticity`, forward & backward FTLE (closed-form).
   - `test_io_loaders.py` — IB2d moving/static mesh import (committed fixtures),
     IBAMR vtk (`@vtk`), COMSOL vtu (`@vtu`).
   - `test_parallel_ib.py` — serial == threads == processes (`@slow`).
+  - `test_plotting_smoke.py` — `plot_*` methods run without error on the Agg
+    backend (`@slow`; the movie test also needs ffmpeg).
 - **Helpers / fixtures**: `tests/_ib_harness.py` (mesh builders + invariant
-  assertions, also drives the parallel scenarios); `tests/fixtures/` holds tiny
-  committed IB2d fixtures, regenerable via `tests/fixtures/_gen_fixtures.py`.
+  assertions; also drives the parallel scenarios and the golden moving-boundary
+  trajectory); `tests/fixtures/` holds tiny committed IB2d fixtures, regenerable
+  via `tests/fixtures/_gen_fixtures.py`.
 - **Markers** (registered in `pytest.ini`): `slow` (only with `--runslow`),
   `vtk` (skipped if vtk data absent), `vtu` (skipped if COMSOL data absent).
-- **Non-automated** visual/exploratory scripts live in `tests/manual/`
-  (`visualtest_*.py`, `mvib2d.py`, `rubberband.py`, the `.ipynb`, the perf
-  benchmark) — excluded from collection via `collect_ignore` in `conftest.py`.
+- **Non-automated** visual/exploratory scripts live in `tests/manual/` —
+  excluded from collection via `collect_ignore` in `conftest.py`.
 
 ### Resolved defects & FTLE notes
 
-The test overhaul and its follow-ups have uncovered a series of latent bugs,
-**all now fixed** with regression tests (the suite has no remaining xfails) — see
-`changelog.txt` for the full list. The original four from the overhaul: sticky
-moving-boundary NaN on axis-aligned elements in `_ibc`; the zero-length-segment
-`ValueError` in `_geom.closest_dist_btwn_lines_and_pt`; `save_fluid`/
-`save_2D_vorticity` on modern pyvista; and backward-time FTLE. Found since:
-`motion.highRe_massive_drift` in 2D; 3D sliding sticking at shared triangle edges;
-and `Swarm.save_pos_to_vtk(all=True)` crashing on any unmasked history step. See
-`TODO.md` for the remaining non-blocking follow-ups.
-
-FTLE specifics worth knowing (`calculate_FTLE`):
+The overhaul and its follow-ups uncovered and fixed a series of latent bugs, each
+with a regression test (the suite has no xfails); see `changelog.txt` for the
+list. Two FTLE specifics worth knowing (`calculate_FTLE`):
 - `FTLE_smallest` is the smallest-eigenvalue (contraction) exponent, **not**
   backward-time FTLE (the old "negate it" guidance was wrong). For attracting LCS,
   call `calculate_FTLE(..., backward=True)` — it integrates the reversed flow and
