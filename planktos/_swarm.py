@@ -59,6 +59,7 @@ class Swarm:
         Environment with all of the defaults.
     init : {'random', 'grid', ndarray}, default='random'
         Method for initalizing agent positions.
+
         * 'random': Uniform random distribution throughout the domain
         * 'grid': Uniform grid on interior of the domain, including capability
           to leave out closed immersed structures. In this case, swarm_size 
@@ -71,6 +72,7 @@ class Swarm:
           case, swarm_size is ignored.
     ib_condition : {None, 'sliding' (default), 'sticky'}
         Boundary condition for immersed boundaries
+
         * None: Will turn off all interactions with immersed boundaries
         * 'sliding': (default) No flux in the direction normal to the boundary; 
           any movement across the boundary will be subject to vector projection 
@@ -88,8 +90,10 @@ class Swarm:
         to an array of zeros with length matching the spatial dimension, and 
         'cov' will be set to an identity matrix of appropriate size according to 
         the spatial dimension. This allows the default agent behavior to be 
-        unbiased brownian motion.  
-        Examples:  
+        unbiased brownian motion.
+
+        Examples:
+
         * diam: diameter of the particles
         * m: mass of the particles
         * Cd: drag coefficient of the particles
@@ -834,15 +838,19 @@ class Swarm:
                 _dataio.write_vtk_point_data(path, name, self.positions[~ma.getmaskarray(self.positions[:,0]),:])
         else:
             for cyc, time in enumerate(self.envir.time_history):
+                # ma.getmaskarray (not .mask) is required: an unmasked history
+                # entry has .mask == nomask (scalar), and ~nomask would index in
+                # a new axis rather than select the unmasked rows.
+                unmasked = self.pos_history[cyc][
+                    ~ma.getmaskarray(self.pos_history[cyc][:,0]),:]
                 if DIM2:
-                    data = np.zeros((self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:].shape[0],3))
-                    data[:,:2] = self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:].squeeze()
-                    _dataio.write_vtk_point_data(path, name, data, 
+                    data = np.zeros((unmasked.shape[0],3))
+                    data[:,:2] = unmasked
+                    _dataio.write_vtk_point_data(path, name, data,
                                                  cycle=cyc, time=time)
                 else:
-                    _dataio.write_vtk_point_data(path, name, 
-                        self.pos_history[cyc][~self.pos_history[cyc][:,0].mask,:].squeeze(), 
-                        cycle=cyc, time=time)
+                    _dataio.write_vtk_point_data(path, name, unmasked,
+                                                 cycle=cyc, time=time)
             cyc = len(self.envir.time_history)
             if DIM2:
                 data = np.zeros((self.positions[~ma.getmaskarray(self.positions[:,0]),:].shape[0],3))

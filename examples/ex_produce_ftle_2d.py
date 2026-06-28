@@ -21,13 +21,13 @@ envir.read_IB2d_fluid_data('ib2d_data', 5.0e-5, 1000)
 # Another option is to try a static flow field, for example by just using 
 #   cycle number 20 (in which vortices have formed). Just uncomment one or the
 #   other depending on what you want to calculate over!
-# envir.read_IB2d_vtk_data('ib2d_data', 5.0e-5, 1000, d_start=20, d_finish=20)
+# envir.read_IB2d_fluid_data('ib2d_data', 5.0e-5, 1000, d_start=20, d_finish=20)
 
 # Recall that there are vertex data associated the fluid velocity data. We can
 #   optionally load these here. Note that things will be a lot slower, and in 
 #   our tests of this particular example, it doesn't make much difference whether 
 #   the agents know about the mesh structures or not:
-# envir.read_IB2d_vertex_data('ib2d_data/channel.vertex')
+# envir.read_IB2d_mesh_data('ib2d_data/channel.vertex', method='proximity')
 
 # If you want a gut-check of what you have at this point, you can always plot it:
 # envir.plot_flow()

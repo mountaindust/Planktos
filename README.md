@@ -182,9 +182,8 @@ Class: Environment
     - `time_history` history of time points simulated
     - `ibmesh` Nx2x2 or Nx3x3 ndarray of mesh elements, given as line segment vertices (2D) or triangle vertices (3D)
     - `max_meshpt_dist` max distance between two vertices in ibmesh. Used internally.
-    - `dt_interp` scipy.interpolate PPoly instance giving the time derivative of the flow velocity field
-    - `struct_plots` additional items (structures) can be plotted along with the simulation by storing function handles in this list. The plotting routine will call each of them in order, passing the main axes handle as the first argument
-    - `struct_plots_args` list of tuples supplying additional arguments to be passed to the struct_plots functions
+    - `plot_structs` additional items (structures) can be plotted along with the simulation by storing function handles in this list. The plotting routine will call each of them in order, passing the main axes handle as the first argument
+    - `plot_structs_args` list of tuples supplying additional arguments to be passed to the plot_structs functions
     - `tiling` if the domain has been tiled, the amount of tiling is recorded here (x,y)
     - `orig_L` length of each domain dimension before tiling
     - `fluid_domain_LLC` if fluid was imported from data, the spatial coordinates of the lower left corner of the original data. This is used internally to aid subsequent translations
@@ -242,8 +241,13 @@ Class: Swarm
     projectile motion)
     - `accelerations` list of current accelerations, one for each agent (for use
     in projectile motion)
+    - `ib_collision_idx` for each agent, the index of the immersed mesh element it
+    collided with during its most recent move, or -1 if there was no collision
     - `envir` Environment object that this Swarm belongs to
     - `rndState` random number generator (for reproducability)
+    - `pool` optional worker pool (any object with a `.map` method, e.g.
+    multiprocessing.Pool or a concurrent.futures Executor) used to parallelize
+    per-agent immersed-boundary collision detection. Defaults to None (serial)
     - `shared_props` properties shared by all members of the Swarm. Includes:
         - `mu` default mean for Gaussian walk (zeros)
         - `cov` covariance matrix for Gaussian walk (identity matrix)

@@ -261,9 +261,13 @@ def apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
             # Vector for agent travel
             vec = endpt - startpt
 
-            # Get the relative position of intersection within the mesh element
-            # Use max in case the element is vertical or horizontal
-            s_I = max((x[0]-Q0[0])/(Q1[0]-Q0[0]),(x[1]-Q0[1])/(Q1[1]-Q0[1]))
+            # Get the relative position of intersection within the mesh element.
+            # x lies on the segment, so either component gives the same s_I; pick
+            # the axis with the largest extent to avoid a 0/0 when the element is
+            # vertical or horizontal (a plain max() would return the NaN).
+            dQ = Q1 - Q0
+            ax = np.argmax(np.abs(dQ))
+            s_I = (x[ax]-Q0[ax])/dQ[ax]
             if idx is None:
                 dt_elem = close_mesh_end
                 idx = 0
@@ -474,7 +478,22 @@ def _get_eligible_moving_mesh_elements(startpt, endpt, start_mesh, end_mesh,
 
 
 
-def _project_and_slide_static(startpt, endpt, intersection, mesh, 
+def _point_in_triangle(P, Q0, Q1, Q2, tol=1e-9):
+    '''Whether point P (assumed coplanar with the triangle) lies inside triangle
+    Q0,Q1,Q2, using normalized barycentric coordinates. A point on an edge counts
+    as inside (within tol). Returns False for a degenerate (zero-area) triangle.'''
+    n = np.cross(Q1 - Q0, Q2 - Q0)
+    nn = np.dot(n, n)
+    if nn == 0:
+        return False
+    a = np.dot(np.cross(Q1 - P, Q2 - P), n) / nn
+    b = np.dot(np.cross(Q2 - P, Q0 - P), n) / nn
+    c = np.dot(np.cross(Q0 - P, Q1 - P), n) / nn
+    return a >= -tol and b >= -tol and c >= -tol
+
+
+
+def _project_and_slide_static(startpt, endpt, intersection, mesh,
                               max_meshpt_dist, prev_idx=None):
     '''Once we have an intersection point with an immersed mesh, slide the 
     agent along the mesh for its remaining movement (frictionless 
@@ -625,20 +644,36 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
         else:
             t_edge = None
     elif DIM == 3:
-        # Detect sliding off 2D edge using seg_intersect_2D
-        # Construct lists of first and second points for the line segments
+        # Decide whether the agent slid off the triangle, mirroring the 2D branch
+        # above (which keys on whether slide_pt overshot the segment, NOT on where
+        # the agent currently sits). Basing the decision on slide_pt rather than on
+        # x is what makes this correct when x lies exactly on an edge -- the
+        # recursion-onto-an-adjacent-triangle entry, or a degenerate hit landing on
+        # a shared edge -- where a detector keyed on x would spuriously re-report
+        # the edge it is sitting on and stick the agent there (and the 2D method,
+        # used for edge detection, does return such a start-on-edge touch).
         Q0_list = np.array(intersection[2:5]) # Q0,Q1,Q2
         Q1_list = Q0_list[(1,2,0),:] # Q1,Q2,Q0
-        tri_intersect = _geom.seg_intersect_2D(x, slide_pt, Q0_list, Q1_list)
-        if tri_intersect is None:
+        if _point_in_triangle(slide_pt, Q0, Q1, Q2):
+            # Projected end is still on the triangle: no edge was crossed.
             t_edge = None
         else:
-            # Get time of intersection
-            t_edge = t_I + (1-t_I)*tri_intersect[1]
-            # Get point of intersection
-            x_edge = tri_intersect[0]
-            # Get side of intersection
-            idx_edge = tri_intersect[4]
+            # Slid off: the exit is the last triangle edge the slide crosses
+            # (largest s_I). x->slide_pt crosses a convex triangle's boundary at
+            # most where it leaves; if x sits on an edge, that start touch has the
+            # smaller s_I and is correctly skipped by taking the max.
+            hits = _geom.seg_intersect_2D(x, slide_pt, Q0_list, Q1_list,
+                                          get_all=True)
+            hits = list(hits) if hits is not None else []
+            if not hits:
+                # Numerical corner case (slide_pt just outside but no crossing
+                # found); treat as ending on the element.
+                t_edge = None
+            else:
+                tri_intersect = max(hits, key=lambda r: r[1])
+                t_edge = t_I + (1-t_I)*tri_intersect[1]
+                x_edge = tri_intersect[0]
+                idx_edge = tri_intersect[4]
             
     ##########                                                  ##########
     #####       Algorithms for going past end of mesh element        #####

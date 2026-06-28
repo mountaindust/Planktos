@@ -3,14 +3,40 @@
 Guidance for working in the Planktos repository. Keep this file current; it is
 loaded into every session.
 
-## Git policy (strict)
+## Git policy (strict — this has repeatedly been mishandled; read carefully)
 
-- **Never `git commit` automatically, and never `git push` automatically.**
-- **Commit only when the user explicitly asks for a commit, each time.** A prior
-  commit request does NOT authorize future commits.
+**Commits and pushes require explicit, per-action authorization in the user's
+most recent message. Authorization NEVER carries forward.**
+
+- **Never `git commit` or `git push` automatically or on your own initiative.**
+- **Each commit needs its own fresh green light.** A commit request authorizes
+  exactly ONE commit, right then. The next commit requires a new, explicit
+  request. Past authorizations do not propagate forward — not across turns, and
+  not within a single multi-step task.
+- **"Do X, then commit, then do Y" authorizes committing X only.** It does NOT
+  authorize committing Y or any later/again work. Map each commit authorization
+  to the one specific step it was attached to, and nothing else.
+- **Do not move toward a commit without authorization.** Running `git add`/staging
+  as a prelude to an unauthorized commit counts as moving toward it — don't do it.
+  (Read-only git — `status`, `diff`, `log` — is always fine.)
 - **A request to commit is NOT a request to push.** Push only when the user
-  explicitly and separately asks to push.
-- When in doubt, stage and show the diff and ask, rather than committing.
+  explicitly and separately asks to push, each time.
+- **When in doubt, do not commit.** Show the diff, summarize, and ask. Leaving
+  changes uncommitted in the working tree is always the safe default.
+
+## Versioning & changelog (the user wants active reminders here)
+
+The user has explicitly asked for help **remembering to maintain the version
+number and the changelog** — these are easy to forget. Be proactive about it:
+
+- The version lives in `planktos/__init__.py` (`__version__`); `setup.cfg` reads
+  it via `attr: planktos.__version__`. The current development version is `1.0.0`.
+- `changelog.txt` is hand-maintained, terse, and grouped by version. When a
+  change is user-facing, prompt to add an entry under the appropriate version.
+- When work looks release-worthy (or a user-facing change lands) but the version
+  or changelog hasn't been touched, **say so** and confirm the right action.
+- Do NOT bump the version or rewrite the changelog silently — surface the need
+  and let the user decide (a version bump is a semver judgment call).
 
 ## What Planktos is
 
@@ -173,43 +199,70 @@ Algorithm/derivation notes are in `docs/notes/` (Markdown with LaTeX):
 
 ## Tests
 
-> ⚠️ **The test suite lags significantly behind the code and needs a full
-> evaluation and major update.** Tests have not been kept current as the code
-> evolved, so absence of failures does not imply coverage — much is stale or
-> missing. Known examples found so far: `pytest` collection was silently broken
-> for a long time (`conftest.py` referenced a nonexistent `_dataio.VTK`; fixed on
-> `mvbnd`/`dyload`); `test_intersection_methods` asserted an outdated
-> `seg_intersect_*` return format; and on `dyload` several `test_framework.py`
-> tests still reference `Environment` attributes removed by the FluidData refactor
-> (`flow_times`, `flow_points`, …). Treat a green run with healthy skepticism and
-> budget a dedicated pass to audit and rewrite the suite against the current API.
+The suite was overhauled (2026-06) into focused, deterministic, fast modules.
+Run `pytest` from the repository root. The default run is ~1s; add `--runslow`
+for the full-simulation parallelization checks (~30s).
 
-- Run `pytest` from the repository root. Main suite: `tests/test_framework.py`;
-  fluid I/O: `tests/test_fluid_read.py`.
-- Markers: `@pytest.mark.slow` (only with `--runslow`), `@pytest.mark.vtk`
-  (skipped if vtk import fails), `@pytest.mark.vtu` (skipped if COMSOL test data
-  absent). Configured in `conftest.py` / `pytest.ini`.
-- `tests/` also holds non-pytest visual/manual scripts (`visualtest_2d.py`,
-  `mvib2d.py`, `rubberband.py`, `.ipynb` notebooks) — these are exploratory, not
-  part of the automated suite.
+- **Run** the whole thing with `pytest`; a specific area with e.g.
+  `pytest tests/test_collisions_static.py`.
+- **Modules** (all self-contained / analytic-answer unless noted):
+  - `test_geom.py` — `_geom` intersection & closest-distance functions.
+  - `test_collisions_static.py` / `test_collisions_moving.py` /
+    `test_collisions_static_3d.py` — call `_ibc.apply_internal_static_BC` /
+    `apply_internal_moving_BC` directly on single trajectories across a
+    geometry × movement matrix (2D segments and 3D triangle meshes); assert
+    no-penetration and exact post-collision positions.
+  - `test_flow_generation.py` — brinkman/channel/canopy, `tile_flow`, `extend`,
+    `flow_points` axis order.
+  - `test_temporal_interp.py` — `fluid.fCubicSpline` / `create_temporal_interpolations`.
+  - `test_agent_models.py` — `apply_agent_model`/`after_move` overrides and
+    `motion` generators.
+  - `test_swarm_lifecycle.py` — `move()` bookkeeping, mask contract, domain BCs.
+  - `test_analysis.py` — `get_2D_vorticity`, FTLE (closed-form answers).
+  - `test_io_loaders.py` — IB2d moving/static mesh import (committed fixtures),
+    IBAMR vtk (`@vtk`), COMSOL vtu (`@vtu`).
+  - `test_parallel_ib.py` — serial == threads == processes (`@slow`).
+- **Helpers / fixtures**: `tests/_ib_harness.py` (mesh builders + invariant
+  assertions, also drives the parallel scenarios); `tests/fixtures/` holds tiny
+  committed IB2d fixtures, regenerable via `tests/fixtures/_gen_fixtures.py`.
+- **Markers** (registered in `pytest.ini`): `slow` (only with `--runslow`),
+  `vtk` (skipped if vtk data absent), `vtu` (skipped if COMSOL data absent).
+- **Non-automated** visual/exploratory scripts live in `tests/manual/`
+  (`visualtest_*.py`, `mvib2d.py`, `rubberband.py`, the `.ipynb`, the perf
+  benchmark) — excluded from collection via `collect_ignore` in `conftest.py`.
 
-### Testing goals (active priority)
+### Resolved defects & FTLE notes
 
-Test coverage is the known weak spot and an explicit area where help is wanted.
-Verification of boundary interactions has so far been **mostly visual/manual**,
-which is slow and computationally expensive. The goal going forward:
+The test overhaul and its follow-ups have uncovered a series of latent bugs,
+**all now fixed** with regression tests (the suite has no remaining xfails) — see
+`changelog.txt` for the full list. The original four from the overhaul: sticky
+moving-boundary NaN on axis-aligned elements in `_ibc`; the zero-length-segment
+`ValueError` in `_geom.closest_dist_btwn_lines_and_pt`; `save_fluid`/
+`save_2D_vorticity` on modern pyvista; and backward-time FTLE. Found since:
+`motion.highRe_massive_drift` in 2D; 3D sliding sticking at shared triangle edges;
+and `Swarm.save_pos_to_vtk(all=True)` crashing on any unmasked history step. See
+`TODO.md` for the remaining non-blocking follow-ups.
 
-- Build **robust, deterministic, computationally cheap** automated tests that
-  fully vet agent–boundary interactions across a matrix of **geometry × movement**
-  assumptions: convex vs concave joints, near-tangent hits, glancing/grazing
-  approaches, multi-element joints, moving vs static boundaries, sliding vs sticky.
-- The key property to assert is the **no-penetration invariant** (agents end on
-  the correct side of every boundary) plus correctness of the resulting position
-  (e.g. projected onto the expected element). Favor small, exact analytic setups
-  with known answers over large simulations.
-- Pin the current trusted moving-boundary behavior with regression tests before
-  any refactor, since the existing implementation is believed correct but lightly
-  covered by automation.
+FTLE specifics worth knowing (`calculate_FTLE`):
+- `FTLE_smallest` is the smallest-eigenvalue (contraction) exponent, **not**
+  backward-time FTLE (the old "negate it" guidance was wrong). For attracting LCS,
+  call `calculate_FTLE(..., backward=True)` — it integrates the reversed flow and
+  stores the backward field in `FTLE_largest`. Backward is **tracer-only** (reverse-
+  time inertial/custom dynamics are dissipative/ill-posed). Forward works for
+  tracer, `ode_gen` (inertial/custom), and user-`swrm` models.
+- FTLE respects **static** immersed boundaries but **not moving** ones (it doesn't
+  advance `envir.time`, so a moving mesh would be frozen) — a moving mesh now raises
+  `NotImplementedError`.
+
+### Testing goals (ongoing)
+
+- Favor small, exact analytic setups with known answers over large simulations;
+  keep the default run fast and deterministic.
+- The key property is the **no-penetration invariant** (agents end on the correct
+  side of every boundary) plus correctness of the resulting position. Extend the
+  geometry × movement matrix (convex/concave joints, grazing, multi-element,
+  moving vs static, sliding vs sticky) in `test_collisions_*`.
+- Pin trusted moving-boundary behavior with regression locks before refactors.
 
 ## Conventions & gotchas
 

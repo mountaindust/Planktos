@@ -20,6 +20,10 @@ input2d
 *.beam
 *.target
 
+# Committed test fixtures (small; regenerate with tests/fixtures/_gen_fixtures.py)
+!tests/fixtures/**/*.vtk
+!tests/fixtures/**/*.vertex
+
 # Autobackup files
 ~*
 

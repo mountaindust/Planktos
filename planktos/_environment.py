@@ -176,10 +176,13 @@ class Environment:
         List of argument tuples to be passed to plot_structs functions, after 
         ax (the plot axis object) is passed
     FTLE_largest : ndarray
-        FTLE field calculated using the largest eigenvalue
+        FTLE field calculated using the largest eigenvalue. Holds the
+        backward-time field when calculate_FTLE was called with backward=True.
     FTLE_smallest : ndarray
-        FTLE field calculated using the smallest eigenvalue. take the negative 
-        of this to get backward-time information
+        FTLE field calculated using the smallest eigenvalue (the contraction
+        exponent of the forward map). NOTE: this is NOT backward-time FTLE -- for
+        incompressible flow it is identically -FTLE_largest. For a true
+        backward-time field, call calculate_FTLE(..., backward=True).
     FTLE_loc : Nx2 masked ndarray
         spatial points on which the FTLE mesh was calculated
     FTLE_loc_end : Nx2 masked ndarray
@@ -340,12 +343,13 @@ class Environment:
 
         ##### FTLE fields #####
         self.FTLE_largest = None
-        self.FTLE_smallest = None # take negative to get backward-time picture
+        self.FTLE_smallest = None # contraction exponent; NOT backward-time FTLE
         self.FTLE_loc = None
         self.FTLE_loc_end = None
         self.FTLE_t0 = None
         self.FTLE_T = None
         self.FTLE_grid_dim = None
+        self.FTLE_backward = None # whether the stored FTLE field is backward-time
 
 
 
@@ -2360,8 +2364,9 @@ class Environment:
 
 
 
-    def calculate_FTLE(self, grid_dim=None, testdir=None, t0=0, T=0.1, dt=0.001, 
-                       ode_gen=None, props=None, t_bound=None, swrm=None):
+    def calculate_FTLE(self, grid_dim=None, testdir=None, t0=0, T=0.1, dt=0.001,
+                       ode_gen=None, props=None, t_bound=None, swrm=None,
+                       backward=False):
         '''Calculate the FTLE field at the given time(s) t0 with integration 
         length T on a discrete grid with given dimensions. The calculation will 
         be conducted with respect to the fluid velocity field loaded in this 
@@ -2438,14 +2443,23 @@ class Environment:
         t_bound : float, optional
             if solving ode or tracer particles, this is the bound on
             the RK45 integration step size. Defaults to dt/100.
-        swrm : Swarm object, optional 
-            Swarm object with user-defined movement rules as 
-            specified by the apply_agent_model method. This allows for arbitrary 
-            FTLE calculations through subclassing and overriding this method. 
-            Steps of length dt will be taken until the integration length T 
-            is reached. The Swarm object itself will not be altered; a shallow 
-            copy will be created for the purpose of calculating the FTLE on 
+        swrm : Swarm object, optional
+            Swarm object with user-defined movement rules as
+            specified by the apply_agent_model method. This allows for arbitrary
+            FTLE calculations through subclassing and overriding this method.
+            Steps of length dt will be taken until the integration length T
+            is reached. The Swarm object itself will not be altered; a shallow
+            copy will be created for the purpose of calculating the FTLE on
             a grid.
+        backward : bool, default=False
+            If True, compute the backward-time FTLE: integrate the flow map
+            backward over [t0, t0-(T-t0)] and store the result in FTLE_largest
+            (whose ridges are attracting LCS). Implemented as forward integration
+            of the reversed flow, so the velocity is sampled at mirrored times
+            (constant-extrapolated outside flow_times). Only supported for tracer
+            particles -- ode_gen/swrm are rejected, since reverse-time integration
+            of dissipative (e.g. inertial-particle drag) dynamics is ill-posed.
+            Moving immersed boundaries are not supported in either direction.
 
         Returns
         -------
@@ -2461,6 +2475,31 @@ class Environment:
         ###########################################################
         ######              Setup Swarm object               ######
         ###########################################################
+        ### GUARDS ###
+        # The integration extent must be positive; otherwise no steps run and the
+        #   FTLE computation would fail later on an empty position history.
+        if not T > t0:
+            raise ValueError("T must be greater than t0 (positive integration "
+                             "extent); for backward-time FTLE use backward=True "
+                             "with T > t0, not a negative T.")
+        # Backward-time FTLE is the forward integration of the reversed flow, which
+        #   is only well-posed for tracer particles. Inertial/custom dynamics are
+        #   dissipative (the drag term flips sign under time reversal and becomes
+        #   anti-dissipative), so backward integration of those is unstable.
+        if backward and (ode_gen is not None or swrm is not None):
+            raise NotImplementedError(
+                "Backward-time FTLE is only supported for tracer particles "
+                "(ode_gen=None, swrm=None). Reverse-time integration of inertial/"
+                "custom dynamics with drag is ill-posed.")
+        # FTLE does not advance self.time during integration, so a moving immersed
+        #   mesh would be silently frozen at its current-time position. Refuse
+        #   rather than return a wrong field. Static meshes (ndim 3) are fine.
+        if self.ibmesh is not None and self.ibmesh_times is not None:
+            raise NotImplementedError(
+                "FTLE does not support moving immersed boundaries (the mesh would "
+                "be frozen at its t0 position during integration). Use a static "
+                "mesh, or compute FTLE on a fluid-only copy of the environment.")
+
         if grid_dim is None:
             grid_dim = tuple(len(pts) for pts in self.flow.flow_points)
 
@@ -2515,6 +2554,14 @@ class Environment:
             else:
                 ode_fun = ode_gen(s)
                 print("Finding {}D FTLE based on supplied ODE generator.".format(len(grid_dim)))
+            if backward:
+                # Backward-time FTLE = forward integration of the reversed flow.
+                # The loop variable t still advances over [t0, T]; sample the
+                # velocity at the mirrored real time 2*t0 - t and negate it, so
+                # dx/dt = -u(x, 2*t0 - t) gives the backward flow map from t0. All
+                # downstream bookkeeping/eigenvalue code is unchanged.
+                _fwd_ode = ode_fun
+                ode_fun = lambda t, x: -_fwd_ode(2*t0 - t, x)
             print(prnt_str)
 
             # keep a list of all times solved for 
@@ -2798,6 +2845,7 @@ class Environment:
         self.FTLE_t0 = t0
         self.FTLE_T = T
         self.FTLE_grid_dim = grid_dim
+        self.FTLE_backward = backward
 
         ###### Print stats ######
         print("Out of {} total points, {} exited the domain during integration.".format(
@@ -3536,10 +3584,14 @@ class Environment:
         Parameters
         ----------
         smallest : bool, default=False
-            If true, plot the negative, smallest, forward-time FTLE as 
-            a way of identifying attracting Lagrangian Coherent Structures (see 
-            Haller and Sapsis 2011). Otherwise, plot the largest, forward-time 
-            FTLE as a way of identifying ridges (separatrix) of LCSs.
+            If true, plot the negative of the smallest-eigenvalue FTLE (the
+            contraction exponent of the forward map). NOTE: this is not a true
+            backward-time field; for attracting Lagrangian Coherent Structures,
+            compute calculate_FTLE(..., backward=True) and plot the (largest)
+            backward field instead (see Haller and Sapsis 2011). Otherwise, plot
+            the largest FTLE -- forward-time ridges are repelling LCS; if the
+            stored field was computed with backward=True, its ridges are
+            attracting LCS.
         clip_l : float, optional
             lower clip value (below this value, mask points)
         clip_h : float, optional
@@ -3609,8 +3661,9 @@ class Environment:
             grid_y = np.reshape(self.FTLE_loc[:,1].data, self.FTLE_grid_dim)
             pcm = ax.pcolormesh(grid_x, grid_y, FTLE, shading='gouraud', 
                                 cmap='plasma')
-            plt.title('Largest fwrd-time FTLE field, $t_0$={}, $\\Delta t$={}.'.format(
-                    self.FTLE_t0, self.FTLE_T))
+            _dir = 'bckwrd' if self.FTLE_backward else 'fwrd'
+            plt.title('Largest {}-time FTLE field, $t_0$={}, $\\Delta t$={}.'.format(
+                    _dir, self.FTLE_t0, self.FTLE_T))
         axbbox = ax.get_position().get_points()
         cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])
         plt.colorbar(pcm, cax=cbaxes)

@@ -45,16 +45,16 @@ envir.read_IB2d_fluid_data('ib2d_data', 5.0e-5, 1000)
 #   the cylinder. Since the geometry is fairly simple, we should be able to 
 #   create mesh structures out of these points by associating nearby points 
 #   within a radius. That is, if two points are within a certain distance of 
-#   each other, we draw a line between them. This is what the 
-#   read_IB2d_vertex_data function does under the 'proximity' method, with a 
-#   default radius of approx. half the resolution of the Eulerian, fluid 
+#   each other, we draw a line between them. This is what the
+#   read_IB2d_mesh_data function does under the 'proximity' method, with a
+#   default radius of approx. half the resolution of the Eulerian, fluid
 #   velocity mesh.
 envir.read_IB2d_mesh_data('ib2d_data/channel.vertex', method='proximity')
 
 # For more complex vertex structures, this may attach too many points, causing 
 #   problems. You can try to adjust the radius, but if the structure has concave 
-#   features, this over-attachement can be unavoidable. In that case, try using 
-#   add_vertices_to_2D_ibmesh, which simply adds a vertex whever mesh lines are 
+#   features, this over-attachement can be unavoidable. In that case, try using
+#   add_vertices_to_static_2D_ibmesh, which simply adds a vertex whever mesh lines are
 #   crossing. It may not be ideal, but it's often good enough in a pinch! One 
 #   thing you absolutely don't want are mesh lines crossing without a vertex 
 #   at every crossing point. This can cause issues with the algorithm that 

@@ -653,10 +653,10 @@ def write_vtk_2D_rectilinear_grid_scalars(path, title, data, grid_points,
     else:
         filepath = path / (title + '_{:04d}.vtk'.format(cycle))
 
-    grid = pv.RectilinearGrid(grid_points[0], grid_points[1], 0)
-    grid.dimensions = (*data.shape, 1) # must be 3D
-    grid.origin = (0,0,0)
-    # we have to flatten the scalar point data, and we have to do it in Fortran 
+    # A RectilinearGrid's dimensions are implied by the coordinate arrays, so the
+    # grid_points lengths must match data.shape (here (nx, ny) -> (nx, ny, 1)).
+    grid = pv.RectilinearGrid(grid_points[0], grid_points[1], np.array([0.0]))
+    # we have to flatten the scalar point data, and we have to do it in Fortran
     #   order because VTK moves in the x, then y, then z direction but with C
     #   memory layout, our arrays move in the z, then y, then x directions
     grid.point_data["values"] = data.flatten(order="F")
@@ -709,14 +709,10 @@ def write_vtk_rectilinear_grid_vectors(path, title, data, grid_points,
 
     if len(grid_points) == 2:
         # VTK data must be 3D
-        grid_points = (grid_points[0], grid_points[1], 0)
+        grid_points = (grid_points[0], grid_points[1], np.array([0.0]))
+    # A RectilinearGrid's dimensions are implied by the coordinate arrays, so the
+    # grid_points lengths must match the data shape (2D data -> a singleton z).
     grid = pv.RectilinearGrid(grid_points[0], grid_points[1], grid_points[2])
-    grid.origin = (0,0,0)
-    if len(data[0].shape) == 2:
-        # VTK data must be 3D
-        grid.dimensions = (*data[0].shape, 1)
-    else:
-        grid.dimensions = data[0].shape
 
     fdata = [data[ii].flatten(order='F') for ii in range(len(data))]
     if len(fdata) == 2:

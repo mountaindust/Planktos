@@ -36,7 +36,7 @@ s1.shared_props['cov'] *= 0.001
 # Ny = len(envir.flow_points[1])
 # ds = min(envir.L[0]/(2*Nx),envir.L[1]/(2*Ny))
 # give_Me_Immersed_Boundary_Geometry(ds,0.05,np.array(envir.L)/2)
-# envir.read_IB2d_vertex_data('circle.vertex')
+# envir.read_IB2d_mesh_data('circle.vertex', method='proximity')
 #######
 
 ### Test for mesh_init ###
