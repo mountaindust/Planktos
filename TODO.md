@@ -34,15 +34,16 @@ Common renames: `envir.flow_points`→`envir.flow.flow_points`,
 `envir.flow_times`→`envir.flow.flow_times`, `get_2D_vorticity`→`get_vorticity`,
 `envir.tile_flow`→`envir.tile_domain`. `Environment.extend` was **removed** on dyload.
 
-- [ ] **`test_analysis.py`** (vorticity ×5, FTLE ×3). Vorticity: rename to
-  `get_vorticity` / `flow.flow_points`. **Also add the 3D vorticity known-answer test**
-  the overhaul explicitly deferred to the dyload merge (solid-body rotation about an
-  axis → constant vorticity vector; `FluidData.get_vorticity` supports 3D). Triage the
-  FTLE failures — could be rename or a real dyload `calculate_FTLE` issue.
-- [ ] **`test_flow_generation.py`** (brinkman/channel/canopy/tile/extend/flow_points-axis).
-  Renames + `tile_flow`→`tile_domain`. The **`extend` test** must be dropped/skipped —
-  `Environment.extend` was removed on dyload (extrapolation is the intended replacement).
-  The `flow_points` axis-order tests validate the fix dyload already carries.
+- [x] **`test_flow_generation.py`** — DONE (10 passed, 1 skipped). Renames +
+  `tile_flow`→`tile_domain`; `extend` test skipped (`Environment.extend` removed on
+  dyload). Surfaced the `FlowArray` numpy-interop bug (below).
+- [x] **`test_temporal_interp.py`** — DONE (7 passed). `create_temporal_interpolations`
+  is gone on dyload (absorbed into `FluidData`); rewrote the two tests against
+  `FluidData` / `fCubicSpline` directly, keeping the off-node cubic-reproduction check.
+- [~] **`test_analysis.py`** — vorticity DONE (renamed to `get_vorticity`,
+  `flow.flow_points`; 14 passed). **3 FTLE *value* tests still fail — a real bug, not a
+  rename** (see real-bugs below). Still TODO: **add the 3D vorticity known-answer test**
+  the overhaul deferred to the dyload merge (`FluidData.get_vorticity` supports 3D).
 - [ ] **`test_io_loaders.py`** (IBAMR load, save_fluid, save_2D_vorticity static).
   Renames for `flow.flow_times`. **(port)** Static-flow `save_fluid` / `save_2D_vorticity`
   was deferred during the merge — port mvbnd's static-flow-save support to the
@@ -50,13 +51,29 @@ Common renames: `envir.flow_points`→`envir.flow.flow_points`,
 - [ ] **`test_material_derivative.py`** + **(real bug)** fix the 3D `calculate_DuDt`
   broadcast error (`fluid.py:1422-1477`): `get_dudt(time)` returns a full-time-series
   array instead of a single-time field in 3D.
-- [ ] **`test_temporal_interp.py`** (`create_temporal_interpolations` / `fCubicSpline`).
-  Reconcile to dyload's `fluid.py` API.
 - [ ] **`test_agent_models.py`** massive-particle (LowRe) failures — triage rename vs
   the `calculate_DuDt`/`highRe_massive_drift` path (likely tied to the DuDt bug above).
 
 ### Other real bugs that matter (fix in Phase 0)
 
+- [ ] **`FlowArray` breaks numpy interop** (found while adapting `test_flow_generation`).
+  `__array_finalize__` propagates `self.array` to every derived array, and the
+  overridden `shape`/`__getitem__` read from `self.array` rather than the array's own
+  buffer — so a `FlowArray` produced by a ufunc/comparison reads stale data. Result:
+  array-wide `np.allclose`/`np.isclose` give wrong answers and even `repr()` raises on
+  a `FlowArray` (`fluid.py:103-265`). User-facing (people run numpy ops on flow). Fix
+  carefully (delicate view/tiling machinery) with a dedicated test covering allclose/
+  isclose/arithmetic/printing on both tiled and untiled `FlowArray`s. Workaround in
+  tests for now: `np.asarray(envir.flow[i])` before array-wide numpy calls.
+- [ ] **FTLE gives wrong values on dyload** (found while adapting `test_analysis`).
+  Simple-shear closed-form FTLE should be ln(φ)≈0.481; dyload returns ≈1.818 (~3.8×).
+  `test_FTLE_simple_shear_closed_form`, `test_backward_FTLE_steady_shear_closed_form`,
+  `test_FTLE_forward_vs_backward_differ_time_dependent_shear` all fail; uniform-flow
+  FTLE (==0) and the scope-guard tests pass. `calculate_FTLE` is byte-identical to
+  mvbnd's (only API-adapted), and vorticity on the same flow is correct — so the bug is
+  in the **FluidData trajectory-integration / flow-interpolation path** the FTLE advect
+  uses, not the FTLE math. Investigate `get_fluid_drift`/`interpolate_temporal_flow`
+  through `FluidData` during FTLE advection.
 - [ ] **`FluidData.fmin`/`fmax` are generators, not values.** Built as generator
   *expressions* (`fluid.py:1069-1070`) then re-bound in `update_spline` as
   `(min(self.fmin[n], ...) for ...)` (`fluid.py:1206-1207, 1266-1267`) — subscripts a

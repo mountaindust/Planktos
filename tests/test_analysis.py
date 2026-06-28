@@ -30,10 +30,12 @@ def _shear_FTLE(A, T=1.0):
 
 def _make_envir(x, y, vx, vy):
     '''2D Environment with a hand-built static flow. flow_points[i] indexes axis i
-    of the flow arrays (the convention get_2D_vorticity uses; the bare flow=
-    constructor path stores them transposed, so set them explicitly).'''
+    of the flow arrays (the convention get_vorticity uses). On dyload flow_points
+    lives on the FluidData object (envir.flow); set it explicitly because the
+    constructor builds a uniform grid, while the non-uniform cases need the actual
+    coordinates.'''
     envir = planktos.Environment(Lx=float(x[-1]), Ly=float(y[-1]), flow=[vx, vy])
-    envir.flow_points = (x, y)
+    envir.flow.flow_points = (x, y)
     return envir
 
 
@@ -53,7 +55,7 @@ def grid(request):
 def test_vorticity_solid_body_rotation(grid):
     '''v = (-y, x): vorticity = dv_y/dx - dv_x/dy = 1 - (-1) = 2 everywhere.'''
     x, y, X, Y = grid
-    vort = _make_envir(x, y, -Y, X).get_2D_vorticity()
+    vort = _make_envir(x, y, -Y, X).get_vorticity()
     assert vort.shape == X.shape
     assert np.allclose(vort, 2.0, atol=1e-10)
 
@@ -62,7 +64,7 @@ def test_vorticity_shear(grid):
     '''v = (a*y, 0): vorticity = -a everywhere.'''
     x, y, X, Y = grid
     a = 1.7
-    assert np.allclose(_make_envir(x, y, a * Y, np.zeros_like(Y)).get_2D_vorticity(),
+    assert np.allclose(_make_envir(x, y, a * Y, np.zeros_like(Y)).get_vorticity(),
                        -a, atol=1e-10)
 
 
@@ -70,18 +72,18 @@ def test_vorticity_general_linear(grid):
     '''v = (a*y, b*x): vorticity = b - a everywhere.'''
     x, y, X, Y = grid
     a, b = 3.0, 2.0
-    assert np.allclose(_make_envir(x, y, a * Y, b * X).get_2D_vorticity(),
+    assert np.allclose(_make_envir(x, y, a * Y, b * X).get_vorticity(),
                        b - a, atol=1e-10)
 
 
 def test_vorticity_on_nonsquare_constructor_flow():
-    '''get_2D_vorticity must work on a non-square flow built via the constructor
+    '''get_vorticity must work on a non-square flow built via the constructor
     (regression: it previously raised due to swapped flow_points).'''
     nx, ny = 12, 9
     x = np.linspace(0, 10, nx); y = np.linspace(0, 8, ny)
     X, Y = np.meshgrid(x, y, indexing='ij')
     envir = planktos.Environment(Lx=10, Ly=8, flow=[-Y, X])   # solid-body rotation
-    vort = envir.get_2D_vorticity()
+    vort = envir.get_vorticity()
     assert vort.shape == (nx, ny)
     assert np.allclose(vort, 2.0, atol=1e-10)
 

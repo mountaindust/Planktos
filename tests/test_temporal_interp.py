@@ -1,9 +1,11 @@
 '''Tests for temporal interpolation of fluid data (planktos.fluid).
 
-create_temporal_interpolations replaces each flow array with an fCubicSpline (a
-CubicSpline subclass that also remembers the original data's shape and extrema).
-Cubic spline interpolation is exact for polynomials up to degree 3, so feeding it a
-known cubic-in-time gives a machine-precision known answer. Self-contained.
+On dyload each flow array is replaced with an fCubicSpline (a CubicSpline subclass
+that also remembers the original data's shape and extrema); FluidData.__init__ does
+this internally when given time-varying data (mvbnd's standalone
+create_temporal_interpolations helper was absorbed into FluidData). Cubic spline
+interpolation is exact for polynomials up to degree 3, so feeding it a known
+cubic-in-time gives a machine-precision known answer. Self-contained.
 '''
 
 import numpy as np
@@ -27,18 +29,20 @@ def cubic_flow():
     return t, flow, cubic
 
 
-def test_create_temporal_interpolations_builds_fcubicspline(cubic_flow):
+def test_fluiddata_splines_time_varying_into_fcubicsplines(cubic_flow):
+    # FluidData replaces each time-varying flow component with an fCubicSpline
+    # (the dyload equivalent of mvbnd's create_temporal_interpolations).
     t, flow, _ = cubic_flow
-    data = [flow.copy(), flow.copy()]
-    out = fluid.create_temporal_interpolations(t.copy(), data)
-    assert out is data                                # replaced in place
-    assert all(isinstance(s, fluid.fCubicSpline) for s in out)
-    assert out[0].shape == flow.shape
+    nx, ny = flow.shape[1], flow.shape[2]
+    fpoints = (np.linspace(0.0, 1.0, nx), np.linspace(0.0, 1.0, ny))
+    fd = fluid.FluidData([flow.copy(), flow.copy()], fpoints, flow_times=t.copy())
+    assert all(isinstance(s, fluid.fCubicSpline) for s in fd._flow)
+    assert fd._flow[0].shape == flow.shape
 
 
 def test_spline_reproduces_known_cubic(cubic_flow):
     t, flow, cubic = cubic_flow
-    sp = fluid.create_temporal_interpolations(t.copy(), [flow.copy()])[0]
+    sp = fluid.fCubicSpline(t.copy(), flow.copy())
     for tt in (0.7, 2.3, 4.9):                        # off-node times
         assert np.allclose(sp(tt), cubic(tt), atol=1e-12)
 
