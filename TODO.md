@@ -151,11 +151,11 @@ points still used). Inherited blockers from the overhaul's notes:
 
 ## Inherited follow-ups from the mvbnd overhaul (non-blocking) 🟢
 
-- [ ] **`motion.RK45` calling convention is fragile** (shape mismatch when called
-  outside the swarm path). If it's meant to be public, give it a clear contract + unit
-  test; otherwise underscore it.
-- [ ] **Plotting smoke tests.** No `plot_*` method is tested; a few Agg-backend
-  "runs without error" smokes would cheaply catch common breakage.
+- [x] **`motion.RK45` contract** — DONE on mvbnd (commit `890113b`), merged in: public
+  contract pinned with tests (`test_agent_models.py`) + docstring clarified. Passes on dyload.
+- [x] **Plotting smoke tests** — DONE on mvbnd (commit `a013dbd`), merged in:
+  `test_plotting_smoke.py` (Agg-backend "runs without error" smokes). Adapted the 2
+  `flow_points` setters to `flow.flow_points`; passes/skips on dyload (headless).
 - [ ] **Backward FTLE for non-tracer models** is intentionally unsupported (reverse-time
   dissipative blow-up). Needs a stabilized/adjoint approach if ever wanted.
 - [ ] **Diffusion-statistics test** (`test_agent_models.py::test_brownian_diffusion_statistics`)

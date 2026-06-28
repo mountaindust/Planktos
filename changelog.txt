@@ -60,8 +60,8 @@ automated coverage of the moving immersed-boundary import. The new tests
 uncovered four latent bugs; all four are now fixed with regression tests (the
 sticky moving-boundary NaN, the closest_dist zero-length crash, the
 save_fluid/save_2D_vorticity pyvista breakage, and backward-time FTLE, all listed
-above), so the suite has no remaining xfails. A few non-blocking follow-ups remain
-(see TODO.md), e.g. full moving-immersed-boundary support in FTLE.
+above), so the suite has no remaining xfails. A few non-blocking follow-ups remain,
+e.g. full moving-immersed-boundary support in FTLE.
 
 
 0.7.0
