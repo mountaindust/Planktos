@@ -37,10 +37,15 @@ def RK45(fun, t0, y0, tf, **kwargs):
     Runge-Kutta Dormand-Prince [1]_ solver (variable time-step solver) by default.
     It offers a more robust solution than the former, custom implementation.
     
-    The passed in ode function (fun) must have call signature (t,x) where x is 
-    a 2-D array with a number of columns equal to the spatial dimension.
-    The solver will run to tf and then return. It is expected that boundary 
-    conditions will be checked after this routine within a Swarm object before 
+    The passed in ode function (fun) must have call signature (t,x) where x is
+    a 2-D array with a number of columns equal to the spatial dimension. The
+    number of rows is arbitrary and need not equal the agent count: use N rows
+    (one per agent) for a first-order system, or stack positions on velocities
+    as a 2N-row state for a second-order system (as inertial_particles and
+    Environment.calculate_FTLE do). RK45 returns the final state with the same
+    shape as y0.
+    The solver will run to tf and then return. It is expected that boundary
+    conditions will be checked after this routine within a Swarm object before
     the next time step.
 
     Keyword arguments will be passed to solve_ivp. Important ones include 

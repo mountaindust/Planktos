@@ -29,10 +29,6 @@ The items below are **non-blocking follow-ups** — relative priority only.
   Static 3D coverage is in place: the project-and-slide on hand-built triangle
   meshes (`test_collisions_static_3d.py`) and the end-to-end load-an-STL-and-run-
   agents path (`test_collisions_stl_3d.py`, generated cube fixture).
-- **`motion.RK45` direct calling convention** is fragile (shape mismatch when used
-  outside the swarm path). The agent-model tests use the documented
-  `Euler_brownian_motion(self, dt, ode=...)` pattern instead. If `RK45` is meant to
-  be public, give it a clear contract + a unit test; otherwise underscore it.
 - **Diffusion statistics test** (`test_agent_models.py::test_brownian_diffusion_statistics`)
   uses 20k agents with a fixed seed and ~10% tolerance. If it ever proves flaky,
   tighten the seed/agent count rather than the tolerance.
