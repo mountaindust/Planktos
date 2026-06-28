@@ -30,7 +30,7 @@ The user has explicitly asked for help **remembering to maintain the version
 number and the changelog** — these are easy to forget. Be proactive about it:
 
 - The version lives in `planktos/__init__.py` (`__version__`); `setup.cfg` reads
-  it via `attr: planktos.__version__`. The current development version is `1.0.0`.
+  it via `attr: planktos.__version__`. The current development version is `1.1.0`.
 - `changelog.txt` is hand-maintained, terse, and grouped by version. When a
   change is user-facing, prompt to add an entry under the appropriate version.
 - When work looks release-worthy (or a user-facing change lands) but the version
