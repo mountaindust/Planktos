@@ -93,12 +93,12 @@ def test_IBAMR_load_single_time():
     envir.set_boundary_conditions(('zero', 'zero'), ('zero', 'zero'), ('noflux', 'noflux'))
 
     assert len(envir.L) == 3 and len(envir.bndry) == 3
-    assert envir.flow_times is None
+    assert envir.flow.flow_times is None
     assert len(envir.flow) == 3 and len(envir.flow[0].shape) == 3
     assert envir.flow[0].shape == envir.flow[1].shape == envir.flow[2].shape
-    assert [envir.flow_points[d][0] for d in range(3)] == [0, 0, 0]
-    assert [envir.flow_points[d][-1] for d in range(3)] == envir.L
-    assert [envir.flow[0].shape[d] for d in range(3)] == [len(envir.flow_points[d]) for d in range(3)]
+    assert [envir.flow.flow_points[d][0] for d in range(3)] == [0, 0, 0]
+    assert [envir.flow.flow_points[d][-1] for d in range(3)] == envir.L
+    assert [envir.flow[0].shape[d] for d in range(3)] == [len(envir.flow.flow_points[d]) for d in range(3)]
     assert envir.h_p is None and envir.time == 0.0 and envir.time_history == []
 
     envir.add_swarm(init='random')
@@ -115,11 +115,11 @@ def test_IBAMR_load_time_series():
     envir.read_IBAMR3d_vtk_data(IBAMR_PATH, d_start=3, d_finish=None)
     envir.set_boundary_conditions(('zero', 'zero'), ('zero', 'zero'), ('noflux', 'noflux'))
 
-    assert len(envir.flow_times) == 3
-    assert envir.flow_times[0] == 0 and envir.flow_times[1] == 2 and envir.flow_times[2] == 4
+    assert len(envir.flow.flow_times) == 3
+    assert envir.flow.flow_times[0] == 0 and envir.flow.flow_times[1] == 2 and envir.flow.flow_times[2] == 4
     assert len(envir.flow[0].shape) == 4                       # time + 3 space
-    assert envir.flow[0].shape[0] == len(envir.flow_times)
-    assert [envir.flow[0].shape[d] for d in range(1, 4)] == [len(envir.flow_points[d]) for d in range(3)]
+    assert envir.flow[0].shape[0] == len(envir.flow.flow_times)
+    assert [envir.flow[0].shape[d] for d in range(1, 4)] == [len(envir.flow.flow_points[d]) for d in range(3)]
 
     envir.add_swarm(init='random')
     sw = envir.swarms[0]
@@ -147,9 +147,9 @@ def test_vtu_load():
     envir.read_comsol_vtu_data(pathname, vel_conv=1000)
     envir.set_boundary_conditions(('zero', 'zero'), ('zero', 'zero'), ('noflux', 'noflux'))
 
-    assert len(envir.L) == 3 and envir.flow_times is None
+    assert len(envir.L) == 3 and envir.flow.flow_times is None
     assert len(envir.flow) == 3 and len(envir.flow[0].shape) == 3
-    assert [envir.flow_points[d][-1] for d in range(3)] == envir.L
+    assert [envir.flow.flow_points[d][-1] for d in range(3)] == envir.L
     assert envir.time == 0.0
 
 
@@ -179,10 +179,12 @@ def test_save_fluid_static_2D_roundtrips(tmp_path):
     envir.save_fluid(str(tmp_path), 'flow')
     assert (tmp_path / 'flow.vtk').is_file()                      # single static file
     data, mesh, _ = _dataio.read_vtk_Rectilinear_Grid_Vector(str(tmp_path / 'flow.vtk'))
-    assert np.allclose(data[0][:, :, 0], envir.flow[0])          # u, orientation preserved
-    assert np.allclose(data[1][:, :, 0], envir.flow[1])          # v
-    assert np.allclose(mesh[0], envir.flow_points[0])            # origin-centered coords
-    assert np.allclose(mesh[1], envir.flow_points[1])
+    # np.asarray strips the FlowArray view (array-wide np.allclose misreads a
+    # FlowArray buffer; see TODO.md Phase 0).
+    assert np.allclose(data[0][:, :, 0], np.asarray(envir.flow[0]))   # u, orientation preserved
+    assert np.allclose(data[1][:, :, 0], np.asarray(envir.flow[1]))   # v
+    assert np.allclose(mesh[0], envir.flow.flow_points[0])            # origin-centered coords
+    assert np.allclose(mesh[1], envir.flow.flow_points[1])
     assert mesh[0][0] == 0.0 and mesh[1][0] == 0.0
 
 
@@ -192,11 +194,11 @@ def test_save_fluid_time_varying_2D_roundtrips(tmp_path):
                             dpdx=np.ones(8) * 0.22306, res=11, tspan=[0, 10])
     envir.save_fluid(str(tmp_path), 'flow', time_history=False, flow_times=True)
     files = sorted(tmp_path.glob('flow_*.vtk'))
-    assert len(files) == len(envir.flow_times)                   # one file per flow time
+    assert len(files) == len(envir.flow.flow_times)                   # one file per flow time
     data, _, t = _dataio.read_vtk_Rectilinear_Grid_Vector(str(tmp_path / 'flow_0003.vtk'))
-    expect = envir.interpolate_temporal_flow(time=envir.flow_times[3])
+    expect = envir.interpolate_temporal_flow(time=envir.flow.flow_times[3])
     assert np.allclose(data[0][:, :, 0], expect[0])
-    assert np.isclose(t, envir.flow_times[3])
+    assert np.isclose(t, envir.flow.flow_times[3])
 
 
 def test_save_fluid_static_3D_roundtrips(tmp_path):
@@ -204,8 +206,9 @@ def test_save_fluid_static_3D_roundtrips(tmp_path):
     envir.set_brinkman_flow(alpha=66, h_p=6, U=5, dpdx=0.22306, res=9)
     envir.save_fluid(str(tmp_path), 'flow3d')
     data, mesh, _ = _dataio.read_vtk_Rectilinear_Grid_Vector(str(tmp_path / 'flow3d.vtk'))
-    assert all(np.allclose(data[i], envir.flow[i]) for i in range(3))
-    assert all(np.allclose(mesh[i], envir.flow_points[i]) for i in range(3))
+    # np.asarray strips the FlowArray view (see TODO.md Phase 0).
+    assert all(np.allclose(data[i], np.asarray(envir.flow[i])) for i in range(3))
+    assert all(np.allclose(mesh[i], envir.flow.flow_points[i]) for i in range(3))
 
 
 def test_save_2D_vorticity_static_roundtrips(tmp_path):
@@ -214,7 +217,7 @@ def test_save_2D_vorticity_static_roundtrips(tmp_path):
     x = np.linspace(0, 10, n); y = np.linspace(0, 8, n)
     X, Y = np.meshgrid(x, y, indexing='ij')
     envir = planktos.Environment(Lx=10, Ly=8, flow=[-Y, X])
-    envir.flow_points = (x, y)
+    envir.flow.flow_points = (x, y)
     envir.save_2D_vorticity(str(tmp_path), 'vort')
     assert (tmp_path / 'vort.vtk').is_file()
     vort = _read_scalar_vtk(tmp_path / 'vort.vtk')

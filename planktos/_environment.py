@@ -2905,10 +2905,21 @@ class Environment:
             velocity data is explicitly specified.
         '''
 
+        # The writer expects coordinate arrays (flow_points), not domain lengths.
+        flow_points = self.flow.flow_points
+
+        # Static flow: a single file, no temporal interpolation. (The time-varying
+        # vorticity accessors assume a time axis and error when flow_times is None.)
+        if self.flow.flow_times is None:
+            vort = self.get_vorticity()
+            _dataio.write_vtk_2D_rectilinear_grid_scalars(
+                path, name, vort, flow_points, None, self.time)
+            return
+
         if time_history:
             for cyc, time in enumerate(self.time_history):
                 vort = self.get_vorticity(t_indx=cyc)
-                _dataio.write_vtk_2D_rectilinear_grid_scalars(path, name, vort, self.L, cyc, time)
+                _dataio.write_vtk_2D_rectilinear_grid_scalars(path, name, vort, flow_points, cyc, time)
             cycle = len(self.time_history)
         else:
             cycle = None
@@ -2919,10 +2930,10 @@ class Environment:
                 out_name = name
             for cyc, time in enumerate(self.flow.flow_times):
                 vort = self.get_vorticity(t_n=cyc)
-                _dataio.write_vtk_2D_rectilinear_grid_scalars(path, out_name, vort, self.L, cyc, time)
+                _dataio.write_vtk_2D_rectilinear_grid_scalars(path, out_name, vort, flow_points, cyc, time)
         if time_history or not flow_times:
             vort = self.get_vorticity(time=self.time)
-            _dataio.write_vtk_2D_rectilinear_grid_scalars(path, name, vort, self.L, cycle, self.time)
+            _dataio.write_vtk_2D_rectilinear_grid_scalars(path, name, vort, flow_points, cycle, self.time)
 
 
 
@@ -2945,10 +2956,23 @@ class Environment:
             explicitly specified.
         '''
 
+        # The writer expects coordinate arrays (flow_points), not domain lengths.
+        flow_points = self.flow.flow_points
+
+        # Static flow: a single file, no temporal interpolation
+        # (interpolate_temporal_flow assumes a time axis and errors when
+        # flow_times is None). np.asarray strips the FlowArray view so the writer
+        # gets plain ndarrays.
+        if self.flow.flow_times is None:
+            static_flow = [np.asarray(self.flow[n]) for n in range(len(self.flow))]
+            _dataio.write_vtk_rectilinear_grid_vectors(
+                path, name, static_flow, flow_points, None, self.time)
+            return
+
         if time_history:
             for cyc, time in enumerate(self.time_history):
                 flow = self.interpolate_temporal_flow(t_index=cyc)
-                _dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, self.L, cyc, time)
+                _dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, flow_points, cyc, time)
             cycle = len(self.time_history)
         else:
             cycle = None
@@ -2959,10 +2983,10 @@ class Environment:
                 out_name = name
             for cyc, time in enumerate(self.flow.flow_times):
                 flow = self.interpolate_temporal_flow(time=time)
-                _dataio.write_vtk_rectilinear_grid_vectors(path, out_name, flow, self.L, cyc, time)
+                _dataio.write_vtk_rectilinear_grid_vectors(path, out_name, flow, flow_points, cyc, time)
         if time_history or not flow_times:
             flow = self.interpolate_temporal_flow(time=self.time)
-            _dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, self.L, cycle, self.time)
+            _dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, flow_points, cycle, self.time)
 
 
 

@@ -44,10 +44,13 @@ Common renames: `envir.flow_points`→`envir.flow.flow_points`,
   `flow.flow_points`; 14 passed). **3 FTLE *value* tests still fail — a real bug, not a
   rename** (see real-bugs below). Still TODO: **add the 3D vorticity known-answer test**
   the overhaul deferred to the dyload merge (`FluidData.get_vorticity` supports 3D).
-- [ ] **`test_io_loaders.py`** (IBAMR load, save_fluid, save_2D_vorticity static).
-  Renames for `flow.flow_times`. **(port)** Static-flow `save_fluid` / `save_2D_vorticity`
-  was deferred during the merge — port mvbnd's static-flow-save support to the
-  `FluidData` API so the static roundtrip tests pass.
+- [x] **`test_io_loaders.py`** — DONE (10 passed, 1 skipped; COMSOL `@vtu` skip).
+  Renames (`flow.flow_times`/`flow.flow_points`) fixed the 2 IBAMR loads. **Source fix:**
+  `save_fluid`/`save_2D_vorticity` were latently broken on dyload — they passed `self.L`
+  (domain lengths) to writers that expect coordinate arrays, and had no static-flow
+  guard. Corrected to pass `self.flow.flow_points` + a static guard (this also fixes the
+  earlier merge resolution, which had restored dyload's broken versions). Two static
+  asserts use the `np.asarray` FlowArray workaround.
 - [ ] **`test_material_derivative.py`** + **(real bug)** fix the 3D `calculate_DuDt`
   broadcast error (`fluid.py:1422-1477`): `get_dudt(time)` returns a full-time-series
   array instead of a single-time field in 3D.
