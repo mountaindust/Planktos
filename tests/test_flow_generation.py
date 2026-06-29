@@ -158,3 +158,40 @@ def test_canopy_flow_3D_time_dependent_physics():
     assert np.all(envir.flow[0][-1, :, :, -1] > envir.flow[0][-1, :, :, 15]), "increase with z"
     assert np.all(envir.flow[0][-1, :, :, -1] > envir.flow[0][-2, :, :, -1]), "increase over time"
     assert np.all(envir.flow[0][0, 0, :, -1] == envir.flow[0][0, -1, :, -1]), "constant in x"
+
+
+# --------------------------------------------------------------------------- #
+#                 flow periodicity at the domain edge (regression)             #
+# --------------------------------------------------------------------------- #
+# FluidData defaults to NON-periodic. Periodic interpolation wraps the upper grid
+# edge to the lower edge (y=L -> y=0 via positions % L), so for a non-periodic
+# shear u=(a*y, 0) the velocity at the exact upper edge must be the data value
+# a*L, not the wrapped value u_x(y=0)=0. (This wraparound at y=L was what corrupted
+# the FTLE boundary row; see tests/test_analysis.py.) Flow periodicity is
+# independent of the agent boundary conditions.
+
+def test_flow_non_periodic_by_default_at_upper_edge():
+    a, n = 1.0, 11
+    x = y = np.linspace(0, 10, n)
+    Y = np.meshgrid(x, y, indexing='ij')[1]
+    edge = np.array([[5.0, 10.0]])               # exact upper (y) edge
+
+    envir = planktos.Environment(Lx=10, Ly=10, flow=[a * Y, np.zeros_like(Y)])
+    assert envir.flow.periodic_dim == (False, False)
+    swrm = planktos.Swarm(swarm_size=1, envir=envir, init=edge, seed=1)
+    u_x = np.asarray(swrm.get_fluid_drift(0.0, swrm.positions))[0, 0]
+    assert np.isclose(u_x, a * 10.0)             # data value at the edge, no wrap
+
+
+def test_flow_periodic_dim_true_wraps_upper_edge():
+    a, n = 1.0, 11
+    x = y = np.linspace(0, 10, n)
+    Y = np.meshgrid(x, y, indexing='ij')[1]
+    edge = np.array([[5.0, 10.0]])
+
+    envir = planktos.Environment(Lx=10, Ly=10, flow=[a * Y, np.zeros_like(Y)],
+                                 periodic_dim=True)
+    assert envir.flow.periodic_dim == (True, True)
+    swrm = planktos.Swarm(swarm_size=1, envir=envir, init=edge, seed=1)
+    u_x = np.asarray(swrm.get_fluid_drift(0.0, swrm.positions))[0, 0]
+    assert np.isclose(u_x, 0.0)                  # y=L wraps to y=0 where u_x=0

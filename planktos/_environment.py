@@ -90,8 +90,13 @@ class Environment:
         times at which the fluid velocity is specified (as indexed by t in the 
         first dimension of each of the fluid ndarrays).
     flow_times : (float, float) or increasing iterable of floats, optional
-        (tstart, tend) or iterable of times at which the fluid velocity 
+        (tstart, tend) or iterable of times at which the fluid velocity
         is specified or scalar dt; required if flow is time-dependent.
+    periodic_dim : bool or tuple of bool, default=False
+        whether the fluid data (passed via flow) is periodic in each spatial
+        dimension. Governs how the flow is interpolated at the domain edges and
+        is independent of the agent boundary conditions (x_bndry/y_bndry/z_bndry).
+        Only applies to the flow= path; the data loaders set this themselves.
     rho : float, optional
         fluid density of environment, kg/m**3 (optional, m here meaning length units).
         Auto-calculated if mu and nu are provided.
@@ -213,8 +218,8 @@ class Environment:
 
     def __init__(self, Lx=10, Ly=10, Lz=None,
                  x_bndry='zero', y_bndry='zero', z_bndry='noflux', flow=None,
-                 flow_times=None, rho=None, mu=None, nu=None, char_L=None, 
-                 U=None, init_swarms=None, units='m', ibmesh_color=None):
+                 flow_times=None, periodic_dim=False, rho=None, mu=None, nu=None,
+                 char_L=None, U=None, init_swarms=None, units='m', ibmesh_color=None):
 
         # Save domain size, units
         if Lz is None:
@@ -260,7 +265,8 @@ class Environment:
                     assert flow_times is None, "flow_times provided but fluid data is not time varying"
             flow_points, flow_times = self._get_flow_variables(flow[0].shape,
                                                                flow_times)
-            self.flow = fluid.FluidData(flow, flow_points, flow_times)
+            self.flow = fluid.FluidData(flow, flow_points, flow_times,
+                                        periodic_dim=periodic_dim)
         else:
             self.flow = None
 
@@ -420,7 +426,8 @@ class Environment:
     #######################################################################
 
 
-    def set_brinkman_flow(self, alpha, h_p, U, dpdx, res=101, tspan=None):
+    def set_brinkman_flow(self, alpha, h_p, U, dpdx, res=101, tspan=None,
+                          periodic_dim=False):
         r'''Get a fully developed Brinkman flow with a porous region.
 
         This method sets the environment fluid velocity as a 1D Brinkman flow 
@@ -454,10 +461,15 @@ class Environment:
             resolution of the flow; that is, number of points at which to 
             resolve the flow, including boundaries
         tspan : [float, float] or iterable of floats, optional
-            corresponds to [tstart, tend] (start time and end time with an 
-            evenly spaced time mesh) or an iterable of times at which flow is 
-            specified in the case of a time-varying flow field. if not specified 
+            corresponds to [tstart, tend] (start time and end time with an
+            evenly spaced time mesh) or an iterable of times at which flow is
+            specified in the case of a time-varying flow field. if not specified
             and U/dpdx are iterable, dt=1 will be used with a start time of zero.
+        periodic_dim : bool or tuple of bool, default=False
+            whether the generated flow is periodic in each spatial dimension
+            (governs interpolation at the domain edges; independent of the agent
+            boundary conditions). Brinkman flow is wall-bounded, so the default is
+            non-periodic.
 
         Examples
         --------
@@ -582,7 +594,8 @@ class Environment:
                 flow = flow.T
                 flow_points, flow_times = self._get_flow_variables(flow.shape)
                 self.flow = fluid.FluidData([flow, np.zeros_like(flow)],
-                                            flow_points, flow_times)
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
             else:
                 #time-dependent; (t,y,x)-> (t,x,y) coordinates
                 flow = np.transpose(flow, axes=(0, 2, 1))
@@ -591,7 +604,8 @@ class Environment:
                 else:
                     flow_points, flow_times = self._get_flow_variables(flow.shape, tspan=tspan)
                 self.flow = fluid.FluidData([flow, np.zeros_like(flow)],
-                                            flow_points, flow_times)
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
                 
         else:
             # 3D
@@ -601,7 +615,8 @@ class Environment:
                 flow = np.transpose(flow, axes=(2, 0, 1)) #(x,y,z)
                 flow_points, flow_times = self._get_flow_variables(flow.shape)
                 self.flow = fluid.FluidData([flow, np.zeros_like(flow), np.zeros_like(flow)],
-                                            flow_points, flow_times)
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
             else:
                 # (t,z,x) -> (t,z,y,x) coordinates
                 flow = np.broadcast_to(flow, (res,flow.shape[0],res,res)) #(y,t,z,x)
@@ -611,13 +626,14 @@ class Environment:
                 else:
                     flow_points, flow_times = self._get_flow_variables(flow.shape, tspan=tspan)
                 self.flow = fluid.FluidData([flow, np.zeros_like(flow), np.zeros_like(flow)],
-                                            flow_points, flow_times)
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
         self._reset_flow_variables()
         self.h_p = h_p
 
 
 
-    def set_two_layer_channel_flow(self, a, h_p, Cd, S, res=101):
+    def set_two_layer_channel_flow(self, a, h_p, Cd, S, res=101, periodic_dim=False):
         '''Apply wide-channel flow with vegetation layer according to the
         two-layer model described in Defina and Bixio (2005), 
         "Vegetated Open Channel Flow" [3]_. 
@@ -637,8 +653,12 @@ class Environment:
             drag coefficient, assumed uniform (unitless)
         S : float 
             bottom slope (unitless, 0-1 with 0 being no slope, resulting in no flow)
-        res : int 
+        res : int
             number of points at which to resolve the flow, including boundaries
+        periodic_dim : bool or tuple of bool, default=False
+            whether the generated flow is periodic in each spatial dimension
+            (governs interpolation at the domain edges; independent of the agent
+            boundary conditions).
 
         See Also
         --------
@@ -703,12 +723,14 @@ class Environment:
         if len(self.L) == 2:
             # 2D
             self.flow = fluid.FluidData([np.broadcast_to(u,(res,res)), np.zeros((res,res))],
-                                        flow_points, flow_times)
+                                        flow_points, flow_times,
+                                        periodic_dim=periodic_dim)
         else:
             # 3D
-            self.flow = fluid.FluidData([np.broadcast_to(u,(res,res,res)), 
+            self.flow = fluid.FluidData([np.broadcast_to(u,(res,res,res)),
                                          np.zeros((res,res,res)), np.zeros((res,res,res))],
-                                         flow_points, flow_times)
+                                         flow_points, flow_times,
+                                         periodic_dim=periodic_dim)
 
         # housekeeping
         self._reset_flow_variables()
@@ -717,7 +739,7 @@ class Environment:
 
 
     def set_canopy_flow(self, h, a, u_star=None, U_h=None, beta=0.3, C=0.25,
-                        res=101, tspan=None):
+                        res=101, tspan=None, periodic_dim=False):
         '''
         Apply flow within and above a uniform homogenous canopy according to 
         the model described in Finnigan and Belcher (2004), "Flow over a hill 
@@ -750,6 +772,10 @@ class Environment:
         tspan : [float, float] or iterable of floats, optional
             [tstart, tend] or iterable of times at which flow is specified
             if None and u_star, U_h, and/or beta are iterable, dt=1 will be used.
+        periodic_dim : bool or tuple of bool, default=False
+            whether the generated flow is periodic in each spatial dimension
+            (governs interpolation at the domain edges; independent of the agent
+            boundary conditions).
 
         See Also
         --------
@@ -892,13 +918,15 @@ class Environment:
                 flow_points, flow_times = self._get_flow_variables((res,res))
                 flow = np.broadcast_to(U_B,(res,res))
                 self.flow = fluid.FluidData([flow, np.zeros_like(flow)],
-                                            flow_points, flow_times)
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
             else:
                 # 3D
                 flow_points, flow_times = self._get_flow_variables((res,res,res))
                 flow = np.broadcast_to(U_B,(res,res,res))
                 self.flow = fluid.FluidData([flow, np.zeros_like(flow), np.zeros_like(flow)],
-                                            flow_points, flow_times)
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
         else:
             # time dependent
             if tspan is None:
@@ -911,7 +939,8 @@ class Environment:
                 flow = np.transpose(flow, axes=(1, 0, 2))
                 flow_points, flow_times = self._get_flow_variables(flow.shape,tspan)
                 self.flow = fluid.FluidData([flow, np.zeros_like(flow)],
-                                            flow_points, flow_times)
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
             else:
                 # 3D
                 # broadcast from (t,y) -> (x,y,t,z)
@@ -920,7 +949,8 @@ class Environment:
                 flow = np.transpose(flow, axes=(2,0,1,3))
                 flow_points, flow_times = self._get_flow_variables(flow.shape,tspan)
                 self.flow = fluid.FluidData([flow, np.zeros_like(flow), np.zeros_like(flow)],
-                                            flow_points, flow_times)
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
 
 
         # housekeeping

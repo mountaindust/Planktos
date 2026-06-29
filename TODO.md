@@ -40,10 +40,10 @@ Common renames: `envir.flow_points`→`envir.flow.flow_points`,
 - [x] **`test_temporal_interp.py`** — DONE (7 passed). `create_temporal_interpolations`
   is gone on dyload (absorbed into `FluidData`); rewrote the two tests against
   `FluidData` / `fCubicSpline` directly, keeping the off-node cubic-reproduction check.
-- [~] **`test_analysis.py`** — vorticity DONE (renamed to `get_vorticity`,
-  `flow.flow_points`; 14 passed). **3 FTLE *value* tests still fail — a real bug, not a
-  rename** (see real-bugs below). Still TODO: **add the 3D vorticity known-answer test**
-  the overhaul deferred to the dyload merge (`FluidData.get_vorticity` supports 3D).
+- [x] **`test_analysis.py`** — DONE (17 passed). Vorticity renamed to `get_vorticity`/
+  `flow.flow_points`; the 3 FTLE value tests now pass after the periodic-default fix
+  (below). Still TODO (not a failure): **add the 3D vorticity known-answer test** the
+  overhaul deferred to the dyload merge (`FluidData.get_vorticity` supports 3D).
 - [x] **`test_io_loaders.py`** — DONE (10 passed, 1 skipped; COMSOL `@vtu` skip).
   Renames (`flow.flow_times`/`flow.flow_points`) fixed the 2 IBAMR loads. **Source fix:**
   `save_fluid`/`save_2D_vorticity` were latently broken on dyload — they passed `self.L`
@@ -76,15 +76,20 @@ Common renames: `envir.flow_points`→`envir.flow.flow_points`,
   carefully (delicate view/tiling machinery) with a dedicated test covering allclose/
   isclose/arithmetic/printing on both tiled and untiled `FlowArray`s. Workaround in
   tests for now: `np.asarray(envir.flow[i])` before array-wide numpy calls.
-- [ ] **FTLE gives wrong values on dyload** (found while adapting `test_analysis`).
-  Simple-shear closed-form FTLE should be ln(φ)≈0.481; dyload returns ≈1.818 (~3.8×).
-  `test_FTLE_simple_shear_closed_form`, `test_backward_FTLE_steady_shear_closed_form`,
-  `test_FTLE_forward_vs_backward_differ_time_dependent_shear` all fail; uniform-flow
-  FTLE (==0) and the scope-guard tests pass. `calculate_FTLE` is byte-identical to
-  mvbnd's (only API-adapted), and vorticity on the same flow is correct — so the bug is
-  in the **FluidData trajectory-integration / flow-interpolation path** the FTLE advect
-  uses, not the FTLE math. Investigate `get_fluid_drift`/`interpolate_temporal_flow`
-  through `FluidData` during FTLE advection.
+- [x] **FTLE wrong values — DONE.** Root cause was **not** the FTLE math (byte-identical
+  to mvbnd) but a **periodic-by-default** bug: `FluidData` defaulted `periodic_dim=True`,
+  and the bare `flow=` constructor + analytic setters never overrode it, so every such
+  flow was treated as periodic. `interpolate_flow` then wraps the upper grid edge to the
+  lower (`pos % flow_points[-1]`, so `y=L → y=0`); FTLE seeds tracer particles exactly on
+  the domain edge, so the top-edge seeds (max velocity) read `u_x(y=0)=0`, never advected/
+  exited, and corrupted the boundary-row flow-map gradient → spurious large FTLE that
+  `nanmax` picked up. **Fix (Approach 1):** default `FluidData.periodic_dim=False`; thread
+  a `periodic_dim` kwarg through `Environment(flow=...)` and the analytic setters; loaders
+  keep their explicit values (IB2d `True`, VTK3d `(T,T,F)`, COMSOL `(F,F,F)`, NetCDF
+  `False`). Periodicity stays independent of `bndry`. Regression tests:
+  `test_flow_{non_periodic_by_default,periodic_dim_true_wraps}_at_upper_edge`; the FTLE
+  closed-forms now pass. NB: this was a general latent bug (any flow sampled exactly at
+  the upper/right edge), not FTLE-specific — FTLE just exposed it.
 - [ ] **`FluidData.fmin`/`fmax` are generators, not values.** Built as generator
   *expressions* (`fluid.py:1069-1070`) then re-bound in `update_spline` as
   `(min(self.fmin[n], ...) for ...)` (`fluid.py:1206-1207, 1266-1267`) — subscripts a
