@@ -144,3 +144,53 @@ def test_sticky_moving_axis_aligned_wall_stops_on_wall(orient):
     assert idx is not None
     assert newend[axis] <= 6.0 + POS_ATOL, "penetrated past the wall's final position"
     assert np.allclose(newend, expected, atol=POS_ATOL)
+
+
+# --------------------------------------------------------------------------- #
+#       golden multi-step trajectory (drift detector for moving collisions)    #
+# --------------------------------------------------------------------------- #
+# The cases above are single-step known answers. This pins a full deterministic
+# multi-step Swarm.move() run through a translating wall (h.run_moving_golden) so
+# any unintended change in the moving-collision behavior shows up as a diff. The
+# baseline was generated from the trusted code and independently satisfies the
+# no-penetration invariant (asserted separately below, so the lock is not purely
+# circular). Regenerate GOLDEN_SLIDING only after a deliberate, reviewed change.
+
+GOLDEN_SLIDING = np.array([
+    [[4.00000000, 3.00000000], [4.00000000, 7.00000000], [2.00000000, 5.00000000], [6.00000000, 5.00000000]],
+    [[5.00000000, 3.00000000], [4.80000000, 7.40000000], [2.30000000, 5.00000000], [6.20000000, 5.00000000]],
+    [[6.00000000, 3.00000000], [5.60000000, 7.80000000], [2.60000000, 5.00000000], [6.40000000, 5.00000000]],
+    [[6.49999000, 3.00000000], [6.40000000, 8.20000000], [2.90000000, 5.00000000], [6.60000000, 5.00000000]],
+    [[6.99990000, 3.00000000], [6.99990000, 8.60000000], [3.20000000, 5.00000000], [7.00001000, 5.00000000]],
+    [[7.49990000, 3.00000000], [7.49990000, 9.00000000], [3.50000000, 5.00000000], [7.50010000, 5.00000000]],
+    [[7.99990000, 3.00000000], [7.99990000, 9.40000000], [3.80000000, 5.00000000], [8.00010000, 5.00000000]],
+])
+
+
+def test_moving_golden_trajectory_matches_baseline():
+    traj = h.run_moving_golden('sliding')
+    assert traj.shape == GOLDEN_SLIDING.shape
+    assert np.allclose(traj, GOLDEN_SLIDING, atol=1e-6), \
+        "moving-collision trajectory drifted from the pinned baseline"
+
+
+def test_moving_golden_trajectory_no_penetration():
+    # Independent of the pinned values: agents 0-2 start left of the wall and
+    # must stay on the near side at every recorded step; agent 3 starts on the
+    # far side and must stay there as the wall sweeps past it.
+    cfg = h.GOLDEN_MOVING
+    traj = h.run_moving_golden('sliding')
+    started_left = np.array(cfg['init'])[:, 0] < cfg['wall_x0']
+    for k in range(traj.shape[0]):
+        wall = h.golden_moving_wall_x(k * cfg['dt'])
+        x = traj[k, :, 0]
+        assert np.all(x[started_left] <= wall + POS_ATOL), \
+            f"near-side agent penetrated the wall at step {k}"
+        assert np.all(x[~started_left] >= wall - POS_ATOL), \
+            f"far-side agent penetrated the wall at step {k}"
+
+
+def test_moving_golden_trajectory_is_deterministic():
+    # No RNG/flow: two runs must be bit-for-bit identical.
+    assert np.array_equal(h.run_moving_golden('sliding'),
+                          h.run_moving_golden('sliding'))

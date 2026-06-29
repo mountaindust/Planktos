@@ -257,3 +257,61 @@ def run_moving(pool=None):
 
 # Map scenario name -> runner, for convenience in tests/generator.
 SCENARIOS = {'static': run_static, 'moving': run_moving}
+
+
+# ---- golden moving-boundary trajectory (deterministic; drift detector) -----
+# A small, fully deterministic multi-step run through a translating wall, pinned
+# as a baseline in test_collisions_moving.py. No RNG and no flow (agents advance
+# by a fixed per-agent velocity), so the trajectory is reproducible to FP and any
+# change is a genuine drift in the moving-collision code. The four agents cover:
+#   0: catches the wall head-on and rides it,
+#   1: catches the wall and slides tangentially (+y) along it,
+#   2: trails the wall and never makes contact (control),
+#   3: starts ahead of the wall and is swept/pushed by it from behind.
+# Changing any value here invalidates the pinned baseline.
+
+GOLDEN_MOVING = dict(
+    M=20, n_steps=6, dt=1.0, wall_x0=5.0, wall_x1=8.0, y_lo=0.5, y_hi=9.5,
+    init=[[4.0, 3.0], [4.0, 7.0], [2.0, 5.0], [6.0, 5.0]],
+    drift=[[1.0, 0.0], [0.8, 0.4], [0.3, 0.0], [0.2, 0.0]],
+)
+
+
+class _ConstDriftSwarm(planktos.Swarm):
+    '''Agents advance by a fixed per-agent velocity (self._drift) each step,
+    ignoring flow and diffusion -- a deterministic driver for the golden lock.'''
+    def apply_agent_model(self, dt):
+        return self.positions + self._drift * dt
+
+
+def golden_moving_wall_x(t):
+    '''Analytic x-position of the translating golden wall at time t (linear in
+    time between the two snapshots).'''
+    c = GOLDEN_MOVING
+    frac = t / (c['n_steps'] * c['dt'])
+    return c['wall_x0'] + (c['wall_x1'] - c['wall_x0']) * frac
+
+
+def run_moving_golden(ib_collisions='sliding'):
+    '''Deterministic multi-step trajectory of GOLDEN_MOVING['init'] agents
+    interacting with a wall translating wall_x0 -> wall_x1. Returns the
+    (n_steps+1, N, 2) trajectory (masked entries -> NaN).'''
+    c = GOLDEN_MOVING
+    envir = planktos.Environment(Lx=10, Ly=10, x_bndry='noflux', y_bndry='noflux',
+                                 flow=[np.zeros((5, 5)), np.zeros((5, 5))])
+    base = wall_segments(c['M'], 0.0, y_lo=c['y_lo'], y_hi=c['y_hi'])
+    mesh = np.zeros((2, c['M'], 2, 2))
+    for ti, xpos in enumerate((c['wall_x0'], c['wall_x1'])):
+        mesh[ti] = base
+        mesh[ti, :, 0, 0] = xpos
+        mesh[ti, :, 1, 0] = xpos
+    envir.ibmesh = mesh
+    envir.ibmesh_times = np.array([0.0, c['n_steps'] * c['dt']])
+    envir.max_meshpt_dist = max_meshpt_dist(base)
+
+    swrm = _ConstDriftSwarm(swarm_size=len(c['init']), envir=envir,
+                            init=np.array(c['init'], float), seed=1)
+    swrm._drift = np.array(c['drift'], float)
+    for _ in range(c['n_steps']):
+        swrm.move(c['dt'], ib_collisions=ib_collisions, silent=True)
+    return np.stack([np.ma.filled(p, np.nan) for p in swrm.full_pos_history])

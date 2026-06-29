@@ -167,3 +167,63 @@ def test_massive_particle_models_run_deterministically(cls, kwargs, dim):
     assert a.shape[1] == dim
     assert np.isfinite(a[~np.isnan(a)]).all(), "produced non-finite positions"
     assert np.array_equal(a, b, equal_nan=True), "not reproducible under a fixed seed"
+
+
+# --------------------------------------------------------------------------- #
+#                 motion.RK45 solver (public deterministic ODE)               #
+# --------------------------------------------------------------------------- #
+# RK45 wraps scipy.integrate.solve_ivp and is part of the public motion API
+# (used by Environment.calculate_FTLE and documented for custom agent models).
+# Contract: y0 is a 2D (rows, D) array, fun(t, y) maps (rows, D) -> (rows, D),
+# and RK45 returns the state at tf with the same shape. `rows` is arbitrary -- N
+# for a first-order system, or 2N when stacking positions on velocities for a
+# second-order one. Keyword args pass through to solve_ivp. These pin that
+# contract with closed-form ODEs and no Swarm involved.
+
+def test_rk45_linear_growth_matches_closed_form():
+    # dy/dt = a*y  ->  y(tf) = y0*exp(a*tf), preserving the (N, D) shape.
+    a, tf = 0.5, 2.0
+    y0 = np.array([[1.0, 2.0], [3.0, -1.0]])
+    y = motion.RK45(lambda t, x: a * x, 0.0, y0, tf, rtol=1e-8, atol=1e-10)
+    assert y.shape == y0.shape
+    assert np.allclose(y, y0 * np.exp(a * tf), atol=1e-6)
+
+
+def test_rk45_constant_velocity_is_exact():
+    # dy/dt = c  ->  y(tf) = y0 + c*tf (RK integrates a degree-1 polynomial exactly).
+    c = np.array([[1.0, -2.0, 0.5]])
+    y0 = np.array([[10.0, 10.0, 10.0]])
+    y = motion.RK45(lambda t, x: np.broadcast_to(c, x.shape), 0.0, y0, 3.0)
+    assert np.allclose(y, y0 + c * 3.0, atol=1e-8)
+
+
+def test_rk45_second_order_system_uses_2NxD_state():
+    # The inertial-particle / FTLE stacking: state = [positions; velocities] as a
+    # 2NxD array, dx/dt = [vel; -w^2 pos] (a harmonic oscillator), no Swarm.
+    w, N = 2.0, 2
+    pos0 = np.array([[1.0], [0.5]]); vel0 = np.array([[0.0], [1.0]])
+    state0 = np.concatenate((pos0, vel0))                  # (2N, D)
+
+    def osc(t, s):
+        n = s.shape[0] // 2
+        return np.concatenate((s[n:], -w**2 * s[:n]))
+
+    sf = motion.RK45(osc, 0.0, state0, 1.0, rtol=1e-9, atol=1e-12)
+    assert sf.shape == state0.shape
+    assert np.allclose(sf[:N], pos0 * np.cos(w) + (vel0 / w) * np.sin(w), atol=1e-6)
+    assert np.allclose(sf[N:], -pos0 * w * np.sin(w) + vel0 * np.cos(w), atol=1e-6)
+
+
+def test_rk45_tolerance_kwargs_passed_to_solver():
+    # Tightening rtol/atol (forwarded to solve_ivp) reduces the integration error.
+    a, tf = 1.0, 1.0
+    y0 = np.array([[1.0]])
+    exact = y0[0, 0] * np.exp(a * tf)
+    loose = motion.RK45(lambda t, x: a * x, 0.0, y0, tf, rtol=1e-2, atol=1e-4)
+    tight = motion.RK45(lambda t, x: a * x, 0.0, y0, tf, rtol=1e-10, atol=1e-12)
+    assert abs(tight[0, 0] - exact) < abs(loose[0, 0] - exact)
+
+
+def test_rk45_rejects_non_2d_initial_state():
+    with pytest.raises(TypeError):
+        motion.RK45(lambda t, x: x, 0.0, np.array([1.0, 2.0]), 1.0)
