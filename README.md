@@ -6,11 +6,11 @@ can be considered negligable. This is an active research project and work is ong
 
 Check out the online documentation at https://planktos.readthedocs.io.\
 
-If you use this software in your project, please cite the following paper:  
-Strickland, W.C., Battista, N.A., Hamlet, C.L., Miller, L.A. (2022). Planktos: An agent-based modeling framework for small organism movement and dispersal in a fluid environment with immersed structures. *Bulletin of Mathematical Biology*, 84(72).  
+**If you use this software in your project, please cite the following paper:**  
+- Strickland, W.C., Battista, N.A., Hamlet, C.L., Miller, L.A. (2022). Planktos: An agent-based modeling framework for small organism movement and dispersal in a fluid environment with immersed structures. *Bulletin of Mathematical Biology*, 84(72).  
 
 Additionally, the documentation can be sited as:  
-Strickland, W.C. (2017). *Planktos agent-based modeling framework, software documentation*. https://planktos.readthedocs.io.
+- Strickland, W.C. (2017). *Planktos agent-based modeling framework, software documentation*. https://planktos.readthedocs.io.
 
 A suggested BibTeX entry for both of these is included in the file Planktos.bib.
 
@@ -40,7 +40,7 @@ ffmpeg version 4.3.1 Copyright (c) 2000-2020 the FFmpeg developers
 ### Installing Planktos
 
 Once FFmpeg is installed, Planktos can be installed from source using `pip` on 
-Python >= 3.7 from the Planktos directory. Navigate to the Planktos directory in 
+Python >= 3.8 from the Planktos directory. Navigate to the Planktos directory in 
 a terminal and use the command:
 
 ```
@@ -79,17 +79,18 @@ $ conda install -c conda-forge mamba
 ```
 Having done that, the dependencies are as follows:
 
-- Python 3.7+ 
-- numpy/scipy
-- matplotlib 3.x
+- Python 3.8+ 
+- numpy >= 1.19
+- scipy >= 1.10.1 (earlier versions have a broken interpn)
+- matplotlib >= 3.0
 - pandas
-- vtk (if loading vtk data, get from conda-forge and use mamba. conda seems to 
+- vtk >= 9.2 (if loading vtk data, get from conda-forge and use mamba. conda seems to 
 break itself trying to install vtk for some reason, and takes an hour to try and 
 solve the dependencies in the process.)
-- pyvista (if saving vtk data, get from conda-forge and use mamba. same problem 
+- pyvista >= 0.44 (if saving vtk data, get from conda-forge and use mamba. same problem 
 as for vtk.)
-- numpy-stl (if loading stl data, get from conda-forge)
-- netCDF4 (if loading netCDF data, comes standard with an Anaconda installation)
+- numpy-stl >= 2.16.3 (if loading stl data, get from conda-forge)
+- netCDF4 >= 1.5.7 (if loading netCDF data, comes standard with an Anaconda installation)
 - pytest (if running tests)
 
 If you want to use the supplied script to convert data from IBAMR into vtk, you will also need a Python 2.7 environment with numpy and VisIt installed (VisIt's Python API is written in
@@ -101,44 +102,63 @@ This requires installation of the optional pytest package.
 
 ## Overview
 Currently, Planktos has built-in capabilities to load either time-independent or 
-time-dependent 2D or 3D fluid velocity data specified on a regular mesh. ASCII 
+time-dependent 2D or 3D fluid velocity data specified on a rectilinear mesh. ASCII 
 vtk format is supported, as well as ASCII vtu files from COMSOL (single-time 
 data only) and NetCDF. More regular grid formats, especially if part of open-source 
 formats, may be supported in the future; please contact the author (cstric12@utk.edu) 
 if you have a format you would like to see supported. A few analytical, 1D flow 
 fields are also available and can be generated in either 2D or 3D environments; 
 these include Brinkman flow, two layer channel flow, and canopy flow. Flow fields 
-can also be extended and tiled in simple ways as appropriate. Mesh data must be 
-time-invariant and loaded via IB2d/IBAMR-style vertex data (2D) or via stl file 
-in 3D. Again, more (open source) formats may be considered if requested.
+can also be extended and tiled in simple ways as appropriate. 2D immersed boundary 
+data can be static or moving and is loaded via IB2d/IBAMR-style vertex data. 3D mesh 
+data must be time-invariant and specified as an STL file/ More (open source) formats 
+may be considered if requested.
 
 For agents, there is support for multiple species (Swarms) along with individual 
 variation though a Pandas Dataframe property of the Swarm class (Swarm.props). 
 Individual agents have access to the local flow field through interpolation of 
 the spatial-temporal fluid velocity grid - specifically, Planktos implements a 
-cubic spline in time with linear interpolation in space 
-(**Future: tricubic spline in space**). In addition to more custom behavior, 
+cubic spline in time with linear interpolation in space. In addition to more custom behavior, 
 included in Planktos is an Ito SDE solver (Euler-Maruyama method) for movement 
 specified as an SDE of the type dX_t = \mu dt + \sigma dW_t and an inertial 
 particle behavior for dynamics described by the linearized Maxey-Riley equation 
 (Haller and Sapsis, 2008). These two may be combined, and other, user-supplied 
 ODEs can also be fed into the drift term of the Ito SDE. Finally, agents will 
-treat immersed boundary meshes as solid barriers. Upon encountering an immersed 
-mesh boundary, any remaining movement will be projected onto the mesh. Both 
-concanve and convex mesh joints are supported, and pains have been taken to make 
-the projection algorithm as numerically stable as possible.
+treat immersed boundary meshes as solid barriers. The way an agent responds upon 
+encountering a mesh is configurable per Swarm via `ib_condition` (and per move 
+via `move(..., ib_collisions=...)`):
+- `'sliding'` (the default): there is no flux normal to the boundary, and any 
+remaining movement for that step is projected onto the mesh (a recursive vector 
+projection that handles being slid into further boundaries).
+- `'sticky'`: the agent stops at the point of intersection for that step. Sticky 
+interactions are supported on moving boundaries as well as static ones.
+- `None`: immersed boundaries are ignored entirely.
+
+Both concave and convex mesh joints are supported, and pains have been taken to 
+make the projection algorithm as numerically stable as possible. Parallelization 
+on per-agent immersed-boundary collision detection has been implemented and is 
+demonstrated in a moving immersed boundary example. Some analysis tools are also 
+available, including 2D vorticity visualization and FTLE calculation.
 
 Single-time and animation plotting of results is available in 2D and 3D; support 
 for plotting multiple agent species together has not yet been implemented.
 
 ## Quickstart
 
-There are several working examples in the examples folder, including a 2D simulation, 
-a 2D simulation demonstrating individual variation, a 3D simulation, 
-a simulation utilizing vtk data obtained from IBAMR which is located in the 
-tests/IBAMR_test_data folder, and a simulation demonstrating subclassing of the apply_agent_model method for user-defined agent behavior. There are also two examples demonstrating how to import vertex data (from IB2d and IBAMR), automatically
-create immersed boundaries out of this data, and then simulate agent movement with these meshes as solid boundaries which the agents respect. More examples will be added as functionality is added. To run any of these examples, change your working directory 
-to the examples directory and then run the desired script.
+There are several working examples in the examples folder, including basic 2D and 
+3D simulations, a 2D simulation demonstrating individual variation, a simulation 
+utilizing vtk data obtained from IBAMR which is located in the tests/IBAMR_test_data 
+folder, and simulations demonstrating subclassing of the apply_agent_model method 
+for user-defined agent behavior (e.g. the 2D and 3D Vicsek models). Several examples 
+demonstrate how to import vertex data (from IB2d and IBAMR), automatically create 
+immersed boundaries out of this data, and then simulate agent movement with these 
+meshes as solid boundaries which the agents respect, including both sliding and 
+sticky interactions in 2D and 3D. In particular, ex_ib2d_mvbnd_sticky.py is the 
+showcase for **2D moving immersed boundaries** (it requires externally downloaded 
+data; see the file header for the link). There are also examples demonstrating 
+FTLE computation and intermittent search strategies. More examples will be added 
+as functionality is added. To run any of these examples, change your working 
+directory to the examples directory and then run the desired script.
 
 An important note about immersed boundary meshes: it is assumed that segments
 of the boundary do not cross except at vertices. This is to keep computational
@@ -164,6 +184,7 @@ Research that utilizes this framework can be seen in:
 - Ozalp, Miller, Dombrowski, Braye, Dix, Pongracz, Howell, Klotsa, Pasour, 
 Strickland (2020). Experiments and agent based models of zooplankton movement 
 within complex flow environments, *Biomimetics*, 5(1), 2.
+- Strickland, Battista, Hamlet, Miller (2022). *Planktos*: an agent-based modeling framework for small organism movement and dispersal in a fluid environment with immersed structures, *Bulletin of Mathematical Biology*, 84(72).
 
 ## API
 Class: Environment
