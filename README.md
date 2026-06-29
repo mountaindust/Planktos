@@ -111,7 +111,7 @@ fields are also available and can be generated in either 2D or 3D environments;
 these include Brinkman flow, two layer channel flow, and canopy flow. Flow fields 
 can also be extended and tiled in simple ways as appropriate. 2D immersed boundary 
 data can be static or moving and is loaded via IB2d/IBAMR-style vertex data. 3D mesh 
-data must be time-invariant and specified as an STL file/ More (open source) formats 
+data must be time-invariant and specified as an STL file. More (open source) formats 
 may be considered if requested.
 
 For agents, there is support for multiple species (Swarms) along with individual 
