@@ -11,10 +11,12 @@ onto agent positions is exact to machine precision. Cubic-spline-in-time
 interpolation reproduces a flow that is linear in time exactly, so its time
 derivative is exact too. Every case below therefore has a closed-form answer.
 
-Flow arrays are built by hand with indexing='ij' and flow_points are set
-explicitly (the bare flow= constructor stores them transposed) so that axis i of
-each flow array is indexed by flow_points[i] -- the convention np.gradient and
-interpolate_flow expect.
+Flow arrays are built by hand with indexing='ij' and flow_points (which live on
+the FluidData object at Environment.flow on dyload) are set explicitly so that
+axis i of each flow array is indexed by flow_points[i] -- the convention
+np.gradient and interpolate_flow expect. The grids here are uniform, so this just
+mirrors what the constructor builds; setting it explicitly keeps the helpers
+correct for non-uniform grids too.
 '''
 
 import numpy as np
@@ -29,14 +31,14 @@ import planktos
 def _envir_2d(x, y, vx, vy, flow_times=None):
     envir = planktos.Environment(Lx=float(x[-1]), Ly=float(y[-1]),
                                  flow=[vx, vy], flow_times=flow_times)
-    envir.flow_points = (x, y)
+    envir.flow.flow_points = (x, y)
     return envir
 
 
 def _envir_3d(x, y, z, vx, vy, vz):
     envir = planktos.Environment(Lx=float(x[-1]), Ly=float(y[-1]), Lz=float(z[-1]),
                                  flow=[vx, vy, vz])
-    envir.flow_points = (x, y, z)
+    envir.flow.flow_points = (x, y, z)
     return envir
 
 
@@ -139,3 +141,38 @@ def test_DuDt_3d_steady_straining_flow():
                                 a**2 * PTS_3D[:, 1],
                                 4 * a**2 * PTS_3D[:, 2]])
     assert np.allclose(swrm.get_DuDt(positions=PTS_3D), expected, atol=1e-9)
+
+
+# --------------------------------------------------------------------------- #
+#                  du/dt time-boundary handling (regression)                   #
+# --------------------------------------------------------------------------- #
+
+def test_dudt_time_boundaries_and_extrapolation():
+    # u = (b t, 0), times in [0, 4]. du/dt = b inside AND at the data endpoints
+    # (the spline derivative is defined there); constant extrapolation gives
+    # du/dt = 0 strictly beyond the ends. Pins two bugs in FluidData.get_dudt's
+    # out-of-range branch: (1) it used <=/>= so it spuriously zeroed the
+    # derivative *at* t0/tN, and (2) it built the zeros with the full fshape
+    # (including the time axis) instead of a single-time NxD field, which made
+    # calculate_DuDt raise a broadcast error at a boundary time.
+    b = 0.6
+    x, y, X, Y = _grid_2d()
+    times = np.linspace(0.0, 4.0, 5)
+    u = np.stack([b * t * np.ones_like(X) for t in times])
+    v = np.zeros_like(u)
+    swrm = _swarm(_envir_2d(x, y, u, v, flow_times=times), PTS_2D)
+
+    # at the left (t=0) and right (t=4) data endpoints: du/dt = (b, 0)
+    for t_end in (0.0, 4.0):
+        d = swrm.get_dudt(positions=PTS_2D, time=t_end)
+        assert d.shape == PTS_2D.shape
+        assert np.allclose(d[:, 0], b, atol=1e-9)
+        assert np.allclose(d[:, 1], 0.0, atol=1e-9)
+
+    # strictly beyond the ends: constant extrapolation -> zero derivative,
+    # and Du/Dt there is the convective term only (here zero, uniform flow)
+    for t_out in (-1.0, 5.0):
+        d = swrm.get_dudt(positions=PTS_2D, time=t_out)
+        assert d.shape == PTS_2D.shape
+        assert np.allclose(d, 0.0, atol=1e-9)
+        assert np.allclose(swrm.get_DuDt(positions=PTS_2D, time=t_out), 0.0, atol=1e-9)

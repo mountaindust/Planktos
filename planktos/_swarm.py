@@ -1255,7 +1255,7 @@ class Swarm:
         if positions is None:
             positions = self.positions
 
-        return self.envir.interpolate_flow(positions, self.envir.dudt(time=time), 
+        return self.envir.interpolate_flow(positions, self.envir.get_dudt(time=time),
                                            method='linear')
 
 

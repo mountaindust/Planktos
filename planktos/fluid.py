@@ -1391,9 +1391,14 @@ class FluidData:
             warnings.warn("Flow is time-invariant; returning zero derivative.")
             return [np.zeros(self.fshape) for ii in range(len(self))]
         
-        # Constant extrapolation beyond full time bounds
-        if time <= self.flow_times[0] or time >= self.flow_times[-1]:
-            return [np.zeros(self.fshape) for ii in range(len(self))]
+        # Constant extrapolation strictly beyond the data's time bounds: the
+        # velocity is held constant there, so du/dt = 0. At the endpoints
+        # themselves the spline derivative is well-defined, so use strict
+        # inequalities. fshape[1:] drops the leading time axis, giving a single-
+        # time field per component (fshape includes the time axis for time-
+        # varying flow).
+        if time < self.flow_times[0] or time > self.flow_times[-1]:
+            return [np.zeros(self.fshape[1:]) for ii in range(len(self))]
         else:
             dudt_list = []
             # ensure the relevant data is loaded

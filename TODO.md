@@ -51,11 +51,19 @@ Common renames: `envir.flow_points`→`envir.flow.flow_points`,
   guard. Corrected to pass `self.flow.flow_points` + a static guard (this also fixes the
   earlier merge resolution, which had restored dyload's broken versions). Two static
   asserts use the `np.asarray` FlowArray workaround.
-- [ ] **`test_material_derivative.py`** + **(real bug)** fix the 3D `calculate_DuDt`
-  broadcast error (`fluid.py:1422-1477`): `get_dudt(time)` returns a full-time-series
-  array instead of a single-time field in 3D.
-- [ ] **`test_agent_models.py`** massive-particle (LowRe) failures — triage rename vs
-  the `calculate_DuDt`/`highRe_massive_drift` path (likely tied to the DuDt bug above).
+- [x] **`test_material_derivative.py` + `test_agent_models.py` massive-particle** — DONE.
+  Was **not** a 3D broadcast bug (that label came from the old `test_massive_physics`);
+  the focused tests pinpointed two real, dimension-agnostic bugs, both fixed:
+  - **(A)** `Swarm.get_dudt` called `self.envir.dudt(...)`, but dyload renamed that to
+    `Environment.get_dudt` (a leftover-rename from the FluidData move that came in via
+    the mvbnd merge) → `AttributeError`. Fixed `_swarm.py` to call `get_dudt`.
+  - **(B)** `FluidData.get_dudt`'s out-of-range branch (`fluid.py`) was wrong two ways:
+    it used `<=`/`>=` (spuriously zeroing the derivative *at* the data endpoints t0/tN)
+    and built the zeros with `self.fshape` (which includes the time axis for time-varying
+    flow) → a time-series-shaped array that broadcast-failed in `calculate_DuDt` at a
+    boundary time. Fixed to strict `<`/`>` and `self.fshape[1:]`.
+  - Added `test_dudt_time_boundaries_and_extrapolation` pinning endpoint + extrapolation
+    behavior; updated the file's helpers to `envir.flow.flow_points` (dyload API).
 
 ### Other real bugs that matter (fix in Phase 0)
 
