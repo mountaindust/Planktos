@@ -38,6 +38,17 @@ number and the changelog** — these are easy to forget. Be proactive about it:
 - Do NOT bump the version or rewrite the changelog silently — surface the need
   and let the user decide (a version bump is a semver judgment call).
 
+**Changelog style (strict):**
+
+- **Length:** each entry ≤ 180 characters, and ≤ 100 in most cases.
+- **Say what changed, not the story.** No details about *what happened* and no
+  *how the bug was found*. State the user-facing effect only.
+- **Skip regression fixes entirely.** If it worked on `master`, we broke it in
+  dev, and we fixed it back, it does NOT go in the changelog.
+- **Lump minor edge-case fixes.** Small bug fixes for edge cases we only found by
+  running a test get collapsed into a single line: `- other minor bug fixes`.
+  Do not give them individual entries.
+
 ## What Planktos is
 
 Planktos is an **agent-based modeling framework** for simulating the movement and

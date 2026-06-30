@@ -1,20 +1,11 @@
 1.1.0
 -----------------------
-Dynamic loading of 2D and 3D fluid velocity data!
-This allows simulations with a highly resolved fluid where RAM constraints
-are a major issue.
-- New FluidData class with subclasses for different data sources
-- ALL loaded fluid data is now a FluidData instance
-- New FlowArray subclass of ndarray provides memory-efficient view on periodic flows and tiles.
-    fCubicSplines also has this capability.
-- Fluid data handling is gone from Environment and in new fluid library
-- tile_flow is now tile_domain in Environment, with main implementation now a method of FluidData
-    TODO: make this a setter of FluidData.tiling, make a note in IBAMR ex that you can tile just the 
-    fluid by setting the tiling property of FluidData. But then you need to make Environment.L and 
-    similar stuff dynamically update off of FluidData.
-- TODO: test dynamic loading
-- Environment.extend was removed. Could be added back if there is demand, but implementation 
-    is now complicated.
+Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids where RAM is a constraint.
+- New FluidData class (per-source subclasses); all loaded fluid data is now a FluidData instance.
+- Fluid data handling moved out of Environment into a new fluid module.
+- New FlowArray ndarray subclass: memory-efficient view for periodic flows/tiles (fCubicSpline too).
+- tile_flow is now Environment.tile_domain (implemented on FluidData).
+- Environment.extend was removed.
 
 
 1.0.0
