@@ -90,8 +90,13 @@ class Environment:
         times at which the fluid velocity is specified (as indexed by t in the 
         first dimension of each of the fluid ndarrays).
     flow_times : (float, float) or increasing iterable of floats, optional
-        (tstart, tend) or iterable of times at which the fluid velocity 
+        (tstart, tend) or iterable of times at which the fluid velocity
         is specified or scalar dt; required if flow is time-dependent.
+    periodic_dim : bool or tuple of bool, default=False
+        whether the fluid data (passed via flow) is periodic in each spatial
+        dimension. Governs how the flow is interpolated at the domain edges and
+        is independent of the agent boundary conditions (x_bndry/y_bndry/z_bndry).
+        Only applies to the flow= path; the data loaders set this themselves.
     rho : float, optional
         fluid density of environment, kg/m**3 (optional, m here meaning length units).
         Auto-calculated if mu and nu are provided.
@@ -176,10 +181,13 @@ class Environment:
         List of argument tuples to be passed to plot_structs functions, after 
         ax (the plot axis object) is passed
     FTLE_largest : ndarray
-        FTLE field calculated using the largest eigenvalue
+        FTLE field calculated using the largest eigenvalue. Holds the
+        backward-time field when calculate_FTLE was called with backward=True.
     FTLE_smallest : ndarray
-        FTLE field calculated using the smallest eigenvalue. take the negative 
-        of this to get backward-time information
+        FTLE field calculated using the smallest eigenvalue (the contraction
+        exponent of the forward map). NOTE: this is NOT backward-time FTLE -- for
+        incompressible flow it is identically -FTLE_largest. For a true
+        backward-time field, call calculate_FTLE(..., backward=True).
     FTLE_loc : Nx2 masked ndarray
         spatial points on which the FTLE mesh was calculated
     FTLE_loc_end : Nx2 masked ndarray
@@ -210,8 +218,8 @@ class Environment:
 
     def __init__(self, Lx=10, Ly=10, Lz=None,
                  x_bndry='zero', y_bndry='zero', z_bndry='noflux', flow=None,
-                 flow_times=None, rho=None, mu=None, nu=None, char_L=None, 
-                 U=None, init_swarms=None, units='m', ibmesh_color=None):
+                 flow_times=None, periodic_dim=False, rho=None, mu=None, nu=None,
+                 char_L=None, U=None, init_swarms=None, units='m', ibmesh_color=None):
 
         # Save domain size, units
         if Lz is None:
@@ -257,7 +265,8 @@ class Environment:
                     assert flow_times is None, "flow_times provided but fluid data is not time varying"
             flow_points, flow_times = self._get_flow_variables(flow[0].shape,
                                                                flow_times)
-            self.flow = fluid.FluidData(flow, flow_points, flow_times)
+            self.flow = fluid.FluidData(flow, flow_points, flow_times,
+                                        periodic_dim=periodic_dim)
         else:
             self.flow = None
 
@@ -340,12 +349,13 @@ class Environment:
 
         ##### FTLE fields #####
         self.FTLE_largest = None
-        self.FTLE_smallest = None # take negative to get backward-time picture
+        self.FTLE_smallest = None # contraction exponent; NOT backward-time FTLE
         self.FTLE_loc = None
         self.FTLE_loc_end = None
         self.FTLE_t0 = None
         self.FTLE_T = None
         self.FTLE_grid_dim = None
+        self.FTLE_backward = None # whether the stored FTLE field is backward-time
 
 
 
@@ -416,7 +426,8 @@ class Environment:
     #######################################################################
 
 
-    def set_brinkman_flow(self, alpha, h_p, U, dpdx, res=101, tspan=None):
+    def set_brinkman_flow(self, alpha, h_p, U, dpdx, res=101, tspan=None,
+                          periodic_dim=False):
         r'''Get a fully developed Brinkman flow with a porous region.
 
         This method sets the environment fluid velocity as a 1D Brinkman flow 
@@ -450,10 +461,15 @@ class Environment:
             resolution of the flow; that is, number of points at which to 
             resolve the flow, including boundaries
         tspan : [float, float] or iterable of floats, optional
-            corresponds to [tstart, tend] (start time and end time with an 
-            evenly spaced time mesh) or an iterable of times at which flow is 
-            specified in the case of a time-varying flow field. if not specified 
+            corresponds to [tstart, tend] (start time and end time with an
+            evenly spaced time mesh) or an iterable of times at which flow is
+            specified in the case of a time-varying flow field. if not specified
             and U/dpdx are iterable, dt=1 will be used with a start time of zero.
+        periodic_dim : bool or tuple of bool, default=False
+            whether the generated flow is periodic in each spatial dimension
+            (governs interpolation at the domain edges; independent of the agent
+            boundary conditions). Brinkman flow is wall-bounded, so the default is
+            non-periodic.
 
         Examples
         --------
@@ -578,7 +594,8 @@ class Environment:
                 flow = flow.T
                 flow_points, flow_times = self._get_flow_variables(flow.shape)
                 self.flow = fluid.FluidData([flow, np.zeros_like(flow)],
-                                            flow_points, flow_times)
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
             else:
                 #time-dependent; (t,y,x)-> (t,x,y) coordinates
                 flow = np.transpose(flow, axes=(0, 2, 1))
@@ -587,7 +604,8 @@ class Environment:
                 else:
                     flow_points, flow_times = self._get_flow_variables(flow.shape, tspan=tspan)
                 self.flow = fluid.FluidData([flow, np.zeros_like(flow)],
-                                            flow_points, flow_times)
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
                 
         else:
             # 3D
@@ -597,7 +615,8 @@ class Environment:
                 flow = np.transpose(flow, axes=(2, 0, 1)) #(x,y,z)
                 flow_points, flow_times = self._get_flow_variables(flow.shape)
                 self.flow = fluid.FluidData([flow, np.zeros_like(flow), np.zeros_like(flow)],
-                                            flow_points, flow_times)
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
             else:
                 # (t,z,x) -> (t,z,y,x) coordinates
                 flow = np.broadcast_to(flow, (res,flow.shape[0],res,res)) #(y,t,z,x)
@@ -607,13 +626,14 @@ class Environment:
                 else:
                     flow_points, flow_times = self._get_flow_variables(flow.shape, tspan=tspan)
                 self.flow = fluid.FluidData([flow, np.zeros_like(flow), np.zeros_like(flow)],
-                                            flow_points, flow_times)
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
         self._reset_flow_variables()
         self.h_p = h_p
 
 
 
-    def set_two_layer_channel_flow(self, a, h_p, Cd, S, res=101):
+    def set_two_layer_channel_flow(self, a, h_p, Cd, S, res=101, periodic_dim=False):
         '''Apply wide-channel flow with vegetation layer according to the
         two-layer model described in Defina and Bixio (2005), 
         "Vegetated Open Channel Flow" [3]_. 
@@ -633,8 +653,12 @@ class Environment:
             drag coefficient, assumed uniform (unitless)
         S : float 
             bottom slope (unitless, 0-1 with 0 being no slope, resulting in no flow)
-        res : int 
+        res : int
             number of points at which to resolve the flow, including boundaries
+        periodic_dim : bool or tuple of bool, default=False
+            whether the generated flow is periodic in each spatial dimension
+            (governs interpolation at the domain edges; independent of the agent
+            boundary conditions).
 
         See Also
         --------
@@ -699,12 +723,14 @@ class Environment:
         if len(self.L) == 2:
             # 2D
             self.flow = fluid.FluidData([np.broadcast_to(u,(res,res)), np.zeros((res,res))],
-                                        flow_points, flow_times)
+                                        flow_points, flow_times,
+                                        periodic_dim=periodic_dim)
         else:
             # 3D
-            self.flow = fluid.FluidData([np.broadcast_to(u,(res,res,res)), 
+            self.flow = fluid.FluidData([np.broadcast_to(u,(res,res,res)),
                                          np.zeros((res,res,res)), np.zeros((res,res,res))],
-                                         flow_points, flow_times)
+                                         flow_points, flow_times,
+                                         periodic_dim=periodic_dim)
 
         # housekeeping
         self._reset_flow_variables()
@@ -713,7 +739,7 @@ class Environment:
 
 
     def set_canopy_flow(self, h, a, u_star=None, U_h=None, beta=0.3, C=0.25,
-                        res=101, tspan=None):
+                        res=101, tspan=None, periodic_dim=False):
         '''
         Apply flow within and above a uniform homogenous canopy according to 
         the model described in Finnigan and Belcher (2004), "Flow over a hill 
@@ -746,6 +772,10 @@ class Environment:
         tspan : [float, float] or iterable of floats, optional
             [tstart, tend] or iterable of times at which flow is specified
             if None and u_star, U_h, and/or beta are iterable, dt=1 will be used.
+        periodic_dim : bool or tuple of bool, default=False
+            whether the generated flow is periodic in each spatial dimension
+            (governs interpolation at the domain edges; independent of the agent
+            boundary conditions).
 
         See Also
         --------
@@ -888,13 +918,15 @@ class Environment:
                 flow_points, flow_times = self._get_flow_variables((res,res))
                 flow = np.broadcast_to(U_B,(res,res))
                 self.flow = fluid.FluidData([flow, np.zeros_like(flow)],
-                                            flow_points, flow_times)
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
             else:
                 # 3D
                 flow_points, flow_times = self._get_flow_variables((res,res,res))
                 flow = np.broadcast_to(U_B,(res,res,res))
                 self.flow = fluid.FluidData([flow, np.zeros_like(flow), np.zeros_like(flow)],
-                                            flow_points, flow_times)
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
         else:
             # time dependent
             if tspan is None:
@@ -907,7 +939,8 @@ class Environment:
                 flow = np.transpose(flow, axes=(1, 0, 2))
                 flow_points, flow_times = self._get_flow_variables(flow.shape,tspan)
                 self.flow = fluid.FluidData([flow, np.zeros_like(flow)],
-                                            flow_points, flow_times)
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
             else:
                 # 3D
                 # broadcast from (t,y) -> (x,y,t,z)
@@ -916,7 +949,8 @@ class Environment:
                 flow = np.transpose(flow, axes=(2,0,1,3))
                 flow_points, flow_times = self._get_flow_variables(flow.shape,tspan)
                 self.flow = fluid.FluidData([flow, np.zeros_like(flow), np.zeros_like(flow)],
-                                            flow_points, flow_times)
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
 
 
         # housekeeping
@@ -942,18 +976,21 @@ class Environment:
             flow_times
         '''
 
-        # Get points defining the spatial grid for flow data
+        # Get points defining the spatial grid for flow data. flow_points[i] is
+        #   the coordinate array for spatial axis i over domain length L[i] -- the
+        #   convention the data loaders, interpolate_flow, get_vorticity, and
+        #   plotting assume. Spatial axes are all of fshape for static flow, or
+        #   all but the leading time axis when the flow is time-dependent.
         points = []
         if tspan is None:
             # no time-dependent flow
-            for dim, mesh_size in enumerate(fshape[::-1]):
-                points.append(np.linspace(0, self.L[dim], mesh_size))
+            spatial_shape = fshape
         else:
-            # time-dependent flow
-            bshape = fshape[:0:-1]
+            # time-dependent flow: the first axis is time
+            spatial_shape = fshape[1:]
             tlen = fshape[0]
-            for dim, mesh_size in enumerate(bshape):
-                points.append(np.linspace(0, self.L[dim], mesh_size))
+        for dim, mesh_size in enumerate(spatial_shape):
+            points.append(np.linspace(0, self.L[dim], mesh_size))
         flow_points = tuple(points)
 
         # set time
@@ -2357,8 +2394,9 @@ class Environment:
 
 
 
-    def calculate_FTLE(self, grid_dim=None, testdir=None, t0=0, T=0.1, dt=0.001, 
-                       ode_gen=None, props=None, t_bound=None, swrm=None):
+    def calculate_FTLE(self, grid_dim=None, testdir=None, t0=0, T=0.1, dt=0.001,
+                       ode_gen=None, props=None, t_bound=None, swrm=None,
+                       backward=False):
         '''Calculate the FTLE field at the given time(s) t0 with integration 
         length T on a discrete grid with given dimensions. The calculation will 
         be conducted with respect to the fluid velocity field loaded in this 
@@ -2435,14 +2473,23 @@ class Environment:
         t_bound : float, optional
             if solving ode or tracer particles, this is the bound on
             the RK45 integration step size. Defaults to dt/100.
-        swrm : Swarm object, optional 
-            Swarm object with user-defined movement rules as 
-            specified by the apply_agent_model method. This allows for arbitrary 
-            FTLE calculations through subclassing and overriding this method. 
-            Steps of length dt will be taken until the integration length T 
-            is reached. The Swarm object itself will not be altered; a shallow 
-            copy will be created for the purpose of calculating the FTLE on 
+        swrm : Swarm object, optional
+            Swarm object with user-defined movement rules as
+            specified by the apply_agent_model method. This allows for arbitrary
+            FTLE calculations through subclassing and overriding this method.
+            Steps of length dt will be taken until the integration length T
+            is reached. The Swarm object itself will not be altered; a shallow
+            copy will be created for the purpose of calculating the FTLE on
             a grid.
+        backward : bool, default=False
+            If True, compute the backward-time FTLE: integrate the flow map
+            backward over [t0, t0-(T-t0)] and store the result in FTLE_largest
+            (whose ridges are attracting LCS). Implemented as forward integration
+            of the reversed flow, so the velocity is sampled at mirrored times
+            (constant-extrapolated outside flow_times). Only supported for tracer
+            particles -- ode_gen/swrm are rejected, since reverse-time integration
+            of dissipative (e.g. inertial-particle drag) dynamics is ill-posed.
+            Moving immersed boundaries are not supported in either direction.
 
         Returns
         -------
@@ -2458,6 +2505,31 @@ class Environment:
         ###########################################################
         ######              Setup Swarm object               ######
         ###########################################################
+        ### GUARDS ###
+        # The integration extent must be positive; otherwise no steps run and the
+        #   FTLE computation would fail later on an empty position history.
+        if not T > t0:
+            raise ValueError("T must be greater than t0 (positive integration "
+                             "extent); for backward-time FTLE use backward=True "
+                             "with T > t0, not a negative T.")
+        # Backward-time FTLE is the forward integration of the reversed flow, which
+        #   is only well-posed for tracer particles. Inertial/custom dynamics are
+        #   dissipative (the drag term flips sign under time reversal and becomes
+        #   anti-dissipative), so backward integration of those is unstable.
+        if backward and (ode_gen is not None or swrm is not None):
+            raise NotImplementedError(
+                "Backward-time FTLE is only supported for tracer particles "
+                "(ode_gen=None, swrm=None). Reverse-time integration of inertial/"
+                "custom dynamics with drag is ill-posed.")
+        # FTLE does not advance self.time during integration, so a moving immersed
+        #   mesh would be silently frozen at its current-time position. Refuse
+        #   rather than return a wrong field. Static meshes (ndim 3) are fine.
+        if self.ibmesh is not None and self.ibmesh_times is not None:
+            raise NotImplementedError(
+                "FTLE does not support moving immersed boundaries (the mesh would "
+                "be frozen at its t0 position during integration). Use a static "
+                "mesh, or compute FTLE on a fluid-only copy of the environment.")
+
         if grid_dim is None:
             grid_dim = tuple(len(pts) for pts in self.flow.flow_points)
 
@@ -2512,6 +2584,14 @@ class Environment:
             else:
                 ode_fun = ode_gen(s)
                 print("Finding {}D FTLE based on supplied ODE generator.".format(len(grid_dim)))
+            if backward:
+                # Backward-time FTLE = forward integration of the reversed flow.
+                # The loop variable t still advances over [t0, T]; sample the
+                # velocity at the mirrored real time 2*t0 - t and negate it, so
+                # dx/dt = -u(x, 2*t0 - t) gives the backward flow map from t0. All
+                # downstream bookkeeping/eigenvalue code is unchanged.
+                _fwd_ode = ode_fun
+                ode_fun = lambda t, x: -_fwd_ode(2*t0 - t, x)
             print(prnt_str)
 
             # keep a list of all times solved for 
@@ -2795,6 +2875,7 @@ class Environment:
         self.FTLE_t0 = t0
         self.FTLE_T = T
         self.FTLE_grid_dim = grid_dim
+        self.FTLE_backward = backward
 
         ###### Print stats ######
         print("Out of {} total points, {} exited the domain during integration.".format(
@@ -2854,10 +2935,21 @@ class Environment:
             velocity data is explicitly specified.
         '''
 
+        # The writer expects coordinate arrays (flow_points), not domain lengths.
+        flow_points = self.flow.flow_points
+
+        # Static flow: a single file, no temporal interpolation. (The time-varying
+        # vorticity accessors assume a time axis and error when flow_times is None.)
+        if self.flow.flow_times is None:
+            vort = self.get_vorticity()
+            _dataio.write_vtk_2D_rectilinear_grid_scalars(
+                path, name, vort, flow_points, None, self.time)
+            return
+
         if time_history:
             for cyc, time in enumerate(self.time_history):
                 vort = self.get_vorticity(t_indx=cyc)
-                _dataio.write_vtk_2D_rectilinear_grid_scalars(path, name, vort, self.L, cyc, time)
+                _dataio.write_vtk_2D_rectilinear_grid_scalars(path, name, vort, flow_points, cyc, time)
             cycle = len(self.time_history)
         else:
             cycle = None
@@ -2868,10 +2960,10 @@ class Environment:
                 out_name = name
             for cyc, time in enumerate(self.flow.flow_times):
                 vort = self.get_vorticity(t_n=cyc)
-                _dataio.write_vtk_2D_rectilinear_grid_scalars(path, out_name, vort, self.L, cyc, time)
+                _dataio.write_vtk_2D_rectilinear_grid_scalars(path, out_name, vort, flow_points, cyc, time)
         if time_history or not flow_times:
             vort = self.get_vorticity(time=self.time)
-            _dataio.write_vtk_2D_rectilinear_grid_scalars(path, name, vort, self.L, cycle, self.time)
+            _dataio.write_vtk_2D_rectilinear_grid_scalars(path, name, vort, flow_points, cycle, self.time)
 
 
 
@@ -2894,10 +2986,23 @@ class Environment:
             explicitly specified.
         '''
 
+        # The writer expects coordinate arrays (flow_points), not domain lengths.
+        flow_points = self.flow.flow_points
+
+        # Static flow: a single file, no temporal interpolation
+        # (interpolate_temporal_flow assumes a time axis and errors when
+        # flow_times is None). np.asarray strips the FlowArray view so the writer
+        # gets plain ndarrays.
+        if self.flow.flow_times is None:
+            static_flow = [np.asarray(self.flow[n]) for n in range(len(self.flow))]
+            _dataio.write_vtk_rectilinear_grid_vectors(
+                path, name, static_flow, flow_points, None, self.time)
+            return
+
         if time_history:
             for cyc, time in enumerate(self.time_history):
                 flow = self.interpolate_temporal_flow(t_index=cyc)
-                _dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, self.L, cyc, time)
+                _dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, flow_points, cyc, time)
             cycle = len(self.time_history)
         else:
             cycle = None
@@ -2908,10 +3013,10 @@ class Environment:
                 out_name = name
             for cyc, time in enumerate(self.flow.flow_times):
                 flow = self.interpolate_temporal_flow(time=time)
-                _dataio.write_vtk_rectilinear_grid_vectors(path, out_name, flow, self.L, cyc, time)
+                _dataio.write_vtk_rectilinear_grid_vectors(path, out_name, flow, flow_points, cyc, time)
         if time_history or not flow_times:
             flow = self.interpolate_temporal_flow(time=self.time)
-            _dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, self.L, cycle, self.time)
+            _dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, flow_points, cycle, self.time)
 
 
 
@@ -3533,10 +3638,14 @@ class Environment:
         Parameters
         ----------
         smallest : bool, default=False
-            If true, plot the negative, smallest, forward-time FTLE as 
-            a way of identifying attracting Lagrangian Coherent Structures (see 
-            Haller and Sapsis 2011). Otherwise, plot the largest, forward-time 
-            FTLE as a way of identifying ridges (separatrix) of LCSs.
+            If true, plot the negative of the smallest-eigenvalue FTLE (the
+            contraction exponent of the forward map). NOTE: this is not a true
+            backward-time field; for attracting Lagrangian Coherent Structures,
+            compute calculate_FTLE(..., backward=True) and plot the (largest)
+            backward field instead (see Haller and Sapsis 2011). Otherwise, plot
+            the largest FTLE -- forward-time ridges are repelling LCS; if the
+            stored field was computed with backward=True, its ridges are
+            attracting LCS.
         clip_l : float, optional
             lower clip value (below this value, mask points)
         clip_h : float, optional
@@ -3606,8 +3715,9 @@ class Environment:
             grid_y = np.reshape(self.FTLE_loc[:,1].data, self.FTLE_grid_dim)
             pcm = ax.pcolormesh(grid_x, grid_y, FTLE, shading='gouraud', 
                                 cmap='plasma')
-            plt.title('Largest fwrd-time FTLE field, $t_0$={}, $\\Delta t$={}.'.format(
-                    self.FTLE_t0, self.FTLE_T))
+            _dir = 'bckwrd' if self.FTLE_backward else 'fwrd'
+            plt.title('Largest {}-time FTLE field, $t_0$={}, $\\Delta t$={}.'.format(
+                    _dir, self.FTLE_t0, self.FTLE_T))
         axbbox = ax.get_position().get_points()
         cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])
         plt.colorbar(pcm, cax=cbaxes)

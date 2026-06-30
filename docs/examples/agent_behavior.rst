@@ -36,7 +36,7 @@ provide key information for behavior. Examples include:
 - get_prop() : return either shared or individual agent properties
 - get_fluid_drift() : return the fluid velocity at all agent locations
 - get_dudt() : return fluid velocity time derivative at all agent locations
-- get_fluid_gradient() : gradient of the magnitude of fluid velocity at all
+- get_fluid_mag_gradient() : gradient of the magnitude of fluid velocity at all
   agent locations
 
 The subclassing and overriding itself is easy. Here we'll provide an example
@@ -53,8 +53,8 @@ swrm.apply_agent_model(dt), and NOT "swrm.apply_agent_model(swrm, dt)". This det
 doesn't matter so much here; the swrm.move method is how we update Swarms, and 
 it will do the business of calling apply_agent_model for us. The main thing to 
 remember  is that if you need any Swarm attributes or methods, you should access
-them via "self.<method or attribute here>". For example, you can get the 
-gradient of the fluid speed (magnitude of velocity) using self.get_fluid_gradient(). ::
+them via "self.<method or attribute here>". For example, you can get the
+gradient of the fluid speed (magnitude of velocity) using self.get_fluid_mag_gradient(). ::
 
     class myswarm(planktos.Swarm):
 

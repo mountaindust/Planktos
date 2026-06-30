@@ -26,9 +26,11 @@ Functionality includes:
 * Loading time dependent CFD-generated velocity fields from VTK or NetCDF 
   formatted data files
 * Loading immersed STL-formatted mesh structures and vertex points
+* Agent interaction with immersed boundary meshes as solid structures
+  (frictionless/sliding or sticky collisions), including moving boundaries in 2D
 * Data visualization as images or animations with kernel density estimation
-* Velocity field analysis with respect to deterministic agent behavior via the 
-  finite-time Lagrangian exponent.
+* Velocity field analysis with respect to deterministic agent behavior via the
+  finite-time Lyapunov exponent.
 
 If you use this software in your project, please cite the following paper: 
 

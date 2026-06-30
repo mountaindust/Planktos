@@ -23,8 +23,8 @@ you'd need to start with::
 Once planktos is imported, the first thing we do is create an Environment. 
 The default Environment is a 10 meter by 10 meter 2D rectangle in which agents 
 can exit out of any side (after which they cease to be simulated). The fluid 
-velocity is zero everywhere until you set it to something else. See the 
-documentation of the Environment class in planktos/environment.py for all the 
+velocity is zero everywhere until you set it to something else. See the
+documentation of the Environment class in planktos/_environment.py for all the
 options! ::
 
     envir = planktos.Environment()

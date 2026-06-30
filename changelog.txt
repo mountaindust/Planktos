@@ -31,6 +31,16 @@ and otherwise gives the index of the first mesh element encountered.
 - Cleans up Swarm and Environment by kicking static methods and loaders to external module. Adds leading underscores to make API cleaner.
 - Changes the name of get_positions to apply_agent_model, removes params argument.
 - Updated installation instructions and added workflow.
+- Optional parallelization of immersed-boundary collision detection: attach any worker pool exposing .map (multiprocessing.Pool, ProcessPoolExecutor, or ThreadPoolExecutor) to a Swarm via the new pool attribute/kwarg. Defaults to serial (pool=None), behavior unchanged.
+- get_2D_vorticity vectorized via np.gradient: identical to the old loop on uniform grids, more accurate on non-uniform grids.
+- New single-file tutorial for sticky moving boundaries.
+- Bug fixes: corrected ib_collision_idx for some collisions; fixed flow_points axis ordering for non-square grids passed directly to Environment(); repaired pytest collection and updated stale intersection/vorticity tests.
+- Bug fixes (collision math, surfaced by the new test suite): sticky moving-boundary collisions no longer return NaN for perfectly axis-aligned (vertical/horizontal) mesh elements (_ibc contact parameter now uses the largest-extent axis instead of max() over a 0/0); closest_dist_btwn_lines_and_pt no longer raises on a mix of zero-length and normal segments (_geom).
+- Bug fix: Environment.save_fluid and save_2D_vorticity work again on modern pyvista. The rectilinear-grid writers no longer set the now-forbidden .origin/.dimensions on a RectilinearGrid; the save methods now pass coordinate arrays (flow_points) rather than domain lengths; and static (time-invariant) flows are handled. Saved coordinates are origin-centered (lower-left corner at 0), consistent with the load-time convention.
+- Bug fix: Swarm.save_pos_to_vtk(all=True) works again. The position-history loop filtered masked agents with .mask (which is the scalar nomask when nothing is masked) instead of ma.getmaskarray, raising a broadcast ValueError on any unmasked history step; the current-time branch was already correct. First automated coverage of the Swarm save methods added (tests/test_swarm_save.py round-trips save_pos_to_csv, save_data, and save_pos_to_vtk).
+- Bug fix: motion.highRe_massive_drift now works in 2D. It previously hardcoded three spatial velocity components and raised in 2D; the drag term now broadcasts over the environment's dimension (output unchanged in 3D).
+- Bug fix (3D immersed boundaries): agents sliding on a triangle mesh no longer stick at shared triangle edges; they correctly slide onto the adjacent triangle. This affected coplanar tiled (flat) surfaces and concave folds. The 3D slide-off-edge test now keys on whether the projected end overshot the triangle (mirroring the 2D path) instead of on the agent's current position, which spuriously re-detected the just-crossed edge. No-penetration was independently audited and the 2D path is unchanged. First automated 3D collision coverage added (tests/test_collisions_static_3d.py).
+- New: backward-time FTLE. Environment.calculate_FTLE gains a backward=True option that computes the true backward-time field (attracting LCS) by integrating the reversed flow, stored in FTLE_largest. This replaces the previous, mathematically incorrect guidance to negate FTLE_smallest (which for incompressible flow is just -FTLE_largest); the FTLE_smallest docstring and plot_2D_FTLE text are corrected. Backward is tracer-only (reverse-time integration of dissipative inertial/custom dynamics is ill-posed). FTLE now raises NotImplementedError for moving immersed boundaries (which it cannot advance in time) and for a non-positive integration extent, rather than silently producing wrong output. Forward FTLE (tracer, inertial via ode_gen, and custom swarms) is unchanged.
 
 
 Geometry module added to collect workhorse mathematical functions. Explanation of the mathematics and implementation has been added and cleaned up.
@@ -38,6 +48,20 @@ Geometry module added to collect workhorse mathematical functions. Explanation o
 Better code organization, including consolidation of IB2d mesh loading
 
 Critical bug fixes in agent-mesh interaction; extensive testing.
+
+Test suite overhaul. The automated tests were reorganized into focused, fast,
+deterministic modules under tests/ (geometry, static/moving collisions, flow
+generation, temporal interpolation, agent models, swarm lifecycle, analysis, and
+I/O loaders). The default `pytest` run is ~1s; the slower full-simulation
+parallelization checks are gated behind `--runslow`. Exploratory/visual scripts
+moved to tests/manual/ (not collected). Tiny committed fixtures in
+tests/fixtures/ (regenerable via tests/fixtures/_gen_fixtures.py) give the first
+automated coverage of the moving immersed-boundary import. The new tests
+uncovered four latent bugs; all four are now fixed with regression tests (the
+sticky moving-boundary NaN, the closest_dist zero-length crash, the
+save_fluid/save_2D_vorticity pyvista breakage, and backward-time FTLE, all listed
+above), so the suite has no remaining xfails. A few non-blocking follow-ups remain,
+e.g. full moving-immersed-boundary support in FTLE.
 
 
 0.7.0

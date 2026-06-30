@@ -8,6 +8,7 @@ Author: Christopher Strickland
 Email: cstric12@utk.edu
 '''
 
+import functools
 import numpy as np
 from scipy import integrate, optimize
 from . import _geom
@@ -260,9 +261,13 @@ def apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
             # Vector for agent travel
             vec = endpt - startpt
 
-            # Get the relative position of intersection within the mesh element
-            # Use max in case the element is vertical or horizontal
-            s_I = max((x[0]-Q0[0])/(Q1[0]-Q0[0]),(x[1]-Q0[1])/(Q1[1]-Q0[1]))
+            # Get the relative position of intersection within the mesh element.
+            # x lies on the segment, so either component gives the same s_I; pick
+            # the axis with the largest extent to avoid a 0/0 when the element is
+            # vertical or horizontal (a plain max() would return the NaN).
+            dQ = Q1 - Q0
+            ax = np.argmax(np.abs(dQ))
+            s_I = (x[ax]-Q0[ax])/dQ[ax]
             if idx is None:
                 dt_elem = close_mesh_end
                 idx = 0
@@ -332,10 +337,105 @@ def apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
 
         else:
             raise NotImplementedError("3D moving meshes not currently supported.")
-            
 
 
-def _get_eligible_moving_mesh_elements(startpt, endpt, start_mesh, end_mesh, 
+
+#############################################################################
+#####          PARALLEL DISPATCH WORKERS FOR POOL.MAP                    #####
+#############################################################################
+# These module-level workers let Swarm.apply_boundary_conditions dispatch the
+# per-agent IB collision check through a user-supplied worker pool. They take a
+# single packed argument (so they work with the one-argument calling convention
+# of pool.map / the builtin map) and are picklable by qualified name, which is
+# required for process pools on spawn-based platforms. Shared per-timestep mesh
+# data is bound in once via functools.partial (see make_ib_worker), keeping each
+# per-agent argument tiny and avoiding re-pickling the mesh for every agent.
+
+
+def _ib_worker_static(arg, mesh, max_meshpt_dist, ib_collisions):
+    '''Per-agent static-mesh IB collision worker for pool.map.
+
+    Parameters
+    ----------
+    arg : tuple (idx, startpt, endpt)
+        idx is the agent index; startpt/endpt are length-D ndarrays.
+    mesh : ndarray
+        static immersed boundary mesh (Nx2x2 or Nx3x3)
+    max_meshpt_dist : float
+    ib_collisions : {'sliding', 'sticky'}
+
+    Returns
+    -------
+    tuple (idx, (new_loc, dx, mesh_idx))
+        idx is echoed back so results can be applied independent of ordering.
+    '''
+    idx, startpt, endpt = arg
+    res = apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist,
+                                   ib_collisions=ib_collisions)
+    return idx, res
+
+
+def _ib_worker_moving(arg, start_mesh, end_mesh, max_meshpt_dist, max_mov,
+                      ib_collisions):
+    '''Per-agent moving-mesh IB collision worker for pool.map.
+
+    Parameters
+    ----------
+    arg : tuple (idx, startpt, endpt)
+        idx is the agent index; startpt/endpt are length-D ndarrays.
+    start_mesh, end_mesh : ndarray
+        immersed boundary mesh interpolated at the start and end of the step.
+    max_meshpt_dist : float
+    max_mov : float
+        maximum distance any mesh vertex moved during the step.
+    ib_collisions : {'sliding', 'sticky'}
+
+    Returns
+    -------
+    tuple (idx, (new_loc, dx, mesh_idx))
+    '''
+    idx, startpt, endpt = arg
+    res = apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
+                                   max_meshpt_dist, max_mov,
+                                   ib_collisions=ib_collisions)
+    return idx, res
+
+
+def make_ib_worker(shared):
+    '''Bind per-timestep shared mesh data into a one-argument callable for map().
+
+    Parameters
+    ----------
+    shared : tuple
+        Output of Swarm._precompute_ib_shared. shared[0] is a tag, either
+        'static' -> ('static', mesh, max_meshpt_dist, ib_collisions) or
+        'moving' -> ('moving', start_mesh, end_mesh, max_meshpt_dist, max_mov,
+        ib_collisions).
+
+    Returns
+    -------
+    callable
+        A functools.partial taking a single (idx, startpt, endpt) argument and
+        returning (idx, (new_loc, dx, mesh_idx)). Picklable for process pools
+        because it wraps a module-level function with picklable bound arguments.
+    '''
+    tag = shared[0]
+    if tag == 'static':
+        _, mesh, max_meshpt_dist, ib_collisions = shared
+        return functools.partial(_ib_worker_static, mesh=mesh,
+                                 max_meshpt_dist=max_meshpt_dist,
+                                 ib_collisions=ib_collisions)
+    elif tag == 'moving':
+        _, start_mesh, end_mesh, max_meshpt_dist, max_mov, ib_collisions = shared
+        return functools.partial(_ib_worker_moving, start_mesh=start_mesh,
+                                 end_mesh=end_mesh,
+                                 max_meshpt_dist=max_meshpt_dist,
+                                 max_mov=max_mov, ib_collisions=ib_collisions)
+    raise ValueError("Unknown IB shared-data tag: {}".format(tag))
+
+
+
+def _get_eligible_moving_mesh_elements(startpt, endpt, start_mesh, end_mesh,
                                        max_mov, search_rad):
     '''
     From starting and ending points for the mesh, find all elements that 
@@ -378,7 +478,22 @@ def _get_eligible_moving_mesh_elements(startpt, endpt, start_mesh, end_mesh,
 
 
 
-def _project_and_slide_static(startpt, endpt, intersection, mesh, 
+def _point_in_triangle(P, Q0, Q1, Q2, tol=1e-9):
+    '''Whether point P (assumed coplanar with the triangle) lies inside triangle
+    Q0,Q1,Q2, using normalized barycentric coordinates. A point on an edge counts
+    as inside (within tol). Returns False for a degenerate (zero-area) triangle.'''
+    n = np.cross(Q1 - Q0, Q2 - Q0)
+    nn = np.dot(n, n)
+    if nn == 0:
+        return False
+    a = np.dot(np.cross(Q1 - P, Q2 - P), n) / nn
+    b = np.dot(np.cross(Q2 - P, Q0 - P), n) / nn
+    c = np.dot(np.cross(Q0 - P, Q1 - P), n) / nn
+    return a >= -tol and b >= -tol and c >= -tol
+
+
+
+def _project_and_slide_static(startpt, endpt, intersection, mesh,
                               max_meshpt_dist, prev_idx=None):
     '''Once we have an intersection point with an immersed mesh, slide the 
     agent along the mesh for its remaining movement (frictionless 
@@ -529,20 +644,36 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
         else:
             t_edge = None
     elif DIM == 3:
-        # Detect sliding off 2D edge using seg_intersect_2D
-        # Construct lists of first and second points for the line segments
+        # Decide whether the agent slid off the triangle, mirroring the 2D branch
+        # above (which keys on whether slide_pt overshot the segment, NOT on where
+        # the agent currently sits). Basing the decision on slide_pt rather than on
+        # x is what makes this correct when x lies exactly on an edge -- the
+        # recursion-onto-an-adjacent-triangle entry, or a degenerate hit landing on
+        # a shared edge -- where a detector keyed on x would spuriously re-report
+        # the edge it is sitting on and stick the agent there (and the 2D method,
+        # used for edge detection, does return such a start-on-edge touch).
         Q0_list = np.array(intersection[2:5]) # Q0,Q1,Q2
         Q1_list = Q0_list[(1,2,0),:] # Q1,Q2,Q0
-        tri_intersect = _geom.seg_intersect_2D(x, slide_pt, Q0_list, Q1_list)
-        if tri_intersect is None:
+        if _point_in_triangle(slide_pt, Q0, Q1, Q2):
+            # Projected end is still on the triangle: no edge was crossed.
             t_edge = None
         else:
-            # Get time of intersection
-            t_edge = t_I + (1-t_I)*tri_intersect[1]
-            # Get point of intersection
-            x_edge = tri_intersect[0]
-            # Get side of intersection
-            idx_edge = tri_intersect[4]
+            # Slid off: the exit is the last triangle edge the slide crosses
+            # (largest s_I). x->slide_pt crosses a convex triangle's boundary at
+            # most where it leaves; if x sits on an edge, that start touch has the
+            # smaller s_I and is correctly skipped by taking the max.
+            hits = _geom.seg_intersect_2D(x, slide_pt, Q0_list, Q1_list,
+                                          get_all=True)
+            hits = list(hits) if hits is not None else []
+            if not hits:
+                # Numerical corner case (slide_pt just outside but no crossing
+                # found); treat as ending on the element.
+                t_edge = None
+            else:
+                tri_intersect = max(hits, key=lambda r: r[1])
+                t_edge = t_I + (1-t_I)*tri_intersect[1]
+                x_edge = tri_intersect[0]
+                idx_edge = tri_intersect[4]
             
     ##########                                                  ##########
     #####       Algorithms for going past end of mesh element        #####

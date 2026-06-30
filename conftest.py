@@ -3,7 +3,15 @@
 import pytest
 from pathlib import Path
 from planktos import _dataio
-VTK = _dataio.VTK
+
+# Exploratory / visual scripts and the perf benchmark live here. They are not
+# automated tests (and several need external data or produce plots/videos), so
+# keep them out of collection entirely.
+collect_ignore = ['tests/manual']
+# vtk is a mandatory dependency (see setup.cfg) that _dataio imports
+# unconditionally, so it is present whenever planktos imports. Fall back to True
+# if _dataio does not expose an explicit VTK availability flag.
+VTK = getattr(_dataio, 'VTK', True)
 
 def pytest_addoption(parser):
     '''Adds parser options'''
@@ -32,13 +40,6 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "vtu" in item.keywords:
                 item.add_marker(skip_vtu)
-    
-def pytest_configure(config):
-    config.addinivalue_line(
-        "markers",
-        "vtk: mark test as requiring vtk data"
-    )
-    config.addinivalue_line(
-        "markers",
-        "vtu: mark test as requiring vtu data"
-    )
+
+# Note: the slow/vtk/vtu markers are registered in pytest.ini (single source of
+# truth). Do not re-register them here.
