@@ -49,32 +49,38 @@ a clean Anaconda/Miniforge installation.
 2. matplotlib's backend, especially Qt or Pyside, which are needed on MacOS for 
 proper video rendering.
 
-This is especially true on MacOS - Apple's operating system has always had 
-terrible issues with plotting libraries in Python. My best advice is to avoid 
-Python 3.12 and use Python 3.11 instead, use VTK 9.2 instead of the newer 
-versions (don't use older ones, which are incompatible with newer versions of numpy), 
-and make sure you are using only PyQt5 and do not have any PyQt6 or Pyside6 
-libraries installed.
+This is especially true on MacOS - Apple's operating system has always had
+terrible issues with plotting libraries in Python. If you hit trouble there, make
+sure you are using only PyQt5 and do not have any PyQt6 or Pyside6 libraries
+installed. Do not use VTK older than 9.2, which is incompatible with newer
+versions of numpy. Newer VTK releases are fine; development is currently done on
+9.4.2.
 
-The dependencies are as follows. If you are using Miniforge, conda-forge is the 
-default channel and you can install vtk with just the command `conda install vtk`. 
-Otherwise, it is recommended to install as much as possible using the 
-conda-forge channel via the command `conda install conda-forge::<pkg name>`.
+The dependencies are as follows, with the minimum supported version of each. If
+you are using Miniforge, conda-forge is the default channel and you can install
+vtk with just the command `conda install vtk`. Otherwise, it is recommended to
+install as much as possible using the conda-forge channel via the command
+`conda install conda-forge::<pkg name>`.
 
-- Python 3.8+ 
-- numpy/scipy
-- matplotlib 3.x
+- Python 3.8+
+- numpy >= 1.19
+- scipy >= 1.10.1 (earlier versions have a broken interpn)
+- matplotlib >= 3.0
 - pandas
-- vtk :: 
+- vtk >= 9.2 ::
 
     conda install conda-forge::vtk
 
-- pyvista (from conda-forge. Note: pyvista may install vtk as a dependency, but 
-    the version could be years old and broken in modern versions of numpy. This 
-    may be an instance of conda-forge and default Anaconda channel incompatibility).
-- numpy-stl (if loading stl data). Again, get it from conda-forge.
-- netCDF4 (if loading netCDF data)
+- pyvista >= 0.44 (from conda-forge. Note: pyvista may install vtk as a
+    dependency, but the version could be years old and broken in modern versions
+    of numpy. This may be an instance of conda-forge and default Anaconda channel
+    incompatibility).
+- numpy-stl >= 2.16.3 (if loading stl data). Again, get it from conda-forge.
+- netCDF4 >= 1.5.7 (if loading netCDF data)
 - pytest (if running tests)
+
+These minimums are the ones declared in setup.cfg, so they are what `pip install`
+will enforce. Development is currently done on Python 3.12.
 
 If you get _image DLL errors from pillow when trying to load matplotlib.pyplot, 
 try using pip to reinstall pillow using `pip install -U pillow`.

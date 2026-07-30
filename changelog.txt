@@ -9,6 +9,11 @@ Documentation-only release. No library behavior was changed.
 - Swarm docstring now lists pool under Attributes, not only as a constructor parameter.
 - Repository-wide spelling pass (codespell) over the README, docs, package docstrings, and examples: 90 corrections. One of these changes printed output: the canopy-top message in set_canopy_flow now reads "Mean wind speed", which was previously misspelled.
 - Fixed the README header GIF caption, which pointed at a nonexistent examples/ex_vicsek_model.py; the file is ex_vicsek_model_2d.py.
+- docs/index.rst landing page now opens with the same tagline and scope paragraph as the README, and includes the header animation with its caption.
+- Links to the documentation now render as proper preview cards on LinkedIn, Slack, and elsewhere rather than blank boxes (via sphinxext-opengraph), with per-page titles and descriptions. Adds docs/_static/planktos_card.png, a 1200x630 card derived from the left portion of logo.png.
+- The README Capabilities list now mentions moving 2D immersed boundaries and sliding/sticky collisions, matching the equivalent list in the docs.
+- Refreshed stale environment advice in docs/quickstart.rst: dropped the recommendation to pin VTK at 9.2 and to avoid Python 3.12 (9.4.2 and 3.12 are both in use), and the dependency list now carries the same minimum versions declared in setup.cfg rather than being unversioned.
+- Read the Docs now builds on Python 3.11 instead of 3.10.
 
 1.0.0
 -----------------------

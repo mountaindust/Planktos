@@ -38,7 +38,9 @@ including VTK and PyVista dependencies, are in the
 
 - Arbitrary agent behavior via ODEs, SDEs, or coded movement algorithms
 - Time-dependent CFD velocity fields loaded from VTK or NetCDF
-- Immersed structures from STL meshes (3D) or IB2d/IBAMR vertex data (2D)
+- Immersed structures from STL meshes (3D, static) or IB2d/IBAMR vertex data
+  (2D, static or moving)
+- Agents treat immersed meshes as solid, with sliding or sticky collisions
 - Visualization as images or animations, with kernel density estimation
 - Finite-time Lyapunov exponent analysis of the velocity field
 
