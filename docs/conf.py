@@ -34,13 +34,33 @@ release = version
 extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.viewcode',
-    'sphinx.ext.napoleon'
+    'sphinx.ext.napoleon',
+    'sphinxext.opengraph'
 ]
 
 # napoleon_use_ivar = True
 napoleon_use_rtype = False
 napoleon_use_admonition_for_examples = True
 napoleon_custom_sections = ("Attributes", "params_style")
+
+# -- Open Graph / link preview metadata --------------------------------------
+# Controls how links to these docs render as cards on LinkedIn, Slack, etc.
+# Without this, such links appear as blank, untitled boxes.
+
+ogp_site_url = 'https://planktos.readthedocs.io/en/latest/'
+ogp_site_name = 'Planktos documentation'
+ogp_type = 'website'
+# Pull an og:description out of each page's own text rather than repeating a
+# single site-wide blurb on every card.
+ogp_enable_meta_description = True
+ogp_description_length = 200
+# Card image. Must be an absolute URL: crawlers do not resolve relative paths.
+# planktos_card.png is the left portion of logo.png (cut at its whitespace
+# gutter) pre-sized to the 1200x630 / 1.91:1 Open Graph card ratio, so that
+# platforms which crop to fill have nothing left to crop. Do not point this at
+# logo.png directly: at 3.03:1 it gets center-cropped and loses the wordmark.
+ogp_image = ogp_site_url + '_static/planktos_card.png'
+ogp_image_alt = 'Planktos: agent-based modeling of small organisms in fluid flow'
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']

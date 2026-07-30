@@ -97,7 +97,7 @@ def Euler_brownian_motion(swarm, dt, positions=None, velocities=None,
 
     where :math:`\\mu` is the drift and :math:`\\sigma` is the diffusion.
     :math:`\\mu` can be specified directly as a constant or via an ode, or both.
-    If both are ommited, the default is to use the mu property of the Swarm
+    If both are omitted, the default is to use the mu property of the Swarm
     object plus the local fluid drift. If an ode is given but mu is not, the
     the mu property of the Swarm will be added to the ode velocity term before
     solving (however, the Swarm mu is zero by default).
@@ -144,7 +144,7 @@ def Euler_brownian_motion(swarm, dt, positions=None, velocities=None,
         information on default behavior if this is not specified.
     sigma : array, optional
         Brownian diffusion coefficient matrix. If None, use the 'cov' property 
-        of the Swarm object, or lacking that, the 'D' property. For convienence, 
+        of the Swarm object, or lacking that, the 'D' property. For convenience, 
         :math:`\\sigma` can be provided in several ways:
 
         - As a covariance matrix stored in Swarm.get_prop('cov'). This is the 
@@ -225,7 +225,7 @@ def Euler_brownian_motion(swarm, dt, positions=None, velocities=None,
     ##### Take Euler step in deterministic part, possibly with Taylor series #####
     if ode is not None:
         assert callable(ode), "ode must be a callable function with signature ode(t,x)."
-        # assume that ode retuns a vector of shape 2NxD
+        # assume that ode returns a vector of shape 2NxD
         if positions is None:
             ode_mu = ode(swarm.envir.time, ma.concatenate((swarm.positions,swarm.velocities)))
         else:

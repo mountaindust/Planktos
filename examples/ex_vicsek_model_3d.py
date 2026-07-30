@@ -97,7 +97,7 @@ class vicsek3d(planktos.Swarm):
 
     def __calc_dist(self, origin, positions_array):
         ''' A private method that calculates the distance between an origin 
-        position and all the postions in postions_array, respecting periodic
+        position and all the positions in postions_array, respecting periodic
         boundary conditions when applicable.
             
             Parameters
@@ -195,7 +195,7 @@ IC_pos[:,2] = (np.random.rand(SWARM_SIZE)-0.5)*0.1 + z_center
 # create Vicsek Swarm
 swrm = vicsek3d(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
 
-# passive particles for comparsion
+# passive particles for comparison
 # swrm = planktos.Swarm(swarm_size=SWARM_SIZE, envir=envir, init=IC_pos)
 # swrm.shared_props['cov'] *= 0.02**2 # with jitter
 # swrm.shared_props['cov'] *= 0 # without jitter

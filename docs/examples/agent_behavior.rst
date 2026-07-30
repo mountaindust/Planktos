@@ -76,7 +76,7 @@ gradient of the fluid speed (magnitude of velocity) using self.get_fluid_mag_gra
             #   property is called 'bias'.
 
             # There are two ways of accessing the property. One is by getting it
-            #   from the self.props DataFrame directly. However, more convienent
+            #   from the self.props DataFrame directly. However, more convenient
             #   is by using the built-in method self.get_prop, since it 
             #   automatically converts DataFrame columns to numpy arrays.
 
@@ -98,7 +98,7 @@ gradient of the fluid speed (magnitude of velocity) using self.get_fluid_mag_gra
 
             # Let's assume that if you move toward the mean, you do so by one std
             #   of your jitter (specified by the 'cov' property which is shared 
-            #   among agents, assumed to be the idenity matrix times a constant).
+            #   among agents, assumed to be the identity matrix times a constant).
 
             bias = bias_dir*bias_bool_tile*np.sqrt(self.get_prop('cov')[0,0])
 
@@ -146,7 +146,7 @@ the default here. ::
 Remember that we also need a 'bias' property! Let's randomly select 20% of 
 the swarm to not be biased. We'll do this so that the same number are
 selected each time based off the size of the swarm (for consistency), but 
-the acutal agents selected are random. ::
+the actual agents selected are random. ::
 
     num_agents = swrm.positions.shape[0]
     num_not_biased = round(num_agents*.2)

@@ -224,13 +224,13 @@ def apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
     
     # Get intersections
     if DIM == 2:
-        # find interesections between line segment of motion and 
+        # find intersections between line segment of motion and 
         #   quadrilateral in 3D (t,x,y) space
         intersection = _geom.seg_intersect_2D_multilinear_poly(startpt, endpt,
                             close_mesh_start[:,0,:], close_mesh_start[:,1,:],
                             close_mesh_end[:,0,:], close_mesh_end[:,1,:])
     else:
-        # find interesections between line segment of motion and 
+        # find intersections between line segment of motion and 
         #   hyper-quadrilateral (hyper-plane) in 4D (t,x,y,z) space
         raise NotImplementedError("3D moving meshes not currently supported.")
     
@@ -521,7 +521,7 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
         apply_internal_moving_BC.
     prev_idx : int, optional
         in recursion with adjoining mesh elements, this prevents an infinite 
-        recusion with, e.g., mesh elements in an acute angle.
+        recursion with, e.g., mesh elements in an acute angle.
 
     Returns
     -------
@@ -553,7 +553,7 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
         Qvec = Q1-Q0
         Qvec_u = Qvec/np.linalg.norm(Qvec)
 
-        # Find direction indictor for which side of the mesh element the 
+        # Find direction indicator for which side of the mesh element the 
         #   agent hit the element.
         agent_prev_loc = startpt + vec*(t_I-0.00001)
         dir_vec = agent_prev_loc-x
@@ -586,7 +586,7 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
         Qvec10 = Q1-Q0
         Qvec21 = Q2-Q1
 
-        # Find direction indictor for which side of the mesh element the 
+        # Find direction indicator for which side of the mesh element the 
         #   agent hit the element.
         agent_prev_loc = startpt + vec*(t_I-0.00001)
         dir_vec = agent_prev_loc-x
@@ -907,7 +907,7 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
         in case of recursion with apply_internal_moving_BC.
     prev_idx : int, optional
         in recursion with adjoining mesh elements, this prevents an infinite 
-        recusion with, e.g., mesh elements in an acute angle.
+        recursion with, e.g., mesh elements in an acute angle.
 
     Returns
     -------

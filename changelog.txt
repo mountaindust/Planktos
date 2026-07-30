@@ -8,6 +8,20 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - Environment.extend was removed.
 
 
+1.0.1
+-----------------------
+Documentation-only release. No library behavior was changed.
+- README restructured as a landing page; the hand-maintained API listing is replaced by links to the generated docs.
+- New "Related projects" section in the README crediting IB2d and IBAMR.
+- docs/index.rst landing page now matches the README, including the header animation.
+- docs/quickstart.rst synced with the code: ib_condition values, pool parallelization, vorticity and FTLE tools, current example list.
+- Corrected the docs claim that multiple Swarms in one Environment are broken; only joint plotting and cross-Swarm interaction are missing. See issue #49.
+- Links to the docs now render as preview cards instead of blank boxes (sphinxext-opengraph).
+- Refreshed stale VTK and Python version advice in the install instructions; dependency minimums now match setup.cfg.
+- Read the Docs builds on Python 3.11.
+- Repository-wide spelling pass; set_canopy_flow now prints "Mean wind speed".
+- other minor documentation fixes
+
 1.0.0
 -----------------------
 Moving immersed boundaries are now supported in 2D!
@@ -15,7 +29,7 @@ Moving immersed boundaries are now supported in 2D!
 - all 2D plotting routines updated to handle moving immersed boundaries
 - both sticky and frictionless immersed boundary interactions included!
 - reworked apply_internal_static_BC for 2D and 3D cases, important bug fixes
-- swarm.ib_collision is now ib_collision_idx. It is -1 if the corresponding agent did not encounter a mesh elment during the previous timestep, 
+- swarm.ib_collision is now ib_collision_idx. It is -1 if the corresponding agent did not encounter a mesh element during the previous timestep,
 and otherwise gives the index of the first mesh element encountered.
 - Swarm and Environment classes are now capitalized.
 - Cleans up Swarm and Environment by kicking static methods and loaders to external module. Adds leading underscores to make API cleaner.
