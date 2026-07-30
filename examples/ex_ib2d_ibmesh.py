@@ -54,7 +54,7 @@ envir.read_IB2d_mesh_data('ib2d_data/channel.vertex', method='proximity')
 # For more complex vertex structures, this may attach too many points, causing 
 #   problems. You can try to adjust the radius, but if the structure has concave 
 #   features, this over-attachement can be unavoidable. In that case, try using
-#   add_vertices_to_static_2D_ibmesh, which simply adds a vertex whever mesh lines are
+#   add_vertices_to_static_2D_ibmesh, which simply adds a vertex wherever mesh lines are
 #   crossing. It may not be ideal, but it's often good enough in a pinch! One 
 #   thing you absolutely don't want are mesh lines crossing without a vertex 
 #   at every crossing point. This can cause issues with the algorithm that 

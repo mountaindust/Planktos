@@ -88,7 +88,7 @@ class Environment:
         'flow_points' must also be specified as a tuple (len==dimension) of 1D 
         arrays specifying the mesh points along each direction. If the velocity 
         field is time varying, the argument 'flow_points' must also be 
-        given, which should in this case be an interable of times at which the 
+        given, which should in this case be an iterable of times at which the
         fluid velocity is specified (as indexed by t in the first dimension of 
         each of the fluid ndarrays).
     flow_times : [float, float] or increasing iterable of floats, optional
@@ -151,7 +151,7 @@ class Environment:
     tiling : tuple (x,y) of floats 
         how much tiling was done in the x and y direction
     orig_L : tuple (Lx,Ly) of floats
-        length of the domain in x and y direction (Lx,Ly) before tiling occured
+        length of the domain in x and y direction (Lx,Ly) before tiling occurred
     h_p : float
         height of porous region in analytic flows, e.g. Brinkman
     g : float
@@ -360,7 +360,7 @@ class Environment:
         # List of arguments tuples to be passed to these functions, after ax
         self.plot_structs_args = []
 
-        ##### Initalize Time #####
+        ##### Initialize Time #####
 
         # By default, time is updated whenever an individual swarm moves (swarm.move()),
         #   or when all swarms in the environment are collectively moved.
@@ -452,7 +452,7 @@ class Environment:
         r'''Get a fully developed Brinkman flow with a porous region.
 
         This method sets the environment fluid velocity as a 1D Brinkman flow 
-        based on a porous layer of hight h_p in the bottom of the domain.
+        based on a porous layer of height h_p in the bottom of the domain.
         Velocity gradient is zero in the x-direction and all flow moves parallel 
         to the x-axis. Porous region is the lower part of the y-domain (2D) or
         z-domain (3D) with width h_p and an empty region above. For 3D flow, the
@@ -743,7 +743,7 @@ class Environment:
     def set_canopy_flow(self, h, a, u_star=None, U_h=None, beta=0.3, C=0.25,
                         res=101, tspan=None):
         '''
-        Apply flow within and above a uniform homogenous canopy according to 
+        Apply flow within and above a uniform homogeneous canopy according to 
         the model described in Finnigan and Belcher (2004), "Flow over a hill 
         covered with a plant canopy" [4]_. 
         
@@ -874,7 +874,7 @@ class Environment:
                     U_h[U_h == np.inf] = 0
                     U_h[U_h == -np.inf] = 0
                     U_h[U_h == np.nan] = 0
-                print("Mean wind spead at canopy top, U_h = {} {}/s".format(U_h, self.units))
+                print("Mean wind speed at canopy top, U_h = {} {}/s".format(U_h, self.units))
         else:
             assert U_h is not None, "Flow not set: One of u_star or U_h must be specified."
             u_star = U_h*beta
@@ -1076,7 +1076,7 @@ class Environment:
     def read_IBAMR3d_vtk_data(self, path, d_start=0, d_finish=None,
                               vel_conv=None, grid_conv=None):
         '''Reads in one or more vtk Rectilinear Grid Vector files. If path
-        refers to a single file, the resulting flow will be time invarient.
+        refers to a single file, the resulting flow will be time invariant.
         Otherwise, this method will assume that files are named IBAMR_db_###.vtk 
         where ### is the dump number, and that the mesh is the same in each vtk.
         Also, imported times will be translated backward so that the first time 
@@ -1115,7 +1115,7 @@ class Environment:
 
     def read_comsol_vtu_data(self, filename, vel_conv=None, grid_conv=None):
         '''Reads in vtu flow data from a single source and sets environment
-        variables accordingly. The resulting flow will be time invarient.
+        variables accordingly. The resulting flow will be time invariant.
         It is assumed this data is on a regular grid and that a grid section
         is included in the data.
 
@@ -1405,7 +1405,7 @@ class Environment:
         Software has a tendency to output data files where the fluid mesh is 
         specified at the center of cells rather than at the corners. This will 
         be readily apparent if Planktos loads your fluid velocity data and 
-        reports spacial dimensions one dx, dy, and dz smaller than you were 
+        reports spatial dimensions one dx, dy, and dz smaller than you were 
         expecting. To fix this, Planktos will interpolate/extrapolate the fluid 
         velocity mesh using the default method to get additional grid points on 
         the edge of the domain.
@@ -1748,7 +1748,7 @@ class Environment:
             the indices of the vertices that are not connected with their 
             predecessor using Python convention (indexing starts at 0).
         add_idx_list : iterable of 2-tuple of int, optional
-            If additional line segements should be added between non-successive 
+            If additional line segments should be added between non-successive 
             vertices, list index pairs of the vertices that should be connected 
             using the MATLAB convention that indexing starts at 1.
         periodic : bool (default: False)
@@ -2195,7 +2195,7 @@ class Environment:
                         np.array([self.flow[dim][-1,...]]) for jj in range(x_plus)
                         ), axis=0)
                 # next, extend in y direction. This requires a shuffling
-                #   (tranpose) of dimensions...
+                #   (transpose) of dimensions...
                 if DIM3 and y_minus+y_plus > 0:
                     self.flow[dim] = np.concatenate(tuple(
                         np.array([self.flow[dim][:,0,:]]).transpose(1,0,2)
@@ -2622,7 +2622,7 @@ class Environment:
                             np.sqrt(np.sum(
                             np.array(self.interpolate_temporal_flow())**2,
                             axis=0)), *self.flow_points, edge_order=2)
-        # save the newly calculuate gradient
+        # save the newly calculate gradient
         self.mag_grad = flow_grad
         self.mag_grad_time = self.time
 
@@ -2664,7 +2664,7 @@ class Environment:
 
         Returns
         -------
-        cells dictionary, or tuple of two dictonaries (cells, neighbors)
+        cells dictionary, or tuple of two dictionaries (cells, neighbors)
         '''
 
         if dz is not None:
@@ -2899,7 +2899,7 @@ class Environment:
         
         1) The boundary conditions specified by this environment will be respected.
         2) Immersed boundaries (if any are loaded into this environment) will be 
-           treated as impassible to all particles and movement vectors crossing these 
+           treated as impassable to all particles and movement vectors crossing these 
            boundaries will be projected onto them.
 
         If passing in a set of ode or finding the FTLE field for tracer particles, 
@@ -2926,7 +2926,7 @@ class Environment:
         t0 : float, optional
             start time for calculating FTLE. If None, default 
             behavior is to set t0=0.
-            TODO: Interable to calculate at many times. Default then becomes 
+            TODO: Iterable to calculate at many times. Default then becomes 
             t0=0 for time invariant flows and calculate FTLE at all times 
             the flow field was specified at (self.flow_times) 
             for time varying flows?
@@ -2976,7 +2976,7 @@ class Environment:
         Returns
         -------
         Swarm object
-            used to calculuate the FTLE
+            used to calculate the FTLE
         list
             list of dt integration steps
         ndarray
@@ -3390,7 +3390,7 @@ class Environment:
         '''
         assert len(self.L) == 2, "Fluid velocity field must be 2D!"
         if (t_indx is not None or time is not None or t_n is not None) and self.flow_times is None:
-            warnings.warn("Warning: flow is time invarient but time arg passed into get_2D_vorticity.",
+            warnings.warn("Warning: flow is time invariant but time arg passed into get_2D_vorticity.",
                           RuntimeWarning)
 
         # Is the flow time-varying? (an extra leading time axis is present)

@@ -30,7 +30,9 @@ The user has explicitly asked for help **remembering to maintain the version
 number and the changelog** — these are easy to forget. Be proactive about it:
 
 - The version lives in `planktos/__init__.py` (`__version__`); `setup.cfg` reads
-  it via `attr: planktos.__version__`. The current development version is `1.0.0`.
+  it via `attr: planktos.__version__`, and `docs/conf.py` imports it — so the one
+  string in `__init__.py` is the single source of truth. Current version: `1.0.1`
+  (`1.0.0` is released and tagged; `1.0.1` is a documentation-only bump, unreleased).
 - `changelog.txt` is hand-maintained, terse, and grouped by version. When a
   change is user-facing, prompt to add an entry under the appropriate version.
 - When work looks release-worthy (or a user-facing change lands) but the version
@@ -54,23 +56,25 @@ Biology* 84(72). Docs: https://planktos.readthedocs.io
 
 ## Branch context (read this first)
 
-- **`mvbnd`** — current working branch. Goal: 2D **moving immersed boundaries**
-  (largely done; this is the `1.0.0` work). Not yet merged to master pending a
-  manuscript submission. **You are usually here** for changes *unrelated* to
-  dynamic fluid loading, which then get merged into `dyload` as needed.
-- **`dyload`** — the main feature branch under active development: **dynamic
+- **`dyload`** — **current development branch.** The main feature work: **dynamic
   loading of fluid data** (streaming/loading fluid time steps on demand rather
-  than all at once). Not your default working branch. This matters because
-  time-dependent 3D fluid data is often ~100 GB raw and significantly larger once
-  splined, so it cannot be held in memory all at once.
-- **`master`** — stable/published.
+  than all at once). This matters because time-dependent 3D fluid data is often
+  ~100 GB raw and significantly larger once splined, so it cannot be held in
+  memory all at once. **You are usually here.**
+- **`master`** — stable/published; carries the released `1.0.x` line. Small,
+  self-contained changes (docs, typos, packaging) are sometimes made here
+  directly and then merged into `dyload`.
+- **`mvbnd`** — **gone.** This was the 2D **moving immersed boundaries** work; it
+  was merged into `master`, released as tag `v1.0.0`, and the branch has since
+  been deleted locally and on origin. Older notes and commit messages still
+  mention it; that history is preserved in `master`.
 
 **3D moving boundaries are planned but not started.** They are blocked on `dyload`
 (3D dynamic fluid loading) working first, because of the data-size problem above.
 Moving boundaries are currently **2D only**.
 
 When making cross-cutting changes (like this CLAUDE.md), expect them to be
-merged from `mvbnd` into `dyload` later.
+merged from `master` into `dyload` later.
 
 ## Package layout
 
@@ -119,8 +123,8 @@ swrm.plot_all(movie_filename='out.mp4')     # visualize
 ```
 
 See `examples/` for runnable scripts (start with `basic_ex_2d.py`,
-`basic_ex_3d.py`). `ex_ib2d_mvbnd_sticky.py` is the **moving-boundary** showcase
-for this branch (needs external data — see the file header for the download link).
+`basic_ex_3d.py`). `ex_ib2d_mvbnd_sticky.py` is the **2D moving-boundary**
+showcase (needs external data — see the file header for the download link).
 
 ## Customizing agent behavior — the one rule that matters
 
@@ -183,7 +187,8 @@ breaks" is a hard requirement, not an aspiration. Treat the following as load-be
 
 Algorithm/derivation notes are in `docs/notes/` (Markdown with LaTeX):
 - `project_and_slide_moving.md` — the moving-boundary project-and-slide math
-  (the core of this branch). Implemented in `_ibc._project_and_slide_moving`.
+  (the core of the 2D moving-boundary work). Implemented in
+  `_ibc._project_and_slide_moving`.
 - `Equations_of_motion.md`, `Intersection_w_multilinear_polynomial.md`,
   `Lines_closest_points.md` — supporting derivations.
 
@@ -192,10 +197,13 @@ Algorithm/derivation notes are in `docs/notes/` (Markdown with LaTeX):
 - Source of truth for behavior is the **docstrings** in the source (NumPy style),
   which Sphinx autodoc renders. `docs/` builds the readthedocs site
   (`docs/index.rst`, `docs/quickstart.rst`, `docs/api/`, `docs/examples/`).
-- The **API listing in `README.md` is a hand-maintained mirror that can drift**
-  out of sync with the code (its method names were last reconciled with the source
-  on 2026-06-24). When the README and the source disagree, **trust the source
-  docstrings**, and fix the README.
+- `README.md` is a **landing page, not a reference.** Its hand-maintained API
+  listing was removed in `1.0.1` (it had drifted) and replaced with links to the
+  generated docs. Do not reintroduce a duplicated API listing there — if
+  something is undocumented, fix the docstring in the source.
+- Run `codespell README.md docs/ planktos/ examples/` after documentation work;
+  the tree was made clean in `1.0.1`. Note it has ambiguous cases it will not
+  auto-fix (`-w`), so read its output rather than trusting a zero exit alone.
 
 ## Tests
 

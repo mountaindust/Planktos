@@ -332,7 +332,7 @@ def seg_intersect_2D(P0, P1, Q0_list, Q1_list, get_all=False):
     projection onto the triangle crosses any of the lines in Q. This is 
     important to deal with roundoff error.
 
-    This algorithm uses a parameteric equation approach for speed, based on
+    This algorithm uses a parametric equation approach for speed, based on
     [1]_
     
     Parameters
@@ -366,7 +366,7 @@ def seg_intersect_2D(P0, P1, Q0_list, Q1_list, get_all=False):
 
     References
     ----------
-    .. [1] Sunday, Daniel, (2021). Practial Geometry Algorithms with C++ 
+    .. [1] Sunday, Daniel, (2021). Practical Geometry Algorithms with C++ 
         Code, self-published: Amazon KDP.
     '''
 
@@ -399,7 +399,7 @@ def seg_intersect_2D(P0, P1, Q0_list, Q1_list, get_all=False):
     denom_list = np.multiply(v_perp,u).sum(1) #vectorized dot product
 
     # We need to deal with parallel cases. With roundoff error, exact zeros
-    #   are unlikely (but ruled out below). Another possiblity is getting
+    #   are unlikely (but ruled out below). Another possibility is getting
     #   inf values, but these will not record as being between 0 and 1, and
     #   will not throw errors when compared to these values. So all should
     #   be good.
@@ -412,7 +412,7 @@ def seg_intersect_2D(P0, P1, Q0_list, Q1_list, get_all=False):
     #   happens. Call these s_I and t_I respectively.
     s_I_list = -np.ones_like(denom_list)
     t_I_list = -np.ones_like(denom_list)
-    # Now only need to calculuate s_I & t_I for non parallel cases; others
+    # Now only need to calculate s_I & t_I for non parallel cases; others
     #   will report as not intersecting automatically (as -1)
     #   (einsum is faster for vectorized dot product, but need same length,
     #   non-empty vectors)
@@ -458,7 +458,7 @@ def seg_intersect_3D_triangles(P0, P1, Q0_list, Q1_list, Q2_list, get_all=False)
     a different triangle (three points).
     Returns None if there is no intersection.
 
-    This algorithm uses a parameteric equation approach for speed, based on
+    This algorithm uses a parametric equation approach for speed, based on
     [2]_
 
     Parameters
@@ -496,7 +496,7 @@ def seg_intersect_3D_triangles(P0, P1, Q0_list, Q1_list, Q2_list, get_all=False)
     
     References
     ----------
-    .. [1] Sunday, Daniel, (2021). Practial Geometry Algorithms with C++ 
+    .. [1] Sunday, Daniel, (2021). Practical Geometry Algorithms with C++ 
         Code, self-published: Amazon KDP.
     '''
 
@@ -594,7 +594,7 @@ def seg_intersect_3D_plane(u, n_list, w):
 
     References
     ----------
-    .. [1] Sunday, Daniel, (2021). Practial Geometry Algorithms with C++ 
+    .. [1] Sunday, Daniel, (2021). Practical Geometry Algorithms with C++ 
         Code, self-published: Amazon KDP.
     '''
 
@@ -634,7 +634,7 @@ def seg_intersect_3D_plane(u, n_list, w):
 
 
 def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
-    '''Find the first intersection between a 2D line segement from P0 (t=0) to 
+    '''Find the first intersection between a 2D line segment from P0 (t=0) to 
     P1 (t=1) and the manifolds (multilinear polynomials) created by linear 
     interpolation of the line segments from Q0_list and Q1_list (t=0) to Q2_list 
     and Q3_list (t=1). All arguments are assumed to be given as 2D spatial
@@ -671,9 +671,9 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
         the fraction of the line segment traveled from P0 before 
         intersection occurred (only if intersection occurred)
     Q0_interp : length 2 array
-        interpolated first point of 1D mesh element at time of interesection
+        interpolated first point of 1D mesh element at time of intersection
     Q1_interp : length 2 array
-        interpolated second point of 1D mesh element at time of interesection
+        interpolated second point of 1D mesh element at time of intersection
     idx : int or None
         index of quadrilateral intersected. None if only one was being tested
     '''
@@ -755,7 +755,7 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
             t_sol[np.logical_and(is_linear,~B_zero)] = linear_sol
             A = A[~is_linear]; B = B[~is_linear]; C = C[~is_linear]
 
-        ### Calculate and check descriminant ###
+        ### Calculate and check discriminant ###
 
         # #  In case high accuracy is needed because of square and square-root
         # with decimal.localcontext() as ctx:

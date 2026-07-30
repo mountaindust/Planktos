@@ -1,3 +1,15 @@
+1.0.1
+-----------------------
+Documentation-only release. No library behavior was changed.
+- README restructured as a landing page: new tagline, badges, header animation, Quickstart, and Capabilities sections.
+- The hand-maintained API listing in the README has been removed in favor of links to the generated docs at planktos.readthedocs.io. That listing had begun to drift (it described interpolate_temporal_flow as linear in time when it is a cubic spline, and rho as a fluid velocity rather than a density), and omitted a dozen methods and attributes added since it was written.
+- New "Related projects" section in the README crediting IB2d and IBAMR, with citations.
+- docs/quickstart.rst brought in sync with the current code: named ib_condition values ('sliding', 'sticky', None) instead of the older frictionless/sticky prose, the optional pool-based parallelization of collision detection, the 2D vorticity and FTLE analysis tools, and an updated list of the example scripts.
+- Corrected the docs claim that multiple Swarms in one Environment are broken. Multiple Swarms simulate correctly via Environment.move_swarms; what remains unimplemented is plotting several Swarms on the same axes, and there is no built-in cross-Swarm interaction. See issue #49.
+- Swarm docstring now lists pool under Attributes, not only as a constructor parameter.
+- Repository-wide spelling pass (codespell) over the README, docs, package docstrings, and examples: 90 corrections. One of these changes printed output: the canopy-top message in set_canopy_flow now reads "Mean wind speed", which was previously misspelled.
+- Fixed the README header GIF caption, which pointed at a nonexistent examples/ex_vicsek_model.py; the file is ex_vicsek_model_2d.py.
+
 1.0.0
 -----------------------
 Moving immersed boundaries are now supported in 2D!
@@ -5,7 +17,7 @@ Moving immersed boundaries are now supported in 2D!
 - all 2D plotting routines updated to handle moving immersed boundaries
 - both sticky and frictionless immersed boundary interactions included!
 - reworked apply_internal_static_BC for 2D and 3D cases, important bug fixes
-- swarm.ib_collision is now ib_collision_idx. It is -1 if the corresponding agent did not encounter a mesh elment during the previous timestep, 
+- swarm.ib_collision is now ib_collision_idx. It is -1 if the corresponding agent did not encounter a mesh element during the previous timestep,
 and otherwise gives the index of the first mesh element encountered.
 - Swarm and Environment classes are now capitalized.
 - Cleans up Swarm and Environment by kicking static methods and loaders to external module. Adds leading underscores to make API cleaner.

@@ -62,7 +62,7 @@ class myswarm(planktos.Swarm):
         mean position of the swarm.'''
 
         # When accessing Swarm information, be careful that you do not 
-        #   accidently overwrite the object properties. Most assignments in 
+        #   accidentally overwrite the object properties. Most assignments in 
         #   Python are by reference, meaning that the new variable is just an 
         #   alias for the data in the old variable. This is done for speed. So 
         #   if there is any chance that you will be changing the values in your 
@@ -83,7 +83,7 @@ class myswarm(planktos.Swarm):
         #   'bias'.
 
         # There are two ways of accessing the property. One is by getting it
-        #   from the self.props DataFrame directly. However, more convienent
+        #   from the self.props DataFrame directly. However, more convenient
         #   is by using the built-in method self.get_prop, since it automatically
         #   converts DataFrame columns to numpy arrays.
 
@@ -110,7 +110,7 @@ class myswarm(planktos.Swarm):
 
         # Let's assume that if you move toward the mean, you do so by one std
         #   of your jitter (specified by the 'cov' property which is shared 
-        #   among agents, assumed to be the idenity matrix times a constant).
+        #   among agents, assumed to be the identity matrix times a constant).
 
         bias = bias_dir*bias_bool_tile*np.sqrt(self.get_prop('cov')[0,0])
 
@@ -157,7 +157,7 @@ swrm.shared_props['cov'] = swrm.shared_props['cov'] * 0.01
 # Remember that we also need a 'bias' property! Let's randomly select 20% of 
 #   the swarm to not be biased. We'll do this so that the same number are
 #   selected each time based off the size of the swarm (for consistency), but 
-#   the acutal agents selected are random.
+#   the actual agents selected are random.
 num_agents = swrm.N
 num_not_biased = round(num_agents*.2)
 idx_not_biased = np.random.choice(np.arange(num_agents), num_not_biased)

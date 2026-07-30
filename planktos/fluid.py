@@ -1,5 +1,5 @@
 '''Functions and methods for loading and handling fluid data.
-These are mainly utilized by the Enviornment class.
+These are mainly utilized by the Environment class.
 
 Created: Thurs July 9 2025
 
@@ -116,7 +116,7 @@ def _read_IB2d_dumpfiles(path, d_start, d_finish, vector_data):
 def _read_IBAMR3d_vtkfiles(path, d_start=0, d_finish=None, 
                           vel_conv=None, grid_conv=None):
     '''Reads in one or more vtk Rectilinear Grid Vector files. If path
-    refers to a single file, the resulting flow will be time invarient.
+    refers to a single file, the resulting flow will be time invariant.
     Otherwise, this method will assume that files are named IBAMR_db_###.vtk 
     where ### is the dump number, and that the mesh is the same in each vtk.
     Also, imported times will be translated backward so that the first time 
@@ -308,7 +308,7 @@ def create_temporal_interpolations(flow_times, flow_data):
         # Defaults to not-a-knot boundary condition, resulting in first
         #   and second segments at curve ends being the same polynomial
         # Defaults to extrapolating out-of-bounds points based on first
-        #   and last intervals. This will be overriden by this method
+        #   and last intervals. This will be overridden by this method
         #   to use constant extrapolation instead.
         flow_data[n] = fCubicSpline(flow_times, flow)
     return flow_data

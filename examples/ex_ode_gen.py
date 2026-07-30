@@ -45,7 +45,7 @@ def my_ode_generator(swarm):
         #   zeros.
 
         # The first half of the rows in x are the current positions of the agents.
-        #   The second half are teh current velocities.
+        #   The second half are the current velocities.
         N = round(x.shape[0]/2)
         vel = swarm.get_fluid_drift(t,x[:N])
         # Add a bias toward the mean position

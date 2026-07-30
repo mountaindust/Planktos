@@ -37,8 +37,8 @@ if __name__ == '__main__':
     #In the ex_ib2d_ibmesh we read in the vertex data to get an immersed mesh. 
     #   This approach does not work for moving boundaries, 
     #   so we will read in the lag points data instead.
-    #   We also need to manually remove any indexs corresponding to lag points which are connected to wrong points. 
-    #   See the documention for read_IB2d_mesh_data in _swarm.py for more detail about brk_idx_list and other option. 
+    #   We also need to manually remove any indices corresponding to lag points which are connected to wrong points. 
+    #   See the documentation for read_IB2d_mesh_data in _swarm.py for more detail about brk_idx_list and other option. 
     envir.read_IB2d_mesh_data('ib2d_jellyfish_data', dt=1.25e-5  , print_dump=1600, brk_idx_list=[241])
 
     # In this example, we are going to create agents that stick to immersed

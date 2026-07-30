@@ -39,7 +39,7 @@ except ModuleNotFoundError:
 
 #############################################################################
 #                                                                           #
-#                          DEPENCENCY DECORATORS                            #
+#                          DEPENDENCY DECORATORS                            #
 #                                                                           #
 #############################################################################
 
@@ -236,7 +236,7 @@ def read_vtk_Unstructured_Grid_Points(filename):
     vtk_data = reader.GetOutput()
 
     # Cells are specified by a vtk cell type and a list of points that make up
-    #   that cell. py_data.CellTypes is a list of numerial cell types.
+    #   that cell. py_data.CellTypes is a list of numerical cell types.
     #   py_data.Cells is an array that, for each cell in order, lists the number
     #   of points in that cell followed by the index of each cell point. Since
     #   this makes random access to a given cell hard, a third data structure
@@ -289,7 +289,7 @@ def read_2DEulerian_Data_From_vtk(path, simNum, strChoice, xy=False):
     where the file contains 2D IB2d data, either scalar or vector. 
     
     The call signature is set up for easy looping over the sort of file name 
-    sturcture used by IB2d.
+    structure used by IB2d.
     
     Parameters
     ----------
@@ -530,7 +530,7 @@ def write_vtk_point_data(path, title, data, cycle=None, time=None):
     '''Write point data to an ascii VTK file, such as agent positions. 
     
     The call 
-    signature is formated for easy looping over many time points, resulting in 
+    signature is formatted for easy looping over many time points, resulting in 
     one VTK file per time. The filename will be based on the title string and 
     the cycle number. The VTK file will be formatted as PolyData and will 
     contain field data on both CYCLE (integer time step number) and TIME (float 
@@ -572,7 +572,7 @@ def write_vtk_2D_rectilinear_grid_scalars(path, title, data, grid_points,
     '''Write scalar data to an ascii VTK Rectilinear Grid file (e.g. vorticity). 
     Expects data to be on a 2D rectilinear grid. Uses the pyvista library. 
     
-    The call signature is formated for easy looping over many time points, 
+    The call signature is formatted for easy looping over many time points, 
     resulting in one VTK file per time. The filename will be based on the title 
     string and the cycle number. The VTK file will contain field data on both 
     CYCLE (integer time step number) and TIME (float time in seconds). 
@@ -623,7 +623,7 @@ def write_vtk_rectilinear_grid_vectors(path, title, data, grid_points,
     '''Write vector data on a 2D or 3D uniform grid (e.g. fluid velocity). Uses 
     the pyvista library. 
 
-    The call signature is formated for easy looping over many time points, 
+    The call signature is formatted for easy looping over many time points, 
     resulting in one VTK file per time. The filename will be based on the title 
     string and the cycle number. The VTK file will contain field data on both 
     CYCLE (integer time step number) and TIME (float time in seconds).

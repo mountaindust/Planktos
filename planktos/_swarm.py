@@ -58,7 +58,7 @@ class Swarm:
         Environment for the Swarm to exist in. Defaults to a newly initialized 
         Environment with all of the defaults.
     init : {'random', 'grid', ndarray}, default='random'
-        Method for initalizing agent positions.
+        Method for initializing agent positions.
 
         * 'random': Uniform random distribution throughout the domain
         * 'grid': Uniform grid on interior of the domain, including capability
@@ -207,6 +207,11 @@ class Swarm:
         motion, and other properties may be required for other physics.
     rndState : numpy Generator object
         random number generator for this Swarm, seeded by the "seed" parameter
+    pool : object with a .map method or None
+        Worker pool used to parallelize per-agent immersed-boundary collision
+        detection, as supplied by the "pool" parameter. None (the default) runs
+        serially. See the parameter documentation above for guidance on choosing
+        a pool; it is also accessible as self.pool inside apply_agent_model.
 
     Notes
     -----
@@ -221,7 +226,7 @@ class Swarm:
         for ii in range(50):
             swm.move(0.1)
 
-    In order to accomodate general, user-defined behavior algorithms, all other 
+    In order to accommodate general, user-defined behavior algorithms, all other 
     agent behaviors should be explicitly specified by subclassing this Swarm 
     class and overriding the apply_agent_model method. This is easy, and takes the 
     following form: ::
@@ -463,7 +468,7 @@ class Swarm:
 
         Notes
         -----
-        This algorithm is meant as a huristic only! It is not guaranteed to mask 
+        This algorithm is meant as a heuristic only! It is not guaranteed to mask 
         all interior grid points, and will mask non-interior points if there is 
         not a clear line from the point to one of the boundaries of the domain. 
         If this method fails for your geometry and better accuracy is needed, 
@@ -1070,7 +1075,7 @@ class Swarm:
         To access the current positions of each agent, use self.positions. 
         self.positions is a masked, NxD array of agent positions where the mask 
         refers to whether or not the agent has exited the domain. You do not 
-        want to accidently edit self.positions directly, so make sure that you 
+        want to accidentally edit self.positions directly, so make sure that you 
         get a value copy of self.positions using self.positions.copy() whenever 
         that copy will be modified. Direct assignment of self.positions is by 
         reference.
@@ -1287,7 +1292,7 @@ class Swarm:
         TIME_DEP = len(self.envir.flow[0].shape) != len(self.envir.L)
         flow_grad = None
 
-        # If available, use the already calculuated gradient (if it's at the
+        # If available, use the already calculated gradient (if it's at the
         #   correct time)
         if self.envir.mag_grad is not None:
             if not TIME_DEP:
@@ -1360,7 +1365,7 @@ class Swarm:
         if so, to update self.positions using a sliding collision algorithm 
         based on vector projection and second: assess whether or not any agents 
         exited the domain and if so, update their positions based on the 
-        boundary conditions as specified in the enviornment class (self.envir).
+        boundary conditions as specified in the environment class (self.envir).
 
         For noflux boundary conditions such sliding projections are really simple 
         (since the domain is just a box), so we just do them directly/manually
@@ -1560,7 +1565,7 @@ class Swarm:
         if np.any(BC_mult_bool):
             # mark these for recursion
             mult_idx = idx_array[BC_mult_bool]
-            # figure out which exit crossing occured first and treat that as the 
+            # figure out which exit crossing occurred first and treat that as the 
             #   only one. Use the velocity to parameterize the movement.
             s_array = np.zeros((len(BC_mult_bool),len(self.envir.L)))
             for dim in range(len(self.envir.L)):
@@ -2250,7 +2255,7 @@ class Swarm:
             If None, plot the entire history of the swarm's movement including 
             the present time, with each step being a frame in the animation. If 
             an iterable, plot only the time steps of the swarm as indexed by
-            the iterable (note, this is an interable of the time step indices, 
+            the iterable (note, this is an iterable of the time step indices,
             not the time in seconds at those time steps!).
         downsamp : iterable of int or int, optional 
             If None, do not downsample the agents - plot them all. If an integer, 
@@ -2494,7 +2499,7 @@ class Swarm:
             if azim is not None or elev is not None:
                 ax.view_init(elev, azim)
             # UNFORTUNATELY, 3D matplotlib plotting is very weird about masked 
-            #   arrays. The implemenation does not parallel 2D: it wants a color 
+            #   arrays. The implementation does not parallel 2D: it wants a color 
             #   list that is the same length as the number of points it will be 
             #   plotting, and not the length of the masked array in total. So, 
             #   we have to check for masking and adjust appropriately.
@@ -2863,7 +2868,7 @@ class Swarm:
                                     r'Agent $\overline{v}_z$'+': {:.2g} {}/s'.format(
                                     avg_swrm_vel[2], self.envir.units))
                     # UNFORTUNATELY, 3D matplotlib plotting is very weird about masked 
-                    #   arrays. The implemenation does not parallel 2D: it wants a color 
+                    #   arrays. The implementation does not parallel 2D: it wants a color 
                     #   list that is the same length as the number of points it will be 
                     #   plotting, and not the length of the masked array in total. So, 
                     #   we have to check for masking and adjust appropriately.
@@ -3125,7 +3130,7 @@ class Swarm:
                                     r'Agent $\overline{v}_z$'+': {:.2g} {}/s'.format(
                                     avg_swrm_vel[2], self.envir.units))
                     # UNFORTUNATELY, 3D matplotlib plotting is very weird about masked 
-                    #   arrays. The implemenation does not parallel 2D: it wants a color 
+                    #   arrays. The implementation does not parallel 2D: it wants a color 
                     #   list that is the same length as the number of points it will be 
                     #   plotting, and not the length of the masked array in total. So, 
                     #   we have to check for masking and adjust appropriately.
