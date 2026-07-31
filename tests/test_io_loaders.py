@@ -44,6 +44,73 @@ def test_moving_mesh_import():
 
 
 # --------------------------------------------------------------------------- #
+#              IB2d fluid import, scalar form (committed fixture)             #
+# --------------------------------------------------------------------------- #
+# IB2d writes velocity either as one vector file per dump (u.####.vtk) or as a
+# pair of scalar files (uX/uY.####.vtk). The vector form is covered end to end in
+# test_dynamic_loading.py; this pins the scalar branch, which is selected by a
+# different filename test in IB2dData and read through a different branch of
+# _dataio.read_vtk_Structured_Points.
+
+def test_ib2d_fluid_scalar_form_matches_vector_form():
+    from planktos import fluid
+    scalar = fluid.IB2dData(str(FIXTURES / 'ib2d_fluid_scalar_min'),
+                            dt=0.1, print_dump=10, d_start=0)
+    vector = fluid.IB2dData(str(FIXTURES / 'ib2d_fluid_min'),
+                            dt=0.1, print_dump=10, d_start=0, d_finish=2)
+    assert scalar.vector_data is False and vector.vector_data is True
+    assert scalar.fshape == vector.fshape == (3, 7, 6)
+    assert np.allclose(scalar.flow_times, vector.flow_times)
+    for q in (0.0, 1.5, 2.0):
+        for a, b in zip(scalar(q), vector(q)):
+            assert np.allclose(a, b)
+
+
+# --------------------------------------------------------------------------- #
+#                 TIME header scan (_dataio.read_vtk_time_only)               #
+# --------------------------------------------------------------------------- #
+# Exists so a dump series can be timestamped without being parsed: legacy VTK
+# puts FIELD FieldData right after DATASET, so TIME is in the first few hundred
+# bytes. That is what lets VTK3dData build the full timeline up front, which the
+# windowed path requires -- see tests/test_dynamic_loading.py.
+
+def test_read_vtk_time_only_matches_the_full_reader():
+    files = sorted((FIXTURES / 'vtk3d_min').glob('IBAMR_db_*.vtk'))
+    assert len(files) == 8
+    peeked = [_dataio.read_vtk_time_only(str(f)) for f in files]
+    full = [_dataio.read_vtk_Rectilinear_Grid_Vector(str(f))[2] for f in files]
+    assert peeked == [0., 1., 2., 3., 4., 5., 6., 7.]
+    assert np.allclose(peeked, full)
+
+
+def test_read_vtk_time_only_returns_none_when_absent():
+    # A file with no TIME field data. None means "not found in the header", which
+    # callers must treat as "fall back to a full read", not "no time exists".
+    assert _dataio.read_vtk_time_only(str(FIXTURES / 'lagspts_min' /
+                                          'lagsPts.0000.vtk')) is None
+
+
+def test_read_vtk_time_only_does_not_read_the_whole_file():
+    # The point of the function: cost is independent of file size. Scanning far
+    # less than the file still finds TIME, since it lives in the header.
+    f = str(FIXTURES / 'vtk3d_min' / 'IBAMR_db_003.vtk')
+    assert Path(f).stat().st_size > 512
+    assert _dataio.read_vtk_time_only(f, nbytes=512) == 3.0
+
+
+def test_read_vtk_time_only_rejects_a_truncated_value():
+    # If the scan window ends mid-number the value would be silently wrong, so a
+    # value line that is also the last line in the buffer is refused.
+    f = str(FIXTURES / 'vtk3d_min' / 'IBAMR_db_003.vtk')
+    with open(f, 'rb') as fh:
+        head = fh.read(4096).decode('utf-8', errors='ignore')
+    decl = next(i for i, ln in enumerate(head.splitlines())
+                if ln.split()[:1] == ['TIME'])
+    cutoff = len('\n'.join(head.splitlines()[:decl + 1])) + 2   # into the value line
+    assert _dataio.read_vtk_time_only(f, nbytes=cutoff) is None
+
+
+# --------------------------------------------------------------------------- #
 #            static immersed boundary import (committed fixture)              #
 # --------------------------------------------------------------------------- #
 

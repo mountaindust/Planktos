@@ -212,6 +212,60 @@ def read_vtk_Rectilinear_Grid_Vector(filename):
 
 
 
+def read_vtk_time_only(filename, nbytes=4096):
+    '''Read just the TIME field-data value from a legacy VTK file's header.
+
+    Legacy VTK writes ``FIELD FieldData`` immediately after the ``DATASET``
+    line, so a TIME entry lands within the first few hundred bytes -- ahead of
+    the coordinate arrays and long before POINT_DATA. Recovering it therefore
+    costs one small header read no matter how large the file is, which is what
+    makes it practical to timestamp an entire dump series up front: dynamic
+    loading needs the whole timeline before it can slice windows out of it, but
+    it must not have to parse every dump to get it.
+
+    The header of a legacy VTK file is ASCII even when the data that follows is
+    BINARY, so this works for both.
+
+    Parameters
+    ----------
+    filename : string
+        path and filename of the VTK file
+    nbytes : int, default=4096
+        how many bytes of the header to scan
+
+    Returns
+    -------
+    float, or None if no single-valued TIME entry was found in the scanned
+        region. None is not proof that the file is untimed -- the format also
+        permits FIELD data inside the POINT_DATA/CELL_DATA sections, past the
+        scanned region -- so a caller that needs certainty should fall back to
+        read_vtk_Rectilinear_Grid_Vector for that file.
+    '''
+
+    with open(filename, 'rb') as f:
+        head = f.read(nbytes).decode('utf-8', errors='ignore')
+    lines = head.splitlines()
+
+    for n, line in enumerate(lines):
+        # A FIELD array is declared as "<name> <numComponents> <numTuples>
+        # <dataType>" with the values on the following line(s). Require the
+        # single-valued form, matching the assertion in the full reader.
+        parts = line.split()
+        if len(parts) == 4 and parts[0] == 'TIME' and parts[1] == '1' \
+                and parts[2] == '1':
+            # Only trust the value line if it is not the final line in the
+            # buffer, which may have been cut mid-number by the read limit.
+            if n + 1 >= len(lines) - 1:
+                return None
+            try:
+                return float(lines[n+1].split()[0])
+            except (ValueError, IndexError):
+                return None
+
+    return None
+
+
+
 def read_vtk_Unstructured_Grid_Points(filename):
     '''Read immersed mesh data from an ascii Unstructured Grid VTK file, such as
     those exported from VisIt. Uses the VTK Python library. The mesh should 

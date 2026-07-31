@@ -663,6 +663,26 @@ class FluidData:
         if INUM is not None and len(flow_times) <= INUM:
             raise RuntimeError("Not enough data files for dynamic splining.")
 
+        # A subclass that streams from storage must hand over the timestamps for
+        # the WHOLE dataset, not just the resident window: windows are sliced out
+        # of flow_times and the simulation is bounded by its endpoints. Getting
+        # this wrong does not raise on its own -- a short flow_times makes
+        # INUM >= len(flow_times)-1 below, which quietly selects the "everything
+        # is in memory" branch, sets extrapolate=(True, True), and thereby
+        # disables update_spline for the rest of the run. Check it here, where
+        # the subclass has already published the dump range it intends to cover.
+        if INUM is not None and INUM is not True and INUM is not False \
+                and flow_times is not None \
+                and hasattr(self, 'd_start') and hasattr(self, 'd_finish'):
+            expected = self.d_finish - self.d_start + 1
+            if len(flow_times) != expected:
+                raise RuntimeError(
+                    "flow_times must cover the entire dump range when loading "
+                    "dynamically: dumps {}-{} is {} time points, but "
+                    "flow_times has {}. A loader must timestamp every dump up "
+                    "front, not just the window it loads first.".format(
+                        self.d_start, self.d_finish, expected, len(flow_times)))
+
         self.flow_points = flow_points
         self.flow_times = flow_times
         if isinstance(periodic_dim, tuple):
@@ -676,6 +696,18 @@ class FluidData:
             
             if self.INUM is not None and self.INUM is not False:
                 if self.INUM is True or self.INUM >= len(self.flow_times)-1:
+                    if self.INUM is not True:
+                        # An int INUM is a request for a sliding window, but one
+                        # at least as wide as the dataset leaves nothing to
+                        # slide. Say so: the resulting object holds everything in
+                        # memory and never calls update_spline, which is the
+                        # opposite of what was asked for.
+                        warnings.warn(
+                            "INUM={} spans the entire dataset ({} time points), "
+                            "so all fluid data is being held in memory and no "
+                            "dynamic loading will occur. Use a smaller INUM to "
+                            "load windows from storage.".format(
+                                self.INUM, len(self.flow_times)), UserWarning)
                     for n, f in enumerate(flow):
                         flow[n] = LinearSpline(self.flow_times, f, extrapolate=(True, True))
                 elif self.INUM < len(self.flow_times)-1:
@@ -1458,18 +1490,26 @@ class VTK3dData(FluidData):
                 self.d_finish = round(d_finish)
                 assert d_finish in file_nums, "d_finish number not found!"
             
+            ### Timestamp the whole dump series before loading any fluid ###
+            # flow_times must span the ENTIRE range, not just whatever window is
+            # resident: FluidData slices windows out of it and bounds the
+            # simulation by its endpoints. Building it from the opening window
+            # alone used to make INUM >= len(flow_times)-1, which sends FluidData
+            # down its "everything is already in memory" branch with
+            # extrapolate=(True, True) -- disabling update_spline outright and
+            # silently freezing the fluid at the end of the first window.
+            flow_times = self._read_all_times(self.d_start, self.d_finish)
+
             ### Load fluid data ###
             if INUM is None or INUM is True:
                 print('Reading vtk fluid data...')
-                flow, mesh, flow_times = self._read_vtkfiles(self.path, self.title,  
-                                                             self.d_start, 
-                                                             self.d_finish)
+                flow, mesh = self._read_vtkfiles(self.path, self.title,
+                                                 self.d_start, self.d_finish)
                 print('Done!')
             else:
                 assert INUM > 3, 'INUM must be at least 4.'
-                flow, mesh, flow_times = self._read_vtkfiles(self.path, self.title,  
-                                                             self.d_start, 
-                                                             self.d_start+INUM)
+                flow, mesh = self._read_vtkfiles(self.path, self.title,
+                                                 self.d_start, self.d_start+INUM)
                 # record the inclusive bounds of the starting dump numbers to be used
                 self.loaded_dump_bnds = (self.d_start, self.d_start+INUM)
                 # same, but based off of zero to correspond with flow_times indices
@@ -1499,12 +1539,60 @@ class VTK3dData(FluidData):
         '''
         Dynamically load additional data.
         '''
-        flow, mesh, flow_times = self._read_vtkfiles(self.path, self.title,
-                                                     d_start, d_finish)
+        flow, mesh = self._read_vtkfiles(self.path, self.title,
+                                         d_start, d_finish)
         if self.vel_conv is not None:
             for ii, d in enumerate(flow):
                 flow[ii] = d*self.vel_conv
         return flow
+
+
+
+    def _read_all_times(self, d_start, d_finish):
+        '''Timestamp every dump in [d_start, d_finish] without parsing the files.
+
+        TIME sits in each file's header, so this costs one small header read per
+        dump rather than a full parse -- see _dataio.read_vtk_time_only. Any file
+        whose header scan comes up empty is read in full before concluding it is
+        untimed, since the format permits FIELD data outside the header.
+
+        Parameters
+        ----------
+        d_start : int
+            first dump number in the series
+        d_finish : int
+            last dump number in the series (inclusive)
+
+        Returns
+        -------
+        ndarray of times shifted so that d_start is at t=0, or None if the
+            series holds a single dump (time-invariant flow). If time
+            information is missing from any dump, warns and falls back to unit
+            time steps across the whole series.
+        '''
+
+        if d_start == d_finish:
+            return None
+
+        path = Path(self.path)
+        times = []
+        for n in range(d_start, d_finish+1):
+            fname = str(path / (self.title + str(n).zfill(self.nwidth) + '.vtk'))
+            time = _dataio.read_vtk_time_only(fname)
+            if time is None:
+                # Header scan missed it; pay for a full read of this one file
+                # before deciding the dump carries no time information.
+                time = _dataio.read_vtk_Rectilinear_Grid_Vector(fname)[2]
+            times.append(time)
+
+        if None in times:
+            warnings.warn("Could not retrieve time information from at least"+
+                          " one vtk file. Assuming unit time-steps...", UserWarning)
+            return np.arange(len(times), dtype=float)
+
+        times = np.array(times, dtype=float)
+        # shift so that the first dump loaded corresponds to environment time 0
+        return times - times[0]
 
 
     
@@ -1531,39 +1619,32 @@ class VTK3dData(FluidData):
         -------
         flow : list of ndarray (fluid data)
         mesh : list of 1D arrays of grid points in x, y, and z directions
-        flow_times : None or ndarray of times at which the fluid velocity is
-            specified.
+
+        Notes
+        -----
+        Time information is deliberately not returned here. The timeline for the
+        whole series is built once, up front, by _read_all_times; this method is
+        also the per-window loader on the dynamic path, where re-deriving times
+        from the resident window is both wasted work and how flow_times came to
+        describe only part of the dataset.
         '''
 
         path = Path(path)
 
         ### Gather data ###
         flow = [[], [], []]
-        flow_times = []
 
         for n in range(d_start, d_finish+1):
             num = str(n).zfill(self.nwidth)
             this_file = path / (title+num+'.vtk')
-            data, mesh, time = _dataio.read_vtk_Rectilinear_Grid_Vector(str(this_file))
+            data, mesh, _ = _dataio.read_vtk_Rectilinear_Grid_Vector(str(this_file))
             for dim in range(3):
                 flow[dim].append(data[dim])
-            flow_times.append(time)
 
         flow = [np.array(flow[0]).squeeze(), np.array(flow[1]).squeeze(),
                 np.array(flow[2]).squeeze()]
-        # parse time information
-        if None not in flow_times and len(flow_times) > 1:
-            # shift time so that the first time is 0.
-            flow_times = np.array(flow_times) - min(flow_times)
-        elif None in flow_times and len(flow_times) > 1:
-            # could not parse time information
-            warnings.warn("Could not retrieve time information from at least"+
-                        " one vtk file. Assuming unit time-steps...", UserWarning)
-            flow_times = np.arange(len(flow_times))
-        else:
-            flow_times = None
 
-        return flow, mesh, flow_times
+        return flow, mesh
 
 
 
