@@ -86,7 +86,7 @@ class Environment:
         as the index increases. The velocity field mesh will be inferred from 
         the shape of the ndarrays under the assumption that the mesh is regular
         and includes values on the domain boundary. If the velocity field is time 
-        varying, the parameter 'flow_times' must also be given as an interable of 
+        varying, the parameter 'flow_times' must also be given as an iterable of
         times at which the fluid velocity is specified (as indexed by t in the 
         first dimension of each of the fluid ndarrays).
     flow_times : (float, float) or increasing iterable of floats, optional
@@ -340,7 +340,7 @@ class Environment:
         # List of arguments tuples to be passed to these functions, after ax
         self.plot_structs_args = []
 
-        ##### Initalize Time #####
+        ##### Initialize Time #####
 
         # By default, time is updated whenever an individual swarm moves (swarm.move()),
         #   or when all swarms in the environment are collectively moved.
@@ -431,7 +431,7 @@ class Environment:
         r'''Get a fully developed Brinkman flow with a porous region.
 
         This method sets the environment fluid velocity as a 1D Brinkman flow 
-        based on a porous layer of hight h_p in the bottom of the domain.
+        based on a porous layer of height h_p in the bottom of the domain.
         Velocity gradient is zero in the x-direction and all flow moves parallel 
         to the x-axis. Porous region is the lower part of the y-domain (2D) or
         z-domain (3D) with width h_p and an empty region above. For 3D flow, the
@@ -741,7 +741,7 @@ class Environment:
     def set_canopy_flow(self, h, a, u_star=None, U_h=None, beta=0.3, C=0.25,
                         res=101, tspan=None, periodic_dim=False):
         '''
-        Apply flow within and above a uniform homogenous canopy according to 
+        Apply flow within and above a uniform homogeneous canopy according to 
         the model described in Finnigan and Belcher (2004), "Flow over a hill 
         covered with a plant canopy" [4]_. 
         
@@ -876,7 +876,7 @@ class Environment:
                     U_h[U_h == np.inf] = 0
                     U_h[U_h == -np.inf] = 0
                     U_h[U_h == np.nan] = 0
-                print("Mean wind spead at canopy top, U_h = {} {}/s".format(U_h, self.units))
+                print("Mean wind speed at canopy top, U_h = {} {}/s".format(U_h, self.units))
         else:
             assert U_h is not None, "Flow not set: One of u_star or U_h must be specified."
             u_star = U_h*beta
@@ -1055,7 +1055,7 @@ class Environment:
                               d_finish=None, INUM=None, 
                               periodic_dim=(True, True, False), vel_conv=None):
         '''Reads in one or more vtk Rectilinear Grid Vector files. If path
-        refers to a single file, the resulting flow will be time invarient.
+        refers to a single file, the resulting flow will be time invariant.
         Otherwise, this method will assume that files are named <title>###.vtk 
         where ### is the dump number, and that the mesh is the same in each vtk.
         Also, imported times will be translated backward so that the first time 
@@ -1071,8 +1071,9 @@ class Environment:
         ----------
         path : string
             path to vtk data, incl. file extension if a single file
-        title : string, default='IBAMR_db_'
-            The name of each vtk before the dump number
+        title : string, optional
+            The name of each vtk before the dump number. Defaults to
+            ``IBAMR_db_``.
         d_start : int, default=0
             vtk dump number to start with.
         d_finish : int, optional
@@ -1457,7 +1458,7 @@ class Environment:
             the indices of the vertices that are not connected with their 
             predecessor using Python convention (indexing starts at 0).
         add_idx_list : iterable of 2-tuple of int, optional
-            If additional line segements should be added between non-successive 
+            If additional line segments should be added between non-successive 
             vertices, list index pairs of the vertices that should be connected 
             using the MATLAB convention that indexing starts at 1.
         periodic : bool (default: False)
@@ -2140,7 +2141,7 @@ class Environment:
                             np.sqrt(np.sum(
                             np.array(self.interpolate_temporal_flow())**2,
                             axis=0)), *self.flow.flow_points, edge_order=2)
-        # save the newly calculuate gradient
+        # save the newly calculate gradient
         self.mag_grad = flow_grad
         self.mag_grad_time = self.time
 
@@ -2182,7 +2183,7 @@ class Environment:
 
         Returns
         -------
-        cells dictionary, or tuple of two dictonaries (cells, neighbors)
+        cells dictionary, or tuple of two dictionaries (cells, neighbors)
         '''
 
         if dz is not None:
@@ -2417,7 +2418,7 @@ class Environment:
         
         1) The boundary conditions specified by this environment will be respected.
         2) Immersed boundaries (if any are loaded into this environment) will be 
-           treated as impassible to all particles and movement vectors crossing these 
+           treated as impassable to all particles and movement vectors crossing these 
            boundaries will be projected onto them.
 
         If passing in a set of ode or finding the FTLE field for tracer particles, 
@@ -2444,7 +2445,7 @@ class Environment:
         t0 : float, optional
             start time for calculating FTLE. If None, default 
             behavior is to set t0=0.
-            TODO: Interable to calculate at many times. Default then becomes 
+            TODO: Iterable to calculate at many times. Default then becomes 
             t0=0 for time invariant flows and calculate FTLE at all times 
             the flow field was specified at (self.flow.flow_times) 
             for time varying flows?
@@ -2494,7 +2495,7 @@ class Environment:
         Returns
         -------
         Swarm object
-            used to calculuate the FTLE
+            used to calculate the FTLE
         list
             list of dt integration steps
         ndarray
@@ -2886,7 +2887,7 @@ class Environment:
 
 
     def get_vorticity(self, t_indx=None, time=None, t_n=None):
-        '''Calculuate the vorticity of the fluid velocity field at a given time.
+        '''Calculate the vorticity of the fluid velocity field at a given time.
 
         If all time arguments are None but the flow is time-varying, the vorticity
         at the current time will be returned. If more than one time argument is

@@ -70,13 +70,13 @@ class imsearch(planktos.Swarm):
 
     def apply_agent_model(self, dt):
 
-        # Get an array that will code the proprotion of [t,t+dt] at which the 
+        # Get an array that will code the proportion of [t,t+dt] at which the 
         #   agents switched state. -1 will mean they didn't switch.
         switch_time = -1*np.ones(self.N)
 
         # It's best to use the Swarm's own rndState object to generate random 
         #   numbers for stochastic processes. That way, everything is 
-        #   reproducable with a single seed.
+        #   reproducible with a single seed.
 
         # Get one random number in [0,1] for each agent
         rand_numbers = self.rndState.random(self.N)

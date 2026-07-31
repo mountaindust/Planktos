@@ -1,5 +1,5 @@
 '''Functions and methods for loading and handling fluid data.
-These are mainly utilized by the Enviornment class.
+These are mainly utilized by the Environment class.
 
 Created: Thurs July 9 2025
 
@@ -10,7 +10,6 @@ Email: cstric12@utk.edu
 
 import warnings
 import numpy as np
-import numpy._core.numeric as _nx
 from scipy import interpolate
 from scipy.linalg import solve_banded
 from pathlib import Path
@@ -603,7 +602,7 @@ class fCubicSpline(interpolate.CubicSpline):
 
         Notes
         -----
-        This implemenation is largely based on the source code scipy.interploate._cubic.py
+        This implementation is largely based on the source code scipy.interpolate._cubic.py
         '''
         n = len(x)
         dx = np.diff(x)
@@ -684,7 +683,7 @@ class fCubicSpline(interpolate.CubicSpline):
 
         Notes
         -----
-        This implemenation is largely based on the source code scipy.interploate._cubic.py
+        This implementation is largely based on the source code scipy.interpolate._cubic.py
         '''
         n = len(x)
         assert n>3, "At least 3 data points are needed for left-based spline."
@@ -1737,7 +1736,7 @@ class VTK3dData(FluidData):
     def __init__(self, path, title='IBAMR_db_', d_start=0, d_finish=None, 
                  INUM=7, periodic_dim=(True, True, False), vel_conv=None):
         '''Reads in one or more vtk Rectilinear Grid Vector files. If path
-        refers to a single file, the resulting flow will be time invarient.
+        refers to a single file, the resulting flow will be time invariant.
         Otherwise, this method will assume that files are named <title>###.vtk 
         where ### is the dump number, and that the mesh is the same in each vtk.
         Also, imported times will be translated backward so that the first time 
@@ -1754,8 +1753,9 @@ class VTK3dData(FluidData):
         path : string
             path to vtk data. This can either be a directory or a single file.
             If it is a single file, other parameters except vel_conv are ignored.
-        title : string, default='IBAMR_db_'
-            The name of each vtk before the dump number
+        title : string, optional
+            The name of each vtk before the dump number. Defaults to
+            ``IBAMR_db_``.
         d_start : int, default=0
             vtk dump number to start with.
         d_finish : int, optional
@@ -1853,7 +1853,7 @@ class VTK3dData(FluidData):
     
     def _read_vtkfiles(self, path, title, d_start, d_finish):
         '''Reads in one or more vtk Rectilinear Grid Vector files. If path
-        refers to a single file, the resulting flow will be time invarient.
+        refers to a single file, the resulting flow will be time invariant.
         Otherwise, this method will assume that files are named IBAMR_db_###.vtk 
         where ### is the dump number, and that the mesh is the same in each vtk.
         Also, imported times will be translated backward so that the first time 
@@ -2051,7 +2051,7 @@ class ComsolVTUData(FluidData):
 #     Software has a tendency to output data files where the fluid mesh is 
 #     specified at the center of cells rather than at the corners. This will 
 #     be readily apparent if Planktos loads your fluid velocity data and 
-#     reports spacial dimensions one dx, dy, and dz smaller than you were 
+#     reports spatial dimensions one dx, dy, and dz smaller than you were
 #     expecting. To fix this, Planktos will interpolate/extrapolate the fluid 
 #     velocity mesh using the default method to get additional grid points on 
 #     the edge of the domain.

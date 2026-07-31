@@ -72,7 +72,7 @@ envir = planktos.Environment(char_L=0.1, rho=1, mu=0.001, U=15)
 envir.read_IB2d_fluid_data('ib2d_data', 5.0e-5, 1000, d_start=20, d_finish=None)
 
 ##############     Use a Passed in ODE Generator    ##############
-# Note: intertial particles requires certain parameters to be present in the 
+# Note: inertial particles requires certain parameters to be present in the 
 #   Swarm object that generates the ODE functions (which in turn define the 
 #   parameters in the ODEs). We can specify these using a dictionary and the
 #   props parameter of calculate_FTLE.

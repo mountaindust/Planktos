@@ -30,7 +30,10 @@ The user has explicitly asked for help **remembering to maintain the version
 number and the changelog** — these are easy to forget. Be proactive about it:
 
 - The version lives in `planktos/__init__.py` (`__version__`); `setup.cfg` reads
-  it via `attr: planktos.__version__`. The current development version is `1.1.0`.
+  it via `attr: planktos.__version__`, and `docs/conf.py` imports it — so the one
+  string in `__init__.py` is the single source of truth. The current development
+  version on this branch is `1.1.0`; `1.0.1` is the documentation-only release
+  that shipped from `master`.
 - `changelog.txt` is hand-maintained, terse, and grouped by version. When a
   change is user-facing, prompt to add an entry under the appropriate version.
 - When work looks release-worthy (or a user-facing change lands) but the version
@@ -65,16 +68,18 @@ Biology* 84(72). Docs: https://planktos.readthedocs.io
 
 ## Branch context (read this first)
 
-- **`mvbnd`** — current working branch. Goal: 2D **moving immersed boundaries**
-  (largely done; this is the `1.0.0` work). Not yet merged to master pending a
-  manuscript submission. **You are usually here** for changes *unrelated* to
-  dynamic fluid loading, which then get merged into `dyload` as needed.
-- **`dyload`** — the main feature branch under active development: **dynamic
+- **`dyload`** — **current development branch.** The main feature work: **dynamic
   loading of fluid data** (streaming/loading fluid time steps on demand rather
-  than all at once). Not your default working branch. This matters because
-  time-dependent 3D fluid data is often ~100 GB raw and significantly larger once
-  splined, so it cannot be held in memory all at once.
-- **`master`** — stable/published.
+  than all at once). This matters because time-dependent 3D fluid data is often
+  ~100 GB raw and significantly larger once splined, so it cannot be held in
+  memory all at once. **You are usually here.**
+- **`master`** — stable/published; carries the released `1.0.x` line. Small,
+  self-contained changes (docs, typos, packaging) are sometimes made here
+  directly and then merged into `dyload`.
+- **`mvbnd`** — **gone.** This was the 2D **moving immersed boundaries** work; it
+  was merged into `master`, released as tag `v1.0.0`, and the branch has since
+  been deleted locally and on origin. Older notes and commit messages still
+  mention it; that history is preserved in `master`.
 
 **3D moving boundaries are planned but not started.** They are blocked on `dyload`
 (3D dynamic fluid loading) working first, because of the data-size problem above.
@@ -90,8 +95,22 @@ Source-specific ingestion (porting the old VisIt SAMRAI→vtk script, reading
 OpenFOAM/COMSOL directly, etc.) is intentionally **out of scope for `dyload`**: it is
 lower priority than getting 3D moving boundaries working.
 
+**`TODO.md` is the working plan for this branch** — phased, prioritized, and kept
+current. Read it before starting work here: it records what is done, what is
+known-broken, and the design history behind the fluid architecture. Keep it
+updated as items land.
+
+**How `dyload` diverges from `master`.** Almost all of it is the fluid API: on
+this branch `Environment.flow` is a `FluidData` object, and a number of
+fluid-related `Environment` methods were renamed, moved onto `FluidData`, or
+removed outright (see "Fluid data architecture"). The practical hazard is that
+documentation and tests written against `master` **merge cleanly and are still
+wrong** — this has already happened once. When merging from `master`, grep the
+incoming text for fluid API names and check each against the source rather than
+trusting a conflict-free merge.
+
 When making cross-cutting changes (like this CLAUDE.md), expect them to be
-merged from `mvbnd` into `dyload` later.
+merged from `master` into `dyload` later.
 
 ## Package layout
 
@@ -99,16 +118,20 @@ The installable package is `planktos/`. Public API is intentionally tiny;
 internal modules carry a **leading underscore** and are not part of the public
 surface (a deliberate convention — see `changelog.txt`).
 
+(Line counts are deliberately omitted — they went stale faster than they were
+useful. `_environment.py` and `_swarm.py` are the big ones, with `fluid.py` close
+behind since the dynamic-loading work.)
+
 | File | Public? | Purpose |
 |------|---------|---------|
 | `planktos/__init__.py` | yes | Exports `Environment`, `Swarm`. `motion` is reachable as `planktos.motion`. |
-| `planktos/_environment.py` (~4250 ln) | `Environment` class | The fluid domain: holds flow field, immersed boundary mesh, swarms, time. Loads fluid/mesh data, generates analytical flows, plots, computes vorticity/FTLE. |
-| `planktos/_swarm.py` (~3160 ln) | `Swarm` class | A group of agents: positions/velocities/props, the move loop, boundary-condition application, plotting, data saving. |
-| `planktos/motion.py` (~550 ln) | yes (`planktos.motion`) | Equation-of-motion generators & solvers: `Euler_brownian_motion` (default SDE), `inertial_particles`, `highRe_massive_drift`, `tracer_particles`, `RK45`. |
-| `planktos/fluid.py` (~380 ln) | mostly internal | Fluid data loading helpers + `fCubicSpline` (subclass of `scipy.interpolate.CubicSpline`) and `create_temporal_interpolations`. Newer module (2025); relevant to `dyload`. |
-| `planktos/_geom.py` (~840 ln) | internal | Pure geometry workhorses: segment/line/triangle intersections, closest distances, multilinear-polynomial intersection (for moving meshes). Formerly static methods of `Swarm`. |
-| `planktos/_ibc.py` (~1170 ln) | internal | Immersed-boundary collision handling: `apply_internal_static_BC`, `apply_internal_moving_BC`, and the project-and-slide routines for static and moving meshes. |
-| `planktos/_dataio.py` (~680 ln) | internal | Low-level read/write of vtk, vtu, .vertex, stl, NetCDF. Use `Environment` loader methods instead of calling these directly. |
+| `planktos/_environment.py` | `Environment` class | The domain: boundary conditions, immersed boundary mesh, swarms, time. Loads fluid/mesh data, generates analytical flows, plots, computes vorticity/FTLE. Fluid data itself lives in `fluid.py` (see below). |
+| `planktos/_swarm.py` | `Swarm` class | A group of agents: positions/velocities/props, the move loop, boundary-condition application, plotting, data saving. |
+| `planktos/motion.py` | yes (`planktos.motion`) | Equation-of-motion generators & solvers: `Euler_brownian_motion` (default SDE), `inertial_particles`, `highRe_massive_drift`, `tracer_particles`, `RK45`. |
+| `planktos/fluid.py` | `FluidData` is user-visible via `Environment.flow`; the rest internal | All fluid velocity data and its temporal interpolation: `FluidData` (+ per-source `IB2dData`, `VTK3dData`, `ComsolVTUData`), `FlowArray`, `LinearSpline`, `fCubicSpline`, `SplineRangeError`. See "Fluid data architecture" below. |
+| `planktos/_geom.py` | internal | Pure geometry workhorses: segment/line/triangle intersections, closest distances, multilinear-polynomial intersection (for moving meshes). Formerly static methods of `Swarm`. |
+| `planktos/_ibc.py` | internal | Immersed-boundary collision handling: `apply_internal_static_BC`, `apply_internal_moving_BC`, and the project-and-slide routines for static and moving meshes. |
+| `planktos/_dataio.py` | internal | Low-level read/write of vtk, vtu, .vertex, stl, NetCDF. Use `Environment` loader methods instead of calling these directly. |
 
 ## Core mental model
 
@@ -120,11 +143,59 @@ surface (a deliberate convention — see `changelog.txt`).
 3. `positions` (and `velocities`, `accelerations`) are **masked arrays** of shape
    `Nx2`/`Nx3`. **A masked row = that agent has left the domain** and is no
    longer updated. Respect/preserve the mask.
-4. The fluid `flow` is a list of ndarrays (one per spatial dim). For
-   time-dependent flow the first axis is time. On first temporal interpolation
-   these arrays are replaced in place by `fCubicSpline` objects; the raw data can
-   be recovered with `Environment.regenerate_flow_data()`. Interpolation is
-   **cubic spline in time, linear in space**.
+4. **`Environment.flow` is a `fluid.FluidData` object**, not a list of ndarrays.
+   Index it (`envir.flow[0]`) to get a spatial component. Spatial interpolation
+   is **linear**; interpolation in time is **cubic when the whole dataset is in
+   memory and linear when dynamically loading**. See the next section — this is
+   the biggest single difference from `master`.
+
+## Fluid data architecture (the heart of this branch)
+
+`Environment.flow` is a **`fluid.FluidData` instance**. This is the central change
+on `dyload` and the thing most likely to trip up code, docs, or tests written
+against `master`.
+
+- `FluidData` owns the velocity field, the spatial grid (`flow_points`), the time
+  stamps (`flow_times`), periodicity (`periodic_dim`), and the temporal
+  interpolation. Per-source subclasses handle ingestion: `IB2dData`, `VTK3dData`,
+  `ComsolVTUData`.
+- Fluid-level operations live on the object, not on `Environment`: `tile_flow`,
+  `get_vorticity`, `get_dudt`, `calculate_DuDt`, `update_spline`, `load_dumpfiles`.
+- `FluidData.get_raw_loaded_data()` is the nearest thing to the old
+  `Environment.regenerate_flow_data()`. Note *loaded*: under dynamic loading only
+  the current window exists.
+- `periodic_dim` is a property of the fluid data and is **independent of the
+  agent boundary conditions** in `Environment.bndry`. It defaults to `False`.
+
+**`INUM` controls dynamic loading, and with it the interpolation in time:**
+
+| `INUM` | Held in memory | Interpolation in time |
+|--------|----------------|-----------------------|
+| `None` (default) | the whole dataset | **cubic** (`fCubicSpline`) |
+| `True` | the whole dataset | linear (`LinearSpline`) |
+| `int` (< number of intervals) | a sliding window of `INUM`+1 time points | linear (`LinearSpline`) |
+
+**Linear-in-time is a deliberate, permanent tradeoff of dynamic loading — not a
+placeholder.** Cubic was tried and abandoned: stitching a cubic spline across a
+window that gains data on either side is numerically unstable, and resplining each
+window makes derivatives discontinuous at the breakpoints. Linear is
+unconditionally stable, trivially window-extensible (carry two raw boundary
+values, no derivatives to match), and needs less data held. The design history —
+including the specific approaches that failed — is at the bottom of `TODO.md`.
+
+The cost, worth stating plainly because it reaches the physics: smoothness drops
+C²→C⁰ (velocity kinks at each timestamp), between-sample accuracy goes
+O(Δt⁴)→O(Δt²), and ∂u/∂t becomes a piecewise-constant step function — which feeds
+`get_dudt` → the material derivative → the inertial-particle models. Full cubic
+stays the default for datasets that fit in memory. **Quantifying that gap is still
+an open task** (TODO.md Phase 1C); do not assert a magnitude for it until then.
+
+**`FlowArray`** is an `np.ndarray` subclass providing a memory-cheap *view* for
+periodic/tiled flows: it reports the tiled `shape` while storing a single copy.
+**Gotcha:** numpy ufuncs operate on the underlying, untiled buffer. `f.shape` may
+say `(41,41)` while `np.asarray(f).shape` says `(21,21)`, and `f * 2` silently
+returns an untiled array. Call `np.asarray()` deliberately before array-wide numpy
+operations, and don't assume arithmetic preserves tiling.
 
 ## The canonical workflow
 
@@ -140,8 +211,8 @@ swrm.plot_all(movie_filename='out.mp4')     # visualize
 ```
 
 See `examples/` for runnable scripts (start with `basic_ex_2d.py`,
-`basic_ex_3d.py`). `ex_ib2d_mvbnd_sticky.py` is the **moving-boundary** showcase
-for this branch (needs external data — see the file header for the download link).
+`basic_ex_3d.py`). `ex_ib2d_mvbnd_sticky.py` is the **2D moving-boundary**
+showcase (needs external data — see the file header for the download link).
 
 ## Customizing agent behavior — the one rule that matters
 
@@ -205,7 +276,8 @@ breaks" is a hard requirement, not an aspiration. Treat the following as load-be
 
 Algorithm/derivation notes are in `docs/notes/` (Markdown with LaTeX):
 - `project_and_slide_moving.md` — the moving-boundary project-and-slide math
-  (the core of this branch). Implemented in `_ibc._project_and_slide_moving`.
+  (the core of the 2D moving-boundary work). Implemented in
+  `_ibc._project_and_slide_moving`.
 - `Equations_of_motion.md`, `Intersection_w_multilinear_polynomial.md`,
   `Lines_closest_points.md` — supporting derivations.
 
@@ -214,17 +286,36 @@ Algorithm/derivation notes are in `docs/notes/` (Markdown with LaTeX):
 - Source of truth for behavior is the **docstrings** in the source (NumPy style),
   which Sphinx autodoc renders. `docs/` builds the readthedocs site
   (`docs/index.rst`, `docs/quickstart.rst`, `docs/api/`, `docs/examples/`).
-- The **API listing in `README.md` is a hand-maintained mirror that can drift**
-  out of sync with the code (its method names were last reconciled with the source
-  on 2026-06-24). When the README and the source disagree, **trust the source
-  docstrings**, and fix the README.
+- `README.md` is a **landing page, not a reference.** Its hand-maintained API
+  listing was removed in `1.0.1` (it had drifted) and replaced with links to the
+  generated docs. Do not reintroduce a duplicated API listing there — if
+  something is undocumented, fix the docstring in the source.
+- Run `codespell README.md docs/ planktos/ examples/` after documentation work;
+  the tree was made clean in `1.0.1`. Note it has ambiguous cases it will not
+  auto-fix (`-w`), so read its output rather than trusting a zero exit alone.
+
+## CI and pre-commit
+
+- **GitHub Actions** (`.github/workflows/tests.yml`) runs the test suite and
+  codespell on every push and pull request. It is the authority: it cannot be
+  bypassed and it runs on Linux, which has already caught a failure that did not
+  reproduce on the user's Windows machine (numpy 2.5 removing `np.cross` for
+  2-vectors). If CI fails and you cannot reproduce locally, **check the
+  dependency versions first** — the runner installs the newest of everything.
+- **`.pre-commit-config.yaml`** mirrors the codespell check locally. It is inert
+  until `pre-commit install` is run **once per clone**, which is easy to forget
+  on a new machine — if the user is setting up a fresh clone, remind them.
+  `git commit --no-verify` bypasses it. Documented under "Development" in the
+  README.
+- Keep the pre-commit codespell skip list in sync with the workflow's, so the
+  two cannot disagree about what is checked.
 
 ## Tests
 
 The suite is organized into focused, deterministic, fast modules (overhauled
-2026-06). Run `pytest` from the repository root. The default run is ~2s; add
-`--runslow` for the slower checks — the full-simulation parallelization tests
-(~30s) and the plotting smokes.
+2026-06). Run `pytest` from the repository root. The default run is ~1s; add
+`--runslow` for the slower checks — the full-simulation parallelization tests and
+the plotting smokes — which brings it to roughly 13s.
 
 - **Run** the whole thing with `pytest`; a specific area with e.g.
   `pytest tests/test_collisions_static.py`.
@@ -240,9 +331,13 @@ The suite is organized into focused, deterministic, fast modules (overhauled
   - `test_collisions_stl_3d.py` — end-to-end 3D: load a generated STL via
     `Environment.read_stl_mesh_data` and drive agents into it with `Swarm.move()`
     (needs the optional numpy-stl; module skips otherwise).
-  - `test_flow_generation.py` — brinkman/channel/canopy, `tile_flow`, `extend`,
-    `flow_points` axis order.
-  - `test_temporal_interp.py` — `fluid.fCubicSpline` / `create_temporal_interpolations`.
+  - `test_flow_generation.py` — brinkman/channel/canopy, `tile_domain`,
+    `flow_points` axis order. Contains one deliberate skip: `Environment.extend`
+    was removed on this branch (extrapolation is the intended replacement), and
+    the test is parked rather than deleted because `extend` may come back for the
+    specific fluid fields where it makes sense. Un-skip it if that happens.
+  - `test_temporal_interp.py` — `fluid.fCubicSpline` and `FluidData`'s temporal
+    interpolation (`create_temporal_interpolations` was absorbed into `FluidData`).
   - `test_agent_models.py` — `apply_agent_model`/`after_move` overrides, the
     `motion` generators, and the public `motion.RK45` solver contract.
   - `test_material_derivative.py` — `Swarm.get_DuDt` / `get_dudt` (closed-form).
@@ -252,7 +347,7 @@ The suite is organized into focused, deterministic, fast modules (overhauled
     agent wraps across the domain and immediately meets a wall on the far side).
   - `test_swarm_save.py` — round-trips for `save_pos_to_csv` / `save_data` /
     `save_pos_to_vtk`.
-  - `test_analysis.py` — `get_2D_vorticity`, forward & backward FTLE (closed-form).
+  - `test_analysis.py` — `get_vorticity`, forward & backward FTLE (closed-form).
   - `test_io_loaders.py` — IB2d moving/static mesh import (committed fixtures),
     IBAMR vtk (`@vtk`), COMSOL vtu (`@vtu`).
   - `test_parallel_ib.py` — serial == threads == processes (`@slow`).
@@ -265,7 +360,8 @@ The suite is organized into focused, deterministic, fast modules (overhauled
 - **Markers** (registered in `pytest.ini`): `slow` (only with `--runslow`),
   `vtk` (skipped if vtk data absent), `vtu` (skipped if COMSOL data absent).
 - **Non-automated** visual/exploratory scripts live in `tests/manual/` —
-  excluded from collection via `collect_ignore` in `conftest.py`.
+  excluded from collection via `collect_ignore` in `conftest.py` (at the
+  repository root, not in `tests/`).
 
 ### Resolved defects & FTLE notes
 
@@ -314,5 +410,5 @@ list. Two FTLE specifics worth knowing (`calculate_FTLE`):
   pandas, vtk>=9.2, pyvista>=0.44; optional extras: STL, netCDF, test). Editable
   install with `pip install -e .`.
 - `changelog.txt` is hand-maintained — update it for user-facing changes.
-</content>
-</invoke>
+- `TODO.md` is the working plan for this branch (phases, known bugs, design
+  history). Keep it current as items land; see "Branch context" above.

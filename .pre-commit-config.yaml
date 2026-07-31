@@ -1,0 +1,36 @@
+# Local pre-commit hooks. These are optional and OFF until you run, once per
+# clone:
+#
+#     pre-commit install
+#
+# After that they run automatically on `git commit`, against staged files only.
+# To commit without running them:  git commit --no-verify
+#
+# These are a fast local echo of what .github/workflows/tests.yml checks on the
+# server. CI remains the authority: it cannot be bypassed and it runs the test
+# suite, which is too slow for a commit hook.
+
+repos:
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.3
+    hooks:
+      - id: codespell
+        # Mirror the skip list in the CI workflow so the two cannot disagree.
+        # past_projects/ is archived prior research code, deliberately left as
+        # written; docs/_static holds binary assets.
+        exclude: ^(past_projects/|docs/_static/|docs/_build/)
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      # Structural checks only, all of which are no-ops on a clean tree.
+      # Deliberately NOT enabling trailing-whitespace or end-of-file-fixer:
+      # the repository currently has ~1900 lines with trailing whitespace and
+      # 29 files without a final newline, so they would rewrite roughly half
+      # the tree the first time they ran.
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        # Data files are gitignored, but this catches one slipping through.
+        # The header animation is ~2.9 MB, so the ceiling sits above it.
+        args: ['--maxkb=3000']

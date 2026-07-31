@@ -66,7 +66,7 @@ in the background::
 .. image:: ../_static/basic_ex_2d_agents.png
 
 The bars that you see at the bottom denote the height of the porous layer and 
-aren't really "there" in the sense that the porous layer is homogenous - Planktos 
+aren't really "there" in the sense that the porous layer is homogeneous - Planktos 
 just gives them a random distribution to mimic seagrass. To the top and right, 
 you can see the Gaussian kernel density estimation for the Swarm. Various 
 statistics are also given.

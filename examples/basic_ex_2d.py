@@ -38,7 +38,7 @@ envir.plot_flow()
 #   random positions throughout the environment. We just need to tell it what 
 #   environment it should go in by passing in our Environment object.
 #   Let's also specify a seed for the random number generator, so that our 
-#   results will be reproducable.
+#   results will be reproducible.
 swrm = planktos.Swarm(envir=envir, seed=1)
 
 # Let's plot our new agents to see what we have so far:
