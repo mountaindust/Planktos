@@ -1,3 +1,9 @@
+1.0.2
+-----------------------
+Bug fixes.
+- Bug fix: calculate_FTLE(swrm=...) raised AttributeError on the first step, and appended to the caller's Swarm history.
+
+
 1.0.1
 -----------------------
 Documentation-only release. No library behavior was changed.

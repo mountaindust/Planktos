@@ -3028,7 +3028,13 @@ class Environment:
             # Add Swarm to Environment and re-initialize swarm positions
             self.add_swarm(s)
             s.positions = s.grid_init(*grid_dim, testdir=testdir)
+            # Give the copy its own history lists. copy.copy is shallow, so
+            # without this the FTLE integration appends grid-sized entries to
+            # the caller's Swarm -- which this method promises not to alter.
             s.pos_history = []
+            s.vel_history = []
+            if s.props_history is not None:
+                s.props_history = []
             if self.flow is not None:
                 s.velocities = ma.array(s.get_fluid_drift(), mask=s.positions.mask.copy())
             else:
@@ -3176,7 +3182,7 @@ class Environment:
                 # Update history
                 s.pos_history.append(old_positions)
                 s.vel_history.append(old_velocities)
-                if self.props_history is not None:
+                if s.props_history is not None:
                     s.props_history.append(old_props)
 
                 # Update velocity and acceleration

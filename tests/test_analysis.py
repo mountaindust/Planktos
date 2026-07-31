@@ -116,6 +116,69 @@ def test_FTLE_simple_shear_closed_form():
 
 
 # --------------------------------------------------------------------------- #
+#                    FTLE from a user-supplied Swarm                           #
+# --------------------------------------------------------------------------- #
+# calculate_FTLE(swrm=...) steps the Swarm's own apply_agent_model rather than
+# running RK45, so it is a distinct code path from the tracer and ode_gen
+# branches above -- and it had no coverage at all. Two regressions lived there:
+# it read self.props_history (an Environment attribute that does not exist)
+# where it meant the Swarm's, raising AttributeError on the very first step; and
+# copy.copy leaves the copy's history lists aliased to the caller's Swarm, which
+# the method's docstring promises not to alter.
+
+class _AdvectSwarm(planktos.Swarm):
+    '''Pure Euler advection by the local fluid velocity -- deterministic, unlike
+    the default Brownian model, so the FTLE has a closed-form answer.'''
+
+    def apply_agent_model(self, dt):
+        return self.positions + self.get_fluid_drift()*dt
+
+
+@pytest.mark.parametrize('store_prop_history', [False, True])
+def test_FTLE_with_user_swarm_shear_closed_form(store_prop_history):
+    # u = (a*y, 0): y never changes, so an Euler step is exact and the flow-map
+    # gradient is the same [[1, aT],[0,1]] the RK45 path produces. Same closed
+    # form as test_FTLE_simple_shear_closed_form, reached a different way.
+    a, T, n = 1.0, 1.0, 21
+    x = np.linspace(0, 10, n); y = np.linspace(0, 10, n)
+    X, Y = np.meshgrid(x, y, indexing='ij')
+    envir = planktos.Environment(Lx=10, Ly=10, flow=[a * Y, np.zeros_like(Y)])
+    swrm = _AdvectSwarm(swarm_size=4, envir=envir, seed=1,
+                        store_prop_history=store_prop_history)
+
+    envir.calculate_FTLE(grid_dim=(8, 8), T=T, dt=0.05, swrm=swrm)
+    assert np.nanmax(envir.FTLE_largest) == pytest.approx(_shear_FTLE(a * T), abs=1e-3)
+
+
+@pytest.mark.parametrize('store_prop_history', [False, True])
+def test_FTLE_with_user_swarm_leaves_it_unaltered(store_prop_history):
+    # "The Swarm object itself will not be altered; a shallow copy will be
+    # created" -- so the caller's histories must not collect the grid-sized
+    # entries the FTLE integration generates.
+    n = 11
+    x = np.linspace(0, 10, n); y = np.linspace(0, 10, n)
+    X, Y = np.meshgrid(x, y, indexing='ij')
+    envir = planktos.Environment(Lx=10, Ly=10, flow=[Y, np.zeros_like(Y)])
+    swrm = _AdvectSwarm(swarm_size=4, envir=envir, seed=1,
+                        store_prop_history=store_prop_history)
+    swrm.move(0.1)                                  # one real step of its own
+
+    n_pos = len(swrm.pos_history)
+    n_vel = len(swrm.vel_history)
+    n_props = None if swrm.props_history is None else len(swrm.props_history)
+
+    envir.calculate_FTLE(grid_dim=(8, 8), T=0.5, dt=0.05, swrm=swrm)
+
+    assert len(swrm.pos_history) == n_pos
+    assert len(swrm.vel_history) == n_vel
+    if n_props is None:
+        assert swrm.props_history is None
+    else:
+        assert len(swrm.props_history) == n_props
+    assert swrm.positions.shape[0] == 4             # not re-gridded
+
+
+# --------------------------------------------------------------------------- #
 #                          backward-time FTLE                                  #
 # --------------------------------------------------------------------------- #
 # Backward FTLE is the forward integration of the reversed flow; FTLE_largest
