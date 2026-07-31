@@ -10,7 +10,6 @@ Email: cstric12@utk.edu
 
 import warnings
 import numpy as np
-import numpy._core.numeric as _nx
 from scipy import interpolate
 from scipy.linalg import solve_banded
 from pathlib import Path
