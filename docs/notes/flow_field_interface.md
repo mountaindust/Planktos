@@ -1078,13 +1078,16 @@ whole note plus `CLAUDE.md` and `TODO.md` (root) first. Quick orientation:
 - **Pre-existing breakage found while verifying step 1, unrelated to it** (all three
   reproduce identically against the pre-step-1 package, so they are not regressions —
   recorded here so the next session does not re-diagnose them):
-  - `_environment.py` `calculate_FTLE` reads `self.props_history` where it means
-    `s.props_history`, so the user-`swrm` branch raises `AttributeError`. Breaks
-    `examples/ex_produce_ftle_2d.py` at its third FTLE call.
-  - `_environment.py` `read_IB2d_mesh_data` dereferences
+  - **[fixed]** `_environment.py` `calculate_FTLE` read `self.props_history` where it
+    meant `s.props_history`, so the user-`swrm` branch raised `AttributeError`. Fixing
+    that exposed a second defect in the same block — the shallow `copy.copy` left
+    `vel_history`/`props_history` aliased to the caller's Swarm — so both were fixed
+    together. See TODO.md.
+  - **[fixed]** `_environment.py` `read_IB2d_mesh_data` dereferenced
     `self.flow.fluid_domain_LLC` without checking `self.flow is not None`, so loading a
-    mesh into a fluid-free environment raises. Breaks `examples/ex_vicsek_model_2d.py`
-    at its first call.
+    mesh into a fluid-free environment raised. This one *is* a `dyload` regression —
+    on `master` `fluid_domain_LLC` is an `Environment` attribute that always exists, so
+    it only became reachable when the attribute moved onto `FluidData`. See TODO.md.
   - `_ibc._project_and_slide_static` raises
     `ValueError: operands could not be broadcast together with shapes (3,2) (3,)` on
     the ib2d channel mesh when agents are seeded uniformly across the domain (rather

@@ -1597,8 +1597,11 @@ class Environment:
                 vertices = _read_single_file(path)
                 print("Processing vertex file for pair-wise connections within {}.".format(
                     res_factor*Eulerian_res))
-                # shift coordinates to match any shift that happened in flow data
-                if self.flow.fluid_domain_LLC is not None:
+                # shift coordinates to match any shift that happened in flow data.
+                # With no fluid loaded there is no shift to match, which is a
+                # supported way to use this method -- passing res explicitly is
+                # how you say you have no fluid grid to infer it from.
+                if self.flow is not None and self.flow.fluid_domain_LLC is not None:
                     for ii in range(2):
                         vertices[:,ii] -= self.flow.fluid_domain_LLC[ii]
                 dist_mat_test = distance.pdist(vertices)<=res_factor*Eulerian_res
@@ -1613,7 +1616,8 @@ class Environment:
             elif method == 'hull':
                 vertices = _read_single_file(path)
                 # shift coordinates to match any shift that happened in flow data
-                if self.flow.fluid_domain_LLC is not None:
+                # (see the note on the fluid-free case under 'proximity' above)
+                if self.flow is not None and self.flow.fluid_domain_LLC is not None:
                     for ii in range(2):
                         vertices[:,ii] -= self.flow.fluid_domain_LLC[ii]
                 hull = ConvexHull(vertices)
@@ -2581,7 +2585,13 @@ class Environment:
             # Add Swarm to Environment and re-initialize swarm positions
             self.add_swarm(s)
             s.positions = s.grid_init(*grid_dim, testdir=testdir)
+            # Give the copy its own history lists. copy.copy is shallow, so
+            # without this the FTLE integration appends grid-sized entries to
+            # the caller's Swarm -- which this method promises not to alter.
             s.pos_history = []
+            s.vel_history = []
+            if s.props_history is not None:
+                s.props_history = []
             if self.flow is not None:
                 s.velocities = ma.array(s.get_fluid_drift(), mask=s.positions.mask.copy())
             else:
@@ -2729,7 +2739,7 @@ class Environment:
                 # Update history
                 s.pos_history.append(old_positions)
                 s.vel_history.append(old_velocities)
-                if self.props_history is not None:
+                if s.props_history is not None:
                     s.props_history.append(old_props)
 
                 # Update velocity and acceleration

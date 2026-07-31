@@ -134,6 +134,69 @@ def test_static_vertex_import_closed_with_add_idx():
 
 
 # --------------------------------------------------------------------------- #
+#      static vertex import: the 'proximity' and 'hull' methods                #
+# --------------------------------------------------------------------------- #
+# These are the two methods that consult the fluid, in order to shift mesh
+# coordinates into the translated frame the fluid loaders put the fluid in. Both
+# used to dereference self.flow unconditionally, so importing a mesh into an
+# environment with no fluid raised AttributeError -- even though that is a
+# supported workflow (passing `res` explicitly is how you say you have no fluid
+# grid to infer the connection radius from). Neither method had any coverage.
+#
+# box.vertex is the four corners of a 2x2 square, so sides are 2.0 apart and
+# diagonals 2*sqrt(2) = 2.83. The connection radius is res_factor*res = 0.501*res,
+# and res=4.5 puts it at 2.25 -- catching the four sides, excluding the diagonals.
+
+BOX = 'mesh_min/box.vertex'
+BOX_RES = 4.5
+
+
+def test_static_vertex_import_proximity_without_fluid():
+    envir = planktos.Environment(Lx=10, Ly=10)
+    assert envir.flow is None
+    envir.read_IB2d_mesh_data(str(FIXTURES / BOX), method='proximity', res=BOX_RES)
+    assert envir.ibmesh.shape == (4, 2, 2)                  # the four sides
+    seg_len = np.linalg.norm(envir.ibmesh[:, 0, :] - envir.ibmesh[:, 1, :], axis=1)
+    assert np.allclose(seg_len, 2.0)
+    # unshifted: there is no fluid frame to shift into
+    assert np.isclose(envir.ibmesh[..., 0].min(), 2.0)
+    assert np.isclose(envir.ibmesh[..., 1].min(), 2.0)
+
+
+def test_static_vertex_import_hull_without_fluid():
+    envir = planktos.Environment(Lx=10, Ly=10)
+    envir.read_IB2d_mesh_data(str(FIXTURES / BOX), method='hull')
+    assert envir.ibmesh.shape == (4, 2, 2)                  # hull of a square
+    assert np.isclose(envir.ibmesh[..., 0].min(), 2.0)
+
+
+@pytest.mark.parametrize('method', ['proximity', 'hull'])
+def test_static_vertex_import_still_shifts_when_fluid_is_loaded(method):
+    # The guard must not cost the shift when there *is* a fluid: a loader that
+    # translated its data to the origin records the original corner in
+    # fluid_domain_LLC, and the mesh has to follow it.
+    n = 11
+    g = np.linspace(0, 10, n)
+    X, Y = np.meshgrid(g, g, indexing='ij')
+    envir = planktos.Environment(Lx=10, Ly=10, flow=[np.zeros_like(X), np.zeros_like(Y)])
+    envir.flow.fluid_domain_LLC = (1.0, 0.5)
+
+    kwargs = {'res': BOX_RES} if method == 'proximity' else {}
+    envir.read_IB2d_mesh_data(str(FIXTURES / BOX), method=method, **kwargs)
+    assert envir.ibmesh.shape == (4, 2, 2)
+    assert np.isclose(envir.ibmesh[..., 0].min(), 2.0 - 1.0)
+    assert np.isclose(envir.ibmesh[..., 1].min(), 2.0 - 0.5)
+
+
+def test_static_vertex_import_proximity_without_res_still_requires_fluid():
+    # res=None means "infer the radius from the fluid grid", which genuinely
+    # needs a fluid. That guard is the one that should fire, with its message.
+    envir = planktos.Environment(Lx=10, Ly=10)
+    with pytest.raises(AssertionError, match='flow data'):
+        envir.read_IB2d_mesh_data(str(FIXTURES / BOX), method='proximity')
+
+
+# --------------------------------------------------------------------------- #
 #            IBAMR vtk fluid (in-repo data, vtk-gated)                        #
 # --------------------------------------------------------------------------- #
 

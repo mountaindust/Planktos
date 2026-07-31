@@ -10,6 +10,7 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - FluidData is documented in the API reference, including the INUM interpolation-in-time tradeoff.
 - Plots now show mean agent speed and its spread in place of mean and max fluid speed; plotting no longer loads fluid data for statistics.
 - New FluidData.get_mean_velocity returns the spatial mean of each velocity component at any time.
+- Bug fix: calculate_FTLE(swrm=...) raised AttributeError on the first step, and appended to the caller's Swarm history.
 
 
 1.0.1

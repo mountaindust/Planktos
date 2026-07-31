@@ -176,17 +176,47 @@ because step 1 was verified by running the examples end to end.
   the three. Likely a missing `keepdims=True` (or an `axis` that should be `-1`) on a
   multi-element slide, but that is a guess — diagnose before patching, and add the case
   to `test_collisions_static.py`.
-- [ ] 🔴 **`Environment.calculate_FTLE` breaks whenever a `swrm=` is supplied.**
-  `_environment.py` reads `self.props_history` where it means `s.props_history`
-  (the correct spelling is two lines above, in the same block), so the user-swarm branch
-  raises `AttributeError: 'Environment' object has no attribute 'props_history'`. Breaks
-  `examples/ex_produce_ftle_2d.py` at its third FTLE call. The `tracer`/`ode_gen`
-  branches are unaffected, which is why the FTLE tests miss it.
-- [ ] 🟡 **`Environment.read_IB2d_mesh_data` assumes a fluid is already loaded.**
-  It dereferences `self.flow.fluid_domain_LLC` with no `self.flow is not None` guard, so
-  reading a mesh into a fluid-free environment raises `AttributeError`. Breaks
-  `examples/ex_vicsek_model_2d.py` at its first call — that example deliberately runs
-  without fluid. Guard it (no shift is needed when there is nothing to shift).
+- [x] **`Environment.calculate_FTLE` breaks whenever a `swrm=` is supplied — DONE.**
+  Two defects in the same branch, both present on `master` as well (so this is a real
+  1.1.0 fix, not a dev regression):
+  1. It read `self.props_history` where it meant `s.props_history` (the correct
+     spelling is two lines above, in the same block), so the user-swarm branch raised
+     `AttributeError: 'Environment' object has no attribute 'props_history'` on the
+     very first step, always.
+  2. `copy.copy(swrm)` is shallow and only `pos_history` was re-initialized on the
+     copy, so `vel_history` and `props_history` stayed aliased to the caller's Swarm.
+     Fixing (1) alone therefore turned a crash into silent corruption: the caller's
+     `vel_history` collected grid-sized entries (1 → 12 in the regression test),
+     contradicting the docstring's "The Swarm object itself will not be altered."
+  Regression tests: `test_analysis.py::test_FTLE_with_user_swarm_shear_closed_form`
+  (closed-form value via Euler advection through `apply_agent_model`, both
+  `store_prop_history` settings) and `::test_FTLE_with_user_swarm_leaves_it_unaltered`.
+  Both fail without the fix. `examples/ex_produce_ftle_2d.py` now runs to completion.
+- [x] **`Environment.read_IB2d_mesh_data` assumed a fluid was already loaded — DONE.**
+  The static-file branch dereferenced `self.flow.fluid_domain_LLC` with no
+  `self.flow is not None` guard under `method='proximity'` and `method='hull'`, so
+  reading a mesh into a fluid-free environment raised `AttributeError`. That is a
+  supported workflow: passing `res` explicitly is how you say you have no fluid grid to
+  infer the connection radius from, and `examples/ex_vicsek_model_2d.py` does exactly
+  that. The correct form was already in the same file twice (`read_stl_mesh_data`,
+  `read_3D_vertex_data_to_convex_hull`); the two IB2d sites now match it.
+
+  **`dyload`-only regression** — on `master` `fluid_domain_LLC` is an `Environment`
+  attribute that always exists, so `self.fluid_domain_LLC` cannot fail there. It became
+  reachable when the attribute moved onto `FluidData`. No changelog entry, per the
+  rule in CLAUDE.md, and not cherry-picked to `master`.
+
+  Regression tests in `test_io_loaders.py`: `proximity` and `hull` without fluid, that
+  both still shift when a fluid *is* loaded, and that `res=None` still raises its
+  "Must import flow data first!" assertion. Neither method had any coverage before,
+  which is why this went unnoticed. `examples/ex_vicsek_model_2d.py` runs again.
+
+- [ ] 🟢 **Decide: `method='adjacent'` never applies the LLC shift**, even when a fluid
+  *is* loaded, while `proximity` and `hull` do. Latent rather than broken today —
+  IB2d's `fluid_domain_LLC` is `(0.0, 0.0)` for `examples/ib2d_data` (checked), so the
+  shift is a no-op and all three methods agree there. A vertex file paired with fluid
+  whose grid does not start at the origin would come out offset. Either add the shift
+  to `adjacent` or document why it is excluded.
 
 ### Cleanup (low urgency)
 
