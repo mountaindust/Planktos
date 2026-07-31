@@ -128,7 +128,7 @@ behind since the dynamic-loading work.)
 | `planktos/_environment.py` | `Environment` class | The domain: boundary conditions, immersed boundary mesh, swarms, time. Loads fluid/mesh data, generates analytical flows, plots, computes vorticity/FTLE. Fluid data itself lives in `fluid.py` (see below). |
 | `planktos/_swarm.py` | `Swarm` class | A group of agents: positions/velocities/props, the move loop, boundary-condition application, plotting, data saving. |
 | `planktos/motion.py` | yes (`planktos.motion`) | Equation-of-motion generators & solvers: `Euler_brownian_motion` (default SDE), `inertial_particles`, `highRe_massive_drift`, `tracer_particles`, `RK45`. |
-| `planktos/fluid.py` | `FluidData` is user-visible via `Environment.flow`; the rest internal | All fluid velocity data and its temporal interpolation: `FluidData` (+ per-source `IB2dData`, `VTK3dData`, `ComsolVTUData`), `FlowArray`, `LinearSpline`, `fCubicSpline`, `SplineRangeError`. See "Fluid data architecture" below. |
+| `planktos/fluid.py` | `FluidData` is user-visible via `Environment.flow`; the rest internal | All fluid velocity data and its temporal interpolation: `FluidData` (+ per-source `IB2dData`, `VTK3dData`, `ComsolVTUData`), `LinearSpline`, `fCubicSpline`, `SplineRangeError`. See "Fluid data architecture" below. |
 | `planktos/_geom.py` | internal | Pure geometry workhorses: segment/line/triangle intersections, closest distances, multilinear-polynomial intersection (for moving meshes). Formerly static methods of `Swarm`. |
 | `planktos/_ibc.py` | internal | Immersed-boundary collision handling: `apply_internal_static_BC`, `apply_internal_moving_BC`, and the project-and-slide routines for static and moving meshes. |
 | `planktos/_dataio.py` | internal | Low-level read/write of vtk, vtu, .vertex, stl, NetCDF. Use `Environment` loader methods instead of calling these directly. |
@@ -190,12 +190,33 @@ O(Δt⁴)→O(Δt²), and ∂u/∂t becomes a piecewise-constant step function �
 stays the default for datasets that fit in memory. **Quantifying that gap is still
 an open task** (TODO.md Phase 1C); do not assert a magnitude for it until then.
 
-**`FlowArray`** is an `np.ndarray` subclass providing a memory-cheap *view* for
-periodic/tiled flows: it reports the tiled `shape` while storing a single copy.
-**Gotcha:** numpy ufuncs operate on the underlying, untiled buffer. `f.shape` may
-say `(41,41)` while `np.asarray(f).shape` says `(21,21)`, and `f * 2` silently
-returns an untiled array. Call `np.asarray()` deliberately before array-wide numpy
-operations, and don't assume arithmetic preserves tiling.
+**Velocity components are plain `np.ndarray`.** Index a `FluidData` (`envir.flow[0]`)
+for a static component, or call it (`envir.flow(t)`) for a temporally interpolated
+one; either way you get an ordinary array on which every numpy/scipy/matplotlib
+operation works normally. There are no interop caveats and no `np.asarray()`
+defensive wrapping — if you find such a wrapper, it is a leftover.
+
+This replaced `FlowArray`, an `ndarray` subclass that virtualized tiled flow by
+overriding `.shape`/`__getitem__`. It was **deleted** in the fluid-interface
+refactor: modern scipy defeats the trick (`RegularGridInterpolator` calls
+`np.asarray` on any array-API object, discarding the virtual shape), so the tiled
+interpolation path never actually worked, while the subclass corrupted ordinary
+numpy operations on flow data. `docs/notes/flow_field_interface.md` is the full
+record.
+
+**Domain tiling currently raises `NotImplementedError`** (`FluidData.tile_flow`,
+`Environment.tile_domain`) — it went away with `FlowArray` and returns as a
+position-wrapping implementation covering 2D *and* 3D, after the plotting work.
+`Environment.extend` remains removed, and is decided at the same time. Do not
+reintroduce a materializing tiling stopgap; see §5/§9 of the note for why.
+
+**When tiling comes back, work from the restoration checklist at
+`docs/notes/flow_field_interface.md` §9.1.** Gating it off left notices and
+replaced tests across source, tests, examples, docs, and prose; §9.1 lists every
+one. Both old bodies are preserved **commented out beneath their `raise`**, under a
+`PREVIOUS IMPLEMENTATION, KEPT FOR RESTORATION` banner — reuse them rather than
+rewriting. Only the fluid halves are superseded; `tile_domain`'s ibmesh/`L` logic
+and `tile_flow`'s `flow_points` extension still stand.
 
 ## The canonical workflow
 
@@ -331,15 +352,17 @@ the plotting smokes — which brings it to roughly 13s.
   - `test_collisions_stl_3d.py` — end-to-end 3D: load a generated STL via
     `Environment.read_stl_mesh_data` and drive agents into it with `Swarm.move()`
     (needs the optional numpy-stl; module skips otherwise).
-  - `test_flow_generation.py` — brinkman/channel/canopy, `tile_domain`,
-    `flow_points` axis order. Contains one deliberate skip: `Environment.extend`
+  - `test_flow_generation.py` — brinkman/channel/canopy, `tile_domain` (now pinned
+    as raising `NotImplementedError`, including that a failed call leaves the
+    environment unmutated), `flow_points` axis order. One deliberate skip: `Environment.extend`
     was removed on this branch (extrapolation is the intended replacement), and
     the test is parked rather than deleted because `extend` may come back for the
     specific fluid fields where it makes sense. Un-skip it if that happens.
   - `test_temporal_interp.py` — `fluid.fCubicSpline` and `FluidData`'s temporal
     interpolation (`create_temporal_interpolations` was absorbed into `FluidData`).
-  - `test_flow_interface.py` — pins the `Environment.flow` consumer contract ahead
-    of the `FlowArray` removal: `interpolate_flow`/`interpolate_temporal_flow`
+  - `test_flow_interface.py` — pins the `Environment.flow` consumer contract (it
+    was written as the safety net for the `FlowArray` removal, which it survived
+    unchanged): `interpolate_flow`/`interpolate_temporal_flow`
     values, the container + spline-indexing surface, `fmin`/`fmax` tuples,
     `_calc_basic_stats`, `get_mean_fluid_speed`, `calculate_mag_gradient`,
     `get_raw_loaded_data`, `fshape`, the plotting strided-slice path, the

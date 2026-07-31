@@ -1766,11 +1766,24 @@ class Environment:
 
 
     def tile_domain(self, x=1, y=1):
-        '''Tile fluid flow and immersed meshes a number of times in the x and/or 
-        y directions. While obviously this works best if the fluid is periodic 
-        in the direction(s) being tiled, this will not be enforced. Instead, it 
-        will just be assumed that the domain edges are equivalent, and only the
-        right/upper domain edge will be used in tiling.
+        '''Tile the fluid flow and immersed meshes a number of times in the x
+        and/or y directions.
+
+        .. note::
+           **Temporarily unavailable.** See :meth:`planktos.fluid.FluidData.tile_flow`
+           for why: tiling was implemented as a virtual ndarray view that modern
+           scipy defeats, and that view has been removed. Tiling will return as a
+           position-wrapping implementation covering both 2D and 3D, after the
+           plotting work. See ``docs/notes/flow_field_interface.md``.
+
+           Raising here rather than in ``tile_flow`` alone keeps the environment
+           from being left half-tiled (mesh and ``L`` updated, fluid not) when
+           there is no fluid loaded.
+
+           The previous body is preserved commented-out below. Only its *fluid*
+           call is superseded by position-wrapping; the ibmesh tiling and ``L``
+           scaling are still correct as written and should be reused rather than
+           rewritten. See §9.1 of the note for the full restoration checklist.
 
         Parameters
         ----------
@@ -1778,27 +1791,46 @@ class Environment:
             number of tiles in the x direction (counting the one already there)
         y : int, default=1
             number of tiles in the y direction (counting the one already there)
+
+        Raises
+        ------
+        NotImplementedError
+            always, until the position-wrapping implementation lands
         '''
 
-        if self.flow is not None:
-            self.flow.tile_flow(x,y)
+        raise NotImplementedError(
+            'Tiling is temporarily unavailable. The previous implementation '
+            'relied on the FlowArray view, which modern scipy defeats by '
+            'coercing array-API objects with np.asarray; FlowArray has been '
+            'removed. Tiling will return as a position-wrapping implementation '
+            'for 2D and 3D. See docs/notes/flow_field_interface.md.')
 
-        # tile Lagrangian meshes
-        if self.ibmesh is not None:
-            newmeshs = [self.ibmesh]
-            for ii in range(x):
-                for jj in range(y):
-                    new_mesh = np.array(self.ibmesh)
-                    new_mesh[:,:,0] += self.L[0]*ii
-                    new_mesh[:,:,1] += self.L[1]*jj
-                    newmeshs.append(new_mesh)
-            self.ibmesh = np.concatenate(newmeshs).astype(np.float64)
-
-        # update environment dimensions
-        self.L[0] *= x; self.L[1] *= y
-        
-        print("Fluid tiled. Planktos domain size is now {}.".format(self.L))
-        self._reset_flow_deriv()
+        # --- PREVIOUS IMPLEMENTATION, KEPT FOR RESTORATION ------------------
+        # Retained deliberately rather than left to git history: the mesh and
+        # domain-size handling below is still wanted verbatim when tiling
+        # returns. Only `self.flow.tile_flow(x,y)` is superseded (by the
+        # position-wrapping scheme in the note). Restore with the raise deleted.
+        #
+        # if self.flow is not None:
+        #     self.flow.tile_flow(x,y)
+        #
+        # # tile Lagrangian meshes
+        # if self.ibmesh is not None:
+        #     newmeshs = [self.ibmesh]
+        #     for ii in range(x):
+        #         for jj in range(y):
+        #             new_mesh = np.array(self.ibmesh)
+        #             new_mesh[:,:,0] += self.L[0]*ii
+        #             new_mesh[:,:,1] += self.L[1]*jj
+        #             newmeshs.append(new_mesh)
+        #     self.ibmesh = np.concatenate(newmeshs).astype(np.float64)
+        #
+        # # update environment dimensions
+        # self.L[0] *= x; self.L[1] *= y
+        #
+        # print("Fluid tiled. Planktos domain size is now {}.".format(self.L))
+        # self._reset_flow_deriv()
+        # --------------------------------------------------------------------
 
 
     #######################################################################
@@ -2114,11 +2146,7 @@ class Environment:
             # temporal flow. interpolate in time, and then in space.
             flow_now = self.interpolate_temporal_flow()
 
-        # np.asarray strips the FlowArray view, which otherwise leaks a derived
-        # array carrying the original component's shape -- np.mean then returns
-        # something that misreports its own shape to callers. Drop the asarray
-        # when FlowArray is deleted; see docs/notes/flow_field_interface.md.
-        comps = [np.asarray(flow_now[n]) for n in range(3 if DIM3 else 2)]
+        comps = [flow_now[n] for n in range(3 if DIM3 else 2)]
         fluid_speed = np.sqrt(sum(c**2 for c in comps))
 
         return np.mean(fluid_speed)
@@ -2994,10 +3022,9 @@ class Environment:
 
         # Static flow: a single file, no temporal interpolation
         # (interpolate_temporal_flow assumes a time axis and errors when
-        # flow_times is None). np.asarray strips the FlowArray view so the writer
-        # gets plain ndarrays.
+        # flow_times is None).
         if self.flow.flow_times is None:
-            static_flow = [np.asarray(self.flow[n]) for n in range(len(self.flow))]
+            static_flow = [self.flow[n] for n in range(len(self.flow))]
             _dataio.write_vtk_rectilinear_grid_vectors(
                 path, name, static_flow, flow_points, None, self.time)
             return

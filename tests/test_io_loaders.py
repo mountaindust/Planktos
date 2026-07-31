@@ -179,10 +179,8 @@ def test_save_fluid_static_2D_roundtrips(tmp_path):
     envir.save_fluid(str(tmp_path), 'flow')
     assert (tmp_path / 'flow.vtk').is_file()                      # single static file
     data, mesh, _ = _dataio.read_vtk_Rectilinear_Grid_Vector(str(tmp_path / 'flow.vtk'))
-    # np.asarray strips the FlowArray view (array-wide np.allclose misreads a
-    # FlowArray buffer; see TODO.md Phase 0).
-    assert np.allclose(data[0][:, :, 0], np.asarray(envir.flow[0]))   # u, orientation preserved
-    assert np.allclose(data[1][:, :, 0], np.asarray(envir.flow[1]))   # v
+    assert np.allclose(data[0][:, :, 0], envir.flow[0])   # u, orientation preserved
+    assert np.allclose(data[1][:, :, 0], envir.flow[1])   # v
     assert np.allclose(mesh[0], envir.flow.flow_points[0])            # origin-centered coords
     assert np.allclose(mesh[1], envir.flow.flow_points[1])
     assert mesh[0][0] == 0.0 and mesh[1][0] == 0.0
@@ -206,8 +204,7 @@ def test_save_fluid_static_3D_roundtrips(tmp_path):
     envir.set_brinkman_flow(alpha=66, h_p=6, U=5, dpdx=0.22306, res=9)
     envir.save_fluid(str(tmp_path), 'flow3d')
     data, mesh, _ = _dataio.read_vtk_Rectilinear_Grid_Vector(str(tmp_path / 'flow3d.vtk'))
-    # np.asarray strips the FlowArray view (see TODO.md Phase 0).
-    assert all(np.allclose(data[i], np.asarray(envir.flow[i])) for i in range(3))
+    assert all(np.allclose(data[i], envir.flow[i]) for i in range(3))
     assert all(np.allclose(mesh[i], envir.flow.flow_points[i]) for i in range(3))
 
 

@@ -4,9 +4,15 @@ This example is very similar to ex_ib2d_ibmesh.py, but in 3D and with data
 that is available without external download. It also demonstrates the utility of 
 the convex hull algorithm and demonstrates how the domain can be tiled.
 
-This example loads the vtk fluid velocity field AND loads vertex data describing 
+This example loads the vtk fluid velocity field AND loads vertex data describing
 a 3D cylinder, creating an ibmesh out of it using a convex hull algorithm. \
-Agents should not be able to move through the cylinder boundaries.'''
+Agents should not be able to move through the cylinder boundaries.
+
+!!! THIS EXAMPLE DOES NOT CURRENTLY RUN TO COMPLETION !!!
+The tile_domain call below raises NotImplementedError: tiling is temporarily
+unavailable while the fluid-data interface is reworked. It returns as a
+position-wrapping implementation covering 2D and 3D. Delete this notice and
+re-run when that lands. See docs/notes/flow_field_interface.md.'''
 
 import planktos
 

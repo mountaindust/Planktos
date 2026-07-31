@@ -352,15 +352,26 @@ Correctness-first: pin trusted behavior before removing anything.
    user-visible output (§3.4, patched with the `np.asarray` idiom already used in
    `save_fluid` — remove in §7.3 below), and one independent of `FlowArray`
    entirely (§3.5, `get_raw_loaded_data` broken on the whole dynamic path).
-3. **Delete `FlowArray`;** make static components and spline returns plain
-   ndarrays. Drop the `np.asarray(...)` workarounds in tests and `save_fluid`.
-4. **Gate tiling off:** `tile_flow`/`tile_domain` raise `NotImplementedError` in
-   2D and 3D. Convert `test_tile_flow_replicates_and_resizes` to assert the raise.
-   Note the affected 3D examples in their file headers.
-5. Run full suite (`pytest`, then `--runslow`). Confirm the workarounds are gone
-   and nothing regressed.
-6. Update `changelog.txt` (user-facing: interop fix, tiling temporarily
-   unavailable) and this note.
+3. **[done]** **Delete `FlowArray`;** static components and spline returns are
+   plain ndarrays. All `np.asarray(...)` workarounds dropped from `save_fluid`,
+   `get_mean_fluid_speed`, `_calc_basic_stats`, and the tests. Removing
+   `FlowArray` also deleted the ~165-line class plus the tiling index-mapping
+   branches it served inside `LinearSpline.__getitem__` and
+   `fCubicSpline.__getitem__` (~73 lines each), and the `tiling`/`dshape`
+   attributes throughout — roughly 380 lines net.
+4. **[done]** **Gate tiling off:** `FluidData.tile_flow` and
+   `Environment.tile_domain` raise `NotImplementedError` in 2D and 3D.
+   `tile_domain` raises *before* mutating anything, so a failed call cannot leave
+   a half-tiled environment (mesh and `L` updated, fluid not) — pinned by
+   `test_tile_domain_leaves_environment_untouched`. The old
+   `test_tile_flow_replicates_and_resizes` became three tests asserting the
+   interim contract. The affected examples (`ex_IBAMR_ibmesh.py`,
+   `ex_sticky_seafan_3d.py`, `basic_ex_3d.py`) and their docs pages carry a
+   notice rather than having the calls edited out.
+5. **[done]** Full suite green: **201 passed, 20 skipped** (`pytest`);
+   **219 passed, 2 skipped** (`--runslow`); codespell clean.
+6. **[done]** `changelog.txt` updated: the `FlowArray` line is replaced with the
+   plain-ndarray guarantee, plus a line recording that tiling temporarily raises.
 
 Then §8 (plotting streaming), and only after that §9 (real tiling + revisit
 `extend`). Each of those is its own design pass with its own note-worthy
@@ -426,9 +437,83 @@ is the physically right answer — it is the same class of operation as tiling
 re-materializing arrays. If it returns, un-skip
 `test_extend_grows_domain_and_copies_edges` in `tests/test_flow_generation.py`.
 
-**Re-enable as it lands:** remove the `NotImplementedError` gates, restore the
-tiling test to a real behavioral check, and un-flag the 3D examples
-(`ex_IBAMR_ibmesh.py`, `ex_sticky_seafan_3d.py`, `basic_ex_3d.py`).
+### 9.1 Restoration checklist — everything §7.4 touched
+
+Gating tiling off left notices, stubs, and replaced tests scattered across source,
+tests, examples, docs, and prose. **This is the complete list**; work down it when
+tiling returns, and delete this subsection once it is empty.
+
+⚠️ **Read this first: the old bodies are preserved in place, commented out.**
+`FluidData.tile_flow` and `Environment.tile_domain` both had their entire bodies
+replaced by a `raise`, but the previous implementations sit directly beneath each
+raise under a `PREVIOUS IMPLEMENTATION, KEPT FOR RESTORATION` banner. **Reuse them
+rather than rewriting from memory** — parts of both are still correct:
+
+- `tile_domain` — only its `self.flow.tile_flow(x,y)` call is superseded by
+  position-wrapping. The ibmesh tiling (offsetting copies by `L[0]*ii`,
+  `L[1]*jj`), the `self.L` scaling, and the `_reset_flow_deriv()` call are still
+  correct verbatim.
+- `tile_flow` — the `f.tiling` propagation is dead (`FlowArray` and the spline
+  `tiling` attributes are gone), but the `fshape` arithmetic and the
+  `flow_points` extension are the shape/geometry half of the §4.4 naming rule and
+  carry over as-is. The reported coordinate arrays still have to grow with the
+  tiling even though the velocity data will not.
+
+**Source — remove the gates:**
+- [ ] `planktos/fluid.py` — `FluidData.tile_flow`: replace the `raise` and its
+      `.. note::` with the position-wrapping implementation, reusing the
+      commented-out `fshape`/`flow_points` handling. Delete the commented block
+      once its useful parts are back in force.
+- [ ] `planktos/_environment.py` — `Environment.tile_domain`: same, restoring the
+      commented-out ibmesh/`L`/`_reset_flow_deriv` logic. Note the docstring
+      currently explains *why* it raises before mutating anything — that rationale
+      stops applying once the call succeeds. Delete the commented block afterward.
+- [ ] `planktos/_swarm.py` — the `Swarm` class docstring example lost its
+      `>>> envir.tile_domain(3,3)` line (it would have raised). Restore if you want
+      the example to show tiling again.
+
+**Tests — replace the interim contract with a behavioral one:**
+- [ ] `tests/test_flow_generation.py` — delete `test_tile_domain_raises_not_implemented`,
+      `test_tile_domain_leaves_environment_untouched`, and
+      `test_tile_flow_raises_on_fluiddata_directly`, plus the section comment above
+      them. Restore a real check: the pre-§7.4 `test_tile_flow_replicates_and_resizes`
+      is in git history (same commit as above) and is a reasonable starting point,
+      **but it only covered 2D and only the stored values** — the new implementation
+      needs interpolation-through-tiling and 3D coverage, which is exactly what was
+      missing before (§3.2: no test ever called `interpolate_flow` after
+      `tile_domain`, which is why the breakage went unnoticed).
+- [ ] Add the `tiling` × `periodic_dim` interaction tests this section calls for.
+
+**Examples — delete the notices:**
+- [ ] `examples/ex_IBAMR_ibmesh.py` — "!!! THIS EXAMPLE DOES NOT CURRENTLY RUN TO
+      COMPLETION !!!" block in the module docstring.
+- [ ] `examples/ex_sticky_seafan_3d.py` — same block in the module docstring.
+- [ ] `examples/basic_ex_3d.py` — the `# NOTE: tile_domain currently raises ...`
+      comment.
+- [ ] `examples/old_examples/old_ex_pltcyl.py` calls `tile_domain(3,3)` and was
+      **deliberately left unflagged** — it is archived record-keeping code whose own
+      header says to skip it. Nothing to undo; listed so its absence above does not
+      read as an oversight.
+
+**Docs — delete the warnings:**
+- [ ] `docs/examples/IBAMR_ibmesh.rst` — the `.. warning::` after the `tile_domain`
+      snippet.
+- [ ] `docs/examples/basic_3d.rst` — the `.. warning::` after the tiling paragraph.
+- [ ] When `docs/api/FluidData.rst` finally exists (an open TODO.md item), make sure
+      `tile_flow`'s docstring no longer carries the unavailability note.
+
+**Prose — retract the "temporarily unavailable" framing:**
+- [ ] `CLAUDE.md` — the "**Domain tiling currently raises `NotImplementedError`**"
+      paragraph in "Fluid data architecture", and the `test_flow_generation.py`
+      bullet in the Tests section.
+- [ ] `TODO.md` — Phase 1 item **(E)**, and the deferred `Environment.extend` item.
+- [ ] This note — §5 (the deferral rationale), §7.4, and this section.
+
+**Release coordination:** `changelog.txt` under 1.1.0 carries
+`- Domain tiling temporarily raises NotImplementedError; it returns with 2D and 3D support.`
+That line is accurate **only if 1.1.0 ships before tiling returns.** If tiling lands
+first, delete it and describe the new implementation instead. Do not let both
+statements ship together.
 
 ---
 
@@ -451,13 +536,10 @@ Interface requirements were derived from a full audit. Highest-signal sites:
   `_environment.py` `save_fluid`, `_environment.py` `get_mean_fluid_speed`,
   `_swarm.py` `_calc_basic_stats` (both the 2D and 3D branches), and the
   defensive `np.asarray` wrappers throughout `tests/test_flow_interface.py`.
-- **Tiling call sites (to gate in §7.4, restore in §9):**
-  `planktos/fluid.py` `tile_flow` (~L1276), `planktos/_environment.py`
-  `tile_domain` (~L1768), `_swarm.py:272` (docstring example);
-  `tests/test_flow_generation.py::test_tile_flow_replicates_and_resizes`;
-  examples `ex_IBAMR_ibmesh.py:36`, `ex_sticky_seafan_3d.py:30`,
-  `basic_ex_3d.py:25` (comment), `old_examples/old_ex_pltcyl.py:61`; docs
-  `docs/examples/IBAMR_ibmesh.rst:37`, `docs/examples/basic_3d.rst:24`.
+- **Tiling call sites:** this was the pre-work grep used to plan §7.4. It is now
+  superseded by **§9.1, the restoration checklist**, which records what was actually
+  done to each site rather than merely where they were. Use §9.1; line numbers here
+  went stale the moment the work landed.
 
 ---
 
@@ -469,27 +551,31 @@ whole note plus `CLAUDE.md` and `TODO.md` (root) first. Quick orientation:
 **Where we are (as of the 2026-07-31 revision):**
 - Branch `dyload`. This is the "dynamic loading of fluid data" feature branch.
 - **Done:** the `fmin`/`fmax` generator fix (§3.3); this note; the §7.2 pinning
-  suite `tests/test_flow_interface.py` (40 tests); and the three bugs it surfaced
-  (§3.4 `max_spd` / `get_mean_fluid_speed`, §3.5 `get_raw_loaded_data`). Suite is
-  green: **199 passed, 20 skipped** with `pytest`; **217 passed, 2 skipped** with
+  suite `tests/test_flow_interface.py` (40 tests); the three bugs it surfaced
+  (§3.4 `max_spd` / `get_mean_fluid_speed`, §3.5 `get_raw_loaded_data`); and
+  **§7.3–§7.6 — `FlowArray` is deleted and tiling is gated off.** Suite is green:
+  **201 passed, 20 skipped** with `pytest`; **219 passed, 2 skipped** with
   `--runslow`.
-- **Next actionable step: §7.3 — delete `FlowArray`.** The safety net now exists.
-- **Not started:** deleting `FlowArray` (§4.1/§7.3), gating tiling off (§7.4), the
-  plotting streaming redesign (§8), and the real tiling implementation (§9).
+- The §7.2 suite passes with every `np.asarray` wrapper stripped out, which is
+  what makes the deletion *provably* behavior-preserving rather than merely
+  untested-and-green. Only one test in the whole suite had to change behavior:
+  the tiling one, by design.
+- **Next actionable step: §8 — the plotting streaming redesign.** Then §9 (real
+  tiling + revisit `extend`).
+- **Not started:** §8 and §9.
 - **`tests/IBAMR_test_data/` is present** (`IBAMR_db_003/004/005.vtk`,
   `mesh_db.vtk`) — 3D IBAMR data for the `@vtk`-marked tests and for validating
   §9. Its absence on the original authoring machine is what led to the since-
   dropped 2D tiling stopgap.
 
-**The immediate next actionable step** is §7.3: *delete `FlowArray`*, making static
-components and spline returns plain ndarrays, then drop the `np.asarray`
-workarounds listed in the appendix. The §7.2 safety net is in place, so the
-correctness-first precondition (see `CLAUDE.md`) is satisfied. After §7.3, proceed
-through §7.4-7.6, then §8, then §9.
+**The immediate next actionable step** is §8, the plotting streaming redesign,
+which is still an outline and needs its own design pass before any code. §9 (real
+tiling, and whether `extend` returns) follows it.
 
-**How to tell §7.3 worked:** `tests/test_flow_interface.py` must stay green with the
-`np.asarray` wrappers *removed* — that is the whole point of having written it
-first. The §3.4 fixes should become unnecessary rather than merely redundant.
+**Re-confirming §7.3 landed cleanly**, if picking this up cold: the reproduction
+snippets below for defects §3.1 and §3.2 should now fail at *import* /
+`tile_domain` respectively, because `FlowArray` no longer exists and tiling
+raises. That is the intended end state, not a regression.
 
 **Still outstanding housekeeping:** update `TODO.md` Phase 0 — the `fmin`/`fmax`
 item is done, and the `FlowArray` interop item is superseded by this note's plan
@@ -497,8 +583,9 @@ item is done, and the `FlowArray` interop item is superseded by this note's plan
 so the fix is deletion + deferral, not patching the subclass). Phase 1 item (E)
 ("Tiling/periodic × dynamic") is likewise superseded: tiling is gated off until §9.
 
-**Re-confirming the evidence (optional, ~10s each).** The failure modes and the
-fix are reproducible from the repo root:
+**Re-confirming the evidence (historical).** These reproduced the defects *before*
+§7.3. Kept as the record of what was wrong; §3.1 and §3.2 no longer run at all
+(`FlowArray` is gone; `tile_domain` raises), which is the point:
 
 ```python
 # Defect 3.1 — FlowArray interop (stale self.array):

@@ -21,8 +21,12 @@ envir.set_brinkman_flow(alpha=66, h_p=1.5, U=1, dpdx=1, res=101)
 
 # If you decide later you want a bigger spatial domain (or you loaded fluid data
 #   with periodic boundary conditions but want a bigger domain than the CFD
-#   data was generated on), you can tile the environment in the x and y 
+#   data was generated on), you can tile the environment in the x and y
 #   directions using the tile_domain method (this also works in 2D).
+#   NOTE: tile_domain currently raises NotImplementedError -- tiling is
+#   temporarily unavailable while the fluid-data interface is reworked, and
+#   returns as a position-wrapping implementation for 2D and 3D. See
+#   docs/notes/flow_field_interface.md.
 
 # 3D visualization is a hard problem in general and requires advanced libraries
 #   specifically built for that purpose (e.g., VTK). While Planktos can read

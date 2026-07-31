@@ -12,38 +12,48 @@ is wired up but unexercised. Temporal interpolation of dynamically-loaded data i
 time** (`fCubicSpline`). See the design-history section at the bottom for the
 cubic→linear story.
 
-**Phase 0 is essentially complete and the suite is green:** **199 passed, 20
-skipped** with `pytest`, **217 passed, 2 skipped** with `pytest --runslow`. No
+**Phase 0 is essentially complete and the suite is green:** **201 passed, 20
+skipped** with `pytest`, **219 passed, 2 skipped** with `pytest --runslow`. No
 failures, no xfails. Every test-adaptation item under Phase 0 is done. The
 `fmin`/`fmax` generator bug is fixed. The `FlowArray` numpy-interop item turned out
 to be the tip of a larger design problem and has been **superseded by a dedicated
 plan** — see below.
 
-**Next up: the flow-field interface refactor** (`docs/notes/flow_field_interface.md`).
-Investigating the `FlowArray` interop bug showed that `FlowArray`'s sole reason to
-exist — virtualizing tiled flow for `interpn` — is **defeated by modern scipy**
-(`RegularGridInterpolator` calls `np.asarray` on any array-API object, discarding the
-subclass's virtual `.shape`/`__getitem__`), so the tiled interpolation path is broken
-*and* untested today. The agreed plan is: delete `FlowArray` (components become plain
-ndarrays), gate tiling and domain extension off behind `NotImplementedError`, then do
-plotting, then implement tiling properly for 2D and 3D together. **That note is the
-source of truth for this work; read it before touching `fluid.py`.**
+**The flow-field interface refactor** (`docs/notes/flow_field_interface.md`) is
+**through step §7.6 — the core work is done.** Investigating the `FlowArray` interop
+bug showed that `FlowArray`'s sole reason to exist — virtualizing tiled flow for
+`interpn` — is **defeated by modern scipy** (`RegularGridInterpolator` calls
+`np.asarray` on any array-API object, discarding the subclass's virtual
+`.shape`/`__getitem__`), so the tiled interpolation path was broken *and* untested.
+What landed:
 
-Step §7.2 of that plan is **done**: `tests/test_flow_interface.py` (40 tests) pins the
-flow-interface contract — `interpolate_flow` values, the container/spline surface,
-`fmin`/`fmax`, `_calc_basic_stats`, `get_raw_loaded_data`, the `LinearSpline`/`INUM`
-temporal path, and 3D vorticity — so the `FlowArray` deletion can be shown to be
-behavior-preserving. Writing it surfaced three live bugs, all fixed:
+- **§7.2** — `tests/test_flow_interface.py` (40 tests) pins the flow-interface
+  contract: `interpolate_flow` values, the container/spline surface, `fmin`/`fmax`,
+  `_calc_basic_stats`, `get_raw_loaded_data`, the `LinearSpline`/`INUM` temporal
+  path, and 3D vorticity. Writing it surfaced three live bugs, all fixed:
+  - **(note §3.4)** `max_spd` on every plot frame reported max |u| rather than the
+    max fluid speed; `get_mean_fluid_speed` returned a value misreporting its shape.
+  - **(note §3.5)** `get_raw_loaded_data` returned `LinearSpline` objects instead of
+    ndarrays on the **entire dynamic-loading path** — it dispatched on "is it an
+    fCubicSpline" and the else-branch assumed static flow. Fixed by giving
+    `LinearSpline` the `regenerate_data` method `fCubicSpline` already had and
+    branching on `flow_times is None`.
+- **§7.3** — **`FlowArray` is deleted.** Velocity components are plain ndarrays
+  everywhere; every `np.asarray` workaround is gone. The §7.2 suite stays green
+  *with the wrappers stripped out*, which is what makes this provably
+  behavior-preserving.
+- **§7.4** — **tiling raises `NotImplementedError`** in 2D and 3D
+  (`FluidData.tile_flow`, `Environment.tile_domain`), the latter before mutating
+  anything so no half-tiled environment is possible. Affected examples and docs
+  carry a notice.
 
-- **(note §3.4)** `max_spd` on every plot frame reported max |u| rather than the max
-  fluid speed, and `get_mean_fluid_speed` returned a value misreporting its own shape.
-- **(note §3.5)** `get_raw_loaded_data` returned `LinearSpline` objects instead of
-  ndarrays on the **entire dynamic-loading path** — it dispatched on "is it an
-  fCubicSpline" and the else-branch assumed static flow. Fixed by giving
-  `LinearSpline` the `regenerate_data` method `fCubicSpline` already had and
-  branching on `flow_times is None` instead. Relevant to Phase 1 below.
-
-**Next actionable step is §7.3 — delete `FlowArray`.**
+**Next: §8 (plotting streaming redesign), then §9 (real position-wrapping tiling for
+2D and 3D, and whether `Environment.extend` returns).** Both still need design work —
+read the note first. When tiling returns, **§9.1 of the note is the restoration
+checklist**: every notice, stub, and replaced test that gating it off left behind.
+Both old implementations are preserved commented-out beneath their `raise`, so the
+still-valid parts (`tile_domain`'s ibmesh/`L` handling, `tile_flow`'s `flow_points`
+extension) can be reused rather than rewritten.
 
 **Then Phase 1** — actually exercising dynamic loading in 2D. Item (C) there,
 quantifying dynamic-linear vs. full-cubic error, is the key scientific question and
@@ -101,16 +111,15 @@ Common renames: `envir.flow_points`→`envir.flow.flow_points`,
 
 ### Other real bugs that matter (fix in Phase 0)
 
-- [~] **`FlowArray` breaks numpy interop — SUPERSEDED** by
-  `docs/notes/flow_field_interface.md` (found while adapting `test_flow_generation`).
-  `__array_finalize__` propagates `self.array` to every derived array, and the
-  overridden `shape`/`__getitem__` read from `self.array` rather than the array's own
-  buffer — so a `FlowArray` produced by a ufunc/comparison reads stale data. Workaround
-  in tests for now: `np.asarray(envir.flow[i])` before array-wide numpy calls.
-  **The fix is not to patch the subclass.** The deeper finding is that `FlowArray`'s
-  only purpose (virtual tiling through `interpn`) no longer works at all under modern
-  scipy, so the plan is **deletion + deferral of tiling**. Do not start this from the
-  description here — follow the note's §7 sequence.
+- [x] **`FlowArray` breaks numpy interop — RESOLVED BY DELETION.** (Found while
+  adapting `test_flow_generation`.) `__array_finalize__` propagated `self.array` to
+  every derived array, and the overridden `shape`/`__getitem__` read from
+  `self.array` rather than the array's own buffer — so a `FlowArray` produced by a
+  ufunc/comparison read stale data. The fix was not to patch the subclass: its only
+  purpose (virtual tiling through `interpn`) no longer worked at all under modern
+  scipy, so `FlowArray` was **deleted** and tiling deferred. Velocity components are
+  now plain ndarrays and every `np.asarray` workaround is gone. See
+  `docs/notes/flow_field_interface.md` §7.3.
 - [x] **FTLE wrong values — DONE.** Root cause was **not** the FTLE math (byte-identical
   to mvbnd) but a **periodic-by-default** bug: `FluidData` defaulted `periodic_dim=True`,
   and the bare `flow=` constructor + analytic setters never overrode it, so every such
@@ -165,12 +174,14 @@ remains below is genuinely about *window sliding*, which still needs real data.
 - [ ] **(D) `get_dudt` under linear splining** is a piecewise-constant, discontinuous
   finite difference (`LinearSpline.derivative`, `fluid.py:479-494`). Pin current behavior.
 - [~] **(E) Tiling/periodic × dynamic — SUPERSEDED / on hold.** Was: `FlowArray` view +
-  `tiling` propagation through `update_spline`. Tiling is being gated off behind
-  `NotImplementedError` for the duration of the interface refactor and the plotting
-  work, so there is nothing to test here yet. Revisit as part of the real tiling
-  implementation (`docs/notes/flow_field_interface.md` §9), which covers 2D and 3D
-  together and must define how `tiling` interacts with `periodic_dim`. **Periodic ×
-  dynamic on its own is still worth testing** and stays in scope for Phase 1.
+  `tiling` propagation through `update_spline`. Tiling now raises
+  `NotImplementedError` for the duration of the plotting work, and the `tiling`
+  propagation (and its `assert ... "Tiling did not propagate correctly"` guards) is
+  gone from `update_spline`, so there is nothing to test here yet. Revisit as part of
+  the real tiling implementation (`docs/notes/flow_field_interface.md` §9), which
+  covers 2D and 3D together and must define how `tiling` interacts with
+  `periodic_dim`. **Periodic × dynamic on its own is still worth testing** and stays
+  in scope for Phase 1.
 
 ---
 

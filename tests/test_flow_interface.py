@@ -1,9 +1,13 @@
-'''Pins the fluid-velocity-field interface contract before the FlowArray removal.
+'''Pins the fluid-velocity-field interface contract of Environment.flow.
 
-This module is the safety net required by docs/notes/flow_field_interface.md §7.2:
-it fixes the *observable behavior* of every consumer of Environment.flow that the
-refactor is about to touch, so that deleting FlowArray (§7.3) is provably
-behavior-preserving rather than hopefully so.
+This module was written as the safety net required by
+docs/notes/flow_field_interface.md §7.2: it fixed the *observable behavior* of
+every consumer of Environment.flow before the FlowArray removal (§7.3), so that
+the deletion could be shown to be behavior-preserving rather than merely assumed
+so. It served that purpose -- FlowArray is gone and every assertion here passed
+unchanged, including after the defensive np.asarray wrappers were stripped out --
+and it now stands as the general contract test for the fluid interface. Keep it
+green through the tiling (§9) and plotting (§8) work still to come.
 
 Scope is deliberately the surfaces that had no direct coverage:
   * Environment.interpolate_flow / interpolate_temporal_flow — the per-move hot
@@ -141,10 +145,10 @@ def test_interpolate_temporal_flow_returns_spatial_field():
     flow_t = envir.interpolate_temporal_flow(time=1.5)
     assert len(flow_t) == 2
     for comp in flow_t:
-        assert np.asarray(comp).shape == (11, 9)
+        assert comp.shape == (11, 9)
     x = np.linspace(0, 10, 11)
     expected_u = np.stack([1.5 * x for _ in range(9)], axis=1)
-    assert np.allclose(np.asarray(flow_t[0]), expected_u)
+    assert np.allclose(flow_t[0], expected_u)
 
 
 def test_interpolate_temporal_flow_at_data_times_reproduces_data():
@@ -155,8 +159,8 @@ def test_interpolate_temporal_flow_at_data_times_reproduces_data():
     x = np.linspace(0, 10, 11)
     for idx, t in enumerate(envir.flow.flow_times):
         flow_t = envir.interpolate_temporal_flow(time=t)
-        raw_u = np.asarray(envir.flow[0][idx])
-        assert np.allclose(np.asarray(flow_t[0]), raw_u)
+        raw_u = envir.flow[0][idx]
+        assert np.allclose(flow_t[0], raw_u)
         # and the raw data really is the analytic field u = t*x
         assert np.allclose(raw_u, np.stack([t * x for _ in range(9)], axis=1))
 
@@ -322,8 +326,8 @@ def test_calculate_mag_gradient_known_answer():
     envir.calculate_mag_gradient()
     assert envir.mag_grad is not None
     assert len(envir.mag_grad) == 2
-    assert np.allclose(np.asarray(envir.mag_grad[0]), 1.0)
-    assert np.allclose(np.asarray(envir.mag_grad[1]), 2.0)
+    assert np.allclose(envir.mag_grad[0], 1.0)
+    assert np.allclose(envir.mag_grad[1], 2.0)
     assert np.isclose(envir.mag_grad_time, envir.time)
 
 
@@ -369,7 +373,7 @@ def test_linear_spline_exact_on_linear_data(linear_in_time_field, query):
     t, data, base, slope, fpoints = linear_in_time_field
     fd = fluid.FluidData([data.copy(), data.copy()], fpoints,
                          flow_times=t.copy(), INUM=True)
-    got = np.asarray(fd(query)[0])
+    got = fd(query)[0]
     assert np.allclose(got, base + slope * query)
 
 
@@ -383,8 +387,8 @@ def test_linear_and_cubic_agree_on_linear_data(linear_in_time_field):
     fd_cub = fluid.FluidData([data.copy(), data.copy()], fpoints,
                              flow_times=t.copy())
     for query in (0.3, 1.9, 3.6):
-        assert np.allclose(np.asarray(fd_lin(query)[0]),
-                           np.asarray(fd_cub(query)[0]))
+        assert np.allclose(fd_lin(query)[0],
+                           fd_cub(query)[0])
 
 
 def test_linear_spline_surface(linear_in_time_field):
@@ -393,11 +397,11 @@ def test_linear_spline_surface(linear_in_time_field):
     from planktos import fluid
     t, data, _, _, _ = linear_in_time_field
     sp = fluid.LinearSpline(t.copy(), data.copy())
-    assert np.allclose(np.asarray(sp[2]), data[2])
+    assert np.allclose(sp[2], data[2])
     assert np.isclose(sp.min(), data.min())
     assert np.isclose(sp.max(), data.max())
     assert np.isclose(sp.absmax(), np.abs(data).max())
-    assert np.allclose(np.asarray(sp.regenerate_data()), data)
+    assert np.allclose(sp.regenerate_data(), data)
     assert sp.shape == data.shape
 
 
@@ -408,7 +412,7 @@ def test_linear_spline_derivative_is_the_slope(linear_in_time_field):
     t, data, _, slope, _ = linear_in_time_field
     sp = fluid.LinearSpline(t.copy(), data.copy())
     for query in (0.5, 2.5, 3.5):
-        assert np.allclose(np.asarray(sp.derivative(query)), slope)
+        assert np.allclose(sp.derivative(query), slope)
 
 
 def test_get_raw_loaded_data_round_trips(linear_in_time_field):
@@ -424,7 +428,7 @@ def test_get_raw_loaded_data_round_trips(linear_in_time_field):
         raw = fd.get_raw_loaded_data()
         assert len(raw) == 2
         for comp in raw:
-            arr = np.asarray(comp)
+            arr = comp
             assert arr.shape == data.shape
             assert np.allclose(arr, data)
 
@@ -433,8 +437,8 @@ def test_get_raw_loaded_data_static():
     envir, X, Y = _linear_2d()
     raw = envir.flow.get_raw_loaded_data()
     assert len(raw) == 2
-    assert np.allclose(np.asarray(raw[0]), X)
-    assert np.allclose(np.asarray(raw[1]), 2 * Y)
+    assert np.allclose(raw[0], X)
+    assert np.allclose(raw[1], 2 * Y)
 
 
 # --------------------------------------------------------------------------- #
@@ -443,15 +447,16 @@ def test_get_raw_loaded_data_static():
 
 def test_quiver_style_strided_slice_and_transpose():
     # Swarm.plot/plot_all build quivers from flow[k][::M,::N].T. Pin it: this is
-    # a derived-array operation, exactly the territory where the FlowArray view
-    # misbehaves, and the plotting smokes only assert "runs without error".
+    # a derived-array operation, which was exactly the territory where the old
+    # FlowArray view misbehaved, and the plotting smokes only assert "runs
+    # without error".
     envir, X, Y = _linear_2d()
     M, N = 2, 3
     for k, truth in ((0, X), (1, 2 * Y)):
         sliced = envir.flow[k][::M, ::N]
-        assert np.asarray(sliced).shape == truth[::M, ::N].shape
-        assert np.allclose(np.asarray(sliced), truth[::M, ::N])
-        assert np.allclose(np.asarray(envir.flow[k][::M, ::N].T), truth[::M, ::N].T)
+        assert sliced.shape == truth[::M, ::N].shape
+        assert np.allclose(sliced, truth[::M, ::N])
+        assert np.allclose(envir.flow[k][::M, ::N].T, truth[::M, ::N].T)
 
 
 def test_fshape_matches_component_shape():
@@ -479,9 +484,9 @@ def test_vorticity_3d_solid_body_rotation():
                                  z_bndry=('zero', 'zero'))
     vort = envir.get_vorticity()
     assert len(vort) == 3
-    assert np.allclose(np.asarray(vort[0]), 0.0)
-    assert np.allclose(np.asarray(vort[1]), 0.0)
-    assert np.allclose(np.asarray(vort[2]), 2.0)
+    assert np.allclose(vort[0], 0.0)
+    assert np.allclose(vort[1], 0.0)
+    assert np.allclose(vort[2], 2.0)
 
 
 def test_vorticity_3d_general_linear_field():
@@ -502,13 +507,13 @@ def test_vorticity_3d_general_linear_field():
         x_bndry=('zero', 'zero'), y_bndry=('zero', 'zero'),
         z_bndry=('zero', 'zero'))
     vort = envir.get_vorticity()
-    assert np.allclose(np.asarray(vort[0]), b3 - c2)
-    assert np.allclose(np.asarray(vort[1]), c1 - a3)
-    assert np.allclose(np.asarray(vort[2]), a2 - b1)
+    assert np.allclose(vort[0], b3 - c2)
+    assert np.allclose(vort[1], c1 - a3)
+    assert np.allclose(vort[2], a2 - b1)
 
 
 def test_vorticity_3d_shape_matches_grid():
     envir, _, _, _ = _linear_3d()
     vort = envir.get_vorticity()
     for comp in vort:
-        assert np.asarray(comp).shape == (7, 7, 7)
+        assert comp.shape == (7, 7, 7)

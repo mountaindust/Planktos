@@ -37,6 +37,12 @@ original size. ::
     envir.tile_domain(3,3)
     envir.plot_flow()
 
+.. warning::
+   ``tile_domain`` currently raises ``NotImplementedError``. Tiling is
+   temporarily unavailable while the fluid-data interface is reworked, and will
+   return as a position-wrapping implementation covering both 2D and 3D. This
+   part of the example does not run until then.
+
 .. image:: ../_static/IBAMR_tiled.png
 
 Let's add a Swarm with 100 agents all positioned somewhat behind the 

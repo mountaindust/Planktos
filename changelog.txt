@@ -3,8 +3,9 @@
 Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids where RAM is a constraint.
 - New FluidData class (per-source subclasses); all loaded fluid data is now a FluidData instance.
 - Fluid data handling moved out of Environment into a new fluid module.
-- New FlowArray ndarray subclass: memory-efficient view for periodic flows/tiles (fCubicSpline too).
+- Velocity field components are plain ndarrays; all numpy/scipy/matplotlib operations work on them directly.
 - tile_flow is now Environment.tile_domain (implemented on FluidData).
+- Domain tiling temporarily raises NotImplementedError; it returns with 2D and 3D support.
 - Environment.extend was removed.
 
 

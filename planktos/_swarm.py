@@ -265,11 +265,10 @@ class Swarm:
 
     Examples
     --------
-    Create a default Swarm in an Environment with some fluid data loaded and tiled.
+    Create a default Swarm in an Environment with some fluid data loaded.
 
     >>> envir = planktos.Environment()
     >>> envir.read_IBAMR3d_vtk_data('../tests/IBAMR_test_data', d_start=5, d_finish=None)
-    >>> envir.tile_domain(3,3)
     >>> swrm = Swarm(envir=envir)
 
     '''
@@ -1788,13 +1787,7 @@ class Swarm:
             else:
                 # temporally changing flow
                 flow = self.envir.interpolate_temporal_flow(t_index=t_indx)
-            # np.asarray strips the FlowArray view before any array math. The
-            # view's overridden min/max read the *original* component's buffer
-            # rather than the derived array's own values, so max_spd reported
-            # max|u| instead of the max fluid speed, and the .mean() results
-            # carried a bogus shape. Drop the asarray when FlowArray is deleted;
-            # see docs/notes/flow_field_interface.md.
-            u = np.asarray(flow[0]); v = np.asarray(flow[1])
+            u = flow[0]; v = flow[1]
             flow_spd = np.sqrt(u**2 + v**2)
             avg_spd_x = u.mean()
             avg_spd_y = v.mean()
@@ -1810,8 +1803,7 @@ class Swarm:
             else:
                 # temporally changing flow
                 flow = self.envir.interpolate_temporal_flow(t_indx)
-            # see the 2D branch above re: np.asarray and the FlowArray view
-            u = np.asarray(flow[0]); v = np.asarray(flow[1]); w = np.asarray(flow[2])
+            u = flow[0]; v = flow[1]; w = flow[2]
             flow_spd = np.sqrt(u**2 + v**2 + w**2)
             avg_spd_x = u.mean()
             avg_spd_y = v.mean()
