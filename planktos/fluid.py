@@ -558,58 +558,78 @@ class SplineRangeError(ValueError):
 #######################################################################
 
 
+# Design note (not user-facing): routines for manipulating the fluid velocity
+# field should find their way into this class from the Environment class.
 class FluidData:
     '''
     Container class for fluid velocity data and its temporal interpolations.
 
-    Routines for manipulating the fluid velocity field should find their way 
-    into here from the Environment class.
+    ``Environment.flow`` is an instance of this class, or of one of its
+    per-source subclasses. It owns the velocity field, the spatial grid the
+    field is defined on, the time stamps, and the interpolation in time --
+    including loading further data from storage when a requested time falls
+    outside what is currently held in memory.
 
-    The fluid velocity field can be accessed by calling an instance of this 
-    class as a function with the desired simulation time as the sole argument. 
-    The result will be a list of ndarrays with the following format:
-    [x-vel field ndarray (i,j,[k]), y-vel field ndarray (i,j,[k]),
-    z-vel field ndarray (if 3D)]. i is x index, j is y index, etc., with the 
-    value of x,y, and z increasing as the corresponding index increases.
+    There are two ways to get velocity data out of it.
 
-    If the fluid is not being dynamically loaded from disk, an instance of 
-    FluidData will also act as a container object for the raw data arrays. 
-    Just access them as though FluidData were a list. If the fluid velocity 
-    field is not time-varying, the result will be an ndarray in each direction. 
-    If the fluid is time varying, the data is stored as part of an a 
-    fCubicSpline object in each direction that can still behave as if it were
-    [x-vel field ndarray ([t],i,j,[k]), y-vel field ndarray ([t],i,j,[k]),
-    z-vel field ndarray (if 3D)].
+    **Call it with a time.** ``envir.flow(t)`` returns the field at simulation
+    time ``t``, interpolated in time, as a list of plain ndarrays:
+    ``[x-velocity (i,j,[k]), y-velocity (i,j,[k]), z-velocity (3D only)]``,
+    where i indexes x, j indexes y and k indexes z, each increasing with the
+    corresponding coordinate. This always works, and it is the only option when
+    data is being loaded dynamically, since the time requested is what
+    determines which data gets loaded.
+
+    **Index it like a list.** ``envir.flow[0]`` gives the x-velocity component.
+    For a time-invariant field that is the raw ndarray. For a time-varying field
+    it is that component's interpolant in time, which may itself be indexed by
+    time index as though it were an ``([t],i,j,[k])`` array. This is unavailable
+    while data is being loaded dynamically (``INUM`` an int), because a time
+    index would then refer to a position in a shifting window rather than in the
+    dataset; ``TypeError`` is raised instead.
+
+    Interpolation in *space* does not happen here. Use
+    ``Environment.interpolate_flow``, or one of the ``Swarm`` accessors that
+    wrap it (``get_fluid_drift`` and friends).
+
+    Interpolation in *time* is cubic when the whole dataset is held in memory
+    and linear when data is loaded dynamically -- see ``INUM`` below, and the
+    discussion of the tradeoff in the narrative documentation for this class.
 
     FluidData is subclassed for loading data from particular types of sources.
 
     Attributes
     ----------
-    flow_points : tuple (len==dimension) of 1D ndarrays
-        points defining the spatial grid for the fluid velocity data. These do 
-            not have to be evenly spaced, but should have the same length as each 
-            spatial dimension of the flow data. It is assumed that endpoints lie 
-            on the domain boundary.
-    flow_times : ndarray of floats or None
-        if specified, the time stamp for each index t in the flow arrays (time 
-        varying fluid velocity fields only)
-    fshape : shape of each component of the fluid velocity field ([t],i,j,[k])
-        as an ndarray of raw data.
+    flow_points : tuple (len == spatial dimension) of 1D ndarrays
+        Points defining the spatial grid the fluid velocity is specified on.
+        These need not be evenly spaced, but must have the same length as the
+        corresponding spatial dimension of the flow data. Endpoints are assumed
+        to lie on the domain boundary.
+    flow_times : ndarray of floats, or None
+        Time stamp for each index t in the flow arrays. None for a
+        time-invariant field.
+    fshape : tuple
+        Shape of each component of the fluid velocity field as an ndarray of
+        raw data, ``([t],i,j,[k])``.
     ndim : int
-        Number of dimensions of the fluid velocity field (2 or 3)
-    INUM : Number of intervals loaded at any given time when dynamically 
-        loading data. None results in cubic splining all data. True results in 
-        linearly splining all data.
+        Number of spatial dimensions of the fluid velocity field (2 or 3).
+    INUM : None, True, or int
+        How much data is held in memory, and how it is interpolated in time.
+        None (the default) splines the entire dataset cubically. True splines
+        the entire dataset linearly. An int loads a sliding window of
+        ``INUM`` + 1 time points from storage as needed and splines it linearly.
     periodic_dim : tuple of bool
-        Whether or not the fluid data is periodic in each spatial dimension
-        (default non-periodic; independent of the agent boundary conditions)
+        Whether the fluid data is periodic in each spatial dimension. Defaults
+        to non-periodic, and is independent of the agent boundary conditions in
+        ``Environment.bndry``.
     fluid_domain_LLC : tuple
-        If the fluid velocity came from data and was translated in space so that 
-        the LLC was in the lower left corner, this stores the original LLC.
+        If the fluid velocity came from data that was translated in space so
+        that its lower left corner sat at the origin, this holds the original
+        lower left corner.
     fmin : tuple
-        Minimum velocity in all the data seen so far
+        Minimum velocity in each direction over all data seen so far.
     fmax : tuple
-        Maximum velocity in all the data seen so far
+        Maximum velocity in each direction over all data seen so far.
     '''
 
     def __init__(self, flow, flow_points, flow_times=None, INUM=None,

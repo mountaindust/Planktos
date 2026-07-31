@@ -342,22 +342,36 @@ points still used). Inherited blockers from the overhaul's notes:
 
 ## Documentation 🟡
 
-- [ ] **`FluidData` is undocumented on readthedocs.** `docs/api/` only autoclasses
-  `Environment`, `Swarm`, and `motion`, but `FluidData` is now user-visible:
-  `envir.flow` *is* one, and `tile_flow` / `get_vorticity` / `get_dudt` /
-  `calculate_DuDt` / `get_raw_loaded_data` are called on it. Add
-  `docs/api/FluidData.rst` (autoclass with `:members:`; consider the per-source
-  subclasses too) and list it in `docs/api/index.rst`. Should land before 1.1.0
-  releases, since the object is part of the public surface now.
+- [x] **`FluidData` on readthedocs — DONE.** `docs/api/FluidData.rst` autoclasses
+  `FluidData` and the three per-source subclasses and is listed in
+  `docs/api/index.rst`. Alongside the autodoc it carries narrative sections on how
+  to get velocity data out (call it with a time vs. index it like a list, and why
+  indexing is refused while streaming) and on the `INUM` tradeoff (below).
+  `Environment.rst` gained a pointer, since `INUM` is met first through the
+  `Environment` reader methods. Writing it turned up a `FluidData` class docstring
+  that rendered badly and claimed the time-varying case is always an `fCubicSpline`
+  (true only for `INUM=None`); rewritten, along with the malformed numpydoc in its
+  `Attributes` block. Sphinx builds clean, no warnings.
 - [ ] **Sweep the prose docs for the master-era fluid API.** `docs/quickstart.rst`
   and `README.md` still frame fluid handling as `Environment`-level. The 1.0.1
   merge fixed the two that were outright wrong (`get_2D_vorticity` → `get_vorticity`,
   and the claim that flow can be "extended"), but the overall framing still assumes
-  master's API. Worth a pass once the fluid API stops moving.
-- [ ] **Document `INUM` and the linear-vs-cubic tradeoff for users**, not just in
-  CLAUDE.md/TODO.md. Anyone enabling dynamic loading is silently accepting
-  linear-in-time; that belongs in the user-facing docs alongside the Phase 1(C)
-  number once it exists.
+  master's API. Worth a pass once the fluid API stops moving — **still deliberately
+  held**, since §9 decides what `tile_flow` becomes and whether `Environment.extend`
+  returns, and both are exactly what this prose would describe. The new
+  `docs/api/FluidData.rst` covers the reference side in the meantime.
+- [x] **`INUM` and the linear-vs-cubic tradeoff — DONE.** Documented for users in
+  `docs/api/FluidData.rst` (anchor `inum-tradeoff`): the `INUM` table, why linear
+  in time is permanent rather than a placeholder, and what it costs. Per the Phase
+  1 (C) findings it quotes the **convergence orders and the ensemble result, not
+  the bare rms ratio** — the ratio blends a smooth regime where cubic is decisively
+  better with a rough one where neither converges, so on its own it would mislead
+  in either direction. Ends with the practical reading (ensemble statistics are
+  unlikely to change; prefer `INUM=None` for inertial particles when the data
+  fits) and a note that absolute errors do not transfer between datasets while the
+  orders do, that the figures are from one 2D dataset, and that the measurement is
+  reproducible via `tests/manual/quantify_temporal_interp.py`.
+  - Remaining: re-check the numbers on 3D data in Phase 2 and update the note.
 
 ## Inherited follow-ups from the mvbnd overhaul (non-blocking) 🟢
 
