@@ -412,6 +412,16 @@ points still used). Inherited blockers from the overhaul's notes:
   actually used (reviewer-requested for a prior publication). Lowest priority.
 - [ ] **Rectilinear (non-uniform) grid support in `calculate_FTLE`**. Relevant since we
   assume a rectilinear fluid grid, but a diagnostic and non-blocking.
+- [ ] ⚠️ **Watch: vtk emits a numpy 2.5 deprecation that would become fatal.**
+  `vtkmodules/util/numpy_support.py` assigns `result.shape = shape`, which numpy 2.5
+  deprecates in favour of `np.reshape`. Harmless today (a `DeprecationWarning`), but
+  if numpy promotes it to an error, **every vtk read breaks** — `_dataio`'s
+  `read_vtk_Structured_Points` and `read_vtk_Rectilinear_Grid_Vector` both go through
+  `numpy_support`, so IB2d, IBAMR/VTK3d and the committed fixtures all fail at once.
+  Nothing to fix here; the fix belongs upstream in vtk. Surfaced by CI (Python 3.12
+  job, which installs the newest numpy) failing a test that promoted *all* warnings to
+  errors — that test now filters to planktos-origin warnings only, so the deprecation
+  no longer masquerades as our bug. Re-check when bumping the vtk or numpy minimum.
 - [ ] Changelog housekeeping (`changelog.txt`, 1.1.0): drop "TODO: test dynamic loading"
   once Phases 1–2 land; resolve the `tiling`-setter TODO (make tiling a setter of
   `FluidData.tiling`, with `Environment.L` updating off it) — folded into the real

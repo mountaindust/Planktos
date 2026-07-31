@@ -36,11 +36,13 @@ tests/fixtures/ib2d_fluid_min, regenerate with tests/fixtures/_gen_fixtures.py),
 because what those sections are about is the timeline a loader builds from files.
 '''
 
+import os
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+import planktos
 from planktos import fluid
 
 FIXTURES = Path(__file__).parent / 'fixtures'
@@ -117,6 +119,20 @@ def _tol(ref):
     '''A few ulp of the reference field -- see the module docstring on why
     agreement is to round-off rather than bit-for-bit.'''
     return 8 * np.finfo(float).eps * max(1.0, max(np.abs(r).max() for r in ref))
+
+
+_PKG_DIR = os.path.abspath(os.path.dirname(planktos.__file__))
+
+
+def _from_planktos(caught):
+    '''Keep only the warnings raised from inside the planktos package.
+
+    Anchored to the package directory rather than matching the string
+    "planktos" in the path, since the repository directory may differ from the
+    package directory only by case.
+    '''
+    return [w for w in caught
+            if os.path.abspath(str(w.filename)).startswith(_PKG_DIR)]
 
 
 # --------------------------------------------------------------------------- #
@@ -583,10 +599,21 @@ def test_ib2d_construction_is_warning_free(INUM):
     # The guards added to FluidData must not fire on a correct loader. IB2dData
     # derives flow_times analytically over the full dump range, so it satisfies
     # them -- but it is the path with the most to lose if they are wrong.
+    #
+    # Only warnings raised from inside planktos count. Promoting *every* warning
+    # to an error also catches third-party deprecations that this suite neither
+    # causes nor can fix: on numpy 2.5, vtk's own numpy_support does
+    # `result.shape = shape`, which numpy now deprecates, so a blanket
+    # simplefilter('error') fails here for reasons having nothing to do with the
+    # guards. That the guards *do* fire when they should is pinned separately by
+    # test_inum_spanning_the_dataset_warns and test_short_flow_times_is_rejected.
     import warnings
-    with warnings.catch_warnings():
-        warnings.simplefilter('error')
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
         _ib2d(INUM)
+    ours = _from_planktos(caught)
+    assert not ours, 'planktos warned during a correct load: {}'.format(
+        [str(w.message) for w in ours])
 
 
 def test_ib2d_windowed_actually_slides():
