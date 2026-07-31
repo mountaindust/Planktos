@@ -47,13 +47,22 @@ What landed:
   anything so no half-tiled environment is possible. Affected examples and docs
   carry a notice.
 
-**Next: §8 (plotting streaming redesign), then §9 (real position-wrapping tiling for
-2D and 3D, and whether `Environment.extend` returns).** Both still need design work —
-read the note first. When tiling returns, **§9.1 of the note is the restoration
-checklist**: every notice, stub, and replaced test that gating it off left behind.
-Both old implementations are preserved commented-out beneath their `raise`, so the
-still-valid parts (`tile_domain`'s ibmesh/`L` handling, `tile_flow`'s `flow_points`
-extension) can be reused rather than rewritten.
+**Next: §8 (plotting streaming), then §9 (real position-wrapping tiling for 2D and 3D,
+and whether `Environment.extend` returns).**
+
+- **§8 is specified and ready to build** — an implementation plan with a build order
+  (note §8.4). No code written yet. Steps 1–2 (frame statistics, then
+  `fps`/`playback_rate`) are independently shippable and need no architectural
+  commitment; steps 3–4 (recorder + derived-quantity cache, then `plot_all` reading it)
+  should be re-evaluated after those land. All design questions are settled, including
+  the capture/render split (§8.3.7: the recorder writes a data cache and never draws;
+  `plot_all` does all rendering from it). Two changelog entries fall out of §8, and the
+  examples' plotting sections need rewriting.
+- **§9 still needs its design pass.** When tiling returns, **§9.1 of the note is the
+  restoration checklist**: every notice, stub, and replaced test that gating it off
+  left behind. Both old implementations are preserved commented-out beneath their
+  `raise`, so the still-valid parts (`tile_domain`'s ibmesh/`L` handling,
+  `tile_flow`'s `flow_points` extension) can be reused rather than rewritten.
 
 **Then Phase 1** — actually exercising dynamic loading in 2D. Item (C) there,
 quantifying dynamic-linear vs. full-cubic error, is the key scientific question and
@@ -412,6 +421,19 @@ points still used). Inherited blockers from the overhaul's notes:
   the real tiling work — the two are the same class of operation (reported domain ≠
   stored grid) and should share a mechanism. The parked test
   `test_flow_generation.py::test_extend_grows_domain_and_copies_edges` un-skips if so.
+- [ ] **Optional agent-history retention (maybe-feature).** `Swarm.pos_history` grows
+  every step, so long runs accumulate memory whether or not anyone plots them. A flag
+  along the lines of `store_pos_history='all' | 'frames' | None` would let a user cap
+  it (`store_prop_history` is the naming precedent, and `'frames'` — keep history only
+  where plot frames were captured — keeps history and the plotting cache mutually
+  consistent).
+  - **Not free, and the loss is unrecoverable:** decimating history breaks `plot_all`
+    at full step resolution, `save_data`, `save_pos_to_csv`, `save_pos_to_vtk`, and any
+    post-hoc agent analysis (per-step displacement/dispersal statistics). Must be
+    opt-in, off by default, and loudly documented.
+  - Considered for the §8 plotting redesign and **deliberately left out** — it is a
+    long-run memory question with consumers well beyond plotting, and nothing in §8
+    depends on it (`docs/notes/flow_field_interface.md` §8.2, "Not in scope").
 
 ---
 

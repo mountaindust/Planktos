@@ -235,6 +235,22 @@ See `examples/` for runnable scripts (start with `basic_ex_2d.py`,
 `basic_ex_3d.py`). `ex_ib2d_mvbnd_sticky.py` is the **2D moving-boundary**
 showcase (needs external data — see the file header for the download link).
 
+### Plotting: 2D is the real thing, 3D is a stand-in
+
+All plotting is matplotlib today. **The 3D plotting is explicitly a placeholder**
+awaiting a vtk-powered library, and when that lands 3D plotting will be **split out
+entirely** from the 2D path. Two working consequences:
+
+- **Do not invest in matplotlib 3D rendering.** Effort spent enriching 3D frames is
+  written off at the rewrite. Keep 3D changes minimal and cheap.
+- **Do not contort 2D designs to stay symmetric with 3D.** Shared abstractions
+  spanning both would only have to be unpicked at the split. 2D and 3D diverging is
+  the intended direction, not a wart.
+
+Already visible in the code: `Swarm.plot_all`'s `fluid='vort'|'quiver'` backdrops
+are 2D-only, so a 3D frame draws nothing about the fluid. See
+`docs/notes/flow_field_interface.md` §8.2.
+
 ## Customizing agent behavior — the one rule that matters
 
 **To change how agents move, subclass `Swarm` and override `apply_agent_model(self, dt)`.**
@@ -374,10 +390,14 @@ the plotting smokes — which brings it to roughly 13s.
     branch's headline feature: `FluidData.update_spline`. Covers TODO Phase 1
     (A) windowed-linear == full-linear to round-off, (B) slide behavior (forward,
     backward, jump-to-start, extrapolation flags, bounded window and load count),
-    and (D) `get_dudt` under linear splining. Uses a synthetic `FluidData`
-    subclass whose `load_dumpfiles` slices an in-memory array, so the real slider
-    runs with no data on disk. Phase 1 (C) — the quantitative linear-vs-cubic
-    number — and the vtk ingestion path still need real data.
+    and (D) `get_dudt` under linear splining. The (A)/(B)/(D) sections drive the
+    real slider from a synthetic `FluidData` subclass whose `load_dumpfiles`
+    slices an in-memory array, so they touch no files. Two further sections run
+    the actual loaders — `VTK3dData` and `IB2dData` — against committed fixtures,
+    because what they pin is the **timeline a loader builds from files**: that it
+    spans the whole dump series rather than the opening window, which is what
+    decides whether a window ever slides. Only Phase 1 (C), the quantitative
+    linear-vs-cubic number, still needs real data.
   - `test_agent_models.py` — `apply_agent_model`/`after_move` overrides, the
     `motion` generators, and the public `motion.RK45` solver contract.
   - `test_material_derivative.py` — `Swarm.get_DuDt` / `get_dudt` (closed-form).
@@ -389,14 +409,24 @@ the plotting smokes — which brings it to roughly 13s.
     `save_pos_to_vtk`.
   - `test_analysis.py` — `get_vorticity`, forward & backward FTLE (closed-form).
   - `test_io_loaders.py` — IB2d moving/static mesh import (committed fixtures),
-    IBAMR vtk (`@vtk`), COMSOL vtu (`@vtu`).
+    the IB2d fluid `uX`/`uY` scalar branch, `_dataio.read_vtk_time_only` (the
+    header-only `TIME` scan), IBAMR vtk (`@vtk`), COMSOL vtu (`@vtu`).
   - `test_parallel_ib.py` — serial == threads == processes (`@slow`).
   - `test_plotting_smoke.py` — `plot_*` methods run without error on the Agg
     backend (`@slow`; the movie test also needs ffmpeg).
 - **Helpers / fixtures**: `tests/_ib_harness.py` (mesh builders + invariant
   assertions; also drives the parallel scenarios and the golden moving-boundary
-  trajectory); `tests/fixtures/` holds tiny committed IB2d fixtures, regenerable
-  via `tests/fixtures/_gen_fixtures.py`.
+  trajectory); `tests/fixtures/` holds tiny committed fixtures (~100 kB total),
+  all regenerable via `tests/fixtures/_gen_fixtures.py` — edit that script rather
+  than hand-editing a vtk:
+  - `lagspts_min/`, `mesh_min/` — IB2d moving and static immersed boundaries.
+  - `ib2d_fluid_min/` (vector `u.####.vtk`), `ib2d_fluid_scalar_min/`
+    (`uX`/`uY.####.vtk`) — 2D fluid. Fields are `u = t` and `v = sin(2πx/Lx)`, so
+    `u` reads back the simulation time and a frozen or truncated timeline is
+    immediately visible. IB2d omits the periodic endpoint, so a 6×5 dump loads as
+    a 7×6 field over a 6×5 domain.
+  - `vtk3d_min/` — 8 rectilinear 3D dumps carrying `TIME` field data, for
+    `VTK3dData`. Field is `u = t`, `v = x`, `w = t·z`.
 - **Markers** (registered in `pytest.ini`): `slow` (only with `--runslow`),
   `vtk` (skipped if vtk data absent), `vtu` (skipped if COMSOL data absent).
 - **Non-automated** visual/exploratory scripts live in `tests/manual/` —

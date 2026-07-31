@@ -374,35 +374,496 @@ Correctness-first: pin trusted behavior before removing anything.
    plain-ndarray guarantee, plus a line recording that tiling temporarily raises.
 
 Then §8 (plotting streaming), and only after that §9 (real tiling + revisit
-`extend`). Each of those is its own design pass with its own note-worthy
-decisions.
+`extend`). §8 has since had its design pass and is fully specified; §9 still needs
+one.
 
 ---
 
-## 8. Plotting streaming (outline — flesh out later)
+## 8. Plotting streaming — implementation plan
 
-Recorded now, to be designed after dynamic loading is solid. Plotting is already a
-bottleneck in 2D runs; for 3D dynamic loading it is worse, because a naive design
-pays the load+interpolate cost **twice** — once to advance agents, once to render
-frames — re-streaming ~100 GB on the second pass.
+Status: **specified, not yet implemented** (design settled 2026-07-31). All design
+questions are decided; what follows is the specification and build order, not a
+discussion. The deliberation that produced these choices — the options weighed and
+rejected — is in this file's git history.
 
-Target architecture: **render each frame from the fluid window that is already
-resident for the current simulation step, and cache a cheap (compressed) image per
-frame; assemble the video at the end.** Sketch:
-- an opt-in mode / shortcut method (e.g. `move_and_plot()`) that renders during the
-  move loop from the already-loaded window, so the expensive data is touched once;
-- persist frames as compressed images to disk (PNG per frame, or straight into an
-  ffmpeg pipe) rather than holding figures in memory — memory stays O(one frame);
-  this also helps the existing 2D bottleneck, independent of dynamic loading;
-- `plot_all` reads from the frame cache if present, instead of re-simulating the
-  flow for visualization;
-- pairs naturally with the position-wrapping tiling of §9: a tiled quiver wraps
-  coordinates the same way the interpolator does, so plotting never materializes a
-  tiled array. Doing plotting *first* means §9 has a working renderer to validate
-  tiled visualization against.
-- open questions: keeping interactive/exploratory (random-access replay) plotting
-  working alongside the streaming one-pass mode; the API surface; decoupling
-  frame-rate from step-rate.
+**Starting cold?** Read §8.1–§8.2 for the problem and scope, then §8.4 for what to
+build first and §8.4.1 for the concrete entry points.
+
+**The problem.** `Swarm.plot_all` replays the whole run after the fact, pulling fluid
+data at every frame. Under dynamic loading that re-streams the entire dataset a second
+time, having already streamed it once to advance the agents.
+
+**The solution, in one line:** capture what each frame needs *while the data is already
+resident*, into a small derived-quantity cache, and make the per-frame statistics cost
+nothing.
+
+> **Correction (supersedes the original outline).** That outline claimed plotting was
+> also a *memory* bottleneck, because "the whole animation is built before anything is
+> written", and proposed streaming frames to disk as an independent win. **This is
+> false.** `Animation.save()` already wraps `writer.saving(...)` and calls
+> `grab_frame()` per frame, so `plot_all` has always streamed into the ffmpeg pipe with
+> O(one frame) encoding memory; `FuncAnimation` holds a single figure and redraws it,
+> and `cache_frame_data` caches only the frame *indices*. The existing 2D bottleneck is
+> **time** — recomputing vorticity and re-rendering every frame — which is what §8.3.1
+> and the cache address. There is no separate "stream the video" work item.
+
+---
+
+### 8.1 Why — where the cost actually is
+
+`plot_all`'s `animate(n)` is a random-access replay over `pos_history`; with
+`frames=None` it renders one frame per `move()` call. Each frame pulls fluid data at
+`envir.time_history[n]`:
+
+| Per-frame call | Cost | Applies to |
+|---|---|---|
+| `_calc_basic_stats(t_indx=n)` → `interpolate_temporal_flow` | **full field**, then `.mean()`/`.max()` | 2D **and 3D**, unconditionally |
+| `get_vorticity(t_indx=n)` (`fluid='vort'`) | full field + `np.gradient` | 2D only |
+| `interpolate_temporal_flow(t_index=n)` (`fluid='quiver'`) | full field, then `[::M,::N]` | 2D only |
+| `interpolate_temporal_mesh(...)` | mesh only, cheap | moving meshes |
+
+Under dynamic loading each of those goes through `FluidData.__call__`, which reloads
+from disk when the requested time leaves the resident window. Replaying frames 0..N
+therefore slides the window back to the start and forward again — a full second pass.
+
+Two facts drive the whole design:
+
+1. **In 3D, the stats text is the entire per-frame fluid cost.** `fluid='vort'` and
+   `'quiver'` are 2D-only, so a 3D frame draws nothing about the fluid — yet
+   `_calc_basic_stats` still pulls the whole 3D field every frame to print
+   `Fluid v_max` in the corner. The ~100 GB second pass exists to render a text label.
+2. **2D and 3D are different problems.** The expensive *visualization* is 2D-only,
+   where data usually fits in memory and replay is cheap. The expensive *data volume*
+   is 3D, where the only fluid-dependent thing drawn is text.
+
+### 8.2 Scope
+
+- **§8 is a 2D feature.** The 3D deliverable is the statistics fix (§8.3.1) and
+  nothing else.
+- **3D plotting is a stand-in.** It is matplotlib today, awaiting a vtk-powered
+  replacement, at which point it splits out from the 2D path entirely. Therefore:
+  **do not invest in matplotlib 3D rendering**, and **do not contort the 2D design to
+  stay symmetric with 3D** — shared abstractions would only have to be unpicked.
+- **Not in scope:** agent-history retention (recorded in `TODO.md` as a possible
+  future feature — a long-run memory question with consumers beyond plotting; nothing
+  here depends on it).
+
+---
+
+### 8.3 Component specifications
+
+#### 8.3.1 Frame statistics
+
+**Remove** `avg_spd` and `max_spd` (whole-grid fluid reductions). **Add** the standard
+deviation of agent speed. Result: `_calc_basic_stats` needs **no fluid field at any
+frame**, in 2D or 3D.
+
+Surviving fluid stats are the component means `avg_spd_x`, `avg_spd_y`, `avg_spd_z`,
+served from a **per-dump mean sidecar**: cache `mean(uᵢ)` per component per dump as
+each dump loads (a few floats, free), then evaluate exactly at any time via the
+interpolation weights (§8.5, linearity). Agent statistics come from `velocities` /
+`pos_history` and involve no fluid at all.
+
+Rationale for the substitution, beyond cost: whole-grid reductions include regions
+containing no agents. In an agent-based model a statistic over the agent population is
+more informative, and the spread of agent speeds speaks directly to whether the
+population is moving coherently. Whole-field values remain available on demand via
+`FluidData.fmin`/`fmax` and `Environment.get_mean_fluid_speed()`.
+
+Implementation notes:
+- **Pair the statistic coherently.** The existing "Agent v̄" shows `‖⟨v⟩‖` — the norm
+  of the mean velocity vector, which measures net directed transport and cancels for
+  opposed motion. `std(|v|)` beside it is a mismatch. Either also show mean speed
+  `⟨|v|⟩` and pair the two, or state that the lines measure different things.
+- **Respect the mask** — only in-domain agents contribute. `t_indx == 0` defines
+  velocity as zero, so the spread is zero there.
+- **Ripple:** the returned tuple is unpacked at **eight** sites in `_swarm.py` (2D and
+  3D variants). Private method, so no API promise, but all eight change together.
+
+#### 8.3.2 Recorder API
+
+**The recorder captures data only — it never renders** (§8.3.7). All video production
+belongs to `plot_all`, reading the cache afterwards. So the recorder takes **no video
+parameters at all**: no `fps`, no `playback_rate`, no colormap, no figure size. It
+takes only what determines *what data is captured*.
+
+`Environment.record(...)` is the implementation; `Swarm.record(...)` is sugar that
+delegates with that swarm preselected. (A `Swarm`-level recorder could not express a
+multi-swarm capture, since `Environment.move_swarms()` is the multi-swarm path. Joint
+multi-swarm plotting is a known gap — issue #49 — and is not solved here, but the API
+must not foreclose it.)
+
+```python
+with envir.record('run_cache/', fluid='vort') as rec:
+    for _ in range(steps):
+        rec.move(dt)            # advance + capture
+```
+
+Note `fluid='vort'` here means **which fluid quantity to cache**, not what to draw —
+the same keyword on `plot_all` selects the backdrop. Same word, different side of the
+capture/render line; worth distinct wording in the docstrings.
+```python
+with envir.record('run_cache/', fluid='vort') as rec:
+    for _ in range(steps):
+        swrm.move(dt)           # user's own loop body
+        do_something_custom()
+        rec.capture()           # explicit
+```
+
+- `rec.move(dt, **kwargs)` forwards to `move()` / `move_swarms()` and captures — the
+  common case, with no way to forget it.
+- `rec.capture()` stays available for loops doing work the recorder should not own.
+  (Named `capture`, not `frame`: it records simulation state, and frames no longer
+  exist at record time.)
+- **No auto-hook on `move()`.** Users routinely subclass `Swarm` and override the move
+  machinery; a plain `move()` call must not acquire invisible side effects.
+- **`__exit__` finalizes on the exception path** — flush and write the cache metadata —
+  then **re-raises**. A run that dies at hour eleven of twelve keeps a
+  complete-to-that-point, fully renderable cache.
+- Returns a handle carrying the cache path, which `plot_all` consumes (§8.3.6).
+
+**Capture schedule.** Agent state is captured **every step by default**. A coarser
+schedule may be specified later if memory demands it; the framing is deliberately
+*not* "capture every N video frames" but **"as if `dt` were larger"** — the cache then
+looks exactly like a run performed at the coarser timestep, and everything downstream
+is unchanged with `Δt_capture` substituted for `dt`. Keeping this orthogonal to video
+frame rate matters: capture resolution is a **data-fidelity** choice fixed at run
+time, frame rate is a **presentation** choice changeable forever after. Conflating
+them would be the original `dt`↔`fps` footgun in a new costume.
+
+*Naming hazard:* `dump` is already this codebase's word for **fluid** data dumps
+(`d_start`, `d_finish`, `load_dumpfiles`, `loaded_dump_bnds`), and IB2d's
+`print_dump` is the same concept for its own output. An agent capture schedule is
+conceptually identical but must not be called simply "dump" — always qualify, or use
+`capture_interval` and reserve "dump" for fluid.
+
+#### 8.3.3 Derived-quantity cache
+
+Cache **derived quantities, not images**, so re-plotting stays possible without
+re-running: colormap, clip, agent subset, figure size and dpi all stay adjustable.
+Fixed at record time: the downsample factors and which fluid quantity was recorded.
+
+**Container: a directory of `.npy` files — one per fluid dump, one per agent capture —
+plus a metadata sidecar.** `.npz` is unusable here: `np.savez` writes the archive in
+one call, so everything would have to be accumulated in memory first, defeating the
+streaming property that motivates the whole design (~1 GB for full-resolution
+vorticity over 500 dumps). HDF5/zarr would add a required dependency to a deliberately
+lean `install_requires`.
+
+**Cadence is hybrid, and neither base is the video frame rate** — frames do not exist
+until render time:
+- **Fluid-derived quantities (vorticity, downsampled quiver): once per fluid dump.**
+  Permitted by linearity (§8.5) — exact reconstruction at *any* time. Usually smaller
+  than per-frame would be (149 dumps vs 500 frames for the leaf dataset).
+- **Agent-derived quantities: once per capture step** (every simulation step by
+  default, §8.3.2).
+
+Together these make the entire frame-rate choice post-hoc: any `Δt_frame ≥
+Δt_capture` can be rendered from the same cache.
+
+Per-dump full-resolution vorticity is an accepted disk cost: 2D-only, and only when
+the user asks for vorticity. IB2d datasets commonly ship comparable vorticity fields
+already.
+
+**Schema — the metadata must carry:**
+- format **version**;
+- **source fingerprint** (dump range and `flow_times` extent, or a hash) so a cache
+  from a different run or dataset is refused;
+- **which quantity** was cached (`vort`, `quiver`, or both) and the **downsample
+  factors** `M`, `N`;
+- the **capture times** (agent time base) and the **dump times** (fluid time base) —
+  there are no "frame times", since frames are chosen at render time;
+- the **capture interval** actually used, since it is the floor on any later
+  `Δt_frame` (§8.3.5);
+- **axes**: `flow_points` and domain `L`, so the cache plots without touching fluid;
+- **per-dump extrema** for colour normalization (§8.3.4);
+- the **per-dump fluid component means** — the §8.3.1 sidecar, a few floats per dump,
+  from which the surviving fluid statistics are exact at any time;
+- the **agent positions** per capture (`N×D` plus mask). Easy to omit as "already in
+  `pos_history`" — but that lives in memory and dies with the process, so without it
+  the cache cannot render after a crash or be used in a later session;
+- the **agent velocities** per capture. Do **not** plan to re-derive these from
+  cached positions: `_calc_basic_stats` currently finite-differences consecutive
+  history entries, which is only equivalent to the true velocity when capture is every
+  step. Under any coarser schedule the derived value is a smoothed, different quantity
+  — and the new agent-speed statistics (§8.3.1) depend on it. Storing velocities
+  doubles this part of the cache and removes the trap entirely.
+
+Note what is *not* stored: the `_calc_basic_stats` scalars. With positions,
+velocities, and the per-dump fluid means all present, every displayed statistic is
+derivable at render time — so caching them too would be redundant state that could
+drift from the data it summarizes.
+
+**Validation on load — missing ≠ mismatched:**
+- **Mismatched** (wrong fingerprint, wrong grid) → hard refusal with a clear message.
+  Silently plotting a foreign cache is the worst available outcome.
+- **Missing** (a quantity not recorded) → **fall back to the fluid**. Free when
+  `INUM=None`; the §8.3.6 warn-and-re-stream path otherwise. This is what keeps
+  vorticity computable after the fact for someone who recorded without it.
+- **Never derive vorticity from cached quiver arrays.** They are downsampled, so
+  gradients taken on them are a coarser, different field — a plausible-looking wrong
+  answer. Recording both `vort` and `quiver` is the cheap prevention.
+
+#### 8.3.4 Video output and colour normalization
+
+**`plot_all` is the sole video producer** (§8.3.7), and it already streams:
+`Animation.save()` internally uses `writer.saving(...)` + `grab_frame()` per frame, so
+encoding memory is already O(one frame). **No change is required to the video-writing
+machinery at all** — the work in §8 is about where the *data* comes from, not how
+pixels reach ffmpeg.
+
+**No PNG-frames option.** Every argument for one is covered better elsewhere:
+truncation and mid-run inspection by container choice; crash re-render by the cache;
+single publication stills by `Swarm.plot(t, filename=...)`; resume is impossible
+regardless, as Planktos has no simulation checkpointing.
+
+**Document `.mkv` for long or unattended runs.** A hard kill (HPC walltime, OOM,
+node failure) is `SIGKILL`: `__exit__` never runs, the pipe is never closed, and an
+`.mp4` is then usually unplayable because ffmpeg writes the `moov` atom last. `.mkv`
+survives truncation *and* is playable while still being written, which also covers
+checking on a long run mid-flight. Remuxing afterwards is lossless and one call:
+`ffmpeg -i out.mkv -c copy out.mp4`. Fragmented mp4
+(`-movflags frag_keyframe+empty_moov`) is the alternative, passed via `writer_kwargs`.
+
+**Colour normalization.** Replace the current per-frame `fld.autoscale()` — a drifting
+colour scale is scientifically misleading — with a **global scale derived from the
+cached per-dump extrema in a second pass over the cache** (small) rather than over the
+fluid (huge). Note `FluidData.fmin`/`fmax` are *not* usable for this: they are
+documented as covering "all the data seen so far", so under dynamic loading they grow
+during the run and would reintroduce the drift. Max-over-dumps is an exact upper bound
+under linear interpolation and very tight under cubic. If a live one-pass render mode
+is ever offered it has no global scale available and must take an explicit
+`clip`/`vmin`/`vmax`, or disclose the drift on the colorbar.
+
+#### 8.3.5 Frame rate: `fps` and `playback_rate`
+
+Users set two quantities they already understand; `dt` leaves the user-facing API
+entirely:
+
+| Parameter | Meaning | Default |
+|---|---|---|
+| `fps` | frames per second of output — *smoothness*, comparable to standard 24/25/30/60 | `10` today; see below |
+| `playback_rate` | simulated seconds per second of video — *speed* vs real time | `1` |
+
+```
+Δt_frame = playback_rate / fps
+```
+
+| `playback_rate` | `fps` | `Δt_frame` | Reads as |
+|---|---|---|---|
+| 1 | 30 | 0.0333 s | real time, smooth |
+| 0.5 | 30 | 0.0167 s | 2× slow motion |
+| 10 | 24 | 0.417 s | 10× fast forward |
+
+This replaces a long-standing footgun. With frames pinned to steps, `fps` was the only
+lever: at `dt = 1e-3`, real-time playback demanded `fps = 1000`, while the default
+`fps = 10` turned 10 s of simulation (10 000 steps, hence 10 000 frames) into a
+**17-minute** movie. At `dt = 1e-4` the same settings give 2.8 hours.
+
+- `per_dump=True` is an alternative specifier setting `Δt_frame` = dump spacing; report
+  the resulting playback rate back to the user.
+- **A raw step count (`every=k`) is rejected** — users vary `dt` between `move()`
+  calls, so it silently means different things within one run.
+- **`Δt_frame < Δt_capture` is the one failure mode.** Frames cannot be produced
+  between captured states. Clamp to every captured state and **warn with the
+  numbers**, including the achieved rate `Δt_capture × fps`. Silent clamping would
+  reintroduce the footgun in a new form.
+- **`fps ≤ playback_rate / Δt_capture`** follows from `Δt_frame ≥ Δt_capture`. With
+  the default capture-every-step schedule, `Δt_capture = dt` and this reads
+  `fps ≤ playback_rate / dt`. So **slow motion and smoothness trade off unless the
+  capture interval is small**: at `dt = 0.025` captured every step, real time reaches
+  40 fps but 10× slow motion caps at 4 fps. Document as: *smooth slow motion needs
+  fine capture.*
+- When rendering from a cache, `Δt_capture` is read from the metadata; when replaying
+  live from `pos_history`, it is `dt`. Same rule, one substitution.
+- **Frame times are not exactly uniform.** Frames are chosen at render time by picking,
+  for each target time, the nearest available capture — so spacing jitters by up to one
+  `Δt_capture` whenever `Δt_frame` is not an exact multiple of it. The video is encoded
+  at constant `fps` regardless, so this shows as slightly uneven motion. Negligible
+  when `Δt_frame >> Δt_capture`; **warn when `Δt_frame` is only a small multiple**
+  (say < 3×), where the jitter is a large fraction of the interval.
+- **Minor open call for step 2:** `plot_all`'s `fps` default is currently `10`. With
+  `playback_rate=1` that yields `Δt_frame = 0.1` s, which is fine but choppy. Raising
+  the default to 24 or 30 would look better and is a second (small) behavior change on
+  top of `playback_rate`. Decide when implementing; either way it is changelog
+  material only if changed.
+- **Assumption to document:** "real time" presumes simulated time is in seconds.
+  `Environment.units` covers *length* only; seconds is the convention throughout.
+- **`fps` is re-encodable after the fact**, because dump-cadence caching (§8.3.3) can
+  supply any `Δt_frame`. Only the downsample factors and recorded quantity are fixed.
+
+#### 8.3.6 `plot_all`
+
+- **Reads the cache when given one** (explicit path, or the handle returned by the
+  recorder). Frames are then *selected* from the cache's **capture times** — the
+  schema's capture-time list is the authority for what can be rendered, and
+  `Δt_capture` from the metadata is the floor on `Δt_frame` (§8.3.5). Never assume
+  cached entries correspond one-to-one with `pos_history` indices.
+- **With no cache after a dynamically-loaded run: still works.** Re-streams as today,
+  but emits a loud one-time warning with the estimated cost — detected by `INUM` being
+  set and the requested frames spanning more than the resident window. Never break a
+  working workflow silently; never let someone accidentally re-stream 100 GB unwarned.
+- **`playback_rate=1` becomes the default here too.** Existing scripts will produce
+  different videos. Accepted as a deliberate 1.1.0 change: the old behavior *is* the
+  footgun.
+- With `INUM=None` the whole dataset is in memory, replay costs nothing extra, and
+  today's random-access behavior is otherwise preserved.
+
+#### 8.3.7 Separation of concerns: capture vs render
+
+**DECIDED: the recorder captures data only; `plot_all` does all rendering.**
+
+`plot_all` is not made obsolete by the recorder — it drives the interactive on-screen
+animation, replay is free when `INUM=None`, and the recorder requires deciding before
+the run. The two do different jobs, and this decision draws the line between them
+cleanly:
+
+| | Recorder | `plot_all` |
+|---|---|---|
+| When | during the run | any time after |
+| Job | write the cache while data is resident | turn a cache (or live history) into pixels |
+| Knows about | fluid dumps, capture schedule | `fps`, `playback_rate`, colormap, clip, figure |
+
+Rationale: the cache already holds everything needed to render, so rendering during
+the run buys convenience only — and costs the thing the cache was chosen for. Every
+video parameter stays adjustable forever, which an image cache or live rendering would
+have re-fixed at run time.
+
+Three consequences worth stating, because they simplify the build:
+
+- **There is exactly one rendering path**, so no shared-renderer refactor is needed.
+  `plot_all` keeps `FuncAnimation` and `animate()` essentially as they are; only the
+  *source* of per-frame data changes.
+- **The recorder takes no video parameters** (§8.3.2), which removes the config-
+  duplication problem between it and `plot_all` entirely.
+- **The video-writing machinery needs no work at all** (§8.3.4).
+
+---
+
+### 8.4 Build order
+
+1. **Frame statistics (§8.3.1)** — independent, low risk, and the **entire 3D
+   deliverable**. Needs none of the caching machinery, and touches no rendering.
+2. **`fps` / `playback_rate` (§8.3.5)** — user-facing, self-contained, removes the
+   footgun. Lands entirely inside `plot_all` as a frame-selection computation (it
+   already accepts a `frames` iterable), so it needs no caching and no recorder.
+3. **Recorder + cache (§8.3.2, §8.3.3)** — the substantial piece, and pure data
+   capture: no rendering, no video parameters, no matplotlib.
+4. **`plot_all` reads the cache; colour normalization (§8.3.6, §8.3.4)** — the only
+   step that touches rendering, and it changes where per-frame data comes from rather
+   than how it is drawn.
+5. **Examples and docs rewrite (§8.6)**.
+
+Steps 1 and 2 are independently shippable and require no architectural commitment.
+**Re-evaluate 3–4 after they land**: given that 3D plotting is awaiting a vtk rewrite
+(§8.2), steps 1–2 may be the whole justified investment for now, with the cache
+warranted only if 2D re-plotting turns out to be a real workflow pain.
+
+*Two earlier versions of this list are worth not repeating.* One had "stream the
+video" as an independent step, on the false premise that `plot_all` held frames in
+memory — see the correction at the head of §8; `plot_all` has always streamed. The
+other had "extract a shared frame renderer" as a prerequisite, which the §8.3.7
+capture/render split removes: with exactly one rendering path there is nothing to
+share.
+
+#### 8.4.1 Entry points for a cold start
+
+Line numbers drift; search for the names.
+
+**Step 1 — frame statistics.**
+- `Swarm._calc_basic_stats` (`planktos/_swarm.py`) — the 2D branch and the 3D branch
+  each build the tuple; both change.
+- **Eight unpack sites** in `_swarm.py` consume that tuple (in `plot`, `plot_all`, and
+  the movie-writing paths, 2D and 3D variants). `grep -n "_calc_basic_stats" planktos/_swarm.py`
+  finds all of them. The display strings alongside them (`Fluid $v_{max}$`,
+  `Fluid $\overline{v}$`) are what change for users.
+- ⚠️ **Four existing tests pin the behavior being removed** and must be rewritten as
+  part of this step, not treated as breakage:
+  `tests/test_flow_interface.py::test_calc_basic_stats_2d_known_answers`,
+  `::test_calc_basic_stats_3d_known_answers`,
+  `::test_calc_basic_stats_time_varying_uses_requested_time_index`,
+  `::test_calc_basic_stats_returns_plain_scalars`. The first two assert
+  `max_spd == max speed` explicitly (that assertion was itself a bug fix — see §3.4),
+  so deleting the statistic means deliberately retiring a regression lock. Replace with
+  equivalents for the agent-speed spread; keep the component-mean assertions.
+- The per-dump mean sidecar belongs in `FluidData` (`planktos/fluid.py`), populated
+  where dumps are loaded (`load_dumpfiles` / `update_spline`) so it costs nothing.
+
+**Step 2 — `fps` / `playback_rate`.**
+- `Swarm.plot_all` signature (`fps`, and the `frames` argument it already accepts) —
+  the change is a frame-*selection* computation feeding `frames`, plus the clamp/warn
+  checks. `frames=None` currently expands to `range(len(self.pos_history)+1)`; that
+  expansion is what `playback_rate` replaces.
+- `FuncAnimation(..., interval=...)` controls **on-screen** playback and is separate
+  from the saved-video `fps`. Do not conflate them.
+- `Swarm.plot` (single frame) snaps a requested `t` to the nearest
+  `Environment.time_history` entry without interpolation; that behavior is unchanged.
+
+**Verification.** `pytest` (fast, ~1 s) plus `pytest --runslow` for the plotting
+smokes, which exercise `plot_*` on the Agg backend and will catch signature breakage.
+The movie test additionally needs ffmpeg on `PATH`.
+
+### 8.5 The property everything rests on
+
+Both spline classes evaluate as a **weighted sum of nodal fields**,
+`u(t) = Σᵢ wᵢ(t)·uᵢ`, for `LinearSpline` and `fCubicSpline` alike. So any **linear**
+functional of the field commutes with temporal interpolation:
+
+```
+F(u(t)) = Σᵢ wᵢ(t)·F(uᵢ)          for linear F
+```
+
+`mean`, `np.gradient` (hence vorticity), and subsampling (hence quiver arrays) are all
+linear. This is what makes the per-dump mean sidecar exact (§8.3.1) and dump-cadence
+caching exact (§8.3.3), using weights the interpolator already computes.
+
+`max` and `mean(√(u²+v²))` are **not** linear and do not commute — which is why
+`max_spd` and `avg_spd` were dropped rather than cached.
+
+### 8.6 Obligations
+
+- **Changelog (1.1.0)**, both user-visible relative to 1.0.x:
+  - fluid speed statistics replaced by agent-speed spread on plots;
+  - `playback_rate` added and defaulting to 1, changing existing video output.
+- **Examples rewrite.** The plotting portions change regardless. Current effective
+  playback rates (`dt × fps`) show the footgun's fingerprint — a 27× spread with no
+  evident intent:
+
+  | Example | `dt` | `fps` | Effective rate |
+  |---|---|---|---|
+  | `ex_ib2d_ibmesh.py` | 0.025 | 3 | 0.075 — 13× slow motion |
+  | `ex_ib2d_sticky.py` | 0.025 | 3 | 0.075 — 13× slow motion |
+  | `ex_ib2d_mvbnd_sticky.py` | 0.025 | 6 | 0.15 — 6.7× slow motion |
+  | `ex_ind_var.py` | 0.1 | 20 | 2.0 — 2× fast forward |
+
+  Under today's scheme `Δt_frame = dt` identically, so the effective rate is just
+  `dt × fps` — users could only choose `fps`, and the playback rate fell out wherever
+  it fell. That is why the spread is incoherent: nobody chose these rates.
+
+  When rewriting, choose the **playback rate** deliberately and keep it near current
+  behavior where that makes sense — the fluid examples genuinely want slow motion for
+  legible vortices. Then note the real constraint: at `dt = 0.025`,
+  `playback_rate = 0.075` permits at most 3 fps, so a smoother version of those
+  examples needs a **smaller `dt`**, not a different `fps`.
+- **Docs:** the `fps`/`playback_rate` model and its `dt` ceiling; the seconds
+  assumption; `.mkv` guidance for long runs; what the cache stores and when it is
+  refused.
+
+### 8.7 Deferred within §8
+
+- **Async frame writing.** Matplotlib rendering is slow and currently serializes with
+  the physics. Matplotlib is not thread-safe, but rendering in the main thread and
+  handing only the encode/write to a writer thread would hide most of the I/O cost.
+  **Measure before building** — it may be irrelevant next to the physics.
+- **A live one-pass render mode** (rendering without a cache). Only meaningful if a
+  workflow appears that cannot afford the cache; it inherits the colour-normalization
+  problem (§8.3.4).
+
+### 8.8 Interaction with §9
+
+Position-wrapping tiling pairs naturally with this: a tiled quiver wraps coordinates
+the same way the interpolator does, so plotting never materializes a tiled array.
+Doing §8 first gives §9 a working renderer to validate tiled visualization against.
 
 ---
 
@@ -560,17 +1021,21 @@ whole note plus `CLAUDE.md` and `TODO.md` (root) first. Quick orientation:
   what makes the deletion *provably* behavior-preserving rather than merely
   untested-and-green. Only one test in the whole suite had to change behavior:
   the tiling one, by design.
-- **Next actionable step: §8 — the plotting streaming redesign.** Then §9 (real
-  tiling + revisit `extend`).
-- **Not started:** §8 and §9.
+- **§8 (plotting streaming) has had its design pass** and is an implementation plan
+  with a build order (§8.4), all design questions settled. No §8 code has been written.
+- **Next actionable step: §8 step 1** (the frame-statistics change). Steps 1–2 are
+  independently shippable and need no architectural commitment; re-evaluate 3–4 after
+  they land.
+- **Not started:** all §8 implementation, and §9 (which still needs its design pass).
 - **`tests/IBAMR_test_data/` is present** (`IBAMR_db_003/004/005.vtk`,
   `mesh_db.vtk`) — 3D IBAMR data for the `@vtk`-marked tests and for validating
   §9. Its absence on the original authoring machine is what led to the since-
   dropped 2D tiling stopgap.
 
-**The immediate next actionable step** is §8, the plotting streaming redesign,
-which is still an outline and needs its own design pass before any code. §9 (real
-tiling, and whether `extend` returns) follows it.
+**The immediate next actionable step** is implementing §8 in the order given in §8.4,
+starting with the frame-statistics change — independent, low risk, and the entire 3D
+deliverable. §9 (real tiling, and whether `extend` returns) follows, and still needs
+its own design pass.
 
 **Re-confirming §7.3 landed cleanly**, if picking this up cold: the reproduction
 snippets below for defects §3.1 and §3.2 should now fail at *import* /
