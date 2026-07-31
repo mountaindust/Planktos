@@ -2,6 +2,7 @@
 
 **Agent-based modeling of small organisms within fluid flows around immersed structures.**
 
+[![Tests](https://github.com/mountaindust/Planktos/actions/workflows/tests.yml/badge.svg)](https://github.com/mountaindust/Planktos/actions/workflows/tests.yml)
 [![Docs](https://img.shields.io/badge/docs-readthedocs-blue)](https://planktos.readthedocs.io)
 [![Paper](https://img.shields.io/badge/paper-Bull.%20Math.%20Biol.%202022-green)](https://doi.org/10.1007/s11538-022-01027-1)
 [![License](https://img.shields.io/badge/license-GPLv3-lightgrey)](LICENSE)
@@ -127,7 +128,9 @@ as for vtk.)
 
 ### Tests
 All tests can be run by typing `pytest` into a terminal in the base directory. 
-This requires installation of the optional pytest package.
+This requires installation of the optional pytest package. Add `--runslow` to
+include the slower checks (the parallelization tests and the plotting smoke
+tests).
 
 ## Overview
 
@@ -198,3 +201,37 @@ boundary geometry produced by CFD solvers.
 - **[IBAMR](https://github.com/IBAMR/IBAMR)** — an adaptive, distributed-memory
   immersed boundary solver. Planktos imports 3D IBAMR velocity data and vertex
   data via VTK.
+
+## Development
+
+Install in editable mode so source changes take effect without reinstalling:
+
+```
+pip install -e .
+```
+
+Tests are run with `pytest` from the base directory — see
+[Tests](#tests) above.
+
+### Pre-commit hooks (optional, one-time setup per clone)
+
+The repository includes a [pre-commit](https://pre-commit.com) configuration
+that spell checks with codespell and runs a few structural checks (valid YAML,
+no leftover merge-conflict markers, no oversized files). **It does nothing
+until you turn it on, and you have to do that once in every fresh clone:**
+
+```
+pip install pre-commit
+pre-commit install
+```
+
+From then on the hooks run automatically on `git commit`, against staged files
+only. To commit without running them:
+
+```
+git commit --no-verify
+```
+
+These hooks are a fast local echo of what GitHub Actions checks on every push.
+CI remains the authority: it cannot be bypassed, and it also runs the full test
+suite, which is too slow for a commit hook.

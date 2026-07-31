@@ -20,6 +20,8 @@ Documentation-only release. No library behavior was changed.
 - Refreshed stale VTK and Python version advice in the install instructions; dependency minimums now match setup.cfg.
 - Read the Docs builds on Python 3.11.
 - Repository-wide spelling pass; set_canopy_flow now prints "Mean wind speed".
+- GitHub Actions runs the test suite and codespell on every push and pull request; status badge in the README.
+- Test suite works under numpy 2.5, which removed np.cross for 2-vectors.
 - other minor documentation fixes
 
 1.0.0
