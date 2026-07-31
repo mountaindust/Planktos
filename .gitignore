@@ -19,6 +19,10 @@ input2d
 *.stl
 *.beam
 *.target
+*.vtp
+*.vtm
+*.vtm.series
+tests/unsteady_3D_testdata/
 
 # Committed test fixtures (small; regenerate with tests/fixtures/_gen_fixtures.py)
 !tests/fixtures/**/*.vtk

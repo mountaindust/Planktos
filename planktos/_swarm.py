@@ -1788,9 +1788,16 @@ class Swarm:
             else:
                 # temporally changing flow
                 flow = self.envir.interpolate_temporal_flow(t_index=t_indx)
-            flow_spd = np.sqrt(flow[0]**2 + flow[1]**2)
-            avg_spd_x = flow[0].mean()
-            avg_spd_y = flow[1].mean()
+            # np.asarray strips the FlowArray view before any array math. The
+            # view's overridden min/max read the *original* component's buffer
+            # rather than the derived array's own values, so max_spd reported
+            # max|u| instead of the max fluid speed, and the .mean() results
+            # carried a bogus shape. Drop the asarray when FlowArray is deleted;
+            # see docs/notes/flow_field_interface.md.
+            u = np.asarray(flow[0]); v = np.asarray(flow[1])
+            flow_spd = np.sqrt(u**2 + v**2)
+            avg_spd_x = u.mean()
+            avg_spd_y = v.mean()
             avg_spd = flow_spd.mean()
             max_spd = flow_spd.max()
             return perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_swrm_vel
@@ -1803,10 +1810,12 @@ class Swarm:
             else:
                 # temporally changing flow
                 flow = self.envir.interpolate_temporal_flow(t_indx)
-            flow_spd = np.sqrt(flow[0]**2 + flow[1]**2 + flow[2]**2)
-            avg_spd_x = flow[0].mean()
-            avg_spd_y = flow[1].mean()
-            avg_spd_z = flow[2].mean()
+            # see the 2D branch above re: np.asarray and the FlowArray view
+            u = np.asarray(flow[0]); v = np.asarray(flow[1]); w = np.asarray(flow[2])
+            flow_spd = np.sqrt(u**2 + v**2 + w**2)
+            avg_spd_x = u.mean()
+            avg_spd_y = v.mean()
+            avg_spd_z = w.mean()
             avg_spd = flow_spd.mean()
             max_spd = flow_spd.max()
             return perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel

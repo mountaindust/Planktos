@@ -4,7 +4,7 @@
 (a sliding window of timesteps) instead of holding the whole dataset in memory, so
 that large 3D time-varying flows (~100 GB raw, larger once splined) can be used.
 
-**Current state (2026-07-30):** the architecture is built and the API has settled —
+**Current state (2026-07-31):** the architecture is built and the API has settled —
 all fluid data is a `FluidData` object (`planktos/fluid.py`), dynamic windowed
 loading is implemented and reported working for 2D IB2d data, and 3D (`VTK3dData`)
 is wired up but unexercised. Temporal interpolation of dynamically-loaded data is
@@ -12,16 +12,40 @@ is wired up but unexercised. Temporal interpolation of dynamically-loaded data i
 time** (`fCubicSpline`). See the design-history section at the bottom for the
 cubic→linear story.
 
-**Phase 0 is essentially complete and the suite is green:** **159 passed, 20
-skipped** with `pytest`, **177 passed, 2 skipped** with `pytest --runslow`. No
-failures, no xfails. Every test-adaptation item under Phase 0 is done. What remains
-there is two real bugs — `FluidData.fmin`/`fmax` still being generators rather than
-values, and the `FlowArray` numpy-interop problem, which has *narrowed*: it no longer
-crashes (`repr`, `np.allclose`, and arithmetic all behave), but numpy still operates
-on the underlying untiled buffer, so `f.shape` and `np.asarray(f).shape` disagree for
-a tiled array and arithmetic silently drops the tiling — plus one cleanup item.
+**Phase 0 is essentially complete and the suite is green:** **199 passed, 20
+skipped** with `pytest`, **217 passed, 2 skipped** with `pytest --runslow`. No
+failures, no xfails. Every test-adaptation item under Phase 0 is done. The
+`fmin`/`fmax` generator bug is fixed. The `FlowArray` numpy-interop item turned out
+to be the tip of a larger design problem and has been **superseded by a dedicated
+plan** — see below.
 
-**Next up: Phase 1** — actually exercising dynamic loading in 2D. Item (C) there,
+**Next up: the flow-field interface refactor** (`docs/notes/flow_field_interface.md`).
+Investigating the `FlowArray` interop bug showed that `FlowArray`'s sole reason to
+exist — virtualizing tiled flow for `interpn` — is **defeated by modern scipy**
+(`RegularGridInterpolator` calls `np.asarray` on any array-API object, discarding the
+subclass's virtual `.shape`/`__getitem__`), so the tiled interpolation path is broken
+*and* untested today. The agreed plan is: delete `FlowArray` (components become plain
+ndarrays), gate tiling and domain extension off behind `NotImplementedError`, then do
+plotting, then implement tiling properly for 2D and 3D together. **That note is the
+source of truth for this work; read it before touching `fluid.py`.**
+
+Step §7.2 of that plan is **done**: `tests/test_flow_interface.py` (40 tests) pins the
+flow-interface contract — `interpolate_flow` values, the container/spline surface,
+`fmin`/`fmax`, `_calc_basic_stats`, `get_raw_loaded_data`, the `LinearSpline`/`INUM`
+temporal path, and 3D vorticity — so the `FlowArray` deletion can be shown to be
+behavior-preserving. Writing it surfaced three live bugs, all fixed:
+
+- **(note §3.4)** `max_spd` on every plot frame reported max |u| rather than the max
+  fluid speed, and `get_mean_fluid_speed` returned a value misreporting its own shape.
+- **(note §3.5)** `get_raw_loaded_data` returned `LinearSpline` objects instead of
+  ndarrays on the **entire dynamic-loading path** — it dispatched on "is it an
+  fCubicSpline" and the else-branch assumed static flow. Fixed by giving
+  `LinearSpline` the `regenerate_data` method `fCubicSpline` already had and
+  branching on `flow_times is None` instead. Relevant to Phase 1 below.
+
+**Next actionable step is §7.3 — delete `FlowArray`.**
+
+**Then Phase 1** — actually exercising dynamic loading in 2D. Item (C) there,
 quantifying dynamic-linear vs. full-cubic error, is the key scientific question and
 is still unanswered; don't quote a magnitude for that gap until it is.
 
@@ -52,8 +76,8 @@ Common renames: `envir.flow_points`→`envir.flow.flow_points`,
   `FluidData` / `fCubicSpline` directly, keeping the off-node cubic-reproduction check.
 - [x] **`test_analysis.py`** — DONE (17 passed). Vorticity renamed to `get_vorticity`/
   `flow.flow_points`; the 3 FTLE value tests now pass after the periodic-default fix
-  (below). Still TODO (not a failure): **add the 3D vorticity known-answer test** the
-  overhaul deferred to the dyload merge (`FluidData.get_vorticity` supports 3D).
+  (below). The deferred **3D vorticity known-answer test** has since landed in
+  `tests/test_flow_interface.py` (solid-body rotation, general linear field, shape).
 - [x] **`test_io_loaders.py`** — DONE (10 passed, 1 skipped; COMSOL `@vtu` skip).
   Renames (`flow.flow_times`/`flow.flow_points`) fixed the 2 IBAMR loads. **Source fix:**
   `save_fluid`/`save_2D_vorticity` were latently broken on dyload — they passed `self.L`
@@ -77,15 +101,16 @@ Common renames: `envir.flow_points`→`envir.flow.flow_points`,
 
 ### Other real bugs that matter (fix in Phase 0)
 
-- [ ] **`FlowArray` breaks numpy interop** (found while adapting `test_flow_generation`).
+- [~] **`FlowArray` breaks numpy interop — SUPERSEDED** by
+  `docs/notes/flow_field_interface.md` (found while adapting `test_flow_generation`).
   `__array_finalize__` propagates `self.array` to every derived array, and the
   overridden `shape`/`__getitem__` read from `self.array` rather than the array's own
-  buffer — so a `FlowArray` produced by a ufunc/comparison reads stale data. Result:
-  array-wide `np.allclose`/`np.isclose` give wrong answers and even `repr()` raises on
-  a `FlowArray` (`fluid.py:103-265`). User-facing (people run numpy ops on flow). Fix
-  carefully (delicate view/tiling machinery) with a dedicated test covering allclose/
-  isclose/arithmetic/printing on both tiled and untiled `FlowArray`s. Workaround in
-  tests for now: `np.asarray(envir.flow[i])` before array-wide numpy calls.
+  buffer — so a `FlowArray` produced by a ufunc/comparison reads stale data. Workaround
+  in tests for now: `np.asarray(envir.flow[i])` before array-wide numpy calls.
+  **The fix is not to patch the subclass.** The deeper finding is that `FlowArray`'s
+  only purpose (virtual tiling through `interpn`) no longer works at all under modern
+  scipy, so the plan is **deletion + deferral of tiling**. Do not start this from the
+  description here — follow the note's §7 sequence.
 - [x] **FTLE wrong values — DONE.** Root cause was **not** the FTLE math (byte-identical
   to mvbnd) but a **periodic-by-default** bug: `FluidData` defaulted `periodic_dim=True`,
   and the bare `flow=` constructor + analytic setters never overrode it, so every such
@@ -100,10 +125,14 @@ Common renames: `envir.flow_points`→`envir.flow.flow_points`,
   `test_flow_{non_periodic_by_default,periodic_dim_true_wraps}_at_upper_edge`; the FTLE
   closed-forms now pass. NB: this was a general latent bug (any flow sampled exactly at
   the upper/right edge), not FTLE-specific — FTLE just exposed it.
-- [ ] **`FluidData.fmin`/`fmax` are generators, not values.** Built as generator
-  *expressions* (`fluid.py:1069-1070`) then re-bound in `update_spline` as
-  `(min(self.fmin[n], ...) for ...)` (`fluid.py:1206-1207, 1266-1267`) — subscripts a
-  generator and will `TypeError` if consumed after a window slide. On the dynamic path.
+- [x] **`FluidData.fmin`/`fmax` were generators, not values — DONE.** Built as generator
+  *expressions* then re-bound in `update_spline` as `(min(self.fmin[n], ...) for ...)` —
+  subscripted a generator (`TypeError` on every window slide, the dynamic path), and
+  plotting's `max_u, max_v = flow.fmax` worked exactly once before the generator was
+  exhausted. Fixed by wrapping all three sites in `tuple(...)`: `fluid.py` `__init__`
+  (~L1074-1075) and both `update_spline` slide branches (~L1211-1212, ~L1271-1272).
+  Values were always correct; only the container type was wrong. Details in
+  `docs/notes/flow_field_interface.md` §3.3.
 
 ### Cleanup (low urgency)
 
@@ -118,6 +147,11 @@ Common renames: `envir.flow_points`→`envir.flow.flow_points`,
 
 Use 2D IB2d data (cheap, deterministic, reported working). Separate two questions:
 
+NB: the in-memory linear path (`INUM=True`) now has unit coverage in
+`tests/test_flow_interface.py` (`LinearSpline` call/index/extrema/derivative/
+`regenerate_data`, and linear-vs-cubic agreement on data linear in time). What
+remains below is genuinely about *window sliding*, which still needs real data.
+
 - [ ] **(A) Machinery correctness — exact.** Dynamic windowed-linear (`INUM=k`) must
   return **identical** values (machine precision) to full linear (`INUM=True`) at every
   query time — linear interp is local, so window-sliding can't change the value. A
@@ -130,8 +164,13 @@ Use 2D IB2d data (cheap, deterministic, reported working). Separate two question
   checked visually so far (`tests/manual/visualtest_2d.py`).
 - [ ] **(D) `get_dudt` under linear splining** is a piecewise-constant, discontinuous
   finite difference (`LinearSpline.derivative`, `fluid.py:479-494`). Pin current behavior.
-- [ ] **(E) Tiling/periodic × dynamic.** `FlowArray` view + `tiling` propagation through
-  `update_spline` (there are `assert ... "Tiling did not propagate correctly"` guards).
+- [~] **(E) Tiling/periodic × dynamic — SUPERSEDED / on hold.** Was: `FlowArray` view +
+  `tiling` propagation through `update_spline`. Tiling is being gated off behind
+  `NotImplementedError` for the duration of the interface refactor and the plotting
+  work, so there is nothing to test here yet. Revisit as part of the real tiling
+  implementation (`docs/notes/flow_field_interface.md` §9), which covers 2D and 3D
+  together and must define how `tiling` interacts with `periodic_dim`. **Periodic ×
+  dynamic on its own is still worth testing** and stays in scope for Phase 1.
 
 ---
 
@@ -146,8 +185,23 @@ exported from VisIt/ParaView**, where the source field (IBFE SAMRAI / OpenFOAM F
 rectilinear vtk — source-specific ingestion is **out of scope** (see CLAUDE.md "3D
 fluid data sources").
 
-- [ ] Stage the real 3D dynamic dataset on-machine (gitignored; `proj_dev/` convention);
-  record the path/loader call.
+- [x] **Stage the real 3D dynamic dataset on-machine — DONE.** It is at
+  `tests/unsteady_3D_testdata/` (gitignored as a whole directory; `.vtp`/`.vtm`/
+  `.vtm.series` were added to `.gitignore` alongside it). Contents: `VTK/` with 21
+  timestep `.vtm`s + a `.vtm.series` (case `case08_alpha2_1e8`),
+  `oral_arm_disk.stl`, and `README_oral_arm_setup.md` with the full setup spec.
+  - **Physics:** OpenFOAM, Cassiopea oral-arm porous disk. Water (ρ=1000,
+    ν=1e-6), Re=500, laminar transient. Pulsing annular inlet,
+    u_z(t) = 0.01·½(1−cos(2π·0.8·t)) m/s. Export covers the last two pulse cycles
+    (t ≥ 7.5 s, period 1.25 s). Domain x,y ∈ [−0.05, 0.05], z ∈ [0.003, 0.271] m,
+    **all lengths in meters**. Fields: `U`, `p` (kinematic), `vorticity`, `Q`.
+  - ⚠️ **Not directly loadable yet.** This is OpenFOAM **unstructured** XML
+    (`.vtu`/`.vtm`), but this branch assumes a **rectilinear** grid (see CLAUDE.md
+    "3D fluid data sources"). It must be resampled to a rectilinear grid in
+    ParaView/VisIt and re-exported before `VTK3dData`/`read_IBAMR3d_vtk_data` can
+    read it. Record the resample recipe here once done — that step is the actual
+    first task of Phase 2, not the staging.
+  - `oral_arm_disk.stl` is a ready-made 3D immersed boundary for Phase 3.
 - [ ] End-to-end `VTK3dData` dynamic load of rectilinear vtk via
   `read_IBAMR3d_vtk_data(..., INUM=...)`; un-skip / fix the IBAMR load tests on real data.
 - [ ] Re-run Phase 1 (A)–(E) equivalents in 3D.
@@ -223,9 +277,13 @@ points still used). Inherited blockers from the overhaul's notes:
   assume a rectilinear fluid grid, but a diagnostic and non-blocking.
 - [ ] Changelog housekeeping (`changelog.txt`, 1.1.0): drop "TODO: test dynamic loading"
   once Phases 1–2 land; resolve the `tiling`-setter TODO (make tiling a setter of
-  `FluidData.tiling`, with `Environment.L` updating off it).
-- [ ] `Environment.extend` was removed (extrapolation is the intended replacement). Re-add
-  only if there's demand.
+  `FluidData.tiling`, with `Environment.L` updating off it) — folded into the real
+  tiling implementation, `docs/notes/flow_field_interface.md` §9.
+- [ ] `Environment.extend` was removed (extrapolation is the intended replacement).
+  Whether it returns is decided in `docs/notes/flow_field_interface.md` §9, alongside
+  the real tiling work — the two are the same class of operation (reported domain ≠
+  stored grid) and should share a mechanism. The parked test
+  `test_flow_generation.py::test_extend_grows_domain_and_copies_edges` un-skips if so.
 
 ---
 

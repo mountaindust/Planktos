@@ -474,7 +474,18 @@ class LinearSpline:
     
     def absmax(self):
         return np.abs(self.flow).max()
-    
+
+    def regenerate_data(self):
+        '''
+        Return the original data the interpolation is based on.
+
+        Mirrors fCubicSpline.regenerate_data so that both spline classes present
+        the same surface. A linear spline stores its raw data outright, so this
+        is a direct reference rather than a reconstruction -- deliberately no
+        copy, since under dynamic loading the window can be very large.
+        '''
+        return self.flow
+
     def derivative(self, val):
         '''
         Returns time derivative at the specified time.
@@ -1140,11 +1151,19 @@ class FluidData:
 
 
     def get_raw_loaded_data(self):
-        '''Get the ndarrays that the current splines are based on.'''
-        if isinstance(self._flow[0], fCubicSpline):
-            return [flow.regenerate_data() for flow in self._flow]
-        else:
+        '''Get the ndarrays that the current splines are based on.
+
+        Under dynamic loading this is only the currently loaded window, not the
+        whole dataset.
+        '''
+        # Static flow is stored as arrays directly; time-varying flow is always
+        # held as splines, of either class. Testing flow_times rather than the
+        # spline type avoids the old bug where the non-cubic branch assumed
+        # "static" and so handed back LinearSpline objects instead of ndarrays
+        # on the dynamic-loading path.
+        if self.flow_times is None:
             return self._flow
+        return [flow.regenerate_data() for flow in self._flow]
 
 
 

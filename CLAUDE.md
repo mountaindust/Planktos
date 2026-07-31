@@ -338,6 +338,15 @@ the plotting smokes — which brings it to roughly 13s.
     specific fluid fields where it makes sense. Un-skip it if that happens.
   - `test_temporal_interp.py` — `fluid.fCubicSpline` and `FluidData`'s temporal
     interpolation (`create_temporal_interpolations` was absorbed into `FluidData`).
+  - `test_flow_interface.py` — pins the `Environment.flow` consumer contract ahead
+    of the `FlowArray` removal: `interpolate_flow`/`interpolate_temporal_flow`
+    values, the container + spline-indexing surface, `fmin`/`fmax` tuples,
+    `_calc_basic_stats`, `get_mean_fluid_speed`, `calculate_mag_gradient`,
+    `get_raw_loaded_data`, `fshape`, the plotting strided-slice path, the
+    `LinearSpline`/`INUM` temporal path (the in-memory half of dynamic loading —
+    `test_temporal_interp.py` covers only `fCubicSpline`), and 3D vorticity. All
+    closed-form. See `docs/notes/flow_field_interface.md` §7.2 — **this is the
+    safety net for that refactor; keep it green as the work lands.**
   - `test_agent_models.py` — `apply_agent_model`/`after_move` overrides, the
     `motion` generators, and the public `motion.RK45` solver contract.
   - `test_material_derivative.py` — `Swarm.get_DuDt` / `get_dudt` (closed-form).

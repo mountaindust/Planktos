@@ -2114,10 +2114,12 @@ class Environment:
             # temporal flow. interpolate in time, and then in space.
             flow_now = self.interpolate_temporal_flow()
 
-        if DIM3:
-            fluid_speed = np.sqrt(flow_now[0]**2+flow_now[1]**2+flow_now[2]**2)
-        else:
-            fluid_speed = np.sqrt(flow_now[0]**2+flow_now[1]**2)
+        # np.asarray strips the FlowArray view, which otherwise leaks a derived
+        # array carrying the original component's shape -- np.mean then returns
+        # something that misreports its own shape to callers. Drop the asarray
+        # when FlowArray is deleted; see docs/notes/flow_field_interface.md.
+        comps = [np.asarray(flow_now[n]) for n in range(3 if DIM3 else 2)]
+        fluid_speed = np.sqrt(sum(c**2 for c in comps))
 
         return np.mean(fluid_speed)
 
