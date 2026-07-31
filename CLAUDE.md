@@ -205,6 +205,22 @@ Algorithm/derivation notes are in `docs/notes/` (Markdown with LaTeX):
   the tree was made clean in `1.0.1`. Note it has ambiguous cases it will not
   auto-fix (`-w`), so read its output rather than trusting a zero exit alone.
 
+## CI and pre-commit
+
+- **GitHub Actions** (`.github/workflows/tests.yml`) runs the test suite and
+  codespell on every push and pull request. It is the authority: it cannot be
+  bypassed and it runs on Linux, which has already caught a failure that did not
+  reproduce on the user's Windows machine (numpy 2.5 removing `np.cross` for
+  2-vectors). If CI fails and you cannot reproduce locally, **check the
+  dependency versions first** — the runner installs the newest of everything.
+- **`.pre-commit-config.yaml`** mirrors the codespell check locally. It is inert
+  until `pre-commit install` is run **once per clone**, which is easy to forget
+  on a new machine — if the user is setting up a fresh clone, remind them.
+  `git commit --no-verify` bypasses it. Documented under "Development" in the
+  README.
+- Keep the pre-commit codespell skip list in sync with the workflow's, so the
+  two cannot disagree about what is checked.
+
 ## Tests
 
 The suite is organized into focused, deterministic, fast modules (overhauled

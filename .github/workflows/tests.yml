@@ -14,12 +14,22 @@ concurrency:
 jobs:
   pytest:
     name: pytest (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       # Report every version's result, not just the first failure.
       fail-fast: false
       matrix:
-        python-version: ['3.12']
+        include:
+          # The development version.
+          - python-version: '3.12'
+            os: ubuntu-latest
+          # The floor declared by python_requires in setup.cfg. Worth testing
+          # because nothing in the source needs anything past 3.6 -- the real
+          # constraint comes from the dependencies, which move on their own.
+          # Pinned to 22.04: 3.8 is EOL and setup-python no longer provides it
+          # on the 24.04 image that ubuntu-latest now points at.
+          - python-version: '3.8'
+            os: ubuntu-22.04
 
     steps:
       - uses: actions/checkout@v7
