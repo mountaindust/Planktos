@@ -31,10 +31,10 @@ number and the changelog** — these are easy to forget. Be proactive about it:
 
 - The version lives in `planktos/__init__.py` (`__version__`); `setup.cfg` reads
   it via `attr: planktos.__version__`, and `docs/conf.py` imports it — so the one
-  string in `__init__.py` is the single source of truth. `__version__` is `1.0.1`,
-  which is released and tagged (`v1.0.1`, documentation-only), as is `v1.0.0`.
-  `changelog.txt` has an open **1.0.2** section accumulating bug fixes;
-  `__version__` has deliberately not been bumped to match yet.
+  string in `__init__.py` is the single source of truth. `__version__` is `1.0.2`,
+  which is **in development and not yet tagged**, accumulating bug fixes under its
+  own `changelog.txt` section. `v1.0.1` (documentation-only) and `v1.0.0` are
+  released and tagged.
 - `changelog.txt` is hand-maintained, terse, and grouped by version. When a
   change is user-facing, prompt to add an entry under the appropriate version.
 - When work looks release-worthy (or a user-facing change lands) but the version
