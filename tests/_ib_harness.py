@@ -117,7 +117,10 @@ def signed_perp_dist_2D(P, Q0, Q1):
     Q0->Q1. Sign indicates side (left of the directed line is positive).'''
     Q0 = np.asarray(Q0, float); Q1 = np.asarray(Q1, float); P = np.asarray(P, float)
     d = Q1 - Q0
-    return np.cross(d, P - Q0) / np.linalg.norm(d)
+    r = P - Q0
+    # 2D scalar cross product, written out rather than via np.cross: numpy
+    # removed support for 2-vectors in np.cross in 2.5 (deprecated since 1.x).
+    return (d[0]*r[1] - d[1]*r[0]) / np.linalg.norm(d)
 
 
 def project_param_2D(P, Q0, Q1):
