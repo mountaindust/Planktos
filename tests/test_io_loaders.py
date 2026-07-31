@@ -67,6 +67,89 @@ def test_static_vertex_import_closed_with_add_idx():
 
 
 # --------------------------------------------------------------------------- #
+#          mesh import and the fluid coordinate frame                          #
+# --------------------------------------------------------------------------- #
+# The fluid loaders translate their data so its lower-left corner sits at the
+# origin, recording the original corner in fluid_domain_LLC. Mesh coordinates
+# arrive in that original frame, so every import path has to subtract the same
+# offset or mesh and fluid end up silently offset from each other.
+#
+# read_IB2d_mesh_data has four branches and only two of them did it: the
+# 'proximity' and 'hull' static methods shifted, while the 'adjacent' static
+# method and the moving-mesh branch did not. All four now go through one helper.
+#
+# The shift is a no-op for IB2d data, whose grids start at the origin, which is
+# why the omission went unnoticed -- so these tests set fluid_domain_LLC
+# explicitly rather than relying on a loader to produce a nonzero one.
+#
+# box.vertex is the four corners of a 2x2 square, so sides are 2.0 apart and
+# diagonals 2*sqrt(2) = 2.83. The connection radius is res_factor*res = 0.501*res,
+# and res=4.5 puts it at 2.25 -- catching the four sides, excluding the diagonals.
+
+BOX = 'mesh_min/box.vertex'
+BOX_RES = 4.5
+LLC = (1.0, 0.5)
+
+# method -> (extra kwargs, expected number of segments)
+STATIC_METHODS = {'adjacent': ({}, 3),                  # open chain of 4 vertices
+                  'proximity': ({'res': BOX_RES}, 4),   # the four sides
+                  'hull': ({}, 4)}                      # hull of a square
+
+
+def _shifted_envir():
+    '''Environment recording a nonzero original fluid lower-left corner.'''
+    envir = planktos.Environment(Lx=10, Ly=10)
+    envir.fluid_domain_LLC = LLC
+    return envir
+
+
+@pytest.mark.parametrize('method', sorted(STATIC_METHODS))
+def test_static_vertex_import_without_a_recorded_corner(method):
+    kwargs, n_seg = STATIC_METHODS[method]
+    envir = planktos.Environment(Lx=10, Ly=10)
+    assert envir.fluid_domain_LLC is None
+    envir.read_IB2d_mesh_data(str(FIXTURES / BOX), method=method, **kwargs)
+    assert envir.ibmesh.shape == (n_seg, 2, 2)
+    # unshifted: there is no fluid frame to shift into
+    assert np.isclose(envir.ibmesh[..., 0].min(), 2.0)
+    assert np.isclose(envir.ibmesh[..., 1].min(), 2.0)
+
+
+def test_static_vertex_import_proximity_segment_lengths():
+    envir = planktos.Environment(Lx=10, Ly=10)
+    envir.read_IB2d_mesh_data(str(FIXTURES / BOX), method='proximity', res=BOX_RES)
+    seg_len = np.linalg.norm(envir.ibmesh[:, 0, :] - envir.ibmesh[:, 1, :], axis=1)
+    assert np.allclose(seg_len, 2.0)            # sides only, no diagonals
+
+
+@pytest.mark.parametrize('method', sorted(STATIC_METHODS))
+def test_static_vertex_import_shifts_into_the_fluid_frame(method):
+    # Every static method must follow the fluid's translation. 'adjacent' used to
+    # skip it, putting the mesh in a different frame from the fluid it is meant
+    # to sit in -- with no error, just wrong geometry.
+    kwargs, n_seg = STATIC_METHODS[method]
+    envir = _shifted_envir()
+    envir.read_IB2d_mesh_data(str(FIXTURES / BOX), method=method, **kwargs)
+    assert envir.ibmesh.shape == (n_seg, 2, 2)
+    assert np.isclose(envir.ibmesh[..., 0].min(), 2.0 - LLC[0])
+    assert np.isclose(envir.ibmesh[..., 1].min(), 2.0 - LLC[1])
+
+
+def test_moving_mesh_import_shifts_into_the_fluid_frame():
+    # Same for the moving (directory of lagsPts.####.vtk) branch, which also used
+    # to skip the shift. Unshifted, frame 0's first segment is [[1,1],[1,2]].
+    envir = _shifted_envir()
+    envir.read_IB2d_mesh_data(str(FIXTURES / 'lagspts_min'), dt=0.1, print_dump=1,
+                              d_start=0)
+    assert envir.ibmesh.shape == (3, 3, 2, 2)
+    assert np.allclose(envir.ibmesh[0, 0],
+                       [[1. - LLC[0], 1. - LLC[1]], [1. - LLC[0], 2. - LLC[1]]])
+    # the shift is rigid: the +1.0 x-translation across frames is untouched
+    assert np.allclose(envir.ibmesh[2, 0] - envir.ibmesh[0, 0],
+                       [[1., 0.], [1., 0.]])
+
+
+# --------------------------------------------------------------------------- #
 #            IBAMR vtk fluid (in-repo data, vtk-gated)                        #
 # --------------------------------------------------------------------------- #
 
