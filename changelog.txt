@@ -8,6 +8,8 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - Domain tiling temporarily raises NotImplementedError; it returns with 2D and 3D support.
 - Environment.extend was removed.
 - FluidData is documented in the API reference, including the INUM interpolation-in-time tradeoff.
+- Plots now show mean agent speed and its spread in place of mean and max fluid speed; plotting no longer loads fluid data for statistics.
+- New FluidData.get_mean_velocity returns the spatial mean of each velocity component at any time.
 
 
 1.0.1

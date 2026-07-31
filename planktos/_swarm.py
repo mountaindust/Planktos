@@ -1718,8 +1718,19 @@ class Swarm:
 
 
     def _calc_basic_stats(self, DIM3, t_indx=None):
-        ''' Return basic stats about % agents remaining, fluid velocity, and 
+        ''' Return basic stats about % agents remaining, fluid velocity, and
         agent velocity for plot printing.
+
+        No fluid velocity field is pulled here. The fluid component means come
+        from FluidData's per-dump mean cache, which is exact at any time and
+        needs no data loaded, so a plot or movie costs nothing in fluid I/O even
+        when the run is dynamically loading. Whole-grid reductions over the
+        fluid (mean and max fluid speed) were removed for that reason: they are
+        nonlinear, so they cannot be cached that way, and they summarize the
+        whole domain including regions holding no agents. The spread of agent
+        speeds took their place -- it says directly whether the population is
+        moving coherently. Whole-field values are still available on demand from
+        FluidData.fmin/fmax and Environment.get_mean_fluid_speed().
 
         Parameters
         ----------
@@ -1732,10 +1743,6 @@ class Swarm:
         -------
         perc_left : float
             percentage of agents left within the domain
-        avg_spd : float
-            average fluid speed
-        max_spd : float
-            maximum fluid speed
         avg_spd_x : float
             average x-component of fluid velocity
         avg_spd_y : float
@@ -1744,6 +1751,10 @@ class Swarm:
             average z-component of fluid velocity
         avg_swrm_vel : array
             average agent velocity
+        avg_swrm_spd : float
+            average agent speed
+        std_swrm_spd : float
+            standard deviation of the agent speeds
         '''
 
         # get % of agents left in domain
@@ -1757,60 +1768,53 @@ class Swarm:
             num_orig = num_left
         perc_left = 100*num_left/num_orig
 
-        # get average swarm velocity
+        # get agent velocities
         if t_indx is None:
-            if np.all(self.velocities.mask):
-                vel_data = np.zeros(self.velocities.shape)
-            elif np.any(self.velocities.mask):
-                vel_data = self.velocities[~self.velocities.mask.any(axis=1)]
-            else:
-                vel_data = self.velocities
-            avg_swrm_vel = vel_data.mean(axis=0)
+            vel_data = self.velocities
         elif t_indx == 0:
-            avg_swrm_vel = np.zeros(len(self.envir.L))
+            # velocity is defined as zero at the initial time, so the mean
+            # velocity is the zero vector and the spread of speeds is zero.
+            vel_data = np.zeros((1,len(self.envir.L)))
         else:
             vel_data = (self.pos_history[t_indx] - self.pos_history[t_indx-1])/(
                         self.envir.time_history[t_indx]-self.envir.time_history[t_indx-1])
-            avg_swrm_vel = vel_data.mean(axis=0)
+
+        # only agents still in the domain contribute. agents leave whole rows at
+        # a time, so dropping masked rows loses nothing from the survivors.
+        mask = np.ma.getmaskarray(vel_data)
+        vel_data = np.asarray(np.ma.getdata(vel_data))[~mask.any(axis=1)]
+        if vel_data.size == 0:
+            # every agent has left; report zeros rather than masked values,
+            # which the plot text cannot format.
+            vel_data = np.zeros((1,len(self.envir.L)))
+
+        avg_swrm_vel = vel_data.mean(axis=0)
+        swrm_spd = np.linalg.norm(vel_data, axis=1)
+        avg_swrm_spd = swrm_spd.mean()
+        std_swrm_spd = swrm_spd.std()
 
         if self.envir.flow is None and not DIM3:
-            return perc_left, 0, 0, 0, 0, avg_swrm_vel
+            return perc_left, 0, 0, avg_swrm_vel, avg_swrm_spd, std_swrm_spd
         elif self.envir.flow is None and DIM3:
-            return perc_left, 0, 0, 0, 0, 0, avg_swrm_vel
+            return perc_left, 0, 0, 0, avg_swrm_vel, avg_swrm_spd, std_swrm_spd
+
+        # get the fluid component means from the cache
+        if self.envir.flow.flow_times is None:
+            # temporally constant flow
+            fluid_means = self.envir.flow.get_mean_velocity()
+        else:
+            if t_indx is None:
+                time = self.envir.time
+            else:
+                time = self.envir.time_history[t_indx]
+            fluid_means = self.envir.flow.get_mean_velocity(time=time)
 
         if not DIM3:
-            # 2D flow
-            # get current fluid flow info
-            if self.envir.flow.flow_times is None:
-                # temporally constant flow
-                flow = self.envir.flow
-            else:
-                # temporally changing flow
-                flow = self.envir.interpolate_temporal_flow(t_index=t_indx)
-            u = flow[0]; v = flow[1]
-            flow_spd = np.sqrt(u**2 + v**2)
-            avg_spd_x = u.mean()
-            avg_spd_y = v.mean()
-            avg_spd = flow_spd.mean()
-            max_spd = flow_spd.max()
-            return perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_swrm_vel
-
+            return (perc_left, fluid_means[0], fluid_means[1], avg_swrm_vel,
+                    avg_swrm_spd, std_swrm_spd)
         else:
-            # 3D flow
-            if self.envir.flow.flow_times is None:
-                # temporally constant flow
-                flow = self.envir.flow
-            else:
-                # temporally changing flow
-                flow = self.envir.interpolate_temporal_flow(t_indx)
-            u = flow[0]; v = flow[1]; w = flow[2]
-            flow_spd = np.sqrt(u**2 + v**2 + w**2)
-            avg_spd_x = u.mean()
-            avg_spd_y = v.mean()
-            avg_spd_z = w.mean()
-            avg_spd = flow_spd.mean()
-            max_spd = flow_spd.max()
-            return perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel
+            return (perc_left, fluid_means[0], fluid_means[1], fluid_means[2],
+                    avg_swrm_vel, avg_swrm_spd, std_swrm_spd)
 
 
 
@@ -2007,14 +2011,13 @@ class Swarm:
                     transform=ax.transAxes, fontsize=12)
 
             # textual info
-            perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_swrm_vel = \
+            perc_left, avg_spd_x, avg_spd_y, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
                 self._calc_basic_stats(DIM3=False, t_indx=loc)
             plt.figtext(0.77, 0.77,
                         '{:.1f}% remain\n'.format(perc_left)+
                         '\n  ------ Info ------\n'+
-                        r'Fluid $v_{max}$'+': {:.1g} {}/s\n'.format(max_spd, self.envir.units)+
-                        r'Fluid $\overline{v}$'+': {:.1g} {}/s\n'.format(avg_spd, self.envir.units)+
-                        r'Agent $\overline{v}$'+': {:.1g} {}/s\n'.format(np.linalg.norm(avg_swrm_vel), self.envir.units),
+                        r'Agent $|\overline{v}|$'+': {:.2g} {}/s\n'.format(np.linalg.norm(avg_swrm_vel), self.envir.units)+
+                        r'Agent $\overline{|v|}$'+': {:.2g} $\\pm$ {:.2g} {}/s\n'.format(avg_swrm_spd, std_swrm_spd, self.envir.units),
                         fontsize=10)
             axHistx.text(0.01, 0.98, r'Fluid $\overline{v}_x$'+': {:.2g} \n'.format(avg_spd_x)+
                          r'Agent $\overline{v}_x$'+': {:.2g}'.format(avg_swrm_vel[0]),
@@ -2112,11 +2115,12 @@ class Swarm:
                       fontsize=12)
 
             # textual info
-            perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel = \
+            perc_left, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
                 self._calc_basic_stats(DIM3=True, t_indx=loc)
-            ax.text2D(0.75, 0.9, r'Fluid $v_{max}$'+': {:.2g} {}/s\n'.format(max_spd, self.envir.units)+
-                      r'Fluid $v_{avg}$'+': {:.2g} {}/s\n'.format(avg_spd, self.envir.units)+
-                      r'Agent $v_{avg}$'+': {:.2g} {}/s'.format(np.linalg.norm(avg_swrm_vel), self.envir.units),
+            # anchored a little further left than the old fluid stats box: the
+            # "mean +/- spread" line is wider than the lines it replaced.
+            ax.text2D(0.65, 0.9, r'Agent $|\overline{v}|$'+': {:.2g} {}/s\n'.format(np.linalg.norm(avg_swrm_vel), self.envir.units)+
+                      r'Agent $\overline{|v|}$'+': {:.2g} $\\pm$ {:.2g} {}/s'.format(avg_swrm_spd, std_swrm_spd, self.envir.units),
                       transform=ax.transAxes, horizontalalignment='left',
                       fontsize=10)
             ax.text2D(0.02, 0, '{:.1f}% remain\n'.format(perc_left),
@@ -2403,16 +2407,15 @@ class Swarm:
             # textual info
             time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
                                 fontsize=12)
-            perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_swrm_vel = \
+            perc_left, avg_spd_x, avg_spd_y, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
                 self._calc_basic_stats(DIM3=False, t_indx=n0)
             axStats = plt.axes([0.77, 0.77, 0.25, 0.2], frameon=False)
             axStats.set_axis_off()
             stats_text = axStats.text(0,1,
                          '{:.1f}% remain\n'.format(perc_left)+
                          '\n  ------ Info ------\n'+
-                         r'Fluid $v_{max}$'+': {:.1g} {}/s\n'.format(max_spd, self.envir.units)+
-                         r'Fluid $\overline{v}$'+': {:.1g} {}/s\n'.format(avg_spd, self.envir.units)+
-                         r'Agent $\overline{v}$'+': {:.1g} {}/s\n'.format(np.linalg.norm(avg_swrm_vel), self.envir.units),
+                         r'Agent $|\overline{v}|$'+': {:.2g} {}/s\n'.format(np.linalg.norm(avg_swrm_vel), self.envir.units)+
+                         r'Agent $\overline{|v|}$'+': {:.2g} $\\pm$ {:.2g} {}/s\n'.format(avg_swrm_spd, std_swrm_spd, self.envir.units),
                          fontsize=10, transform=axStats.transAxes,
                          verticalalignment='top')
             x_text = axHistx.text(0.01, 0.98, r'Fluid $\overline{v}_x$'+': {:.2g} \n'.format(avg_spd_x)+
@@ -2557,15 +2560,14 @@ class Swarm:
                                   self.envir.time_history[n0]),
                                   transform=ax.transAxes, animated=True,
                                   verticalalignment='top', fontsize=12)
-            perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel = \
+            perc_left, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
                 self._calc_basic_stats(DIM3=True, t_indx=n0)
-            flow_text = ax.text2D(0.75, 0.9,
-                                  r'Fluid $v_{max}$'+': {:.2g} {}/s\n'.format(
-                                  max_spd, self.envir.units)+
-                                  r'Fluid $v_{avg}$'+': {:.2g} {}/s\n'.format(
-                                  avg_spd, self.envir.units)+
-                                  r'Agent $v_{avg}$'+': {:.2g} {}/s'.format(
-                                  np.linalg.norm(avg_swrm_vel), self.envir.units),
+            # see the note on the matching anchor in Swarm.plot
+            flow_text = ax.text2D(0.65, 0.9,
+                                  r'Agent $|\overline{v}|$'+': {:.2g} {}/s\n'.format(
+                                  np.linalg.norm(avg_swrm_vel), self.envir.units)+
+                                  r'Agent $\overline{|v|}$'+': {:.2g} $\\pm$ {:.2g} {}/s'.format(
+                                  avg_swrm_spd, std_swrm_spd, self.envir.units),
                                   transform=ax.transAxes, animated=True,
                                   horizontalalignment='left', fontsize=10)
             perc_text = ax.text2D(0.02, 0,
@@ -2689,13 +2691,12 @@ class Swarm:
                 time_text.set_text('time = {:.2f}'.format(self.envir.time_history[n]))
                 if not DIM3:
                     # 2D
-                    perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_swrm_vel = \
+                    perc_left, avg_spd_x, avg_spd_y, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
                         self._calc_basic_stats(DIM3=False, t_indx=n)
                     stats_text.set_text('{:.1f}% remain\n'.format(perc_left)+
                          '\n  ------ Info ------\n'+
-                         r'Fluid $v_{max}$'+': {:.1g} {}/s\n'.format(max_spd, self.envir.units)+
-                         r'Fluid $\overline{v}$'+': {:.1g} {}/s\n'.format(avg_spd, self.envir.units)+
-                         r'Agent $\overline{v}$'+': {:.1g} {}/s\n'.format(np.linalg.norm(avg_swrm_vel), self.envir.units))
+                         r'Agent $|\overline{v}|$'+': {:.2g} {}/s\n'.format(np.linalg.norm(avg_swrm_vel), self.envir.units)+
+                         r'Agent $\overline{|v|}$'+': {:.2g} $\\pm$ {:.2g} {}/s\n'.format(avg_swrm_spd, std_swrm_spd, self.envir.units))
                     x_text.set_text(r'Fluid $\overline{v}_x$'+': {:.2g} \n'.format(avg_spd_x)+
                          r'Agent $\overline{v}_x$'+': {:.2g}'.format(avg_swrm_vel[0]))
                     y_text.set_text(r'Fluid $\overline{v}_y$'+': {:.2g} \n'.format(avg_spd_y)+
@@ -2842,16 +2843,14 @@ class Swarm:
                     
                 else:
                     # 3D
-                    perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel = \
+                    perc_left, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
                         self._calc_basic_stats(DIM3=True, t_indx=n)
                     # print(n)
                     # print(self.pos_history[n].all() is ma.masked)
-                    flow_text.set_text(r'Fluid $v_{max}$'+': {:.2g} {}/s\n'.format(
-                                       max_spd, self.envir.units)+
-                                       r'Fluid $v_{avg}$'+': {:.2g} {}/s\n'.format(
-                                       avg_spd, self.envir.units)+
-                                       r'Agent $v_{avg}$'+': {:.2g} {}/s'.format(
-                                       np.linalg.norm(avg_swrm_vel), self.envir.units))
+                    flow_text.set_text(r'Agent $|\overline{v}|$'+': {:.2g} {}/s\n'.format(
+                                       np.linalg.norm(avg_swrm_vel), self.envir.units)+
+                                       r'Agent $\overline{|v|}$'+': {:.2g} $\\pm$ {:.2g} {}/s'.format(
+                                       avg_swrm_spd, std_swrm_spd, self.envir.units))
                     perc_text.set_text('{:.1f}% remain\n'.format(perc_left))
                     x_text.set_text(r'Fluid $\overline{v}_x$'+': {:.2g} {}/s\n'.format(
                                     avg_spd_x, self.envir.units)+
@@ -2977,13 +2976,12 @@ class Swarm:
                 time_text.set_text('time = {:.2f}'.format(self.envir.time))
                 if not DIM3:
                     # 2D end
-                    perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_swrm_vel = \
+                    perc_left, avg_spd_x, avg_spd_y, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
                         self._calc_basic_stats(DIM3=False, t_indx=None)
                     stats_text.set_text('{:.1f}% remain\n'.format(perc_left)+
                          '\n  ------ Info ------\n'+
-                         r'Fluid $v_{max}$'+': {:.1g} {}/s\n'.format(max_spd, self.envir.units)+
-                         r'Fluid $\overline{v}$'+': {:.1g} {}/s\n'.format(avg_spd, self.envir.units)+
-                         r'Agent $\overline{v}$'+': {:.1g} {}/s\n'.format(np.linalg.norm(avg_swrm_vel), self.envir.units))
+                         r'Agent $|\overline{v}|$'+': {:.2g} {}/s\n'.format(np.linalg.norm(avg_swrm_vel), self.envir.units)+
+                         r'Agent $\overline{|v|}$'+': {:.2g} $\\pm$ {:.2g} {}/s\n'.format(avg_swrm_spd, std_swrm_spd, self.envir.units))
                     x_text.set_text(r'Fluid $\overline{v}_x$'+': {:.2g} \n'.format(avg_spd_x)+
                          r'Agent $\overline{v}_x$'+': {:.2g}'.format(avg_swrm_vel[0]))
                     y_text.set_text(r'Fluid $\overline{v}_y$'+': {:.2g} \n'.format(avg_spd_y)+
@@ -3106,14 +3104,12 @@ class Swarm:
                     
                 else:
                     # 3D end
-                    perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel = \
+                    perc_left, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
                         self._calc_basic_stats(DIM3=True)
-                    flow_text.set_text(r'Fluid $v_{max}$'+': {:.2g} {}/s\n'.format(
-                                       max_spd, self.envir.units)+
-                                       r'Fluid $v_{avg}$'+': {:.2g} {}/s\n'.format(
-                                       avg_spd, self.envir.units)+
-                                       r'Agent $v_{avg}$'+': {:.2g} {}/s'.format(
-                                       np.linalg.norm(avg_swrm_vel), self.envir.units))
+                    flow_text.set_text(r'Agent $|\overline{v}|$'+': {:.2g} {}/s\n'.format(
+                                       np.linalg.norm(avg_swrm_vel), self.envir.units)+
+                                       r'Agent $\overline{|v|}$'+': {:.2g} $\\pm$ {:.2g} {}/s'.format(
+                                       avg_swrm_spd, std_swrm_spd, self.envir.units))
                     perc_text.set_text('{:.1f}% remain\n'.format(perc_left))
                     x_text.set_text(r'Fluid $\overline{v}_x$'+': {:.2g} {}/s\n'.format(
                                     avg_spd_x, self.envir.units)+

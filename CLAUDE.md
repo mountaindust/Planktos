@@ -160,7 +160,15 @@ against `master`.
   interpolation. Per-source subclasses handle ingestion: `IB2dData`, `VTK3dData`,
   `ComsolVTUData`.
 - Fluid-level operations live on the object, not on `Environment`: `tile_flow`,
-  `get_vorticity`, `get_dudt`, `calculate_DuDt`, `update_spline`, `load_dumpfiles`.
+  `get_vorticity`, `get_dudt`, `calculate_DuDt`, `get_mean_velocity`,
+  `update_spline`, `load_dumpfiles`.
+- **`get_mean_velocity(time=|t_idx=)` reads a cache, not the field.** The spatial
+  mean of each component is recorded per dump as that dump loads, and evaluated
+  with the same interpolation weights the field uses — exact, because the mean is
+  linear and both splines are weighted sums of nodal fields. This is what lets
+  plotting print fluid statistics without re-streaming the dataset (see
+  `docs/notes/flow_field_interface.md` §8.3.1). A mean stays valid after the
+  sliding window has moved past its dump; only a never-loaded dump costs a load.
 - `FluidData.get_raw_loaded_data()` is the nearest thing to the old
   `Environment.regenerate_flow_data()`. Note *loaded*: under dynamic loading only
   the current window exists.
@@ -380,7 +388,8 @@ the plotting smokes — which brings it to roughly 13s.
     was written as the safety net for the `FlowArray` removal, which it survived
     unchanged): `interpolate_flow`/`interpolate_temporal_flow`
     values, the container + spline-indexing surface, `fmin`/`fmax` tuples,
-    `_calc_basic_stats`, `get_mean_fluid_speed`, `calculate_mag_gradient`,
+    `_calc_basic_stats` (including that it pulls **no** fluid field),
+    `get_mean_velocity`, `get_mean_fluid_speed`, `calculate_mag_gradient`,
     `get_raw_loaded_data`, `fshape`, the plotting strided-slice path, the
     `LinearSpline`/`INUM` temporal path (the in-memory half of dynamic loading —
     `test_temporal_interp.py` covers only `fCubicSpline`), and 3D vorticity. All
@@ -390,7 +399,9 @@ the plotting smokes — which brings it to roughly 13s.
     branch's headline feature: `FluidData.update_spline`. Covers TODO Phase 1
     (A) windowed-linear == full-linear to round-off, (B) slide behavior (forward,
     backward, jump-to-start, extrapolation flags, bounded window and load count),
-    and (D) `get_dudt` under linear splining. The (A)/(B)/(D) sections drive the
+    and (D) `get_dudt` under linear splining, plus the per-dump mean cache behind
+    the plot statistics (`get_mean_velocity` exact across slides; a replay after a
+    full sweep costs zero loads). Those sections drive the
     real slider from a synthetic `FluidData` subclass whose `load_dumpfiles`
     slices an in-memory array, so they touch no files. Two further sections run
     the actual loaders — `VTK3dData` and `IB2dData` — against committed fixtures,

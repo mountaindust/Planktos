@@ -1,9 +1,10 @@
 # Fluid velocity field interface — analysis and refactor plan
 
 Status: **plan / design note** (2026-07). Records the decisions reached while
-investigating the `dyload` Phase-0 "`FlowArray` breaks numpy interop" item. Only
-the `fmin`/`fmax` fix has been implemented so far; everything else here is the
-agreed plan, to be executed in the sequence in §7.
+investigating the `dyload` Phase-0 "`FlowArray` breaks numpy interop" item. §7 is
+complete (`FlowArray` deleted, tiling gated off) and §8 step 1 (frame statistics)
+has landed; §8 steps 2–5 and §9 remain the agreed plan. Individual sections carry
+their own **[done]** markers.
 
 **Revised 2026-07-31:** the tiling *stopgap* (2D materialization) was dropped —
 tiling and domain extension are now deferred **wholesale**, raising
@@ -381,10 +382,10 @@ one.
 
 ## 8. Plotting streaming — implementation plan
 
-Status: **specified, not yet implemented** (design settled 2026-07-31). All design
-questions are decided; what follows is the specification and build order, not a
-discussion. The deliberation that produced these choices — the options weighed and
-rejected — is in this file's git history.
+Status: **step 1 built; steps 2–5 specified, not yet implemented** (design settled
+2026-07-31). All design questions are decided; what follows is the specification and
+build order, not a discussion. The deliberation that produced these choices — the
+options weighed and rejected — is in this file's git history.
 
 **Starting cold?** Read §8.1–§8.2 for the problem and scope, then §8.4 for what to
 build first and §8.4.1 for the concrete entry points.
@@ -452,7 +453,7 @@ Two facts drive the whole design:
 
 ### 8.3 Component specifications
 
-#### 8.3.1 Frame statistics
+#### 8.3.1 Frame statistics — **[done]**
 
 **Remove** `avg_spd` and `max_spd` (whole-grid fluid reductions). **Add** the standard
 deviation of agent speed. Result: `_calc_basic_stats` needs **no fluid field at any
@@ -479,6 +480,34 @@ Implementation notes:
   velocity as zero, so the spread is zero there.
 - **Ripple:** the returned tuple is unpacked at **eight** sites in `_swarm.py` (2D and
   3D variants). Private method, so no API promise, but all eight change together.
+
+**As built** (the open call above was decided in favor of pairing):
+
+- `_calc_basic_stats` returns `(perc_left, avg_spd_x, avg_spd_y[, avg_spd_z],
+  avg_swrm_vel, avg_swrm_spd, std_swrm_spd)`. Both new agent statistics are computed
+  from the same masked-row-filtered velocity data as `avg_swrm_vel`.
+- The plot box shows **both** agent quantities, notated to say which is which:
+  `Agent $|\overline{v}|$` (the norm of the mean velocity — net transport) and
+  `Agent $\overline{|v|}$: m ± s` (mean speed and its spread). The `Fluid v_max` /
+  `Fluid v̄` lines are gone; the per-axis `Fluid v̄ₓ` lines on the histogram axes stay,
+  now served from the cache.
+- The 3D stats box moved from `text2D(0.75, 0.9)` to `0.65` — the `±` line is wider
+  than the lines it replaced and ran off the right edge of the axes.
+- The sidecar is `FluidData._dump_means`, an `(n_times, n_components)` array of NaN
+  filled in by `_record_dump_means` at every point where data lands in memory
+  (`__init__`, and all three load sites in `update_spline`). `get_mean_velocity(time=,
+  t_idx=)` is the public reader. For cubic splining it evaluates a `fCubicSpline` built
+  over the means themselves — same class, same knots, therefore exactly the mean of the
+  splined field, since the construction is linear in the data. For linear splining it
+  interpolates the sidecar directly against `flow_times` rather than against the
+  resident window, so **a mean stays available after the window has moved past it** —
+  which is what makes replaying a finished run free. A time whose bracketing dumps were
+  never loaded falls back to a load (a cache miss, not a cache lie).
+- **Measured effect**, 25-dump IB2d dataset at `INUM=4`, 48 steps, then `plot_all` to a
+  movie: fluid loader calls during plotting went **8 → 0** (25 dumps re-read → none).
+  With `fluid='vort'` it stays at 8, because the vorticity backdrop genuinely needs the
+  field — that is step 4's problem, not step 1's. In 3D, where nothing fluid is drawn,
+  the 0-load case is the only case.
 
 #### 8.3.2 Recorder API
 
@@ -742,8 +771,9 @@ Three consequences worth stating, because they simplify the build:
 
 ### 8.4 Build order
 
-1. **Frame statistics (§8.3.1)** — independent, low risk, and the **entire 3D
-   deliverable**. Needs none of the caching machinery, and touches no rendering.
+1. **[done]** **Frame statistics (§8.3.1)** — independent, low risk, and the **entire
+   3D deliverable**. Needs none of the caching machinery, and touches no rendering.
+   See "As built" in §8.3.1 for what shipped and the measured effect.
 2. **`fps` / `playback_rate` (§8.3.5)** — user-facing, self-contained, removes the
    footgun. Lands entirely inside `plot_all` as a frame-selection computation (it
    already accepts a `frames` iterable), so it needs no caching and no recorder.
@@ -770,7 +800,7 @@ share.
 
 Line numbers drift; search for the names.
 
-**Step 1 — frame statistics.**
+**Step 1 — frame statistics. [done]** Kept as the record of what the step involved.
 - `Swarm._calc_basic_stats` (`planktos/_swarm.py`) — the 2D branch and the 3D branch
   each build the tuple; both change.
 - **Eight unpack sites** in `_swarm.py` consume that tuple (in `plot`, `plot_all`, and
@@ -788,6 +818,18 @@ Line numbers drift; search for the names.
   equivalents for the agent-speed spread; keep the component-mean assertions.
 - The per-dump mean sidecar belongs in `FluidData` (`planktos/fluid.py`), populated
   where dumps are loaded (`load_dumpfiles` / `update_spline`) so it costs nothing.
+
+  **Tests as landed.** All four were rewritten. The retired `max_spd` regression lock
+  is replaced by `test_calc_basic_stats_agent_speed_vs_mean_velocity`, which pins that
+  `⟨|v|⟩` and `‖⟨v⟩‖` are genuinely the different quantities the plot now claims (four
+  agents, two at +1 and two at −3 in x: `‖⟨v⟩‖ = 1`, `⟨|v|⟩ = 2`, `std = 1`). The
+  strongest new test is `test_calc_basic_stats_pulls_no_fluid_field`, which monkeypatches
+  `FluidData.__call__` and `Environment.interpolate_temporal_flow` to raise — reaching
+  for the field is now a hard failure rather than a silent cost. `get_mean_velocity` is
+  covered in `test_flow_interface.py` (static, cubic, linear, `t_idx`, extrapolation,
+  the "requires a time" error) and, for the sliding window, in a new section of
+  `test_dynamic_loading.py` — including that a **replay after a full sweep triggers
+  zero loads**, and the jump-to-start fast path records means too.
 
 **Step 2 — `fps` / `playback_rate`.**
 - `Swarm.plot_all` signature (`fps`, and the `frames` argument it already accepts) —
@@ -823,7 +865,7 @@ caching exact (§8.3.3), using weights the interpolator already computes.
 ### 8.6 Obligations
 
 - **Changelog (1.1.0)**, both user-visible relative to 1.0.x:
-  - fluid speed statistics replaced by agent-speed spread on plots;
+  - **[done]** fluid speed statistics replaced by agent-speed spread on plots;
   - `playback_rate` added and defaulting to 1, changing existing video output.
 - **Examples rewrite.** The plotting portions change regardless. Current effective
   playback rates (`dt × fps`) show the footgun's fingerprint — a 27× spread with no
@@ -1022,20 +1064,40 @@ whole note plus `CLAUDE.md` and `TODO.md` (root) first. Quick orientation:
   untested-and-green. Only one test in the whole suite had to change behavior:
   the tiling one, by design.
 - **§8 (plotting streaming) has had its design pass** and is an implementation plan
-  with a build order (§8.4), all design questions settled. No §8 code has been written.
-- **Next actionable step: §8 step 1** (the frame-statistics change). Steps 1–2 are
-  independently shippable and need no architectural commitment; re-evaluate 3–4 after
-  they land.
-- **Not started:** all §8 implementation, and §9 (which still needs its design pass).
+  with a build order (§8.4), all design questions settled.
+- **§8 step 1 (frame statistics) is done** — see "As built" in §8.3.1. The fluid speed
+  reductions are gone, agent mean speed and spread replace them, and the surviving
+  fluid component means come from `FluidData.get_mean_velocity` and its per-dump
+  cache. Verified beyond the suite by running the examples: a windowed IB2d run
+  followed by `plot_all` went from 8 loader calls (25 dumps re-read) to 0, and the 3D
+  time-varying path was driven end to end against `tests/IBAMR_test_data`.
+- **Next actionable step: §8 step 2** (`fps` / `playback_rate`). Like step 1 it is
+  independently shippable and needs no architectural commitment; re-evaluate 3–4 after
+  it lands.
+- **Not started:** §8 steps 2–5, and §9 (which still needs its design pass).
+- **Pre-existing breakage found while verifying step 1, unrelated to it** (all three
+  reproduce identically against the pre-step-1 package, so they are not regressions —
+  recorded here so the next session does not re-diagnose them):
+  - `_environment.py` `calculate_FTLE` reads `self.props_history` where it means
+    `s.props_history`, so the user-`swrm` branch raises `AttributeError`. Breaks
+    `examples/ex_produce_ftle_2d.py` at its third FTLE call.
+  - `_environment.py` `read_IB2d_mesh_data` dereferences
+    `self.flow.fluid_domain_LLC` without checking `self.flow is not None`, so loading a
+    mesh into a fluid-free environment raises. Breaks `examples/ex_vicsek_model_2d.py`
+    at its first call.
+  - `_ibc._project_and_slide_static` raises
+    `ValueError: operands could not be broadcast together with shapes (3,2) (3,)` on
+    the ib2d channel mesh when agents are seeded uniformly across the domain (rather
+    than at the example's point source). This one is in the load-bearing collision
+    code and deserves a real look.
 - **`tests/IBAMR_test_data/` is present** (`IBAMR_db_003/004/005.vtk`,
   `mesh_db.vtk`) — 3D IBAMR data for the `@vtk`-marked tests and for validating
   §9. Its absence on the original authoring machine is what led to the since-
   dropped 2D tiling stopgap.
 
-**The immediate next actionable step** is implementing §8 in the order given in §8.4,
-starting with the frame-statistics change — independent, low risk, and the entire 3D
-deliverable. §9 (real tiling, and whether `extend` returns) follows, and still needs
-its own design pass.
+**The immediate next actionable step** is §8.4 step 2 (`fps` / `playback_rate`), step 1
+having landed. §9 (real tiling, and whether `extend` returns) follows the rest of §8,
+and still needs its own design pass.
 
 **Re-confirming §7.3 landed cleanly**, if picking this up cold: the reproduction
 snippets below for defects §3.1 and §3.2 should now fail at *import* /

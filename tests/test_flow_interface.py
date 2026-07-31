@@ -12,7 +12,8 @@ green through the tiling (§9) and plotting (§8) work still to come.
 Scope is deliberately the surfaces that had no direct coverage:
   * Environment.interpolate_flow / interpolate_temporal_flow — the per-move hot
     path, and the single most important thing not to break.
-  * Swarm._calc_basic_stats — the fluid summary printed on every plot frame.
+  * Swarm._calc_basic_stats — the summary printed on every plot frame, and
+    FluidData.get_mean_velocity, the per-dump mean cache behind its fluid half.
   * FluidData.fmin/fmax — the tuple contract (regression lock for §3.3).
   * 3D vorticity — a known-answer test the mvbnd overhaul deferred to this branch.
 2D vorticity (test_analysis.py) and save_fluid round-trips (test_io_loaders.py)
@@ -278,43 +279,47 @@ def test_fmin_fmax_are_reusable_tuples_time_varying():
 
 
 # --------------------------------------------------------------------------- #
-#              _calc_basic_stats — the fluid summary shown on plots            #
+#                _calc_basic_stats — the summary shown on plots                #
 # --------------------------------------------------------------------------- #
+#
+# §8.3.1 of the refactor note replaced the whole-grid fluid reductions (mean and
+# max fluid speed) with the spread of agent speeds, so that a frame needs no
+# fluid field at all: the surviving fluid statistics are the component means,
+# and those come from FluidData's per-dump mean cache. The old assertion that
+# max_spd was the max *speed* rather than max|u| was itself a bug fix (§3.4);
+# retiring it is deliberate, and the equivalent lock now lives on the agent
+# statistics -- test_calc_basic_stats_agent_speed_vs_mean_velocity pins that
+# ⟨|v|⟩ and ‖⟨v⟩‖ are the different quantities they claim to be.
 
 def test_calc_basic_stats_2d_known_answers():
     envir, X, Y = _linear_2d()
     swrm = planktos.Swarm(swarm_size=10, envir=envir, seed=1)
-    perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_swrm_vel = \
+    perc_left, avg_spd_x, avg_spd_y, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
         swrm._calc_basic_stats(DIM3=False)
 
-    u = X
-    v = 2 * Y
-    speed = np.sqrt(u ** 2 + v ** 2)
     assert np.isclose(perc_left, 100.0)
-    assert np.isclose(avg_spd_x, u.mean())
-    assert np.isclose(avg_spd_y, v.mean())
-    assert np.isclose(avg_spd, speed.mean())
-    # max_spd must be the max *speed*, not the max of any single component.
-    # These differ here (max|u| = 10, max speed = sqrt(100+256)), which is what
-    # makes this a real check rather than a coincidence.
-    assert np.isclose(max_spd, speed.max())
-    assert not np.isclose(max_spd, u.max())
+    assert np.isclose(avg_spd_x, X.mean())
+    assert np.isclose(avg_spd_y, (2 * Y).mean())
+    # a new swarm starts out drifting with the fluid; the speed statistics are
+    # over the agent population, not the grid
+    spd = np.linalg.norm(np.asarray(swrm.velocities), axis=1)
+    assert np.isclose(avg_swrm_spd, spd.mean())
+    assert np.isclose(std_swrm_spd, spd.std())
 
 
 def test_calc_basic_stats_3d_known_answers():
     envir, X, Y, Z = _linear_3d()
     swrm = planktos.Swarm(swarm_size=10, envir=envir, seed=1)
-    perc_left, avg_spd, max_spd, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel = \
-        swrm._calc_basic_stats(DIM3=True)
+    perc_left, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel, avg_swrm_spd, \
+        std_swrm_spd = swrm._calc_basic_stats(DIM3=True)
 
-    u, v, w = X, 2 * Y, 3 * Z
-    speed = np.sqrt(u ** 2 + v ** 2 + w ** 2)
     assert np.isclose(perc_left, 100.0)
-    assert np.isclose(avg_spd_x, u.mean())
-    assert np.isclose(avg_spd_y, v.mean())
-    assert np.isclose(avg_spd_z, w.mean())
-    assert np.isclose(avg_spd, speed.mean())
-    assert np.isclose(max_spd, speed.max())
+    assert np.isclose(avg_spd_x, X.mean())
+    assert np.isclose(avg_spd_y, (2 * Y).mean())
+    assert np.isclose(avg_spd_z, (3 * Z).mean())
+    spd = np.linalg.norm(np.asarray(swrm.velocities), axis=1)
+    assert np.isclose(avg_swrm_spd, spd.mean())
+    assert np.isclose(std_swrm_spd, spd.std())
 
 
 def test_calc_basic_stats_time_varying_uses_requested_time_index():
@@ -327,32 +332,163 @@ def test_calc_basic_stats_time_varying_uses_requested_time_index():
     x = np.linspace(0, 10, 11)
     y = np.linspace(0, 8, 9)
     v_field = np.stack([y for _ in range(11)], axis=0)
+    u_field = np.stack([x for _ in range(9)], axis=1)
 
     # at t=0 the field is u = 0*x = 0, v = y
     stats0 = swrm._calc_basic_stats(DIM3=False, t_indx=0)
-    assert np.isclose(stats0[3], 0.0)                   # avg_spd_x
-    assert np.isclose(stats0[4], v_field.mean())        # avg_spd_y
-    assert np.isclose(stats0[2], v_field.max())         # max_spd == max|v|
+    assert np.isclose(stats0[1], 0.0)                   # avg_spd_x
+    assert np.isclose(stats0[2], v_field.mean())        # avg_spd_y
 
     # at t=1 the field is u = x, v = y
     stats1 = swrm._calc_basic_stats(DIM3=False, t_indx=1)
-    u_field = np.stack([x for _ in range(9)], axis=1)
-    assert np.isclose(stats1[3], u_field.mean())
-    assert np.isclose(stats1[2], np.sqrt(u_field**2 + v_field**2).max())
+    assert np.isclose(stats1[1], u_field.mean())
+    assert np.isclose(stats1[2], v_field.mean())
 
-    # u grows with time, so the max speed strictly increases
-    assert stats1[2] > stats0[2]
+    # u = t*x grows with time, so its mean strictly increases
+    assert stats1[1] > stats0[1]
+
+
+def test_calc_basic_stats_pulls_no_fluid_field(monkeypatch):
+    # The whole point of §8.3.1: a frame must cost no fluid data. Under dynamic
+    # loading, reaching for the field here is what re-streams the dataset a
+    # second time, so make any such reach a hard failure.
+    from planktos import fluid
+
+    envir = _linear_in_time_2d()
+    swrm = planktos.Swarm(swarm_size=10, envir=envir, seed=1)
+    for _ in range(2):
+        swrm.move(1.0)
+
+    def boom(*args, **kwargs):
+        raise AssertionError('_calc_basic_stats reached for the fluid field')
+
+    monkeypatch.setattr(fluid.FluidData, '__call__', boom)
+    monkeypatch.setattr(type(envir), 'interpolate_temporal_flow', boom)
+
+    u_field = np.stack([np.linspace(0, 10, 11) for _ in range(9)], axis=1)
+    for t_indx in (0, 1, None):
+        stats = swrm._calc_basic_stats(DIM3=False, t_indx=t_indx)
+        assert np.isfinite(stats[1])
+    # and the value is still right: at t_indx=1 the field is u = x
+    assert np.isclose(swrm._calc_basic_stats(DIM3=False, t_indx=1)[1],
+                      u_field.mean())
+
+
+def test_calc_basic_stats_agent_speed_vs_mean_velocity():
+    # ⟨|v|⟩ and ‖⟨v⟩⟩‖ measure different things -- mean speed vs net directed
+    # transport -- and the plots now show both, so pin that they are computed as
+    # such. Four agents: two moving +x at speed 1, two moving -x at speed 3.
+    #   ‖⟨v⟩‖ = |(1+1-3-3)/4| = 1,  ⟨|v|⟩ = (1+1+3+3)/4 = 2,  std = 1.
+    vels = np.array([[1.0, 0.0], [1.0, 0.0], [-3.0, 0.0], [-3.0, 0.0]])
+
+    class _Fixed(planktos.Swarm):
+        def apply_agent_model(self, dt):
+            return self.positions + vels * dt
+
+    envir = planktos.Environment(Lx=100, Ly=100)
+    swrm = _Fixed(swarm_size=4, envir=envir, seed=1)
+    swrm.positions[:, :] = 50.0
+    swrm.move(0.5)
+
+    perc_left, _, _, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
+        swrm._calc_basic_stats(DIM3=False)
+    assert np.allclose(avg_swrm_vel, [-1.0, 0.0])
+    assert np.isclose(np.linalg.norm(avg_swrm_vel), 1.0)
+    assert np.isclose(avg_swrm_spd, 2.0)
+    assert np.isclose(std_swrm_spd, 1.0)
+    # the distinction is the reason both are shown
+    assert not np.isclose(avg_swrm_spd, np.linalg.norm(avg_swrm_vel))
+
+
+def test_calc_basic_stats_agent_speed_at_initial_time_is_zero():
+    # t_indx == 0 defines the agent velocity as zero, so both the mean speed and
+    # its spread must be zero there rather than masked or nan.
+    envir, _, _ = _linear_2d()
+    swrm = planktos.Swarm(swarm_size=10, envir=envir, seed=1)
+    swrm.move(0.1)
+    stats = swrm._calc_basic_stats(DIM3=False, t_indx=0)
+    assert np.allclose(stats[3], 0.0)
+    assert np.isclose(stats[4], 0.0)
+    assert np.isclose(stats[5], 0.0)
 
 
 def test_calc_basic_stats_returns_plain_scalars():
-    # Consumers format these with '{:.1g}'.format(...) into plot titles, which
+    # Consumers format these with '{:.2g}'.format(...) into plot titles, which
     # requires real scalars. Guards against a stray array-like leaking through.
     envir, _, _ = _linear_2d()
     swrm = planktos.Swarm(swarm_size=10, envir=envir, seed=1)
-    stats = swrm._calc_basic_stats(DIM3=False)
-    for value in stats[:5]:
-        assert np.ndim(value) == 0
-        assert '{:.1g}'.format(value)
+    swrm.move(0.1)
+    for stats in (swrm._calc_basic_stats(DIM3=False),
+                  swrm._calc_basic_stats(DIM3=False, t_indx=0)):
+        # everything but avg_swrm_vel, which is a vector
+        for value in (stats[0], stats[1], stats[2], stats[4], stats[5]):
+            assert np.ndim(value) == 0
+            assert '{:.2g}'.format(value)
+
+
+# --------------------------------------------------------------------------- #
+#            get_mean_velocity — the per-dump mean cache behind the stats      #
+# --------------------------------------------------------------------------- #
+#
+# The cache is exact, not an approximation: both spline classes evaluate as a
+# weighted sum of the nodal fields and the spatial mean is linear, so the mean
+# commutes with interpolation in time (§8.5). The fields below are deliberately
+# NOT linear in time, so agreement is a statement about that identity rather
+# than about both schemes being trivially exact.
+
+def _nonlinear_in_time_field(T=6, nx=7, ny=5):
+    t = np.linspace(0.0, 5.0, T)
+    x = np.linspace(0.0, 10.0, nx)
+    y = np.linspace(0.0, 8.0, ny)
+    X, Y = np.meshgrid(x, y, indexing='ij')
+    u = np.stack([np.sin(tt) * X + tt ** 2 for tt in t])
+    v = np.stack([tt ** 3 * Y for tt in t])
+    return t, (x, y), [u, v]
+
+
+def test_get_mean_velocity_static_matches_field():
+    envir, X, Y = _linear_2d()
+    got = envir.flow.get_mean_velocity()
+    assert isinstance(got, tuple) and len(got) == 2
+    assert np.isclose(got[0], X.mean())
+    assert np.isclose(got[1], (2 * Y).mean())
+
+
+def test_get_mean_velocity_static_warns_on_time():
+    envir, _, _ = _linear_2d()
+    with pytest.warns(UserWarning, match='time-invariant'):
+        envir.flow.get_mean_velocity(time=1.0)
+
+
+def test_get_mean_velocity_requires_a_time_when_time_varying():
+    envir = _linear_in_time_2d()
+    with pytest.raises(ValueError):
+        envir.flow.get_mean_velocity()
+
+
+@pytest.mark.parametrize('INUM', [None, True])
+@pytest.mark.parametrize('query', [-1.0, 0.0, 0.4, 1.0, 2.7, 5.0, 6.0])
+def test_get_mean_velocity_equals_mean_of_field(INUM, query):
+    # Covers both the cubic (INUM=None) and linear (INUM=True) temporal paths,
+    # and the constant extrapolation outside the data bounds.
+    from planktos import fluid
+    t, fpoints, comps = _nonlinear_in_time_field()
+    fd = fluid.FluidData([c.copy() for c in comps], fpoints,
+                         flow_times=t.copy(), INUM=INUM)
+    got = fd.get_mean_velocity(time=query)
+    expected = tuple(f.mean() for f in fd(query))
+    assert np.allclose(got, expected, rtol=0, atol=1e-12)
+
+
+def test_get_mean_velocity_accepts_t_idx():
+    from planktos import fluid
+    t, fpoints, comps = _nonlinear_in_time_field()
+    fd = fluid.FluidData([c.copy() for c in comps], fpoints,
+                         flow_times=t.copy(), INUM=None)
+    assert np.allclose(fd.get_mean_velocity(t_idx=2),
+                       fd.get_mean_velocity(time=t[2]))
+    assert np.allclose(fd.get_mean_velocity(t_idx=2),
+                       [comps[0][2].mean(), comps[1][2].mean()])
 
 
 # --------------------------------------------------------------------------- #

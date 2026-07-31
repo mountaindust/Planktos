@@ -50,14 +50,22 @@ What landed:
 **Next: §8 (plotting streaming), then §9 (real position-wrapping tiling for 2D and 3D,
 and whether `Environment.extend` returns).**
 
-- **§8 is specified and ready to build** — an implementation plan with a build order
-  (note §8.4). No code written yet. Steps 1–2 (frame statistics, then
-  `fps`/`playback_rate`) are independently shippable and need no architectural
+- **§8 step 1 (frame statistics) is done.** The whole-grid fluid speed reductions
+  (`avg_spd`, `max_spd`) are gone from every plot; agent mean speed and its spread
+  replace them, and the surviving fluid component means come from a per-dump mean
+  cache on `FluidData` (`get_mean_velocity`) rather than the field. A plot or movie now
+  costs **zero** fluid loads unless a fluid backdrop is actually drawn — measured 8 → 0
+  on a windowed 25-dump IB2d run. This was the entire 3D deliverable of §8. See the
+  note's §8.3.1 "As built".
+- **§8 steps 2–5 remain**, with the build order in note §8.4. Step 2
+  (`fps`/`playback_rate`) is independently shippable and needs no architectural
   commitment; steps 3–4 (recorder + derived-quantity cache, then `plot_all` reading it)
-  should be re-evaluated after those land. All design questions are settled, including
-  the capture/render split (§8.3.7: the recorder writes a data cache and never draws;
-  `plot_all` does all rendering from it). Two changelog entries fall out of §8, and the
-  examples' plotting sections need rewriting.
+  should be re-evaluated after it lands — with step 1 done, the per-frame fluid cost is
+  already gone in 3D, which was the strongest argument for the cache. All design
+  questions are settled, including the capture/render split (§8.3.7: the recorder
+  writes a data cache and never draws; `plot_all` does all rendering from it). One
+  changelog entry is still outstanding (`playback_rate`), and the examples' plotting
+  sections need rewriting.
 - **§9 still needs its design pass.** When tiling returns, **§9.1 of the note is the
   restoration checklist**: every notice, stub, and replaced test that gating it off
   left behind. Both old implementations are preserved commented-out beneath their
@@ -151,6 +159,34 @@ Common renames: `envir.flow_points`→`envir.flow.flow_points`,
   (~L1074-1075) and both `update_spline` slide branches (~L1211-1212, ~L1271-1272).
   Values were always correct; only the container type was wrong. Details in
   `docs/notes/flow_field_interface.md` §3.3.
+
+### Found while verifying §8 step 1 against the examples (unrelated to it) 🔴
+
+All three reproduce identically against the pre-step-1 package, so they are
+long-standing, not regressions. None is covered by the test suite — they only showed up
+because step 1 was verified by running the examples end to end.
+
+- [ ] 🔴 **`_ibc._project_and_slide_static` raises on the ib2d channel mesh.**
+  `ValueError: operands could not be broadcast together with shapes (3,2) (3,)` at
+  `adj_vec_u = adj_vec/np.linalg.norm(adj_vec, axis=-1)`. Reproduce: load
+  `examples/ib2d_data` fluid + `channel.vertex` mesh, seed a swarm *uniformly* over the
+  domain (not the examples' point source) so some agents start inside/near the cylinder,
+  `cov *= 0.0001`, then `move(0.02)` — it dies at step 21 with `seed=1`,
+  `swarm_size=50`. This is the load-bearing collision code, so it is the most serious of
+  the three. Likely a missing `keepdims=True` (or an `axis` that should be `-1`) on a
+  multi-element slide, but that is a guess — diagnose before patching, and add the case
+  to `test_collisions_static.py`.
+- [ ] 🔴 **`Environment.calculate_FTLE` breaks whenever a `swrm=` is supplied.**
+  `_environment.py` reads `self.props_history` where it means `s.props_history`
+  (the correct spelling is two lines above, in the same block), so the user-swarm branch
+  raises `AttributeError: 'Environment' object has no attribute 'props_history'`. Breaks
+  `examples/ex_produce_ftle_2d.py` at its third FTLE call. The `tracer`/`ode_gen`
+  branches are unaffected, which is why the FTLE tests miss it.
+- [ ] 🟡 **`Environment.read_IB2d_mesh_data` assumes a fluid is already loaded.**
+  It dereferences `self.flow.fluid_domain_LLC` with no `self.flow is not None` guard, so
+  reading a mesh into a fluid-free environment raises `AttributeError`. Breaks
+  `examples/ex_vicsek_model_2d.py` at its first call — that example deliberately runs
+  without fluid. Guard it (no shift is needed when there is nothing to shift).
 
 ### Cleanup (low urgency)
 

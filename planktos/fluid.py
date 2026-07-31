@@ -713,7 +713,18 @@ class FluidData:
         if self.flow_times is not None:
             # record shape of the fluid data
             self.fshape = (len(self.flow_times), *flow[0].shape[1:])
-            
+
+            # Per-dump spatial means of each velocity component: the sidecar the
+            # plotting statistics read instead of touching the field itself.
+            # Recorded here and in update_spline -- wherever data lands in
+            # memory -- so it costs one reduction over data that is already
+            # resident. NaN marks a dump that has never been loaded, which is
+            # possible only when a window is being slid.
+            self._dump_means = np.full((len(self.flow_times), len(flow)), np.nan)
+            self._record_dump_means(0, flow)
+            # Set below for cubic splining, where the whole dataset is resident.
+            self._mean_interp = None
+
             if self.INUM is not None and self.INUM is not False:
                 if self.INUM is True or self.INUM >= len(self.flow_times)-1:
                     if self.INUM is not True:
@@ -740,11 +751,20 @@ class FluidData:
                 self.INUM = None
                 for n, f in enumerate(flow):
                     flow[n] = fCubicSpline(self.flow_times, f, extrapolate=(True, True))
+                # Spline the per-dump means with the same class and knots as the
+                # field. Cubic spline construction is linear in the data, and so
+                # is the spatial mean, so this evaluates to exactly the mean of
+                # the splined field at any time -- provided the two are built
+                # the same way, which reusing fCubicSpline guarantees.
+                self._mean_interp = fCubicSpline(self.flow_times, self._dump_means,
+                                                 extrapolate=(True, True))
             self._flow = flow
         else:
             # Time-invariant flow. Just save it as-is.
             self.fshape = flow[0].shape
             self._flow = list(flow)
+            self._dump_means = np.array([np.mean(f) for f in self._flow])
+            self._mean_interp = None
 
         self.fmin = tuple(f.min() for f in self._flow)
         self.fmax = tuple(f.max() for f in self._flow)
@@ -831,11 +851,125 @@ class FluidData:
 
 
 
+    def _record_dump_means(self, idx_start, flow):
+        '''Cache the spatial mean of each velocity component for loaded dumps.
+
+        Called wherever fluid data arrives in memory, so the reduction is over
+        data that is already resident and costs nothing extra.
+
+        Parameters
+        ----------
+        idx_start : int
+            index into flow_times that the first time point of the passed data
+            corresponds to
+        flow : list of ndarrays
+            per-component fluid data with a leading time axis, in the form
+            load_dumpfiles returns
+        '''
+
+        for n, f in enumerate(flow):
+            means = np.mean(f, axis=tuple(range(1, f.ndim)))
+            self._dump_means[idx_start:idx_start+len(means), n] = means
+
+
+
+    def _interp_dump_means(self, time):
+        '''Evaluate the per-dump mean sidecar at a time, or None if data is missing.
+
+        Returns None when a dump bracketing the requested time has never been
+        loaded, so its mean was never recorded -- the caller decides whether to
+        pay for a load.
+
+        This mirrors the temporal interpolation of the field itself, and is
+        exact rather than approximate: both spline classes evaluate as a
+        weighted sum of the nodal fields, and the spatial mean is linear, so
+        mean(u(t)) == sum_i w_i(t)*mean(u_i). Times outside the data bounds get
+        the same constant extrapolation __call__ applies.
+        '''
+
+        if self._mean_interp is not None:
+            # Cubic. The entire dataset was resident when the interpolant was
+            # built, so no mean can be missing.
+            if time <= self.flow_times[0]:
+                time = self.flow_times[0]
+            elif time >= self.flow_times[-1]:
+                time = self.flow_times[-1]
+            return tuple(float(m) for m in self._mean_interp(time))
+
+        # Linear. Done off flow_times and the sidecar rather than off the
+        # resident spline, so it stays correct for any dump whose mean has been
+        # recorded -- including one the sliding window has since moved past.
+        if time <= self.flow_times[0]:
+            means = self._dump_means[0]
+        elif time >= self.flow_times[-1]:
+            means = self._dump_means[-1]
+        else:
+            idx = np.searchsorted(self.flow_times, time) - 1
+            m0 = self._dump_means[idx]
+            m1 = self._dump_means[idx+1]
+            means = m0 + (m1 - m0) * (time - self.flow_times[idx]) / (
+                    self.flow_times[idx+1] - self.flow_times[idx])
+
+        if np.isnan(means).any():
+            return None
+        return tuple(float(m) for m in means)
+
+
+
+    def get_mean_velocity(self, time=None, t_idx=None):
+        '''Spatial mean of each fluid velocity component.
+
+        This is served from a per-dump cache of means built as data loads, so it
+        does not touch the velocity field and does not trigger a load for any
+        time whose bracketing dumps have already been seen. That matters for
+        plotting, which asks for these once per frame: under dynamic loading,
+        computing them from the field would re-stream the entire dataset.
+
+        The value is exact, not approximate -- see the note on linearity in
+        docs/notes/flow_field_interface.md §8.5.
+
+        Parameters
+        ----------
+        time : float, optional
+            The time at which to evaluate the means. Ignored, with a warning,
+            for time-invariant flow.
+        t_idx : int, optional
+            The index into flow_times at which to evaluate the means.
+
+        Returns
+        -------
+        tuple of floats, one per velocity component
+        '''
+
+        if self.flow_times is None:
+            if time is not None or t_idx is not None:
+                warnings.warn("Flow is time-invariant; ignoring time and t_idx.")
+            return tuple(float(m) for m in self._dump_means)
+
+        if time is None and t_idx is not None:
+            time = self.flow_times[t_idx]
+        elif time is None and t_idx is None:
+            raise ValueError("Either time or t_idx must be specified.")
+
+        means = self._interp_dump_means(time)
+        if means is None:
+            # A bracketing dump has never been in memory. Load it -- which
+            # records the means for the whole window -- and try again.
+            flow = self(time)
+            means = self._interp_dump_means(time)
+            if means is None:
+                # The load did not cover both bracketing dumps. Reduce the field
+                # we now hold; it is the same value, just paid for the hard way.
+                return tuple(float(np.mean(f)) for f in flow)
+        return means
+
+
+
     def load_dumpfiles(self, d_start, d_finish):
         '''Subclasses should implement this method to load additional data.'''
         raise NotImplementedError('The subclass for this type of data must '+
                                   'implement its own data loaders.')
-    
+
 
 
     def update_spline(self, time):
@@ -880,6 +1014,13 @@ class FluidData:
             # load new data
             flow = self.load_dumpfiles(d_start, d_finish)
 
+            # Record means for the freshly loaded dumps, which start two time
+            # points into the new window. The two holdovers prepended below are
+            # already in the sidecar from when they were first loaded, and those
+            # entries came from raw data rather than from a spline evaluation
+            # carried across a window boundary.
+            self._record_dump_means(idx_start+2, flow)
+
             # add old spline data
             for n,f in enumerate(flow):
                 flow[n] = np.concatenate((last_flow_0[n][np.newaxis,...],
@@ -904,6 +1045,7 @@ class FluidData:
                 self._flow = self.load_dumpfiles(self.d_start, self.d_start + self.INUM)
                 self.loaded_dump_bnds = (self.d_start, self.d_start + self.INUM)
                 self.loaded_idx_bnds = (0, self.INUM)
+                self._record_dump_means(0, self._flow)
                 for n in range(len(self._flow)):
                     self._flow[n] = LinearSpline(
                         self.flow_times[0:self.INUM+1], self._flow[n],
@@ -931,7 +1073,12 @@ class FluidData:
                     
                 # load new data
                 flow = self.load_dumpfiles(d_start, d_finish)
-                
+
+                # Record means for the freshly loaded dumps. Sliding backward,
+                # these occupy the front of the new window; the two holdovers
+                # appended below already have their means recorded.
+                self._record_dump_means(idx_start, flow)
+
                 # add old spline data
                 for n,f in enumerate(flow):
                     flow[n] = np.concatenate((f, last_flow_0[n][np.newaxis,...],

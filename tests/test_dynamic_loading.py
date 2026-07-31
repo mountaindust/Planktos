@@ -1,5 +1,6 @@
 '''Pins the dynamic (windowed) fluid-loading machinery -- TODO.md Phase 1 (A),
-(B) and (D).
+(B) and (D), plus the per-dump mean cache that plotting reads instead of the
+field (flow_field_interface.md §8.3.1).
 
 `FluidData.update_spline` is the workhorse of this branch: it responds to a
 request for a time outside the currently loaded window by loading the next or
@@ -29,8 +30,9 @@ raw data. That costs an ulp per slide; it does not compound, which is itself
 pinned below (test_holdover_roundoff_does_not_accumulate) since a long 3D run
 makes thousands of slides.
 
-No RNG and no external data anywhere. The (A)/(B)/(D) sections touch no files at
-all; the two closing sections drive the real loaders -- VTK3dData and IB2dData --
+No RNG and no external data anywhere. The (A)/(B)/(D) and mean-cache sections
+touch no files at all; the two closing sections drive the real loaders --
+VTK3dData and IB2dData --
 against small committed fixtures (tests/fixtures/vtk3d_min and
 tests/fixtures/ib2d_fluid_min, regenerate with tests/fixtures/_gen_fixtures.py),
 because what those sections are about is the timeline a loader builds from files.
@@ -447,6 +449,92 @@ def test_dudt_3d_matches_full_linear():
 
 
 # --------------------------------------------------------------------------- #
+#        per-dump mean cache under a sliding window (plotting, §8.3.1)         #
+# --------------------------------------------------------------------------- #
+# Plot frames need the spatial mean of each velocity component. Computing it
+# from the field would make plotting re-stream the whole dataset a second time,
+# so FluidData caches the mean of each dump as that dump loads and evaluates it
+# with the same interpolation weights the field uses. The mean is linear and the
+# interpolation is a weighted sum of nodal fields, so this is exact, not an
+# approximation (§8.5).
+#
+# The field here is not linear in time, so agreement with the field's own mean is
+# a statement about that identity rather than about both being trivially exact.
+
+def test_dump_means_match_the_field_across_slides():
+    dyn, _, t = _pair(_field_2d(), 5)
+    for q in np.linspace(t[0], t[-1], 37):
+        ref = tuple(f.mean() for f in dyn(q))
+        got = dyn.get_mean_velocity(time=q)
+        assert np.allclose(got, ref, rtol=0, atol=1e-12)
+
+
+def test_dump_means_match_full_linear():
+    # The windowed cache must not depend on which window happened to be resident
+    # -- the same property (A) pins for the field itself.
+    dyn, full, t = _pair(_field_2d(), 5)
+    for q in np.linspace(t[0], t[-1], 37):
+        assert np.allclose(dyn.get_mean_velocity(time=q),
+                           full.get_mean_velocity(time=q), rtol=0, atol=1e-12)
+
+
+def test_dump_means_survive_the_window_moving_on():
+    # This is the property the whole design rests on: after a run has swept
+    # forward, replaying it (which is what plot_all does) must cost no loads at
+    # all, even though the resident window is now at the far end of the dataset.
+    dyn, full, t = _pair(_field_2d(), 5)
+    for q in np.linspace(t[0], t[-1], 37):
+        dyn(q)
+    assert not np.isnan(dyn._dump_means).any(), 'a swept dump went unrecorded'
+
+    n_loads = len(dyn.load_calls)
+    for q in np.linspace(t[-1], t[0], 37):          # replay, backward
+        assert np.allclose(dyn.get_mean_velocity(time=q),
+                           full.get_mean_velocity(time=q), rtol=0, atol=1e-12)
+    assert len(dyn.load_calls) == n_loads, 'replaying the means re-streamed data'
+
+
+def test_dump_means_load_on_demand_when_never_seen():
+    # Falling back to a load is the correct answer for a time whose dumps have
+    # never been resident (a cache miss, not a cache lie).
+    dyn, full, t = _pair(_field_2d(), 5)
+    n_loads = len(dyn.load_calls)
+    q = t[-2]                                       # far outside the opening window
+    assert np.allclose(dyn.get_mean_velocity(time=q),
+                       full.get_mean_velocity(time=q), rtol=0, atol=1e-12)
+    assert len(dyn.load_calls) > n_loads
+
+
+def test_dump_means_recorded_on_the_jump_to_start_path():
+    # The backward slide has a separate fast path that reloads the opening window
+    # outright; it must record means too, or a backward replay silently misses.
+    dyn, full, t = _pair(_field_2d(), 5)
+    dyn(t[-1])                                      # sweep to the end
+    dyn(t[0])                                       # jump back to the beginning
+    assert dyn.loaded_idx_bnds == (0, 5)
+    for q in (t[0], t[1], t[3] + 0.01):
+        assert np.allclose(dyn.get_mean_velocity(time=q),
+                           full.get_mean_velocity(time=q), rtol=0, atol=1e-12)
+
+
+def test_dump_means_3d():
+    dyn, full, t = _pair(_field_3d(), 4)
+    for q in np.linspace(t[0], t[-1], 23):
+        got = dyn.get_mean_velocity(time=q)
+        assert len(got) == 3
+        assert np.allclose(got, full.get_mean_velocity(time=q),
+                           rtol=0, atol=1e-12)
+
+
+def test_dump_means_constant_extrapolation_beyond_data_bounds():
+    dyn, _, t = _pair(_field_2d(), 5)
+    assert np.allclose(dyn.get_mean_velocity(time=t[0] - 5),
+                       dyn.get_mean_velocity(time=t[0]))
+    assert np.allclose(dyn.get_mean_velocity(time=t[-1] + 5),
+                       dyn.get_mean_velocity(time=t[-1]))
+
+
+# --------------------------------------------------------------------------- #
 #          VTK3dData end-to-end -- the windowed path against real files        #
 # --------------------------------------------------------------------------- #
 # Everything above drives update_spline through a synthetic in-memory source.
@@ -505,6 +593,18 @@ def test_vtk3d_windowed_matches_full_load():
     for q in np.linspace(0.0, 7.0, 43):
         ref = full(q)
         assert _diff(dyn(q), ref) <= _tol(ref)
+
+
+def test_vtk3d_windowed_mean_velocity_matches_full_load():
+    # The plotting mean cache, on real files and a real slide. u = t everywhere,
+    # so the x-component mean reads back the simulation time -- a frozen or
+    # mis-indexed cache is immediately visible.
+    dyn = _vtk3d(4)
+    full = _vtk3d(True)
+    for q in np.linspace(0.0, 7.0, 29):
+        got = dyn.get_mean_velocity(time=q)
+        assert np.allclose(got, full.get_mean_velocity(time=q), rtol=0, atol=1e-12)
+        assert np.isclose(got[0], q)
 
 
 def test_vtk3d_static_and_spatial_components_survive_the_slide():
