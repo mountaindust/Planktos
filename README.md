@@ -2,6 +2,7 @@
 
 **Agent-based modeling of small organisms within fluid flows around immersed structures.**
 
+[![Tests](https://github.com/mountaindust/Planktos/actions/workflows/tests.yml/badge.svg)](https://github.com/mountaindust/Planktos/actions/workflows/tests.yml)
 [![Docs](https://img.shields.io/badge/docs-readthedocs-blue)](https://planktos.readthedocs.io)
 [![Paper](https://img.shields.io/badge/paper-Bull.%20Math.%20Biol.%202022-green)](https://doi.org/10.1007/s11538-022-01027-1)
 [![License](https://img.shields.io/badge/license-GPLv3-lightgrey)](LICENSE)

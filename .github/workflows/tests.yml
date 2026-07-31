@@ -1,0 +1,90 @@
+name: tests
+
+on:
+  push:
+    branches: [master, dyload]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to the same branch supersedes the run already in flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    name: pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      # Report every version's result, not just the first failure.
+      fail-fast: false
+      matrix:
+        python-version: ['3.12']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      # vtk is a mandatory dependency and conftest.py imports planktos._dataio
+      # (which imports vtk) at collection time, so the VTK wheel's shared
+      # libraries have to be present even though nothing is rendered on screen.
+      # ffmpeg lets the movie smoke test actually run rather than skip itself.
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libxrender1 libxext6 ffmpeg
+
+      - name: Install Planktos and optional extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[test,STL,netCDF]'
+
+      # Recorded so a failure caused by a dependency moving underneath us is
+      # obvious from the log without a local reproduction.
+      - name: Record environment
+        run: |
+          python - <<'PY'
+          import matplotlib, numpy, pandas, planktos, pyvista, scipy, vtk
+          for name, ver in [
+              ('planktos', planktos.__version__),
+              ('numpy', numpy.__version__),
+              ('scipy', scipy.__version__),
+              ('matplotlib', matplotlib.__version__),
+              ('pandas', pandas.__version__),
+              ('vtk', vtk.VTK_VERSION),
+              ('pyvista', pyvista.__version__),
+          ]:
+              print(f'{name:12} {ver}')
+          PY
+
+      # --runslow adds the parallelization checks and the plotting smokes.
+      # The whole suite is ~13s locally, so there is no reason to skip them
+      # here; the run time is dominated by installing dependencies.
+      - name: Run test suite
+        run: pytest --runslow
+
+  codespell:
+    name: codespell
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install codespell
+        run: pip install codespell
+
+      # Whole repo rather than a fixed file list, so new files are covered
+      # automatically. past_projects/ is archived prior research code that is
+      # deliberately left as written, and docs/_static holds binary assets.
+      - name: Spell check
+        run: codespell --skip="./.git,./past_projects,./docs/_build,./docs/_static,*.gif,*.png,*.mp4,*.vtk,*.stl,*.vertex,*.npz"
