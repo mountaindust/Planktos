@@ -4,20 +4,30 @@
 (a sliding window of timesteps) instead of holding the whole dataset in memory, so
 that large 3D time-varying flows (~100 GB raw, larger once splined) can be used.
 
-**Current state (2026-06-28):** the architecture is built — all fluid data is now a
-`FluidData` object (`planktos/fluid.py`, ~2300 lines), dynamic windowed loading is
-implemented and reported working for 2D IB2d data, and 3D (`VTK3dData`) is wired up
-but unexercised. Temporal interpolation of dynamically-loaded data is **linear in
-time** (`LinearSpline`); full-dataset loading defaults to **cubic in time**
-(`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
-story.
+**Current state (2026-07-30):** the architecture is built and the API has settled —
+all fluid data is a `FluidData` object (`planktos/fluid.py`), dynamic windowed
+loading is implemented and reported working for 2D IB2d data, and 3D (`VTK3dData`)
+is wired up but unexercised. Temporal interpolation of dynamically-loaded data is
+**linear in time** (`LinearSpline`); full-dataset loading defaults to **cubic in
+time** (`fCubicSpline`). See the design-history section at the bottom for the
+cubic→linear story.
 
-**Just merged:** the large `mvbnd` **test-suite overhaul** (fast, modular tests; 4
-latent defects found and fixed; no xfails) plus bug fixes. Post-merge the package
-imports and the whole collision / geometry / swarm / periodic / parallel core passes:
-**120 passed, 32 failed, 7 skipped.** All 32 failures are overhaul tests that exercise
-the *`Environment`* fluid API which dyload moved onto `FluidData` — adapting them is
-Phase 0 below. The package source itself carries no merge-introduced breakage.
+**Phase 0 is essentially complete and the suite is green:** **159 passed, 20
+skipped** with `pytest`, **177 passed, 2 skipped** with `pytest --runslow`. No
+failures, no xfails. Every test-adaptation item under Phase 0 is done. What remains
+there is two real bugs — `FluidData.fmin`/`fmax` still being generators rather than
+values, and the `FlowArray` numpy-interop problem, which has *narrowed*: it no longer
+crashes (`repr`, `np.allclose`, and arithmetic all behave), but numpy still operates
+on the underlying untiled buffer, so `f.shape` and `np.asarray(f).shape` disagree for
+a tiled array and arithmetic silently drops the tiling — plus one cleanup item.
+
+**Next up: Phase 1** — actually exercising dynamic loading in 2D. Item (C) there,
+quantifying dynamic-linear vs. full-cubic error, is the key scientific question and
+is still unanswered; don't quote a magnitude for that gap until it is.
+
+**Also merged since:** `master`'s 1.0.1 documentation release (README restructured as
+a landing page, docs synced to the code, Open Graph link previews, repo-wide spelling
+pass). Documentation only — no library behavior on this branch changed.
 
 Priority key: 🔴 do first · 🟡 next · 🟢 later · ⚪ deferred / low priority.
 
@@ -162,6 +172,25 @@ points still used). Inherited blockers from the overhaul's notes:
 
 ---
 
+## Documentation 🟡
+
+- [ ] **`FluidData` is undocumented on readthedocs.** `docs/api/` only autoclasses
+  `Environment`, `Swarm`, and `motion`, but `FluidData` is now user-visible:
+  `envir.flow` *is* one, and `tile_flow` / `get_vorticity` / `get_dudt` /
+  `calculate_DuDt` / `get_raw_loaded_data` are called on it. Add
+  `docs/api/FluidData.rst` (autoclass with `:members:`; consider the per-source
+  subclasses too) and list it in `docs/api/index.rst`. Should land before 1.1.0
+  releases, since the object is part of the public surface now.
+- [ ] **Sweep the prose docs for the master-era fluid API.** `docs/quickstart.rst`
+  and `README.md` still frame fluid handling as `Environment`-level. The 1.0.1
+  merge fixed the two that were outright wrong (`get_2D_vorticity` → `get_vorticity`,
+  and the claim that flow can be "extended"), but the overall framing still assumes
+  master's API. Worth a pass once the fluid API stops moving.
+- [ ] **Document `INUM` and the linear-vs-cubic tradeoff for users**, not just in
+  CLAUDE.md/TODO.md. Anyone enabling dynamic loading is silently accepting
+  linear-in-time; that belongs in the user-facing docs alongside the Phase 1(C)
+  number once it exists.
+
 ## Inherited follow-ups from the mvbnd overhaul (non-blocking) 🟢
 
 - [x] **`motion.RK45` contract** — DONE on mvbnd (commit `890113b`), merged in: public
@@ -203,7 +232,8 @@ points still used). Inherited blockers from the overhaul's notes:
 ## How to run the tests
 
 - Fast loop: `pytest` (≈1s; skips `slow` / `vtk`-absent / `vtu`-absent).
-- Full: `pytest --runslow` (adds the parallelization checks, ~30s).
+- Full: `pytest --runslow` (adds the parallelization checks and the plotting
+  smokes; ≈13s).
 - Regenerate IB2d fixtures after editing the generator:
   `python tests/fixtures/_gen_fixtures.py`.
 
