@@ -211,7 +211,10 @@ class LinearSpline:
         '''
         Returns time derivative at the specified time.
         Note: this is a simple finite difference derivative and piecewise
-        constant on left closed intervals.
+        constant on right closed intervals (t[i-1], t[i]] -- a time falling
+        exactly on a data timestamp takes the slope of the interval to its
+        left. The first timestamp is the exception, taking the slope to its
+        right, since it has no interval on the left.
         '''
         if (val < self.flow_times[0] and not self.extrapolate[0]) \
               or (val >= self.flow_times[-1] and not self.extrapolate[1]):
@@ -798,7 +801,12 @@ class FluidData:
             if self.loaded_dump_bnds[1]-1 + self.INUM > self.d_finish:
                 # We are at the end of the dataset.
                 d_finish = self.d_finish
-                idx_finish = len(self.flow_times)
+                # Last valid index, matching the inclusive convention used by
+                # loaded_dump_bnds and by the middle branch below. (This was
+                # len(self.flow_times), which named a nonexistent index. The
+                # window itself was unaffected -- the slice below clips -- but
+                # loaded_idx_bnds then disagreed with loaded_dump_bnds.)
+                idx_finish = len(self.flow_times) - 1
                 extrapolate = (False, True)
             else:
                 # We are contained in the middle of the dataset.

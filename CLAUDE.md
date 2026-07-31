@@ -370,6 +370,14 @@ the plotting smokes — which brings it to roughly 13s.
     `test_temporal_interp.py` covers only `fCubicSpline`), and 3D vorticity. All
     closed-form. See `docs/notes/flow_field_interface.md` §7.2 — **this is the
     safety net for that refactor; keep it green as the work lands.**
+  - `test_dynamic_loading.py` — the **windowed** (`INUM=int`) path, i.e. this
+    branch's headline feature: `FluidData.update_spline`. Covers TODO Phase 1
+    (A) windowed-linear == full-linear to round-off, (B) slide behavior (forward,
+    backward, jump-to-start, extrapolation flags, bounded window and load count),
+    and (D) `get_dudt` under linear splining. Uses a synthetic `FluidData`
+    subclass whose `load_dumpfiles` slices an in-memory array, so the real slider
+    runs with no data on disk. Phase 1 (C) — the quantitative linear-vs-cubic
+    number — and the vtk ingestion path still need real data.
   - `test_agent_models.py` — `apply_agent_model`/`after_move` overrides, the
     `motion` generators, and the public `motion.RK45` solver contract.
   - `test_material_derivative.py` — `Swarm.get_DuDt` / `get_dudt` (closed-form).

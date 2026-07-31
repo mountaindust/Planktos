@@ -156,23 +156,57 @@ Common renames: `envir.flow_points`→`envir.flow.flow_points`,
 
 Use 2D IB2d data (cheap, deterministic, reported working). Separate two questions:
 
-NB: the in-memory linear path (`INUM=True`) now has unit coverage in
+NB: the in-memory linear path (`INUM=True`) has unit coverage in
 `tests/test_flow_interface.py` (`LinearSpline` call/index/extrema/derivative/
-`regenerate_data`, and linear-vs-cubic agreement on data linear in time). What
-remains below is genuinely about *window sliding*, which still needs real data.
+`regenerate_data`, and linear-vs-cubic agreement on data linear in time).
 
-- [ ] **(A) Machinery correctness — exact.** Dynamic windowed-linear (`INUM=k`) must
-  return **identical** values (machine precision) to full linear (`INUM=True`) at every
-  query time — linear interp is local, so window-sliding can't change the value. A
-  strong, exact, cheap regression test of `update_spline`, independent of (C).
-- [ ] **(B) Window-sliding behavior.** Forward slide, backward slide, the
-  "jump to beginning" fast path, dataset-end extrapolation flips
-  (`update_spline`, `fluid.py:1153-1268`). Assert the loaded window stays bounded.
+**(A), (B) and (D) are DONE** — `tests/test_dynamic_loading.py` (31 tests). The
+earlier note here said window sliding "still needs real data"; that turned out to be
+wrong. `update_spline` asks of a source only a `load_dumpfiles(d_start, d_finish)`
+returning per-component ndarrays with a leading time axis, so a ~20-line synthetic
+`FluidData` subclass backed by an in-memory array exercises the real slider exactly,
+deterministically, in the fast suite. Only (C) and the vtk ingestion path still need
+real data.
+
+- [x] **(A) Machinery correctness — DONE.** Windowed-linear (`INUM=4,5,7`) agrees with
+  full linear (`INUM=True`) on forward sweeps, backward sweeps, non-monotone random
+  access, exactly-on-node times, out-of-bounds clamping, and in 3D. Agreement is to a
+  few ulp, not bit-for-bit: the slider carries window-boundary values by *evaluating*
+  the outgoing spline rather than re-reading raw data, which costs an ulp per slide.
+  **That error does not accumulate** — measured flat at 1–2 ulp across 400 loads and
+  6 full sweeps, pinned by `test_holdover_roundoff_does_not_accumulate`.
+- [x] **(B) Window-sliding behavior — DONE.** Forward slide, backward slide, the
+  "jump to beginning" fast path (asserted to be one load, not a walk), extrapolation
+  flag flips at both dataset ends, bounded window across a full sweep, bounded load
+  count (no thrashing), no load when the query stays inside the window, `fmin`/`fmax`
+  tuples widening across slides (the §3.3 lock on the path where it actually bit),
+  and `get_raw_loaded_data` on a genuinely sliding window (the §3.5 lock).
+  - **Bookkeeping bug found and fixed.** At the dataset end `idx_finish` was set to
+    `len(flow_times)` — one past the last valid index — while `loaded_dump_bnds[1]`
+    stays inclusive, so the two index spaces disagreed there and only there. Latent,
+    not live: the sole reader of `loaded_idx_bnds[1]` is the forward slide, which is
+    gated off by `extrapolate[1]` once the end is reached, and the window itself was
+    unaffected because the slice that builds it clips. Pinned first, then fixed to
+    `len(self.flow_times) - 1`; the whole suite stayed green, which is the evidence
+    the change is inert. `test_index_spaces_agree_at_every_slide` now locks
+    `loaded_idx_bnds == loaded_dump_bnds` across forward and backward sweeps so the
+    two cannot drift apart again.
+  - NB: the closing window is *structurally* ≤ `INUM` samples rather than `INUM`+1,
+    because every forward slide pins `idx_start` to the outgoing window's
+    next-to-last index (the two-sample holdover) and the dataset then runs out. That
+    is unrelated to the bug above and is harmless — less memory, same values — which
+    is why the bounded-window test asserts `<=` rather than `==`.
 - [ ] **(C) Comparability — the key scientific question.** Quantify dynamic-linear
   (`INUM=k`) vs. full-cubic (`INUM=None`) error and **record a number**. Only ever
-  checked visually so far (`tests/manual/visualtest_2d.py`).
-- [ ] **(D) `get_dudt` under linear splining** is a piecewise-constant, discontinuous
-  finite difference (`LinearSpline.derivative`, `fluid.py:479-494`). Pin current behavior.
+  checked visually so far (`tests/manual/visualtest_2d.py`). **Still open — needs real
+  data**; do not quote a magnitude until it is.
+- [x] **(D) `get_dudt` under linear splining — DONE.** Pinned as a piecewise-constant,
+  discontinuous finite difference: the value on each interval, the jump at a
+  breakpoint, zero beyond the data bounds, and agreement with full-linear across
+  slides in 2D and 3D. Also pinned the **interval convention**, which the docstring
+  had backwards: `du/dt` is constant on **right**-closed intervals `(t[i-1], t[i]]`,
+  so a time landing exactly on a timestamp takes the slope of the interval to its
+  *left* (`t0` excepted, having none). Docstring corrected in `fluid.py`.
 - [~] **(E) Tiling/periodic × dynamic — SUPERSEDED / on hold.** Was: `FlowArray` view +
   `tiling` propagation through `update_spline`. Tiling now raises
   `NotImplementedError` for the duration of the plotting work, and the `tiling`
