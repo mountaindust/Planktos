@@ -103,6 +103,58 @@ def test_interpolate_flow_accepts_explicit_flow_argument():
     assert np.allclose(got, [[0.0, 1.0]])
 
 
+def test_interpolate_flow_honors_explicit_flow_points():
+    # Regression (dyload-only): flow_points was accepted, documented, and then
+    # unconditionally overwritten with the environment's grid, so a caller-supplied
+    # grid was silently discarded. master carried the `if flow_points is None`
+    # guard; it was lost when flow_points moved onto FluidData.
+    #
+    # The substitute field is deliberately the same *shape* as the environment's
+    # grid but on twice the extent, so the bug returns a plausible wrong number
+    # instead of raising a shape mismatch -- the dangerous failure mode.
+    envir, _, _ = _linear_2d()                  # environment grid: x in [0,10], 11 pts
+    xg = np.linspace(0, 20, 11)                 # supplied grid:    x in [0,20], 11 pts
+    yg = np.linspace(0, 16, 9)
+    Xg, Yg = np.meshgrid(xg, yg, indexing='ij')
+    other = [Xg.copy(), np.zeros_like(Yg)]      # u = x on the *supplied* grid
+
+    got = envir.interpolate_flow(np.array([[2.0, 3.0]]), flow=other,
+                                 flow_points=(xg, yg))
+    assert np.allclose(got, [[2.0, 0.0]])       # against the env grid this reads 4.0
+
+
+def test_interpolate_flow_defaults_to_environment_flow_points():
+    # The None default must still resolve to the environment's grid.
+    envir, X, Y = _linear_2d()
+    got = envir.interpolate_flow(np.array([[3.0, 4.0]]),
+                                 flow=[X.copy(), 2 * Y.copy()], flow_points=None)
+    assert np.allclose(got, [[3.0, 8.0]])
+
+
+def test_interpolate_flow_periodic_wrap_uses_supplied_flow_points():
+    # The periodic wrap (positions % flow_points[n][-1]) must wrap against the grid
+    # actually being interpolated on, not unconditionally the environment's.
+    # periodic_dim is fluid-level and independent of the agent boundary conditions,
+    # so the defaults for bndry are fine here.
+    x = np.linspace(0, 10.0, 11)
+    y = np.linspace(0, 8.0, 9)
+    X, Y = np.meshgrid(x, y, indexing='ij')
+    envir = planktos.Environment(Lx=10.0, Ly=8.0,
+                                 flow=[X.copy(), np.zeros_like(Y)],
+                                 periodic_dim=True)
+    xg = np.linspace(0, 20.0, 11)
+    yg = np.linspace(0, 16.0, 9)
+    Xg, Yg = np.meshgrid(xg, yg, indexing='ij')
+    other = [Xg.copy(), np.zeros_like(Yg)]
+
+    # x=22 wraps to 2 on the supplied grid (period 20) and reads u=2. Wrapping
+    # against the environment grid (period 10) also gives 2, but then reads that
+    # off the substitute array's coarser spacing -> 4.
+    got = envir.interpolate_flow(np.array([[22.0, 3.0]]), flow=other,
+                                 flow_points=(xg, yg))
+    assert np.allclose(got, [[2.0, 0.0]])
+
+
 # --------------------------------------------------------------------------- #
 #                 interpolate_flow / temporal — time-varying                   #
 # --------------------------------------------------------------------------- #

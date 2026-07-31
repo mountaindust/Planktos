@@ -2031,9 +2031,10 @@ class Environment:
             is time if the fluid velocity field is time varying. If None, the 
             environmental flow field is used. Interpolated in time if necessary.
         flow_points : list-like of 1-D arrays, optional
-            The set of coordinates along each dimension that defines the mesh 
-            grid for the fluid velocity field. If None, the environmental flow 
-            points is used.
+            The set of coordinates along each dimension that defines the mesh
+            grid for the fluid velocity field. If None, the environmental flow
+            points is used. If flow is passed in on a grid other than the
+            environmental one, its coordinates must be passed in here too.
         time : float, optional
             if None, the present time. Otherwise, the flow field will be
             interpolated to the time given based on the Environment flow_times.
@@ -2058,15 +2059,18 @@ class Environment:
                 # time-varying flow
                 flow = self.interpolate_temporal_flow(time=time)
 
-        flow_points = self.flow.flow_points
+        if flow_points is None:
+            flow_points = self.flow.flow_points
 
         # Treat potential periodicity in fluid domain
         if any(self.flow.periodic_dim):
             mod_positions = np.array(positions)
             for n,dim_bool in enumerate(self.flow.periodic_dim):
                 if dim_bool:
-                    # Assumes left side is 0, and domain edge == fluid grid edge
-                    mod_positions[:,n] = positions[:,n] % self.flow.flow_points[n][-1]
+                    # Assumes left side is 0, and domain edge == fluid grid edge.
+                    # Wrap against the grid actually being interpolated on -- the
+                    # environment's, unless a different one was passed in.
+                    mod_positions[:,n] = positions[:,n] % flow_points[n][-1]
         else:
             mod_positions = positions
         
