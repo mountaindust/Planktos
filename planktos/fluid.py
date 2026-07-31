@@ -1072,8 +1072,8 @@ class FluidData:
             self.fshape = flow[0].shape
             self._flow = [f.view(FlowArray) for f in flow]
 
-        self.fmin = (f.min() for f in self._flow)
-        self.fmax = (f.max() for f in self._flow)
+        self.fmin = tuple(f.min() for f in self._flow)
+        self.fmax = tuple(f.max() for f in self._flow)
 
 
     def __call__(self, time):
@@ -1209,8 +1209,8 @@ class FluidData:
             self.loaded_idx_bnds = (idx_start, idx_finish)
 
             # Update fmin/fmax
-            self.fmin = (min(self.fmin[n],f.min()) for n,f in enumerate(self._flow))
-            self.fmax = (max(self.fmax[n],f.max()) for n,f in enumerate(self._flow))
+            self.fmin = tuple(min(self.fmin[n],f.min()) for n,f in enumerate(self._flow))
+            self.fmax = tuple(max(self.fmax[n],f.max()) for n,f in enumerate(self._flow))
             
         while time < self._flow[0].x[0] and not self._flow[0].extrapolate[0]:
             # spline backward
@@ -1269,8 +1269,8 @@ class FluidData:
                 self.loaded_idx_bnds = (idx_start, idx_finish)
 
             # Update fmin/fmax
-            self.fmin = (min(self.fmin[n],f.min()) for n,f in enumerate(self._flow))
-            self.fmax = (max(self.fmax[n],f.max()) for n,f in enumerate(self._flow))
+            self.fmin = tuple(min(self.fmin[n],f.min()) for n,f in enumerate(self._flow))
+            self.fmax = tuple(max(self.fmax[n],f.max()) for n,f in enumerate(self._flow))
     
 
 
