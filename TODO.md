@@ -204,10 +204,47 @@ scalar `uX`/`uY` branch is pinned separately in `test_io_loaders.py` against
     next-to-last index (the two-sample holdover) and the dataset then runs out. That
     is unrelated to the bug above and is harmless — less memory, same values — which
     is why the bounded-window test asserts `<=` rather than `==`.
-- [ ] **(C) Comparability — the key scientific question.** Quantify dynamic-linear
-  (`INUM=k`) vs. full-cubic (`INUM=None`) error and **record a number**. Only ever
-  checked visually so far (`tests/manual/visualtest_2d.py`). **Still open — needs real
-  data**; do not quote a magnitude until it is.
+- [x] **(C) Comparability — DONE.** Measured on real IB2d data (`tests/data/leaf_data`,
+  149 dumps, 129×193, Δt=1e-3 s) by `tests/manual/quantify_temporal_interp.py`, which
+  is reproducible and documents its own methodology. **Errors are measured by
+  withholding** — both schemes are built on every 2nd dump and evaluated at the dumps
+  left out, whose raw values are exact truth neither scheme saw. Comparing linear to
+  cubic directly would have measured their *disagreement*, not either one's error.
+
+  | quantity (Δt=1e-3 s, leaf_data) | linear | cubic | ratio |
+  |---|---|---|---|
+  | velocity, rms err / U_rms | 1.27% | 0.54% | 2.4× |
+  | ∂u/∂t, rms err / \|∂u/∂t\|_rms | 5.62% | 2.40% | 2.3× |
+  | convergence order, **median** point | 1.75 | **4.85** | — |
+  | convergence order, 99th-pct point | 1.62 | 2.40 | — |
+
+  - **Windowing is inert on real data too**, confirming the (A) result end to end:
+    `INUM=4` vs `INUM=True` differ by 1.1e-16 (4e-17 of U_rms). So the whole question
+    is linear-vs-cubic; the streaming machinery costs nothing.
+  - **Do not quote the 2.4× ratio on its own — it blends two regimes.** Interpolation
+    error is wildly concentrated (cubic max/median = 2.4e4×), so an rms-over-everything
+    ratio is set by a rough minority. Where the flow is temporally smooth, both schemes
+    hit their theoretical orders (cubic **4.85**, linear 1.75) and cubic is decisively
+    better; where it is temporally rough, both stall (2.40 / 1.62) and the gap nearly
+    closes — there the *data* is the limit, not the scheme. The rough regions are not
+    the immersed-boundary neighbourhood (none of the worst 1% of points lie within 8
+    cells of the mesh); peak error tracks local |∂²u/∂t²|, correlation ≈0.7.
+  - **The absolute numbers are not transferable; the orders are.** Error depends on the
+    dump interval relative to the flow's own timescales. The harness was calibrated
+    against analytic fields and recovers ~2/~4 when well resolved and degrades
+    predictably when not, so the fitted orders are trustworthy for extrapolating to a
+    different dump cadence.
+  - **The practical answer for an ABM: dynamic loading does not change dispersal
+    statistics.** Individual tracer trajectories decorrelate (rms separation reaches
+    9.9% of path travelled, ~6% of the domain diagonal) — but that is the flow
+    separating nearby particles exponentially, which happens under *any* perturbation,
+    and it saturates at the flow-feature scale. Ensemble statistics over 1936 tracers
+    agree to **within 0.6%, most under 0.3%** (mean/std of x and y, mean/std of net
+    displacement, and its 10th/50th/90th percentiles).
+  - ⚠️ One dataset, one Δt, tracer particles, no immersed boundary in the trajectory
+    run (deliberately, to isolate the interpolation). Re-run on 3D data in Phase 2
+    before generalizing; `INUM` docs should quote the orders and the ensemble result,
+    not the bare ratio.
 - [x] **(D) `get_dudt` under linear splining — DONE.** Pinned as a piecewise-constant,
   discontinuous finite difference: the value on each interval, the jump at a
   breakpoint, zero beyond the data bounds, and agreement with full-linear across
