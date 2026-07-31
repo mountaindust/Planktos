@@ -1506,6 +1506,27 @@ class Environment:
                 raise RuntimeError("File extension for {} not recognized.".format(filename))
             return points
 
+        def _shift_to_fluid_frame(pts):
+            '''Match any translation the fluid loaders applied to the fluid.
+
+            The loaders move fluid data so that its lower-left corner sits at the
+            origin, recording the original corner in fluid_domain_LLC. Mesh
+            coordinates come out of their files in that original frame, so they
+            have to follow, or mesh and fluid end up offset from one another --
+            silently, since nothing about it raises.
+
+            With no fluid loaded there is no translation to match, which is a
+            supported way to build an environment.
+
+            Every branch below goes through this. Three of them used to inline
+            the shift and one did not, which is exactly the kind of omission a
+            shared helper makes impossible.
+            '''
+            if self.flow is not None and self.flow.fluid_domain_LLC is not None:
+                for ii in range(2):
+                    pts[:,ii] -= self.flow.fluid_domain_LLC[ii]
+            return pts
+
         ####### Moving immersed boundary data #######
         if path.is_dir(): 
             #infer d_finish
@@ -1534,8 +1555,8 @@ class Environment:
 
                 filename = path / ('lagsPts.' + str(numSim) + '.vtk')
                 points, bounds = _dataio.read_vtk_Unstructured_Grid_Points(filename)
-                # trim z-direction and store
-                mesh_list.append(points[:,:2])
+                # trim z-direction, match the fluid's frame, and store
+                mesh_list.append(_shift_to_fluid_frame(points[:,:2]))
 
             ### Convert to T x N x 2 x 2 array of mesh elements
 
@@ -1572,7 +1593,7 @@ class Environment:
             ### adjacent method
             if method == 'adjacent':
                 print('Reading vertex data and meshing...')
-                vertices = _read_single_file(path)
+                vertices = _shift_to_fluid_frame(_read_single_file(path))
                 ibmesh = []
                 for n in range(vertices.shape[0]-1):
                     if n+1 not in brk_idx_list:
@@ -1594,16 +1615,9 @@ class Environment:
                 else:
                     Eulerian_res = res
 
-                vertices = _read_single_file(path)
+                vertices = _shift_to_fluid_frame(_read_single_file(path))
                 print("Processing vertex file for pair-wise connections within {}.".format(
                     res_factor*Eulerian_res))
-                # shift coordinates to match any shift that happened in flow data.
-                # With no fluid loaded there is no shift to match, which is a
-                # supported way to use this method -- passing res explicitly is
-                # how you say you have no fluid grid to infer it from.
-                if self.flow is not None and self.flow.fluid_domain_LLC is not None:
-                    for ii in range(2):
-                        vertices[:,ii] -= self.flow.fluid_domain_LLC[ii]
                 dist_mat_test = distance.pdist(vertices)<=res_factor*Eulerian_res
                 idx = np.array(list(combinations(range(vertices.shape[0]),2)))
                 self.ibmesh = np.array([vertices[idx[dist_mat_test,0],:],
@@ -1614,12 +1628,7 @@ class Environment:
                 
             ### Convex hull method
             elif method == 'hull':
-                vertices = _read_single_file(path)
-                # shift coordinates to match any shift that happened in flow data
-                # (see the note on the fluid-free case under 'proximity' above)
-                if self.flow is not None and self.flow.fluid_domain_LLC is not None:
-                    for ii in range(2):
-                        vertices[:,ii] -= self.flow.fluid_domain_LLC[ii]
+                vertices = _shift_to_fluid_frame(_read_single_file(path))
                 hull = ConvexHull(vertices)
                 self.ibmesh = np.array(vertices[hull.simplices], dtype=np.float64)
 

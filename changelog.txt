@@ -11,6 +11,7 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - Plots now show mean agent speed and its spread in place of mean and max fluid speed; plotting no longer loads fluid data for statistics.
 - New FluidData.get_mean_velocity returns the spatial mean of each velocity component at any time.
 - Bug fix: calculate_FTLE(swrm=...) raised AttributeError on the first step, and appended to the caller's Swarm history.
+- Bug fix: meshes imported by the 'adjacent' method or as a moving mesh now follow the fluid's coordinate shift, as the other methods already did.
 
 
 1.0.1

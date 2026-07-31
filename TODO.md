@@ -211,12 +211,33 @@ because step 1 was verified by running the examples end to end.
   "Must import flow data first!" assertion. Neither method had any coverage before,
   which is why this went unnoticed. `examples/ex_vicsek_model_2d.py` runs again.
 
-- [ ] 🟢 **Decide: `method='adjacent'` never applies the LLC shift**, even when a fluid
-  *is* loaded, while `proximity` and `hull` do. Latent rather than broken today —
-  IB2d's `fluid_domain_LLC` is `(0.0, 0.0)` for `examples/ib2d_data` (checked), so the
-  shift is a no-op and all three methods agree there. A vertex file paired with fluid
-  whose grid does not start at the origin would come out offset. Either add the shift
-  to `adjacent` or document why it is excluded.
+- [x] **`method='adjacent'` never applied the LLC shift — DONE, and it was two
+  branches, not one.** The fluid loaders translate their data so its lower-left corner
+  sits at the origin and record the original corner in `fluid_domain_LLC`; mesh
+  coordinates arrive in that original frame and have to follow, or mesh and fluid end
+  up offset with nothing raising. `proximity` and `hull` did this; **`adjacent` and the
+  moving-mesh (directory of `lagsPts.####.vtk`) branch did not.**
+
+  Fixed at the root rather than per site: one nested `_shift_to_fluid_frame` helper in
+  `read_IB2d_mesh_data` that all four branches now call, so the omission cannot recur.
+  It carries the `self.flow is not None` guard, which also keeps the fluid-free
+  workflow working.
+
+  Latent until now because IB2d grids start at the origin, making the shift a no-op —
+  `examples/ib2d_data` has `fluid_domain_LLC == (0.0, 0.0)`. It bites a vertex or
+  lagsPts file paired with fluid whose grid does not start at the origin.
+
+  Present on `master` in both branches too, so it ships as a real fix on both.
+  Regression tests in `test_io_loaders.py` parametrize the three static methods over
+  fluid-free and shifted-fluid environments, plus a moving-mesh shift test; exactly the
+  two previously-unshifted branches fail without the fix.
+
+- [ ] 🟢 **Check `shift_ibmesh_to_match_LLC` against moving meshes.** Noticed while
+  fixing the above, not investigated. It exists for the load-mesh-before-fluid ordering
+  and does `self.ibmesh[:,:,ii] -= ...`, which indexes a static `(N,2,2)` mesh. A moving
+  mesh is `(T,N,2,2)`, so that indexing hits the wrong axis. Confirm, then either
+  generalize it (`self.ibmesh[...,ii]` would cover both) or make it refuse a moving
+  mesh outright.
 
 ### Cleanup (low urgency)
 

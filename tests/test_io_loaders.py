@@ -134,14 +134,23 @@ def test_static_vertex_import_closed_with_add_idx():
 
 
 # --------------------------------------------------------------------------- #
-#      static vertex import: the 'proximity' and 'hull' methods                #
+#          mesh import and the fluid coordinate frame                          #
 # --------------------------------------------------------------------------- #
-# These are the two methods that consult the fluid, in order to shift mesh
-# coordinates into the translated frame the fluid loaders put the fluid in. Both
-# used to dereference self.flow unconditionally, so importing a mesh into an
-# environment with no fluid raised AttributeError -- even though that is a
-# supported workflow (passing `res` explicitly is how you say you have no fluid
-# grid to infer the connection radius from). Neither method had any coverage.
+# The fluid loaders translate their data so its lower-left corner sits at the
+# origin, recording the original corner in fluid_domain_LLC. Mesh coordinates
+# arrive in that original frame, so every import path has to subtract the same
+# offset or mesh and fluid end up silently offset from each other.
+#
+# Two bugs lived here. 'proximity' and 'hull' dereferenced self.flow with no
+# None check, so importing a mesh into a fluid-free environment raised
+# AttributeError -- even though that is a supported workflow (passing `res`
+# explicitly is how you say you have no fluid grid to infer the connection
+# radius from). And 'adjacent' and the moving-mesh branch never applied the
+# shift at all. All four now go through one helper.
+#
+# The shift is a no-op for IB2d data, whose grids start at the origin, which is
+# why the omission went unnoticed -- so these tests set fluid_domain_LLC
+# explicitly rather than relying on a loader to produce a nonzero one.
 #
 # box.vertex is the four corners of a 2x2 square, so sides are 2.0 apart and
 # diagonals 2*sqrt(2) = 2.83. The connection radius is res_factor*res = 0.501*res,
@@ -149,43 +158,67 @@ def test_static_vertex_import_closed_with_add_idx():
 
 BOX = 'mesh_min/box.vertex'
 BOX_RES = 4.5
+LLC = (1.0, 0.5)
+
+# method -> (extra kwargs, expected number of segments)
+STATIC_METHODS = {'adjacent': ({}, 3),                  # open chain of 4 vertices
+                  'proximity': ({'res': BOX_RES}, 4),   # the four sides
+                  'hull': ({}, 4)}                      # hull of a square
 
 
-def test_static_vertex_import_proximity_without_fluid():
+def _shifted_envir():
+    '''Environment whose fluid records a nonzero original lower-left corner.'''
+    g = np.linspace(0, 10, 11)
+    X, Y = np.meshgrid(g, g, indexing='ij')
+    envir = planktos.Environment(Lx=10, Ly=10, flow=[np.zeros_like(X), np.zeros_like(Y)])
+    envir.flow.fluid_domain_LLC = LLC
+    return envir
+
+
+@pytest.mark.parametrize('method', sorted(STATIC_METHODS))
+def test_static_vertex_import_without_fluid(method):
+    kwargs, n_seg = STATIC_METHODS[method]
     envir = planktos.Environment(Lx=10, Ly=10)
     assert envir.flow is None
-    envir.read_IB2d_mesh_data(str(FIXTURES / BOX), method='proximity', res=BOX_RES)
-    assert envir.ibmesh.shape == (4, 2, 2)                  # the four sides
-    seg_len = np.linalg.norm(envir.ibmesh[:, 0, :] - envir.ibmesh[:, 1, :], axis=1)
-    assert np.allclose(seg_len, 2.0)
+    envir.read_IB2d_mesh_data(str(FIXTURES / BOX), method=method, **kwargs)
+    assert envir.ibmesh.shape == (n_seg, 2, 2)
     # unshifted: there is no fluid frame to shift into
     assert np.isclose(envir.ibmesh[..., 0].min(), 2.0)
     assert np.isclose(envir.ibmesh[..., 1].min(), 2.0)
 
 
-def test_static_vertex_import_hull_without_fluid():
+def test_static_vertex_import_proximity_segment_lengths():
     envir = planktos.Environment(Lx=10, Ly=10)
-    envir.read_IB2d_mesh_data(str(FIXTURES / BOX), method='hull')
-    assert envir.ibmesh.shape == (4, 2, 2)                  # hull of a square
-    assert np.isclose(envir.ibmesh[..., 0].min(), 2.0)
+    envir.read_IB2d_mesh_data(str(FIXTURES / BOX), method='proximity', res=BOX_RES)
+    seg_len = np.linalg.norm(envir.ibmesh[:, 0, :] - envir.ibmesh[:, 1, :], axis=1)
+    assert np.allclose(seg_len, 2.0)            # sides only, no diagonals
 
 
-@pytest.mark.parametrize('method', ['proximity', 'hull'])
-def test_static_vertex_import_still_shifts_when_fluid_is_loaded(method):
-    # The guard must not cost the shift when there *is* a fluid: a loader that
-    # translated its data to the origin records the original corner in
-    # fluid_domain_LLC, and the mesh has to follow it.
-    n = 11
-    g = np.linspace(0, 10, n)
-    X, Y = np.meshgrid(g, g, indexing='ij')
-    envir = planktos.Environment(Lx=10, Ly=10, flow=[np.zeros_like(X), np.zeros_like(Y)])
-    envir.flow.fluid_domain_LLC = (1.0, 0.5)
-
-    kwargs = {'res': BOX_RES} if method == 'proximity' else {}
+@pytest.mark.parametrize('method', sorted(STATIC_METHODS))
+def test_static_vertex_import_shifts_into_the_fluid_frame(method):
+    # Every static method must follow the fluid's translation. 'adjacent' used to
+    # skip it, putting the mesh in a different frame from the fluid it is meant
+    # to sit in -- with no error, just wrong geometry.
+    kwargs, n_seg = STATIC_METHODS[method]
+    envir = _shifted_envir()
     envir.read_IB2d_mesh_data(str(FIXTURES / BOX), method=method, **kwargs)
-    assert envir.ibmesh.shape == (4, 2, 2)
-    assert np.isclose(envir.ibmesh[..., 0].min(), 2.0 - 1.0)
-    assert np.isclose(envir.ibmesh[..., 1].min(), 2.0 - 0.5)
+    assert envir.ibmesh.shape == (n_seg, 2, 2)
+    assert np.isclose(envir.ibmesh[..., 0].min(), 2.0 - LLC[0])
+    assert np.isclose(envir.ibmesh[..., 1].min(), 2.0 - LLC[1])
+
+
+def test_moving_mesh_import_shifts_into_the_fluid_frame():
+    # Same for the moving (directory of lagsPts.####.vtk) branch, which also used
+    # to skip the shift. Unshifted, frame 0's first segment is [[1,1],[1,2]].
+    envir = _shifted_envir()
+    envir.read_IB2d_mesh_data(str(FIXTURES / 'lagspts_min'), dt=0.1, print_dump=1,
+                              d_start=0)
+    assert envir.ibmesh.shape == (3, 3, 2, 2)
+    assert np.allclose(envir.ibmesh[0, 0],
+                       [[1. - LLC[0], 1. - LLC[1]], [1. - LLC[0], 2. - LLC[1]]])
+    # the shift is rigid: the +1.0 x-translation across frames is untouched
+    assert np.allclose(envir.ibmesh[2, 0] - envir.ibmesh[0, 0],
+                       [[1., 0.], [1., 0.]])
 
 
 def test_static_vertex_import_proximity_without_res_still_requires_fluid():
