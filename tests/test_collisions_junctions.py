@@ -36,6 +36,8 @@ must not be amplified, and the answer must not depend on where the problem sits
 in space or on the units it is expressed in.
 '''
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -339,6 +341,91 @@ def test_moving_star_junction_carries_the_agent_with_the_boundary():
                        np.asarray(still, float) + shift, atol=h.POS_ATOL), (
         f'agent at {np.asarray(moved)}; a boundary that translated by {shift} '
         f'should have carried it from {np.asarray(still)}')
+
+
+# --------------------------------------------------------------------------- #
+#                       degenerate mesh elements                              #
+# --------------------------------------------------------------------------- #
+# A duplicated vertex in a .vertex file produces a zero-length element under
+# either meshing method: 'adjacent' joins the duplicate to itself, and
+# 'proximity' sees a pair at distance zero, comfortably inside any radius.
+#
+# Such an element has no direction to slide along. Normalizing it yields NaN,
+# and the consequences differ by path: the static slider returned NaN positions,
+# while the moving solver did not return at all.
+#
+# The invariant is that a degenerate element contributes nothing, so adding one
+# to a mesh must leave the answer exactly as it was.
+
+def _with_zero_length_spoke(mesh, at):
+    return np.concatenate([mesh, h.segment(at, at)])
+
+
+@pytest.mark.parametrize('n_spokes', sorted(STAR_K))
+def test_degenerate_element_does_not_change_the_static_answer(n_spokes):
+    sound = _star(n_spokes)
+    degenerate = _with_zero_length_spoke(sound, STAR_HUB)
+
+    base, _, _ = h.call_static(STAR_START, STAR_END, sound)
+    got, _, _ = h.call_static(STAR_START, STAR_END, degenerate)
+
+    h.assert_finite(got, f'{n_spokes}-spoke star + zero-length spoke')
+    assert np.allclose(np.asarray(got, float), np.asarray(base, float),
+                       atol=h.POS_ATOL), (
+        f'a zero-length element changed the result: {base} -> {got}')
+
+
+@pytest.mark.parametrize('n_spokes', sorted(STAR_K))
+def test_degenerate_element_does_not_change_the_moving_answer(n_spokes):
+    # Before this was guarded, the moving solver did not merely give a wrong
+    # answer on this input -- it never returned. A regression would therefore
+    # hang the suite here rather than fail it.
+    shift = np.array([0.3, 0.0])
+    sound = _star(n_spokes)
+    degenerate = _with_zero_length_spoke(sound, STAR_HUB)
+
+    base, _, _ = h.call_moving(STAR_START, STAR_END, sound, sound + shift)
+    got, _, _ = h.call_moving(STAR_START, STAR_END,
+                              degenerate, degenerate + shift)
+
+    h.assert_finite(got, f'{n_spokes}-spoke moving star + zero-length spoke')
+    assert np.allclose(np.asarray(got, float), np.asarray(base, float),
+                       atol=h.POS_ATOL), (
+        f'a zero-length element changed the result: {base} -> {got}')
+
+
+def test_degenerate_triangle_does_not_change_the_3d_answer():
+    '''The 3D counterpart: a zero-area sliver whose apex lies on the shared
+    edge, which has no dihedral to be ranked by.'''
+    sound = h.book_3D(BOOK_E0, BOOK_E1, BOOK_TIPS[:3])
+    sliver = h.book_3D(BOOK_E0, BOOK_E1, BOOK_TIPS[:3] + [(0.0, 1.0, 0.0)])
+
+    base, _, _ = h.call_static(BOOK_START, BOOK_END, sound)
+    got, _, _ = h.call_static(BOOK_START, BOOK_END, sliver)
+
+    h.assert_finite(got, 'book + zero-area sliver')
+    assert np.allclose(np.asarray(got, float), np.asarray(base, float),
+                       atol=h.POS_ATOL)
+
+
+@pytest.mark.parametrize('geom', ['2d wall', '3d triangle'])
+def test_head_on_hit_computes_no_invalid_values(geom):
+    '''A hit with no tangential component has no sliding direction, so the
+    projection onto the element is the zero vector. Normalizing it produced a
+    NaN that happened to go unused -- correct only because the code path that
+    would have consumed it is not taken for a head-on hit.
+    '''
+    if geom == '2d wall':
+        mesh = h.wall_segments(4, 5.0, y_lo=0.0, y_hi=10.0)
+        start, end = (4.0, 5.0), (6.0, 5.0)
+    else:
+        mesh = h.triangle((0.0, 0.0, 1.0), (4.0, 0.0, 1.0), (0.0, 4.0, 1.0))
+        start, end = (1.0, 1.0, 2.0), (1.0, 1.0, 0.0)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', RuntimeWarning)
+        newend, _, _ = h.call_static(start, end, mesh)
+    h.assert_finite(newend, f'head-on {geom}')
 
 
 # --------------------------------------------------------------------------- #

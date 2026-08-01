@@ -6,6 +6,7 @@ Bug fixes.
 - Bug fix: the immersed-boundary collision back-off is now a fixed fraction of the geometry; it grew with domain size and gave NaN at negative coordinates.
 - Bug fix: sliding collisions no longer fail where three or more mesh elements meet at a point, for both static and moving meshes.
 - Bug fix (3D): a sliding agent picks the next triangle by dihedral angle about the shared edge, so a distant third vertex can no longer misdirect it.
+- Bug fix: a duplicated mesh vertex no longer gives NaN positions or a step that never finishes; head-on hits no longer emit a spurious numpy warning.
 
 
 1.0.1

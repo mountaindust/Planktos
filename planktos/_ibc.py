@@ -586,7 +586,15 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
         # Vector projection of vec onto direction Q is obtained via 
         #   Q/||Q||*dot(vec,Q/||Q||) = Q*dot(vec,Q)/||Q||**2.
         proj_vec = Qvec*np.dot(vec,Qvec)/np.dot(Qvec,Qvec)
-        proj_vec_u = proj_vec/np.linalg.norm(proj_vec)
+        # A head-on hit has no tangential component, so there is no sliding
+        #   direction. The agent stays where it struck (slide_pt == x below, so
+        #   it never runs off the element), but leave this a real vector rather
+        #   than a NaN waiting for a future reader.
+        proj_vec_norm = np.linalg.norm(proj_vec)
+        if proj_vec_norm > 0:
+            proj_vec_u = proj_vec/proj_vec_norm
+        else:
+            proj_vec_u = np.zeros(DIM)
 
     elif DIM == 3:
         # intersection comes from _geom.seg_intersect_3D_triangles
@@ -619,7 +627,15 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
         # Vector projection onto Q_norm is 
         #   Qn/||Qn||*dot(vec,Qn/||Qn||) = Qn*dot(vec,Qn)/||Qn||**2
         proj_vec = (vec - Q_norm*np.dot(vec,Q_norm)/np.dot(Q_norm,Q_norm))
-        proj_vec_u = proj_vec/np.linalg.norm(proj_vec)
+        # A head-on hit has no tangential component, so there is no sliding
+        #   direction. The agent stays where it struck (slide_pt == x below, so
+        #   it never runs off the element), but leave this a real vector rather
+        #   than a NaN waiting for a future reader.
+        proj_vec_norm = np.linalg.norm(proj_vec)
+        if proj_vec_norm > 0:
+            proj_vec_u = proj_vec/proj_vec_norm
+        else:
+            proj_vec_u = np.zeros(DIM)
 
     # Position of agent at time t
     proj_to_pt = lambda t: (t-t_I)*proj_vec + x
@@ -730,9 +746,14 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
                 adj_vec[~pt_bool_0] = adj_mesh[~pt_bool_0,0,:] - \
                                         adj_mesh[~pt_bool_0,1,:]
                 # intersection cases will have an angle of -pi/2 to pi/2 between
-                #   Q_norm_u and the adjacent mesh element oriented from the 
+                #   Q_norm_u and the adjacent mesh element oriented from the
                 #   edge the agent is on. That means the dot product is positive.
-                intersect_bool = np.dot(adj_vec, Q_norm_u) >= 0
+                # A zero-length element -- what a duplicated vertex in a mesh
+                #   file produces -- has no direction to slide along, so drop it
+                #   rather than normalize a zero vector into a NaN.
+                intersect_bool = np.logical_and(
+                    np.dot(adj_vec, Q_norm_u) >= 0,
+                    np.linalg.norm(adj_vec, axis=-1) > EPS)
             else:
                 intersect_bool = np.array([False])
 
@@ -1219,9 +1240,14 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
             adj_vec[~pt_bool_0] = adj_mesh_newstart[~pt_bool_0,0,:] - \
                                     adj_mesh_newstart[~pt_bool_0,1,:]
             # intersection cases will have an angle of -pi/2 to pi/2 between
-            #   norm_out_u and the adjacent mesh element oriented from the 
+            #   norm_out_u and the adjacent mesh element oriented from the
             #   edge the agent is on. That means the dot product is positive.
-            intersect_bool = np.dot(adj_vec, norm_out_u) >= 0
+            # A zero-length element has no direction to slide along; keeping it
+            #   as a candidate normalizes a zero vector, and the NaN that
+            #   follows sends the moving solver into a loop it never leaves.
+            intersect_bool = np.logical_and(
+                np.dot(adj_vec, norm_out_u) >= 0,
+                np.linalg.norm(adj_vec, axis=-1) > EPS)
         else:
             intersect_bool = np.array([False])
         ################
