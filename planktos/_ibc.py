@@ -698,7 +698,10 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
         # Find any adjacent mesh segments on the end we went past that would
         #   cause intersection
         if DIM == 2:
-            # In 2D, this is any mesh element that contains the endpoint 
+            # The joint between two segments has a single angle, and the slide
+            #   direction is already the right reference for ranking candidates.
+            rank_vec_u = proj_vec_u
+            # In 2D, this is any mesh element that contains the endpoint
             #   we went past except the current mesh element
             if Q1_crit_dist > Q0_crit_dist:
                 # went past Q0
@@ -772,10 +775,39 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
                 adj_Q_other = adj_mesh[other_bool,:]
                 # get vector pointed away from shared edge on adjacent elements
                 adj_vec = adj_Q_other - x_edge
+
+                # The joint between two triangles is a dihedral about the edge
+                #   they share, so measure it in the plane perpendicular to that
+                #   edge. Where a candidate's third vertex sits *along* the edge
+                #   is free to vary without changing the dihedral at all, and
+                #   must not be allowed to influence which candidate is chosen.
+                if idx_edge == 0:
+                    e_vec = Q1 - Q0
+                elif idx_edge == 1:
+                    e_vec = Q2 - Q1
+                else:
+                    e_vec = Q0 - Q2
+                e_hat = e_vec/np.linalg.norm(e_vec)
+                adj_vec = adj_vec - np.outer(adj_vec @ e_hat, e_hat)
+                rank_vec = proj_vec_u - np.dot(proj_vec_u, e_hat)*e_hat
+                rank_vec_norm = np.linalg.norm(rank_vec)
+                # A slide running exactly along the edge never crosses it, so
+                #   this is unreachable in practice; fall back rather than
+                #   divide by zero if it ever is.
+                if rank_vec_norm > 0:
+                    rank_vec_u = rank_vec/rank_vec_norm
+                else:
+                    rank_vec_u = proj_vec_u
+
                 # intersection cases will have an angle of -pi/2 to pi/2 between
-                #   Q_norm_u and this vector oriented away from the edge the agent 
+                #   Q_norm_u and this vector oriented away from the edge the agent
                 #   is on. That means the dot product is positive.
-                intersect_bool = np.dot(adj_vec, Q_norm_u) >= 0
+                # A candidate whose third vertex lies on the edge's own line is a
+                #   zero-area sliver with no dihedral to speak of; drop it rather
+                #   than normalize a zero vector.
+                intersect_bool = np.logical_and(
+                    np.dot(adj_vec, Q_norm_u) >= 0,
+                    np.linalg.norm(adj_vec, axis=-1) > EPS)
             else:
                 intersect_bool = np.array([False])
 
@@ -783,16 +815,20 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
         if np.any(intersect_bool):
             # Get info about the relevant adjacent elements
             adj_vec = adj_vec[intersect_bool]
-            adj_vec_u = adj_vec/np.linalg.norm(adj_vec, axis=-1)
+            # adj_vec is (k,DIM) and its norms are (k,); keepdims makes the
+            # division per-element rather than per-coordinate.
+            adj_vec_u = adj_vec/np.linalg.norm(adj_vec, axis=-1, keepdims=True)
             adj_vec_idx = adj_mesh_idx[intersect_bool]
             if adj_vec.shape[0] > 1:
-                # get the mesh element that forms the most acute angle with
-                #   the current mesh element. This is equivalent to the largest
-                #   angle between proj_vec and adj_vec
+                # Get the mesh element that forms the most acute angle with the
+                #   current one, equivalently the largest angle between proj_vec
+                #   and adj_vec. The agent reaches the joint hugging the current
+                #   element, so it lies in the wedge bounded by that element and
+                #   this one; every other candidate is beyond it.
                 # clip protects against roundoff error
                 proj_adj_angles = np.arccos(
-                    np.clip(np.dot(proj_vec_u,adj_vec_u),-1.0, 1.0)
-                    ) # all within interval [0,pi]
+                    np.clip(adj_vec_u @ rank_vec_u,-1.0, 1.0)
+                    ) # (k,), all within interval [0,pi]
                 adj_vec_int_idx = np.argmax(proj_adj_angles)
                 adj_vec = adj_vec[adj_vec_int_idx,:]
                 adj_vec_u = adj_vec_u[adj_vec_int_idx,:]
@@ -803,7 +839,7 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
                 adj_vec_u = adj_vec_u[0,:]
                 adj_idx = adj_mesh_idx[intersect_bool][0]
                 proj_adj_angle = np.arccos(
-                    np.clip(np.dot(proj_vec_u,adj_vec_u),-1.0, 1.0))
+                    np.clip(np.dot(rank_vec_u,adj_vec_u),-1.0, 1.0))
                 
             # Treat case of sliding back to a previous mesh element and the
             #   case of a sharp angle
@@ -812,7 +848,7 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
                 # Back away from the intersection point slightly in the 
                 #   direction that bisects the angle between the mesh 
                 #   elements for stay put.
-                mid_vec = (adj_vec_u - proj_vec_u)*0.5
+                mid_vec = (adj_vec_u - rank_vec_u)*0.5
                 if DIM == 2:
                     return Q_edge + EPS*mid_vec
                 elif DIM == 3:

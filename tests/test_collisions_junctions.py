@@ -100,68 +100,25 @@ def _book(n_triangles):
 
 # Only the sliding path reaches the multi-candidate branch; sticky stops at the
 # point of intersection and never chooses a next element, so it is unaffected.
-# The xfail marks below record that split precisely: each one is a specific
-# (geometry, collision mode) combination, and strict=True means the mark itself
-# fails the suite the moment the underlying defect is fixed.
+# Both are exercised anyway, so that a future change which starts routing sticky
+# collisions through the branch does not go unnoticed.
 
-XF_MULTI = pytest.mark.xfail(strict=True, reason=(
-    'BUG-IB-JUNCTION: three or more candidate elements at a joint. The slide '
-    'code normalizes the candidate vectors against a wrongly-shaped array of '
-    'norms, which raises for most candidate counts.'))
-
-XF_SILENT = pytest.mark.xfail(strict=True, reason=(
-    'BUG-IB-JUNCTION: exactly two candidates returns an answer rather than '
-    'raising, but one computed from mis-normalized vectors, so it is not '
-    'invariant under rotation of the whole problem.'))
-
-
-def _spoke_params():
-    '''(ib, n_spokes) with the sliding cases that reach k >= 3 marked.'''
-    out = []
-    for ib in ('sliding', 'sticky'):
-        for n in sorted(STAR_K):
-            marks = [XF_MULTI] if (ib == 'sliding' and STAR_K[n] >= 3) else []
-            out.append(pytest.param(ib, n, marks=marks, id=f'{ib}-{n}spokes'))
-    return out
-
-
-def _fin_params():
-    out = []
-    for ib in ('sliding', 'sticky'):
-        for n in sorted(SQUARE_K):
-            marks = [XF_MULTI] if (ib == 'sliding' and SQUARE_K[n] >= 3) else []
-            out.append(pytest.param(ib, n, marks=marks, id=f'{ib}-{n}fins'))
-    return out
-
-
-def _book_params():
-    '''3D raises for every candidate count except k == 3, where the wrong
-    normalization happens to be shape-compatible and returns silently.'''
-    out = []
-    for ib in ('sliding', 'sticky'):
-        for n in sorted(BOOK_K):
-            bad = ib == 'sliding' and BOOK_K[n] >= 2 and BOOK_K[n] != 3
-            out.append(pytest.param(ib, n, marks=[XF_MULTI] if bad else [],
-                                    id=f'{ib}-{n}tri'))
-    return out
-
-
-@pytest.mark.parametrize('ib,n_spokes', _spoke_params())
+@pytest.mark.parametrize('n_spokes', sorted(STAR_K))
+@pytest.mark.parametrize('ib', ['sliding', 'sticky'])
 def test_star_junction_returns_a_finite_point(ib, n_spokes):
     newend, _, _ = h.call_static(STAR_START, STAR_END, _star(n_spokes),
                                  ib_collisions=ib)
     h.assert_finite(newend, f'{n_spokes}-spoke star ({ib})')
 
 
-@pytest.mark.parametrize('n_spokes', [
-    pytest.param(n, marks=[XF_MULTI] if STAR_K[n] >= 3 else [])
-    for n in sorted(STAR_K)])
+@pytest.mark.parametrize('n_spokes', sorted(STAR_K))
 def test_star_junction_does_not_amplify_motion(n_spokes):
     newend, _, _ = h.call_static(STAR_START, STAR_END, _star(n_spokes))
     h.assert_displacement_bounded(STAR_START, STAR_END, newend)
 
 
-@pytest.mark.parametrize('ib,n_fins', _fin_params())
+@pytest.mark.parametrize('n_fins', sorted(SQUARE_K))
+@pytest.mark.parametrize('ib', ['sliding', 'sticky'])
 def test_finned_corner_keeps_the_agent_outside(ib, n_fins):
     '''The hard invariant, on a closed obstacle so that it is well posed: the
     agent starts outside the square and must finish outside it, wherever along
@@ -172,16 +129,13 @@ def test_finned_corner_keeps_the_agent_outside(ib, n_fins):
     h.assert_outside_polygon(newend, SQUARE, f'{n_fins}-fin corner ({ib})')
 
 
-@pytest.mark.parametrize('n_fins', [
-    pytest.param(n, marks=[XF_MULTI] if SQUARE_K[n] >= 3 else [])
-    for n in sorted(SQUARE_K)])
+@pytest.mark.parametrize('n_fins', sorted(SQUARE_K))
 def test_finned_corner_does_not_amplify_motion(n_fins):
     newend, _, _ = h.call_static(SQUARE_START, SQUARE_END,
                                  _square_with_fins(n_fins))
     h.assert_displacement_bounded(SQUARE_START, SQUARE_END, newend)
 
 
-@XF_MULTI
 def test_star_junction_reports_a_valid_element_index():
     '''The returned index feeds Swarm.ib_collision_idx, which users read. It has
     to index the mesh that was passed in.'''
@@ -195,19 +149,89 @@ def test_star_junction_reports_a_valid_element_index():
 #            3D: an edge shared by three or more triangles                    #
 # --------------------------------------------------------------------------- #
 
-@pytest.mark.parametrize('ib,n_tri', _book_params())
+@pytest.mark.parametrize('n_tri', sorted(BOOK_K))
+@pytest.mark.parametrize('ib', ['sliding', 'sticky'])
 def test_nonmanifold_edge_returns_a_finite_point(ib, n_tri):
     newend, _, _ = h.call_static(BOOK_START, BOOK_END, _book(n_tri),
                                  ib_collisions=ib)
     h.assert_finite(newend, f'{n_tri}-triangle book ({ib})')
 
 
-@pytest.mark.parametrize('n_tri', [
-    pytest.param(n, marks=[XF_MULTI] if (BOOK_K[n] >= 2 and BOOK_K[n] != 3) else [])
-    for n in sorted(BOOK_K)])
+@pytest.mark.parametrize('n_tri', sorted(BOOK_K))
 def test_nonmanifold_edge_does_not_amplify_motion(n_tri):
     newend, _, _ = h.call_static(BOOK_START, BOOK_END, _book(n_tri))
     h.assert_displacement_bounded(BOOK_START, BOOK_END, newend)
+
+
+# --------------------------------------------------------------------------- #
+#            3D: the candidate ranking must use the dihedral angle            #
+# --------------------------------------------------------------------------- #
+# In 2D the joint between two segments has one angle and there is nothing to
+# confuse it with. In 3D the joint between two triangles is a *dihedral* about
+# their shared edge, and a candidate triangle's third vertex can sit anywhere
+# along that edge without changing the dihedral at all. Ranking candidates by
+# the direction to that third vertex therefore mixes in a component running
+# along the edge, which has nothing to do with how far the triangle is folded.
+#
+# The geometry below is built so the two readings disagree: the triangle that
+# actually blocks the agent is NOT the one the third-vertex direction favors.
+
+SPINE_0, SPINE_1 = (0.0, 0.0, 0.0), (0.0, 2.0, 0.0)
+
+
+def _page(dihedral_deg, y_of_tip):
+    '''Third vertex of a triangle hinged on the spine at the given dihedral
+    angle from the z=0 plane, placed at a chosen position along the spine.
+    Only the dihedral should matter to the ranking; y should not.'''
+    a = np.radians(dihedral_deg)
+    return (-np.cos(a), y_of_tip, np.sin(a))
+
+
+def _dihedral_book():
+    '''Page 0 in the z=0 plane, plus two candidates hinged on the spine.
+
+    BLOCKER is folded further over the agent (60 deg vs 20 deg), so an agent
+    hugging page 0 reaches it first and cannot get past it to the other one.
+    SHADOWED is nearly flat but has its third vertex far along the spine, which
+    inflates the third-vertex angle above the blocker's.
+    '''
+    return h.book_3D(SPINE_0, SPINE_1,
+                     [(2.0, 1.0, 0.0),                  # page 0, the agent's
+                      _page(60.0, 1.0),                 # BLOCKER, index 1
+                      _page(20.0, 3.0)])                # SHADOWED, index 2
+
+
+def test_3d_slide_cannot_pass_through_the_blocking_triangle():
+    '''The invariant, stated without reference to which element gets chosen: the
+    agent may not end up on the far side of the triangle that stands between it
+    and everything else at that edge.
+    '''
+    mesh = _dihedral_book()
+    blocker = mesh[1]
+    start = np.array([1.0, 1.0, 0.6])
+    end = np.array([-0.6, 1.0, -0.4])
+    newend, _, _ = h.call_static(start, end, mesh)
+    h.assert_finite(newend, 'dihedral book')
+    h.assert_not_penetrated_3D(start, newend, blocker[0], blocker[1], blocker[2])
+
+
+def test_3d_candidate_ranking_ignores_position_along_the_shared_edge():
+    '''Sliding the shadowed triangle's third vertex along the spine changes no
+    angle in the problem, so it must not change the outcome.'''
+    start = np.array([1.0, 1.0, 0.6])
+    end = np.array([-0.6, 1.0, -0.4])
+
+    results = []
+    for y_tip in (1.0, 3.0, 6.0):
+        mesh = h.book_3D(SPINE_0, SPINE_1,
+                         [(2.0, 1.0, 0.0), _page(60.0, 1.0), _page(20.0, y_tip)])
+        newend, _, _ = h.call_static(start, end, mesh)
+        results.append(np.asarray(newend, float))
+
+    for other in results[1:]:
+        assert np.allclose(other, results[0], atol=h.POS_ATOL), (
+            f'moving a third vertex along the shared edge changed the result: '
+            f'{results[0]} vs {other}')
 
 
 # --------------------------------------------------------------------------- #
@@ -243,9 +267,7 @@ GEOMETRIES = {
 CHAINS = ['vertical wall', 'convex L corner', 'concave V groove']
 JUNCTIONS = ['star k=2', 'star k=3', 'finned k=2', 'finned k=3']
 
-# Geometries reaching three or more candidates raise outright.
-ALL_GEOMETRIES = [pytest.param(n, marks=[XF_MULTI] if n.endswith('k=3') else [])
-                  for n in CHAINS + JUNCTIONS]
+ALL_GEOMETRIES = CHAINS + JUNCTIONS
 
 
 @pytest.mark.parametrize('name', ALL_GEOMETRIES)
@@ -292,12 +314,7 @@ def test_answer_is_independent_of_position_and_orientation(name, theta, offset):
         f'expected {T(base)}')
 
 
-@pytest.mark.parametrize('name', [
-    'star k=2',
-    pytest.param('finned k=2', marks=XF_SILENT),
-    pytest.param('star k=3', marks=XF_MULTI),
-    pytest.param('finned k=3', marks=XF_MULTI),
-])
+@pytest.mark.parametrize('name', JUNCTIONS)
 def test_junction_answer_is_rotation_equivariant(name):
     '''The same property as above, on the junction geometries.
 
