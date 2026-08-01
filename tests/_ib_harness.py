@@ -201,6 +201,25 @@ def assert_displacement_bounded(start, end, newend, rtol=1e-6, atol=POS_ATOL):
         f"resolved displacement {resolved:.6g} exceeds attempted {attempted:.6g}")
 
 
+def assert_displacement_bounded_moving(start, end, newend, start_mesh, end_mesh,
+                                       rtol=1e-6, atol=POS_ATOL):
+    '''Moving-boundary counterpart of assert_displacement_bounded.
+
+    A moving boundary does work on an agent -- it can push or carry it -- so the
+    resolved displacement may legitimately exceed the attempted one. What it
+    cannot exceed is the attempted movement plus how far the boundary itself
+    travelled during the step.
+    '''
+    start = np.asarray(start, float); end = np.asarray(end, float)
+    max_mov = float(np.linalg.norm(np.asarray(end_mesh, float) -
+                                   np.asarray(start_mesh, float), axis=-1).max())
+    attempted = np.linalg.norm(end - start)
+    resolved = np.linalg.norm(np.asarray(newend, float) - start)
+    assert resolved <= (attempted + max_mov)*(1 + rtol) + atol, (
+        f"resolved displacement {resolved:.6g} exceeds attempted {attempted:.6g} "
+        f"plus boundary travel {max_mov:.6g}")
+
+
 def point_inside_polygon(P, poly_pts, tol=0.0):
     '''Ray-cast containment test for a simple closed polygon given as its
     vertices in order. Written out rather than pulled from matplotlib so the

@@ -235,6 +235,113 @@ def test_3d_candidate_ranking_ignores_position_along_the_shared_edge():
 
 
 # --------------------------------------------------------------------------- #
+#            moving meshes: the same joints, on a translating boundary        #
+# --------------------------------------------------------------------------- #
+# _project_and_slide_moving is a separate implementation of the same idea, and
+# it selects among adjacent elements the same way. Moving boundaries are 2D
+# only.
+#
+# The invariants differ in one respect: a moving boundary does work on an agent,
+# so the resolved displacement may exceed the attempted one. It cannot exceed
+# the attempt plus the distance the boundary itself travelled, which is what
+# assert_displacement_bounded_moving checks.
+#
+# Candidate counts here were measured the same way as the static ones: the
+# translating star reaches k = 1, 2, 3, 4 for 2, 3, 4, 5 spokes, and does so for
+# every mesh translation tried, including none.
+
+MOVING_SHIFTS = {'still': (0.0, 0.0), 'advancing': (0.3, 0.0),
+                 'receding': (-0.3, 0.0), 'sideways': (0.0, 0.4)}
+
+def _moving_star(n_spokes, shift):
+    m0 = _star(n_spokes)
+    return m0, m0 + np.asarray(shift, dtype=float)
+
+
+@pytest.mark.parametrize('n_spokes', sorted(STAR_K))
+@pytest.mark.parametrize('shift', sorted(MOVING_SHIFTS))
+@pytest.mark.parametrize('ib', ['sliding', 'sticky'])
+def test_moving_star_junction_returns_a_finite_point(ib, shift, n_spokes):
+    m0, m1 = _moving_star(n_spokes, MOVING_SHIFTS[shift])
+    newend, _, _ = h.call_moving(STAR_START, STAR_END, m0, m1, ib_collisions=ib)
+    h.assert_finite(newend, f'{n_spokes}-spoke moving star ({shift}, {ib})')
+
+
+@pytest.mark.parametrize('n_spokes', sorted(STAR_K))
+@pytest.mark.parametrize('shift', sorted(MOVING_SHIFTS))
+def test_moving_star_junction_does_not_amplify_motion(shift, n_spokes):
+    m0, m1 = _moving_star(n_spokes, MOVING_SHIFTS[shift])
+    newend, _, _ = h.call_moving(STAR_START, STAR_END, m0, m1)
+    h.assert_displacement_bounded_moving(STAR_START, STAR_END, newend, m0, m1)
+
+
+@pytest.mark.parametrize('n_fins', sorted(SQUARE_K))
+@pytest.mark.parametrize('ib', ['sliding', 'sticky'])
+def test_moving_finned_corner_keeps_the_agent_outside(ib, n_fins):
+    '''The hard invariant on a moving obstacle: the agent must finish outside
+    the square *where the square ends up*, not where it started.'''
+    shift = np.array([0.25, 0.0])
+    m0 = _square_with_fins(n_fins)
+    m1 = m0 + shift
+    newend, _, _ = h.call_moving(SQUARE_START, SQUARE_END, m0, m1,
+                                 ib_collisions=ib)
+    h.assert_finite(newend, f'{n_fins}-fin moving corner ({ib})')
+    h.assert_outside_polygon(newend, np.asarray(SQUARE) + shift,
+                             f'{n_fins}-fin moving corner ({ib})')
+
+
+@pytest.mark.parametrize('n_spokes', sorted(STAR_K))
+def test_moving_star_junction_is_rotation_equivariant(n_spokes):
+    '''Rotating the whole problem -- agent, mesh at both ends of the step --
+    must rotate the answer. As in the static case this is the only check that
+    can see an answer that is wrong rather than absent.'''
+    m0, m1 = _moving_star(n_spokes, (0.3, 0.0))
+    base, _, _ = h.call_moving(STAR_START, STAR_END, m0, m1)
+
+    T = h.rigid_2D(np.pi/2)
+    moved, _, _ = h.call_moving(T(STAR_START), T(STAR_END), T(m0), T(m1))
+
+    assert np.allclose(np.asarray(moved, float), T(base), atol=1e-3), (
+        f'{n_spokes}-spoke moving star: rotated problem gave '
+        f'{np.asarray(moved)}, expected {T(base)}')
+
+
+@pytest.mark.parametrize('n_fins', sorted(SQUARE_K))
+def test_moving_finned_corner_is_rotation_equivariant(n_fins):
+    '''The finned corner is the geometry whose static counterpart exposed the
+    two-candidate case: it returns a plausible answer that stops being plausible
+    once the problem is rotated.'''
+    shift = np.array([0.25, 0.0])
+    m0 = _square_with_fins(n_fins)
+    m1 = m0 + shift
+    base, _, _ = h.call_moving(SQUARE_START, SQUARE_END, m0, m1)
+
+    T = h.rigid_2D(np.pi/2)
+    moved, _, _ = h.call_moving(T(SQUARE_START), T(SQUARE_END), T(m0), T(m1))
+
+    assert np.allclose(np.asarray(moved, float), T(base), atol=1e-3), (
+        f'{n_fins}-fin moving corner: rotated problem gave '
+        f'{np.asarray(moved)}, expected {T(base)}')
+
+
+def test_moving_star_junction_carries_the_agent_with_the_boundary():
+    '''A translating junction should leave the agent at the joint's new
+    position, not its old one -- the moving-boundary behavior the static code
+    has no analogue for.'''
+    still_m0, still_m1 = _moving_star(4, (0.0, 0.0))
+    still, _, _ = h.call_moving(STAR_START, STAR_END, still_m0, still_m1)
+
+    shift = np.array([0.3, 0.0])
+    m0, m1 = _moving_star(4, shift)
+    moved, _, _ = h.call_moving(STAR_START, STAR_END, m0, m1)
+
+    assert np.allclose(np.asarray(moved, float),
+                       np.asarray(still, float) + shift, atol=h.POS_ATOL), (
+        f'agent at {np.asarray(moved)}; a boundary that translated by {shift} '
+        f'should have carried it from {np.asarray(still)}')
+
+
+# --------------------------------------------------------------------------- #
 #                 general sanity checks, any geometry                         #
 # --------------------------------------------------------------------------- #
 # These say nothing about junctions; they are properties every collision must

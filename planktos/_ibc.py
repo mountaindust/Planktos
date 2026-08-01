@@ -1230,17 +1230,21 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
             ########  Went past and intersected adjoining element! ########
             # Get info about it
             adj_vec = adj_vec[intersect_bool]
-            adj_vec_u = adj_vec/np.linalg.norm(adj_vec, axis=-1)
+            # adj_vec is (k,2) and its norms are (k,); keepdims makes the
+            # division per-element rather than per-coordinate.
+            adj_vec_u = adj_vec/np.linalg.norm(adj_vec, axis=-1, keepdims=True)
             adj_vec_idx = adj_mesh_end_idx[intersect_bool]
             adj_mesh_newstart = adj_mesh_newstart[intersect_bool]
             if adj_vec.shape[0] > 1:
-                # get the one that is most acute on the side of norm_out_u
-                # This is equivalent to the largest angle between Qslide_vec_u 
-                #   and adj_vec_u
+                # Get the one that is most acute on the side of norm_out_u,
+                #   equivalently the largest angle between Qslide_vec_u and
+                #   adj_vec_u. The agent reaches the joint hugging the element
+                #   it is leaving, so it lies in the wedge bounded by that
+                #   element and this one; the rest are beyond it.
                 # clip protects against roundoff error
                 proj_adj_angles = np.arccos(
-                    np.clip(np.dot(Qslide_vec_u, adj_vec_u),-1.0, 1.0)
-                    ) # all within interval [0,pi]
+                    np.clip(adj_vec_u @ Qslide_vec_u,-1.0, 1.0)
+                    ) # (k,), all within interval [0,pi]
                 adj_vec_int_idx = np.argmax(proj_adj_angles)
                 adj_vec = adj_vec[adj_vec_int_idx,:]
                 adj_vec_u = adj_vec_u[adj_vec_int_idx,:]
