@@ -854,18 +854,23 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
                 adj_vec = adj_vec[adj_vec_int_idx,:]
                 adj_vec_u = adj_vec_u[adj_vec_int_idx,:]
                 adj_idx = adj_vec_idx[adj_vec_int_idx]
-                proj_adj_angle = proj_adj_angles[adj_vec_int_idx]
             else:
                 adj_vec = adj_vec[0,:]
                 adj_vec_u = adj_vec_u[0,:]
                 adj_idx = adj_mesh_idx[intersect_bool][0]
-                proj_adj_angle = np.arccos(
-                    np.clip(np.dot(rank_vec_u,adj_vec_u),-1.0, 1.0))
                 
             # Treat case of sliding back to a previous mesh element and the
-            #   case of a sharp angle
-            if (prev_idx is not None and prev_idx == adj_idx) or\
-                proj_adj_angle >= np.pi/2:
+            #   case where the agent has nowhere to go on the adjacent one.
+            # Continue onto the adjacent element only if the remaining movement
+            #   still advances along it. The ranking above asks which element
+            #   blocks the agent, a question about directions; this asks whether
+            #   the agent gets anywhere once on it, which is what the recursion
+            #   below settles by re-projecting this same movement. Judging that
+            #   from the movement already flattened onto the element being left
+            #   can only err one way: continuing when the agent in fact has
+            #   nowhere to go.
+            advances = np.dot(vec, adj_vec_u) > 0
+            if (prev_idx is not None and prev_idx == adj_idx) or not advances:
                 # Back away from the intersection point slightly in the 
                 #   direction that bisects the angle between the mesh 
                 #   elements for stay put.
@@ -876,6 +881,12 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
                     return x_edge + EPS*mid_vec
             # Otherwise, slide on adjacent mesh element.
             else:
+                # Terminates: the agent enters the new element at the shared
+                #   joint and, since it transfers only when its movement
+                #   advances away from that joint, leaves by the far end. Each
+                #   transfer thus consumes a whole element length, bounding the
+                #   recursion by |vec|/(shortest element). The advance test above
+                #   and the exclusion of zero-length elements both carry this.
                 # Repeat project_and_slide on new segment.
                 if DIM == 2:
                     adj_intersect = (Q_edge, t_edge, 
@@ -906,7 +917,10 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
     if t_edge is not None:
         # Continue on the original trajectory from the time of separation
         #   from the mesh element.
-        # Recursively check for more intersections.
+        # Recursively check for more intersections. This terminates because the
+        #   remaining movement (1-t_edge)*vec strictly shrinks each time, but
+        #   unlike the transfer above nothing bounds how much, so it limits
+        #   depth only loosely.
         if DIM == 2:
             newstartpt = Q_edge + EPS*Q_norm_u
         elif DIM == 3:
@@ -1275,21 +1289,26 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
                 adj_vec = adj_vec[adj_vec_int_idx,:]
                 adj_vec_u = adj_vec_u[adj_vec_int_idx,:]
                 adj_idx = adj_vec_idx[adj_vec_int_idx]
-                proj_adj_angle = proj_adj_angles[adj_vec_int_idx]
             else:
                 adj_vec = adj_vec[0,:]
                 adj_vec_u = adj_vec_u[0,:]
                 adj_idx = adj_mesh_end_idx[intersect_bool][0]
                 adj_vec_int_idx = 0
-                proj_adj_angle = np.arccos(
-                        np.clip(np.dot(Qslide_vec_u, adj_vec_u),-1.0, 1.0))
             # NOTE: This intersection happens at the same time as sliding 
             #   off of the last element because they are joined together.
 
             # Treat case of sliding back to a previous mesh element and the
-            #   case of a sharp angle
-            if (prev_idx is not None and prev_idx == adj_idx) or\
-                proj_adj_angle >= np.pi/2:
+            #   case where the agent has nowhere to go on the adjacent one.
+            # Continue onto the adjacent element only if the remaining movement
+            #   still advances along it. The ranking above asks which element
+            #   blocks the agent, a question about directions; this asks whether
+            #   the agent gets anywhere once on it, which is what the recursion
+            #   below settles by re-projecting this same movement. Judging that
+            #   from the movement already flattened onto the element being left
+            #   can only err one way: continuing when the agent in fact has
+            #   nowhere to go.
+            advances = np.dot(vec, adj_vec_u) > 0
+            if (prev_idx is not None and prev_idx == adj_idx) or not advances:
                 # Back away from the intersection point slightly in the 
                 #   direction that bisects the angle between the mesh 
                 #   elements for stay put.
@@ -1305,6 +1324,9 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
                 mid_vec = (adj_vec_end_u + Q_end_u)*0.5
                 return Q_edge(1) + EPS*mid_vec
             else:
+                # Terminates for the same reason as the static slider: each
+                #   transfer crosses a whole element. Verified to hold here too
+                #   under boundary motion toward, away from and along the agent.
                 # Repeat project_and_slide_moving on new segment.
                 adj_intersect = (Q_edge(t_edge), t_edge, 
                                     adj_mesh_newstart[adj_vec_int_idx,0,:],
