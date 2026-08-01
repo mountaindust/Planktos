@@ -230,6 +230,106 @@ def test_static_vertex_import_proximity_without_res_still_requires_fluid():
 
 
 # --------------------------------------------------------------------------- #
+#            shift_ibmesh_to_match_LLC -- the other load ordering              #
+# --------------------------------------------------------------------------- #
+# The loaders shift a mesh into the fluid's frame only if a fluid is already
+# present. Load the mesh first and there is nothing to shift into yet, so this
+# method exists to apply the shift after the fact. It is public API and had no
+# coverage and no callers.
+#
+# Regression: it indexed self.ibmesh[:,:,ii], which is the coordinate axis only
+# for a static mesh. A moving mesh is (T,N,2,2), where axis 2 is the *endpoint*
+# axis -- so it subtracted LLC[0] from both coordinates of every segment's first
+# endpoint and LLC[1] from both of the second, shearing each segment instead of
+# translating it. Silently: the shapes happen to line up in 2D.
+
+def _fluid_with_llc():
+    '''A FluidData recording a nonzero original lower-left corner.'''
+    g = np.linspace(0, 10, 11)
+    X, Y = np.meshgrid(g, g, indexing='ij')
+    donor = planktos.Environment(Lx=10, Ly=10,
+                                 flow=[np.zeros_like(X), np.zeros_like(Y)])
+    donor.flow.fluid_domain_LLC = LLC
+    return donor.flow
+
+
+def test_shift_ibmesh_to_match_LLC_static():
+    envir = planktos.Environment(Lx=10, Ly=10)
+    envir.read_IB2d_mesh_data(str(FIXTURES / BOX), method='adjacent')
+    before = envir.ibmesh.copy()
+    envir.flow = _fluid_with_llc()
+    envir.shift_ibmesh_to_match_LLC()
+    assert np.allclose(envir.ibmesh, before - np.array(LLC))
+
+
+def test_shift_ibmesh_to_match_LLC_moving_translates_rigidly():
+    envir = planktos.Environment(Lx=10, Ly=10)
+    envir.read_IB2d_mesh_data(str(FIXTURES / 'lagspts_min'), dt=0.1,
+                              print_dump=1, d_start=0)
+    before = envir.ibmesh.copy()
+    assert before.shape == (3, 3, 2, 2)
+    envir.flow = _fluid_with_llc()
+    envir.shift_ibmesh_to_match_LLC()
+
+    # every vertex moves by exactly -LLC, at every time
+    assert np.allclose(envir.ibmesh, before - np.array(LLC))
+    # and the segments keep their shape -- this is what shearing destroyed
+    assert np.allclose(envir.ibmesh[..., 1, :] - envir.ibmesh[..., 0, :],
+                       before[..., 1, :] - before[..., 0, :])
+
+
+def test_shift_ibmesh_to_match_LLC_3d():
+    # Static 3D triangles are (N,3,3). Built by hand to avoid the optional
+    # numpy-stl dependency; only the array layout matters here.
+    envir = planktos.Environment(Lx=10, Ly=10, Lz=10)
+    envir.ibmesh = np.array([[[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]],
+                             [[1., 0., 0.], [1., 1., 0.], [0., 1., 2.]]])
+    before = envir.ibmesh.copy()
+    g = np.linspace(0, 10, 6)
+    X, Y, Z = np.meshgrid(g, g, g, indexing='ij')
+    donor = planktos.Environment(Lx=10, Ly=10, Lz=10,
+                                 flow=[np.zeros_like(X), np.zeros_like(Y),
+                                       np.zeros_like(Z)])
+    donor.flow.fluid_domain_LLC = (1.0, 0.5, 0.25)
+    envir.flow = donor.flow
+    envir.shift_ibmesh_to_match_LLC()
+    assert np.allclose(envir.ibmesh, before - np.array([1.0, 0.5, 0.25]))
+
+
+@pytest.mark.parametrize('kind', ['static', 'moving'])
+def test_shift_ibmesh_to_match_LLC_matches_the_other_load_order(kind):
+    # The contract, stated as an equivalence: loading the fluid first (so the
+    # loader shifts the mesh) and loading the mesh first then calling this must
+    # produce the same mesh.
+    if kind == 'static':
+        args, kwargs = (str(FIXTURES / BOX),), {'method': 'adjacent'}
+    else:
+        args = (str(FIXTURES / 'lagspts_min'),)
+        kwargs = {'dt': 0.1, 'print_dump': 1, 'd_start': 0}
+
+    fluid_first = planktos.Environment(Lx=10, Ly=10)
+    fluid_first.flow = _fluid_with_llc()
+    fluid_first.read_IB2d_mesh_data(*args, **kwargs)
+
+    mesh_first = planktos.Environment(Lx=10, Ly=10)
+    mesh_first.read_IB2d_mesh_data(*args, **kwargs)
+    mesh_first.flow = _fluid_with_llc()
+    mesh_first.shift_ibmesh_to_match_LLC()
+
+    assert np.allclose(mesh_first.ibmesh, fluid_first.ibmesh)
+
+
+def test_shift_ibmesh_to_match_LLC_requires_a_mesh():
+    # Was a bare TypeError from subscripting None, unlike the two neighboring
+    # guards which say what is missing.
+    envir = planktos.Environment(Lx=10, Ly=10)
+    envir.flow = _fluid_with_llc()
+    assert envir.ibmesh is None
+    with pytest.raises(AssertionError, match='mesh'):
+        envir.shift_ibmesh_to_match_LLC()
+
+
+# --------------------------------------------------------------------------- #
 #            IBAMR vtk fluid (in-repo data, vtk-gated)                        #
 # --------------------------------------------------------------------------- #
 

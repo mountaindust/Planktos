@@ -409,16 +409,30 @@ class Environment:
 
 
     def shift_ibmesh_to_match_LLC(self):
-        '''If the fluid position was translated to the origin but the 
-        ibmesh wasn't (possibly b/c the ibmesh was loaded first), 
-        this method will shift the ibmesh based on the original 
-        location of the fluid LLC.'''
+        '''If the fluid position was translated to the origin but the
+        ibmesh wasn't (possibly b/c the ibmesh was loaded first),
+        this method will shift the ibmesh based on the original
+        location of the fluid LLC.
+
+        Call this only when the mesh was loaded *before* the fluid. A mesh
+        loaded after a fluid has already been shifted by its loader, and calling
+        this on top of that would shift it a second time. Nothing can detect
+        that from the stored state, so it is up to the caller.
+
+        Works for every ibmesh layout: static 2D (N,2,2), static 3D triangles
+        (N,3,3), and moving 2D (T,N,2,2). The coordinate axis is the last one in
+        all three, which is why the indexing below is by ellipsis -- indexing a
+        fixed axis silently sheared moving meshes, subtracting one component of
+        the LLC from *both* coordinates of each segment endpoint rather than
+        translating the segment.
+        '''
 
         assert self.flow is not None, "No fluid velocity field loaded."
         assert self.flow.fluid_domain_LLC is not None, "No orig LLC info."
+        assert self.ibmesh is not None, "No immersed boundary mesh loaded."
         # move any ibmesh to match the LLC shift
         for ii in range(len(self.flow.fluid_domain_LLC)):
-            self.ibmesh[:,:,ii] -= self.flow.fluid_domain_LLC[ii]
+            self.ibmesh[...,ii] -= self.flow.fluid_domain_LLC[ii]
 
 
     #######################################################################

@@ -232,12 +232,29 @@ because step 1 was verified by running the examples end to end.
   fluid-free and shifted-fluid environments, plus a moving-mesh shift test; exactly the
   two previously-unshifted branches fail without the fix.
 
-- [ ] 🟢 **Check `shift_ibmesh_to_match_LLC` against moving meshes.** Noticed while
-  fixing the above, not investigated. It exists for the load-mesh-before-fluid ordering
-  and does `self.ibmesh[:,:,ii] -= ...`, which indexes a static `(N,2,2)` mesh. A moving
-  mesh is `(T,N,2,2)`, so that indexing hits the wrong axis. Confirm, then either
-  generalize it (`self.ibmesh[...,ii]` would cover both) or make it refuse a moving
-  mesh outright.
+- [x] **`shift_ibmesh_to_match_LLC` corrupted moving meshes — DONE.** It indexed
+  `self.ibmesh[:,:,ii]`, which is the coordinate axis only for a static mesh. A moving
+  mesh is `(T,N,2,2)` where axis 2 is the **endpoint** axis, so it subtracted `LLC[0]`
+  from *both* coordinates of every segment's first endpoint and `LLC[1]` from both of
+  the second — **shearing each segment rather than translating it**, and silently,
+  since the shapes line up in 2D. Fixed by indexing the last axis with an ellipsis
+  (`self.ibmesh[...,ii]`), which is the coordinate axis for all three layouts: static 2D
+  `(N,2,2)`, static 3D `(N,3,3)`, moving 2D `(T,N,2,2)`. Also added a
+  `self.ibmesh is not None` assertion — it used to fail with a bare `TypeError` from
+  subscripting `None` while its two neighbouring guards had clear messages.
+
+  **`dyload`-only**: the method does not exist on `master` at all. No changelog entry
+  (never shipped), nothing to cherry-pick.
+
+  It is public API with **no callers anywhere** — not in the package, tests, examples,
+  or docs prose — so it was pure untested surface that Sphinx nonetheless documents.
+  Now covered in `test_io_loaders.py`: static, moving (asserting the segments stay
+  rigid, which is what the shear destroyed), static 3D, the missing-mesh guard, and an
+  equivalence test pinning the actual contract — loading fluid-then-mesh (loader
+  shifts) must give the same mesh as mesh-then-fluid plus this call.
+
+  Docstring now warns that calling it on a mesh loaded *after* a fluid double-shifts;
+  nothing can detect that from stored state, so it is the caller's responsibility.
 
 ### Cleanup (low urgency)
 
