@@ -3,6 +3,7 @@
 Bug fixes.
 - Bug fix: calculate_FTLE(swrm=...) raised AttributeError on the first step, and appended to the caller's Swarm history.
 - Bug fix: meshes imported by the 'adjacent' method or as a moving mesh now follow the fluid's coordinate shift, as the other methods already did.
+- Bug fix: the immersed-boundary collision back-off is now a fixed fraction of the geometry; it grew with domain size and gave NaN at negative coordinates.
 
 
 1.0.1

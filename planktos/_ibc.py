@@ -14,7 +14,28 @@ from scipy import integrate, optimize
 from . import _geom
 
 
-def apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist, 
+def _boundary_eps(*coord_arrays):
+    '''Distance to perturb an agent off a boundary it has just been placed on.
+
+    This exists only to keep floating-point round-off from leaving an agent a
+    hair on the *solid* side of the boundary it just struck. It must therefore
+    be large enough to dominate round-off and small enough to be physically
+    negligible -- which makes it a fixed fraction of the problem's coordinate
+    magnitude, not a fixed distance.
+
+    Scaled to about 1e-7 of the largest coordinate involved. Double precision
+    carries ~1e-16 relative, so this clears round-off by nine orders while
+    staying far below any meaningful length.
+    '''
+
+    scale = np.max(np.abs(np.concatenate(coord_arrays, axis=None)))
+    if not scale > 0:
+        # Everything sits at the origin: no coordinate magnitude to scale to.
+        scale = 1.0
+    return 10.0**(np.ceil(np.log10(scale)) - 7)
+
+
+def apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist,
                              ib_collisions='sliding'):
     '''Apply internal boundaries to a trajectory starting and ending at
     startpt and endpt, returning a new endpt (or the original one) as
@@ -146,9 +167,7 @@ def apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist,
         # small number to perturb off of the actual boundary in order to avoid
         #   roundoff errors that would allow penetration
         # base its magnitude off of the given coordinate points
-        coord_mag = np.ceil(np.log(np.max(
-            np.concatenate((startpt,endpt,close_mesh),axis=None))))
-        EPS = 10**(coord_mag-7)
+        EPS = _boundary_eps(startpt, endpt, close_mesh)
 
         back_vec = (startpt-endpt)/np.linalg.norm(endpt-startpt)
         return intersection[0] + back_vec*EPS, np.zeros((DIM)), mesh_idx[idx]
@@ -248,9 +267,7 @@ def apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
         # small number to perturb off of the actual boundary in order to avoid
         #   roundoff errors that would allow boundary penetration
         # base its magnitude off of the given coordinate points
-        coord_mag = np.ceil(np.log(np.max(
-            np.concatenate((startpt,endpt,close_mesh_start,close_mesh_end),axis=None))))
-        EPS = 10**(coord_mag-7)
+        EPS = _boundary_eps(startpt, endpt, close_mesh_start, close_mesh_end)
 
         if DIM == 2:
             x = intersection[0]    # (x,y) coordinates of intersection
@@ -532,9 +549,7 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
     # small number to perturb off of the actual boundary in order to avoid
     #   roundoff errors that would allow penetration
     # base its magnitude off of the given coordinate points
-    coord_mag = np.ceil(np.log(np.max(
-        np.concatenate((startpt,endpt,mesh),axis=None))))
-    EPS = 10**(coord_mag-7)
+    EPS = _boundary_eps(startpt, endpt, mesh)
 
     # Get full travel vector
     vec = endpt-startpt
@@ -918,9 +933,7 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
     # small number to perturb off of the actual boundary in order to avoid
     #   roundoff errors that would allow penetration
     # base its magnitude off of the given coordinate points
-    coord_mag = np.ceil(np.log(np.max(
-        np.concatenate((startpt,endpt,mesh_start,mesh_end),axis=None))))
-    EPS = 10**(coord_mag-7)
+    EPS = _boundary_eps(startpt, endpt, mesh_start, mesh_end)
 
     DIM = len(startpt)
 

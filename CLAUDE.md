@@ -271,11 +271,31 @@ The suite is organized into focused, deterministic, fast modules (overhauled
 - **Non-automated** visual/exploratory scripts live in `tests/manual/` —
   excluded from collection via `collect_ignore` in `conftest.py`.
 
+### What an `xfail` means here (a priority signal, not a parking space)
+
+**An `xfail` in this suite marks a bug serious enough to stop the development
+cycle for.** It is not a way to defer something inconvenient. The convention:
+
+- **`xfail` ⇒ drop other work and fix it.** If a defect does not warrant that,
+  it does not get an `xfail` — it goes in the **issue tracker** with
+  reproduction notes instead.
+- **Always `strict=True`**, always with a `reason` naming the defect. Strict
+  means the suite *fails* the moment the test starts passing, so a marker cannot
+  outlive its bug.
+- **No issue-tracker entry is needed for an `xfail`ed bug.** The test already
+  catalogues it, with an executable reproduction — that is strictly better than
+  prose. Duplicating it in the tracker just creates two things to keep in sync.
+- **Delete the marker in the same commit as the fix.**
+- The steady state is still zero `xfail`s. A non-empty list means work is in
+  flight right now.
+
+Check with `pytest -rX` (lists xfails) or `pytest -rxX` (xfails and xpasses).
+
 ### Resolved defects & FTLE notes
 
 The overhaul and its follow-ups uncovered and fixed a series of latent bugs, each
-with a regression test (the suite has no xfails); see `changelog.txt` for the
-list. Two FTLE specifics worth knowing (`calculate_FTLE`):
+with a regression test; see `changelog.txt` for the list. Two FTLE specifics
+worth knowing (`calculate_FTLE`):
 - `FTLE_smallest` is the smallest-eigenvalue (contraction) exponent, **not**
   backward-time FTLE (the old "negate it" guidance was wrong). For attracting LCS,
   call `calculate_FTLE(..., backward=True)` — it integrates the reversed flow and

@@ -55,6 +55,33 @@ def polyline(points):
     return np.stack([pts[:-1], pts[1:]], axis=1)
 
 
+def star_2D(hub, tips):
+    '''Segments radiating from a single hub point to each tip: (len(tips),2,2).
+
+    Builds vertices of degree > 2, which every chain-shaped builder above is
+    incapable of producing. The number of elements adjacent to a slide that runs
+    off the hub is what exercises the multi-element branch of the slide code.
+    '''
+    hub = np.asarray(hub, dtype=float)
+    return np.stack([np.stack([hub, np.asarray(t, dtype=float)]) for t in tips])
+
+
+def closed_polygon(points):
+    '''Closed chain of segments through points and back to the first: (N,2,2).'''
+    pts = np.asarray(points, dtype=float)
+    return polyline(np.vstack([pts, pts[:1]]))
+
+
+def book_3D(e0, e1, tips):
+    '''Triangles all sharing the edge e0->e1, one per tip: (len(tips),3,3).
+
+    The 3D analogue of star_2D: a non-manifold edge. A closed surface shares each
+    edge between exactly two triangles, so no manifold mesh can produce this.
+    '''
+    e0 = np.asarray(e0, dtype=float); e1 = np.asarray(e1, dtype=float)
+    return np.stack([np.stack([e0, e1, np.asarray(t, dtype=float)]) for t in tips])
+
+
 def max_meshpt_dist(mesh):
     '''Longest edge of any element. Vertex-count agnostic: for 2D segments
     (M,2,2) this is |v0-v1|; for 3D triangles (M,3,3) it is the longest of the
@@ -150,6 +177,66 @@ def assert_not_penetrated_2D(start, end, Q0, Q1, atol=POS_ATOL):
     # end must remain on the start side, give-or-take the on-line tolerance
     assert np.sign(s1) == np.sign(s0) or abs(s1) <= atol, (
         f"penetration: start side dist {s0:.2e}, end side dist {s1:.2e}")
+
+
+# ------------- implementation-independent invariant assertions -------------
+# These hold for ANY correct collision policy, so they can be asserted on
+# geometries whose exact resolved position has not been specified.
+
+def assert_finite(pt, label='result'):
+    '''The resolved position must be a real point. NaN/inf means an agent has
+    silently left the simulation rather than been placed somewhere.'''
+    arr = np.asarray(pt, dtype=float)
+    assert np.all(np.isfinite(arr)), f"{label} is not finite: {arr}"
+
+
+def assert_displacement_bounded(start, end, newend, rtol=1e-6, atol=POS_ATOL):
+    '''Frictionless sliding projects the movement onto the boundary, so the
+    resolved displacement can never exceed the attempted one. A result that
+    travels further than the agent tried to means energy was added.'''
+    start = np.asarray(start, float); end = np.asarray(end, float)
+    attempted = np.linalg.norm(end - start)
+    resolved = np.linalg.norm(np.asarray(newend, float) - start)
+    assert resolved <= attempted*(1 + rtol) + atol, (
+        f"resolved displacement {resolved:.6g} exceeds attempted {attempted:.6g}")
+
+
+def point_inside_polygon(P, poly_pts, tol=0.0):
+    '''Ray-cast containment test for a simple closed polygon given as its
+    vertices in order. Written out rather than pulled from matplotlib so the
+    assertion has no rendering dependency.'''
+    P = np.asarray(P, dtype=float)
+    pts = np.asarray(poly_pts, dtype=float)
+    inside = False
+    n = len(pts)
+    for i in range(n):
+        x0, y0 = pts[i]
+        x1, y1 = pts[(i + 1) % n]
+        if (y0 > P[1]) != (y1 > P[1]):
+            x_cross = x0 + (P[1] - y0)*(x1 - x0)/(y1 - y0)
+            if P[0] < x_cross:
+                inside = not inside
+    return inside
+
+
+def assert_outside_polygon(P, poly_pts, label='result'):
+    '''The no-penetration invariant in the form that survives any sliding
+    policy: an agent that started outside a closed obstacle must end outside it,
+    wherever along the boundary it was placed.'''
+    assert not point_inside_polygon(P, poly_pts), (
+        f"{label} {np.asarray(P)} ended up INSIDE the closed obstacle")
+
+
+def rigid_2D(theta, offset=(0.0, 0.0)):
+    '''Return a function applying a rotation by theta then a translation to the
+    last axis of any array of 2D points.'''
+    c, s = np.cos(theta), np.sin(theta)
+    R = np.array([[c, -s], [s, c]])
+    off = np.asarray(offset, dtype=float)
+
+    def apply(pts):
+        return np.asarray(pts, dtype=float) @ R.T + off
+    return apply
 
 
 def call_static(start, end, mesh, ib_collisions='sliding'):
