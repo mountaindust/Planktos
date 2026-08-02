@@ -14,6 +14,32 @@ from scipy import integrate, optimize
 from . import _geom
 
 
+def _slide_too_deep(startpt, endpt, mesh):
+    '''Explain a RecursionError raised out of the sliding routines.
+
+    A sliding agent recurses once per mesh element it crosses, so the depth is
+    set by how far the step carries it along the boundary relative to the mesh
+    spacing. Exhausting the stack therefore says something specific -- the step
+    is long compared to the mesh -- which a bare RecursionError raised from
+    somewhere in the geometry code does not convey.
+    '''
+
+    dist = np.linalg.norm(np.asarray(endpt, dtype=float)
+                          - np.asarray(startpt, dtype=float))
+    mesh = np.asarray(mesh, dtype=float)
+    elem = np.linalg.norm(mesh[..., 1, :] - mesh[..., 0, :], axis=-1)
+    typical = float(np.median(elem)) if elem.size else float('nan')
+    crossed = dist/typical if typical > 0 else float('nan')
+    return RuntimeError(
+        'Ran out of stack while sliding an agent along an immersed boundary. '
+        'Sliding recurses once per mesh element crossed, and this step moves '
+        '{:.4g} against a typical element of {:.4g} -- on the order of {:.0f} '
+        'elements in one step. Reduce dt, coarsen the mesh, or raise '
+        'sys.setrecursionlimit if the run genuinely needs a slide this deep. '
+        'Agent moved from {} to {}.'.format(
+            dist, typical, crossed, np.asarray(startpt), np.asarray(endpt)))
+
+
 def _boundary_eps(*coord_arrays):
     '''Distance to perturb an agent off a boundary it has just been placed on.
 
@@ -157,8 +183,11 @@ def apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist,
 
         # Project remaining piece of vector onto mesh and repeat processes 
         #   as necessary until we have a final result.
-        new_pos = _project_and_slide_static(startpt, endpt, intersection, 
-                                                    close_mesh, max_meshpt_dist)
+        try:
+            new_pos = _project_and_slide_static(startpt, endpt, intersection,
+                                                close_mesh, max_meshpt_dist)
+        except RecursionError as err:
+            raise _slide_too_deep(startpt, endpt, close_mesh) from err
         return new_pos, new_pos - intersection[0], mesh_idx[idx]
     
     elif ib_collisions == 'sticky':
@@ -347,9 +376,12 @@ def apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
         if DIM == 2:
             # Project remaining piece of vector onto mesh and repeat processes 
             #   as necessary until we have a final result.
-            new_pos = _project_and_slide_moving(startpt, endpt, intersection, 
-                                            close_mesh_start, close_mesh_end, 
-                                            max_meshpt_dist, max_mov)
+            try:
+                new_pos = _project_and_slide_moving(startpt, endpt, intersection,
+                                                close_mesh_start, close_mesh_end,
+                                                max_meshpt_dist, max_mov)
+            except RecursionError as err:
+                raise _slide_too_deep(startpt, endpt, close_mesh_start) from err
             return new_pos, new_pos - intersection[0], mesh_idx[idx]
 
         else:
@@ -957,8 +989,8 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
 
 
 
-def _project_and_slide_moving(startpt, endpt, intersection, mesh_start, 
-                              mesh_end, max_meshpt_dist, max_mov, 
+def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
+                              mesh_end, max_meshpt_dist, max_mov,
                               prev_idx=None):
     '''Once we have an intersection point with an immersed mesh, slide the 
     agent along the moving mesh for its remaining movement (frictionless 

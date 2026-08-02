@@ -429,6 +429,67 @@ def test_head_on_hit_computes_no_invalid_values(geom):
 
 
 # --------------------------------------------------------------------------- #
+#                       running out of stack while sliding                    #
+# --------------------------------------------------------------------------- #
+# A sliding agent recurses once per element it crosses, so the depth is set by
+# how far the step carries it along the boundary relative to the mesh spacing.
+# Each transfer consumes a whole element, so this is bounded -- but by the step
+# length over the element length, which an over-large dt pushes arbitrarily
+# high. Nothing here caps the depth; the point is that when the stack does run
+# out, the failure explains itself instead of surfacing as a bare RecursionError
+# from wherever in the geometry code the stack happened to give way.
+#
+# For scale, an agent grazing the entire length of the 2700-element IB2d channel
+# wall in one step recurses about 300 times, comfortably inside the default
+# limit.
+
+def _fine_wall(n_elements, x=5.0, y_hi=10.0):
+    return h.wall_segments(n_elements, x, y_lo=0.0, y_hi=y_hi)
+
+
+def test_ordinary_deep_slide_still_works():
+    '''A long slide across many elements is legitimate and must not be limited
+    by anything other than the interpreter's own stack.'''
+    mesh = _fine_wall(400)
+    start = np.array([4.9, 1.0])
+    end = np.array([5.3, 7.0])              # ~240 elements
+    newend, _, _ = h.call_static(start, end, mesh)
+    h.assert_finite(newend, 'deep but legitimate slide')
+    h.assert_not_penetrated_2D(start, newend, mesh[0, 0], mesh[0, 1])
+
+
+def test_exhausting_the_stack_reports_the_cause():
+    '''The re-raise names what ran out, why, and what to change -- and keeps the
+    original RecursionError as the cause so the traceback still shows where.'''
+    mesh = _fine_wall(4000)
+    start = np.array([4.9, 0.5])
+    end = np.array([5.3, 9.5])              # far more elements than the stack
+
+    with pytest.raises(RuntimeError, match='sliding an agent') as excinfo:
+        h.call_static(start, end, mesh)
+
+    msg = str(excinfo.value)
+    assert 'dt' in msg, f'should say what to change; got: {msg}'
+    assert 'setrecursionlimit' in msg, f'should offer the escape hatch: {msg}'
+    assert isinstance(excinfo.value.__cause__, RecursionError), \
+        'the original RecursionError should be chained as the cause'
+
+
+def test_stack_exhaustion_message_quantifies_the_mismatch():
+    '''The useful number is the step length against the mesh spacing, since
+    their ratio is what sets the recursion depth.'''
+    mesh = _fine_wall(4000, y_hi=10.0)      # elements of 0.0025
+    start = np.array([4.9, 0.5])
+    end = np.array([5.3, 9.5])
+
+    with pytest.raises(RuntimeError) as excinfo:
+        h.call_static(start, end, mesh)
+    msg = str(excinfo.value)
+    assert '0.0025' in msg, f'should report the element scale; got: {msg}'
+    assert 'elements in one step' in msg
+
+
+# --------------------------------------------------------------------------- #
 #                 general sanity checks, any geometry                         #
 # --------------------------------------------------------------------------- #
 # These say nothing about junctions; they are properties every collision must
