@@ -147,7 +147,10 @@ if __name__ == '__main__':
             # if np.any(swrm.ib_collision_idx): # uncomment to display whenever something is getting stuck!
             #     swrm.plot()
         
-    swrm.plot_all(movie_filename='mvbnd_sticky.mp4', fps=6, fluid='vort',
-                plot_heading=False)
+    # 0.15 simulated seconds per second of video: roughly 7x slow motion, so the
+    #   jellyfish stroke and the vortices it sheds are legible. At dt=0.025 that
+    #   allows up to 6 fps (playback_rate/fps must be at least dt).
+    swrm.plot_all(movie_filename='mvbnd_sticky.mp4', fps=6, playback_rate=0.15,
+                fluid='vort', plot_heading=False)
 
 

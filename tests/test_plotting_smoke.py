@@ -124,9 +124,16 @@ def test_swarm_plot_3d_saves_file(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which('ffmpeg') is None, reason="ffmpeg not on PATH")
-def test_swarm_plot_all_movie_saves_file(tmp_path):
+@pytest.mark.parametrize('kw', [
+    {'fps': 5},                             # dt_frame = 0.2 s, every other step
+    {'fps': 10, 'playback_rate': 1},        # dt_frame = 0.1 s, every step
+    {'frames': [0, 2]},                     # explicit frames still override
+])
+def test_swarm_plot_all_movie_saves_file(tmp_path, kw):
     # The animation/movie path (uses ffmpeg). Kept small so the default run stays fast.
+    # Frame selection itself is pinned in test_frame_selection.py; this only
+    # checks that each way of specifying frames reaches the writer.
     swrm = _spread_swarm(_envir_2d(), n=10)
     out = tmp_path / 'movie.mp4'
-    swrm.plot_all(movie_filename=str(out), fps=5)
+    swrm.plot_all(movie_filename=str(out), **kw)
     assert out.is_file()

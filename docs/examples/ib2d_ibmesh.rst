@@ -103,27 +103,37 @@ its pool attribute (or the pool keyword of the constructor), and Planktos will
 dispatch the check across workers. By default (pool=None) it runs serially.
 
 Planktos will create a movie if you just pass a filename with an
-appropriate extension to the plot_all method of the searm object. By 
-default, one frame is created per time step taken in the simulation (this
-can be changed using the frames argument to plot_all), so you will likely
-want to adjust the number of frames per second (fps) accordingly. Also, in 2D, 
-you have the option of plotting vorticity behind the agents to better see how 
-they are reacting to the fluid. Run the example script to get the full movie; 
+appropriate extension to the plot_all method of the swarm object. Two
+parameters control its timing: fps is how *smooth* the movie is (frames per
+second, as in any video), while playback_rate is how *fast* it plays, in
+seconds of simulated time per second of video. The default playback_rate of 1
+is real time; 0.075, used here, is about 13x slow motion, which gives the flow
+structures time to be seen. Also, in 2D,
+you have the option of plotting vorticity behind the agents to better see how
+they are reacting to the fluid. Run the example script to get the full movie;
 a still partway through the simulation is shown below. ::
 
-    swrm.plot_all(movie_filename='channel_flow_ibmesh.mp4', fps=3, fluid='vort')
+    swrm.plot_all(movie_filename='channel_flow_ibmesh.mp4', fps=3,
+                  playback_rate=0.075, fluid='vort')
 
-Creating movies is another bottleneck in Planktos. Every frame has to be 
-generated individually and then saved, and the fluid vorticity is 
-calculated on-the-fly, internally. In fact, if you have 2D fluid velocity 
-data but not the vorticity data, Planktos can calculate it for you and save 
+Frames can only show states the simulation actually captured, so
+playback_rate/fps must be at least dt -- here 0.075/3 = 0.025, exactly the
+timestep. Ask for more and Planktos warns and clamps to one frame per timestep.
+The practical consequence is worth remembering: smoother slow motion requires a
+smaller dt, not a higher fps.
+
+Creating movies is another bottleneck in Planktos. Every frame has to be
+generated individually and then saved, and the fluid vorticity is
+calculated on-the-fly, internally. In fact, if you have 2D fluid velocity
+data but not the vorticity data, Planktos can calculate it for you and save
 the vorticity data as vtk files, either at the original time points of the
 fluid data or interpolated to the simulation times. All this is to say:
 if you have a simulation with a lot of time steps, there's no reason to be
-making a movie with every one of those time steps as a frame! Depending on 
-the fps, you'll never notice the loss of detail if you just plot every Nth
-simulation step as a frame, and this is highly encouraged to cut down on 
-movie generation time and file size.
+making a movie with every one of those time steps as a frame -- and fps and
+playback_rate see to that automatically, since only the states needed for the
+requested frames are ever drawn. If you want a specific set of steps instead,
+the frames parameter of plot_all takes an explicit list of time step indices
+and overrides the fps/playback_rate selection.
 
 .. image:: ../_static/ib2d_cyl_agents.png
 

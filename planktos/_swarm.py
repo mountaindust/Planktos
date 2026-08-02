@@ -2237,7 +2237,89 @@ class Swarm:
 
 
 
-    def plot_all(self, movie_filename=None, frames=None, downsamp=None, fps=10, 
+    def _select_frames(self, fps, playback_rate):
+        '''Choose which recorded states of the simulation become frames.
+
+        Frames are laid down at a fixed interval of *simulated* time,
+        dt_frame = playback_rate/fps, and each one shows the recorded state
+        nearest to it. The first and last states are always included, so the
+        animation spans the whole run. Frames cannot be produced in between
+        recorded states, so a dt_frame finer than the interval between them is
+        clamped to one frame per state, with a warning.
+
+        Parameters
+        ----------
+        fps : int
+            frames per second of the animation.
+        playback_rate : float
+            simulated seconds per second of animation.
+
+        Returns
+        -------
+        ndarray of int
+            frame indices into the position history, where the final index
+            (equal to its length) means the present state.
+        '''
+
+        if fps <= 0 or playback_rate <= 0:
+            raise ValueError('fps and playback_rate must both be positive.')
+
+        # states available to draw: the position history, then the present.
+        # frame index n means pos_history[n] at time_history[n], with index
+        # len(pos_history) meaning the present positions at envir.time.
+        n_hist = len(self.pos_history)
+        if len(self.envir.time_history) < n_hist:
+            # histories out of step (e.g. move(update_time=False) without a
+            # matching environmental time update). there are no reliable times
+            # to select against, so fall back on a frame per recorded state.
+            return np.arange(n_hist+1)
+        times = np.concatenate((self.envir.time_history[:n_hist],
+                                (self.envir.time,)))
+        if len(times) < 2:
+            return np.arange(len(times))
+
+        dt_frame = playback_rate/fps
+        span = times[-1] - times[0]
+        # mean interval between recorded states; dt itself for a fixed timestep
+        dt_state = span/(len(times)-1)
+
+        # frame times, then the recorded state nearest to each of them
+        frame_times = times[0] + np.arange(int(span/dt_frame)+1)*dt_frame
+        hi = np.clip(np.searchsorted(times, frame_times), 1, len(times)-1)
+        frames = np.where(frame_times-times[hi-1] <= times[hi]-frame_times,
+                          hi-1, hi)
+
+        unique_frames = np.unique(frames)
+        # the tolerance keeps a deliberately exact choice (playback_rate/fps
+        # meant to equal dt) from tripping the clamp on floating point roundoff
+        if dt_frame < dt_state*(1-1e-9) or len(unique_frames) < len(frames):
+            warnings.warn("Cannot draw a frame every {:.3g} s of simulated ".format(dt_frame)+
+                "time: states were only recorded every {:.3g} s. ".format(dt_state)+
+                "Using one frame per recorded state, which plays at {:.3g} ".format(dt_state*fps)+
+                "rather than {:.3g} simulated s per s of video; ".format(playback_rate)+
+                "an fps of {:.3g} or less gives the rate you asked for.".format(playback_rate/dt_state),
+                stacklevel=3)
+            frames = unique_frames
+        elif np.max(np.abs(np.diff(times[frames])-dt_frame), initial=0) > dt_frame/6:
+            # frames land on recorded states, so their spacing jitters by up to
+            # one recording interval whenever dt_frame is not a whole multiple
+            # of it. the video is encoded at a constant fps regardless, so this
+            # shows up as uneven motion.
+            warnings.warn("A frame every {:.3g} s of simulated time is only ".format(dt_frame)+
+                "{:.3g}x the {:.3g} s between recorded states, and not a ".format(dt_frame/dt_state, dt_state)+
+                "whole multiple of it, so motion will look slightly uneven.",
+                stacklevel=3)
+
+        # always finish on the final recorded state
+        if frames[-1] != len(times)-1:
+            frames = np.append(frames, len(times)-1)
+
+        return frames
+
+
+
+    def plot_all(self, movie_filename=None, frames=None, downsamp=None, fps=10,
+                 playback_rate=1,
                  dist='density', fluid=None, clip=None, figsize=None, circ_rad=0.25,
                  plot_heading=True, save_kwargs=None, writer_kwargs=None, 
                  azim=None, elev=None):
@@ -2253,22 +2335,29 @@ class Swarm:
         movie_filename : string, optional
             file name to save movie as. file extension will determine the type
             of file saved.
-        frames : iterable of integers, optional. 
-            If None, plot the entire history of the swarm's movement including 
-            the present time, with each step being a frame in the animation. If 
+        frames : iterable of integers, optional.
+            If None, frames are chosen from fps and playback_rate (below). If
             an iterable, plot only the time steps of the swarm as indexed by
-            the iterable (note, this is an iterable of the time step indices,
-            not the time in seconds at those time steps!).
-        downsamp : iterable of int or int, optional 
-            If None, do not downsample the agents - plot them all. If an integer, 
-            plot only the first n agents (equivalent to range(downsamp)). 
-            If an iterable, plot only the agents specified. In all cases, 
-            statistics are reported for the TOTAL population, both shown and 
+            the iterable, overriding playback_rate (note, this is an iterable
+            of the time step indices, not the time in seconds at those time
+            steps!).
+        downsamp : iterable of int or int, optional
+            If None, do not downsample the agents - plot them all. If an integer,
+            plot only the first n agents (equivalent to range(downsamp)).
+            If an iterable, plot only the agents specified. In all cases,
+            statistics are reported for the TOTAL population, both shown and
             unshown. This includes the histograms/KDE plots.
         fps : int, default=10
-            Frames per second, only used if saving a movie to file. Make
-            sure this is at least as big as 1/dt, where dt is the time interval
-            between frames!
+            Frames per second of the animation: how *smooth* it is. Standard
+            video rates are 24-30 fps.
+        playback_rate : float, default=1
+            Seconds of simulated time per second of animation: how *fast* it
+            plays. 1 is real time (assuming simulated time is in seconds), 0.5
+            is half-speed slow motion, 10 is ten times fast forward. Together 
+            with fps this fixes the simulated time between frames,
+            dt_frame = playback_rate/fps, and each frame shows the recorded
+            state nearest to it in time. dt_frame must be at least the
+            timestep dt.
         dist : {'density' (default), 'cov', float, 'hist'}
             whether to plot Gaussian kernel density estimation or histogram.
             Options are:
@@ -2323,10 +2412,9 @@ class Swarm:
         DIM3 = (len(self.envir.L) == 3)
 
         if frames is None:
-            n0 = 0
-        else:
-            n0 = frames[0]
-            
+            frames = self._select_frames(fps, playback_rate)
+        n0 = frames[0]
+
         if isinstance(downsamp, int):
             downsamp = range(downsamp)
 
@@ -3217,13 +3305,10 @@ class Swarm:
                         return [scat, time_text, flow_text, perc_text, x_text, 
                                 y_text, z_text, xdens_plt, ydens_plt, zdens_plt]
 
-        # infer animation rate from dt between current and last position
-        dt = self.envir.time - self.envir.time_history[-1]
-
-        if frames is None:
-            frames = range(len(self.pos_history)+1)
+        # on-screen playback: the frames were chosen to be fps apart in the
+        # finished video, so display them that far apart too (in milliseconds).
         anim = animation.FuncAnimation(fig, animate, frames=frames,
-                                    interval=dt*100, repeat=False, blit=True)
+                                    interval=1000/fps, repeat=False, blit=True)
 
         if movie_filename is not None:
             try:

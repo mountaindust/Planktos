@@ -2,9 +2,9 @@
 
 Status: **plan / design note** (2026-07). Records the decisions reached while
 investigating the `dyload` Phase-0 "`FlowArray` breaks numpy interop" item. §7 is
-complete (`FlowArray` deleted, tiling gated off) and §8 step 1 (frame statistics)
-has landed; §8 steps 2–5 and §9 remain the agreed plan. Individual sections carry
-their own **[done]** markers.
+complete (`FlowArray` deleted, tiling gated off) and §8 steps 1 (frame statistics)
+and 2 (`fps`/`playback_rate`) have landed; §8 steps 3–5 and §9 remain the agreed
+plan. Individual sections carry their own **[done]** markers.
 
 **Revised 2026-07-31:** the tiling *stopgap* (2D materialization) was dropped —
 tiling and domain extension are now deferred **wholesale**, raising
@@ -382,10 +382,10 @@ one.
 
 ## 8. Plotting streaming — implementation plan
 
-Status: **step 1 built; steps 2–5 specified, not yet implemented** (design settled
-2026-07-31). All design questions are decided; what follows is the specification and
-build order, not a discussion. The deliberation that produced these choices — the
-options weighed and rejected — is in this file's git history.
+Status: **steps 1 and 2 built; steps 3–5 specified, not yet implemented** (design
+settled 2026-07-31). All design questions are decided; what follows is the
+specification and build order, not a discussion. The deliberation that produced these
+choices — the options weighed and rejected — is in this file's git history.
 
 **Starting cold?** Read §8.1–§8.2 for the problem and scope, then §8.4 for what to
 build first and §8.4.1 for the concrete entry points.
@@ -664,7 +664,7 @@ under linear interpolation and very tight under cubic. If a live one-pass render
 is ever offered it has no global scale available and must take an explicit
 `clip`/`vmin`/`vmax`, or disclose the drift on the colorbar.
 
-#### 8.3.5 Frame rate: `fps` and `playback_rate`
+#### 8.3.5 Frame rate: `fps` and `playback_rate` — **[done]**
 
 Users set two quantities they already understand; `dt` leaves the user-facing API
 entirely:
@@ -690,7 +690,11 @@ lever: at `dt = 1e-3`, real-time playback demanded `fps = 1000`, while the defau
 **17-minute** movie. At `dt = 1e-4` the same settings give 2.8 hours.
 
 - `per_dump=True` is an alternative specifier setting `Δt_frame` = dump spacing; report
-  the resulting playback rate back to the user.
+  the resulting playback rate back to the user. **Not built — deliberately dropped when
+  step 2 landed.** It is a second way to say what `playback_rate` already says, and the
+  user can say it exactly:
+  `playback_rate = np.diff(envir.flow.flow_times).mean() * fps`. Cheap to add if a
+  workflow turns out to want it; adding a parameter on speculation is not.
 - **A raw step count (`every=k`) is rejected** — users vary `dt` between `move()`
   calls, so it silently means different things within one run.
 - **`Δt_frame < Δt_capture` is the one failure mode.** Frames cannot be produced
@@ -720,6 +724,69 @@ lever: at `dt = 1e-3`, real-time playback demanded `fps = 1000`, while the defau
   `Environment.units` covers *length* only; seconds is the convention throughout.
 - **`fps` is re-encodable after the fact**, because dump-cadence caching (§8.3.3) can
   supply any `Δt_frame`. Only the downsample factors and recorded quantity are fixed.
+
+**As built.**
+
+- `Swarm.plot_all` gained exactly one parameter, `playback_rate=1`, immediately after
+  `fps`. `frames`, if given, still overrides the selection entirely — it is an explicit
+  list of history indices and always was.
+- The selection is `Swarm._select_frames(fps, playback_rate)`, one private method:
+  it assembles the recorded times (`time_history[:len(pos_history)]` plus the present
+  time, index-aligned with what `animate(n)` expects), places the frames, and issues
+  both warnings. **A first pass split this into a module-level pure function plus a
+  method that fed it**, on the argument that a pure function is the most testable
+  shape. That was the wrong trade here: `_swarm.py` has no module-level code at all, so
+  it bought a new structural precedent and ~25 extra lines to save constructing a Swarm
+  in the tests — which are testing a Swarm method. Driving the real object also tests
+  the index alignment for free, and a varying-`dt` run is expressed by simply moving
+  with a varying `dt`.
+- **The open call was decided in favor of keeping `fps=10`.** The argument that settled
+  it is the interaction with the jitter warning below: at the examples' `dt = 0.025`
+  and `playback_rate=1`, `fps=10` gives `Δt_frame` exactly 4×`dt` — even spacing,
+  silent. `fps=30` would give 1.33×, which is precisely the case the jitter warning
+  exists to flag, so the friendlier-looking default would have shipped a warning on
+  the runs people actually have. Nothing changed, so nothing for the changelog.
+- **Both warnings are computed from the selection itself, not from a nominal `dt`.**
+  This matters because `dt` may vary between `move()` calls, so `Δt_capture` is only
+  ever a summary (the mean interval). The clamp fires when `Δt_frame < Δt_capture` *or*
+  when two frames would land on the same recorded state; the jitter warning fires when
+  the achieved spacing departs from `Δt_frame` by more than a sixth of it, which is the
+  "< 3× and not a whole multiple" condition of the bullets above, measured rather than
+  assumed. The clamp message carries the numbers — the achieved rate and the `fps` that
+  would deliver what was asked for — since it is the one a user has to act on.
+- **Roundoff tolerance on the clamp is load-bearing.** `playback_rate/fps` is a
+  division and `time_history` accumulates `dt` by repeated addition (0.3 arrives as
+  0.30000000000000004), so a deliberately exact choice like `playback_rate=0.075,
+  fps=3` at `dt=0.025` compares as *just* under the recording interval. Without the
+  `1e-9` relative slack it would warn and clamp on every such call — i.e. on the
+  examples, which are written that way. Pinned by
+  `test_frame_interval_equal_to_the_recording_interval_is_not_clamped`.
+- **The first and last recorded states are always frames**, so the movie spans the run
+  even when the span is not a whole multiple of `Δt_frame`. The final interval is then
+  short; that is preferable to silently dropping the end of the simulation.
+- **On-screen playback now honors the same numbers.** `FuncAnimation`'s `interval` is
+  `1000/fps` ms instead of the old `dt*100` heuristic, so the preview and the saved
+  movie agree. The heuristic had the same footgun in miniature: at `dt = 1e-3` it asked
+  matplotlib for a 0.1 ms frame interval. (This does not conflate `interval` with
+  `fps` — it derives the one from the other deliberately.)
+- **Tests:** `tests/test_frame_selection.py`, 19 closed-form tests, no rendering, in
+  the fast run (the whole module takes ~0.2 s). Each drives a real, tiny run and calls
+  `_select_frames` on it. Covers spacing, the roles of `fps` vs `playback_rate`,
+  nearest-state snapping, index alignment with `pos_history`, a run whose `dt` changed
+  partway through, both warnings and the clamp's numbers, the no-warning cases, and
+  degenerate input. `test_plotting_smoke.py`'s movie test is now parametrized over
+  `fps`, `playback_rate`, and explicit `frames` so each route to the writer is
+  exercised end to end.
+- **Examples updated at the call sites** (the prose rewrite of §8.6 remains step 5):
+  `ex_ib2d_ibmesh.py` and `ex_ib2d_sticky.py` `playback_rate=0.075`,
+  `ex_ib2d_mvbnd_sticky.py` `0.15`, `ex_ind_var.py` `2`, `ex_sticky_seafan_3d.py` `2` —
+  each the old `dt × fps` product, so their movies are unchanged. The two Vicsek
+  examples needed **no** edit: they were already at `dt × fps = 1`, and their
+  `# realtime` comments are now literally what the API says. `ex_ib2d_ibmesh.py`'s
+  prose about "one frame per time step" and using `frames` to thin them out was stale
+  the moment this landed and was rewritten, along with the same passage in
+  `docs/examples/ib2d_ibmesh.rst`; `docs/quickstart.rst` gained the model and its `dt`
+  ceiling.
 
 #### 8.3.6 `plot_all`
 
@@ -774,9 +841,10 @@ Three consequences worth stating, because they simplify the build:
 1. **[done]** **Frame statistics (§8.3.1)** — independent, low risk, and the **entire
    3D deliverable**. Needs none of the caching machinery, and touches no rendering.
    See "As built" in §8.3.1 for what shipped and the measured effect.
-2. **`fps` / `playback_rate` (§8.3.5)** — user-facing, self-contained, removes the
-   footgun. Lands entirely inside `plot_all` as a frame-selection computation (it
-   already accepts a `frames` iterable), so it needs no caching and no recorder.
+2. **[done]** **`fps` / `playback_rate` (§8.3.5)** — user-facing, self-contained,
+   removes the footgun. Landed entirely inside `plot_all` as a frame-selection
+   computation (it already accepts a `frames` iterable), so it needed no caching and
+   no recorder. See "As built" in §8.3.5.
 3. **Recorder + cache (§8.3.2, §8.3.3)** — the substantial piece, and pure data
    capture: no rendering, no video parameters, no matplotlib.
 4. **`plot_all` reads the cache; colour normalization (§8.3.6, §8.3.4)** — the only
@@ -831,13 +899,15 @@ Line numbers drift; search for the names.
   `test_dynamic_loading.py` — including that a **replay after a full sweep triggers
   zero loads**, and the jump-to-start fast path records means too.
 
-**Step 2 — `fps` / `playback_rate`.**
+**Step 2 — `fps` / `playback_rate`. [done]** Kept as the record of what the step
+involved.
 - `Swarm.plot_all` signature (`fps`, and the `frames` argument it already accepts) —
   the change is a frame-*selection* computation feeding `frames`, plus the clamp/warn
-  checks. `frames=None` currently expands to `range(len(self.pos_history)+1)`; that
-  expansion is what `playback_rate` replaces.
+  checks. `frames=None` used to expand to `range(len(self.pos_history)+1)`; that
+  expansion is what `playback_rate` replaced.
 - `FuncAnimation(..., interval=...)` controls **on-screen** playback and is separate
-  from the saved-video `fps`. Do not conflate them.
+  from the saved-video `fps`. Do not conflate them. (As built, `interval` is now
+  derived from `fps` on purpose — see §8.3.5 — which is a decision, not a conflation.)
 - `Swarm.plot` (single frame) snaps a requested `t` to the nearest
   `Environment.time_history` entry without interpolation; that behavior is unchanged.
 
@@ -866,8 +936,13 @@ caching exact (§8.3.3), using weights the interpolator already computes.
 
 - **Changelog (1.1.0)**, both user-visible relative to 1.0.x:
   - **[done]** fluid speed statistics replaced by agent-speed spread on plots;
-  - `playback_rate` added and defaulting to 1, changing existing video output.
-- **Examples rewrite.** The plotting portions change regardless. Current effective
+  - **[done]** `playback_rate` added and defaulting to 1, changing existing video
+    output. One line; `fps`'s default did not change and `per_dump` was not built,
+    so neither is changelog material.
+- **Examples rewrite.** *The call sites are done (§8.3.5 "As built") — each example now
+  names its playback rate explicitly, chosen to be the old `dt × fps` product, and the
+  stale "one frame per time step" prose in `ex_ib2d_ibmesh.py` and its docs page is
+  rewritten. What remains for step 5 is the wider prose pass.* Current effective
   playback rates (`dt × fps`) show the footgun's fingerprint — a 27× spread with no
   evident intent:
 
@@ -878,18 +953,20 @@ caching exact (§8.3.3), using weights the interpolator already computes.
   | `ex_ib2d_mvbnd_sticky.py` | 0.025 | 6 | 0.15 — 6.7× slow motion |
   | `ex_ind_var.py` | 0.1 | 20 | 2.0 — 2× fast forward |
 
-  Under today's scheme `Δt_frame = dt` identically, so the effective rate is just
+  Under the old scheme `Δt_frame = dt` identically, so the effective rate was just
   `dt × fps` — users could only choose `fps`, and the playback rate fell out wherever
   it fell. That is why the spread is incoherent: nobody chose these rates.
 
-  When rewriting, choose the **playback rate** deliberately and keep it near current
-  behavior where that makes sense — the fluid examples genuinely want slow motion for
-  legible vortices. Then note the real constraint: at `dt = 0.025`,
+  Each of these is now stated explicitly at its call site, at exactly the rate in the
+  table — deliberate, and unchanged in output. That was the conservative choice: the
+  fluid examples genuinely want slow motion for legible vortices, and stating the rate
+  they already had is a better starting point for step 5 than re-timing them blind.
+  The real constraint to keep in view when re-timing: at `dt = 0.025`,
   `playback_rate = 0.075` permits at most 3 fps, so a smoother version of those
   examples needs a **smaller `dt`**, not a different `fps`.
-- **Docs:** the `fps`/`playback_rate` model and its `dt` ceiling; the seconds
-  assumption; `.mkv` guidance for long runs; what the cache stores and when it is
-  refused.
+- **Docs:** **[done]** the `fps`/`playback_rate` model and its `dt` ceiling, and the
+  seconds assumption, in `docs/quickstart.rst`. Still owed: `.mkv` guidance for long
+  runs, and what the cache stores and when it is refused (both step 4 material).
 
 ### 8.7 Deferred within §8
 
@@ -1057,8 +1134,9 @@ whole note plus `CLAUDE.md` and `TODO.md` (root) first. Quick orientation:
   suite `tests/test_flow_interface.py` (40 tests); the three bugs it surfaced
   (§3.4 `max_spd` / `get_mean_fluid_speed`, §3.5 `get_raw_loaded_data`); and
   **§7.3–§7.6 — `FlowArray` is deleted and tiling is gated off.** Suite is green:
-  **201 passed, 20 skipped** with `pytest`; **219 passed, 2 skipped** with
-  `--runslow`.
+  it stood at **201 passed, 20 skipped** (`pytest`) when §7 landed, and at **495
+  passed, 22 skipped** / **515 passed, 2 skipped** (`--runslow`) after §8 step 2 —
+  the growth is mostly the collision suite merged from `master`.
 - The §7.2 suite passes with every `np.asarray` wrapper stripped out, which is
   what makes the deletion *provably* behavior-preserving rather than merely
   untested-and-green. Only one test in the whole suite had to change behavior:
@@ -1071,10 +1149,20 @@ whole note plus `CLAUDE.md` and `TODO.md` (root) first. Quick orientation:
   cache. Verified beyond the suite by running the examples: a windowed IB2d run
   followed by `plot_all` went from 8 loader calls (25 dumps re-read) to 0, and the 3D
   time-varying path was driven end to end against `tests/IBAMR_test_data`.
-- **Next actionable step: §8 step 2** (`fps` / `playback_rate`). Like step 1 it is
-  independently shippable and needs no architectural commitment; re-evaluate 3–4 after
-  it lands.
-- **Not started:** §8 steps 2–5, and §9 (which still needs its design pass).
+- **§8 step 2 (`fps` / `playback_rate`) is done** — see "As built" in §8.3.5.
+  `plot_all` chooses frames by simulated time rather than one per timestep, `fps`
+  keeps its default of 10, on-screen playback is driven by the same numbers, and both
+  the clamp and the uneven-spacing warnings are measured from the selection so a
+  varying `dt` is handled. `tests/test_frame_selection.py` (19 fast, closed-form
+  tests) pins it. Example call sites now name their playback rate and produce the same
+  movies as before.
+- **Next actionable step: §8 steps 3–4** (recorder + derived-quantity cache, then
+  `plot_all` reading it) — but **re-evaluate first**, as §8.4 says to. With step 1
+  done the per-frame fluid cost is already zero unless a 2D fluid backdrop is drawn,
+  and with step 2 done there are far fewer frames drawing it. The remaining case for
+  the cache is 2D re-plotting of a dynamically-loaded run with `fluid='vort'`; if that
+  is not a real workflow pain, steps 1–2 may be the whole justified investment.
+- **Not started:** §8 steps 3–5, and §9 (which still needs its design pass).
 - **Pre-existing breakage found while verifying step 1, unrelated to it** (all three
   reproduce identically against the pre-step-1 package, so they are not regressions —
   recorded here so the next session does not re-diagnose them):
@@ -1088,19 +1176,21 @@ whole note plus `CLAUDE.md` and `TODO.md` (root) first. Quick orientation:
     mesh into a fluid-free environment raised. This one *is* a `dyload` regression —
     on `master` `fluid_domain_LLC` is an `Environment` attribute that always exists, so
     it only became reachable when the attribute moved onto `FluidData`. See TODO.md.
-  - `_ibc._project_and_slide_static` raises
+  - **[fixed]** `_ibc._project_and_slide_static` raised
     `ValueError: operands could not be broadcast together with shapes (3,2) (3,)` on
-    the ib2d channel mesh when agents are seeded uniformly across the domain (rather
-    than at the example's point source). This one is in the load-bearing collision
-    code and deserves a real look.
+    the ib2d channel mesh when agents were seeded uniformly across the domain (rather
+    than at the example's point source). This was in the load-bearing collision code
+    and got a full pass of its own on `master`, merged here — six defects fixed with
+    regression tests. What is left of that work, including the branch of the moving
+    slider that still has no coverage, is in **TODO.md**, not here.
 - **`tests/IBAMR_test_data/` is present** (`IBAMR_db_003/004/005.vtk`,
   `mesh_db.vtk`) — 3D IBAMR data for the `@vtk`-marked tests and for validating
   §9. Its absence on the original authoring machine is what led to the since-
   dropped 2D tiling stopgap.
 
-**The immediate next actionable step** is §8.4 step 2 (`fps` / `playback_rate`), step 1
-having landed. §9 (real tiling, and whether `extend` returns) follows the rest of §8,
-and still needs its own design pass.
+**The immediate next actionable step** is the re-evaluation of §8.4 steps 3–4, steps 1
+and 2 having landed. §9 (real tiling, and whether `extend` returns) follows the rest of
+§8, and still needs its own design pass.
 
 **Re-confirming §7.3 landed cleanly**, if picking this up cold: the reproduction
 snippets below for defects §3.1 and §3.2 should now fail at *import* /

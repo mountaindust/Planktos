@@ -361,9 +361,9 @@ Algorithm/derivation notes are in `docs/notes/` (Markdown with LaTeX):
 ## Tests
 
 The suite is organized into focused, deterministic, fast modules (overhauled
-2026-06). Run `pytest` from the repository root. The default run is ~1s; add
-`--runslow` for the slower checks — the full-simulation parallelization tests and
-the plotting smokes — which brings it to roughly 13s.
+2026-06). Run `pytest` from the repository root. The default run is a couple of
+seconds; add `--runslow` for the slower checks — the full-simulation
+parallelization tests and the plotting smokes — which brings it to roughly 20s.
 
 - **Run** the whole thing with `pytest`; a specific area with e.g.
   `pytest tests/test_collisions_static.py`.
@@ -425,6 +425,11 @@ the plotting smokes — which brings it to roughly 13s.
   - `test_io_loaders.py` — IB2d moving/static mesh import (committed fixtures),
     the IB2d fluid `uX`/`uY` scalar branch, `_dataio.read_vtk_time_only` (the
     header-only `TIME` scan), IBAMR vtk (`@vtk`), COMSOL vtu (`@vtu`).
+  - `test_frame_selection.py` — `Swarm._select_frames`, the `fps`/`playback_rate`
+    frame choice behind `plot_all`: frame spacing in simulated time, snapping to
+    the nearest recorded state, index alignment with `pos_history`, a run whose
+    `dt` changed partway, and the clamp and uneven-spacing warnings. Drives real
+    tiny runs but renders nothing; rendering is `test_plotting_smoke.py`.
   - `test_parallel_ib.py` — serial == threads == processes (`@slow`).
   - `test_plotting_smoke.py` — `plot_*` methods run without error on the Agg
     backend (`@slow`; the movie test also needs ffmpeg).

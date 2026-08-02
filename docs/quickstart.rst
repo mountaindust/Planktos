@@ -251,6 +251,18 @@ tracer particles only. FTLE calculations respect static immersed boundaries, but
 moving meshes are not supported.
 
 Single-time and animation plotting of results is available in 2D and 3D.
+``Swarm.plot_all`` animates a completed run, saving it to a movie file if given
+a filename. Its timing is set by two independent quantities: ``fps``, the frames
+per second of the video (how *smooth* it is), and ``playback_rate``, the seconds
+of simulated time per second of video (how *fast* it plays). The default
+``playback_rate=1`` is real time, taking simulated time to be in seconds as it
+is throughout Planktos. Frames are placed ``playback_rate/fps`` apart in
+simulated time, each showing the captured state nearest to it, so
+``playback_rate/fps`` can be no smaller than the timestep ``dt`` -- equivalently
+``fps <= playback_rate/dt``. Asking for more frames than there are timesteps to
+fill them is clamped to one frame per timestep, with a warning; smooth slow
+motion therefore calls for a smaller ``dt``, not a higher ``fps``. Passing an
+explicit list of timestep indices as ``frames`` overrides this selection.
 
 .. [1] Haller, G. and Sapsis, T. (2008). Where do inertial particles go in
    fluid flows? Physica D: Nonlinear Phenomena, 237(5), 573-583.

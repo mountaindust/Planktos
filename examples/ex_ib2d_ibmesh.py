@@ -98,17 +98,22 @@ for ii in range(50):
 
 # This time, instead of viewing the results directly, let's output them to an
 #   mp4. Planktos will create a movie if you just pass a filename with an
-#   appropriate extension to the plot_all method of the searm object. By 
-#   default, one frame is created per time step taken in the simulation (this
-#   can be changed using the frames argument to plot_all), so you will likely
-#   want to adjust the number of frames per second (fps) accordingly. The 
-#   default fps is 10, and in this case we only have 50 frames, so let's slow
-#   things down a little to 3 fps.
+#   appropriate extension to the plot_all method of the swarm object. Two
+#   parameters control its timing: fps is how *smooth* the movie is (frames per
+#   second, as in any video), and playback_rate is how *fast* it plays --
+#   seconds of simulated time per second of video, where the default of 1 is
+#   real time. The flow structures here are worth a good look, so let's slow
+#   things down to 0.075 simulated seconds per second of video (about 13x slow
+#   motion) at 3 fps.
+# Frames can only show states that the simulation actually captured, so
+#   playback_rate/fps must be at least dt: here that caps fps at 0.075/0.025 =
+#   3. Planktos warns and clamps if you ask for more. Note what that means --
+#   smoother slow motion requires a smaller dt, not a higher fps.
 # Also, since this fluid velocity field is non-trivial, let's plot the vorticity
-#   behind the agents to better see what is going on! Just set the fluid 
+#   behind the agents to better see what is going on! Just set the fluid
 #   parameter of the function (this only works in 2D).
-swrm.plot_all(movie_filename='channel_flow_ibmesh.mp4', fps=3, fluid='vort',
-              plot_heading=False)
+swrm.plot_all(movie_filename='channel_flow_ibmesh.mp4', fps=3, playback_rate=0.075,
+              fluid='vort', plot_heading=False)
 
 # Creating movies is another bottleneck in Planktos. Every frame has to be 
 #   generated individually and then saved, and the fluid vorticity is 
@@ -117,8 +122,9 @@ swrm.plot_all(movie_filename='channel_flow_ibmesh.mp4', fps=3, fluid='vort',
 #   the vorticity data as vtk files, either at the original time points of the
 #   fluid data or interpolated to the simulation times. All this is to say:
 #   if you have a simulation with a lot of time steps, there's no reason to be
-#   making a movie with every one of those time steps as a frame! Depending on 
-#   the fps, you'll never notice the loss of detail if you just plot every Nth
-#   simulation step as a frame, and this is highly encouraged to cut down on 
-#   movie generation time and file size. Use the "frames" parameter of the 
-#   plot_all function to do this.
+#   making a movie with every one of those time steps as a frame! fps and
+#   playback_rate take care of this for you -- only the states needed for the
+#   frames you asked for are ever drawn, which is what keeps movie generation
+#   time and file size down. If you want a particular set of steps instead, the
+#   "frames" parameter of plot_all still takes an explicit list of time step
+#   indices and overrides the fps/playback_rate selection.

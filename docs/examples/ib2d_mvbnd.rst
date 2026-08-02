@@ -126,10 +126,13 @@ handles the shutdown automatically. ::
         for ii in range(42):
             swrm.move(0.025, ib_collisions='sticky')
 
-Finally, we render the result, plotting fluid vorticity behind the agents. ::
+Finally, we render the result, plotting fluid vorticity behind the agents. The
+playback rate of 0.15 seconds of simulated time per second of video is roughly
+7x slow motion, which keeps the jellyfish stroke and the vortices it sheds
+legible; at dt=0.025, that permits up to 6 fps. ::
 
-    swrm.plot_all(movie_filename='mvbnd_sticky.mp4', fps=6, fluid='vort',
-                  plot_heading=False)
+    swrm.plot_all(movie_filename='mvbnd_sticky.mp4', fps=6, playback_rate=0.15,
+                  fluid='vort', plot_heading=False)
 
 Running the example script produces the mvbnd_sticky.mp4 movie, in which agents
 that contact the swimming jellyfish stick to it and drop out of the simulation.

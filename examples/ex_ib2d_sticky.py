@@ -95,8 +95,10 @@ for ii in range(50):
     #     swrm.plot()
     
 
-swrm.plot_all(movie_filename='channel_flow_sticky.mp4', fps=3, fluid='vort',
-              plot_heading=False)
+# 0.075 simulated seconds per second of video (about 13x slow motion), matching
+#   ex_ib2d_ibmesh.py. At dt=0.025 that caps fps at 3; see that example.
+swrm.plot_all(movie_filename='channel_flow_sticky.mp4', fps=3, playback_rate=0.075,
+              fluid='vort', plot_heading=False)
 
 # Compare the result to that of ex_ib2d_ibmesh.py.
 

@@ -91,6 +91,9 @@ print('{} organisms, {} stuck ({}%).'.format(SWARM_SIZE, swrm.props['stick'].sum
 
 
 #### After the loop ####
-swrm.plot_all(movie_filename='results/seafan2to1_8mmps_sticky_1000dist.mp4', fps=4) # double-time movie
+# playback_rate=2 is 2 seconds of simulated time per second of video, i.e. a
+#   double-time movie. At dt=0.5 that gives one frame per timestep at 4 fps.
+swrm.plot_all(movie_filename='results/seafan2to1_8mmps_sticky_1000dist.mp4',
+              fps=4, playback_rate=2)
 
 

@@ -12,8 +12,8 @@ is wired up but unexercised. Temporal interpolation of dynamically-loaded data i
 time** (`fCubicSpline`). See the design-history section at the bottom for the
 cubic→linear story.
 
-**Phase 0 is essentially complete and the suite is green:** **201 passed, 20
-skipped** with `pytest`, **219 passed, 2 skipped** with `pytest --runslow`. No
+**Phase 0 is essentially complete and the suite is green:** **495 passed, 22
+skipped** with `pytest`, **515 passed, 2 skipped** with `pytest --runslow`. No
 failures, no xfails. Every test-adaptation item under Phase 0 is done. The
 `fmin`/`fmax` generator bug is fixed. The `FlowArray` numpy-interop item turned out
 to be the tip of a larger design problem and has been **superseded by a dedicated
@@ -57,15 +57,27 @@ and whether `Environment.extend` returns).**
   costs **zero** fluid loads unless a fluid backdrop is actually drawn — measured 8 → 0
   on a windowed 25-dump IB2d run. This was the entire 3D deliverable of §8. See the
   note's §8.3.1 "As built".
-- **§8 steps 2–5 remain**, with the build order in note §8.4. Step 2
-  (`fps`/`playback_rate`) is independently shippable and needs no architectural
-  commitment; steps 3–4 (recorder + derived-quantity cache, then `plot_all` reading it)
-  should be re-evaluated after it lands — with step 1 done, the per-frame fluid cost is
-  already gone in 3D, which was the strongest argument for the cache. All design
-  questions are settled, including the capture/render split (§8.3.7: the recorder
-  writes a data cache and never draws; `plot_all` does all rendering from it). One
-  changelog entry is still outstanding (`playback_rate`), and the examples' plotting
-  sections need rewriting.
+- **§8 step 2 (`fps`/`playback_rate`) is done.** `plot_all` no longer renders one frame
+  per timestep: frames are placed `playback_rate/fps` apart in *simulated* time and
+  show the nearest captured state, so speed (`playback_rate`, default 1 = real time)
+  and smoothness (`fps`, default unchanged at 10) are chosen separately and `dt` leaves
+  the plotting API. Asking for frames between recorded states clamps with a warning
+  that carries the numbers; an explicit `frames` list still overrides everything.
+  On-screen playback now uses the same rate. It is one new parameter and one private
+  method (`Swarm._select_frames`) — the note's §8.3.5 `per_dump` bullet was
+  deliberately not built, and an initial module-level/method split was collapsed.
+  `tests/test_frame_selection.py` (19 fast, closed-form tests) pins it, and the example
+  call sites name their playback rate so their movies are unchanged. See the note's
+  §8.3.5 "As built".
+- **§8 steps 3–5 remain**, with the build order in note §8.4 — but steps 3–4 (recorder
+  + derived-quantity cache, then `plot_all` reading it) are explicitly **due a
+  re-evaluation before being built**. Step 1 removed the per-frame fluid cost except
+  where a 2D backdrop is actually drawn, and step 2 cut how many frames draw it, so the
+  remaining case is 2D re-plotting of a dynamically-loaded run with `fluid='vort'`.
+  All design questions are settled if they do go ahead, including the capture/render
+  split (§8.3.7: the recorder writes a data cache and never draws; `plot_all` does all
+  rendering from it). Step 5 is the wider examples/docs prose pass; the call sites and
+  the `fps`/`playback_rate` model in `docs/quickstart.rst` are already done.
 - **§9 still needs its design pass.** When tiling returns, **§9.1 of the note is the
   restoration checklist**: every notice, stub, and replaced test that gating it off
   left behind. Both old implementations are preserved commented-out beneath their
