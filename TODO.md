@@ -265,6 +265,71 @@ because step 1 was verified by running the examples end to end.
 
 ---
 
+## `_ibc.py` — what is left after the 2026-08 collision pass 🟡
+
+**This work was done on `master` and merged here (`27c810b`); the code and its
+tests live on both branches.** Six defects were found and fixed, each with
+regression tests: the boundary back-off scaling with domain size and going NaN
+at negative coordinates; joints where three or more mesh elements meet, in both
+the static and moving sliders; the 3D ranking measuring the wrong angle; a
+duplicated mesh vertex producing NaN positions (static) or a step that never
+finished (moving); the continue/stop decision; and stack exhaustion surfacing as
+a bare `RecursionError`. See `changelog.txt` under 1.0.2.
+
+**`_ibc.py` is not "done".** Measured coverage after all of it is **91% of
+statements, 45 lines never executed** (`python -m coverage run --source=planktos
+-m pytest -q --runslow`, then `coverage report --include="*_ibc.py"
+--show-missing`). Ranked by risk:
+
+- [ ] 🔴 **The rotation branch of the moving slider has never run**
+  (`rotated_past_bool`, the largest uncovered block). It handles a mesh element
+  *rotating* out from under an agent, and it solves a root-finding problem
+  (`optimize.root_scalar`, brentq) to find when the perpendicular velocities
+  matched. This is the same shape as the bug that started the pass — an entire
+  branch no test reaches — and it contains the root find, which is what hung on
+  a degenerate mesh. Rotating boundaries are real for the 2D moving-mesh work,
+  so this is the highest risk-per-line left in the file. Note that a
+  rotating-junction probe produced almost no recursion, which in hindsight was
+  the signal the path was not being reached; constructing a case that genuinely
+  enters it is the first task.
+- [ ] 🟡 **The moving free-flight recursion is untested** (the `newendpt =
+  newstartpt + (1-t_edge)*vec` path near the end of `_project_and_slide_moving`).
+  Its static counterpart dominates recursion depth at ordinary step sizes —
+  44 of 45 recursions in measurements — so the moving one is likely exercised
+  constantly in real runs while never being asserted on.
+- [ ] 🟢 Remaining uncovered lines are early-return special cases
+  (`1-t_I < 10e-7`, "practically finished with this step"), some 3D sticky
+  paths, and the parallel-worker dispatch.
+
+**Two findings recorded rather than fixed** (issue-tracker material by the
+`xfail` rule in CLAUDE.md — real, but not worth stopping the cycle for):
+
+- [ ] 🟡 **An exception during the immersed-boundary stage leaves the `Swarm`
+  mid-update.** `Swarm.move` appends to `pos_history` and recomputes velocities
+  *before* `apply_boundary_conditions`, and advances `envir.time` only *after*.
+  So any raise in between leaves history one entry longer than `time_history`,
+  positions a mix of IB-corrected and raw (possibly *inside* a boundary), and
+  time not advanced. Not hypothetical: it is the state the original junction
+  `ValueError` produced. Loud, but a caller who caught and continued would have
+  penetrating agents and desynchronised history.
+- [ ] 🟢 **The free-flight termination argument has a floating-point gap.** That
+  branch terminates because the remaining movement `(1-t_edge)*vec` strictly
+  shrinks, which needs `t_edge > t_I` to hold *in floating point*. A step small
+  enough to make them equal numerically would stall. Could not be constructed;
+  the `RecursionError` re-raise now bounds the consequence either way.
+
+**Testing approach that worked**, if picking this up cold: the existing suite
+only ever built *chains* (walls, polylines, corners, grooves, dihedrals), where
+a vertex joins at most two segments — so whole branches were unreachable by
+construction. `tests/test_collisions_junctions.py` adds `star_2D`,
+`closed_polygon` and `book_3D` builders for the missing geometry class, and its
+candidate counts were **measured by instrumenting the branch**, not assumed. Its
+invariant assertions (finite, motion not amplified, stays outside a closed
+obstacle, and rigid-motion equivariance) are what caught the wrong-but-finite
+answers that no arithmetic check could see.
+
+---
+
 ## Phase 1 — Test dynamic loading in 2D 🟡
 
 Use 2D IB2d data (cheap, deterministic, reported working). Separate two questions:
