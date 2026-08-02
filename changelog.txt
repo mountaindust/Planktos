@@ -7,6 +7,7 @@ Bug fixes.
 - Bug fix: sliding collisions no longer fail where three or more mesh elements meet at a point, for both static and moving meshes.
 - Bug fix (3D): a sliding agent picks the next triangle by dihedral angle about the shared edge, so a distant third vertex can no longer misdirect it.
 - Bug fix: a duplicated mesh vertex no longer gives NaN positions or a step that never finishes; head-on hits no longer emit a spurious numpy warning.
+- Bug fix: sliding along a moving mesh element no longer depends on the orientation of the coordinate axes. The two critical times the slider uses to check whether an agent left the element mid-step were both computed incorrectly, one of them in a way that was not rotation invariant.
 
 
 1.0.1

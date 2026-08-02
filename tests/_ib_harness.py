@@ -137,6 +137,35 @@ def translating_wall(M, x0, x1, T):
     return mesh, xpos
 
 
+def pivoting_segment(center, length, theta_start, theta_end):
+    '''A single segment of the given length, centered on `center`, turning from
+    theta_start to theta_end across the step. Returns (start_mesh, end_mesh),
+    each a (1,2,2) mesh.
+
+    Pivoting about a point *interior* to the element is what makes its two halves
+    sweep in opposite directions: one rises toward an agent on a given side while
+    the other drops away from it. That is what lets an agent make contact at all
+    and only then have the boundary recede out from under it. An element pivoting
+    about one of its endpoints sweeps the same way along its whole length, so an
+    agent it is receding from never touches it in the first place -- which is why
+    the rotation-away branch of the moving slider went unreached for so long.
+
+    Note that the collision code interpolates the mesh *linearly* between the two
+    snapshots, so the element does not trace a true rotation in between: it also
+    contracts to a chord and re-extends. That is inherent to the moving-mesh
+    model, and it is the reason the slider carries critical-time machinery for
+    the element's length and travel direction at all.
+    '''
+    center = np.asarray(center, dtype=float)
+    half = length/2
+
+    def ends(theta):
+        offset = np.array([np.cos(theta), np.sin(theta)])*half
+        return np.array([[center - offset, center + offset]])
+
+    return ends(theta_start), ends(theta_end)
+
+
 # ----------------------- geometry assertion helpers ------------------------
 
 def signed_perp_dist_2D(P, Q0, Q1):

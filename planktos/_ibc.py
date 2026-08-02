@@ -1137,19 +1137,36 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
     #   addition to the state at the end of the timestep.
 
     if not went_past_el_bool:
-        t_crit_elem_denom = np.dot(Q_tI+Q_end,np.ones(2))-2*np.dot(Q_tI,Q_end)
+        # Both critical points are solved for in the normalized parameter
+        #   u = (t-t_I)/(1-t_I), which runs 0 to 1 as t runs t_I to 1 and in
+        #   which Qvec is the plain interpolation (1-u)*Q_tI + u*Q_end. Each is
+        #   then mapped back with t = t_I + u*(1-t_I), because everything that
+        #   consumes them -- the range tests here, and proj_to_pt, Qvec and
+        #   Q0_t below -- is parameterized by t rather than by u.
+        Q_diff = Q_tI - Q_end
+
+        # |Qvec(u)|**2 is a quadratic in u opening upward, so the element is at
+        #   its shortest at the sole root of its derivative,
+        #   u = Q_tI.Q_diff/|Q_diff|**2. A zero denominator means the element
+        #   holds the same direction and length throughout, so there is no
+        #   such time to find.
+        t_crit_elem_denom = np.dot(Q_diff,Q_diff)
         if t_crit_elem_denom != 0:
-            t_crit_elem = np.dot(Q_tI,1-Q_end)/t_crit_elem_denom
+            t_crit_elem = t_I + (1-t_I)*np.dot(Q_tI,Q_diff)/t_crit_elem_denom
         else:
             t_crit_elem = -1
         if t_I < t_crit_elem < 1:
             t_crit = t_crit_elem
         else:
             t_crit = None
-        
-        t_crit_x_denom = np.dot(Q_tI-Q_end,vec)
+
+        # The direction of travel along the element reverses where the
+        #   projection of vec onto it vanishes. vec.Qvec(u) is linear in u, so
+        #   that happens at the single point u = Q_tI.vec/Q_diff.vec; a zero
+        #   denominator means the projection never changes sign.
+        t_crit_x_denom = np.dot(Q_diff,vec)
         if t_crit_x_denom != 0:
-            t_crit_x = np.dot(Q_tI,vec)/t_crit_x_denom
+            t_crit_x = t_I + (1-t_I)*np.dot(Q_tI,vec)/t_crit_x_denom
         else:
             t_crit_x = -1
         if t_I < t_crit_x < 1:
