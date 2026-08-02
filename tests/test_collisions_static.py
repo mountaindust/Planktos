@@ -255,3 +255,43 @@ def test_deep_recursive_slide_across_concave_arc():
     assert sdist(contact) <= POS_ATOL, "sticky contact penetrated"
     swept = int(np.sum((arc[1:-1, 0] > contact[0]) & (arc[1:-1, 0] < newend[0])))
     assert swept >= 4, f"expected a deep multi-facet slide; swept only {swept}"
+
+
+# --------------------------------------------------------------------------- #
+#            the continue/stop decision at a joint                            #
+# --------------------------------------------------------------------------- #
+
+def test_wedged_agent_stops_off_the_joint_not_on_it():
+    '''An agent that slides into a joint it cannot advance past must be left at
+    that joint, and just off the boundary rather than exactly on the vertex.
+
+    Landing exactly on a vertex is the thing to avoid: an agent sitting
+    precisely on two boundary elements is one round-off away from the wrong side
+    of either, which is what the back-off exists to prevent.
+
+    The joint is deliberately awkward. The adjacent element still points
+    "forwards" relative to the direction the agent was sliding, yet the agent's
+    actual remaining movement has no forward component along it, so it has
+    nowhere to go and belongs at the joint however that is decided.
+    '''
+    V = np.array([5.0, 5.0])
+    Q = h.segment((2.0, 5.0), tuple(V))          # slid along, left to right
+    A = h.segment(tuple(V), (5.6, 7.5))          # steep ramp leaning back over it
+    mesh = np.concatenate([Q, A])
+
+    start = np.array([4.2, 6.4])                 # diving steeply into Q
+    end = np.array([5.2, 4.2])                   # overshooting the vertex
+
+    newend, dx, idx = h.call_static(start, end, mesh, 'sliding')
+
+    # wedged at the joint rather than carried onto the ramp
+    assert np.allclose(newend, V, atol=1e-3), \
+        f"expected the agent to stop at the joint {V}, got {newend}"
+    # but backed off it, not sitting on it
+    offset = np.linalg.norm(np.asarray(newend, float) - V)
+    assert 0 < offset < POS_ATOL, \
+        f"agent left {offset:.3e} from the vertex; expected a small nonzero back-off"
+
+    h.assert_not_penetrated_2D(start, newend, Q[0, 0], Q[0, 1])
+    h.assert_not_penetrated_2D(start, newend, A[0, 0], A[0, 1])
+    h.assert_displacement_bounded(start, end, newend)

@@ -10,8 +10,17 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - FluidData is documented in the API reference, including the INUM interpolation-in-time tradeoff.
 - Plots now show mean agent speed and its spread in place of mean and max fluid speed; plotting no longer loads fluid data for statistics.
 - New FluidData.get_mean_velocity returns the spatial mean of each velocity component at any time.
+
+
+1.0.2
+-----------------------
+Bug fixes.
 - Bug fix: calculate_FTLE(swrm=...) raised AttributeError on the first step, and appended to the caller's Swarm history.
 - Bug fix: meshes imported by the 'adjacent' method or as a moving mesh now follow the fluid's coordinate shift, as the other methods already did.
+- Bug fix: the immersed-boundary collision back-off is now a fixed fraction of the geometry; it grew with domain size and gave NaN at negative coordinates.
+- Bug fix: sliding collisions no longer fail where three or more mesh elements meet at a point, for both static and moving meshes.
+- Bug fix (3D): a sliding agent picks the next triangle by dihedral angle about the shared edge, so a distant third vertex can no longer misdirect it.
+- Bug fix: a duplicated mesh vertex no longer gives NaN positions or a step that never finishes; head-on hits no longer emit a spurious numpy warning.
 
 
 1.0.1

@@ -1532,9 +1532,9 @@ class Environment:
             With no fluid loaded there is no translation to match, which is a
             supported way to build an environment.
 
-            Every branch below goes through this. Three of them used to inline
-            the shift and one did not, which is exactly the kind of omission a
-            shared helper makes impossible.
+            Every branch below goes through this. Two of them used to inline the
+            shift and two did not, which is exactly the kind of omission a shared
+            helper makes impossible.
             '''
             if self.flow is not None and self.flow.fluid_domain_LLC is not None:
                 for ii in range(2):

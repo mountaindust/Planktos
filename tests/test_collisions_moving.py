@@ -155,15 +155,21 @@ def test_sticky_moving_axis_aligned_wall_stops_on_wall(orient):
 # baseline was generated from the trusted code and independently satisfies the
 # no-penetration invariant (asserted separately below, so the lock is not purely
 # circular). Regenerate GOLDEN_SLIDING only after a deliberate, reviewed change.
+#
+# Regenerated once, when the boundary back-off was rescaled (_ibc._boundary_eps).
+# Ten of the 56 entries moved, all of them agents resting *on* the wall and all
+# by the difference between the old and new back-off: 6.49999 -> 6.499999 and so
+# on. Contacts, ordering and wall positions were unchanged, and the independent
+# no-penetration check below passed across the change.
 
 GOLDEN_SLIDING = np.array([
     [[4.00000000, 3.00000000], [4.00000000, 7.00000000], [2.00000000, 5.00000000], [6.00000000, 5.00000000]],
     [[5.00000000, 3.00000000], [4.80000000, 7.40000000], [2.30000000, 5.00000000], [6.20000000, 5.00000000]],
     [[6.00000000, 3.00000000], [5.60000000, 7.80000000], [2.60000000, 5.00000000], [6.40000000, 5.00000000]],
-    [[6.49999000, 3.00000000], [6.40000000, 8.20000000], [2.90000000, 5.00000000], [6.60000000, 5.00000000]],
-    [[6.99990000, 3.00000000], [6.99990000, 8.60000000], [3.20000000, 5.00000000], [7.00001000, 5.00000000]],
-    [[7.49990000, 3.00000000], [7.49990000, 9.00000000], [3.50000000, 5.00000000], [7.50010000, 5.00000000]],
-    [[7.99990000, 3.00000000], [7.99990000, 9.40000000], [3.80000000, 5.00000000], [8.00010000, 5.00000000]],
+    [[6.49999900, 3.00000000], [6.40000000, 8.20000000], [2.90000000, 5.00000000], [6.60000000, 5.00000000]],
+    [[6.99999900, 3.00000000], [6.99999900, 8.60000000], [3.20000000, 5.00000000], [7.00000100, 5.00000000]],
+    [[7.49999900, 3.00000000], [7.49999900, 9.00000000], [3.50000000, 5.00000000], [7.50000100, 5.00000000]],
+    [[7.99999900, 3.00000000], [7.99999900, 9.40000000], [3.80000000, 5.00000000], [8.00000100, 5.00000000]],
 ])
 
 

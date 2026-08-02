@@ -14,7 +14,54 @@ from scipy import integrate, optimize
 from . import _geom
 
 
-def apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist, 
+def _slide_too_deep(startpt, endpt, mesh):
+    '''Explain a RecursionError raised out of the sliding routines.
+
+    A sliding agent recurses once per mesh element it crosses, so the depth is
+    set by how far the step carries it along the boundary relative to the mesh
+    spacing. Exhausting the stack therefore says something specific -- the step
+    is long compared to the mesh -- which a bare RecursionError raised from
+    somewhere in the geometry code does not convey.
+    '''
+
+    dist = np.linalg.norm(np.asarray(endpt, dtype=float)
+                          - np.asarray(startpt, dtype=float))
+    mesh = np.asarray(mesh, dtype=float)
+    elem = np.linalg.norm(mesh[..., 1, :] - mesh[..., 0, :], axis=-1)
+    typical = float(np.median(elem)) if elem.size else float('nan')
+    crossed = dist/typical if typical > 0 else float('nan')
+    return RuntimeError(
+        'Ran out of stack while sliding an agent along an immersed boundary. '
+        'Sliding recurses once per mesh element crossed, and this step moves '
+        '{:.4g} against a typical element of {:.4g} -- on the order of {:.0f} '
+        'elements in one step. Reduce dt, coarsen the mesh, or raise '
+        'sys.setrecursionlimit if the run genuinely needs a slide this deep. '
+        'Agent moved from {} to {}.'.format(
+            dist, typical, crossed, np.asarray(startpt), np.asarray(endpt)))
+
+
+def _boundary_eps(*coord_arrays):
+    '''Distance to perturb an agent off a boundary it has just been placed on.
+
+    This exists only to keep floating-point round-off from leaving an agent a
+    hair on the *solid* side of the boundary it just struck. It must therefore
+    be large enough to dominate round-off and small enough to be physically
+    negligible -- which makes it a fixed fraction of the problem's coordinate
+    magnitude, not a fixed distance.
+
+    Scaled to about 1e-7 of the largest coordinate involved. Double precision
+    carries ~1e-16 relative, so this clears round-off by nine orders while
+    staying far below any meaningful length.
+    '''
+
+    scale = np.max(np.abs(np.concatenate(coord_arrays, axis=None)))
+    if not scale > 0:
+        # Everything sits at the origin: no coordinate magnitude to scale to.
+        scale = 1.0
+    return 10.0**(np.ceil(np.log10(scale)) - 7)
+
+
+def apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist,
                              ib_collisions='sliding'):
     '''Apply internal boundaries to a trajectory starting and ending at
     startpt and endpt, returning a new endpt (or the original one) as
@@ -136,8 +183,11 @@ def apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist,
 
         # Project remaining piece of vector onto mesh and repeat processes 
         #   as necessary until we have a final result.
-        new_pos = _project_and_slide_static(startpt, endpt, intersection, 
-                                                    close_mesh, max_meshpt_dist)
+        try:
+            new_pos = _project_and_slide_static(startpt, endpt, intersection,
+                                                close_mesh, max_meshpt_dist)
+        except RecursionError as err:
+            raise _slide_too_deep(startpt, endpt, close_mesh) from err
         return new_pos, new_pos - intersection[0], mesh_idx[idx]
     
     elif ib_collisions == 'sticky':
@@ -146,9 +196,7 @@ def apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist,
         # small number to perturb off of the actual boundary in order to avoid
         #   roundoff errors that would allow penetration
         # base its magnitude off of the given coordinate points
-        coord_mag = np.ceil(np.log(np.max(
-            np.concatenate((startpt,endpt,close_mesh),axis=None))))
-        EPS = 10**(coord_mag-7)
+        EPS = _boundary_eps(startpt, endpt, close_mesh)
 
         back_vec = (startpt-endpt)/np.linalg.norm(endpt-startpt)
         return intersection[0] + back_vec*EPS, np.zeros((DIM)), mesh_idx[idx]
@@ -248,9 +296,7 @@ def apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
         # small number to perturb off of the actual boundary in order to avoid
         #   roundoff errors that would allow boundary penetration
         # base its magnitude off of the given coordinate points
-        coord_mag = np.ceil(np.log(np.max(
-            np.concatenate((startpt,endpt,close_mesh_start,close_mesh_end),axis=None))))
-        EPS = 10**(coord_mag-7)
+        EPS = _boundary_eps(startpt, endpt, close_mesh_start, close_mesh_end)
 
         if DIM == 2:
             x = intersection[0]    # (x,y) coordinates of intersection
@@ -330,9 +376,12 @@ def apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
         if DIM == 2:
             # Project remaining piece of vector onto mesh and repeat processes 
             #   as necessary until we have a final result.
-            new_pos = _project_and_slide_moving(startpt, endpt, intersection, 
-                                            close_mesh_start, close_mesh_end, 
-                                            max_meshpt_dist, max_mov)
+            try:
+                new_pos = _project_and_slide_moving(startpt, endpt, intersection,
+                                                close_mesh_start, close_mesh_end,
+                                                max_meshpt_dist, max_mov)
+            except RecursionError as err:
+                raise _slide_too_deep(startpt, endpt, close_mesh_start) from err
             return new_pos, new_pos - intersection[0], mesh_idx[idx]
 
         else:
@@ -532,9 +581,7 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
     # small number to perturb off of the actual boundary in order to avoid
     #   roundoff errors that would allow penetration
     # base its magnitude off of the given coordinate points
-    coord_mag = np.ceil(np.log(np.max(
-        np.concatenate((startpt,endpt,mesh),axis=None))))
-    EPS = 10**(coord_mag-7)
+    EPS = _boundary_eps(startpt, endpt, mesh)
 
     # Get full travel vector
     vec = endpt-startpt
@@ -571,7 +618,15 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
         # Vector projection of vec onto direction Q is obtained via 
         #   Q/||Q||*dot(vec,Q/||Q||) = Q*dot(vec,Q)/||Q||**2.
         proj_vec = Qvec*np.dot(vec,Qvec)/np.dot(Qvec,Qvec)
-        proj_vec_u = proj_vec/np.linalg.norm(proj_vec)
+        # A head-on hit has no tangential component, so there is no sliding
+        #   direction. The agent stays where it struck (slide_pt == x below, so
+        #   it never runs off the element), but leave this a real vector rather
+        #   than a NaN waiting for a future reader.
+        proj_vec_norm = np.linalg.norm(proj_vec)
+        if proj_vec_norm > 0:
+            proj_vec_u = proj_vec/proj_vec_norm
+        else:
+            proj_vec_u = np.zeros(DIM)
 
     elif DIM == 3:
         # intersection comes from _geom.seg_intersect_3D_triangles
@@ -604,7 +659,15 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
         # Vector projection onto Q_norm is 
         #   Qn/||Qn||*dot(vec,Qn/||Qn||) = Qn*dot(vec,Qn)/||Qn||**2
         proj_vec = (vec - Q_norm*np.dot(vec,Q_norm)/np.dot(Q_norm,Q_norm))
-        proj_vec_u = proj_vec/np.linalg.norm(proj_vec)
+        # A head-on hit has no tangential component, so there is no sliding
+        #   direction. The agent stays where it struck (slide_pt == x below, so
+        #   it never runs off the element), but leave this a real vector rather
+        #   than a NaN waiting for a future reader.
+        proj_vec_norm = np.linalg.norm(proj_vec)
+        if proj_vec_norm > 0:
+            proj_vec_u = proj_vec/proj_vec_norm
+        else:
+            proj_vec_u = np.zeros(DIM)
 
     # Position of agent at time t
     proj_to_pt = lambda t: (t-t_I)*proj_vec + x
@@ -683,7 +746,10 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
         # Find any adjacent mesh segments on the end we went past that would
         #   cause intersection
         if DIM == 2:
-            # In 2D, this is any mesh element that contains the endpoint 
+            # The joint between two segments has a single angle, and the slide
+            #   direction is already the right reference for ranking candidates.
+            rank_vec_u = proj_vec_u
+            # In 2D, this is any mesh element that contains the endpoint
             #   we went past except the current mesh element
             if Q1_crit_dist > Q0_crit_dist:
                 # went past Q0
@@ -712,9 +778,14 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
                 adj_vec[~pt_bool_0] = adj_mesh[~pt_bool_0,0,:] - \
                                         adj_mesh[~pt_bool_0,1,:]
                 # intersection cases will have an angle of -pi/2 to pi/2 between
-                #   Q_norm_u and the adjacent mesh element oriented from the 
+                #   Q_norm_u and the adjacent mesh element oriented from the
                 #   edge the agent is on. That means the dot product is positive.
-                intersect_bool = np.dot(adj_vec, Q_norm_u) >= 0
+                # A zero-length element -- what a duplicated vertex in a mesh
+                #   file produces -- has no direction to slide along, so drop it
+                #   rather than normalize a zero vector into a NaN.
+                intersect_bool = np.logical_and(
+                    np.dot(adj_vec, Q_norm_u) >= 0,
+                    np.linalg.norm(adj_vec, axis=-1) > EPS)
             else:
                 intersect_bool = np.array([False])
 
@@ -757,10 +828,39 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
                 adj_Q_other = adj_mesh[other_bool,:]
                 # get vector pointed away from shared edge on adjacent elements
                 adj_vec = adj_Q_other - x_edge
+
+                # The joint between two triangles is a dihedral about the edge
+                #   they share, so measure it in the plane perpendicular to that
+                #   edge. Where a candidate's third vertex sits *along* the edge
+                #   is free to vary without changing the dihedral at all, and
+                #   must not be allowed to influence which candidate is chosen.
+                if idx_edge == 0:
+                    e_vec = Q1 - Q0
+                elif idx_edge == 1:
+                    e_vec = Q2 - Q1
+                else:
+                    e_vec = Q0 - Q2
+                e_hat = e_vec/np.linalg.norm(e_vec)
+                adj_vec = adj_vec - np.outer(adj_vec @ e_hat, e_hat)
+                rank_vec = proj_vec_u - np.dot(proj_vec_u, e_hat)*e_hat
+                rank_vec_norm = np.linalg.norm(rank_vec)
+                # A slide running exactly along the edge never crosses it, so
+                #   this is unreachable in practice; fall back rather than
+                #   divide by zero if it ever is.
+                if rank_vec_norm > 0:
+                    rank_vec_u = rank_vec/rank_vec_norm
+                else:
+                    rank_vec_u = proj_vec_u
+
                 # intersection cases will have an angle of -pi/2 to pi/2 between
-                #   Q_norm_u and this vector oriented away from the edge the agent 
+                #   Q_norm_u and this vector oriented away from the edge the agent
                 #   is on. That means the dot product is positive.
-                intersect_bool = np.dot(adj_vec, Q_norm_u) >= 0
+                # A candidate whose third vertex lies on the edge's own line is a
+                #   zero-area sliver with no dihedral to speak of; drop it rather
+                #   than normalize a zero vector.
+                intersect_bool = np.logical_and(
+                    np.dot(adj_vec, Q_norm_u) >= 0,
+                    np.linalg.norm(adj_vec, axis=-1) > EPS)
             else:
                 intersect_bool = np.array([False])
 
@@ -768,42 +868,57 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
         if np.any(intersect_bool):
             # Get info about the relevant adjacent elements
             adj_vec = adj_vec[intersect_bool]
-            adj_vec_u = adj_vec/np.linalg.norm(adj_vec, axis=-1)
+            # adj_vec is (k,DIM) and its norms are (k,); keepdims makes the
+            # division per-element rather than per-coordinate.
+            adj_vec_u = adj_vec/np.linalg.norm(adj_vec, axis=-1, keepdims=True)
             adj_vec_idx = adj_mesh_idx[intersect_bool]
             if adj_vec.shape[0] > 1:
-                # get the mesh element that forms the most acute angle with
-                #   the current mesh element. This is equivalent to the largest
-                #   angle between proj_vec and adj_vec
+                # Get the mesh element that forms the most acute angle with the
+                #   current one, equivalently the largest angle between proj_vec
+                #   and adj_vec. The agent reaches the joint hugging the current
+                #   element, so it lies in the wedge bounded by that element and
+                #   this one; every other candidate is beyond it.
                 # clip protects against roundoff error
                 proj_adj_angles = np.arccos(
-                    np.clip(np.dot(proj_vec_u,adj_vec_u),-1.0, 1.0)
-                    ) # all within interval [0,pi]
+                    np.clip(adj_vec_u @ rank_vec_u,-1.0, 1.0)
+                    ) # (k,), all within interval [0,pi]
                 adj_vec_int_idx = np.argmax(proj_adj_angles)
                 adj_vec = adj_vec[adj_vec_int_idx,:]
                 adj_vec_u = adj_vec_u[adj_vec_int_idx,:]
                 adj_idx = adj_vec_idx[adj_vec_int_idx]
-                proj_adj_angle = proj_adj_angles[adj_vec_int_idx]
             else:
                 adj_vec = adj_vec[0,:]
                 adj_vec_u = adj_vec_u[0,:]
                 adj_idx = adj_mesh_idx[intersect_bool][0]
-                proj_adj_angle = np.arccos(
-                    np.clip(np.dot(proj_vec_u,adj_vec_u),-1.0, 1.0))
                 
             # Treat case of sliding back to a previous mesh element and the
-            #   case of a sharp angle
-            if (prev_idx is not None and prev_idx == adj_idx) or\
-                proj_adj_angle >= np.pi/2:
+            #   case where the agent has nowhere to go on the adjacent one.
+            # Continue onto the adjacent element only if the remaining movement
+            #   still advances along it. The ranking above asks which element
+            #   blocks the agent, a question about directions; this asks whether
+            #   the agent gets anywhere once on it, which is what the recursion
+            #   below settles by re-projecting this same movement. Judging that
+            #   from the movement already flattened onto the element being left
+            #   can only err one way: continuing when the agent in fact has
+            #   nowhere to go.
+            advances = np.dot(vec, adj_vec_u) > 0
+            if (prev_idx is not None and prev_idx == adj_idx) or not advances:
                 # Back away from the intersection point slightly in the 
                 #   direction that bisects the angle between the mesh 
                 #   elements for stay put.
-                mid_vec = (adj_vec_u - proj_vec_u)*0.5
+                mid_vec = (adj_vec_u - rank_vec_u)*0.5
                 if DIM == 2:
                     return Q_edge + EPS*mid_vec
                 elif DIM == 3:
                     return x_edge + EPS*mid_vec
             # Otherwise, slide on adjacent mesh element.
             else:
+                # Terminates: the agent enters the new element at the shared
+                #   joint and, since it transfers only when its movement
+                #   advances away from that joint, leaves by the far end. Each
+                #   transfer thus consumes a whole element length, bounding the
+                #   recursion by |vec|/(shortest element). The advance test above
+                #   and the exclusion of zero-length elements both carry this.
                 # Repeat project_and_slide on new segment.
                 if DIM == 2:
                     adj_intersect = (Q_edge, t_edge, 
@@ -834,7 +949,10 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
     if t_edge is not None:
         # Continue on the original trajectory from the time of separation
         #   from the mesh element.
-        # Recursively check for more intersections.
+        # Recursively check for more intersections. This terminates because the
+        #   remaining movement (1-t_edge)*vec strictly shrinks each time, but
+        #   unlike the transfer above nothing bounds how much, so it limits
+        #   depth only loosely.
         if DIM == 2:
             newstartpt = Q_edge + EPS*Q_norm_u
         elif DIM == 3:
@@ -871,8 +989,8 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
 
 
 
-def _project_and_slide_moving(startpt, endpt, intersection, mesh_start, 
-                              mesh_end, max_meshpt_dist, max_mov, 
+def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
+                              mesh_end, max_meshpt_dist, max_mov,
                               prev_idx=None):
     '''Once we have an intersection point with an immersed mesh, slide the 
     agent along the moving mesh for its remaining movement (frictionless 
@@ -918,9 +1036,7 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
     # small number to perturb off of the actual boundary in order to avoid
     #   roundoff errors that would allow penetration
     # base its magnitude off of the given coordinate points
-    coord_mag = np.ceil(np.log(np.max(
-        np.concatenate((startpt,endpt,mesh_start,mesh_end),axis=None))))
-    EPS = 10**(coord_mag-7)
+    EPS = _boundary_eps(startpt, endpt, mesh_start, mesh_end)
 
     DIM = len(startpt)
 
@@ -1170,9 +1286,14 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
             adj_vec[~pt_bool_0] = adj_mesh_newstart[~pt_bool_0,0,:] - \
                                     adj_mesh_newstart[~pt_bool_0,1,:]
             # intersection cases will have an angle of -pi/2 to pi/2 between
-            #   norm_out_u and the adjacent mesh element oriented from the 
+            #   norm_out_u and the adjacent mesh element oriented from the
             #   edge the agent is on. That means the dot product is positive.
-            intersect_bool = np.dot(adj_vec, norm_out_u) >= 0
+            # A zero-length element has no direction to slide along; keeping it
+            #   as a candidate normalizes a zero vector, and the NaN that
+            #   follows sends the moving solver into a loop it never leaves.
+            intersect_bool = np.logical_and(
+                np.dot(adj_vec, norm_out_u) >= 0,
+                np.linalg.norm(adj_vec, axis=-1) > EPS)
         else:
             intersect_bool = np.array([False])
         ################
@@ -1181,36 +1302,45 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
             ########  Went past and intersected adjoining element! ########
             # Get info about it
             adj_vec = adj_vec[intersect_bool]
-            adj_vec_u = adj_vec/np.linalg.norm(adj_vec, axis=-1)
+            # adj_vec is (k,2) and its norms are (k,); keepdims makes the
+            # division per-element rather than per-coordinate.
+            adj_vec_u = adj_vec/np.linalg.norm(adj_vec, axis=-1, keepdims=True)
             adj_vec_idx = adj_mesh_end_idx[intersect_bool]
             adj_mesh_newstart = adj_mesh_newstart[intersect_bool]
             if adj_vec.shape[0] > 1:
-                # get the one that is most acute on the side of norm_out_u
-                # This is equivalent to the largest angle between Qslide_vec_u 
-                #   and adj_vec_u
+                # Get the one that is most acute on the side of norm_out_u,
+                #   equivalently the largest angle between Qslide_vec_u and
+                #   adj_vec_u. The agent reaches the joint hugging the element
+                #   it is leaving, so it lies in the wedge bounded by that
+                #   element and this one; the rest are beyond it.
                 # clip protects against roundoff error
                 proj_adj_angles = np.arccos(
-                    np.clip(np.dot(Qslide_vec_u, adj_vec_u),-1.0, 1.0)
-                    ) # all within interval [0,pi]
+                    np.clip(adj_vec_u @ Qslide_vec_u,-1.0, 1.0)
+                    ) # (k,), all within interval [0,pi]
                 adj_vec_int_idx = np.argmax(proj_adj_angles)
                 adj_vec = adj_vec[adj_vec_int_idx,:]
                 adj_vec_u = adj_vec_u[adj_vec_int_idx,:]
                 adj_idx = adj_vec_idx[adj_vec_int_idx]
-                proj_adj_angle = proj_adj_angles[adj_vec_int_idx]
             else:
                 adj_vec = adj_vec[0,:]
                 adj_vec_u = adj_vec_u[0,:]
                 adj_idx = adj_mesh_end_idx[intersect_bool][0]
                 adj_vec_int_idx = 0
-                proj_adj_angle = np.arccos(
-                        np.clip(np.dot(Qslide_vec_u, adj_vec_u),-1.0, 1.0))
             # NOTE: This intersection happens at the same time as sliding 
             #   off of the last element because they are joined together.
 
             # Treat case of sliding back to a previous mesh element and the
-            #   case of a sharp angle
-            if (prev_idx is not None and prev_idx == adj_idx) or\
-                proj_adj_angle >= np.pi/2:
+            #   case where the agent has nowhere to go on the adjacent one.
+            # Continue onto the adjacent element only if the remaining movement
+            #   still advances along it. The ranking above asks which element
+            #   blocks the agent, a question about directions; this asks whether
+            #   the agent gets anywhere once on it, which is what the recursion
+            #   below settles by re-projecting this same movement. Judging that
+            #   from the movement already flattened onto the element being left
+            #   can only err one way: continuing when the agent in fact has
+            #   nowhere to go.
+            advances = np.dot(vec, adj_vec_u) > 0
+            if (prev_idx is not None and prev_idx == adj_idx) or not advances:
                 # Back away from the intersection point slightly in the 
                 #   direction that bisects the angle between the mesh 
                 #   elements for stay put.
@@ -1226,6 +1356,9 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
                 mid_vec = (adj_vec_end_u + Q_end_u)*0.5
                 return Q_edge(1) + EPS*mid_vec
             else:
+                # Terminates for the same reason as the static slider: each
+                #   transfer crosses a whole element. Verified to hold here too
+                #   under boundary motion toward, away from and along the agent.
                 # Repeat project_and_slide_moving on new segment.
                 adj_intersect = (Q_edge(t_edge), t_edge, 
                                     adj_mesh_newstart[adj_vec_int_idx,0,:],
