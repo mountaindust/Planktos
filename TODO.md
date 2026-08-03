@@ -178,16 +178,13 @@ All three reproduce identically against the pre-step-1 package, so they are
 long-standing, not regressions. None is covered by the test suite — they only showed up
 because step 1 was verified by running the examples end to end.
 
-- [ ] 🔴 **`_ibc._project_and_slide_static` raises on the ib2d channel mesh.**
-  `ValueError: operands could not be broadcast together with shapes (3,2) (3,)` at
-  `adj_vec_u = adj_vec/np.linalg.norm(adj_vec, axis=-1)`. Reproduce: load
-  `examples/ib2d_data` fluid + `channel.vertex` mesh, seed a swarm *uniformly* over the
-  domain (not the examples' point source) so some agents start inside/near the cylinder,
-  `cov *= 0.0001`, then `move(0.02)` — it dies at step 21 with `seed=1`,
-  `swarm_size=50`. This is the load-bearing collision code, so it is the most serious of
-  the three. Likely a missing `keepdims=True` (or an `axis` that should be `-1`) on a
-  multi-element slide, but that is a guess — diagnose before patching, and add the case
-  to `test_collisions_static.py`.
+- [x] **`_ibc._project_and_slide_static` raised on the ib2d channel mesh — DONE.**
+  `ValueError: operands could not be broadcast together with shapes (3,2) (3,)`. The
+  guess recorded here was right: the candidate directions, a `(k,DIM)` array, were
+  divided by their `(k,)` norms, which NumPy right-aligns into a per-coordinate
+  division, and the ranking then contracted the wrong axes. Fixed on `master` in
+  `020dbd1` (`keepdims=True`), with the same two errors fixed in the moving slider by
+  `60f61e6`. Covered by `tests/test_collisions_junctions.py`.
 - [x] **`Environment.calculate_FTLE` breaks whenever a `swrm=` is supplied — DONE.**
   Two defects in the same branch, both present on `master` as well (so this is a real
   1.1.0 fix, not a dev regression):
@@ -277,7 +274,7 @@ because step 1 was verified by running the examples end to end.
 
 ---
 
-## `_ibc.py` — what is left after the 2026-08 collision pass 🟡
+## `_ibc.py` — the 2026-08 collision passes 🟢
 
 **This work was done on `master` and merged here (`27c810b`); the code and its
 tests live on both branches.** Six defects were found and fixed, each with
@@ -288,30 +285,37 @@ duplicated mesh vertex producing NaN positions (static) or a step that never
 finished (moving); the continue/stop decision; and stack exhaustion surfacing as
 a bare `RecursionError`. See `changelog.txt` under 1.0.2.
 
-**`_ibc.py` is not "done".** Measured coverage after all of it is **91% of
-statements, 45 lines never executed** (`python -m coverage run --source=planktos
--m pytest -q --runslow`, then `coverage report --include="*_ibc.py"
---show-missing`). Ranked by risk:
+**A second `master` pass (2026-08-02/03) closed all of the below and is merged
+here.** Coverage went **91% → 99% of statements, 45 → 7 lines never executed**
+(`python -m coverage run --source=planktos -m pytest -q --runslow`, then
+`coverage report --include="*_ibc.py" --show-missing`). It also found one more
+defect, **BUG-TCRIT**: both critical times the moving slider uses to decide
+whether an agent left its element mid-step were computed wrongly, one of them in
+a way that was not rotation invariant, so the resolved position depended on how
+the problem sat in the coordinate frame. Fixed, with the corrected derivation in
+place; see `changelog.txt` under 1.0.2.
 
-- [ ] 🔴 **The rotation branch of the moving slider has never run**
-  (`rotated_past_bool`, the largest uncovered block). It handles a mesh element
-  *rotating* out from under an agent, and it solves a root-finding problem
-  (`optimize.root_scalar`, brentq) to find when the perpendicular velocities
-  matched. This is the same shape as the bug that started the pass — an entire
-  branch no test reaches — and it contains the root find, which is what hung on
-  a degenerate mesh. Rotating boundaries are real for the 2D moving-mesh work,
-  so this is the highest risk-per-line left in the file. Note that a
-  rotating-junction probe produced almost no recursion, which in hindsight was
-  the signal the path was not being reached; constructing a case that genuinely
-  enters it is the first task.
-- [ ] 🟡 **The moving free-flight recursion is untested** (the `newendpt =
-  newstartpt + (1-t_edge)*vec` path near the end of `_project_and_slide_moving`).
-  Its static counterpart dominates recursion depth at ordinary step sizes —
-  44 of 45 recursions in measurements — so the moving one is likely exercised
-  constantly in real runs while never being asserted on.
-- [ ] 🟢 Remaining uncovered lines are early-return special cases
-  (`1-t_I < 10e-7`, "practically finished with this step"), some 3D sticky
-  paths, and the parallel-worker dispatch.
+- [x] **The rotation branch of the moving slider — DONE.** Reaching it needs an
+  element pivoting about an *interior* point: one half sweeps toward the agent so
+  contact happens at all, the other sweeps away so the boundary can then recede
+  out from under it. An endpoint pivot recedes along its whole length and is
+  never touched, which is why the earlier rotating-junction probe saw almost no
+  recursion. `tests/_ib_harness.pivoting_segment` builds it; the tests assert the
+  branch is entered rather than trusting that it is. No defect found — the branch
+  was correct, just unreached.
+- [x] **The free-flight recursion — DONE**, and broader than recorded here: the
+  *static 2D* path was the one with no coverage at all, not just the moving one.
+  Both now have exact closed-form answers.
+- [x] **The remaining special cases — DONE.** Contact landing at the very end of
+  the step, the travel-reversal critical time, the stay-put vertex-order
+  variants, the 3D middle-edge exit, and the moving stack-exhaustion re-raise.
+  Several were mirror images of covered branches distinguished only by an
+  arbitrary choice (which vertex of an element is stored first), so they are
+  pinned as invariances rather than values.
+
+**The 7 lines still uncovered are not worth chasing:** three are placeholders
+behind the 3D-moving `NotImplementedError`, two are numerical corners documented
+in place as unreachable, and two are solver non-convergence raises.
 
 **Two findings recorded rather than fixed** (issue-tracker material by the
 `xfail` rule in CLAUDE.md — real, but not worth stopping the cycle for):
@@ -329,16 +333,28 @@ statements, 45 lines never executed** (`python -m coverage run --source=planktos
   shrinks, which needs `t_edge > t_I` to hold *in floating point*. A step small
   enough to make them equal numerically would stall. Could not be constructed;
   the `RecursionError` re-raise now bounds the consequence either way.
+- [ ] 🟢 **The mid-step excursion check misses about half the cases it exists
+  for** — filed as **issue #73**. The two critical times bound neither end of an
+  excursion (those are roots of `s(t)=0` and `s(t)=1`, which depend on the slide
+  ODE), so an agent can be carried along an element through a transient overshoot
+  past its end instead of being released there. Measured at 15 of 26 caught,
+  with no false positives, and unchanged by the BUG-TCRIT fix — that corrected
+  the algebra of the two times, not the heuristic built on them. No penetration
+  and no exception, so accuracy only.
 
 **Testing approach that worked**, if picking this up cold: the existing suite
 only ever built *chains* (walls, polylines, corners, grooves, dihedrals), where
 a vertex joins at most two segments — so whole branches were unreachable by
 construction. `tests/test_collisions_junctions.py` adds `star_2D`,
 `closed_polygon` and `book_3D` builders for the missing geometry class, and its
-candidate counts were **measured by instrumenting the branch**, not assumed. Its
+candidate counts were **measured by instrumenting the branch**, not assumed. The
 invariant assertions (finite, motion not amplified, stays outside a closed
-obstacle, and rigid-motion equivariance) are what caught the wrong-but-finite
-answers that no arithmetic check could see.
+obstacle, and rigid-motion equivariance — now in
+`tests/test_collisions_invariants.py`) are what caught the wrong-but-finite
+answers that no arithmetic check could see. The second pass reused the method:
+instrument to confirm a branch is reached, then assert an invariance rather than
+a value wherever the branch is only distinguished from a covered one by an
+arbitrary choice.
 
 ---
 

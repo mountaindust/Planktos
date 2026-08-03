@@ -16,7 +16,6 @@ traveled, and idx indexes the struck element (None for a single element).
 '''
 
 import numpy as np
-import pytest
 
 from planktos import _geom
 

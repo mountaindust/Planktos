@@ -43,6 +43,15 @@ def wall_segments(M, x, y_lo=0.0, y_hi=10.0):
     return mesh
 
 
+def horizontal_wall(M, y, x_lo=0.0, x_hi=10.0):
+    '''A horizontal wall at the given y, split into M line-segment elements.'''
+    xs = np.linspace(x_lo, x_hi, M + 1)
+    mesh = np.zeros((M, 2, 2))
+    mesh[:, 0, 0] = xs[:-1]; mesh[:, 0, 1] = y
+    mesh[:, 1, 0] = xs[1:];  mesh[:, 1, 1] = y
+    return mesh
+
+
 def segment(Q0, Q1):
     '''A single 2D segment as a (1, 2, 2) mesh.'''
     return np.array([[Q0, Q1]], dtype=float)
@@ -123,18 +132,33 @@ def assert_not_penetrated_3D(start, end, P0, P1, P2, atol=POS_ATOL):
         f"penetration: start side {s0:.2e}, end side {s1:.2e}")
 
 
-def translating_wall(M, x0, x1, T):
-    '''A vertical wall translating in x from x0 to x1 over T time slices.
-    Returns (mesh (T,M,2,2), times-agnostic xpositions). For direct calls to
-    apply_internal_moving_BC, just take two slices as start_mesh / end_mesh.'''
-    base = wall_segments(M, 0.0)
-    xpos = np.linspace(x0, x1, T)
-    mesh = np.zeros((T, M, 2, 2))
-    for ti in range(T):
-        mesh[ti] = base
-        mesh[ti, :, 0, 0] = xpos[ti]
-        mesh[ti, :, 1, 0] = xpos[ti]
-    return mesh, xpos
+def pivoting_segment(center, length, theta_start, theta_end):
+    '''A single segment of the given length, centered on `center`, turning from
+    theta_start to theta_end across the step. Returns (start_mesh, end_mesh),
+    each a (1,2,2) mesh.
+
+    Pivoting about a point *interior* to the element is what makes its two halves
+    sweep in opposite directions: one rises toward an agent on a given side while
+    the other drops away from it. That is what lets an agent make contact at all
+    and only then have the boundary recede out from under it. An element pivoting
+    about one of its endpoints sweeps the same way along its whole length, so an
+    agent it is receding from never touches it in the first place -- which is why
+    the rotation-away branch of the moving slider went unreached for so long.
+
+    Note that the collision code interpolates the mesh *linearly* between the two
+    snapshots, so the element does not trace a true rotation in between: it also
+    contracts to a chord and re-extends. That is inherent to the moving-mesh
+    model, and it is the reason the slider carries critical-time machinery for
+    the element's length and travel direction at all.
+    '''
+    center = np.asarray(center, dtype=float)
+    half = length/2
+
+    def ends(theta):
+        offset = np.array([np.cos(theta), np.sin(theta)])*half
+        return np.array([[center - offset, center + offset]])
+
+    return ends(theta_start), ends(theta_end)
 
 
 # ----------------------- geometry assertion helpers ------------------------
@@ -148,22 +172,6 @@ def signed_perp_dist_2D(P, Q0, Q1):
     # 2D scalar cross product, written out rather than via np.cross: numpy
     # removed support for 2-vectors in np.cross in 2.5 (deprecated since 1.x).
     return (d[0]*r[1] - d[1]*r[0]) / np.linalg.norm(d)
-
-
-def project_param_2D(P, Q0, Q1):
-    '''Parameter s in P's projection onto segment Q0->Q1 (0 at Q0, 1 at Q1).'''
-    Q0 = np.asarray(Q0, float); Q1 = np.asarray(Q1, float); P = np.asarray(P, float)
-    d = Q1 - Q0
-    return np.dot(P - Q0, d) / np.dot(d, d)
-
-
-def assert_on_segment_2D(P, Q0, Q1, atol=POS_ATOL):
-    '''Assert P lies on the (finite) segment Q0->Q1: ~zero perpendicular distance
-    and projection parameter within [0,1].'''
-    perp = signed_perp_dist_2D(P, Q0, Q1)
-    assert abs(perp) <= atol, f"point {np.asarray(P)} off the segment line by {perp:.2e}"
-    s = project_param_2D(P, Q0, Q1)
-    assert -atol <= s <= 1 + atol, f"projection param {s:.4f} outside [0,1]"
 
 
 def assert_not_penetrated_2D(start, end, Q0, Q1, atol=POS_ATOL):

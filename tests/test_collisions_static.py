@@ -83,17 +83,9 @@ def test_parallel_motion_along_wall_no_collision(vwall):
 #                 horizontal segment: symmetry check                          #
 # --------------------------------------------------------------------------- #
 
-def _hwall(y, x0=0.0, x1=10.0, M=20):
-    xs = np.linspace(x0, x1, M + 1)
-    mesh = np.zeros((M, 2, 2))
-    mesh[:, 0, 0] = xs[:-1]; mesh[:, 0, 1] = y
-    mesh[:, 1, 0] = xs[1:];  mesh[:, 1, 1] = y
-    return mesh
-
-
 def test_horizontal_diagonal_hit_slides():
     # Mirror of the vertical diagonal case: slide in x along the wall at y=5.
-    mesh = _hwall(5.0)
+    mesh = h.horizontal_wall(20, 5.0)
     start = np.array([5.0, 4.9]); end = np.array([5.4, 5.3])
     newend, dx, idx = h.call_static(start, end, mesh, 'sliding')
     assert newend[1] <= 5.0 + 1e-9, "penetrated above the wall"
@@ -294,4 +286,55 @@ def test_wedged_agent_stops_off_the_joint_not_on_it():
 
     h.assert_not_penetrated_2D(start, newend, Q[0, 0], Q[0, 1])
     h.assert_not_penetrated_2D(start, newend, A[0, 0], A[0, 1])
+    h.assert_displacement_bounded(start, end, newend)
+
+
+# --------------------------------------------------------------------------- #
+#        sliding off a free end and resuming the original trajectory          #
+# --------------------------------------------------------------------------- #
+# Every case above either ends on the element the agent struck or transfers it
+# onto an adjoining one. When a slide runs off an end with nothing attached
+# there, the code instead resumes the agent's *original* trajectory from the
+# moment of separation and re-checks the rest of it for collisions.
+#
+# Nothing in the suite reached that path in 2D. It is not an exotic one: it is
+# what happens at the free end of any open boundary, and measurements on the
+# ib2d channel run put its 2D-and-3D counterpart at 44 of 45 recursions at
+# ordinary step sizes. Both cases below have exact closed-form answers.
+
+def test_slide_off_free_end_resumes_original_trajectory():
+    # Lone segment (0,0)-(1,0). The agent comes down at 45 degrees from
+    # (0.2,0.5) to (1.6,-0.9), so vec = (1.4,-1.4). It reaches y=0 at t=5/14, at
+    # x=0.7, then slides in +x with no vertical motion left to it. The projected
+    # end of that slide is x=1.6, past the free end, which it leaves at t=4/7.
+    # The remaining 3/7 of the movement is then flown unobstructed:
+    #   (1,0) + (3/7)*(1.4,-1.4) = (1.6,-0.6).
+    mesh = h.segment((0.0, 0.0), (1.0, 0.0))
+    start = np.array([0.2, 0.5]); end = np.array([1.6, -0.9])
+
+    newend, dx, idx = h.call_static(start, end, mesh, 'sliding')
+
+    assert idx == 0
+    assert np.allclose(newend, [1.6, -0.6], atol=POS_ATOL), \
+        f"expected the free-flight endpoint (1.6,-0.6), got {newend}"
+    h.assert_displacement_bounded(start, end, newend)
+
+
+def test_free_flight_after_slide_can_strike_another_element():
+    # The same trajectory, with a second segment lying across the flight path at
+    # y=-0.4. The agent leaves the first element at (1,0) as above, flies until
+    # it meets the second at (1.4,-0.4), and slides the remaining tangential 0.2
+    # along it to (1.6,-0.4). This is the recursion the case above stops short
+    # of: free flight that finds a further collision rather than running out.
+    mesh = np.concatenate([h.segment((0.0, 0.0), (1.0, 0.0)),
+                           h.segment((1.2, -0.4), (2.0, -0.4))])
+    start = np.array([0.2, 0.5]); end = np.array([1.6, -0.9])
+
+    newend, dx, idx = h.call_static(start, end, mesh, 'sliding')
+
+    # idx reports the *first* element struck, which is still the upper one
+    assert idx == 0
+    assert np.allclose(newend, [1.6, -0.4], atol=POS_ATOL), \
+        f"expected the agent to be caught by the second element, got {newend}"
+    h.assert_not_penetrated_2D(start, newend, [1.2, -0.4], [2.0, -0.4])
     h.assert_displacement_bounded(start, end, newend)

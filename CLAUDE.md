@@ -375,7 +375,25 @@ parallelization tests and the plotting smokes — which brings it to roughly 20s
     segments, 3D triangle meshes; convex/concave joints, grazing, deep recursive
     multi-element slides); assert no-penetration and exact post-collision
     positions. `test_collisions_moving.py` also pins a deterministic multi-step
-    `Swarm.move()` trajectory (golden drift detector).
+    `Swarm.move()` trajectory (golden drift detector), the moving slider's
+    rotate-away release branch (needs an element pivoting about an *interior*
+    point — see `_ib_harness.pivoting_segment`), and frame-independence of the
+    slide.
+  - `test_collisions_junctions.py` — the cases the chain-shaped builders above
+    structurally cannot reach: vertices of degree > 2 and non-manifold edges,
+    where a slide running off an element has several candidates to continue
+    onto. Asserts invariants (finite, motion not amplified, stays outside a
+    closed obstacle, rigid-motion equivariance) rather than exact positions.
+  - `test_collisions_invariants.py` — the checks that are *not* tied to any
+    geometry: the answer must be finite, must not amplify the motion, must not
+    depend on where the problem sits or which way the axes point, and must
+    behave the same in any units. Also holds the stack-exhaustion cases, since
+    recursion depth is set by step length against mesh spacing rather than by
+    shape. Deliberately uses plain geometries, so a failure is attributable to
+    the property and not to an exotic mesh.
+  - `test_ibc_helpers.py` — the small helpers and guard rails inside `_ibc`:
+    `_boundary_eps`, `_point_in_triangle`, `make_ib_worker` unpacking, and the
+    2D-only guard on moving meshes.
   - `test_collisions_stl_3d.py` — end-to-end 3D: load a generated STL via
     `Environment.read_stl_mesh_data` and drive agents into it with `Swarm.move()`
     (needs the optional numpy-stl; module skips otherwise).
