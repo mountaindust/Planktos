@@ -36,6 +36,7 @@ must not be amplified, and the answer must not depend on where the problem sits
 in space or on the units it is expressed in.
 '''
 
+import sys
 import warnings
 
 import numpy as np
@@ -487,6 +488,58 @@ def test_stack_exhaustion_message_quantifies_the_mismatch():
     msg = str(excinfo.value)
     assert '0.0025' in msg, f'should report the element scale; got: {msg}'
     assert 'elements in one step' in msg
+
+
+def _stack_depth():
+    '''Frames currently on the stack. Cheaper than inspect.stack(), which builds
+    a full record per frame.'''
+    depth, frame = 0, sys._getframe()
+    while frame is not None:
+        depth += 1
+        frame = frame.f_back
+    return depth
+
+
+def test_moving_slide_exhausting_the_stack_reports_the_cause():
+    '''The moving slider has its own re-raise, and needs its own case: a slide
+    along a deforming mesh recurses through a different routine than the static
+    one, so covering one says nothing about the other.
+
+    The interpreter's real stack is not exhausted here. Every element the moving
+    slider crosses costs an ODE solve, so running it out naturally takes seconds;
+    the limit is lowered relative to the depth already in use instead. What is
+    under test is the re-raise, not how many frames the interpreter starts with,
+    and pinning it to a relative depth keeps the test independent of the platform
+    stack size.
+    '''
+    # ~270 elements across the slide, comfortably more than the depth allowed
+    start_mesh = h.wall_segments(300, 5.0, y_lo=0.0, y_hi=1.0)
+    end_mesh = h.wall_segments(300, 5.02, y_lo=0.0, y_hi=1.0)
+    start = np.array([4.995, 0.05])
+    end = np.array([5.1, 0.95])
+
+    original = sys.getrecursionlimit()
+    sys.setrecursionlimit(_stack_depth() + 100)
+    try:
+        h.call_moving(start, end, start_mesh, end_mesh)
+        raised = None
+    except RuntimeError as err:
+        # RecursionError subclasses RuntimeError, so this catches both the
+        # explained failure and a bare one leaking through; they are told apart
+        # below rather than by the except clause.
+        raised = err
+    finally:
+        sys.setrecursionlimit(original)
+
+    assert raised is not None, 'the slide should have run out of stack'
+    assert not isinstance(raised, RecursionError), \
+        f'bare RecursionError escaped instead of being explained: {raised}'
+    msg = str(raised)
+    assert 'sliding an agent' in msg, f'should name what ran out; got: {msg}'
+    assert 'dt' in msg, f'should say what to change; got: {msg}'
+    assert 'setrecursionlimit' in msg, f'should offer the escape hatch: {msg}'
+    assert isinstance(raised.__cause__, RecursionError), \
+        'the original RecursionError should be chained as the cause'
 
 
 # --------------------------------------------------------------------------- #

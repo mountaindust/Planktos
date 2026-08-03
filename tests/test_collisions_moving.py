@@ -357,6 +357,123 @@ def test_release_from_a_turning_obstacle_keeps_the_agent_outside():
 
 
 # --------------------------------------------------------------------------- #
+#             contact arriving at the very end of the step                    #
+# --------------------------------------------------------------------------- #
+
+def test_contact_at_the_very_end_of_the_step_just_backs_off():
+    '''With essentially none of the step left to slide through, the slider skips
+    the whole projection and simply places the agent off the boundary it just
+    reached. Worth its own case because that shortcut returns before any of the
+    machinery the other tests exercise.
+
+    A wall rising from y=0 to y=0.1 and an agent dropping from y=0.5 to a hair
+    under y=0.1 meet at t = 0.5/(0.5+1e-9), which is 1 to within 2e-9.
+    '''
+    start_mesh = h.segment((0.0, 0.0), (1.0, 0.0))
+    end_mesh = h.segment((0.0, 0.1), (1.0, 0.1))
+    start = np.array([0.5, 0.5])
+    end = np.array([0.5, 0.1 - 1e-9])
+
+    newend, dx, idx = h.call_moving(start, end, start_mesh, end_mesh, 'sliding')
+
+    assert idx == 0, 'expected contact with the rising wall'
+    assert np.allclose(newend, [0.5, 0.1], atol=POS_ATOL), \
+        f'expected the agent left at the contact point (0.5,0.1), got {newend}'
+    assert newend[1] >= 0.1, 'agent was left below the wall it just met'
+
+
+# --------------------------------------------------------------------------- #
+#              the travel reversal as the binding critical time               #
+# --------------------------------------------------------------------------- #
+# The slider re-checks two critical times when an agent is still on its element
+# at the end of the step: the element's shortest moment, and where the agent's
+# direction of travel along it reverses. The reversal is the binding one when it
+# comes first, which needs the element to turn through the perpendicular to the
+# agent's travel -- something no translating or gently tilting wall does.
+
+def test_travel_reversal_can_be_the_binding_critical_time():
+    '''An element pivoting from 60 to 120 degrees while the agent travels
+    straight in +x. Its projection onto the agent's travel goes from +2 to -2,
+    so the direction of sliding reverses partway through the step.
+
+    There is no closed form for where the agent lands, so this asserts the
+    invariants plus equivariance. As with the release branch, the usual
+    no-penetration check does not apply to a lone pivoting element: it sweeps
+    across the agent's own start point.
+    '''
+    def pivot(degrees, length=2.0):
+        theta = np.radians(degrees)
+        offset = np.array([np.cos(theta), np.sin(theta)])*length/2
+        return np.array([[-offset, offset]])
+
+    m0, m1 = pivot(60), pivot(120)
+    start = np.array([-1.0, 0.5]); end = np.array([1.0, 0.5])
+    vec = end - start
+
+    # the reversal exists: the element's projection onto the travel flips sign
+    assert (np.dot(vec, m0[0, 1] - m0[0, 0]) *
+            np.dot(vec, m1[0, 1] - m1[0, 0])) < 0, \
+        'this element does not turn through the perpendicular to the travel'
+
+    newend, dx, idx = h.call_moving(start, end, m0, m1)
+
+    assert idx is not None, 'expected contact with the pivoting element'
+    h.assert_finite(newend, 'slide through a travel reversal')
+    h.assert_displacement_bounded_moving(start, end, newend, m0, m1)
+
+    T = h.rigid_2D(0.7, (3.0, -2.0))
+    moved, _, _ = h.call_moving(T(start), T(end), T(m0), T(m1))
+    assert np.allclose(np.asarray(moved, float), T(newend), atol=1e-5), \
+        f'rotated problem gave {np.asarray(moved)}, expected {T(newend)}'
+
+
+# --------------------------------------------------------------------------- #
+#           a wedged agent on a moving joint, either vertex order             #
+# --------------------------------------------------------------------------- #
+
+def test_moving_wedge_rides_the_joint_whatever_the_vertex_order():
+    '''An agent that slides into a moving joint it cannot advance past is left
+    at that joint and carried with it.
+
+    Which of the adjacent element's two vertices is the shared one is an
+    accident of how the mesh file was written, and the slider has a branch per
+    case. Both must give the same answer, so both are run here and compared:
+    that is the only way to see the two branches disagree.
+
+    The focal element is traversed left to right, so the agent leaves by its
+    *second* vertex -- the other of a similar pair of branches, and the one no
+    other moving case reaches.
+    '''
+    joint = np.array([5.0, 5.0])
+    shift = np.array([0.05, 0.0])
+    focal = h.segment((2.0, 5.0), tuple(joint))     # agent slides off its Q1
+    ramp_tip = (5.6, 7.5)                           # leans back over the focal
+    start = np.array([4.2, 6.4])                    # diving steeply into focal
+    end = np.array([5.2, 4.2])                      # overshooting the joint
+
+    results = {}
+    for label, ramp in (('joint first', h.segment(tuple(joint), ramp_tip)),
+                        ('joint second', h.segment(ramp_tip, tuple(joint)))):
+        m0 = np.concatenate([focal, ramp])
+        m1 = m0 + shift
+        newend, dx, idx = h.call_moving(start, end, m0, m1)
+        h.assert_finite(newend, f'moving wedge ({label})')
+        # wedged at the joint, which has itself moved with the mesh
+        assert np.allclose(newend, joint + shift, atol=POS_ATOL), \
+            f'{label}: expected the agent at the joint {joint+shift}, got {newend}'
+        # backed off it, not sitting exactly on it
+        offset = float(np.linalg.norm(newend - (joint + shift)))
+        assert 0 < offset < POS_ATOL, \
+            f'{label}: agent left {offset:.3e} from the vertex'
+        results[label] = newend
+
+    assert np.allclose(results['joint first'], results['joint second'],
+                       atol=1e-12), \
+        ('the resolved position changed with the order the adjacent element\'s '
+         f'vertices were stored: {results}')
+
+
+# --------------------------------------------------------------------------- #
 #       golden multi-step trajectory (drift detector for moving collisions)    #
 # --------------------------------------------------------------------------- #
 # The cases above are single-step known answers. This pins a full deterministic

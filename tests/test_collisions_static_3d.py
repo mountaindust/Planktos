@@ -158,6 +158,34 @@ def test_coplanar_tiled_surface_slides_across_internal_edge():
     assert np.allclose(newend[:2], [1.0, 3.0], atol=POS_ATOL)   # slid to slide_pt in t2
 
 
+@pytest.mark.parametrize('roll', [0, 1, 2])
+def test_slide_across_internal_edge_ignores_vertex_rotation(roll):
+    '''Where a triangle's vertices start in its stored list is arbitrary -- a
+    mesh file may list any of the three first -- so rotating them must not move
+    the agent.
+
+    It is worth checking because the slider identifies the edge an agent leaves
+    by its position in the triangle (Q0Q1, Q1Q2 or Q2Q0) and takes a different
+    branch for each. Rolling the vertices walks all three: the same physical
+    edge is the first, second and third in turn. Rotation is used rather than an
+    arbitrary permutation because it preserves the winding, and so the normal.
+
+    Every other 3D case in the suite builds its triangles with the shared edge
+    written first, which is why the middle branch went unreached.
+    '''
+    t1 = np.array([[0., 0., 0.], [4., 0., 0.], [4., 4., 0.]])   # lower-right
+    t2 = np.array([[0., 0., 0.], [4., 4., 0.], [0., 4., 0.]])   # upper-left
+    start = np.array([3., 1., 0.3]); end = np.array([1., 3., -0.5])
+
+    mesh = np.array([np.roll(t1, roll, axis=0), t2])
+    newend, dx, idx = h.call_static(start, end, mesh, 'sliding')
+
+    assert newend[2] >= -POS_ATOL, "penetrated the flat surface"
+    assert newend[1] - newend[0] > 1.0, "stuck at the internal diagonal edge"
+    assert np.allclose(newend[:2], [1.0, 3.0], atol=POS_ATOL), \
+        f"vertex rotation {roll} moved the agent to {newend}"
+
+
 @pytest.mark.parametrize('slope', [0.05, 0.2, 0.5])
 def test_gentle_concave_fold_slides_onto_neighbor(slope):
     # A gentle concave valley (faces z = slope*|x|). An agent sliding down one

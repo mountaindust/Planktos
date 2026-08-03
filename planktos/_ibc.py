@@ -1241,7 +1241,7 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
         sol = optimize.root_scalar(spd_diff, method='brentq', bracket=(t_I,t_end))
 
         if not sol.converged:
-            raise RuntimeError("Brenq did not converge.")
+            raise RuntimeError("Brentq did not converge.")
         t_rot = sol.root
         # for debugging
         # print(f't_rot = {t_rot}')
