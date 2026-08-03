@@ -314,11 +314,11 @@ def apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
             dQ = Q1 - Q0
             ax = np.argmax(np.abs(dQ))
             s_I = (x[ax]-Q0[ax])/dQ[ax]
-            if idx is None:
-                dt_elem = close_mesh_end
-                idx = 0
-            else:
-                dt_elem = close_mesh_end[idx]
+            # idx is always a real index here. _geom reports a None index only
+            #   for the single-element form of its input, where the element
+            #   arrives as bare 1D arrays and there is nothing to index; the
+            #   arrays assembled above are (N,2) whatever N is, including 1.
+            dt_elem = close_mesh_end[idx]
             # Translate to final position of mesh element in this time step
             new_pos = dt_elem[0,:]*(1-s_I)+ dt_elem[1,:]*s_I
             

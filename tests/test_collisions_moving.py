@@ -143,6 +143,30 @@ def test_sticky_moving_axis_aligned_wall_stops_on_wall(orient):
     assert np.allclose(newend, expected, atol=POS_ATOL)
 
 
+@pytest.mark.parametrize('ib', ['sticky', 'sliding'])
+def test_single_element_moving_mesh_reports_a_real_index(ib):
+    '''A one-element mesh is the case that could plausibly yield a None index,
+    and the sticky path subscripts the mesh with whatever comes back.
+
+    _geom reports a None index only for the single-element *form* of its input,
+    where the element arrives as bare 1D arrays and there is nothing to index.
+    apply_internal_moving_BC always assembles (N,2) arrays, so N=1 still gets an
+    ordinary index. Pinned because the sticky path depends on it.
+    '''
+    start_mesh = h.segment((0.0, 0.0), (1.0, 0.0))
+    end_mesh = h.segment((0.0, 0.1), (1.0, 0.1))
+    start = np.array([0.5, 0.5]); end = np.array([0.5, -0.2])
+
+    newend, dx, idx = h.call_moving(start, end, start_mesh, end_mesh, ib)
+
+    assert idx is not None, "index came back None; the sticky path subscripts with it"
+    assert int(idx) == 0, f"expected element 0, got {idx!r}"
+    # The agent drops straight onto a wall rising from y=0 to y=0.1, so it has no
+    # tangential motion and both modes leave it riding the wall's final position.
+    assert np.allclose(newend, [0.5, 0.1], atol=POS_ATOL), \
+        f"expected the agent to ride the wall to y=0.1, got {newend}"
+
+
 # --------------------------------------------------------------------------- #
 #        sliding off a free end and resuming the original trajectory          #
 # --------------------------------------------------------------------------- #

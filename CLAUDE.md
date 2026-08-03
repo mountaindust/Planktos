@@ -240,7 +240,18 @@ The suite is organized into focused, deterministic, fast modules (overhauled
     segments, 3D triangle meshes; convex/concave joints, grazing, deep recursive
     multi-element slides); assert no-penetration and exact post-collision
     positions. `test_collisions_moving.py` also pins a deterministic multi-step
-    `Swarm.move()` trajectory (golden drift detector).
+    `Swarm.move()` trajectory (golden drift detector), the moving slider's
+    rotate-away release branch (needs an element pivoting about an *interior*
+    point — see `_ib_harness.pivoting_segment`), and frame-independence of the
+    slide.
+  - `test_collisions_junctions.py` — the cases the chain-shaped builders above
+    structurally cannot reach: vertices of degree > 2 and non-manifold edges,
+    where a slide running off an element has several candidates to continue
+    onto. Asserts invariants (finite, motion not amplified, stays outside a
+    closed obstacle, rigid-motion equivariance) rather than exact positions.
+  - `test_ibc_helpers.py` — the small helpers and guard rails inside `_ibc`:
+    `_boundary_eps`, `_point_in_triangle`, `make_ib_worker` unpacking, and the
+    2D-only guard on moving meshes.
   - `test_collisions_stl_3d.py` — end-to-end 3D: load a generated STL via
     `Environment.read_stl_mesh_data` and drive agents into it with `Swarm.move()`
     (needs the optional numpy-stl; module skips otherwise).
