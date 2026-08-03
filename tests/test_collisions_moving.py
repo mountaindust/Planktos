@@ -115,14 +115,6 @@ def test_tilted_wall_sliding_stays_on_near_side():
 #            axis-aligned sticky-moving walls (regression: BUG-STICKY-AXIS)    #
 # --------------------------------------------------------------------------- #
 
-def _horizontal_wall(M, y, x_lo=0.0, x_hi=10.0):
-    xs = np.linspace(x_lo, x_hi, M + 1)
-    mesh = np.zeros((M, 2, 2))
-    mesh[:, 0, 0] = xs[:-1]; mesh[:, 0, 1] = y
-    mesh[:, 1, 0] = xs[1:];  mesh[:, 1, 1] = y
-    return mesh
-
-
 @pytest.mark.parametrize('orient', ['vertical', 'horizontal'])
 def test_sticky_moving_axis_aligned_wall_stops_on_wall(orient):
     # A perfectly axis-aligned moving element used to trip a 0/0 in the sticky
@@ -133,7 +125,7 @@ def test_sticky_moving_axis_aligned_wall_stops_on_wall(orient):
         start = np.array([4.8, 5.0]); end = np.array([6.3, 5.0])
         expected, axis = [6.0, 5.0], 0
     else:
-        start_mesh = _horizontal_wall(20, 5.0); end_mesh = _horizontal_wall(20, 6.0)
+        start_mesh = h.horizontal_wall(20, 5.0); end_mesh = h.horizontal_wall(20, 6.0)
         start = np.array([5.0, 4.8]); end = np.array([5.0, 6.3])
         expected, axis = [5.0, 6.0], 1
     newend, dx, idx = h.call_moving(start, end, start_mesh, end_mesh, 'sticky')
@@ -332,16 +324,10 @@ TURNING_SQUARE_TURN = 0.7
 TURNING_SQUARE_START, TURNING_SQUARE_END = (-1.0, 1.1), (1.5, 0.8)
 
 
-def _turned_square(turn):
-    c, s = np.cos(turn), np.sin(turn)
-    R = np.array([[c, -s], [s, c]])
-    return np.asarray(TURNING_SQUARE, dtype=float) @ R.T
-
-
 def test_release_from_a_turning_obstacle_keeps_the_agent_outside():
     '''The hard invariant, on a release: the agent must finish outside the
     obstacle *where the obstacle ends up*, not where it started.'''
-    corners_end = _turned_square(-TURNING_SQUARE_TURN)
+    corners_end = h.rigid_2D(-TURNING_SQUARE_TURN)(TURNING_SQUARE)
     m0 = h.closed_polygon(TURNING_SQUARE)
     m1 = h.closed_polygon(corners_end)
     start = np.array(TURNING_SQUARE_START); end = np.array(TURNING_SQUARE_END)
@@ -401,12 +387,8 @@ def test_travel_reversal_can_be_the_binding_critical_time():
     no-penetration check does not apply to a lone pivoting element: it sweeps
     across the agent's own start point.
     '''
-    def pivot(degrees, length=2.0):
-        theta = np.radians(degrees)
-        offset = np.array([np.cos(theta), np.sin(theta)])*length/2
-        return np.array([[-offset, offset]])
-
-    m0, m1 = pivot(60), pivot(120)
+    m0, m1 = h.pivoting_segment((0.0, 0.0), 2.0,
+                                np.radians(60), np.radians(120))
     start = np.array([-1.0, 0.5]); end = np.array([1.0, 0.5])
     vec = end - start
 

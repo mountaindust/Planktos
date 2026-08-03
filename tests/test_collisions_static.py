@@ -83,17 +83,9 @@ def test_parallel_motion_along_wall_no_collision(vwall):
 #                 horizontal segment: symmetry check                          #
 # --------------------------------------------------------------------------- #
 
-def _hwall(y, x0=0.0, x1=10.0, M=20):
-    xs = np.linspace(x0, x1, M + 1)
-    mesh = np.zeros((M, 2, 2))
-    mesh[:, 0, 0] = xs[:-1]; mesh[:, 0, 1] = y
-    mesh[:, 1, 0] = xs[1:];  mesh[:, 1, 1] = y
-    return mesh
-
-
 def test_horizontal_diagonal_hit_slides():
     # Mirror of the vertical diagonal case: slide in x along the wall at y=5.
-    mesh = _hwall(5.0)
+    mesh = h.horizontal_wall(20, 5.0)
     start = np.array([5.0, 4.9]); end = np.array([5.4, 5.3])
     newend, dx, idx = h.call_static(start, end, mesh, 'sliding')
     assert newend[1] <= 5.0 + 1e-9, "penetrated above the wall"

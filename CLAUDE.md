@@ -226,9 +226,9 @@ Algorithm/derivation notes are in `docs/notes/` (Markdown with LaTeX):
 ## Tests
 
 The suite is organized into focused, deterministic, fast modules (overhauled
-2026-06). Run `pytest` from the repository root. The default run is ~2s; add
-`--runslow` for the slower checks — the full-simulation parallelization tests
-(~30s) and the plotting smokes.
+2026-06). Run `pytest` from the repository root. ~390 tests; the default run is
+~3s, and `--runslow` brings it to ~16s by adding the full-simulation
+parallelization tests (~12s of that) and the plotting smokes.
 
 - **Run** the whole thing with `pytest`; a specific area with e.g.
   `pytest tests/test_collisions_static.py`.
@@ -249,6 +249,13 @@ The suite is organized into focused, deterministic, fast modules (overhauled
     where a slide running off an element has several candidates to continue
     onto. Asserts invariants (finite, motion not amplified, stays outside a
     closed obstacle, rigid-motion equivariance) rather than exact positions.
+  - `test_collisions_invariants.py` — the checks that are *not* tied to any
+    geometry: the answer must be finite, must not amplify the motion, must not
+    depend on where the problem sits or which way the axes point, and must
+    behave the same in any units. Also holds the stack-exhaustion cases, since
+    recursion depth is set by step length against mesh spacing rather than by
+    shape. Deliberately uses plain geometries, so a failure is attributable to
+    the property and not to an exotic mesh.
   - `test_ibc_helpers.py` — the small helpers and guard rails inside `_ibc`:
     `_boundary_eps`, `_point_in_triangle`, `make_ib_worker` unpacking, and the
     2D-only guard on moving meshes.
