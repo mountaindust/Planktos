@@ -11,6 +11,9 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - Plots now show mean agent speed and its spread in place of mean and max fluid speed; plotting no longer loads fluid data for statistics.
 - New FluidData.get_mean_velocity returns the spatial mean of each velocity component at any time.
 - plot_all: new playback_rate (simulated seconds per second of video) sets movie speed. Defaults to 1, real time, changing existing movies.
+- A time step that fails partway through now marks the Environment (time=None) and reports the state; move() refuses until it is restored.
+- Plotting after a failed time step shows the recorded history and leaves the incomplete step out.
+- Bug fix: a sliding agent released back into free flight can no longer recurse without limit on a degenerate step.
 
 
 1.0.2

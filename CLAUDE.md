@@ -32,11 +32,18 @@ number and the changelog** — these are easy to forget. Be proactive about it:
 - The version lives in `planktos/__init__.py` (`__version__`); `setup.cfg` reads
   it via `attr: planktos.__version__`, and `docs/conf.py` imports it — so the one
   string in `__init__.py` is the single source of truth. The current development
-  version on this branch is `1.1.0`. `master` carries `1.0.2`, also in
-  development and not yet tagged, accumulating bug fixes under its own
-  `changelog.txt` section — those entries stay under `1.0.2` here too rather
-  than being repeated under `1.1.0`. `v1.0.1` (documentation-only) and `v1.0.0`
-  are released and tagged.
+  version on this branch is `1.1.0`.
+- **`v1.0.0`, `v1.0.1` (documentation-only) and `v1.0.2` are all released and
+  tagged.** `master`'s `__version__` is still `1.0.2` — i.e. it currently sits
+  *on* a released version, so the next change landing there needs a bump to
+  `1.0.3` first. The existing `1.0.2` entries in `changelog.txt` are shipped
+  history: leave them alone, on both branches.
+- **A fix made here that is not dyload-specific has nowhere to go but `1.1.0`,**
+  since `1.0.2` is closed. File it under `1.1.0` in `changelog.txt` *and* add it
+  to the **cherry-pick queue at the bottom of `TODO.md`**, which tracks what
+  would make up a `1.0.3` if enough accumulates before `1.1.0` ships. Check
+  portability with `git diff master -- <file>` before assuming it applies —
+  `_swarm.py` in particular has diverged a long way.
 - `changelog.txt` is hand-maintained, terse, and grouped by version. When a
   change is user-facing, prompt to add an entry under the appropriate version.
 - When work looks release-worthy (or a user-facing change lands) but the version

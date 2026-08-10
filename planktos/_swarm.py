@@ -975,6 +975,25 @@ class Swarm:
             to specify their own, custom agent behavior.
         '''
 
+        # A time of None marks an Environment left in an error state by a
+        #   time step that raised partway through (see the except clause
+        #   below). Everything the agents currently hold is a half-applied
+        #   step, so there is nothing sensible to move on from.
+        if self.envir.time is None:
+            raise RuntimeError(
+                "Cannot move: this Swarm/Environment is in an error state. A "
+                "previous time step raised while boundary conditions were "
+                "being applied, so agent positions, velocities, accelerations "
+                "and ib_collision_idx hold a step that was applied to some "
+                "agents but not others -- some may be inside an immersed "
+                "boundary. envir.time was set to None to mark this.\n"
+                "The recorded histories are complete and consistent up to and "
+                "including the failed step. To back that step out and carry "
+                "on, pop the last entry off each:\n"
+                "    envir.time = envir.time_history.pop()\n"
+                "    swrm.positions = swrm.pos_history.pop()\n"
+                "    swrm.velocities = swrm.vel_history.pop()")
+
         if ib_collisions == 'default':
             ib_collisions = self.ib_condition
 
@@ -1003,8 +1022,38 @@ class Swarm:
 
         # Apply boundary conditions (if anything was moving)
         if not np.all(self.positions.mask):
-            self.apply_boundary_conditions(dt, ib_collisions=ib_collisions)
-            self.after_move(dt)
+            try:
+                self.apply_boundary_conditions(dt, ib_collisions=ib_collisions)
+                self.after_move(dt)
+            except Exception as err:
+                # Boundary conditions are applied one agent at a time, so this
+                #   leaves the step applied to some agents and not others. The
+                #   partial state is left alone -- it is what there is to debug
+                #   -- but two things are done to make it legible. First,
+                #   record the time this step started, so that time_history
+                #   matches the pos_history entry appended above and the
+                #   histories stay a consistent record. Second, set the time to
+                #   None, which marks everything current as untrustworthy and
+                #   is what move() refuses to run on.
+                self.envir.time_history.append(self.envir.time)
+                self.envir.time = None
+                raise RuntimeError(
+                    "Boundary conditions or after_move raised partway through this time "
+                    "step, after agent positions had already been updated. "
+                    "The step was applied to some agents and not others, so "
+                    "positions, velocities, accelerations and "
+                    "ib_collision_idx are all unreliable and agents may be "
+                    "sitting inside an immersed boundary. They are left as "
+                    "they are so the failure can be inspected.\n"
+                    "envir.time has been set to None to mark this state, and "
+                    "no further moves are permitted until it is restored. The "
+                    "histories were closed off consistently: time_history now "
+                    "matches pos_history, both ending with the state as it "
+                    "was when this step began. To back the step out and carry "
+                    "on, pop the last entry off each:\n"
+                    "    envir.time = envir.time_history.pop()\n"
+                    "    swrm.positions = swrm.pos_history.pop()\n"
+                    "    swrm.velocities = swrm.vel_history.pop()") from err
 
         # Record new time
         if update_time:
@@ -2268,13 +2317,24 @@ class Swarm:
         # frame index n means pos_history[n] at time_history[n], with index
         # len(pos_history) meaning the present positions at envir.time.
         n_hist = len(self.pos_history)
-        if len(self.envir.time_history) < n_hist:
+        if self.envir.time is None:
+            # A time step raised partway through, so the present positions hold
+            # a step applied to only some agents (see move()). The histories are
+            # still a consistent record, so plot those and leave the incomplete
+            # step out: there is no "present" frame to draw.
+            warnings.warn("Environment.time is None: a time step failed partway "
+                          "through, so the current agent positions are "
+                          "incomplete and are left out. Plotting the recorded "
+                          "history only.", stacklevel=3)
+            times = np.asarray(self.envir.time_history[:n_hist], dtype=float)
+        elif len(self.envir.time_history) < n_hist:
             # histories out of step (e.g. move(update_time=False) without a
             # matching environmental time update). there are no reliable times
             # to select against, so fall back on a frame per recorded state.
             return np.arange(n_hist+1)
-        times = np.concatenate((self.envir.time_history[:n_hist],
-                                (self.envir.time,)))
+        else:
+            times = np.concatenate((self.envir.time_history[:n_hist],
+                                    (self.envir.time,)))
         if len(times) < 2:
             return np.arange(len(times))
 

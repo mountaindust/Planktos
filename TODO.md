@@ -12,7 +12,7 @@ Temporal interpolation of dynamically-loaded data is **linear in time**
 (`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
 story.
 
-**Suite is green: 532 passed / 22 skipped (`pytest`), 552 passed / 2 skipped
+**Suite is green: 535 passed / 22 skipped (`pytest`), 555 passed / 2 skipped
 (`pytest --runslow`).** No failures, no xfails.
 
 **What is done:**
@@ -39,7 +39,9 @@ story.
    returns) — still needs its design pass. §9.1 is the restoration checklist.
 
 **Also merged since:** `master`'s 1.0.1 documentation release and its 1.0.2 bug
-fixes. No dyload-specific behavior changed by either.
+fixes. No dyload-specific behavior changed by either. **`v1.0.2` is released and
+tagged**, so master-applicable fixes made here now queue for a possible **1.0.3** —
+see the cherry-pick queue at the bottom of this file.
 
 Priority key: 🔴 do first · 🟡 next · 🟢 later · ⚪ deferred / low priority.
 
@@ -118,15 +120,15 @@ arithmetic check could see. Where a branch differs from a covered one only by an
 arbitrary choice (which vertex of an element is stored first), pin an **invariance**
 rather than a value.
 
-### The three open findings
+### The three findings — (1) and (2) are now FIXED, (3) remains open
 
-By the `xfail` rule in CLAUDE.md these are issue-tracker material, not `xfail`s: each
-is real, but none is worth stopping the development cycle for. Recorded here in full
+By the `xfail` rule in CLAUDE.md these were issue-tracker material, not `xfail`s: each
+is real, but none was worth stopping the development cycle for. Recorded here in full
 because the summaries alone are not actionable.
 
 ---
 
-#### 1. 🟡 An exception during the immersed-boundary stage leaves the `Swarm` mid-update
+#### 1. ✅ FIXED — an exception during the immersed-boundary stage left the `Swarm` mid-update
 
 **What the code does.** `Swarm.move` ([_swarm.py:941](planktos/_swarm.py#L941)) runs in
 this order:
@@ -150,35 +152,95 @@ is internally inconsistent in four separate ways at once:
   agents after it are raw output from the agent model, which may be **inside an
   immersed boundary or outside the domain**. This violates the branch's hard
   no-penetration invariant;
-- `velocities` / `accelerations` were finite-differenced from the *uncorrected*
-  positions, so they are wrong even for the agents that were subsequently corrected;
+- `velocities` / `accelerations` are a matching mix — corrected agents get theirs
+  recomputed from the corrected displacement by `_apply_ib_result`, the rest keep the
+  raw finite difference. Each agent is self-consistent with its own position; what is
+  wrong is that the un-processed ones describe motion through a boundary;
+- `ib_collision_idx` is **stale** for the un-processed agents — it is never reset per
+  step, so they silently keep the *previous* step's values. In the reproduction the
+  whole array came out byte-identical to the step before. It does not look wrong;
 - `envir.time` was never advanced, and `after_move` never ran; other swarms in the
   environment never got their freeze-append (step 6's loop).
 
 **Why it matters.** The raise itself is loud, so a caller who lets it propagate is
 fine. The damage is to a caller who **catches and continues** — a parameter sweep, a
-batch harness, or a `try/except` around the move loop. They get silently penetrating
-agents and desynchronised history with no further warning.
+batch harness, or a `try/except` around the move loop. Verified: the next `move()` used
+to succeed silently, marching the un-processed agents further past the wall, after which
+they never intersect the mesh again and are **permanently** on the wrong side.
 
-**Not hypothetical:** this is exactly the state the original junction `ValueError`
-produced before that bug was fixed. There is no *known* remaining raise path in step 5,
-which is why this is a robustness fix rather than a live bug.
+**Not hypothetical:** this is the state the original junction `ValueError` produced
+before that bug was fixed.
 
-**Fix shape.** Two options:
-- *(a) Commit atomically.* Do the BC/IB work first, then append history, recompute
-  velocities and advance time together at the end. Cleanest, but `apply_boundary_conditions`
-  writes into `self.positions` in place and has a parallelization path (`self.pool`), so
-  this is not a pure reordering.
-- *(b) Roll back on the exception path.* Wrap step 5 in `try/except`, restore
-  `old_positions`, pop the two (or three) history entries, and re-raise. Small and
-  local; leaves the ordering weirdness in place but makes it unobservable.
+**The key structural fact, verified by building the failure** (6 agents driven into a
+wall, the collision routine patched to raise on the 3rd): **the recorded history is
+entirely clean.** The failed step appends its *pre-move* state, so `pos_history[-1]` is
+the last good state and it sits at `envir.time`. Nothing about the failed step is
+recorded anywhere. Only the four live attributes are wrecked. This is better news than
+it first looked and it shapes the whole fix.
 
-(b) is the cheap correct-enough answer; (a) is the right one if the move loop is ever
-restructured for other reasons.
+Two more measured details:
+
+- **Failure granularity depends on `self.pool`.** Serial `map()` is lazy, so workers
+  and `_apply_ib_result` interleave and the step is applied up to the failing agent.
+  `pool.map()` is **eager**, so a worker exception means **zero** results applied and
+  every agent holds raw output. Both verified.
+- **In every consistent state `len(pos_history) == len(time_history)`** — verified across
+  `move()`, `move_swarms()` and multiple swarms. The mismatch appears only transiently
+  inside `move_swarms` (resolved before it returns), after a failed step, and after a
+  bare `move(update_time=False)` with no matching time bump.
+
+**What was built — `envir.time = None` as the error marker.** Two earlier and larger
+designs were built and reverted as more machinery than the problem warrants: a full
+rollback, then a recovery method plus a time-lookup helper plus plotting that stopped
+before the failure. What landed adds no attributes, no methods, and no per-step cost:
+
+- **The except clause appends `envir.time` to `time_history`** before anything else.
+  The failed step had already appended its pre-move state to `pos_history`, so this
+  closes the histories off *consistently*: both end with the state as it was when the
+  step began, at the time it began. The record stays a valid record.
+- **Then `envir.time = None`**, which marks everything current as untrustworthy. It
+  lives on the `Environment`, so it blocks every swarm in it, not just the one that
+  failed — which is right, since the environment's clock is what stopped meaning
+  anything.
+- **Then re-raise a `RuntimeError` chained `from` the original**, whose message is the
+  actual deliverable: which attributes are unreliable, that the histories were closed
+  off consistently, and the three lines that back the step out.
+- **`move()` checks `self.envir.time is None` first** and refuses. This is the part
+  that prevents harm — continuing was verified to march the un-processed agents further
+  past the wall, after which they never intersect the mesh again and are permanently
+  through it.
+- Recovery is symmetric with what the failure did, and needs no saved state because the
+  history entries *are* the pre-move state:
+
+  ```python
+  envir.time = envir.time_history.pop()
+  swrm.positions = swrm.pos_history.pop()
+  swrm.velocities = swrm.vel_history.pop()
+  ```
+
+  `accelerations` need no restoring — the next `move()` recomputes them from positions
+  and velocities. `ib_collision_idx` is left stale, which is tolerable: it is a
+  diagnostic output and feeds nothing.
+- Two tests in `test_swarm_lifecycle.py` pin the closed-off histories, the marker, the
+  block, and the documented recovery.
+
+- **Plotting works in the error state and leaves the failed step out.**
+  `_select_frames` builds its time axis with `envir.time` on the end, which was
+  arithmetic on `None`; it now branches on that, warns, and uses `time_history` alone.
+  Frames are then exactly the recorded states, so the incomplete positions are never
+  drawn. Pinned by a third test.
+
+**Rejected:** reordering the history appends to after the boundary stage. It looks
+free — the appended values are pre-move copies — but `apply_boundary_conditions` reads
+[`pos_history[-1]`](planktos/_swarm.py#L1405) as each agent's movement start point, so
+the append must precede it.
+
+**Also worth fixing, independently:** the movie-save handler's misleading ffmpeg advice
+(print the actual exception first — it already re-raises).
 
 ---
 
-#### 2. 🟢 The free-flight termination argument has a floating-point gap
+#### 2. ✅ FIXED — the free-flight termination argument had a floating-point gap
 
 **Where.** `_project_and_slide_static`, the "continue on the original trajectory"
 branch ([_ibc.py:949-965](planktos/_ibc.py#L949-L965)).
@@ -194,25 +256,37 @@ because the remaining movement `(1-t_edge)*vec` **strictly shrinks** at every le
 Note the comment already flags that this is weaker than the adjacent-element transfer
 branch above it — nothing bounds *how much* it shrinks, so it bounds depth only loosely.
 
-**The gap.** Strict shrinkage requires `t_edge > t_I` to hold **in floating point**,
-where `t_I` is the intersection time this level started from. `t_edge` is computed as a
-ratio of norms ([_ibc.py:700](planktos/_ibc.py#L700)); for a step short enough relative
-to the mesh geometry, that ratio can round to exactly `t_I`. The remaining movement is
-then unchanged, the next level is handed an identical sub-problem, and the recursion
-sits at a fixed point until the stack runs out.
+**The gap.** The next level receives `(1-t_edge)*vec` against this level's `vec`, so
+strict shrinkage is exactly **`t_edge > 0`** — an earlier version of this entry said
+`t_edge > t_I`, which is not the requirement (`t_I` does not enter the comparison).
+`t_edge` is computed as a ratio of norms ([_ibc.py:700](planktos/_ibc.py#L700)) and
+nothing in that arithmetic guarantees a positive result in floating point; a
+near-tangent hit could round it to zero. The remaining movement would then be
+unchanged, the next level handed an identical sub-problem, and the recursion would sit
+at a fixed point until the stack ran out.
 
-**Consequence, and why it is 🟢.** It could not be constructed as a test — the
-combination requires the roundoff to land exactly, and no search found it. And the
-consequence is now **bounded** regardless: `RecursionError` is caught and re-raised
-through `_slide_too_deep` ([_ibc.py:189](planktos/_ibc.py#L189)), so the failure mode
-is a clean explained exception, not a hang. ⚠️ The message would be *misleading* in
-this scenario — it says the step is long compared to the mesh, which is the opposite of
-what happened.
+**The fix.** One guard at each of the **three** free-flight release sites, placed
+between `newstartpt` and `newendpt`:
 
-**Fix shape.** Track the previous remaining-movement magnitude across the recursion and
-guard: if it fails to strictly decrease, stop the agent at the current point rather
-than recursing. A few lines. Not done because it is unconstructible and therefore
-untestable, and this is load-bearing code where an untested guard is its own risk.
+```python
+if not t_edge > 0: return newstartpt
+```
+
+Spelled `not t_edge > 0` rather than `t_edge <= 0` so a NaN stops too. Returning
+`newstartpt` is safe: it is the separation point already displaced `EPS` along the
+outward normal, so the agent ends outside the boundary — what `'sticky'` does anyway.
+The sites are [_ibc.py:960](planktos/_ibc.py#L960) (static free-flight), and
+[L1410](planktos/_ibc.py#L1410) / [L1418](planktos/_ibc.py#L1418) in the moving slider
+(rotate-away release on `t_rot`, and its own free-flight on `t_edge`).
+
+**No test**, deliberately: the case is unconstructible, which is why it stayed open.
+The evidence the guard is inert is that the suite is unchanged with it in place.
+
+**What this does *not* fix**, and cannot: `t_edge` positive but tiny still shrinks by a
+factor of ~1 and recurses very deep. That is the "nothing bounds how much" property the
+comment already flagged, and `_slide_too_deep` ([_ibc.py:189](planktos/_ibc.py#L189))
+remains the backstop. ⚠️ Its message would be *misleading* in that scenario — it says
+the step is long compared to the mesh, which is the opposite of what happened.
 
 ---
 
@@ -653,3 +727,56 @@ memory · odd `int` = dynamic windowed linear (`INUM` intervals held at a time).
 *(Supersedes the older `planktos/TODO for dynamic loading.txt`, folded in here, and the
 mvbnd overhaul's `TODO.md`, whose non-blocking follow-ups are merged into the sections
 above.)*
+
+---
+
+## Candidates for a 1.0.3 patch release (cherry-pick queue) 🟡
+
+**Why this list exists.** `v1.0.2` is **released and tagged**, so master-applicable
+fixes made here can no longer be filed under it. They currently land under **1.1.0** in
+`changelog.txt`, which means `master` does not get them until 1.1.0 ships. If enough
+accumulates first, cut a **1.0.3** from `master` and cherry-pick the entries below.
+
+Add to this list whenever a fix made on `dyload` is not dyload-specific. The test for
+that is simple: does the code it touches look the same on `master`? Check with
+`git diff master -- <file>` before assuming.
+
+### Queued — the 2026-08-10 `move()`/`_ibc` work
+
+Both findings are written up in full in the "`_ibc.py` — the 2026-08 collision passes"
+section above; that is the reference for *why*, this is the reference for *what to move*.
+
+| What | Where | Applies cleanly to `master`? |
+|---|---|---|
+| **Free-flight termination guards** (finding #2) — three `if not t_edge > 0: return newstartpt` / `if not t_rot > 0:` guards | `planktos/_ibc.py`, in `_project_and_slide_static` (the static free-flight release) and `_project_and_slide_moving` (the rotate-away and free-flight releases) | **Yes.** `git diff master -- planktos/_ibc.py` is *exactly* these 12 added lines, so the file is otherwise identical |
+| **Failed-step error handling** (finding #1) — the `try`/`except` around `apply_boundary_conditions` + `after_move` that appends `time_history` and sets `envir.time = None`, plus the `if self.envir.time is None` check at the top of `move()` | `planktos/_swarm.py`, `Swarm.move` only | **Yes, by hunk.** `_swarm.py` as a whole diverges heavily (~280+/141- vs master, mostly the §8 plotting work), but the two touched regions are byte-identical on `master` — its `move()` has the same `apply_boundary_conditions`/`after_move`/`time_history.append` block |
+| **Tests** — `test_failed_step_closes_histories_and_marks_the_environment`, `test_error_state_blocks_moves_until_it_is_backed_out`, and the `_wall_swarm` / `_fail_on_third_agent` helpers above them | `tests/test_swarm_lifecycle.py` | **Yes.** Both `tests/test_swarm_lifecycle.py` and `tests/_ib_harness.py` exist on `master`, including the `horizontal_wall` and `max_meshpt_dist` builders these use |
+
+**Corresponding `changelog.txt` lines**, currently under 1.1.0 — move these two to a
+1.0.3 section on `master` (they stay under 1.1.0 here as well, since 1.1.0 ships them
+too if no 1.0.3 happens first):
+
+```
+- A time step that fails partway through now marks the Environment (time=None) and reports the state; move() refuses until it is restored.
+- Bug fix: a sliding agent released back into free flight can no longer recurse without limit on a degenerate step.
+```
+
+### ⛔ Explicitly NOT cherry-pickable — dyload-only
+
+- **The `_select_frames` error-state branch** and its test
+  (`test_frame_selection_in_the_error_state_plots_history_only`), plus the changelog
+  line `- Plotting after a failed time step shows the recorded history and leaves the
+  incomplete step out.` **`Swarm._select_frames` does not exist on `master`** — it
+  arrived with the `fps`/`playback_rate` work (note §8 step 2). On `master`, `plot_all`
+  still expands `frames=None` to one frame per recorded state and never builds a time
+  axis, so there is nothing there to guard and no equivalent failure. This line stays
+  under 1.1.0 only.
+
+### How to find these later
+
+They are uncommitted as of this writing, so there are no hashes yet. **Record the
+commit hash(es) here once they land.** Failing that, the reliable anchors are:
+
+- `git log --oneline -S "envir.time = None" -- planktos/_swarm.py`
+- `git log --oneline -S "not t_edge > 0" -- planktos/_ibc.py`
+- the three `changelog.txt` lines quoted above.

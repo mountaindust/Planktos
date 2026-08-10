@@ -215,3 +215,111 @@ def test_move_swarms_and_reset():
     assert len(envir.time_history) == 0
     assert len(a.pos_history) == 0
     assert len(a.full_pos_history) == 1               # just the (reset) current positions
+
+
+# --------------------------------------------------------------------------- #
+#                    a time step that fails partway through                   #
+# --------------------------------------------------------------------------- #
+# Boundary conditions are applied one agent at a time, so an exception out of
+# the collision code leaves the step applied to some agents and not others.
+# move() leaves that partial state alone for inspection, closes the histories
+# off consistently, and marks the Environment by setting time to None.
+
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).parent))
+import _ib_harness as _h
+from planktos import _ibc
+
+
+def _wall_swarm(N=6):
+    '''N agents below a horizontal wall, drifting up into it. No diffusion.'''
+    envir = planktos.Environment(Lx=10, Ly=10)
+    envir.flow = None
+    mesh = _h.horizontal_wall(4, 5.0, 0.0, 10.0)
+    envir.ibmesh = mesh
+    envir.max_meshpt_dist = _h.max_meshpt_dist(mesh)
+    init = np.column_stack((np.linspace(2.0, 8.0, N), np.full(N, 4.0)))
+    swrm = planktos.Swarm(swarm_size=N, envir=envir, init=init, seed=1)
+    swrm.shared_props['cov'] = np.zeros((2, 2))
+    swrm.shared_props['mu'] = np.array([0.0, 2.0])
+    return envir, swrm
+
+
+def _fail_on_third_agent(monkeypatch):
+    real = _ibc.apply_internal_static_BC
+    calls = [0]
+
+    def flaky(*args, **kwargs):
+        calls[0] += 1
+        if calls[0] == 3:
+            raise RuntimeError('synthetic collision failure')
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(_ibc, 'apply_internal_static_BC', flaky)
+
+
+def test_failed_step_closes_histories_and_marks_the_environment(monkeypatch):
+    envir, swrm = _wall_swarm()
+    for _ in range(2):
+        swrm.move(0.5, silent=True)
+    last_good = swrm.positions.copy()
+
+    _fail_on_third_agent(monkeypatch)
+    with pytest.raises(RuntimeError, match='envir.time has been set to None'):
+        swrm.move(0.5, silent=True)
+
+    # the histories stay a consistent record: the failed step contributed the
+    # state as it was when the step began, at the time the step began.
+    assert envir.time is None
+    assert len(swrm.pos_history) == len(envir.time_history) == 3
+    assert envir.time_history[-1] == pytest.approx(1.0)
+    assert np.array_equal(np.asarray(swrm.pos_history[-1]), np.asarray(last_good))
+
+    # the partial step itself is left alone, for inspection
+    assert not np.array_equal(np.asarray(swrm.positions), np.asarray(last_good))
+
+
+def test_error_state_blocks_moves_until_it_is_backed_out(monkeypatch):
+    envir, swrm = _wall_swarm()
+    for _ in range(2):
+        swrm.move(0.5, silent=True)
+    last_good = swrm.positions.copy()
+
+    _fail_on_third_agent(monkeypatch)
+    with pytest.raises(RuntimeError):
+        swrm.move(0.5, silent=True)
+    monkeypatch.undo()
+
+    # moving on would advance from positions that may be inside the boundary,
+    # and an agent left inside never intersects the mesh again.
+    with pytest.raises(RuntimeError, match='error state'):
+        swrm.move(0.5, silent=True)
+
+    # the recovery the error message documents
+    envir.time = envir.time_history.pop()
+    swrm.positions = swrm.pos_history.pop()
+    swrm.velocities = swrm.vel_history.pop()
+    assert envir.time == pytest.approx(1.0)
+    assert np.array_equal(np.asarray(swrm.positions), np.asarray(last_good))
+
+    swrm.move(0.5, silent=True)
+    assert envir.time == pytest.approx(1.5)
+    assert len(swrm.pos_history) == len(envir.time_history) == 3
+
+
+def test_frame_selection_in_the_error_state_plots_history_only(monkeypatch):
+    envir, swrm = _wall_swarm()
+    for _ in range(2):
+        swrm.move(0.5, silent=True)
+    _fail_on_third_agent(monkeypatch)
+    with pytest.raises(RuntimeError):
+        swrm.move(0.5, silent=True)
+
+    with pytest.warns(UserWarning, match='failed partway through'):
+        frames = swrm._select_frames(fps=2, playback_rate=1)
+
+    # every frame is a recorded state; the incomplete step (drawn at index
+    # len(pos_history)) must never appear.
+    assert frames.max() == len(swrm.pos_history) - 1
+    assert len(swrm.pos_history) == len(envir.time_history)
