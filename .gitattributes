@@ -1,0 +1,13 @@
+# The .vtu/.vtp test fixtures carry inline base64 payloads and are generated
+# files (tests/fixtures/_gen_fixtures.py), so git must leave their bytes exactly
+# as written. With core.autocrlf=true -- the Windows default, and what this repo
+# is developed on -- git would otherwise store LF and check out CRLF: the file on
+# disk would differ from what the generator produces, every regeneration would
+# show spurious diffs, and the bytes under test would not be the same on Windows
+# as on the Linux CI runner.
+#
+# Deliberately not applied to the .vtk/.vertex fixtures, which are ASCII and have
+# been read correctly under CRLF conversion since they were added. Marking them
+# now would only force a renormalization for no gain.
+tests/fixtures/**/*.vtu -text
+tests/fixtures/**/*.vtp -text

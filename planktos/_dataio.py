@@ -17,6 +17,9 @@ __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
 import os
+import json
+import warnings
+import xml.etree.ElementTree as ET
 from pathlib import Path
 import numpy as np
 import vtk
@@ -380,6 +383,245 @@ def read_vtu_Unstructured_Grid_Points_FEM(filename):
         data_names.append(vtkpoint_data.GetArrayName(n))
         
     return points, data, data_names
+
+
+
+def read_vtm_series(filename):
+    '''Read a ParaView ``.vtm.series`` index, mapping member files to times.
+
+    A ``.vtm.series`` is plain JSON and holds no field data at all -- it is the
+    declaration of a time series, listing one member file (typically a ``.vtm``
+    manifest) per timestep together with the simulation time it represents::
+
+        {"file-series-version" : "1.0",
+         "files" : [{"name" : "case_787.vtm", "time" : 7.5}, ...]}
+
+    Reading it costs a single small parse and needs no VTK, which is what makes
+    it usable as the timeline source for dynamic loading: windows can only be
+    sliced out of a series whose timestamps are all known up front, and paying a
+    full parse per dump to discover them defeats the purpose.
+
+    Nothing is checked against the filesystem here. The listed files may not all
+    exist -- a truncated or interrupted export is ordinary -- and deciding what
+    to do about that is the caller's policy, not this function's.
+
+    Parameters
+    ----------
+    filename : string or Path
+        path and filename of the .vtm.series file
+
+    Returns
+    -------
+    files : list of Path
+        member files in the order the series declares them, resolved relative to
+        the directory holding the series file. The order is preserved rather than
+        sorted by time; a series that declares times out of order is reported as
+        written.
+    times : ndarray of float
+        time for each entry of files. An entry the series gave no usable time for
+        is NaN rather than an error, so that a caller can fall back to a per-file
+        time source (e.g. read_vtm_manifest) for just those entries.
+    '''
+
+    filename = Path(filename)
+    with open(filename, 'r') as f:
+        series = json.load(f)
+
+    if 'files' not in series:
+        raise ValueError("No 'files' entry in series index {}.".format(filename))
+
+    files = []; times = []
+    for entry in series['files']:
+        if 'name' not in entry:
+            warnings.warn("Skipping an entry with no 'name' in series index "+
+                          "{}.".format(filename), UserWarning)
+            continue
+        files.append(filename.parent / entry['name'])
+        try:
+            times.append(float(entry['time']))
+        except (KeyError, TypeError, ValueError):
+            times.append(np.nan)
+
+    return files, np.array(times, dtype=float)
+
+
+
+def read_vtm_manifest(filename):
+    '''Read a VTK XML MultiBlockDataSet (``.vtm``) manifest.
+
+    A ``.vtm`` contains no data of its own. It is a small XML file naming the
+    child files that together make up one dataset -- for a finite-volume export,
+    typically the interior volume plus one file per boundary patch::
+
+        <vtkMultiBlockDataSet>
+          <DataSet name='internal' file='case_787/internal.vtu' />
+          <Block name='boundary'>
+            <DataSet name='inlet' file='case_787/boundary/inlet.vtp' />
+            ...
+
+    It is parsed here with the standard library rather than
+    ``vtkXMLMultiBlockDataReader``, which would read every child file -- tens of
+    megabytes -- merely to report their names. Resolving names is exactly what is
+    wanted cheaply: it lets a caller settle at construction which timesteps are
+    actually present on disk, instead of discovering a missing file at the window
+    slide that needs it, arbitrarily deep into a streaming run.
+
+    Child paths are resolved but not checked for existence; see read_vtm_series.
+
+    Parameters
+    ----------
+    filename : string or Path
+        path and filename of the .vtm file
+
+    Returns
+    -------
+    datasets : dict of Path, keyed by dataset name
+        every ``DataSet`` in the manifest, flattened across any ``Block``
+        nesting, resolved relative to the directory holding the manifest. Names
+        are assumed unique within a manifest (they are for writers such as
+        OpenFOAM's foamToVTK); a repeat keeps the first and warns.
+    time : float or None
+        the ``TimeValue`` field data entry, if the manifest carries one. This is
+        a per-file fallback for a series index that is missing or incomplete.
+    '''
+
+    filename = Path(filename)
+    root = ET.parse(filename).getroot()
+
+    datasets = {}
+    for elem in root.iter('DataSet'):
+        name = elem.get('name')
+        child = elem.get('file')
+        if name is None or child is None:
+            # A DataSet may legally carry its data inline instead of naming a
+            # file; there is nothing for us to resolve in that case.
+            warnings.warn("Skipping a DataSet with no name/file attribute in "+
+                          "manifest {}.".format(filename), UserWarning)
+            continue
+        if name in datasets:
+            warnings.warn("Duplicate dataset name '{}' in manifest {}; ".format(
+                          name, filename)+"keeping the first.", UserWarning)
+            continue
+        datasets[name] = filename.parent / child
+
+    time = None
+    for elem in root.iter('DataArray'):
+        if elem.get('Name') == 'TimeValue' and elem.text is not None:
+            try:
+                time = float(elem.text.split()[0])
+            except (ValueError, IndexError):
+                time = None
+            break
+
+    return datasets, time
+
+
+
+def read_vtkxml_cell_data(filename, arrays=('U',), cell_centers=True):
+    '''Read cell data, and the cell-center lattice it lives on, from a VTK XML
+    unstructured grid (``.vtu``) or polydata (``.vtp``) file.
+
+    Finite-volume solvers store fields per cell rather than per point, so the
+    point data of such a file is typically empty and ``GetPoints()`` returns cell
+    *corners* -- the wrong lattice to interpolate a cell field on. This reads
+    ``GetCellData()`` and, by default, returns the cell centers to go with it.
+
+    Only the requested arrays are read. That matters for streaming: an
+    unstructured-grid file repeats its full mesh on every timestep even when the
+    mesh never moves, so most of what is on disk is geometry that is already
+    known, and the field arrays that are not wanted are pure waste on top of it.
+    Deselecting them is the cheap part of that saving; the geometry itself cannot
+    be skipped through this reader.
+
+    Parameters
+    ----------
+    filename : string or Path
+        path and filename of the .vtu or .vtp file
+    arrays : iterable of string, or None, default=('U',)
+        names of the cell data arrays to read. Any other array present in the
+        file is deselected before reading. A requested name that the file does
+        not carry warns and is absent from the result. If None, read everything.
+    cell_centers : bool, default=True
+        whether to compute and return the cell centers. Skip it when the mesh is
+        known to be static and the lattice has already been established from an
+        earlier file in the series.
+
+    Returns
+    -------
+    centers : Nx3 ndarray, or None if cell_centers is False
+        center of each cell, in the file's own cell order -- which is not
+        necessarily lexicographic in the coordinates, even for a grid-like mesh
+    data : dict of ndarray, keyed by array name
+        one entry per array read, in the same cell order as centers. Shape is
+        (N,) for a scalar field and (N,3) for a vector field.
+    time : float or None
+        the ``TimeValue`` field data entry, if the file carries one
+    '''
+
+    filename = Path(filename)
+    if not filename.is_file():
+        # vtk's XML readers report a missing file only on stderr and then hand
+        # back an empty dataset, which would surface much later as a confusing
+        # shape mismatch.
+        raise FileNotFoundError("File {} not found!".format(str(filename)))
+
+    if filename.suffix == '.vtu':
+        reader = vtk.vtkXMLUnstructuredGridReader()
+    elif filename.suffix == '.vtp':
+        reader = vtk.vtkXMLPolyDataReader()
+    else:
+        raise ValueError("Unsupported extension '{}': ".format(filename.suffix)+
+                         "expected .vtu (unstructured grid) or .vtp (polydata).")
+    reader.SetFileName(str(filename))
+
+    # Array selection has to happen against the file's metadata, before the bulk
+    # read is triggered by Update().
+    reader.UpdateInformation()
+    if arrays is not None:
+        arrays = tuple(arrays)
+        selection = reader.GetCellDataArraySelection()
+        available = [selection.GetArrayName(n) for n in
+                     range(selection.GetNumberOfArrays())]
+        for name in available:
+            if name not in arrays:
+                selection.DisableArray(name)
+        missing = [name for name in arrays if name not in available]
+        if len(missing) > 0:
+            warnings.warn("Cell data array(s) {} not found in {}. ".format(
+                          missing, str(filename))+
+                          "Present: {}.".format(available), UserWarning)
+    reader.Update()
+    vtk_data = reader.GetOutput()
+
+    # Read the cell data
+    vtkcell_data = vtk_data.GetCellData()
+    data = {}
+    for n in range(vtkcell_data.GetNumberOfArrays()):
+        name = vtkcell_data.GetArrayName(n)
+        data[name] = numpy_support.vtk_to_numpy(vtkcell_data.GetArray(n))
+
+    # Get the cell centers, which are the points this data is specified at
+    if cell_centers:
+        center_filter = vtk.vtkCellCenters()
+        center_filter.SetInputData(vtk_data)
+        center_filter.Update()
+        centers = numpy_support.vtk_to_numpy(
+            center_filter.GetOutput().GetPoints().GetData())
+    else:
+        centers = None
+
+    # Time, if the writer recorded one. Same workaround as elsewhere in this
+    # module: walk the field data by name rather than wrapping the dataset.
+    fielddata = vtk_data.GetFieldData()
+    time = None
+    for n in range(fielddata.GetNumberOfArrays()):
+        if fielddata.GetArrayName(n) == 'TimeValue':
+            time = numpy_support.vtk_to_numpy(fielddata.GetArray(n))
+            assert len(time) == 1, "Currently can only support single time data."
+            time = float(time[0])
+            break
+
+    return centers, data, time
 
 
 

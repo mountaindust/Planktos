@@ -15,10 +15,12 @@ Provenance lives here: edit this script and rerun to change a fixture, rather th
 hand-editing the vtk files.
 '''
 
+import json
 from pathlib import Path
 
 import numpy as np
 import pyvista as pv
+import vtk
 
 HERE = Path(__file__).parent
 
@@ -154,6 +156,215 @@ def write_vtk3d_series(outdir=HERE / 'vtk3d_min'):
     return outdir
 
 
+# OpenFOAM-style multiblock series, for the .vtm.series / .vtm / cell-data readers.
+# Structurally a miniature of the Phase 2 oral-arm export (see
+# docs/notes/openfoam_oral_arm_dataset.md): a uniform Cartesian box of hexahedra
+# carrying CELL data, wrapped in per-timestep .vtm manifests that name an interior
+# .vtu plus inlet/outlet/walls .vtp boundary patches, indexed by a .vtm.series JSON.
+#
+# Three properties are deliberate, and the fixture is worth little without them:
+#
+#   * Cell order is SCRAMBLED by a fixed permutation. The real export's cells are
+#     not lexicographic either, so a loader that reshapes without reordering must
+#     fail here rather than pass by accident.
+#   * Two declared dumps are ABSENT (one interior hole, one end truncation), with
+#     their .vtm manifests still present -- exactly the truncated-transfer state of
+#     the real data. Gap tolerance has to have something to find.
+#   * Fields are analytic, so tests assert closed forms:
+#         U         = (t, x, t*z)   u reads back the time, v pins spatial x
+#         vorticity = (z, y, x)     steady, and distinct from U, so array
+#                                   selection cannot silently return the wrong one
+#         p         = t + y         a scalar, to pin the scalar branch
+#     On the walls U is exactly zero (no-slip), as in the real export -- which is
+#     what makes padding the lateral shell with zeros exact rather than an
+#     approximation.
+OF_CELLS = (4, 4, 5)                 # cells in x, y, z
+OF_ORIGIN = (0., 0., 0.)
+OF_EXTENT = (1., 1., 2.)             # full domain, walls included
+OF_TITLE = 'case_min'
+OF_DUMPS = (10, 20, 30, 40, 50, 60, 70, 80)     # dump numbers, as written
+OF_TIMES = tuple(float(k) for k in range(len(OF_DUMPS)))
+OF_ABSENT = (60, 80)                 # interior hole at t=5, end truncation at t=7
+OF_SEED = 20260810                   # fixes the cell-order scramble
+
+
+def openfoam_grid():
+    '''Cell-center coordinate arrays of the interior, for tests to assert against.
+
+    These are inset half a cell from the domain edges, which is the whole reason
+    the boundary patches have to be spliced back on.
+    '''
+    return [OF_ORIGIN[d] + (np.arange(OF_CELLS[d]) + 0.5) *
+            (OF_EXTENT[d] - OF_ORIGIN[d]) / OF_CELLS[d] for d in range(3)]
+
+
+def _of_fields(centers, t):
+    '''The analytic fields above, evaluated at an (N,3) array of cell centers.'''
+    x, y, z = centers[:, 0], centers[:, 1], centers[:, 2]
+    U = np.stack([np.full(len(centers), t), x, t * z], axis=1)
+    vort = np.stack([z, y, x], axis=1)
+    return U, vort, t + y
+
+
+def _of_interior():
+    '''The interior hexahedral mesh, cells scrambled out of lexicographic order.
+
+    Returns the pyvista grid and its cell centers in the scrambled file order.
+    '''
+    nx, ny, nz = OF_CELLS
+    axes = [np.linspace(OF_ORIGIN[d], OF_EXTENT[d], OF_CELLS[d] + 1)
+            for d in range(3)]
+    # Corner points, x fastest -- the layout pid() below indexes into.
+    P = np.stack(np.meshgrid(*axes, indexing='ij'), axis=-1).reshape(-1, 3,
+                                                                    order='F')
+    nxp, nyp = nx + 1, ny + 1
+
+    def pid(i, j, k):
+        return i + j * nxp + k * nxp * nyp
+
+    cells = []
+    for k in range(nz):
+        for j in range(ny):
+            for i in range(nx):
+                # VTK_HEXAHEDRON node order: bottom face, then top face
+                cells.append([8, pid(i, j, k), pid(i+1, j, k),
+                              pid(i+1, j+1, k), pid(i, j+1, k),
+                              pid(i, j, k+1), pid(i+1, j, k+1),
+                              pid(i+1, j+1, k+1), pid(i, j+1, k+1)])
+    cells = np.array(cells)
+    perm = np.random.default_rng(OF_SEED).permutation(len(cells))
+    cells = cells[perm]
+
+    grid = pv.UnstructuredGrid(cells.ravel(),
+                               np.full(len(cells), pv.CellType.HEXAHEDRON), P)
+    return grid, np.asarray(grid.cell_centers().points)
+
+
+def _of_patch(axis, side):
+    '''One boundary patch as quads on the plane `axis` = min (side 0) / max (1).
+
+    Cell centers land on the same in-plane lattice as the interior, which is what
+    lets the caps splice on exactly instead of being interpolated.
+    '''
+    tan = [d for d in range(3) if d != axis]
+    axes = [np.linspace(OF_ORIGIN[d], OF_EXTENT[d], OF_CELLS[d] + 1)
+            for d in range(3)]
+    a, b = axes[tan[0]], axes[tan[1]]
+    plane = OF_ORIGIN[axis] if side == 0 else OF_EXTENT[axis]
+
+    pts = np.zeros(((len(a)) * (len(b)), 3))
+    A, B = np.meshgrid(a, b, indexing='ij')
+    pts[:, tan[0]] = A.ravel(order='F')
+    pts[:, tan[1]] = B.ravel(order='F')
+    pts[:, axis] = plane
+
+    na = len(a)
+    faces = []
+    for jb in range(len(b) - 1):
+        for ia in range(na - 1):
+            p = ia + jb * na
+            faces.append([4, p, p + 1, p + 1 + na, p + na])
+    return pv.PolyData(pts, np.array(faces).ravel())
+
+
+def _of_boundary():
+    '''inlet (z min), outlet (z max), and walls (the four lateral planes).
+
+    walls is a single PolyData holding all four planes, as foamToVTK writes it.
+    '''
+    inlet = _of_patch(2, 0)
+    outlet = _of_patch(2, 1)
+    walls = _of_patch(0, 0) + _of_patch(0, 1) + _of_patch(1, 0) + _of_patch(1, 1)
+    return inlet, outlet, walls
+
+
+def _of_save(dataset, path):
+    '''Write a .vtu/.vtp the way foamToVTK does: inline base64 with UInt64 size
+    headers and no compressor.
+
+    pyvista's save() gives no control here and defaults to zlib with UInt32
+    headers. The difference is invisible through vtk's readers, but it is exactly
+    what the planned direct-XML fast path for U depends on (note
+    docs/notes/openfoam_oral_arm_dataset.md sec 7) -- and that would be developed
+    against this fixture, so the fixture has to be honest about the byte layout.
+    '''
+    writer = (vtk.vtkXMLUnstructuredGridWriter() if path.suffix == '.vtu'
+              else vtk.vtkXMLPolyDataWriter())
+    writer.SetFileName(str(path))
+    writer.SetInputData(dataset)
+    writer.SetDataModeToBinary()        # inline base64, not an appended blob
+    writer.SetCompressorTypeToNone()
+    writer.SetHeaderTypeToUInt64()
+    writer.Write()
+
+
+def _write_vtm(path, dumpdir, time):
+    '''The per-timestep manifest. Hand-written so the fixture pins the exact XML
+    shape the reader parses -- the nested boundary Block and the TimeValue field
+    data -- rather than whatever a writer happens to emit.'''
+    path.write_text(
+        "<?xml version='1.0'?>\n"
+        "<VTKFile type='vtkMultiBlockDataSet' version='1.0' "
+        "byte_order='LittleEndian' header_type='UInt64'>\n"
+        "  <vtkMultiBlockDataSet>\n"
+        f"    <DataSet name='internal' file='{dumpdir}/internal.vtu' />\n"
+        "    <Block name='boundary'>\n"
+        f"      <DataSet name='inlet' file='{dumpdir}/boundary/inlet.vtp' />\n"
+        f"      <DataSet name='outlet' file='{dumpdir}/boundary/outlet.vtp' />\n"
+        f"      <DataSet name='walls' file='{dumpdir}/boundary/walls.vtp' />\n"
+        "    </Block>\n"
+        "  </vtkMultiBlockDataSet>\n"
+        "  <FieldData>\n"
+        "    <DataArray type='Float32' Name='TimeValue' NumberOfTuples='1' "
+        "format='ascii'>\n"
+        f"{time}\n"
+        "    </DataArray>\n"
+        "  </FieldData>\n"
+        "</VTKFile>\n")
+
+
+def write_openfoam_series(outdir=HERE / 'openfoam_min'):
+    outdir.mkdir(parents=True, exist_ok=True)
+    interior, int_centers = _of_interior()
+    inlet, outlet, walls = _of_boundary()
+
+    for num, t in zip(OF_DUMPS, OF_TIMES):
+        dumpdir = f'{OF_TITLE}_{num}'
+        # The manifest is written for every declared dump, including the ones
+        # whose data is missing -- that is the state a truncated transfer leaves.
+        _write_vtm(outdir / (dumpdir + '.vtm'), dumpdir, t)
+        if num in OF_ABSENT:
+            continue
+
+        U, vort, p = _of_fields(int_centers, t)
+        interior.cell_data['U'] = U
+        interior.cell_data['vorticity'] = vort
+        interior.cell_data['p'] = p
+        interior.field_data['TimeValue'] = np.array([t], dtype=np.float32)
+        (outdir / dumpdir).mkdir(exist_ok=True)
+        _of_save(interior, outdir / dumpdir / 'internal.vtu')
+
+        bdir = outdir / dumpdir / 'boundary'
+        bdir.mkdir(exist_ok=True)
+        for name, patch in (('inlet', inlet), ('outlet', outlet),
+                            ('walls', walls)):
+            cen = np.asarray(patch.cell_centers().points)
+            pU, pvort, pp = _of_fields(cen, t)
+            if name == 'walls':
+                pU = np.zeros_like(pU)      # no-slip, exactly zero
+            patch.cell_data['U'] = pU
+            patch.cell_data['vorticity'] = pvort
+            patch.cell_data['p'] = pp
+            patch.field_data['TimeValue'] = np.array([t], dtype=np.float32)
+            _of_save(patch, bdir / (name + '.vtp'))
+
+    (outdir / (OF_TITLE + '.vtm.series')).write_text(json.dumps(
+        {'file-series-version': '1.0',
+         'files': [{'name': f'{OF_TITLE}_{num}.vtm', 'time': t}
+                   for num, t in zip(OF_DUMPS, OF_TIMES)]}, indent=2) + '\n')
+    return outdir
+
+
 if __name__ == '__main__':
     d = write_moving_mesh()
     print("wrote moving mesh ->", d, sorted(p.name for p in d.iterdir()))
@@ -165,3 +376,6 @@ if __name__ == '__main__':
     print("wrote IB2d fluid (vector) ->", f, sorted(p.name for p in f.iterdir()))
     s = write_ib2d_fluid_scalar()
     print("wrote IB2d fluid (scalar) ->", s, sorted(p.name for p in s.iterdir()))
+    o = write_openfoam_series()
+    print("wrote OpenFOAM-style series ->", o,
+          sorted(p.name for p in o.iterdir()))

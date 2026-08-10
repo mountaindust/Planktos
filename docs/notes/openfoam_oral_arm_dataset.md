@@ -103,6 +103,17 @@ ix = np.rint((cc[:,0] - cc[:,0].min()) / dx).astype(int)
 (For a merely-rectilinear, non-uniform future dataset, `np.searchsorted` against
 rounded `np.unique` grid vectors generalizes.)
 
+**The same trap survives into the derived cell centers, which is where a loader
+actually meets it.** `vtkCellCenters` averages the float32 corners and returns
+float64, so it looks like it should be clean — it is not. Measured through
+`_dataio.read_vtkxml_cell_data` on dump 787: `np.unique` on the center coordinates
+reports **79 distinct y-levels where only 66 exist** (and 77 / 75 on the inlet and
+outlet patches), because cells that share a y-level average to values differing in
+the last bits. `np.unique` is therefore unusable for recovering the grid vectors,
+not merely for sorting. Snapping recovers exactly 66 / 66 / 178 levels, with max
+deviation from an integer of **8.5e-7** of a cell width in x and y and **8.0e-6**
+in z.
+
 ---
 
 ## 3. Are the sample points fixed in time?
@@ -170,6 +181,15 @@ Practical notes:
   4 MB × 21 files. `walls.vtp` is also a single PolyData holding all four planes, so
   using it means splitting by coordinate yourself.
 - `inlet` / `outlet` carry real data and should be read.
+
+**"Identical x/y lattice" is now verified through the reader, not just asserted.**
+Re-measured 2026-08-10 via `_dataio.read_vtkxml_cell_data`: once each patch's
+centers are snapped as in §2, the recovered inlet x and y grid vectors match the
+interior's **bit-for-bit** (max \|diff\| exactly 0.0). Compare raw `np.unique`
+output between patch and interior and it appears to disagree — that is the
+roundoff artifact above, not a real lattice mismatch. Also confirmed through the
+reader: `walls.vtp` `U` is exactly zero everywhere, so the zero-padding shortcut is
+exact rather than approximate.
 
 ---
 
@@ -254,13 +274,41 @@ from the manifest and the file index from the directory listing would put the tw
 index spaces silently out of step — the same class of bug as the `VTK3dData` frozen
 timeline (`TODO.md` Phase 2).
 
-### Low-level read
-`read_vtu_Unstructured_Grid_Points_FEM` in `_dataio.py` is the right starting point
-(`vtkXMLUnstructuredGridReader` reads these fine), but needs **two** changes, not
-one:
-1. `GetPointData()` → `GetCellData()`
-2. `GetPoints()` → cell centers (`vtkCellCenters`, or compute from connectivity).
-   `GetPoints()` returns hexahedron *corners*, which is the wrong lattice.
+### Low-level read ✅ DONE (2026-08-10)
+
+Three new functions in `_dataio.py`, all generic to the VTK XML container scheme
+rather than to OpenFOAM, covered by `tests/fixtures/openfoam_min/` and
+`tests/test_io_loaders.py`:
+
+| Function | Reads | Uses VTK? |
+|---|---|---|
+| `read_vtm_series` | `.vtm.series` → member paths + times | no (`json`) |
+| `read_vtm_manifest` | `.vtm` → `{name: path}` + `TimeValue` | no (`xml.etree`) |
+| `read_vtkxml_cell_data` | `.vtu`/`.vtp` → cell centers, cell arrays, time | yes |
+
+Notes on the shape they landed in:
+
+- **A new function, not a change to `read_vtu_Unstructured_Grid_Points_FEM`.** An
+  earlier version of this section framed it as two edits to that function
+  (`GetPointData()`→`GetCellData()`, `GetPoints()`→cell centers). Both changes are
+  right in substance and `read_vtkxml_cell_data` makes them — but that function is
+  live for `ComsolVTUData`, which genuinely wants point data on FEM corner points.
+  Editing it in place would have broken COMSOL for no gain.
+- `.vtm` is parsed with the standard library, **not** `vtkXMLMultiBlockDataReader`,
+  which would read every child file (85 MB) merely to report their names. Hand
+  parsing a 700-byte XML is what makes "resolve which dumps exist, eagerly, at
+  construction" cheap enough to be unconditional.
+- `read_vtkxml_cell_data(arrays=...)` deselects unwanted cell arrays before
+  `Update()`. Default is `('U',)`; `vorticity` is one argument away, since
+  collaborators' exports often ship it and reading it beats regenerating it.
+- Missing files raise `FileNotFoundError`. vtk's XML readers otherwise report the
+  problem on stderr and return an *empty dataset*, which surfaces much later as a
+  confusing shape mismatch.
+- Measured on the real data: `internal.vtu` reads in **0.87 s** with `U` alone,
+  0.94 s with `vorticity` as well. `cell_centers=False` saves ~0.06 s — the option
+  is there to express "the mesh is static, I already have the lattice", not as a
+  speed win. The 51 MB of geometry dominates and this reader cannot skip it (§7,
+  I/O budget).
 
 ### No regridding, but a permutation
 No `LinearNDInterpolator` step is needed. The permutation of §2 is required instead,

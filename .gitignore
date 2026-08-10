@@ -27,6 +27,10 @@ tests/unsteady_3D_testdata/
 # Committed test fixtures (small; regenerate with tests/fixtures/_gen_fixtures.py)
 !tests/fixtures/**/*.vtk
 !tests/fixtures/**/*.vertex
+!tests/fixtures/**/*.vtu
+!tests/fixtures/**/*.vtp
+!tests/fixtures/**/*.vtm
+!tests/fixtures/**/*.vtm.series
 
 # Autobackup files
 ~*

@@ -111,6 +111,215 @@ def test_read_vtk_time_only_rejects_a_truncated_value():
 
 
 # --------------------------------------------------------------------------- #
+#        VTK XML multiblock series: .vtm.series, .vtm, and cell data          #
+# --------------------------------------------------------------------------- #
+# The readers behind the OpenFOAM finite-volume path. The fixture is a miniature
+# of the real oral-arm export (docs/notes/openfoam_oral_arm_dataset.md): a 4x4x5
+# uniform box of hexahedra carrying CELL data, per-timestep .vtm manifests naming
+# an interior .vtu plus inlet/outlet/walls .vtp patches, and a .vtm.series index.
+# Eight dumps are declared; two are absent (an interior hole at t=5 and an end
+# truncation at t=7), reproducing the truncated transfer the real data arrived in.
+# Fields are analytic: U = (t, x, t*z), vorticity = (z, y, x), p = t + y, with U
+# exactly zero on the no-slip walls.
+
+OF_DIR = FIXTURES / 'openfoam_min'
+OF_TIMES = [0., 1., 2., 3., 4., 5., 6., 7.]
+OF_ABSENT_TIMES = [5., 7.]
+# Interior cell centers -- inset half a cell from the domain, which is why the
+# boundary patches have to be spliced back on to recover the full extent.
+OF_XC = np.array([0.125, 0.375, 0.625, 0.875])
+OF_ZC = np.array([0.2, 0.6, 1.0, 1.4, 1.8])
+OF_DOMAIN = ((0., 1.), (0., 1.), (0., 2.))
+
+
+def _of_internal(num):
+    return _dataio.read_vtm_manifest(OF_DIR / f'case_min_{num}.vtm')[0]['internal']
+
+
+def test_read_vtm_series_declares_the_whole_timeline():
+    # The series is the timeline source for dynamic loading, so it has to report
+    # every declared dump -- including ones whose data never arrived. Filtering
+    # is the caller's policy; a reader that quietly dropped them would hide the
+    # gap instead of surfacing it.
+    files, times = _dataio.read_vtm_series(OF_DIR / 'case_min.vtm.series')
+    assert len(files) == 8
+    assert np.array_equal(times, OF_TIMES)
+    assert [f.name for f in files] == [f'case_min_{n}.vtm'
+                                       for n in (10, 20, 30, 40, 50, 60, 70, 80)]
+    # resolved relative to the series file, not the working directory
+    assert all(f.parent == OF_DIR for f in files)
+    assert sum(f.is_file() for f in files) == 8
+
+
+def test_read_vtm_series_reports_a_missing_time_as_nan(tmp_path):
+    # NaN rather than an exception, so a caller can fall back to the per-file
+    # TimeValue for just the entries the index failed to describe.
+    p = tmp_path / 'x.vtm.series'
+    p.write_text('{"file-series-version":"1.0","files":['
+                 '{"name":"a.vtm","time":1.5},{"name":"b.vtm"}]}')
+    files, times = _dataio.read_vtm_series(p)
+    assert [f.name for f in files] == ['a.vtm', 'b.vtm']
+    assert times[0] == 1.5 and np.isnan(times[1])
+
+
+def test_read_vtm_series_rejects_an_index_with_no_files(tmp_path):
+    p = tmp_path / 'x.vtm.series'
+    p.write_text('{"file-series-version":"1.0"}')
+    with pytest.raises(ValueError, match='files'):
+        _dataio.read_vtm_series(p)
+
+
+def test_read_vtm_manifest_flattens_the_block_nesting():
+    # inlet/outlet/walls sit inside a <Block name='boundary'>; the nesting
+    # carries nothing a loader needs, so it is flattened away.
+    datasets, time = _dataio.read_vtm_manifest(OF_DIR / 'case_min_10.vtm')
+    assert set(datasets) == {'internal', 'inlet', 'outlet', 'walls'}
+    assert time == 0.
+    assert datasets['internal'] == OF_DIR / 'case_min_10' / 'internal.vtu'
+    assert datasets['walls'] == (OF_DIR / 'case_min_10' / 'boundary' /
+                                 'walls.vtp')
+    assert all(p.is_file() for p in datasets.values())
+
+
+def test_read_vtm_manifest_time_agrees_with_the_series_index():
+    # Two independent declarations of the same timeline. They have to agree, or
+    # the fallback chain (series first, per-file TimeValue for gaps) would put a
+    # dump at a different time depending on which source answered.
+    files, times = _dataio.read_vtm_series(OF_DIR / 'case_min.vtm.series')
+    assert [_dataio.read_vtm_manifest(f)[1] for f in files] == list(times)
+
+
+def test_read_vtm_manifest_resolves_children_that_do_not_exist():
+    # The enabling case for gap tolerance: an absent dump still has a manifest,
+    # so its data path can be resolved and tested cheaply at construction rather
+    # than discovered at the window slide that needs it.
+    for num, t in zip((60, 80), OF_ABSENT_TIMES):
+        datasets, time = _dataio.read_vtm_manifest(
+            OF_DIR / f'case_min_{num}.vtm')
+        assert time == t
+        assert datasets['internal'].name == 'internal.vtu'
+        assert not datasets['internal'].is_file()
+
+
+def test_read_vtm_manifest_time_is_none_when_absent(tmp_path):
+    p = tmp_path / 'x.vtm'
+    p.write_text("<?xml version='1.0'?>\n<VTKFile type='vtkMultiBlockDataSet'>"
+                 "<vtkMultiBlockDataSet>"
+                 "<DataSet name='internal' file='d/internal.vtu' />"
+                 "</vtkMultiBlockDataSet></VTKFile>")
+    datasets, time = _dataio.read_vtm_manifest(p)
+    assert time is None
+    assert datasets == {'internal': tmp_path / 'd' / 'internal.vtu'}
+
+
+def test_read_vtkxml_cell_data_reads_centers_not_corners():
+    # Finite-volume fields live on cells. GetPoints() would return the 5x5x6=150
+    # hexahedron corners, which is the wrong lattice to interpolate a cell field
+    # on; the 4x4x5=80 cell centers are the right one.
+    centers, data, time = _dataio.read_vtkxml_cell_data(_of_internal(10))
+    assert centers.shape == (80, 3)
+    assert data['U'].shape == (80, 3)
+    assert time == 0.
+    for d, expected in ((0, OF_XC), (1, OF_XC), (2, OF_ZC)):
+        assert np.allclose(np.unique(np.round(centers[:, d], 9)), expected)
+    # inset half a cell: the centers do not reach the domain edges
+    for d, (lo, hi) in enumerate(OF_DOMAIN):
+        assert centers[:, d].min() > lo and centers[:, d].max() < hi
+
+
+def test_read_vtkxml_cell_data_cell_order_is_not_lexicographic():
+    # Pins the fixture property that makes reordering testable at all. The real
+    # export's cells are not lexicographic either, so a loader that reshapes
+    # without a permutation scrambles the field silently. If a regenerated
+    # fixture ever came out sorted, every downstream reordering test would start
+    # passing for the wrong reason -- this is what catches that.
+    centers, _, _ = _dataio.read_vtkxml_cell_data(_of_internal(10), arrays=())
+    order = np.lexsort((centers[:, 0], centers[:, 1], centers[:, 2]))
+    assert not np.array_equal(order, np.arange(len(centers)))
+
+
+def test_read_vtkxml_cell_data_returns_the_analytic_fields():
+    # Closed forms, evaluated in the file's own (scrambled) cell order -- so a
+    # reader that returned centers and data in mismatched orders would fail here.
+    for num, t in ((10, 0.), (40, 3.)):
+        centers, data, _ = _dataio.read_vtkxml_cell_data(
+            _of_internal(num), arrays=('U', 'vorticity', 'p'))
+        x, y, z = centers[:, 0], centers[:, 1], centers[:, 2]
+        assert np.allclose(data['U'], np.stack([np.full(80, t), x, t * z], 1))
+        assert np.allclose(data['vorticity'], np.stack([z, y, x], 1))
+        assert np.allclose(data['p'], t + y)
+        assert data['p'].shape == (80,)      # scalar stays 1D
+
+
+def test_read_vtkxml_cell_data_reads_only_the_requested_arrays():
+    # An unstructured-grid file repeats its whole mesh every timestep, so the
+    # fields that are not wanted are waste on top of waste. Velocity alone by
+    # default; vorticity is one argument away, since solvers often ship it and
+    # reading it beats regenerating it.
+    _, default, _ = _dataio.read_vtkxml_cell_data(_of_internal(10))
+    assert set(default) == {'U'}
+    _, both, _ = _dataio.read_vtkxml_cell_data(_of_internal(10),
+                                               arrays=('U', 'vorticity'))
+    assert set(both) == {'U', 'vorticity'}
+    assert np.array_equal(default['U'], both['U'])
+    _, every, _ = _dataio.read_vtkxml_cell_data(_of_internal(10), arrays=None)
+    assert set(every) == {'U', 'vorticity', 'p'}
+
+
+def test_read_vtkxml_cell_data_warns_for_an_array_the_file_lacks():
+    # Collaborators' export pipelines vary; asking for a field that is not there
+    # should say so by name rather than return a quietly incomplete result.
+    with pytest.warns(UserWarning, match='not found'):
+        _, data, _ = _dataio.read_vtkxml_cell_data(_of_internal(10),
+                                                   arrays=('U', 'nope'))
+    assert set(data) == {'U'}
+
+
+def test_read_vtkxml_cell_data_can_skip_the_cell_centers():
+    # The mesh is static across the series, so the lattice is established once
+    # and every later dump needs the field arrays only.
+    centers, data, _ = _dataio.read_vtkxml_cell_data(_of_internal(20),
+                                                     cell_centers=False)
+    assert centers is None
+    assert data['U'].shape == (80, 3)
+
+
+def test_read_vtkxml_cell_data_reads_the_polydata_patches():
+    # The boundary patches are .vtp, not .vtu, and are what closes the half-cell
+    # inset. inlet/outlet must land on the domain's z faces and share the
+    # interior's in-plane lattice exactly, or the splice would need interpolation.
+    datasets, _ = _dataio.read_vtm_manifest(OF_DIR / 'case_min_40.vtm')
+    interior, _, _ = _dataio.read_vtkxml_cell_data(datasets['internal'],
+                                                   arrays=())
+    for name, plane in (('inlet', 0.), ('outlet', 2.)):
+        centers, data, time = _dataio.read_vtkxml_cell_data(datasets[name])
+        assert centers.shape == (16, 3) and time == 3.
+        assert np.allclose(np.unique(centers[:, 2]), [plane])
+        for d in (0, 1):
+            assert np.array_equal(np.unique(centers[:, d]),
+                                  np.unique(interior[:, d]))
+    # walls is one PolyData holding all four lateral planes, and is exactly zero
+    # (no-slip) -- which is what makes padding the shell with zeros exact.
+    centers, data, _ = _dataio.read_vtkxml_cell_data(datasets['walls'])
+    assert centers.shape == (4 * 4 * 5, 3)
+    assert not data['U'].any()
+
+
+def test_read_vtkxml_cell_data_raises_on_a_missing_file():
+    # vtk's XML readers report a missing file on stderr and hand back an empty
+    # dataset, which would surface much later as a confusing shape mismatch.
+    with pytest.raises(FileNotFoundError):
+        _dataio.read_vtkxml_cell_data(OF_DIR / 'case_min_60' / 'internal.vtu')
+
+
+def test_read_vtkxml_cell_data_rejects_an_unsupported_extension(tmp_path):
+    p = tmp_path / 'flow.vtk'
+    p.write_text('not xml')
+    with pytest.raises(ValueError, match='.vtu'):
+        _dataio.read_vtkxml_cell_data(p)
+
+
+# --------------------------------------------------------------------------- #
 #            static immersed boundary import (committed fixture)              #
 # --------------------------------------------------------------------------- #
 

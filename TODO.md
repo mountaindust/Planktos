@@ -12,7 +12,7 @@ Temporal interpolation of dynamically-loaded data is **linear in time**
 (`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
 story.
 
-**Suite is green: 535 passed / 22 skipped (`pytest`), 555 passed / 2 skipped
+**Suite is green: 551 passed / 22 skipped (`pytest`), 571 passed / 2 skipped
 (`pytest --runslow`).** No failures, no xfails.
 
 **What is done:**
@@ -483,31 +483,64 @@ list — it is not restated here.
 
 ### The real work: a loader for this format 🔴
 
-Nothing in `planktos` reads it today. `VTK3dData` reads *legacy* rectilinear vtk;
-`ComsolVTUData` reads a single `.vtu` holding all times. This data is a per-timestep
-`.vtu` referenced through `.vtm` manifests — the **loop shape of `VTK3dData`** with the
-**file format of `ComsolVTUData`**, and neither one as-is.
+Nothing in `planktos` read it before 2026-08-10. `VTK3dData` reads *legacy* rectilinear
+vtk; `ComsolVTUData` reads a single `.vtu` holding all times. This data is a
+per-timestep `.vtu` referenced through `.vtm` manifests — the **loop shape of
+`VTK3dData`** with the **file format of `ComsolVTUData`**, and neither one as-is.
+
+**Step 1 of 2 — the `_dataio` file readers — ✅ DONE (2026-08-10).** Three generic VTK
+XML functions: `read_vtm_series` (JSON index → paths + times), `read_vtm_manifest`
+(XML manifest → `{name: path}` + `TimeValue`), `read_vtkxml_cell_data` (`.vtu`/`.vtp` →
+cell centers + selected cell arrays + time). Neither manifest reader touches VTK.
+Pinned by 16 tests in `tests/test_io_loaders.py` against a new committed fixture,
+`tests/fixtures/openfoam_min/` (305 kB in the working tree, **~29 kB packed** —
+base64 of structured floats compresses ~10×; regenerate with
+`tests/fixtures/_gen_fixtures.py`).
+The fixture is a structural miniature of the real export and four of its properties
+are load-bearing: **cell order is scrambled** by a fixed permutation, **two declared
+dumps are absent** (interior hole + end truncation) with their manifests still present,
+fields are analytic (`U=(t,x,t·z)`, `vorticity=(z,y,x)`, `p=t+y`, `U≡0` on walls), and
+the `.vtu`/`.vtp` are written **uncompressed, inline base64, `UInt64` headers** to match
+foamToVTK's byte layout — pyvista's `save()` defaults to zlib/`UInt32`, which would
+quietly invalidate the fixture for the §7 direct-parse optimization.
+Verified against the real 1.5 GB dataset during development; per the decision that the
+data lives on one machine, **no permanent test depends on it.** Full loader details in
+note §7.
+
+**Step 2 — `OpenFOAMData(FluidData)` in `fluid.py`** — the permutation, the boundary
+splice, the gap policy, and `flow_times`. Not started; everything unchecked below is
+its work.
 
 Four things make it more than a format swap (all detailed in the note):
 
-- [ ] **Fields are `CELL_DATA`, not point data** — OpenFOAM is finite-volume, and
-  `point_data` is empty. `_dataio.read_vtu_Unstructured_Grid_Points_FEM` needs
-  `GetPointData()`→`GetCellData()` *and* `GetPoints()`→cell centers (`vtkCellCenters`);
-  `GetPoints()` returns hexahedron **corners**, which is the wrong lattice.
+- [x] **Fields are `CELL_DATA`, not point data** — OpenFOAM is finite-volume, and
+  `point_data` is empty. Handled by the new `_dataio.read_vtkxml_cell_data`, which
+  reads `GetCellData()` and returns `vtkCellCenters` output rather than `GetPoints()`
+  (hexahedron **corners**, the wrong lattice). Written as a **new** function rather
+  than an edit to `read_vtu_Unstructured_Grid_Points_FEM` as originally planned —
+  that one is live for `ComsolVTUData`, which wants point data on FEM corner points.
 - [ ] **Cell ordering is not lexicographic.** A bare `.reshape((66,66,178))` silently
   scrambles the field. A permutation index is required — built by snapping coordinates
   to an integer lattice, **not** by `lexsort` on raw floats, which fails on float32
   roundoff. Computed **once**, since the mesh is static.
+  - ⚠️ **`np.unique` is unusable here too, not just `lexsort`** — measured through the
+    new reader: the float64 cell centers show **79 distinct y-levels where 66 exist**.
+    Snapping recovers 66/66/178 exactly (max deviation 8.5e-7 of a cell in x/y, 8.0e-6
+    in z). Note §2.
 - [ ] **Cell centers are inset half a cell**, so raw centers report the domain as
   0.0985 × 0.0985 × 0.2665 instead of the true 0.1 × 0.1 × 0.268. The `.vtp` boundary
   patches close this **exactly**: `inlet`/`outlet` carry real data on the identical x/y
   lattice, `walls` is exactly zero (no-slip) and can simply be padded. Assembly is
   66×66×178 → 66×66×180 → 68×68×180. The 12 edges and 8 corners appear in no file but
   lie on no-slip walls, so filling zeros there is exact.
-- [ ] **Times come from the `.vtm.series` JSON** (plain JSON, no VTK needed), or the
-  per-file `TimeValue`. ⚠️ **This is the `VTK3dData` timeline trap again** — see the
-  fixed bug below. `flow_times` must span the **whole series** from the start, not just
-  the opening window.
+  - Both claims now **verified through the reader** rather than asserted: once snapped,
+    the inlet's x/y grid vectors match the interior's bit-for-bit, and `walls.vtp` `U`
+    is exactly zero everywhere.
+- [x] **Times come from the `.vtm.series` JSON** (plain JSON, no VTK needed), or the
+  per-file `TimeValue`. Both readers exist (`read_vtm_series`, `read_vtm_manifest`) and
+  the two sources are confirmed to agree on all 21 real dumps. ⚠️ **The `VTK3dData`
+  timeline trap still applies to the consumer** — see the fixed bug below. `flow_times`
+  must span the **whole series** from the start, not just the opening window.
 
 **I/O budget, which is the whole point of the branch:** 61% of every 85 MB file is
 geometry that never changes. Going through `vtkXMLUnstructuredGridReader` re-reads
@@ -515,6 +548,23 @@ geometry that never changes. Going through `vtkXMLUnstructuredGridReader` re-rea
 arrays / parse the `U` `DataArray` directly / one-time `.npy` preprocess).
 **Get the VTK path correct first; treat this as an optimization.**
 
+- [ ] 🔴 **The loader must tolerate missing *metadata* files, not just missing dumps.**
+  Fluid data arrives from collaborators through a pipeline nobody remembers choosing
+  last time, so which index/manifest layer is present varies between deliveries. The
+  three `_dataio` readers were deliberately built as independent functions so this
+  degradation can be a chain of fallbacks in `FluidData` rather than a rewrite:
+
+  | Missing | Fallback |
+  |---|---|
+  | `.vtm.series` | glob the `.vtm` files; take each time from its `TimeValue` |
+  | `.vtm` manifests too | glob the dump directories; read `TimeValue` from `internal.vtu` |
+  | all time info | warn, assume unit steps (the `VTK3dData._read_all_times` precedent) |
+  | boundary `.vtp` patches | interior only, and say so — the domain is then a half cell short in every direction, which is the failure the `center_cell_regrid` docstring describes |
+
+  Sort order is the trap in the glob paths: dump directories are named with unpadded
+  numbers (`case08_alpha2_1e8_787`, `..._1008`), so a lexical sort puts 1008 before
+  787. Parse the number and sort numerically. Warn about **which** fallback was taken —
+  silently accepting a degraded timeline is the `VTK3dData` frozen-fluid bug's shape.
 - [ ] 🔴 **The loader must tolerate a dump series with holes — warn, do not fail.**
   4 of 21 timesteps in this dataset are missing (t = 9.0, 9.375, 9.75, 10.0): the
   `.vtm` manifests exist but the directories they name do not, a truncated transfer.
@@ -774,8 +824,12 @@ too if no 1.0.3 happens first):
 
 ### How to find these later
 
-They are uncommitted as of this writing, so there are no hashes yet. **Record the
-commit hash(es) here once they land.** Failing that, the reliable anchors are:
+**All of it landed in one commit: `816e6d7`** ("Make a failed time step legible instead
+of silently corrupting the run"). That commit also carries the dyload-only
+`_select_frames` change and these notes, so it cannot be cherry-picked wholesale —
+take the hunks listed in the table above.
+
+Backup anchors if the hash goes stale (a rebase, say):
 
 - `git log --oneline -S "envir.time = None" -- planktos/_swarm.py`
 - `git log --oneline -S "not t_edge > 0" -- planktos/_ibc.py`
