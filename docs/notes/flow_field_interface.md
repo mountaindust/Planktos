@@ -1128,80 +1128,61 @@ Interface requirements were derived from a full audit. Highest-signal sites:
 If you are picking this up in a fresh session with no prior context, read this
 whole note plus `CLAUDE.md` and `TODO.md` (root) first. Quick orientation:
 
-**Where we are (as of the 2026-07-31 revision):**
+**Where we are (as of 2026-08-10):**
 - Branch `dyload`. This is the "dynamic loading of fluid data" feature branch.
-- **Done:** the `fmin`/`fmax` generator fix (§3.3); this note; the §7.2 pinning
-  suite `tests/test_flow_interface.py` (40 tests); the three bugs it surfaced
-  (§3.4 `max_spd` / `get_mean_fluid_speed`, §3.5 `get_raw_loaded_data`); and
-  **§7.3–§7.6 — `FlowArray` is deleted and tiling is gated off.** Suite is green:
-  it stood at **201 passed, 20 skipped** (`pytest`) when §7 landed, and at **495
-  passed, 22 skipped** / **515 passed, 2 skipped** (`--runslow`) after §8 step 2 —
-  the growth is mostly the collision suite merged from `master`.
+- **§7 is complete.** `FlowArray` is deleted, tiling is gated off (§7.4), and
+  `tests/test_flow_interface.py` pins the consumer contract. The three bugs writing
+  it surfaced (§3.3 `fmin`/`fmax`, §3.4 `max_spd`/`get_mean_fluid_speed`, §3.5
+  `get_raw_loaded_data`) are all fixed.
 - The §7.2 suite passes with every `np.asarray` wrapper stripped out, which is
   what makes the deletion *provably* behavior-preserving rather than merely
   untested-and-green. Only one test in the whole suite had to change behavior:
   the tiling one, by design.
-- **§8 (plotting streaming) has had its design pass** and is an implementation plan
-  with a build order (§8.4), all design questions settled.
-- **§8 step 1 (frame statistics) is done** — see "As built" in §8.3.1. The fluid speed
-  reductions are gone, agent mean speed and spread replace them, and the surviving
-  fluid component means come from `FluidData.get_mean_velocity` and its per-dump
-  cache. Verified beyond the suite by running the examples: a windowed IB2d run
-  followed by `plot_all` went from 8 loader calls (25 dumps re-read) to 0, and the 3D
-  time-varying path was driven end to end against `tests/IBAMR_test_data`.
-- **§8 step 2 (`fps` / `playback_rate`) is done** — see "As built" in §8.3.5.
-  `plot_all` chooses frames by simulated time rather than one per timestep, `fps`
-  keeps its default of 10, on-screen playback is driven by the same numbers, and both
-  the clamp and the uneven-spacing warnings are measured from the selection so a
-  varying `dt` is handled. `tests/test_frame_selection.py` (19 fast, closed-form
-  tests) pins it. Example call sites now name their playback rate and produce the same
-  movies as before.
-- **Next actionable step: §8 steps 3–4** (recorder + derived-quantity cache, then
-  `plot_all` reading it) — but **re-evaluate first**, as §8.4 says to. With step 1
-  done the per-frame fluid cost is already zero unless a 2D fluid backdrop is drawn,
-  and with step 2 done there are far fewer frames drawing it. The remaining case for
-  the cache is 2D re-plotting of a dynamically-loaded run with `fluid='vort'`; if that
-  is not a real workflow pain, steps 1–2 may be the whole justified investment.
+- **§8 steps 1 and 2 are complete** — see "As built" in §8.3.1 and §8.3.5. Frame
+  statistics come from `FluidData.get_mean_velocity` and its per-dump cache (a
+  windowed IB2d run followed by `plot_all` went from 8 loader calls to 0);
+  `plot_all` chooses frames by simulated time via `fps`/`playback_rate`, pinned by
+  `tests/test_frame_selection.py`.
 - **Not started:** §8 steps 3–5, and §9 (which still needs its design pass).
-- **Pre-existing breakage found while verifying step 1, unrelated to it** (all three
-  reproduce identically against the pre-step-1 package, so they are not regressions —
-  recorded here so the next session does not re-diagnose them):
-  - **[fixed]** `_environment.py` `calculate_FTLE` read `self.props_history` where it
-    meant `s.props_history`, so the user-`swrm` branch raised `AttributeError`. Fixing
-    that exposed a second defect in the same block — the shallow `copy.copy` left
-    `vel_history`/`props_history` aliased to the caller's Swarm — so both were fixed
-    together. See TODO.md.
-  - **[fixed]** `_environment.py` `read_IB2d_mesh_data` dereferenced
-    `self.flow.fluid_domain_LLC` without checking `self.flow is not None`, so loading a
-    mesh into a fluid-free environment raised. This one *is* a `dyload` regression —
-    on `master` `fluid_domain_LLC` is an `Environment` attribute that always exists, so
-    it only became reachable when the attribute moved onto `FluidData`. See TODO.md.
-  - **[fixed]** `_ibc._project_and_slide_static` raised
-    `ValueError: operands could not be broadcast together with shapes (3,2) (3,)` on
-    the ib2d channel mesh when agents were seeded uniformly across the domain (rather
-    than at the example's point source). This was in the load-bearing collision code
-    and got a full pass of its own on `master`, merged here — six defects fixed with
-    regression tests. What is left of that work, including the branch of the moving
-    slider that still has no coverage, is in **TODO.md**, not here.
+- Suite is green: **532 passed / 22 skipped** (`pytest`), **552 passed / 2 skipped**
+  (`--runslow`). It stood at 201/20 when §7 landed; most of the growth is the
+  collision suite merged from `master`.
 - **`tests/IBAMR_test_data/` is present** (`IBAMR_db_003/004/005.vtk`,
   `mesh_db.vtk`) — 3D IBAMR data for the `@vtk`-marked tests and for validating
   §9. Its absence on the original authoring machine is what led to the since-
   dropped 2D tiling stopgap.
 
-**The immediate next actionable step** is the re-evaluation of §8.4 steps 3–4, steps 1
-and 2 having landed. §9 (real tiling, and whether `extend` returns) follows the rest of
-§8, and still needs its own design pass.
+**What to do next, and it is a decision, not a task.** §8.4 says to **re-evaluate
+steps 3–4 before building them**, and that re-evaluation has not happened yet. The
+case for the cache has weakened since it was specified: step 1 made the per-frame
+fluid cost zero unless a 2D fluid backdrop is actually drawn, and step 2 cut how many
+frames draw one. What remains is 2D re-plotting of a dynamically-loaded run with
+`fluid='vort'`. **If that is not a real workflow pain, steps 1–2 are the whole
+justified investment** and §8 can be closed with step 5 (the prose pass) alone.
+
+⚠️ **Note the branch-level priority, which this note cannot see:** `TODO.md` Phase 2
+(3D dynamic loading against the real OpenFOAM dataset) is the branch's remaining
+reason to exist and blocks 3D moving boundaries, whereas §8 steps 3–4 are a 2D
+plotting optimization whose own specification questions whether it is needed. Do not
+read "next section in the note" as "next work to do."
+
+**Earlier revisions of this section catalogued three pre-existing defects found while
+verifying step 1** (`calculate_FTLE` with a user swarm, `read_IB2d_mesh_data` without a
+fluid, and the `_project_and_slide_static` junction `ValueError`). All are **fixed**,
+with regression tests, and are recorded in `TODO.md` Phase 0 and `changelog.txt`. They
+are no longer handoff material.
 
 **Re-confirming §7.3 landed cleanly**, if picking this up cold: the reproduction
 snippets below for defects §3.1 and §3.2 should now fail at *import* /
 `tile_domain` respectively, because `FlowArray` no longer exists and tiling
 raises. That is the intended end state, not a regression.
 
-**Still outstanding housekeeping:** update `TODO.md` Phase 0 — the `fmin`/`fmax`
-item is done, and the `FlowArray` interop item is superseded by this note's plan
-(the deeper finding is §3.2 — tiling-through-`interpn` is defeated by modern scipy,
-so the fix is deletion + deferral, not patching the subclass). Phase 1 item (E)
-("Tiling/periodic × dynamic") is likewise superseded: tiling is gated off until §9.
+**Housekeeping: done.** `TODO.md` Phase 0 is reconciled with this note (the
+`fmin`/`fmax` item closed; the `FlowArray` interop item resolved by deletion, the
+deeper finding being §3.2 — tiling-through-`interpn` is defeated by modern scipy). Its
+Phase 1 item (E) is marked superseded, tiling being gated off until §9. The one part
+of (E) that was never about tiling — **periodic × dynamic** — is still untested and
+now carries forward under Phase 2.
 
 **Re-confirming the evidence (historical).** These reproduced the defects *before*
 §7.3. Kept as the record of what was wrong; §3.1 and §3.2 no longer run at all

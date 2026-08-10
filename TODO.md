@@ -4,266 +4,82 @@
 (a sliding window of timesteps) instead of holding the whole dataset in memory, so
 that large 3D time-varying flows (~100 GB raw, larger once splined) can be used.
 
-**Current state (2026-07-31):** the architecture is built and the API has settled —
-all fluid data is a `FluidData` object (`planktos/fluid.py`), dynamic windowed
-loading is implemented and reported working for 2D IB2d data, and 3D (`VTK3dData`)
-is wired up but unexercised. Temporal interpolation of dynamically-loaded data is
-**linear in time** (`LinearSpline`); full-dataset loading defaults to **cubic in
-time** (`fCubicSpline`). See the design-history section at the bottom for the
-cubic→linear story.
+**Current state (2026-08-10).** The architecture is built and the API has settled —
+all fluid data is a `FluidData` object (`planktos/fluid.py`). Dynamic windowed
+loading works and is tested in **both** 2D and 3D against committed fixtures.
+Temporal interpolation of dynamically-loaded data is **linear in time**
+(`LinearSpline`); full-dataset loading defaults to **cubic in time**
+(`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
+story.
 
-**Phase 0 is essentially complete and the suite is green:** **495 passed, 22
-skipped** with `pytest`, **515 passed, 2 skipped** with `pytest --runslow`. No
-failures, no xfails. Every test-adaptation item under Phase 0 is done. The
-`fmin`/`fmax` generator bug is fixed. The `FlowArray` numpy-interop item turned out
-to be the tip of a larger design problem and has been **superseded by a dedicated
-plan** — see below.
+**Suite is green: 532 passed / 22 skipped (`pytest`), 552 passed / 2 skipped
+(`pytest --runslow`).** No failures, no xfails.
 
-**The flow-field interface refactor** (`docs/notes/flow_field_interface.md`) is
-**through step §7.6 — the core work is done.** Investigating the `FlowArray` interop
-bug showed that `FlowArray`'s sole reason to exist — virtualizing tiled flow for
-`interpn` — is **defeated by modern scipy** (`RegularGridInterpolator` calls
-`np.asarray` on any array-API object, discarding the subclass's virtual
-`.shape`/`__getitem__`), so the tiled interpolation path was broken *and* untested.
-What landed:
+**What is done:**
 
-- **§7.2** — `tests/test_flow_interface.py` (40 tests) pins the flow-interface
-  contract: `interpolate_flow` values, the container/spline surface, `fmin`/`fmax`,
-  `_calc_basic_stats`, `get_raw_loaded_data`, the `LinearSpline`/`INUM` temporal
-  path, and 3D vorticity. Writing it surfaced three live bugs, all fixed:
-  - **(note §3.4)** `max_spd` on every plot frame reported max |u| rather than the
-    max fluid speed; `get_mean_fluid_speed` returned a value misreporting its shape.
-  - **(note §3.5)** `get_raw_loaded_data` returned `LinearSpline` objects instead of
-    ndarrays on the **entire dynamic-loading path** — it dispatched on "is it an
-    fCubicSpline" and the else-branch assumed static flow. Fixed by giving
-    `LinearSpline` the `regenerate_data` method `fCubicSpline` already had and
-    branching on `flow_times is None`.
-- **§7.3** — **`FlowArray` is deleted.** Velocity components are plain ndarrays
-  everywhere; every `np.asarray` workaround is gone. The §7.2 suite stays green
-  *with the wrappers stripped out*, which is what makes this provably
-  behavior-preserving.
-- **§7.4** — **tiling raises `NotImplementedError`** in 2D and 3D
-  (`FluidData.tile_flow`, `Environment.tile_domain`), the latter before mutating
-  anything so no half-tiled environment is possible. Affected examples and docs
-  carry a notice.
+- **Phase 0** (adapt the suite to the `FluidData` API, fix what it surfaced) — complete.
+- **Phase 1** (2D dynamic loading) — complete, including **(C)**, the
+  linear-vs-cubic error measurement, which is answered with numbers. Only
+  periodic × dynamic testing is left over, folded into Phase 2.
+- **Flow-field interface refactor** (`docs/notes/flow_field_interface.md`) — **§7
+  complete** (`FlowArray` deleted, tiling gated off, `test_flow_interface.py` pinning
+  the consumer contract) and **§8 steps 1–2 complete** (plot statistics served from a
+  per-dump mean cache; `fps`/`playback_rate` frame selection).
+- **`_ibc.py` collision passes** — done on `master` and merged here; coverage 91% → 99%.
 
-**Next: §8 (plotting streaming), then §9 (real position-wrapping tiling for 2D and 3D,
-and whether `Environment.extend` returns).**
+**Where the work goes next, in priority order:**
 
-- **§8 step 1 (frame statistics) is done.** The whole-grid fluid speed reductions
-  (`avg_spd`, `max_spd`) are gone from every plot; agent mean speed and its spread
-  replace them, and the surviving fluid component means come from a per-dump mean
-  cache on `FluidData` (`get_mean_velocity`) rather than the field. A plot or movie now
-  costs **zero** fluid loads unless a fluid backdrop is actually drawn — measured 8 → 0
-  on a windowed 25-dump IB2d run. This was the entire 3D deliverable of §8. See the
-  note's §8.3.1 "As built".
-- **§8 step 2 (`fps`/`playback_rate`) is done.** `plot_all` no longer renders one frame
-  per timestep: frames are placed `playback_rate/fps` apart in *simulated* time and
-  show the nearest captured state, so speed (`playback_rate`, default 1 = real time)
-  and smoothness (`fps`, default unchanged at 10) are chosen separately and `dt` leaves
-  the plotting API. Asking for frames between recorded states clamps with a warning
-  that carries the numbers; an explicit `frames` list still overrides everything.
-  On-screen playback now uses the same rate. It is one new parameter and one private
-  method (`Swarm._select_frames`) — the note's §8.3.5 `per_dump` bullet was
-  deliberately not built, and an initial module-level/method split was collapsed.
-  `tests/test_frame_selection.py` (19 fast, closed-form tests) pins it, and the example
-  call sites name their playback rate so their movies are unchanged. See the note's
-  §8.3.5 "As built".
-- **§8 steps 3–5 remain**, with the build order in note §8.4 — but steps 3–4 (recorder
-  + derived-quantity cache, then `plot_all` reading it) are explicitly **due a
-  re-evaluation before being built**. Step 1 removed the per-frame fluid cost except
-  where a 2D backdrop is actually drawn, and step 2 cut how many frames draw it, so the
-  remaining case is 2D re-plotting of a dynamically-loaded run with `fluid='vort'`.
-  All design questions are settled if they do go ahead, including the capture/render
-  split (§8.3.7: the recorder writes a data cache and never draws; `plot_all` does all
-  rendering from it). Step 5 is the wider examples/docs prose pass; the call sites and
-  the `fps`/`playback_rate` model in `docs/quickstart.rst` are already done.
-- **§9 still needs its design pass.** When tiling returns, **§9.1 of the note is the
-  restoration checklist**: every notice, stub, and replaced test that gating it off
-  left behind. Both old implementations are preserved commented-out beneath their
-  `raise`, so the still-valid parts (`tile_domain`'s ibmesh/`L` handling,
-  `tile_flow`'s `flow_points` extension) can be reused rather than rewritten.
+1. **Phase 2 — 3D dynamic loading against the real OpenFOAM dataset.** This is the
+   branch's remaining reason to exist and it blocks 3D moving boundaries. The
+   dataset is staged; the task is a **loader**, not data prep. See Phase 2.
+2. **Note §8 steps 3–4** (recorder + derived-quantity cache) — explicitly **due a
+   re-evaluation before being built**, since steps 1–2 removed most of the cost they
+   were designed for. Step 5 (prose pass) follows whatever is decided.
+3. **Note §9** (real position-wrapping tiling, 2D and 3D; whether `Environment.extend`
+   returns) — still needs its design pass. §9.1 is the restoration checklist.
 
-**Then Phase 1** — actually exercising dynamic loading in 2D. Item (C) there,
-quantifying dynamic-linear vs. full-cubic error, is the key scientific question and
-is still unanswered; don't quote a magnitude for that gap until it is.
-
-**Also merged since:** `master`'s 1.0.1 documentation release (README restructured as
-a landing page, docs synced to the code, Open Graph link previews, repo-wide spelling
-pass). Documentation only — no library behavior on this branch changed.
+**Also merged since:** `master`'s 1.0.1 documentation release and its 1.0.2 bug
+fixes. No dyload-specific behavior changed by either.
 
 Priority key: 🔴 do first · 🟡 next · 🟢 later · ⚪ deferred / low priority.
 
 ---
 
-## Phase 0 — Adapt the overhauled suite to dyload's `FluidData` API + fix real bugs 🔴
+## Phase 0 — Adapt the suite to `FluidData` + fix what it surfaced ✅ COMPLETE
 
-The overhaul's tests were written against mvbnd's `Environment` fluid API. On dyload
-that API moved onto `FluidData`. Most of the 32 failures are mechanical renames, but a
-few are genuine dyload bugs or deferred ports — triage each as **(rename)** vs **(real
-bug)** vs **(port)**. Goal: green suite = trustworthy baseline before Phase 1.
+The overhauled suite was written against mvbnd's `Environment` fluid API; on dyload
+that API moved onto `FluidData`. All 32 failures are resolved, every test module is
+adapted, and the suite is green. The API renames that caused most of them —
+`envir.flow_points`→`envir.flow.flow_points`, `envir.flow_times`→
+`envir.flow.flow_times`, `get_2D_vorticity`→`get_vorticity`, `envir.tile_flow`→
+`envir.tile_domain`, `Environment.extend` removed — are recorded in CLAUDE.md and are
+the standing hazard when merging `master` text.
 
-Common renames: `envir.flow_points`→`envir.flow.flow_points`,
-`envir.flow_times`→`envir.flow.flow_times`, `get_2D_vorticity`→`get_vorticity`,
-`envir.tile_flow`→`envir.tile_domain`. `Environment.extend` was **removed** on dyload.
+**Nine real defects were found and fixed along the way**, each with a regression test.
+They are described user-facing in `changelog.txt` (1.0.2 and 1.1.0) and in full detail
+in the git history; one line each here, since the interesting part is now the tests
+that pin them:
 
-- [x] **`test_flow_generation.py`** — DONE (10 passed, 1 skipped). Renames +
-  `tile_flow`→`tile_domain`; `extend` test skipped (`Environment.extend` removed on
-  dyload). Surfaced the `FlowArray` numpy-interop bug (below).
-- [x] **`test_temporal_interp.py`** — DONE (7 passed). `create_temporal_interpolations`
-  is gone on dyload (absorbed into `FluidData`); rewrote the two tests against
-  `FluidData` / `fCubicSpline` directly, keeping the off-node cubic-reproduction check.
-- [x] **`test_analysis.py`** — DONE (17 passed). Vorticity renamed to `get_vorticity`/
-  `flow.flow_points`; the 3 FTLE value tests now pass after the periodic-default fix
-  (below). The deferred **3D vorticity known-answer test** has since landed in
-  `tests/test_flow_interface.py` (solid-body rotation, general linear field, shape).
-- [x] **`test_io_loaders.py`** — DONE (10 passed, 1 skipped; COMSOL `@vtu` skip).
-  Renames (`flow.flow_times`/`flow.flow_points`) fixed the 2 IBAMR loads. **Source fix:**
-  `save_fluid`/`save_2D_vorticity` were latently broken on dyload — they passed `self.L`
-  (domain lengths) to writers that expect coordinate arrays, and had no static-flow
-  guard. Corrected to pass `self.flow.flow_points` + a static guard (this also fixes the
-  earlier merge resolution, which had restored dyload's broken versions). Two static
-  asserts use the `np.asarray` FlowArray workaround.
-- [x] **`test_material_derivative.py` + `test_agent_models.py` massive-particle** — DONE.
-  Was **not** a 3D broadcast bug (that label came from the old `test_massive_physics`);
-  the focused tests pinpointed two real, dimension-agnostic bugs, both fixed:
-  - **(A)** `Swarm.get_dudt` called `self.envir.dudt(...)`, but dyload renamed that to
-    `Environment.get_dudt` (a leftover-rename from the FluidData move that came in via
-    the mvbnd merge) → `AttributeError`. Fixed `_swarm.py` to call `get_dudt`.
-  - **(B)** `FluidData.get_dudt`'s out-of-range branch (`fluid.py`) was wrong two ways:
-    it used `<=`/`>=` (spuriously zeroing the derivative *at* the data endpoints t0/tN)
-    and built the zeros with `self.fshape` (which includes the time axis for time-varying
-    flow) → a time-series-shaped array that broadcast-failed in `calculate_DuDt` at a
-    boundary time. Fixed to strict `<`/`>` and `self.fshape[1:]`.
-  - Added `test_dudt_time_boundaries_and_extrapolation` pinning endpoint + extrapolation
-    behavior; updated the file's helpers to `envir.flow.flow_points` (dyload API).
+| Defect | Where | Now pinned by |
+|---|---|---|
+| `FlowArray` returned stale data from any derived array | `fluid.py` | resolved by **deleting** `FlowArray` (note §7.3) |
+| `FluidData` defaulted `periodic_dim=True`, wrapping the upper grid edge to the lower — corrupted every FTLE field | `fluid.py` | `test_flow_generation.py` edge tests + `test_analysis.py` closed-forms |
+| `fmin`/`fmax` were generator *expressions*, not tuples — `TypeError` on every window slide | `fluid.py` | `test_flow_interface.py`, `test_dynamic_loading.py` |
+| `Swarm.get_dudt` called the pre-rename `envir.dudt` | `_swarm.py` | `test_material_derivative.py` |
+| `FluidData.get_dudt` zeroed the derivative *at* the data endpoints and built zeros with the wrong shape | `fluid.py` | `test_material_derivative.py` |
+| `save_fluid`/`save_2D_vorticity` passed domain lengths where coordinate arrays were expected | `_environment.py` | `test_io_loaders.py` |
+| `calculate_FTLE(swrm=...)` raised on step 1, and its shallow copy aliased the caller's history | `_environment.py` | `test_analysis.py` (2 tests) |
+| `read_IB2d_mesh_data` required a loaded fluid; `method='adjacent'` and the moving-mesh branch never applied the LLC shift | `_environment.py` | `test_io_loaders.py` (parametrized over all methods) |
+| `shift_ibmesh_to_match_LLC` **sheared** moving-mesh segments instead of translating them | `_environment.py` | `test_io_loaders.py` (rigidity assertion) |
 
-### Other real bugs that matter (fix in Phase 0)
+Two notes worth keeping:
 
-- [x] **`FlowArray` breaks numpy interop — RESOLVED BY DELETION.** (Found while
-  adapting `test_flow_generation`.) `__array_finalize__` propagated `self.array` to
-  every derived array, and the overridden `shape`/`__getitem__` read from
-  `self.array` rather than the array's own buffer — so a `FlowArray` produced by a
-  ufunc/comparison read stale data. The fix was not to patch the subclass: its only
-  purpose (virtual tiling through `interpn`) no longer worked at all under modern
-  scipy, so `FlowArray` was **deleted** and tiling deferred. Velocity components are
-  now plain ndarrays and every `np.asarray` workaround is gone. See
-  `docs/notes/flow_field_interface.md` §7.3.
-- [x] **FTLE wrong values — DONE.** Root cause was **not** the FTLE math (byte-identical
-  to mvbnd) but a **periodic-by-default** bug: `FluidData` defaulted `periodic_dim=True`,
-  and the bare `flow=` constructor + analytic setters never overrode it, so every such
-  flow was treated as periodic. `interpolate_flow` then wraps the upper grid edge to the
-  lower (`pos % flow_points[-1]`, so `y=L → y=0`); FTLE seeds tracer particles exactly on
-  the domain edge, so the top-edge seeds (max velocity) read `u_x(y=0)=0`, never advected/
-  exited, and corrupted the boundary-row flow-map gradient → spurious large FTLE that
-  `nanmax` picked up. **Fix (Approach 1):** default `FluidData.periodic_dim=False`; thread
-  a `periodic_dim` kwarg through `Environment(flow=...)` and the analytic setters; loaders
-  keep their explicit values (IB2d `True`, VTK3d `(T,T,F)`, COMSOL `(F,F,F)`, NetCDF
-  `False`). Periodicity stays independent of `bndry`. Regression tests:
-  `test_flow_{non_periodic_by_default,periodic_dim_true_wraps}_at_upper_edge`; the FTLE
-  closed-forms now pass. NB: this was a general latent bug (any flow sampled exactly at
-  the upper/right edge), not FTLE-specific — FTLE just exposed it.
-- [x] **`FluidData.fmin`/`fmax` were generators, not values — DONE.** Built as generator
-  *expressions* then re-bound in `update_spline` as `(min(self.fmin[n], ...) for ...)` —
-  subscripted a generator (`TypeError` on every window slide, the dynamic path), and
-  plotting's `max_u, max_v = flow.fmax` worked exactly once before the generator was
-  exhausted. Fixed by wrapping all three sites in `tuple(...)`: `fluid.py` `__init__`
-  (~L1074-1075) and both `update_spline` slide branches (~L1211-1212, ~L1271-1272).
-  Values were always correct; only the container type was wrong. Details in
-  `docs/notes/flow_field_interface.md` §3.3.
-
-### Found while verifying §8 step 1 against the examples (unrelated to it) 🔴
-
-All three reproduce identically against the pre-step-1 package, so they are
-long-standing, not regressions. None is covered by the test suite — they only showed up
-because step 1 was verified by running the examples end to end.
-
-- [x] **`_ibc._project_and_slide_static` raised on the ib2d channel mesh — DONE.**
-  `ValueError: operands could not be broadcast together with shapes (3,2) (3,)`. The
-  guess recorded here was right: the candidate directions, a `(k,DIM)` array, were
-  divided by their `(k,)` norms, which NumPy right-aligns into a per-coordinate
-  division, and the ranking then contracted the wrong axes. Fixed on `master` in
-  `020dbd1` (`keepdims=True`), with the same two errors fixed in the moving slider by
-  `60f61e6`. Covered by `tests/test_collisions_junctions.py`.
-- [x] **`Environment.calculate_FTLE` breaks whenever a `swrm=` is supplied — DONE.**
-  Two defects in the same branch, both present on `master` as well (so this is a real
-  1.1.0 fix, not a dev regression):
-  1. It read `self.props_history` where it meant `s.props_history` (the correct
-     spelling is two lines above, in the same block), so the user-swarm branch raised
-     `AttributeError: 'Environment' object has no attribute 'props_history'` on the
-     very first step, always.
-  2. `copy.copy(swrm)` is shallow and only `pos_history` was re-initialized on the
-     copy, so `vel_history` and `props_history` stayed aliased to the caller's Swarm.
-     Fixing (1) alone therefore turned a crash into silent corruption: the caller's
-     `vel_history` collected grid-sized entries (1 → 12 in the regression test),
-     contradicting the docstring's "The Swarm object itself will not be altered."
-  Regression tests: `test_analysis.py::test_FTLE_with_user_swarm_shear_closed_form`
-  (closed-form value via Euler advection through `apply_agent_model`, both
-  `store_prop_history` settings) and `::test_FTLE_with_user_swarm_leaves_it_unaltered`.
-  Both fail without the fix. `examples/ex_produce_ftle_2d.py` now runs to completion.
-- [x] **`Environment.read_IB2d_mesh_data` assumed a fluid was already loaded — DONE.**
-  The static-file branch dereferenced `self.flow.fluid_domain_LLC` with no
-  `self.flow is not None` guard under `method='proximity'` and `method='hull'`, so
-  reading a mesh into a fluid-free environment raised `AttributeError`. That is a
-  supported workflow: passing `res` explicitly is how you say you have no fluid grid to
-  infer the connection radius from, and `examples/ex_vicsek_model_2d.py` does exactly
-  that. The correct form was already in the same file twice (`read_stl_mesh_data`,
-  `read_3D_vertex_data_to_convex_hull`); the two IB2d sites now match it.
-
-  **`dyload`-only regression** — on `master` `fluid_domain_LLC` is an `Environment`
-  attribute that always exists, so `self.fluid_domain_LLC` cannot fail there. It became
-  reachable when the attribute moved onto `FluidData`. No changelog entry, per the
-  rule in CLAUDE.md, and not cherry-picked to `master`.
-
-  Regression tests in `test_io_loaders.py`: `proximity` and `hull` without fluid, that
-  both still shift when a fluid *is* loaded, and that `res=None` still raises its
-  "Must import flow data first!" assertion. Neither method had any coverage before,
-  which is why this went unnoticed. `examples/ex_vicsek_model_2d.py` runs again.
-
-- [x] **`method='adjacent'` never applied the LLC shift — DONE, and it was two
-  branches, not one.** The fluid loaders translate their data so its lower-left corner
-  sits at the origin and record the original corner in `fluid_domain_LLC`; mesh
-  coordinates arrive in that original frame and have to follow, or mesh and fluid end
-  up offset with nothing raising. `proximity` and `hull` did this; **`adjacent` and the
-  moving-mesh (directory of `lagsPts.####.vtk`) branch did not.**
-
-  Fixed at the root rather than per site: one nested `_shift_to_fluid_frame` helper in
-  `read_IB2d_mesh_data` that all four branches now call, so the omission cannot recur.
-  It carries the `self.flow is not None` guard, which also keeps the fluid-free
-  workflow working.
-
-  Latent until now because IB2d grids start at the origin, making the shift a no-op —
-  `examples/ib2d_data` has `fluid_domain_LLC == (0.0, 0.0)`. It bites a vertex or
-  lagsPts file paired with fluid whose grid does not start at the origin.
-
-  Present on `master` in both branches too, so it ships as a real fix on both.
-  Regression tests in `test_io_loaders.py` parametrize the three static methods over
-  fluid-free and shifted-fluid environments, plus a moving-mesh shift test; exactly the
-  two previously-unshifted branches fail without the fix.
-
-- [x] **`shift_ibmesh_to_match_LLC` corrupted moving meshes — DONE.** It indexed
-  `self.ibmesh[:,:,ii]`, which is the coordinate axis only for a static mesh. A moving
-  mesh is `(T,N,2,2)` where axis 2 is the **endpoint** axis, so it subtracted `LLC[0]`
-  from *both* coordinates of every segment's first endpoint and `LLC[1]` from both of
-  the second — **shearing each segment rather than translating it**, and silently,
-  since the shapes line up in 2D. Fixed by indexing the last axis with an ellipsis
-  (`self.ibmesh[...,ii]`), which is the coordinate axis for all three layouts: static 2D
-  `(N,2,2)`, static 3D `(N,3,3)`, moving 2D `(T,N,2,2)`. Also added a
-  `self.ibmesh is not None` assertion — it used to fail with a bare `TypeError` from
-  subscripting `None` while its two neighbouring guards had clear messages.
-
-  **`dyload`-only**: the method does not exist on `master` at all. No changelog entry
-  (never shipped), nothing to cherry-pick.
-
-  It is public API with **no callers anywhere** — not in the package, tests, examples,
-  or docs prose — so it was pure untested surface that Sphinx nonetheless documents.
-  Now covered in `test_io_loaders.py`: static, moving (asserting the segments stay
-  rigid, which is what the shear destroyed), static 3D, the missing-mesh guard, and an
-  equivalence test pinning the actual contract — loading fluid-then-mesh (loader
-  shifts) must give the same mesh as mesh-then-fluid plus this call.
-
-  Docstring now warns that calling it on a mesh loaded *after* a fluid double-shifts;
-  nothing can detect that from stored state, so it is the caller's responsibility.
+- The **periodic-by-default** bug was general, not FTLE-specific — any flow sampled
+  exactly at an upper/right grid edge read the opposite edge. FTLE only exposed it
+  because it seeds tracers exactly on the domain boundary.
+- The last three were found by **running the examples end to end**, not by the suite.
+  None had any test coverage; `ex_produce_ftle_2d.py` and `ex_vicsek_model_2d.py` were
+  both broken. That remains the cheapest way to find this class of defect.
 
 ### Cleanup (low urgency)
 
@@ -274,142 +90,228 @@ because step 1 was verified by running the examples end to end.
 
 ---
 
-## `_ibc.py` — the 2026-08 collision passes 🟢
+## `_ibc.py` — the 2026-08 collision passes ✅ COMPLETE (3 findings left open)
 
-**This work was done on `master` and merged here (`27c810b`); the code and its
-tests live on both branches.** Six defects were found and fixed, each with
-regression tests: the boundary back-off scaling with domain size and going NaN
-at negative coordinates; joints where three or more mesh elements meet, in both
-the static and moving sliders; the 3D ranking measuring the wrong angle; a
-duplicated mesh vertex producing NaN positions (static) or a step that never
-finished (moving); the continue/stop decision; and stack exhaustion surfacing as
-a bare `RecursionError`. See `changelog.txt` under 1.0.2.
+**Done on `master` and merged here** (`27c810b`, `e448d0a`); the code and tests live
+on both branches. Two passes fixed **seven** defects — six in the first pass, plus
+**BUG-TCRIT** in the second (the moving slider's two critical times were computed
+wrongly, one of them in a way that was not rotation invariant, so the resolved
+position depended on how the problem sat in the coordinate frame). All are described
+in `changelog.txt` under 1.0.2, each with regression tests.
 
-**A second `master` pass (2026-08-02/03) closed all of the below and is merged
-here.** Coverage went **91% → 99% of statements, 45 → 7 lines never executed**
+Coverage went **91% → 99% of statements, 45 → 7 lines never executed**
 (`python -m coverage run --source=planktos -m pytest -q --runslow`, then
-`coverage report --include="*_ibc.py" --show-missing`). It also found one more
-defect, **BUG-TCRIT**: both critical times the moving slider uses to decide
-whether an agent left its element mid-step were computed wrongly, one of them in
-a way that was not rotation invariant, so the resolved position depended on how
-the problem sat in the coordinate frame. Fixed, with the corrected derivation in
-place; see `changelog.txt` under 1.0.2.
+`coverage report --include="*_ibc.py" --show-missing`). **The 7 remaining lines are
+not worth chasing:** three are placeholders behind the 3D-moving
+`NotImplementedError`, two are numerical corners documented in place as unreachable,
+two are solver non-convergence raises.
 
-- [x] **The rotation branch of the moving slider — DONE.** Reaching it needs an
-  element pivoting about an *interior* point: one half sweeps toward the agent so
-  contact happens at all, the other sweeps away so the boundary can then recede
-  out from under it. An endpoint pivot recedes along its whole length and is
-  never touched, which is why the earlier rotating-junction probe saw almost no
-  recursion. `tests/_ib_harness.pivoting_segment` builds it; the tests assert the
-  branch is entered rather than trusting that it is. No defect found — the branch
-  was correct, just unreached.
-- [x] **The free-flight recursion — DONE**, and broader than recorded here: the
-  *static 2D* path was the one with no coverage at all, not just the moving one.
-  Both now have exact closed-form answers.
-- [x] **The remaining special cases — DONE.** Contact landing at the very end of
-  the step, the travel-reversal critical time, the stay-put vertex-order
-  variants, the 3D middle-edge exit, and the moving stack-exhaustion re-raise.
-  Several were mirror images of covered branches distinguished only by an
-  arbitrary choice (which vertex of an element is stored first), so they are
-  pinned as invariances rather than values.
+**Testing method that worked**, if picking this up cold: the old suite only ever built
+*chains* (walls, polylines, corners, grooves, dihedrals), where a vertex joins at most
+two segments — so whole branches were unreachable by construction.
+`tests/test_collisions_junctions.py` adds `star_2D`, `closed_polygon` and `book_3D` for
+the missing geometry class, and its candidate counts were **measured by instrumenting
+the branch**, not assumed. The invariant assertions (finite, motion not amplified,
+stays outside a closed obstacle, rigid-motion equivariance — now in
+`tests/test_collisions_invariants.py`) are what caught the wrong-but-finite answers no
+arithmetic check could see. Where a branch differs from a covered one only by an
+arbitrary choice (which vertex of an element is stored first), pin an **invariance**
+rather than a value.
 
-**The 7 lines still uncovered are not worth chasing:** three are placeholders
-behind the 3D-moving `NotImplementedError`, two are numerical corners documented
-in place as unreachable, and two are solver non-convergence raises.
+### The three open findings
 
-**Two findings recorded rather than fixed** (issue-tracker material by the
-`xfail` rule in CLAUDE.md — real, but not worth stopping the cycle for):
-
-- [ ] 🟡 **An exception during the immersed-boundary stage leaves the `Swarm`
-  mid-update.** `Swarm.move` appends to `pos_history` and recomputes velocities
-  *before* `apply_boundary_conditions`, and advances `envir.time` only *after*.
-  So any raise in between leaves history one entry longer than `time_history`,
-  positions a mix of IB-corrected and raw (possibly *inside* a boundary), and
-  time not advanced. Not hypothetical: it is the state the original junction
-  `ValueError` produced. Loud, but a caller who caught and continued would have
-  penetrating agents and desynchronised history.
-- [ ] 🟢 **The free-flight termination argument has a floating-point gap.** That
-  branch terminates because the remaining movement `(1-t_edge)*vec` strictly
-  shrinks, which needs `t_edge > t_I` to hold *in floating point*. A step small
-  enough to make them equal numerically would stall. Could not be constructed;
-  the `RecursionError` re-raise now bounds the consequence either way.
-- [ ] 🟢 **The mid-step excursion check misses about half the cases it exists
-  for** — filed as **issue #73**. The two critical times bound neither end of an
-  excursion (those are roots of `s(t)=0` and `s(t)=1`, which depend on the slide
-  ODE), so an agent can be carried along an element through a transient overshoot
-  past its end instead of being released there. Measured at 15 of 26 caught,
-  with no false positives, and unchanged by the BUG-TCRIT fix — that corrected
-  the algebra of the two times, not the heuristic built on them. No penetration
-  and no exception, so accuracy only.
-
-**Testing approach that worked**, if picking this up cold: the existing suite
-only ever built *chains* (walls, polylines, corners, grooves, dihedrals), where
-a vertex joins at most two segments — so whole branches were unreachable by
-construction. `tests/test_collisions_junctions.py` adds `star_2D`,
-`closed_polygon` and `book_3D` builders for the missing geometry class, and its
-candidate counts were **measured by instrumenting the branch**, not assumed. The
-invariant assertions (finite, motion not amplified, stays outside a closed
-obstacle, and rigid-motion equivariance — now in
-`tests/test_collisions_invariants.py`) are what caught the wrong-but-finite
-answers that no arithmetic check could see. The second pass reused the method:
-instrument to confirm a branch is reached, then assert an invariance rather than
-a value wherever the branch is only distinguished from a covered one by an
-arbitrary choice.
+By the `xfail` rule in CLAUDE.md these are issue-tracker material, not `xfail`s: each
+is real, but none is worth stopping the development cycle for. Recorded here in full
+because the summaries alone are not actionable.
 
 ---
 
-## Phase 1 — Test dynamic loading in 2D 🟡
+#### 1. 🟡 An exception during the immersed-boundary stage leaves the `Swarm` mid-update
 
-Use 2D IB2d data (cheap, deterministic, reported working). Separate two questions:
+**What the code does.** `Swarm.move` ([_swarm.py:941](planktos/_swarm.py#L941)) runs in
+this order:
 
-NB: the in-memory linear path (`INUM=True`) has unit coverage in
-`tests/test_flow_interface.py` (`LinearSpline` call/index/extrema/derivative/
-`regenerate_data`, and linear-vs-cubic agreement on data linear in time).
+1. copy `old_positions` / `old_velocities` ([L982](planktos/_swarm.py#L982));
+2. `self.positions[:,:] = self.apply_agent_model(dt)` ([L992](planktos/_swarm.py#L992));
+3. **append to `pos_history` / `vel_history`** ([L995](planktos/_swarm.py#L995));
+4. **recompute `velocities` and `accelerations`** by finite difference ([L1001](planktos/_swarm.py#L1001));
+5. `apply_boundary_conditions(...)` — *this is where domain BCs and all immersed-boundary
+   collision handling run* — then `after_move` ([L1006](planktos/_swarm.py#L1006));
+6. append to `time_history` and advance `envir.time` ([L1011](planktos/_swarm.py#L1011)).
 
-**(A), (B) and (D) are DONE** — `tests/test_dynamic_loading.py`. The earlier note here
-said window sliding "still needs real data"; that turned out to be wrong.
-`update_spline` asks of a source only a `load_dumpfiles(d_start, d_finish)` returning
-per-component ndarrays with a leading time axis, so a ~20-line synthetic `FluidData`
-subclass backed by an in-memory array exercises the real slider exactly,
-deterministically, in the fast suite.
+**The problem.** Steps 3–4 commit state that step 5 is supposed to correct, and step 6
+has not happened yet. So a raise anywhere in step 5 leaves the object in a state that
+is internally inconsistent in four separate ways at once:
 
-**Ingestion is covered too, in both dimensions.** `IB2dData` — the 2D reference path,
-and previously the *only* loader with no automated coverage at all (every
-`read_IB2d_fluid_data` call in the tree is under `tests/manual/` and needs external
-data) — now loads end to end from `tests/fixtures/ib2d_fluid_min` (8 dumps, vector
-form) with `INUM=None/True/4`, pinning the full timeline, a real window slide, the
-periodic wrap, and warning-free construction under the new `FluidData` guards. The
-scalar `uX`/`uY` branch is pinned separately in `test_io_loaders.py` against
-`ib2d_fluid_scalar_min`. **Only (C) still needs real data.**
+- `pos_history` is one entry **longer** than `time_history`, so every subsequent index
+  into the two is misaligned — including `plot_all`'s frame selection, which assumes
+  they correspond;
+- `positions` holds a **mix**: agents processed before the raise are IB-corrected,
+  agents after it are raw output from the agent model, which may be **inside an
+  immersed boundary or outside the domain**. This violates the branch's hard
+  no-penetration invariant;
+- `velocities` / `accelerations` were finite-differenced from the *uncorrected*
+  positions, so they are wrong even for the agents that were subsequently corrected;
+- `envir.time` was never advanced, and `after_move` never ran; other swarms in the
+  environment never got their freeze-append (step 6's loop).
+
+**Why it matters.** The raise itself is loud, so a caller who lets it propagate is
+fine. The damage is to a caller who **catches and continues** — a parameter sweep, a
+batch harness, or a `try/except` around the move loop. They get silently penetrating
+agents and desynchronised history with no further warning.
+
+**Not hypothetical:** this is exactly the state the original junction `ValueError`
+produced before that bug was fixed. There is no *known* remaining raise path in step 5,
+which is why this is a robustness fix rather than a live bug.
+
+**Fix shape.** Two options:
+- *(a) Commit atomically.* Do the BC/IB work first, then append history, recompute
+  velocities and advance time together at the end. Cleanest, but `apply_boundary_conditions`
+  writes into `self.positions` in place and has a parallelization path (`self.pool`), so
+  this is not a pure reordering.
+- *(b) Roll back on the exception path.* Wrap step 5 in `try/except`, restore
+  `old_positions`, pop the two (or three) history entries, and re-raise. Small and
+  local; leaves the ordering weirdness in place but makes it unobservable.
+
+(b) is the cheap correct-enough answer; (a) is the right one if the move loop is ever
+restructured for other reasons.
+
+---
+
+#### 2. 🟢 The free-flight termination argument has a floating-point gap
+
+**Where.** `_project_and_slide_static`, the "continue on the original trajectory"
+branch ([_ibc.py:949-965](planktos/_ibc.py#L949-L965)).
+
+**What the branch does.** An agent sliding along a mesh element runs off the end, and
+there is no adjacent element to transfer onto. It is then released back into free
+flight from the separation time `t_edge`, and the routine **recurses** on itself with
+`newstartpt = x_edge + EPS*normal` and `newendpt = newstartpt + (1-t_edge)*vec` — i.e.
+whatever fraction of the original step remains.
+
+**The termination argument, as written in the comment:** the recursion terminates
+because the remaining movement `(1-t_edge)*vec` **strictly shrinks** at every level.
+Note the comment already flags that this is weaker than the adjacent-element transfer
+branch above it — nothing bounds *how much* it shrinks, so it bounds depth only loosely.
+
+**The gap.** Strict shrinkage requires `t_edge > t_I` to hold **in floating point**,
+where `t_I` is the intersection time this level started from. `t_edge` is computed as a
+ratio of norms ([_ibc.py:700](planktos/_ibc.py#L700)); for a step short enough relative
+to the mesh geometry, that ratio can round to exactly `t_I`. The remaining movement is
+then unchanged, the next level is handed an identical sub-problem, and the recursion
+sits at a fixed point until the stack runs out.
+
+**Consequence, and why it is 🟢.** It could not be constructed as a test — the
+combination requires the roundoff to land exactly, and no search found it. And the
+consequence is now **bounded** regardless: `RecursionError` is caught and re-raised
+through `_slide_too_deep` ([_ibc.py:189](planktos/_ibc.py#L189)), so the failure mode
+is a clean explained exception, not a hang. ⚠️ The message would be *misleading* in
+this scenario — it says the step is long compared to the mesh, which is the opposite of
+what happened.
+
+**Fix shape.** Track the previous remaining-movement magnitude across the recursion and
+guard: if it fails to strictly decrease, stop the agent at the current point rather
+than recursing. A few lines. Not done because it is unconstructible and therefore
+untestable, and this is load-bearing code where an untested guard is its own risk.
+
+---
+
+#### 3. 🟢 The mid-step excursion check misses about half the cases it exists for — **issue #73**
+
+**Where.** `_project_and_slide_moving`, the "did we go past the end of the element?"
+block ([_ibc.py:1122-1211](planktos/_ibc.py#L1122-L1211)).
+
+**Why the check exists.** On a **moving** mesh the element translates, rotates *and
+stretches* underneath the sliding agent. So "did the agent run off the end?" cannot be
+answered from the end-of-step state alone: the agent can slide past an endpoint and
+come **back onto** the element before the step ends. Missing that means it should have
+been released at the endpoint and was not.
+
+**What the check actually does.** It samples the along-element position at up to three
+times and asks, at each, whether the distance from the agent to either endpoint exceeds
+the element's own length ([L1129](planktos/_ibc.py#L1129), [L1181](planktos/_ibc.py#L1181)):
+
+- **t = 1**, the end of the step;
+- **`t_crit_elem`** ([L1153](planktos/_ibc.py#L1153)) — where the element is
+  **shortest**. `|Qvec(u)|²` is an upward quadratic in the normalized parameter, so
+  this is the sole root of its derivative;
+- **`t_crit_x`** ([L1167](planktos/_ibc.py#L1167)) — where the direction of travel
+  along the element **reverses**, i.e. where the projection of `vec` onto the element
+  vanishes.
+
+If any sample says "past", a least-squares solve ([L1204](planktos/_ibc.py#L1204))
+finds the actual exit time.
+
+**Why it is incomplete.** The excursion is the interval where the normalized
+along-element coordinate `s(t)` leaves `[0,1]`, so its endpoints are the **roots of
+`s(t)=0` and `s(t)=1`**. Those roots are determined by the slide ODE. Neither critical
+time is such a root — both were chosen because they have closed forms, and they are
+merely *plausible* places for an excursion to be caught. An excursion that opens and
+closes strictly between the three samples is invisible to the test.
+
+**What it costs.** The agent is carried along the element through the overshoot instead
+of being released at the endpoint — a **position accuracy** error. It is **not** a
+penetration: throughout the excursion the agent is projected onto the element's line,
+so it stays on the correct side. No exception is raised.
+
+**Measured:** 15 of 26 constructed excursion cases caught, **no false positives** (it
+never claims an excursion that did not happen). Unchanged by the BUG-TCRIT fix — that
+corrected the *algebra* of the two critical times; this is about the *heuristic built
+on them*, which is a separate question.
+
+**Fix shape.** Root-find `s(t)=0` and `s(t)=1` directly instead of sampling. `s(t)`
+comes from the slide ODE, so these are numerical root-finds on an ODE solution rather
+than closed forms — the same class as the least-squares already run at
+[L1204](planktos/_ibc.py#L1204), but more of them and from a worse initial guess.
+Substantial, delicate work in the most load-bearing code in the project.
+
+**Why deferred.** Accuracy only, no penetration, no false positives — and moving
+boundaries are **2D-only** while this branch's whole purpose is unblocking 3D. Revisit
+with Phase 3 (3D moving boundaries), where the moving slider gets rewritten for
+triangles anyway and this decision has to be made again from scratch.
+
+---
+
+## Phase 1 — Test dynamic loading in 2D ✅ COMPLETE
+
+All of (A)–(D) are done and pinned in `tests/test_dynamic_loading.py`; (E) is
+superseded. **Only the periodic × dynamic combination is still untested**, and it
+carries forward into Phase 2.
+
+**The key structural insight, if extending this:** `update_spline` asks of a data
+source only a `load_dumpfiles(d_start, d_finish)` returning per-component ndarrays
+with a leading time axis. So a ~20-line synthetic `FluidData` subclass backed by an
+in-memory array exercises the **real** slider exactly and deterministically, with no
+files, in the fast suite. An earlier version of this plan wrongly assumed window
+sliding could only be tested against real data.
+
+**Ingestion is covered in both dimensions** against committed fixtures: `IB2dData`
+from `tests/fixtures/ib2d_fluid_min` (8 dumps, vector form, `INUM=None/True/4`) and
+the scalar `uX`/`uY` branch from `ib2d_fluid_scalar_min`; `VTK3dData` from
+`tests/fixtures/vtk3d_min`. The in-memory linear path (`INUM=True`) has unit coverage
+in `tests/test_flow_interface.py`.
 
 - [x] **(A) Machinery correctness — DONE.** Windowed-linear (`INUM=4,5,7`) agrees with
   full linear (`INUM=True`) on forward sweeps, backward sweeps, non-monotone random
   access, exactly-on-node times, out-of-bounds clamping, and in 3D. Agreement is to a
-  few ulp, not bit-for-bit: the slider carries window-boundary values by *evaluating*
-  the outgoing spline rather than re-reading raw data, which costs an ulp per slide.
-  **That error does not accumulate** — measured flat at 1–2 ulp across 400 loads and
-  6 full sweeps, pinned by `test_holdover_roundoff_does_not_accumulate`.
-- [x] **(B) Window-sliding behavior — DONE.** Forward slide, backward slide, the
-  "jump to beginning" fast path (asserted to be one load, not a walk), extrapolation
-  flag flips at both dataset ends, bounded window across a full sweep, bounded load
-  count (no thrashing), no load when the query stays inside the window, `fmin`/`fmax`
-  tuples widening across slides (the §3.3 lock on the path where it actually bit),
-  and `get_raw_loaded_data` on a genuinely sliding window (the §3.5 lock).
-  - **Bookkeeping bug found and fixed.** At the dataset end `idx_finish` was set to
-    `len(flow_times)` — one past the last valid index — while `loaded_dump_bnds[1]`
-    stays inclusive, so the two index spaces disagreed there and only there. Latent,
-    not live: the sole reader of `loaded_idx_bnds[1]` is the forward slide, which is
-    gated off by `extrapolate[1]` once the end is reached, and the window itself was
-    unaffected because the slice that builds it clips. Pinned first, then fixed to
-    `len(self.flow_times) - 1`; the whole suite stayed green, which is the evidence
-    the change is inert. `test_index_spaces_agree_at_every_slide` now locks
-    `loaded_idx_bnds == loaded_dump_bnds` across forward and backward sweeps so the
-    two cannot drift apart again.
-  - NB: the closing window is *structurally* ≤ `INUM` samples rather than `INUM`+1,
-    because every forward slide pins `idx_start` to the outgoing window's
-    next-to-last index (the two-sample holdover) and the dataset then runs out. That
-    is unrelated to the bug above and is harmless — less memory, same values — which
-    is why the bounded-window test asserts `<=` rather than `==`.
+  few ulp, not bit-for-bit, because the slider carries window-boundary values by
+  *evaluating* the outgoing spline rather than re-reading raw data. **That error does
+  not accumulate** — flat at 1–2 ulp across 400 loads and 6 full sweeps
+  (`test_holdover_roundoff_does_not_accumulate`).
+- [x] **(B) Window-sliding behavior — DONE.** Forward/backward slides, the
+  jump-to-beginning fast path (asserted to be one load, not a walk), extrapolation
+  flags at both dataset ends, bounded window and bounded load count across a full
+  sweep, no load when the query stays inside the window, `fmin`/`fmax` widening across
+  slides, and `get_raw_loaded_data` on a genuinely sliding window.
+  - **Index-space bookkeeping bug found and fixed:** at the dataset end `idx_finish`
+    was `len(flow_times)`, one past the last valid index, while `loaded_dump_bnds[1]`
+    is inclusive. Latent rather than live (its only reader is gated off by
+    `extrapolate[1]` at that point). `test_index_spaces_agree_at_every_slide` now
+    locks the two together.
+  - NB: the closing window is *structurally* ≤ `INUM` samples rather than `INUM`+1 —
+    every forward slide pins `idx_start` to the outgoing window's next-to-last index
+    (the two-sample holdover) and the dataset then runs out. Harmless (less memory,
+    same values), which is why the bounded-window test asserts `<=`.
 - [x] **(C) Comparability — DONE.** Measured on real IB2d data (`tests/data/leaf_data`,
   149 dumps, 129×193, Δt=1e-3 s) by `tests/manual/quantify_temporal_interp.py`, which
   is reproducible and documents its own methodology. **Errors are measured by
@@ -470,64 +372,133 @@ scalar `uX`/`uY` branch is pinned separately in `test_io_loaders.py` against
 
 ---
 
-## Phase 2 — Test dynamic loading in 3D 🟡 (blocks 3D moving boundaries)
+## Phase 2 — Dynamic loading in 3D against real data 🔴 (blocks 3D moving boundaries)
 
-The actual end goal (the ~100 GB case). **Needs real 3D dynamic fluid data** — the user
-has a sample from their collaborator to stage on this machine when we reach this step.
+The actual end goal (the ~100 GB case) and **the branch's remaining reason to exist.**
 
-**Assume a rectilinear fluid grid.** Data is expected as a sequence of **vtk files
-exported from VisIt/ParaView**, where the source field (IBFE SAMRAI / OpenFOAM FEM) was
-*already* interpolated onto a rectilinear grid externally. Planktos just reads that
-rectilinear vtk — source-specific ingestion is **out of scope** (see CLAUDE.md "3D
-fluid data sources").
+### The dataset is staged and analyzed ✅
 
-- [x] **Stage the real 3D dynamic dataset on-machine — DONE.** It is at
-  `tests/unsteady_3D_testdata/` (gitignored as a whole directory; `.vtp`/`.vtm`/
-  `.vtm.series` were added to `.gitignore` alongside it). Contents: `VTK/` with 21
-  timestep `.vtm`s + a `.vtm.series` (case `case08_alpha2_1e8`),
-  `oral_arm_disk.stl`, and `README_oral_arm_setup.md` with the full setup spec.
-  - **Physics:** OpenFOAM, Cassiopea oral-arm porous disk. Water (ρ=1000,
-    ν=1e-6), Re=500, laminar transient. Pulsing annular inlet,
-    u_z(t) = 0.01·½(1−cos(2π·0.8·t)) m/s. Export covers the last two pulse cycles
-    (t ≥ 7.5 s, period 1.25 s). Domain x,y ∈ [−0.05, 0.05], z ∈ [0.003, 0.271] m,
-    **all lengths in meters**. Fields: `U`, `p` (kinematic), `vorticity`, `Q`.
-  - ⚠️ **Not directly loadable yet.** This is OpenFOAM **unstructured** XML
-    (`.vtu`/`.vtm`), but this branch assumes a **rectilinear** grid (see CLAUDE.md
-    "3D fluid data sources"). It must be resampled to a rectilinear grid in
-    ParaView/VisIt and re-exported before `VTK3dData`/`read_IBAMR3d_vtk_data` can
-    read it. Record the resample recipe here once done — that step is the actual
-    first task of Phase 2, not the staging.
-  - `oral_arm_disk.stl` is a ready-made 3D immersed boundary for Phase 3.
-- [x] **`VTK3dData` dynamic loading was silently broken — found and fixed ahead of the
-  real data.** `flow_times` was built from only the dumps read at construction, so on
-  the windowed path it held `INUM+1` timestamps instead of the whole series. That did
-  not raise: it made `INUM >= len(flow_times)-1`, which sends `FluidData` down its
-  "everything is in memory" branch with `extrapolate=(True, True)`, making
-  `update_spline` unreachable. The run then completed with the fluid **frozen** at the
-  end of the opening window — no error, no warning. (`IB2dData` was never affected; it
-  computes `flow_times` analytically over the full range, which is why 2D worked.)
-  - **Fix.** `TIME` lives in each legacy-vtk header (`FIELD FieldData` sits right after
-    `DATASET`, ahead of the coordinate arrays), so the whole series can be timestamped
-    with one ~4 kB header read per dump — measured 62× faster than a full parse on the
-    IBAMR test files, and *constant* in file size, so the margin only grows with real
-    dumps. New `_dataio.read_vtk_time_only`, with a per-file fallback to a full read
-    since the format also permits `FIELD` outside the header. `_read_vtkfiles` no
-    longer parses times at all (it is the per-window loader; that was both wasted work
-    and the origin of the bug).
-  - **Guards added to `FluidData`,** so the next loader making this mistake fails
-    loudly: a dynamically-loading subclass that exposes `d_start`/`d_finish` must pass
-    `flow_times` covering the full dump range, and an int `INUM` that spans the dataset
-    now warns that no dynamic loading will occur (a pre-existing footgun of its own).
-  - **Coverage.** `tests/fixtures/vtk3d_min/` — 8 tiny rectilinear vtk dumps with
-    `TIME`, generated by `_gen_fixtures.py`, field `u=t, v=x, w=t*z` so a frozen or
-    truncated timeline is unmistakable. Exercised end to end in
-    `test_dynamic_loading.py`; `read_vtk_time_only` unit-tested in `test_io_loaders.py`.
-- [ ] Re-run the above against **real** 3D data once the OpenFOAM resample lands;
-  un-skip / fix the IBAMR load tests on real data.
-- [ ] Re-run Phase 1 (A)–(E) equivalents in 3D.
-- [ ] 3D material derivative end-to-end (after the Phase 0 `calculate_DuDt` fix) for
-  massive / inertial particle models.
+`tests/unsteady_3D_testdata/` (gitignored as a whole directory). Contents: `VTK/` with
+21 timestep `.vtm`s + a `.vtm.series` (case `case08_alpha2_1e8`), `oral_arm_disk.stl`,
+and `README_oral_arm_setup.md` with the full setup spec.
+
+**Physics:** OpenFOAM, Cassiopea oral-arm porous disk. Water (ρ=1000, ν=1e-6), Re=500,
+laminar transient. Pulsing annular inlet, u_z(t) = 0.01·½(1−cos(2π·0.8·t)) m/s. Export
+covers the last two pulse cycles (t ≥ 7.5 s, period 1.25 s). Domain x,y ∈ [−0.05, 0.05],
+z ∈ [0.003, 0.271] m, **all lengths in meters**. Fields: `U`, `p` (kinematic),
+`vorticity`, `Q`. `oral_arm_disk.stl` is a ready-made 3D immersed boundary for Phase 3.
+
+> ### ⛔ CORRECTION — no resample is needed
+>
+> An earlier version of this plan said the data was unstructured and had to be
+> resampled to a rectilinear grid in ParaView/VisIt first. **That is wrong**, and it
+> mis-framed Phase 2 as a data-prep task when it is a **loader-writing** task.
+>
+> The data *is* stored as `vtkUnstructuredGrid`, but that is only OpenFOAM's
+> `foamToVTK` writer being generic. Verified by reading the files: 803,531 points /
+> 775,368 cells, **every** cell a `VTK_HEXAHEDRON`, forming an exact 67×67×179 point /
+> 66×66×178 cell **uniform Cartesian lattice** with constant spacing to float32
+> roundoff and no refinement anywhere. `snappyHexMesh` was never run; the disk is a
+> porosity source term, not mesh geometry. The point coordinates are **bit-identical
+> across every timestep**, so geometry can be computed once and only fields streamed.
+
+**Full structural analysis: [docs/notes/openfoam_oral_arm_dataset.md](docs/notes/openfoam_oral_arm_dataset.md).**
+It was originally written into the gitignored data directory and was therefore
+untracked; moved into `docs/notes/` 2026-08-10. §7 of that note is the loader work
+list — it is not restated here.
+
+### The real work: a loader for this format 🔴
+
+Nothing in `planktos` reads it today. `VTK3dData` reads *legacy* rectilinear vtk;
+`ComsolVTUData` reads a single `.vtu` holding all times. This data is a per-timestep
+`.vtu` referenced through `.vtm` manifests — the **loop shape of `VTK3dData`** with the
+**file format of `ComsolVTUData`**, and neither one as-is.
+
+Four things make it more than a format swap (all detailed in the note):
+
+- [ ] **Fields are `CELL_DATA`, not point data** — OpenFOAM is finite-volume, and
+  `point_data` is empty. `_dataio.read_vtu_Unstructured_Grid_Points_FEM` needs
+  `GetPointData()`→`GetCellData()` *and* `GetPoints()`→cell centers (`vtkCellCenters`);
+  `GetPoints()` returns hexahedron **corners**, which is the wrong lattice.
+- [ ] **Cell ordering is not lexicographic.** A bare `.reshape((66,66,178))` silently
+  scrambles the field. A permutation index is required — built by snapping coordinates
+  to an integer lattice, **not** by `lexsort` on raw floats, which fails on float32
+  roundoff. Computed **once**, since the mesh is static.
+- [ ] **Cell centers are inset half a cell**, so raw centers report the domain as
+  0.0985 × 0.0985 × 0.2665 instead of the true 0.1 × 0.1 × 0.268. The `.vtp` boundary
+  patches close this **exactly**: `inlet`/`outlet` carry real data on the identical x/y
+  lattice, `walls` is exactly zero (no-slip) and can simply be padded. Assembly is
+  66×66×178 → 66×66×180 → 68×68×180. The 12 edges and 8 corners appear in no file but
+  lie on no-slip walls, so filling zeros there is exact.
+- [ ] **Times come from the `.vtm.series` JSON** (plain JSON, no VTK needed), or the
+  per-file `TimeValue`. ⚠️ **This is the `VTK3dData` timeline trap again** — see the
+  fixed bug below. `flow_times` must span the **whole series** from the start, not just
+  the opening window.
+
+**I/O budget, which is the whole point of the branch:** 61% of every 85 MB file is
+geometry that never changes. Going through `vtkXMLUnstructuredGridReader` re-reads
+51 MB per timestep to extract 12 MB of velocity. Options in the note §7 (disable unused
+arrays / parse the `U` `DataArray` directly / one-time `.npy` preprocess).
+**Get the VTK path correct first; treat this as an optimization.**
+
+- [ ] 🔴 **The loader must tolerate a dump series with holes — warn, do not fail.**
+  4 of 21 timesteps in this dataset are missing (t = 9.0, 9.375, 9.75, 10.0): the
+  `.vtm` manifests exist but the directories they name do not, a truncated transfer.
+  17 are present, confirmed 2026-08-10. **Decision: work with the data as-is** rather
+  than waiting on a re-send, and treat gap tolerance as a loader requirement in its
+  own right — truncated or interrupted exports are normal in practice.
+
+  Requirements:
+  - **Resolve which dumps actually exist eagerly, at construction**, when the
+    timeline is built. Do *not* discover a missing file at the window slide that
+    needs it. Under dynamic loading that raise could land hours into a long run,
+    which is the worst possible time for it and exactly what streaming makes likely.
+  - **Warn once**, naming the missing times and how many were dropped. Silence here
+    would be worse than the failure: the run completes and nothing indicates the
+    timeline has holes.
+  - **Build `flow_times` and the dump index over the present dumps only**, densely.
+    Then `d_start`/`d_finish` index the surviving series, `load_dumpfiles` is never
+    handed a filename that is not there, and everything downstream is unchanged. The
+    only visible effect is a wider interval between two adjacent entries.
+  - **Warn separately about the resulting non-uniform spacing.** Interpolation error
+    scales with the dump interval (Phase 1 (C)), so a 0.125 s series with a 0.5 s hole
+    is measurably worse across that hole and the user should know where.
+  - ⚠️ Interacts with the `flow_times`-must-span-the-whole-series guard below: the
+    "whole series" is the set of dumps that exist, not the set the manifest declares.
+
+### Already fixed ahead of the real data ✅
+
+- [x] **`VTK3dData` dynamic loading was silently broken.** `flow_times` was built from
+  only the dumps read at construction, so on the windowed path it held `INUM+1`
+  timestamps instead of the whole series. That did not raise: it made
+  `INUM >= len(flow_times)-1`, which sends `FluidData` down its "everything is in
+  memory" branch with `extrapolate=(True, True)`, making `update_spline` unreachable.
+  The run completed with the fluid **frozen** at the end of the opening window — no
+  error, no warning. (`IB2dData` computes `flow_times` analytically over the full
+  range, which is why 2D was never affected.)
+  - **Fix:** `TIME` lives in each legacy-vtk header, so the whole series is timestamped
+    with one ~4 kB header read per dump — 62× faster than a full parse and *constant*
+    in file size, so the margin grows with real dumps. New `_dataio.read_vtk_time_only`
+    with a per-file fallback to a full read.
+  - **Guards added to `FluidData`** so the next loader making this mistake fails loudly:
+    a dynamically-loading subclass exposing `d_start`/`d_finish` must pass `flow_times`
+    covering the full dump range, and an int `INUM` spanning the dataset now warns that
+    no dynamic loading will occur.
+  - **Coverage:** `tests/fixtures/vtk3d_min/` — 8 tiny rectilinear vtk dumps with `TIME`
+    (`u=t, v=x, w=t*z`, so a frozen or truncated timeline is unmistakable).
+
+### Then, once it loads
+
+- [ ] Re-run the Phase 1 (A)–(D) equivalents on real 3D data.
+- [ ] **Periodic × dynamic** — carried over from Phase 1; still untested in either
+  dimension. Note this dataset has walls, not periodic sides, so it may not be the
+  vehicle for it.
+- [ ] Re-check the Phase 1 (C) interpolation-error numbers on 3D data and update
+  `docs/api/FluidData.rst`, which currently carries 2D figures with that caveat stated.
+- [ ] 3D material derivative end-to-end for massive / inertial particle models.
 - [ ] **Memory profiling:** confirm RAM stays bounded to one window across a long 3D run.
+  This is the branch's headline claim and is still unmeasured on real data.
+- [ ] Un-skip / fix the IBAMR load tests on real data.
 
 ---
 
@@ -549,15 +520,11 @@ points still used). Inherited blockers from the overhaul's notes:
 ## Documentation 🟡
 
 - [x] **`FluidData` on readthedocs — DONE.** `docs/api/FluidData.rst` autoclasses
-  `FluidData` and the three per-source subclasses and is listed in
-  `docs/api/index.rst`. Alongside the autodoc it carries narrative sections on how
-  to get velocity data out (call it with a time vs. index it like a list, and why
-  indexing is refused while streaming) and on the `INUM` tradeoff (below).
-  `Environment.rst` gained a pointer, since `INUM` is met first through the
-  `Environment` reader methods. Writing it turned up a `FluidData` class docstring
-  that rendered badly and claimed the time-varying case is always an `fCubicSpline`
-  (true only for `INUM=None`); rewritten, along with the malformed numpydoc in its
-  `Attributes` block. Sphinx builds clean, no warnings.
+  `FluidData` and the three per-source subclasses, plus narrative on how to get
+  velocity data out (call it with a time vs. index it like a list, and why indexing is
+  refused while streaming) and on the `INUM` tradeoff. `Environment.rst` points to it,
+  since `INUM` is met first through the `Environment` reader methods. Sphinx builds
+  clean.
 - [ ] **Sweep the prose docs for the master-era fluid API.** `docs/quickstart.rst`
   and `README.md` still frame fluid handling as `Environment`-level. The 1.0.1
   merge fixed the two that were outright wrong (`get_2D_vorticity` → `get_vorticity`,
@@ -566,18 +533,14 @@ points still used). Inherited blockers from the overhaul's notes:
   held**, since §9 decides what `tile_flow` becomes and whether `Environment.extend`
   returns, and both are exactly what this prose would describe. The new
   `docs/api/FluidData.rst` covers the reference side in the meantime.
-- [x] **`INUM` and the linear-vs-cubic tradeoff — DONE.** Documented for users in
-  `docs/api/FluidData.rst` (anchor `inum-tradeoff`): the `INUM` table, why linear
-  in time is permanent rather than a placeholder, and what it costs. Per the Phase
-  1 (C) findings it quotes the **convergence orders and the ensemble result, not
-  the bare rms ratio** — the ratio blends a smooth regime where cubic is decisively
-  better with a rough one where neither converges, so on its own it would mislead
-  in either direction. Ends with the practical reading (ensemble statistics are
-  unlikely to change; prefer `INUM=None` for inertial particles when the data
-  fits) and a note that absolute errors do not transfer between datasets while the
-  orders do, that the figures are from one 2D dataset, and that the measurement is
-  reproducible via `tests/manual/quantify_temporal_interp.py`.
-  - Remaining: re-check the numbers on 3D data in Phase 2 and update the note.
+- [x] **`INUM` and the linear-vs-cubic tradeoff — DONE.** In `docs/api/FluidData.rst`
+  (anchor `inum-tradeoff`): the `INUM` table, why linear in time is permanent rather
+  than a placeholder, what it costs, and the practical reading (ensemble statistics
+  are unlikely to change; prefer `INUM=None` for inertial particles when the data
+  fits). Per Phase 1 (C) it quotes the **convergence orders and the ensemble result,
+  not the bare rms ratio**, and states that absolute errors do not transfer between
+  datasets while the orders do.
+  - Remaining: re-check the numbers on 3D data in Phase 2 and update the page.
 
 ## Inherited follow-ups from the mvbnd overhaul (non-blocking) 🟢
 
@@ -595,11 +558,16 @@ points still used). Inherited blockers from the overhaul's notes:
 
 ## Deferred / low priority ⚪
 
-> **Source-specific fluid ingestion is out of scope for this branch.** We assume the
-> fluid arrives as rectilinear vtk (pre-interpolated in VisIt/ParaView). Reading IBFE
-> SAMRAI / OpenFOAM / COMSOL directly — including porting the old VisIt
-> `read_IBAMR3d_py27.py` SAMRAI→vtk script — is lower priority than 3D moving boundaries
-> and scratched here. Background is in CLAUDE.md ("3D fluid data sources").
+> **Most source-specific fluid ingestion is out of scope for this branch.** Planktos
+> assumes a **rectilinear fluid grid**. Reading IBFE SAMRAI or COMSOL directly —
+> including porting the old VisIt `read_IBAMR3d_py27.py` SAMRAI→vtk script — is lower
+> priority than 3D moving boundaries and is scratched here.
+>
+> **The exception is the Phase 2 OpenFOAM reader, which is in scope and is 🔴.** That
+> dataset is already on a uniform Cartesian grid despite its `vtkUnstructuredGrid`
+> container, so it needs a loader rather than a resample. See Phase 2 and
+> `docs/notes/openfoam_oral_arm_dataset.md`. Background in CLAUDE.md ("3D fluid data
+> sources").
 
 - [ ] **COMSOL VTU loader** (`ComsolVTUData`) — existing, full-load only. Verify only if
   needed; collaborator no longer uses COMSOL and the export format has likely changed.
@@ -646,9 +614,10 @@ points still used). Inherited blockers from the overhaul's notes:
 
 ## How to run the tests
 
-- Fast loop: `pytest` (≈1s; skips `slow` / `vtk`-absent / `vtu`-absent).
+- Fast loop: `pytest` (≈4s; skips `slow` / `vtk`-absent / `vtu`-absent).
 - Full: `pytest --runslow` (adds the parallelization checks and the plotting
-  smokes; ≈13s).
+  smokes; ≈15s).
+- List any `xfail`s with `pytest -rX` — a non-empty list means work is in flight.
 - Regenerate IB2d fixtures after editing the generator:
   `python tests/fixtures/_gen_fixtures.py`.
 

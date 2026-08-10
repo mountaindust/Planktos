@@ -90,13 +90,24 @@ Moving boundaries are currently **2D only**.
 
 **3D fluid data sources (terse, for future reference).** The 3D flows come from
 either **IBFE** (fluid solved over the *entire* domain, including inside immersed
-objects, as SAMRAI files on an adaptive rectangular mesh) or **OpenFOAM** (fluid only
-*outside* objects, on a 3D FEM point mesh). For now, in both cases the field is
-interpolated to a **rectilinear grid** externally (VisIt/ParaView → vtk) and that vtk
-is what Planktos loads — i.e. **assume a rectilinear fluid grid for the time being.**
-Source-specific ingestion (porting the old VisIt SAMRAI→vtk script, reading
-OpenFOAM/COMSOL directly, etc.) is intentionally **out of scope for `dyload`**: it is
-lower priority than getting 3D moving boundaries working.
+objects, as SAMRAI files on an adaptive rectangular mesh) or **OpenFOAM**. Planktos
+**assumes a rectilinear fluid grid** — that assumption stands, and is the thing to
+check about any new dataset.
+
+What it does *not* mean is that the data must arrive as rectilinear vtk. **The Phase 2
+OpenFOAM dataset is stored as `vtkUnstructuredGrid` yet sits on a perfectly uniform
+Cartesian grid** — `foamToVTK` writes `.vtu` regardless of the underlying mesh, so the
+container says nothing about the geometry. It needs **no resampling**, only a reordering
+permutation (cell ordering is not lexicographic) and a half-cell boundary splice. Fluid
+there is defined *everywhere*, including inside the immersed object, which carries a
+porosity source term rather than being cut out of the mesh. Verify a dataset's actual
+lattice before assuming it needs a VisIt/ParaView pass; see
+`docs/notes/openfoam_oral_arm_dataset.md`.
+
+Reading that dataset **is** in scope for `dyload` — it is Phase 2, and it blocks 3D
+moving boundaries. What stays out of scope is *other* source-specific ingestion:
+porting the old VisIt SAMRAI→vtk script, reading COMSOL directly, and OpenFOAM cases
+whose mesh is genuinely unstructured (`snappyHexMesh` refinement, tets, polyhedra).
 
 **`TODO.md` is the working plan for this branch** — phased, prioritized, and kept
 current. Read it before starting work here: it records what is done, what is
