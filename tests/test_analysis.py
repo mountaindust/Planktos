@@ -16,6 +16,26 @@ import planktos
 from planktos import motion
 
 
+def _full_stencil_values(envir, last_time, T):
+    """FTLE values at grid points whose entire stencil integrated for the full T.
+
+    calculate_FTLE normalizes by the time actually integrated, which is shorter
+    than T wherever a stencil point left the domain early -- see the method's
+    docstring. The closed forms below are all evaluated at s = T, so they apply
+    only where nothing truncated. For a linear flow the field is spatially
+    constant there, so both ends of the range are asserted rather than just the
+    max: that pins every qualifying point instead of one lucky one.
+    """
+    lt = np.reshape(np.asarray(last_time), envir.FTLE_grid_dim)
+    full = lt >= T - 1e-12
+    stencil = np.zeros_like(full)
+    stencil[1:-1, 1:-1] = (full[1:-1, 1:-1] & full[:-2, 1:-1] & full[2:, 1:-1]
+                           & full[1:-1, :-2] & full[1:-1, 2:])
+    keep = stencil & ~np.ma.getmaskarray(envir.FTLE_largest)
+    assert keep.any(), "no grid point integrated for the full T"
+    return np.asarray(envir.FTLE_largest)[keep]
+
+
 def _shear_FTLE(A, T=1.0):
     '''Largest FTLE of a shear flow whose accumulated shear is A: the flow-map
     gradient is [[1, A],[0,1]], so lam_max = (2+A^2 + sqrt((2+A^2)^2-4))/2 and
@@ -109,12 +129,52 @@ def test_FTLE_simple_shear_closed_form():
     x = np.linspace(0, 10, n); y = np.linspace(0, 10, n)
     X, Y = np.meshgrid(x, y, indexing='ij')
     envir = planktos.Environment(Lx=10, Ly=10, flow=[a * Y, np.zeros_like(Y)])
-    envir.calculate_FTLE(grid_dim=(8, 8), T=T, dt=0.05)
+    _, _, last_time = envir.calculate_FTLE(grid_dim=(8, 8), T=T, dt=0.05)
 
     aT = a * T
     lam = (2 + aT**2 + np.sqrt((2 + aT**2)**2 - 4)) / 2
     expected = np.log(np.sqrt(lam)) / T                  # = ln(golden ratio) ~ 0.4812
-    assert np.nanmax(envir.FTLE_largest) == pytest.approx(expected, abs=1e-3)
+    vals = _full_stencil_values(envir, last_time, T)
+    assert vals.max() == pytest.approx(expected, abs=1e-3)
+    assert vals.min() == pytest.approx(expected, abs=1e-3)
+
+
+def test_FTLE_normalizes_by_the_time_actually_integrated():
+    # The lock on the normalization. u = a(x-1/2), v = -a(y-1/2) is pure strain:
+    # the flow map over any elapsed time s has gradient diag(e^{as}, e^{-as}), so
+    # the largest FTLE is ln(sqrt(e^{2as}))/s = a -- EXACTLY a, for every s. That
+    # is what makes this field the right probe: a point whose stencil left the
+    # domain early integrated for less than T, and must still report a.
+    #
+    # calculate_FTLE used to divide by T regardless of how long it had actually
+    # integrated, so the stretching from one interval was normalized by another's
+    # length. Truncated points came back at 0.34-0.72 of truth here, always low,
+    # in a band 3-4 cells deep around the domain edge -- and in a through-flow
+    # domain, where tracers leave continuously, that band is not a rim.
+    a, T, n = 1.0, 0.2, 41
+    g = np.linspace(0, 1, n)
+    X, Y = np.meshgrid(g, g, indexing='ij')
+    envir = planktos.Environment(Lx=1.0, Ly=1.0,
+                                 flow=[a*(X - 0.5), -a*(Y - 0.5)])
+    _, _, last_time = envir.calculate_FTLE(grid_dim=(31, 31), T=T, dt=0.001)
+
+    F = envir.FTLE_largest
+    unmasked = ~np.ma.getmaskarray(F)
+    vals = np.asarray(F)[unmasked]
+    assert vals.size > 800, "expected most of the grid to survive"
+    assert np.abs(vals - a).max() < 1e-10
+
+    # and specifically: the points that did NOT get the full T are also exact,
+    # which is the half of the field the old normalization got wrong
+    lt = np.reshape(np.asarray(last_time), envir.FTLE_grid_dim)
+    truncated = unmasked & (lt < T - 1e-12)
+    assert truncated.sum() > 50, "expected a meaningful number of early exits"
+    assert np.abs(np.asarray(F)[truncated] - a).max() < 1e-10
+
+    # FTLE_smallest is the contraction exponent: -a, by the same argument
+    Fs = envir.FTLE_smallest
+    small = np.asarray(Fs)[~np.ma.getmaskarray(Fs)]
+    assert np.abs(small + a).max() < 1e-10
 
 
 # --------------------------------------------------------------------------- #
@@ -148,8 +208,10 @@ def test_FTLE_with_user_swarm_shear_closed_form(store_prop_history):
     swrm = _AdvectSwarm(swarm_size=4, envir=envir, seed=1,
                         store_prop_history=store_prop_history)
 
-    envir.calculate_FTLE(grid_dim=(8, 8), T=T, dt=0.05, swrm=swrm)
-    assert np.nanmax(envir.FTLE_largest) == pytest.approx(_shear_FTLE(a * T), abs=1e-3)
+    _, _, last_time = envir.calculate_FTLE(grid_dim=(8, 8), T=T, dt=0.05, swrm=swrm)
+    vals = _full_stencil_values(envir, last_time, T)
+    assert vals.max() == pytest.approx(_shear_FTLE(a * T), abs=1e-3)
+    assert vals.min() == pytest.approx(_shear_FTLE(a * T), abs=1e-3)
 
 
 @pytest.mark.parametrize('store_prop_history', [False, True])
@@ -200,8 +262,10 @@ def test_backward_FTLE_steady_shear_closed_form():
     x = np.linspace(0, 10, n); y = np.linspace(0, 10, n)
     X, Y = np.meshgrid(x, y, indexing='ij')
     envir = planktos.Environment(Lx=10, Ly=10, flow=[a * Y, np.zeros_like(Y)])
-    envir.calculate_FTLE(grid_dim=(8, 8), T=T, dt=0.05, backward=True)
-    assert np.nanmax(envir.FTLE_largest) == pytest.approx(_shear_FTLE(a * T), abs=1e-3)
+    _, _, last_time = envir.calculate_FTLE(grid_dim=(8, 8), T=T, dt=0.05, backward=True)
+    vals = _full_stencil_values(envir, last_time, T)
+    assert vals.max() == pytest.approx(_shear_FTLE(a * T), abs=1e-3)
+    assert vals.min() == pytest.approx(_shear_FTLE(a * T), abs=1e-3)
 
 
 def test_FTLE_forward_vs_backward_differ_time_dependent_shear():
@@ -223,9 +287,11 @@ def test_FTLE_forward_vs_backward_differ_time_dependent_shear():
         return planktos.Environment(Lx=10, Ly=10, flow=[u.copy(), v.copy()],
                                     flow_times=times.copy())
 
-    ef = envir(); ef.calculate_FTLE(grid_dim=(8, 8), t0=0, T=1.0, dt=0.02)
-    eb = envir(); eb.calculate_FTLE(grid_dim=(8, 8), t0=0, T=1.0, dt=0.02, backward=True)
-    fwd = np.nanmax(ef.FTLE_largest); bwd = np.nanmax(eb.FTLE_largest)
+    ef = envir(); _, _, lt_f = ef.calculate_FTLE(grid_dim=(8, 8), t0=0, T=1.0, dt=0.02)
+    eb = envir(); _, _, lt_b = eb.calculate_FTLE(grid_dim=(8, 8), t0=0, T=1.0,
+                                                 dt=0.02, backward=True)
+    fwd = _full_stencil_values(ef, lt_f, 1.0).max()
+    bwd = _full_stencil_values(eb, lt_b, 1.0).max()
 
     assert fwd == pytest.approx(_shear_FTLE(1.5), abs=1e-2)
     assert bwd == pytest.approx(_shear_FTLE(0.5), abs=1e-2)

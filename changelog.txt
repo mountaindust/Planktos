@@ -18,6 +18,7 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - A Swarm subclass that replaces move() instead of apply_agent_model now warns at class definition.
 - Plotting after a failed time step shows the recorded history and leaves the incomplete step out.
 - Bug fix: a sliding agent released back into free flight can no longer recurse without limit on a degenerate step.
+- Bug fix: FTLE is now normalized by the time actually integrated, correcting values where neighboring tracers left the domain early.
 - other minor bug fixes
 
 

@@ -33,13 +33,8 @@ asserted. That was the branch's stated remaining reason to exist.
 
 **Where the work goes next, in priority order:**
 
-1. 🔴 **The robustness pass on the OpenFOAM loader**, plus **rectilinear (non-uniform)
-   grid support in `calculate_FTLE`** — grouped, because they are the same body of
-   work: making the Phase 2 loader usable on the next dataset and on the analyses people
-   will actually run against it. FTLE joins the group because Phase 2 *created* its
-   urgency: the boundary splice produces a grid that is rectilinear but **not uniform**
-   (half-width outermost intervals), so FTLE on the oral-arm data needs it. The full
-   list is under Phase 2, "Robustness follow-ups".
+1. 🔴 **The robustness pass on the OpenFOAM loader** — making the Phase 2 loader usable
+   on the next dataset. The list is under Phase 2, "Robustness follow-ups".
 2. 🟡 **Note §9** (real position-wrapping tiling, 2D and 3D; whether `Environment.extend`
    returns) — still needs its design pass. §9.1 is the restoration checklist. This also
    **unblocks the prose-docs sweep**, which is deliberately held because §9 decides
@@ -668,13 +663,6 @@ fallbacks rather than a rewrite.
   fields live and when they are preferred — not on the reader.
 - [ ] **Whichever fallback is taken, say so.** Silently accepting a degraded timeline is
   the shape of the `VTK3dData` frozen-fluid bug.
-- [ ] 🔴 **Rectilinear (non-uniform) grid support in `calculate_FTLE`.** Moved here from
-  "deferred / low priority" on 2026-08-11, because Phase 2 created its urgency rather
-  than merely relating to it: the boundary splice produces a grid that is rectilinear
-  but **not uniform** — the outermost interval in each direction is half-width, being the
-  distance from the outermost cell centers to the domain wall. So FTLE on the oral-arm
-  dataset, the whole point of having it, needs this first. Not a diagnostic nicety any
-  more.
 - [ ] **Boundary-condition corners.** Where two faces meet, the 12 edges and 8 corners
   appear in no patch file and are filled from the adjoining faces — averaged, with a
   warning when they disagree. The real dataset **does** disagree there: the inlet ring
@@ -915,6 +903,27 @@ Inherited blockers from the overhaul's notes:
   (`tests/data/comsol/vtu_test_data.txt`) or stays gated.
 - [ ] **NetCDF** (`load_NetCDF` / `read_NetCDF_flow`) — existing, full-load only. Never
   actually used (reviewer-requested for a prior publication). Lowest priority.
+- [ ] **Rectilinear (non-uniform) grid support in `calculate_FTLE`** — a *feature*, not
+  a bug fix, and **not** needed by the OpenFOAM dataset.
+  - ⚠️ **Correcting a claim made in this file on 2026-08-11**, that Phase 2 had made this
+    urgent because the boundary splice produces a non-uniform grid. It does not follow.
+    `Swarm.grid_init` seeds tracers on `np.linspace(0, L, n)` — a **uniform** grid built
+    with no reference to `flow_points` — and `calculate_FTLE`'s `dx = L[0]/(grid_dim[0]-1)`
+    is exactly that grid's spacing. The fluid grid never enters the gradient. Measured
+    against an analytic strain field whose FTLE is exactly `a` on any grid: a uniform
+    fluid grid and one with **79x spacing variation** give **bit-identical** FTLE fields.
+    For the oral-arm grid the seed spacing would be 0.001493 against the fluid's 0.001515
+    interior — 1.5%, and irrelevant.
+  - What it would actually buy: resolution matching on a genuinely refined mesh, where a
+    uniform seed grid over-resolves the coarse regions and under-resolves the fine ones.
+    `grid_dim` defaulting to `len(flow_points[d])` implies an intent to match the fluid
+    grid that is not honoured for non-uniform grids.
+  - Shape of the change: `grid_init` takes explicit coordinate arrays; `calculate_FTLE`
+    takes `grid_points`; and the central-difference denominator `x_mult*dx` becomes
+    `xgrid[n1] - xgrid[n0]` from the stencil indices it already holds, which is correct
+    for both cases and deletes the `x_mult`/`y_mult`/`z_mult` bookkeeping. ⚠️ A centred
+    difference on a non-uniform grid is only **first**-order unless the weighted
+    three-point formula is used — decide that deliberately.
 - [ ] ⚠️ **Watch: vtk emits a numpy 2.5 deprecation that would become fatal.**
   `vtkmodules/util/numpy_support.py` assigns `result.shape = shape`, which numpy 2.5
   deprecates in favour of `np.reshape`. Harmless today (a `DeprecationWarning`), but
@@ -1064,6 +1073,28 @@ raises, so an existing subclass that extends-and-delegates keeps importing.
 
 ```
 - A Swarm subclass that replaces move() instead of apply_agent_model now warns at class definition.
+```
+
+### Queued — the FTLE normalization fix (2026-08-11)
+
+`calculate_FTLE` divided by `T` even where a stencil point had left the domain early
+and the flow map had therefore only been integrated to `t_calc`. Stretching from one
+interval, normalized by another's length: it under-reports, always in the same
+direction. Measured at **0.34-0.72 of truth** on an analytic field, in a band 3-4 cells
+deep around the domain edge — and in a through-flow domain, where tracers leave
+continuously, that band is not a rim.
+
+| What | Where | Applies cleanly to `master`? |
+|---|---|---|
+| `elapsed = t_calc - t0` and its guard, plus `log(sqrt(w))/T` → `/elapsed` in both places | `planktos/_environment.py`, `calculate_FTLE` only | **Yes, by hunk.** `_environment.py` has diverged enormously (568+/977- vs master), but this block is byte-identical there — master carries the same defect at its lines 3315 / 3362 / 3366 |
+| **Docstring** — the "points whose neighbors leave the domain early" paragraph, and the `last_time` return note pointing at it | same method | **Yes** |
+| **Tests** — `test_FTLE_normalizes_by_the_time_actually_integrated` and the `_full_stencil_values` helper | `tests/test_analysis.py` | **Yes** |
+| **The four shear assertions**, reworked off `nanmax` onto full-integration stencils | `tests/test_analysis.py` | **Yes, and required.** Master has the same `nanmax(envir.FTLE_largest)` assertions at its lines 115 / 150 / 202. They break under the fix: the shear field's FTLE depends on integration time, so `nanmax` picks up a truncated point with a legitimately *higher* rate |
+
+**Corresponding `changelog.txt` line**, currently under 1.1.0:
+
+```
+- Bug fix: FTLE is now normalized by the time actually integrated, correcting values where neighboring tracers left the domain early.
 ```
 
 ### ⛔ Explicitly NOT cherry-pickable — dyload-only
