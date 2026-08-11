@@ -13,6 +13,10 @@ The fluid *save* path (save_fluid) is currently broken on modern pyvista and is
 pinned as a strict xfail.
 '''
 
+import json
+import re
+import shutil
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -320,6 +324,79 @@ def test_read_vtkxml_cell_data_rejects_an_unsupported_extension(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+#           TimeValue from a VTK XML header, without parsing the file         #
+# --------------------------------------------------------------------------- #
+# The .vtu/.vtp counterpart of read_vtk_time_only, and the time source of last
+# resort for an export with no index and no manifests. The saving is the whole
+# point: an unstructured export repeats its entire mesh in every dump (51 MB per
+# file in the reference dataset), so parsing the series to recover one float per
+# dump would read gigabytes to answer a question the headers already answer.
+
+def test_read_vtkxml_time_only_matches_the_full_read():
+    # Same answer as the full parse, on both container types.
+    for num, t in zip((10, 30, 70), (0., 2., 6.)):
+        f = _of_internal(num)
+        assert _dataio.read_vtkxml_time_only(f) == t
+        assert _dataio.read_vtkxml_cell_data(
+            f, arrays=(), load_cell_coordinates=False)[2] == t
+    patch = OF_DIR / 'case_min_30' / 'boundary' / 'inlet.vtp'
+    assert _dataio.read_vtkxml_time_only(patch) == 2.
+
+
+def test_read_vtkxml_time_only_reads_an_ascii_array(tmp_path):
+    # VTK writes TimeValue as ascii text in ascii data mode and as inline base64
+    # in binary mode. Both are ordinary output, so both are decoded.
+    import vtk
+    src = vtk.vtkXMLUnstructuredGridReader()
+    src.SetFileName(str(_of_internal(40)))
+    src.Update()
+    w = vtk.vtkXMLUnstructuredGridWriter()
+    w.SetFileName(str(tmp_path / 'ascii.vtu'))
+    w.SetInputData(src.GetOutput())
+    w.SetDataModeToAscii()
+    w.Write()
+    assert _dataio.read_vtkxml_time_only(tmp_path / 'ascii.vtu') == 3.
+
+
+def test_read_vtkxml_time_only_declines_a_compressed_array(tmp_path):
+    # A compressed inline array is not decoded here -- one slow path through the
+    # full reader beats a second, barely-exercised decoder for a single float.
+    # What matters is that declining reads as "unknown", never as a wrong time.
+    import vtk
+    src = vtk.vtkXMLUnstructuredGridReader()
+    src.SetFileName(str(_of_internal(40)))
+    src.Update()
+    w = vtk.vtkXMLUnstructuredGridWriter()
+    w.SetFileName(str(tmp_path / 'zlib.vtu'))
+    w.SetInputData(src.GetOutput())
+    w.SetDataModeToBinary()
+    w.SetCompressorTypeToZLib()
+    w.Write()
+    assert _dataio.read_vtkxml_time_only(tmp_path / 'zlib.vtu') is None
+    # ...and the fallback the loader takes does get it
+    assert _dataio.read_vtkxml_cell_data(
+        tmp_path / 'zlib.vtu', arrays=(), load_cell_coordinates=False)[2] == 3.
+
+
+def test_read_vtkxml_time_only_returns_none_rather_than_half_an_answer():
+    # A scan cut short by nbytes must report "unknown", not a truncated number.
+    f = _of_internal(20)
+    assert _dataio.read_vtkxml_time_only(f, nbytes=150) is None
+    assert _dataio.read_vtkxml_time_only(f, nbytes=4096) == 1.
+
+
+def test_read_vtkxml_time_only_returns_none_when_there_is_no_timevalue(tmp_path):
+    p = tmp_path / 'untimed.vtu'
+    p.write_text("<?xml version=\"1.0\"?>\n"
+                 "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" "
+                 "byte_order=\"LittleEndian\" header_type=\"UInt64\">\n"
+                 "  <UnstructuredGrid>\n"
+                 "    <Piece NumberOfPoints=\"0\" NumberOfCells=\"0\"/>\n"
+                 "  </UnstructuredGrid>\n</VTKFile>\n")
+    assert _dataio.read_vtkxml_time_only(p) is None
+
+
+# --------------------------------------------------------------------------- #
 #            OpenFOAM finite-volume ingestion (fluid.OpenFOAMData)            #
 # --------------------------------------------------------------------------- #
 # Assembly of the same fixture into a Planktos grid. Three things happen here
@@ -511,6 +588,270 @@ def test_openfoam_environment_reader():
     # reads back (u, v, w) = (t, x, t*z) at an interior point
     got = envir.interpolate_flow(np.array([[0.5, 0.5, 1.0]]), time=2.0)
     assert np.allclose(np.squeeze(got), [2.0, 0.5, 2.0])
+
+
+# --------------------------------------------------------------------------- #
+#          OpenFOAM: rebuilding the timeline from an incomplete export        #
+# --------------------------------------------------------------------------- #
+# The .vtm.series index, the .vtm manifests, and the internal.vtu TimeValue are
+# three independent declarations of the same timeline, so losing one of them
+# need not be fatal. The loader tries them in that order and then falls back to
+# unit steps.
+#
+# What is actually being pinned here is not the recovery so much as the
+# announcement. A timeline quietly rebuilt from a worse source is the same shape
+# as this branch's worst bug -- a run that completed normally with the fluid
+# frozen -- so every step past the first has to warn and to leave a record on
+# the object saying which source answered.
+#
+# The variants are derived from the committed fixture rather than committed
+# separately, so they cannot drift from the export they are meant to be a
+# damaged copy of.
+
+# Renaming the surviving dumps 10,20,30,40,50,70 -> 7,8,9,10,11,12 makes the
+# lexical and numeric orderings of the directory names disagree: sorted as text,
+# 10/11/12 come before 7/8/9. That is the real export's naming (case08_..._787
+# through case08_..._1034, unpadded), and the reason the glob sorts numerically.
+OF_RENUMBER = {10: 7, 20: 8, 30: 9, 40: 10, 50: 11, 70: 12}
+
+
+def _strip_timevalue(path):
+    '''Delete the FieldData block from a VTK XML file, in place.
+
+    The fixture writes inline base64 with no appended binary section, so the
+    file is ASCII throughout and the block can simply be cut out.
+    '''
+    path.write_text(re.sub(r'\s*<FieldData>.*?</FieldData>', '',
+                           path.read_text(), flags=re.DOTALL))
+
+
+def _set_manifest_time(path, t):
+    '''Rewrite the TimeValue a .vtm manifest declares.'''
+    path.write_text(re.sub(r"(Name='TimeValue'[^>]*>)\s*\S+\s*(</DataArray>)",
+                           r'\g<1>' + '\n{}\n'.format(t) + r'\g<2>',
+                           path.read_text()))
+
+
+def _of_variant(tmp_path, index=True, manifests=True, timevalue=True,
+                renumber=False):
+    '''A copy of the committed fixture with pieces of the export taken away.'''
+    root = tmp_path / 'VTK'
+    shutil.copytree(OF_DIR, root)
+    if not index:
+        for p in root.glob('*.vtm.series'):
+            p.unlink()
+    if not manifests:
+        for p in root.glob('*.vtm'):
+            p.unlink()
+    if not timevalue:
+        for p in list(root.rglob('*.vtu')) + list(root.rglob('*.vtp')):
+            _strip_timevalue(p)
+    if renumber:
+        # Only meaningful once the manifests are gone: they name the dump
+        # directories, so renaming those would break the paths they resolve.
+        assert not manifests and not index
+        for old, new in OF_RENUMBER.items():
+            (root / 'case_min_{}'.format(old)).rename(
+                root / 'case_min_{}'.format(new))
+    return root
+
+
+def _assert_fixture_field(fd, times):
+    '''The fixture's interior field is u = t, v = x, w = t*z.
+
+    Asserting it against the *original* dump times, indexed by position in the
+    rebuilt timeline, is what pins the dump ORDER: it is the one thing that
+    distinguishes a correctly ordered series from a scrambled one carrying the
+    same set of values.
+    '''
+    X, _, Z = np.meshgrid(OF_GRID_X[1:-1], OF_GRID_X[1:-1], OF_GRID_Z[1:-1],
+                          indexing='ij')
+    for k, t_orig in enumerate(times):
+        u, v, w = fd(fd.flow_times[k])
+        assert np.allclose(u[1:-1, 1:-1, 1:-1], t_orig)
+        assert np.allclose(v[1:-1, 1:-1, 1:-1], X)
+        assert np.allclose(w[1:-1, 1:-1, 1:-1], t_orig*Z)
+
+
+def test_openfoam_records_the_primary_source_when_the_export_is_whole():
+    # The baseline the fallbacks are measured against. No warning about the
+    # source, because nothing was lost.
+    fd = _openfoam()
+    assert fd.dump_source == 'series'
+    assert fd.time_source == 'the .vtm.series index'
+    assert fd.series_path.name == 'case_min.vtm.series'
+
+
+def test_openfoam_natural_sort_orders_unpadded_dump_numbers():
+    # The trap the directory glob is sorted against, in the real export's own
+    # names: unpadded, so 1008 sorts before 787 as text.
+    from planktos import fluid
+    names = ['case08_alpha2_1e8_{}'.format(n)
+             for n in (787, 800, 917, 1008, 1034)]
+    assert sorted(reversed(names)) != names            # lexically wrong...
+    assert sorted(reversed(names), key=fluid.OpenFOAMData._natural_key) == names
+
+
+# ---- 1: no .vtm.series index -> the .vtm manifests --------------------------
+
+def test_openfoam_falls_back_to_the_manifests_when_the_index_is_gone(tmp_path):
+    from planktos import fluid
+    path = _of_variant(tmp_path, index=False)
+    with pytest.warns(UserWarning, match='No .vtm.series index'):
+        fd = fluid.OpenFOAMData(str(path))
+    assert fd.dump_source == 'manifests'
+    assert 'manifest' in fd.time_source
+    assert fd.series_path is None
+    # the same timeline and the same field the index would have produced
+    assert np.allclose(fd.flow_times, OF_KEPT)
+    _assert_fixture_field(fd, OF_KEPT)
+
+
+def test_openfoam_manifests_still_report_the_dumps_that_never_arrived(tmp_path):
+    # A manifest survives for each absent dump, so the gap is still declared and
+    # still warned about -- the fallback loses the index, not the record.
+    from planktos import fluid
+    path = _of_variant(tmp_path, index=False)
+    with pytest.warns(UserWarning, match='not on disk'):
+        fd = fluid.OpenFOAMData(str(path))
+    assert len(fd.flow_times) == 6
+
+
+def test_openfoam_fills_a_gap_in_the_index_from_the_manifests(tmp_path):
+    # A partial failure of the primary source: the index is there but does not
+    # time every entry. The manifest answers for just those entries, and says so.
+    from planktos import fluid
+    path = _of_variant(tmp_path)
+    series = path / 'case_min.vtm.series'
+    data = json.loads(series.read_text())
+    del data['files'][2]['time']                       # case_min_30, t = 2
+    series.write_text(json.dumps(data))
+    with pytest.warns(UserWarning, match='without a usable time'):
+        fd = fluid.OpenFOAMData(str(path))
+    assert fd.dump_source == 'series'
+    assert 'filling 1 gap' in fd.time_source
+    assert np.allclose(fd.flow_times, OF_KEPT)
+
+
+# ---- 2: no manifests either -> the dump directories -------------------------
+
+def test_openfoam_falls_back_to_the_dump_directories(tmp_path):
+    from planktos import fluid
+    path = _of_variant(tmp_path, index=False, manifests=False)
+    with pytest.warns(UserWarning, match='no .vtm manifests'):
+        fd = fluid.OpenFOAMData(str(path))
+    assert fd.dump_source == 'directories'
+    assert 'internal.vtu' in fd.time_source
+    assert np.allclose(fd.flow_times, OF_KEPT)
+    _assert_fixture_field(fd, OF_KEPT)
+
+
+def test_openfoam_directory_fallback_finds_the_boundary_patches(tmp_path):
+    # Without a manifest naming them, the patches are found by their position:
+    # the .vtp files in each dump's boundary/ subdirectory. They still have to
+    # splice on, or the domain would come out half a cell short in every
+    # direction -- so the recovered grid is the assertion.
+    from planktos import fluid
+    path = _of_variant(tmp_path, index=False, manifests=False)
+    with pytest.warns(UserWarning):
+        fd = fluid.OpenFOAMData(str(path))
+    assert fd.fshape == (6, 6, 6, 7)
+    assert np.allclose(fd.flow_points[0], OF_GRID_X)
+    assert np.allclose(fd.flow_points[2], OF_GRID_Z)
+    assert np.allclose(fd.L, [1., 1., 2.])
+    u, v, w = fd(3.)
+    for comp in (u, v, w):                             # the no-slip walls
+        assert not comp[0, 1:-1, 1:-1].any()
+        assert not comp[1:-1, -1, 1:-1].any()
+
+
+def test_openfoam_directory_fallback_cannot_know_a_dump_is_missing(tmp_path):
+    # Worth pinning because it is a real loss, not an oversight. The absent
+    # dumps are declared nowhere once the manifests are gone, so nothing can
+    # report them missing; the widened interval is the only remaining trace, and
+    # the uneven-spacing warning is the only thing that will mention it.
+    from planktos import fluid
+    path = _of_variant(tmp_path, index=False, manifests=False)
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter('always')
+        fd = fluid.OpenFOAMData(str(path))
+    msgs = [str(w.message) for w in rec]
+    assert not any('not on disk' in m for m in msgs)
+    assert any('not evenly spaced' in m for m in msgs)
+    assert np.allclose(fd.flow_times, OF_KEPT)
+
+
+# ---- 3: no time information anywhere -> unit steps --------------------------
+
+def test_openfoam_assumes_unit_steps_when_nothing_carries_a_time(tmp_path):
+    from planktos import fluid
+    path = _of_variant(tmp_path, index=False, manifests=False, timevalue=False,
+                       renumber=True)
+    with pytest.warns(UserWarning, match='assuming unit time steps'):
+        fd = fluid.OpenFOAMData(str(path))
+    assert fd.time_source == 'assumed unit steps'
+    assert np.allclose(fd.flow_times, np.arange(6))
+    # No uneven-spacing warning is possible here, and that is the point of the
+    # loud one: unit steps have silently closed the gap the real timeline had.
+
+
+def test_openfoam_untimed_dumps_are_ordered_numerically_not_lexically(tmp_path):
+    # THE ordering test, and the only place the numeric sort is load-bearing:
+    # with no times to sort by, the filename order IS the timeline. Sorted as
+    # text the six dumps would come out 10,11,12,7,8,9 -- so u, which reads back
+    # the dump's original time, would run 3,4,6,0,1,2 instead of 0,1,2,3,4,6.
+    from planktos import fluid
+    path = _of_variant(tmp_path, index=False, manifests=False, timevalue=False,
+                       renumber=True)
+    with pytest.warns(UserWarning):
+        fd = fluid.OpenFOAMData(str(path))
+    _assert_fixture_field(fd, OF_KEPT)
+
+
+def test_openfoam_refuses_a_series_that_is_only_partly_timed(tmp_path):
+    # Deliberately NOT the unit-step fallback. Overwriting a mostly-real
+    # timeline with indices would move every dump that did carry a time.
+    from planktos import fluid
+    path = _of_variant(tmp_path, index=False, manifests=False)
+    _strip_timevalue(path / 'case_min_30' / 'internal.vtu')
+    with pytest.raises(RuntimeError, match='rest are timed'):
+        fluid.OpenFOAMData(str(path))
+
+
+# ---- the chain's own guard rails --------------------------------------------
+
+def test_openfoam_rejects_a_timeline_that_does_not_advance(tmp_path):
+    # Both splines divide by the interval between successive times, so a repeat
+    # is not a degraded timeline but an unusable one.
+    from planktos import fluid
+    path = _of_variant(tmp_path, index=False)
+    _set_manifest_time(path / 'case_min_30.vtm', 1.0)  # already case_min_20's
+    with pytest.raises(RuntimeError, match='not strictly increasing'):
+        fluid.OpenFOAMData(str(path))
+
+
+def test_openfoam_reorders_globbed_dumps_by_their_recovered_times(tmp_path):
+    # For a globbed source the filename order was only ever a proxy; the times
+    # are the real thing, and disagreeing with the names is worth saying.
+    from planktos import fluid
+    path = _of_variant(tmp_path, index=False)
+    # t = 0 -> 5, so case_min_10 moves from the front of the series to between
+    # case_min_50 (t = 4) and case_min_70 (t = 6).
+    _set_manifest_time(path / 'case_min_10.vtm', 5.0)
+    with pytest.warns(UserWarning, match='not in time order'):
+        fd = fluid.OpenFOAMData(str(path))
+    assert np.allclose(fd.flow_times, [0., 1., 2., 3., 4., 5.])
+    # The field is baked into the files and does not move with the relabeling,
+    # so u still reads back each dump's ORIGINAL time -- which is what shows the
+    # dumps themselves were reordered, not merely their timestamps.
+    _assert_fixture_field(fd, [1., 2., 3., 4., 0., 6.])
+
+
+def test_openfoam_raises_when_there_is_nothing_to_read(tmp_path):
+    from planktos import fluid
+    (tmp_path / 'empty').mkdir()
+    with pytest.raises(FileNotFoundError, match='No .vtm.series index'):
+        fluid.OpenFOAMData(str(tmp_path / 'empty'))
 
 
 # --------------------------------------------------------------------------- #

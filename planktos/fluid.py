@@ -8,6 +8,7 @@ Author: Christopher Strickland
 Email: cstric12@utk.edu
 '''
 
+import re
 import warnings
 import numpy as np
 from scipy import interpolate
@@ -1788,6 +1789,27 @@ class OpenFOAMData(FluidData):
         handed, and discovering the gap partway through a long streaming run
         would be the worst possible moment for it.
 
+        **Pieces of the export may also be missing entirely**, and the timeline
+        is recovered from whatever remains, in this order:
+
+        1. the ``.vtm.series`` index, using the times it declares;
+        2. failing that, the ``.vtm`` manifests, using the ``TimeValue`` each
+           one carries;
+        3. failing that, the dump directories, using the ``TimeValue`` in each
+           ``internal.vtu``;
+        4. failing that, unit time steps.
+
+        Every step past the first warns, and the one taken is recorded in
+        ``dump_source`` and ``time_source``. Announcing it matters more than the
+        recovery does: a run that completes on a timeline other than the one the
+        user believes they loaded is the failure mode this loader most needs to
+        avoid.
+
+        Dumps discovered by globbing (2 and 3) are ordered by their recovered
+        times, falling back to a numeric-aware sort of their names -- foamToVTK
+        numbers them without zero padding, so a lexical sort would put dump 1008
+        ahead of dump 787.
+
         If INUM (interval number) is set to an integer >= 4, the data will be
         dynamically loaded as needed with INUM intervals between the temporal
         data sets available at any given time.
@@ -1795,8 +1817,9 @@ class OpenFOAMData(FluidData):
         Parameters
         ----------
         path : string
-            path to the directory holding the ``.vtm.series`` index (typically
-            the ``VTK`` directory foamToVTK writes), or to the index file itself
+            path to the directory holding the export (typically the ``VTK``
+            directory foamToVTK writes), or to the ``.vtm.series`` index itself.
+            A directory need not contain an index; see the fallback chain above.
         INUM : int > 3, True, or None (default)
             max number of splined intervals held at any one time; the number of
             time points held is 1+INUM, and INUM must be at least 4. None splines
@@ -1817,6 +1840,17 @@ class OpenFOAMData(FluidData):
             with nothing downstream able to detect the error, so this raises by
             default. False is not yet implemented; the intended behavior is to
             regrid the cell-centered data out to the domain edges and warn.
+
+        Attributes
+        ----------
+        dump_source : {'series', 'manifests', 'directories'}
+            which step of the fallback chain supplied the list of dumps
+        time_source : string
+            a phrase naming where the times came from, for the record and for
+            error messages. Not drawn from a fixed set -- it says how many gaps
+            a secondary source filled, where that applies.
+        series_path : Path or None
+            the ``.vtm.series`` index, if there was one to read
         '''
 
         ##### Parse parameters #####
@@ -1904,8 +1938,210 @@ class OpenFOAMData(FluidData):
 
 
 
+    @staticmethod
+    def _natural_key(name):
+        '''Sort key that orders the numbers embedded in a name numerically.
+
+        foamToVTK names its dumps with unpadded numbers -- case08_alpha2_1e8_787
+        through case08_alpha2_1e8_1034 -- so a plain lexical sort puts 1008
+        ahead of 787 and silently reverses part of the timeline. Splitting on
+        digit runs and comparing those runs as integers puts them back in order.
+
+        The split always alternates non-digit, digit, non-digit, ..., beginning
+        with a (possibly empty) non-digit, so two keys always compare like with
+        like at every position.
+        '''
+        return tuple(int(s) if s.isdigit() else s
+                     for s in re.split(r'(\d+)', name))
+
+
+
+    @staticmethod
+    def _check_internal(datasets, source):
+        if 'internal' not in datasets:
+            raise RuntimeError(
+                "Manifest {} names no 'internal' dataset. Expected the "
+                "volume data written by foamToVTK.".format(source.name))
+
+
+
+    def _find_dumps(self, path):
+        '''Locate the dumps of the series, and how each one is timestamped.
+
+        Three sources are tried in turn, each a fallback for the one before it:
+        the ``.vtm.series`` index, the ``.vtm`` manifests, and the dump
+        directories themselves. Which one answered is recorded in
+        ``dump_source`` / ``time_source`` and, whenever it is not the first,
+        announced with a warning. That announcement is the point of the chain
+        rather than an aside: a degraded timeline accepted in silence is the
+        exact shape of the worst bug this branch has had, where a run completed
+        normally with the fluid quietly frozen.
+
+        Returns
+        -------
+        list of (datasets, time), one per dump the source declares, in the order
+            the source gives them. datasets is the resolved {dataset name: path}
+            mapping, or None for a dump that is declared but whose data is not
+            on disk; time is NaN for a dump the source could not timestamp.
+        '''
+
+        path = Path(path)
+        if path.is_file():
+            return self._candidates_from_series(path)
+        if not path.is_dir():
+            raise FileNotFoundError("{} not found!".format(str(path)))
+
+        ##### 1: the .vtm.series index #####
+        found = sorted(path.glob('*.vtm.series'))
+        if len(found) > 1:
+            raise RuntimeError(
+                "Found {} .vtm.series indices in {}: {}. Pass the one to "
+                "read.".format(len(found), str(path),
+                               [f.name for f in found]))
+        if len(found) == 1:
+            return self._candidates_from_series(found[0])
+
+        ##### 2: the .vtm manifests #####
+        vtms = sorted(path.glob('*.vtm'),
+                      key=lambda p: self._natural_key(p.name))
+        if len(vtms) > 0:
+            warnings.warn(
+                "No .vtm.series index in {}; falling back to the {} .vtm "
+                "manifest(s) found there, timed by their own TimeValue "
+                "entries.".format(str(path), len(vtms)), UserWarning)
+            return self._candidates_from_manifests(vtms)
+
+        ##### 3: the dump directories #####
+        dumpdirs = sorted((d for d in path.iterdir()
+                           if d.is_dir() and (d/'internal.vtu').is_file()),
+                          key=lambda p: self._natural_key(p.name))
+        if len(dumpdirs) > 0:
+            warnings.warn(
+                "No .vtm.series index and no .vtm manifests in {}; falling "
+                "back to the {} dump director(ies) found there, timed by the "
+                "TimeValue in each internal.vtu. Boundary patches are taken to "
+                "be the .vtp files beside each internal.vtu or in a boundary/ "
+                "subdirectory.".format(str(path), len(dumpdirs)), UserWarning)
+            return self._candidates_from_dirs(dumpdirs)
+
+        raise FileNotFoundError(
+            "No .vtm.series index, .vtm manifest, or dump directory holding an "
+            "internal.vtu found in {}. Expected the VTK directory written by "
+            "foamToVTK.".format(str(path)))
+
+
+
+    def _candidates_from_series(self, series):
+        '''Dumps declared by a .vtm.series index -- the primary source.'''
+
+        self.series_path = series
+        self.dump_source = 'series'
+        self._source_label = "the index {}".format(series.name)
+        self.time_source = "the .vtm.series index"
+
+        files, times = _dataio.read_vtm_series(series)
+
+        candidates = []; filled = 0
+        for f, t in zip(files, times):
+            if not f.is_file():
+                candidates.append((None, t))
+                continue
+            datasets, mtime = _dataio.read_vtm_manifest(f)
+            self._check_internal(datasets, f)
+            if np.isnan(t):
+                # The index failed to describe this entry; the manifest's own
+                # TimeValue is the per-file fallback for precisely that.
+                t = np.nan if mtime is None else mtime
+                filled += int(not np.isnan(t))
+            if not datasets['internal'].is_file():
+                candidates.append((None, t))
+                continue
+            candidates.append((datasets, t))
+
+        if filled > 0:
+            self.time_source = ("the .vtm.series index, with per-manifest "
+                                "TimeValue filling {} gap(s) in it".format(filled))
+            warnings.warn(
+                "{} declares {} dump(s) without a usable time; their TimeValue "
+                "was taken from the .vtm manifest instead.".format(
+                    series.name, filled), UserWarning)
+
+        return candidates
+
+
+
+    def _candidates_from_manifests(self, vtms):
+        '''Dumps found by globbing .vtm manifests, timed by their TimeValue.
+
+        The fallback for an export whose .vtm.series index was never written or
+        did not survive the transfer. Everything the index would have supplied
+        -- which dumps exist, and when each one is -- is present in the
+        manifests themselves, one small XML parse apiece.
+        '''
+
+        self.series_path = None
+        self.dump_source = 'manifests'
+        self._source_label = "the .vtm manifests in {}".format(
+            str(vtms[0].parent))
+        self.time_source = "the TimeValue of each .vtm manifest"
+
+        candidates = []
+        for f in vtms:
+            datasets, mtime = _dataio.read_vtm_manifest(f)
+            self._check_internal(datasets, f)
+            t = np.nan if mtime is None else mtime
+            candidates.append(
+                (datasets if datasets['internal'].is_file() else None, t))
+        return candidates
+
+
+
+    def _candidates_from_dirs(self, dumpdirs):
+        '''Dumps found by globbing the dump directories themselves.
+
+        The last resort: no index and no manifests, so both the dump list and
+        the timeline have to come out of the data files. Time is read from each
+        internal.vtu's TimeValue header rather than by parsing the file, since
+        an unstructured export repeats its whole mesh every dump and parsing all
+        of them to recover one float apiece would read gigabytes.
+        '''
+
+        self.series_path = None
+        self.dump_source = 'directories'
+        self._source_label = "the dump directories in {}".format(
+            str(dumpdirs[0].parent))
+        self.time_source = "the TimeValue in each internal.vtu"
+
+        candidates = []; untimed_writer = False
+        for k, d in enumerate(dumpdirs):
+            internal = d/'internal.vtu'
+            t = _dataio.read_vtkxml_time_only(internal)
+            if t is None and not untimed_writer:
+                # The header scan is bounded and decodes only the common
+                # encodings, so a miss is not proof the file is untimed. Pay for
+                # one full read before concluding it.
+                t = _dataio.read_vtkxml_cell_data(
+                    internal, arrays=(), load_cell_coordinates=False)[2]
+                if t is None and k == 0:
+                    # Whether a writer records TimeValue at all is a property of
+                    # the export, not of one file within it. Settling that on the
+                    # first dump keeps "this series carries no times" from
+                    # costing a full parse of every dump in it -- gigabytes of
+                    # static mesh re-read, for a conclusion the first file has
+                    # already given.
+                    untimed_writer = True
+            # foamToVTK puts the patches in a boundary/ subdirectory; tolerate
+            # them sitting beside internal.vtu as well.
+            datasets = {'internal': internal}
+            for p in sorted((d/'boundary').glob('*.vtp')) + sorted(d.glob('*.vtp')):
+                datasets.setdefault(p.stem, p)
+            candidates.append((datasets, np.nan if t is None else t))
+        return candidates
+
+
+
     def _read_series(self, path):
-        '''Resolve the series index and work out which of its dumps are present.
+        '''Resolve the dump series and work out which of its dumps are present.
 
         Returns
         -------
@@ -1916,82 +2152,99 @@ class OpenFOAMData(FluidData):
             time of each entry of dumps, shifted so the first is 0.0
         '''
 
-        path = Path(path)
-        if path.is_dir():
-            found = sorted(path.glob('*.vtm.series'))
-            if len(found) == 0:
-                raise FileNotFoundError(
-                    "No .vtm.series index found in {}. ".format(str(path))+
-                    "Expected the VTK directory written by foamToVTK.")
-            if len(found) > 1:
-                raise RuntimeError(
-                    "Found {} .vtm.series indices in {}: {}. Pass the one to "
-                    "read.".format(len(found), str(path),
-                                   [f.name for f in found]))
-            series = found[0]
-        elif path.is_file():
-            series = path
-        else:
-            raise FileNotFoundError("{} not found!".format(str(path)))
-        self.series_path = series
-
-        files, times = _dataio.read_vtm_series(series)
-
-        ##### Resolve which dumps actually exist, eagerly #####
         # Eagerly, at construction, rather than at the window slide that needs a
         # missing file: under dynamic loading that raise lands arbitrarily deep
         # into a run, which is the worst possible moment and exactly what
         # streaming makes likely.
+        candidates = self._find_dumps(path)
+
+        ##### Drop the dumps whose data is not on disk #####
         def _fmt(t):
             return 'unknown' if t is None or np.isnan(t) else '{:g}'.format(t)
 
         dumps = []; keep_times = []; missing = []
-        for f, t in zip(files, times):
-            if not f.is_file():
+        for datasets, t in candidates:
+            if datasets is None:
                 missing.append(_fmt(t))
-                continue
-            datasets, mtime = _dataio.read_vtm_manifest(f)
-            if 'internal' not in datasets:
-                raise RuntimeError(
-                    "Manifest {} names no 'internal' dataset. Expected the "
-                    "volume data written by foamToVTK.".format(f.name))
-            # The series index is the primary time source; fall back to the
-            # manifest's own TimeValue for an entry it failed to describe.
-            dtime = mtime if np.isnan(t) else t
-            if not datasets['internal'].is_file():
-                missing.append(_fmt(dtime))
-                continue
-            dumps.append(datasets)
-            keep_times.append(dtime)
+            else:
+                dumps.append(datasets)
+                keep_times.append(t)
 
         if len(dumps) == 0:
             raise FileNotFoundError(
-                "None of the {} dumps declared by {} are present on "
-                "disk.".format(len(files), series.name))
+                "None of the {} dumps found via {} are present on disk.".format(
+                    len(candidates), self._source_label))
 
         if len(missing) > 0:
             # Warn rather than fail: a truncated or interrupted export is normal.
             # But warn loudly -- silence here would be worse than the failure,
             # since the run would complete with nothing indicating that the
-            # timeline is not the one the index declared.
+            # timeline is not the one the source declared.
             warnings.warn(
-                "{} of {} dumps declared by {} are not on disk and have been "
+                "{} of {} dumps found via {} are not on disk and have been "
                 "skipped: t = {}. The timeline is built over the {} dumps that "
-                "remain.".format(len(missing), len(files), series.name,
-                                 ', '.join(missing), len(dumps)), UserWarning)
-
-        if None in keep_times:
-            raise RuntimeError(
-                "No time information for at least one dump in {}: the series "
-                "index gave none and the manifest carries no TimeValue.".format(
-                    series.name))
+                "remain.".format(len(missing), len(candidates),
+                                 self._source_label, ', '.join(missing),
+                                 len(dumps)), UserWarning)
 
         if len(dumps) == 1:
             return dumps, None
 
-        flow_times = np.array(keep_times, dtype=float)
+        keep_times = np.array(keep_times, dtype=float)
+
+        ##### No time information anywhere: fall back to unit steps #####
+        if np.all(np.isnan(keep_times)):
+            self.time_source = 'assumed unit steps'
+            warnings.warn(
+                "No time information for any dump found via {}: assuming unit "
+                "time steps. Every time the simulation is run against is "
+                "therefore an index, not a physical time, and any velocity in "
+                "physical units is scaled wrongly by the true dump "
+                "interval.".format(self._source_label), UserWarning)
+            return dumps, np.arange(len(dumps), dtype=float)
+
+        if np.any(np.isnan(keep_times)):
+            # Deliberately not the unit-step fallback that VTK3dData takes when
+            # any single dump is untimed. Unit steps are defensible only when
+            # nothing better exists; here something does, for most of the
+            # series, and overwriting a real timeline with indices would move
+            # every dump that *was* timed to the wrong place.
+            raise RuntimeError(
+                "No time information for {} of {} dumps found via {}, but the "
+                "rest are timed. Unit time steps would misplace the dumps that "
+                "do carry a time, so the series cannot be read as it "
+                "stands.".format(int(np.isnan(keep_times).sum()), len(dumps),
+                                 self._source_label))
+
+        ##### Order the dumps we globbed ourselves by their recovered times ####
+        # A .vtm.series declares its own order and is authoritative about it, so
+        # it is left as written. For a globbed source the order was ours to pick
+        # and the filenames were only a proxy; the times are the real thing.
+        if self.dump_source != 'series':
+            order = np.argsort(keep_times, kind='stable')
+            if not np.array_equal(order, np.arange(len(order))):
+                warnings.warn(
+                    "The dumps found via {} are not in time order under their "
+                    "filenames; they have been reordered by their recorded "
+                    "times.".format(self._source_label), UserWarning)
+                dumps = [dumps[i] for i in order]
+                keep_times = keep_times[order]
+
         # shift so that the first dump loaded corresponds to environment time 0
-        flow_times = flow_times - flow_times[0]
+        flow_times = keep_times - keep_times[0]
+
+        ##### The timeline has to be a timeline #####
+        # Both splines divide by the interval between successive times, so a
+        # repeat or a step backward is not a degraded timeline but an unusable
+        # one. Nothing above can produce it from well-formed input, which is
+        # exactly why it is worth saying out loud if it appears.
+        bad = np.nonzero(np.diff(flow_times) <= 0)[0]
+        if len(bad) > 0:
+            raise RuntimeError(
+                "Dump times from {} are not strictly increasing: t = {} is "
+                "followed by t = {}.".format(
+                    self.time_source, '{:g}'.format(keep_times[bad[0]]),
+                    '{:g}'.format(keep_times[bad[0]+1])))
 
         ##### Warn about non-uniform spacing left behind by any gaps #####
         # Interpolation error scales with the dump interval, so a series with a

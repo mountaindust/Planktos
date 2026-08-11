@@ -642,22 +642,45 @@ arrays / parse the `U` `DataArray` directly / one-time `.npy` preprocess).
     dumps that exist**, not the set the index declares. Pinned by
     `test_openfoam_flow_times_span_the_surviving_series`.
 
-### Robustness follow-ups — 🔴 THE NEXT BLOCK OF WORK
+### Robustness follow-ups — 🔴 IN PROGRESS
 
-**Decision (2026-08-11): get it working for the data we have, then write fallbacks.**
-Only gap tolerance was built up front, because our dataset is truncated. Everything
-below is speculative until a delivery actually exhibits it — fallbacks written against
-input nobody has sent tend to be wrong when the input finally arrives. The three
-`_dataio` readers are independent functions specifically so these can be a chain of
-fallbacks rather than a rewrite.
+**Done (2026-08-11): the time-source fallback chain — items 1, 2, 3 and 7.**
+Still open: `require_boundary=False` (4), per-dump mesh verification (5), surfacing a
+stored `vorticity` (6), and the `bc_corner` policy (8).
 
-- [ ] **Missing `.vtm.series`** → glob the `.vtm` files; take each time from its
-  `TimeValue`.
-- [ ] **Missing `.vtm` manifests too** → glob the dump directories; read `TimeValue`
+**Decision (2026-08-11), superseded the same day: the time-source fallbacks were
+built rather than deferred.** The original call was to get it working for the data we
+have and write fallbacks only against a delivery that actually exhibits the problem —
+fallbacks written against input nobody has sent tend to be wrong when the input
+finally arrives. That still holds for what remains open below. What changed is that
+the *timeline* fallbacks (1–3) were judged cheap enough and load-bearing enough to
+build up front: they are pure reads of information the export already carries, and
+each of the three `_dataio` readers was written as an independent function precisely
+so this could be a chain rather than a rewrite. Items 4–6 and 8 are still deferred on
+the original reasoning.
+
+- [x] ✅ **Missing `.vtm.series`** → glob the `.vtm` files; take each time from its
+  `TimeValue`. Built as `OpenFOAMData._candidates_from_manifests`. The manifests
+  survive for absent dumps, so the gap warning still fires on this path.
+- [x] ✅ **Missing `.vtm` manifests too** → glob the dump directories; read `TimeValue`
   from `internal.vtu`. ⚠️ Sort **numerically**: directories are named with unpadded
   numbers (`case08_alpha2_1e8_787`, `..._1008`), so a lexical sort puts 1008 before 787.
-- [ ] **No time information anywhere** → warn, assume unit steps (the
-  `VTK3dData._read_all_times` precedent).
+  Built as `_candidates_from_dirs` + `_natural_key`. Two notes on how it landed:
+  - Time comes from a **bounded header scan**, new `_dataio.read_vtkxml_time_only` —
+    the `.vtu`/`.vtp` counterpart of `read_vtk_time_only`, decoding inline ascii and
+    uncompressed base64 and falling back to the full reader otherwise. Without it,
+    timestamping the real 21-dump series would re-read ~1.8 GB of static mesh to
+    recover 21 floats. Patches are found at `boundary/*.vtp` beside each
+    `internal.vtu`, since no manifest names them any more.
+  - **This tier cannot see a missing dump.** Nothing declares the dumps that never
+    arrived once the manifests are gone, so the only remaining trace is the widened
+    interval and the uneven-spacing warning. Pinned as such.
+- [x] ✅ **No time information anywhere** → warn, assume unit steps (the
+  `VTK3dData._read_all_times` precedent). Deliberately narrower than that precedent,
+  which takes unit steps when *any* dump is untimed: a **partly** timed series raises
+  instead, because overwriting a mostly-real timeline with indices would move every
+  dump that did carry a time. This is also the only place the numeric sort is
+  load-bearing — with no times to sort by, the filename order *is* the timeline.
 - [ ] **`require_boundary=False`** → currently raises `NotImplementedError`. The
   intended behavior is to restore `center_cell_regrid` (commented out at the bottom of
   `fluid.py`) to regrid the cell-centered data out to the domain edge, with a warning.
@@ -671,8 +694,15 @@ fallbacks rather than a rewrite.
   ship it; `_dataio.read_vtkxml_cell_data(arrays=...)` already reads it on request. The
   work is on the `FluidData`/`get_vorticity` side — deciding where stored derived
   fields live and when they are preferred — not on the reader.
-- [ ] **Whichever fallback is taken, say so.** Silently accepting a degraded timeline is
-  the shape of the `VTK3dData` frozen-fluid bug.
+- [x] ✅ **Whichever fallback is taken, say so.** Silently accepting a degraded timeline
+  is the shape of the `VTK3dData` frozen-fluid bug. Every step of the chain past the
+  first warns, and the step taken is recorded on the object as `dump_source` /
+  `time_source` so it can be inspected after the fact. Two guards came with it, since
+  a rebuilt timeline is the thing most likely to come out wrong: dumps found by
+  globbing are **reordered by their recovered times** when the filenames disagree
+  (warning if so), and a timeline that is not strictly increasing **raises** — both
+  splines divide by the interval between successive times, so a repeat is unusable
+  rather than merely degraded.
 - [ ] **Boundary-condition corners.** Where two faces meet, the 12 edges and 8 corners
   appear in no patch file and are filled from the adjoining faces — averaged, with a
   warning when they disagree. The real dataset **does** disagree there: the inlet ring

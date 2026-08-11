@@ -275,6 +275,51 @@ from the manifest and the file index from the directory listing would put the tw
 index spaces silently out of step — the same class of bug as the `VTK3dData` frozen
 timeline (`TODO.md` Phase 2).
 
+### The timeline survives losing pieces of the export ✅ DONE (2026-08-11)
+
+Gap tolerance above is about dumps that are declared and absent. This is about the
+*declarations themselves* being absent. Three files independently describe the same
+timeline, so the loader tries them in turn (`OpenFOAMData._find_dumps`):
+
+| # | Source | Times from | Built as |
+|---|---|---|---|
+| 1 | `.vtm.series` index | the `time` it declares, per-manifest `TimeValue` for any it leaves blank | `_candidates_from_series` |
+| 2 | the `.vtm` manifests | each manifest's own `TimeValue` | `_candidates_from_manifests` |
+| 3 | the dump directories | `TimeValue` in each `internal.vtu` | `_candidates_from_dirs` |
+| 4 | — | unit steps | in `_read_series` |
+
+Points worth keeping:
+
+- **The announcement is the feature, not the recovery.** Every step past the first
+  warns, and the step taken is recorded as `dump_source` / `time_source`. A run
+  completing on a quietly rebuilt timeline is the same shape as the `VTK3dData`
+  frozen-fluid bug, which is the worst thing that has happened on this branch.
+- **Tier 3 timestamps via a header scan**, new `_dataio.read_vtkxml_time_only` — the
+  `.vtu`/`.vtp` counterpart of `read_vtk_time_only`. VTK XML puts `<FieldData>` ahead
+  of the `<Piece>`, so the time is in the first few hundred bytes. Measured on this
+  dataset: **1.0 ms against 0.75 s** for a full read of one 84.2 MB `internal.vtu`, a
+  factor of ~750, and *constant* in file size. All 17 surviving dumps scan in 0.01 s
+  and agree with the `.vtm.series` index exactly; without it, timing the series would
+  re-read ~1.4 GB of static mesh to recover 17 floats. Inline ascii and uncompressed
+  base64 are decoded; a compressed or appended array returns `None` and falls back to
+  the full reader, which is a slow path rather than a wrong answer. (Note that VTK
+  declares `compressor=` on the root element even in ascii data mode, where it applies
+  to nothing — so it can only be judged once an array is known to be binary.)
+- **Tier 3 cannot see a missing dump.** With no manifest, nothing declares the dumps
+  that never arrived, so the widened interval and the uneven-spacing warning are the
+  only remaining trace. This is a real loss relative to tiers 1–2, not an oversight.
+- **Unit steps only when nothing is timed.** `VTK3dData._read_all_times` falls back
+  when *any* dump is untimed; here a partly timed series raises instead, since unit
+  steps would displace every dump that did carry a time.
+- **Sort numerically.** Dump directories are named with unpadded numbers, so a
+  lexical sort puts `..._1008` before `..._787` — confirmed against the real names,
+  where the lexical order does begin at 1008 and the numeric one at 787. Globbed
+  dumps are then reordered by their recovered times where those disagree with the
+  filenames; the numeric sort is load-bearing exactly in tier 4, where the filename
+  order *is* the timeline.
+- A timeline that is not strictly increasing raises. Both splines divide by the
+  interval between successive times.
+
 ### Low-level read ✅ DONE (2026-08-10)
 
 Three new functions in `_dataio.py`, all generic to the VTK XML container scheme
@@ -286,6 +331,7 @@ rather than to OpenFOAM, covered by `tests/fixtures/openfoam_min/` and
 | `read_vtm_series` | `.vtm.series` → member paths + times | no (`json`) |
 | `read_vtm_manifest` | `.vtm` → `{name: path}` + `TimeValue` | no (`xml.etree`) |
 | `read_vtkxml_cell_data` | `.vtu`/`.vtp` → cell centers, cell arrays, time | yes |
+| `read_vtkxml_time_only` | `.vtu`/`.vtp` header → `TimeValue` alone (added 2026-08-11) | no (`re`/`base64`) |
 
 Notes on the shape they landed in:
 

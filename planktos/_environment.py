@@ -1139,6 +1139,13 @@ class Environment:
 
         Dumps that the series index declares but which are not on disk are
         skipped with a warning, and the timeline is built over those that remain.
+        Missing pieces of the export are tolerated the same way: absent the
+        index, the timeline is rebuilt from the ``.vtm`` manifests, then from the
+        ``TimeValue`` in each ``internal.vtu``, and finally from unit time steps.
+        Every fallback warns and is recorded on the resulting flow object in
+        ``dump_source`` and ``time_source``, since a run completing on a
+        different timeline than the user believes they loaded is worse than one
+        that fails.
 
         If INUM (interval number) is set to an integer >= 4, then the data will
         be dynamically loaded as needed with INUM intervals between the temporal

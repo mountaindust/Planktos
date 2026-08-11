@@ -17,7 +17,9 @@ __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
 import os
+import re
 import json
+import base64
 import warnings
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -514,6 +516,105 @@ def read_vtm_manifest(filename):
             break
 
     return datasets, time
+
+
+
+def read_vtkxml_time_only(filename, nbytes=4096):
+    '''Read just the ``TimeValue`` field-data entry from a VTK XML file's header.
+
+    VTK XML writes ``<FieldData>`` immediately inside the dataset element, ahead
+    of the ``<Piece>`` holding the mesh, so a ``TimeValue`` entry lands within the
+    first few hundred bytes of a ``.vtu``/``.vtp`` no matter how large the file
+    is. Recovering it therefore costs one small header read rather than a full
+    parse -- which is what makes it practical to timestamp a whole dump series
+    from the files themselves. Dynamic loading needs the entire timeline before
+    it can slice windows out of it, and an unstructured-grid export repeats its
+    full mesh in every dump: for the reference dataset that is 51 MB of geometry
+    per file, so parsing all of them merely to recover one float apiece would
+    read gigabytes to answer a question the headers already answer.
+
+    This is the ``.vtu``/``.vtp`` counterpart of read_vtk_time_only, which does
+    the same job for legacy VTK files.
+
+    Parameters
+    ----------
+    filename : string or Path
+        path and filename of the .vtu or .vtp file
+    nbytes : int, default=4096
+        how many bytes of the header to scan
+
+    Returns
+    -------
+    float, or None if no single-valued TimeValue was recovered from the scanned
+        region. None is not proof that the file is untimed: the entry may lie
+        past the scanned region, or be stored in an encoding this does not
+        decode (see below). A caller that needs certainty should fall back to
+        read_vtkxml_cell_data for that file.
+
+    Notes
+    -----
+    Inline ``ascii`` and uncompressed inline ``binary`` (base64) storage are
+    decoded here; those are what VTK writes by default and what the reference
+    OpenFOAM export uses. ``appended`` and compressed arrays return None rather
+    than growing a second, barely-exercised decoder for a single float -- the
+    full reader handles them, and the cost of falling back to it is one slow
+    path, not a wrong answer.
+    '''
+
+    with open(filename, 'rb') as f:
+        head = f.read(nbytes).decode('utf-8', errors='ignore')
+
+    def _attrs(tag_body):
+        return dict(re.findall(r'([\w]+)\s*=\s*["\']([^"\']*)["\']', tag_body))
+
+    # Storage details are declared once on the root VTKFile element, not on the
+    # individual arrays.
+    root = re.search(r'<VTKFile\s([^>]*)>', head)
+    if root is None:
+        return None
+    root = _attrs(root.group(1))
+
+    for m in re.finditer(r'<DataArray\s([^>]*?)>(.*?)</DataArray>', head,
+                         re.DOTALL):
+        attrs = _attrs(m.group(1))
+        if attrs.get('Name') != 'TimeValue':
+            continue
+        # Match the assertion in the full reader: a single time per file.
+        if attrs.get('NumberOfTuples', '1') != '1':
+            return None
+
+        fmt = attrs.get('format', 'ascii').lower()
+        if fmt == 'ascii':
+            try:
+                return float(m.group(2).split()[0])
+            except (ValueError, IndexError):
+                return None
+        if fmt != 'binary':
+            return None
+        # A compressor is declared on the root even in ascii data mode, where it
+        # applies to nothing -- so it can only be judged once the array is known
+        # to be binary.
+        if 'compressor' in root:
+            return None
+
+        # Inline base64: a byte-count header of header_type, then the payload.
+        dtypes = {'Float32': 'f4', 'Float64': 'f8', 'Int32': 'i4',
+                  'Int64': 'i8', 'UInt32': 'u4', 'UInt64': 'u8'}
+        order = '>' if root.get('byte_order') == 'BigEndian' else '<'
+        if attrs.get('type') not in dtypes:
+            return None
+        dtype = np.dtype(order + dtypes[attrs['type']])
+        hsize = 8 if root.get('header_type', 'UInt32') == 'UInt64' else 4
+        try:
+            raw = base64.b64decode(''.join(m.group(2).split()))
+        except Exception:
+            return None
+        if len(raw) < hsize + dtype.itemsize:
+            return None
+        return float(np.frombuffer(raw, dtype=dtype, count=1,
+                                   offset=hsize)[0])
+
+    return None
 
 
 
