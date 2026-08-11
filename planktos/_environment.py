@@ -1053,10 +1053,12 @@ class Environment:
             number of first vtk dump to read in
         d_finish : int, optional
             number of last vtk dump to read in, or None to read to end
-        INUM : odd int >=5 or None (default)
-            max number of splined intervals at any one time. Must be odd and 
-            at least 5. If it is given as None then all the time-varying
-            fluid data will be splined and held in the FluidData object.
+        INUM : int > 3, True, or None (default)
+            max number of splined intervals held at any one time; the number of
+            time points held is 1+INUM, and INUM must be at least 4. None splines
+            the entire dataset at once and cubically in time; True holds the
+            entire dataset too but splines it linearly; an int streams a sliding
+            window from storage and splines that linearly.
         '''
 
         self.flow = fluid.IB2dData(path, dt, print_dump, d_start, d_finish, INUM)
@@ -1075,7 +1077,7 @@ class Environment:
         Also, imported times will be translated backward so that the first time 
         loaded corresponds to a Planktos environment time of 0.0.
 
-        If INUM (interval number) is set to an odd integer >=5, then the data 
+        If INUM (interval number) is set to an integer >= 4, then the data 
         will be dynamically loaded as needed with INUM intervals between the 
         temporal data sets available at any given time.
 
@@ -1092,11 +1094,12 @@ class Environment:
             vtk dump number to start with.
         d_finish : int, optional
             vtk dump number to end with. If None, end with last one.
-        INUM : int > 3 or None (default)
-            max number of splined intervals at any one time. Must be  
-            at least 4. If it is given as None then all the time-varying
-            fluid data will be splined at once. Note the number of time points 
-            needed is 1+INUM.
+        INUM : int > 3, True, or None (default)
+            max number of splined intervals held at any one time; the number of
+            time points held is 1+INUM, and INUM must be at least 4. None splines
+            the entire dataset at once and cubically in time; True holds the
+            entire dataset too but splines it linearly; an int streams a sliding
+            window from storage and splines that linearly.
         periodic_dim : list of 2 or 3 bool, default=(True, True, False)
             True if that spatial dimension is periodic, otherwise False
         vel_conv : float, optional
@@ -1149,9 +1152,11 @@ class Environment:
             path to the directory holding the ``.vtm.series`` index (typically
             the ``VTK`` directory foamToVTK writes), or to the index file itself
         INUM : int > 3, True, or None (default)
-            max number of splined intervals at any one time. Must be at least 4.
-            If None, all the time-varying fluid data will be splined at once.
-            Note the number of time points needed is 1+INUM.
+            max number of splined intervals held at any one time; the number of
+            time points held is 1+INUM, and INUM must be at least 4. None splines
+            the entire dataset at once and cubically in time; True holds the
+            entire dataset too but splines it linearly; an int streams a sliding
+            window from storage and splines that linearly.
         periodic_dim : list of 3 bool, default=(False, False, False)
             True if that spatial dimension is periodic, otherwise False
         vel_conv : float, optional

@@ -60,7 +60,9 @@ an ``int``    a window of ``INUM`` + 1 times   linear
 ============  ===============================  =========================
 
 ``None`` is the default, and is what you want whenever the dataset fits in
-memory.
+memory. An ``int`` must be at least 4, since a window narrower than that leaves
+too little either side of the query time to slide against; it does **not** have
+to be odd. ``INUM`` + 1 time points are held, so a window of 4 intervals keeps 5.
 
 **Enabling dynamic loading means accepting linear interpolation in time.** That
 is a permanent property of the design rather than a placeholder: stitching a

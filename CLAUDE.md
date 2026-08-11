@@ -91,9 +91,11 @@ Biology* 84(72). Docs: https://planktos.readthedocs.io
   been deleted locally and on origin. Older notes and commit messages still
   mention it; that history is preserved in `master`.
 
-**3D moving boundaries are planned but not started.** They are blocked on `dyload`
-(3D dynamic fluid loading) working first, because of the data-size problem above.
-Moving boundaries are currently **2D only**.
+**3D moving boundaries are parked and not scheduled.** They were blocked on `dyload`
+(3D dynamic fluid loading), which is no longer the case — that work completed
+2026-08-11 — but nothing about them is being picked up. `TODO.md` keeps the list under
+a PARKED heading purely so the pieces are not rediscovered from scratch later; do not
+start work from it. Moving boundaries are currently **2D only**.
 
 **3D fluid data sources (terse, for future reference).** The 3D flows come from
 either **IBFE** (fluid solved over the *entire* domain, including inside immersed

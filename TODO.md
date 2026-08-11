@@ -12,7 +12,7 @@ Temporal interpolation of dynamically-loaded data is **linear in time**
 (`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
 story.
 
-**Suite is green: 585 passed / 22 skipped (`pytest`), 605 passed / 2 skipped
+**Suite is green: 591 passed / 22 skipped (`pytest`), 611 passed / 2 skipped
 (`pytest --runslow`).** No failures, no xfails.
 
 **What is done:**
@@ -27,18 +27,28 @@ story.
   per-dump mean cache; `fps`/`playback_rate` frame selection).
 - **`_ibc.py` collision passes** — done on `master` and merged here; coverage 91% → 99%.
 
+**Phase 2 is complete (2026-08-11).** The loader reads the real OpenFOAM dataset, the
+windowed machinery is vetted against it, and the memory claim is measured rather than
+asserted. That was the branch's stated remaining reason to exist.
+
 **Where the work goes next, in priority order:**
 
-1. **Phase 2 — 3D dynamic loading against the real OpenFOAM dataset.** The **loader is
-   done** (2026-08-11) and the real dataset loads, streams and drives agents. What
-   remains is the validation work under "Then, once it loads" — re-running the Phase 1
-   (A)–(D) equivalents on 3D data, the memory profiling that is the branch's headline
-   claim, and the interpolation-error re-measurement.
-2. **Note §8 steps 3–4** (recorder + derived-quantity cache) — explicitly **due a
-   re-evaluation before being built**, since steps 1–2 removed most of the cost they
-   were designed for. Step 5 (prose pass) follows whatever is decided.
-3. **Note §9** (real position-wrapping tiling, 2D and 3D; whether `Environment.extend`
-   returns) — still needs its design pass. §9.1 is the restoration checklist.
+1. 🔴 **The robustness pass on the OpenFOAM loader**, plus **rectilinear (non-uniform)
+   grid support in `calculate_FTLE`** — grouped, because they are the same body of
+   work: making the Phase 2 loader usable on the next dataset and on the analyses people
+   will actually run against it. FTLE joins the group because Phase 2 *created* its
+   urgency: the boundary splice produces a grid that is rectilinear but **not uniform**
+   (half-width outermost intervals), so FTLE on the oral-arm data needs it. The full
+   list is under Phase 2, "Robustness follow-ups".
+2. 🟡 **Note §9** (real position-wrapping tiling, 2D and 3D; whether `Environment.extend`
+   returns) — still needs its design pass. §9.1 is the restoration checklist. This also
+   **unblocks the prose-docs sweep**, which is deliberately held because §9 decides
+   exactly what that prose would describe.
+3. 🟡 **The 1.0.3 decision** — whether to cut a patch release from `master` and
+   cherry-pick the queue at the bottom of this file, or let 1.1.0 carry it.
+
+**Note §8 (plotting) is being handled in a concurrent session and its open design
+question is resolved there.** Do not pick it up from this file.
 
 **Also merged since:** `master`'s 1.0.1 documentation release and its 1.0.2 bug
 fixes. No dyload-specific behavior changed by either. **`v1.0.2` is released and
@@ -87,10 +97,26 @@ Two notes worth keeping:
 
 ### Cleanup (low urgency)
 
-- [ ] 🟢 **Orphaned discarded code:** `fCubicSpline._left_based_cspline` /
-  `_extend_prev_spline` (`fluid.py:581-763`) — the abandoned cubic-window approach,
-  now unreachable (the only `fCubicSpline(...)` caller uses default `bc_type`). Remove
-  or annotate as "abandoned — see history."
+- [x] ✅ **Orphaned discarded code deleted (2026-08-11).**
+  `fCubicSpline._left_based_cspline` and `_extend_prev_spline` — the abandoned
+  cubic-window approach — are gone, along with the two `__init__` branches that reached
+  them, the now-unused `dydx0`/`dydx1`/`direction` parameters, and the `solve_banded`
+  import that existed only for them. 183 lines.
+  - **Verified orphaned before deleting**, not assumed: every `fCubicSpline(...)` call
+    site in the package and the suite passes only `(flow_times, flow)` and at most
+    `extrapolate=`, never `bc_type='left'` and never `dydx0`; nothing subclasses the
+    class; and it is not in the API docs, so the signature change is internal. (The
+    hits under `build/` are a stale, untracked build artifact.)
+  - The knowledge is not lost with the code: what was tried and why it failed is in the
+    design-history section at the bottom of this file, with commit `bbd093b`.
+- [x] ✅ **`fCubicSpline.trim_end` deleted too (2026-08-11).** The survivor of
+  design-history item 2 (deleting boundary-contaminated coefficients, `7b385d7`), from
+  the same abandoned effort. Verified orphaned three ways before removing: no textual
+  reference anywhere outside its own definition; no `getattr`/`hasattr` path to it; and
+  **`LinearSpline` has no counterpart**, so it cannot have been part of a duck-typed
+  interface — `FluidData` swaps the two spline classes freely, so any polymorphic
+  `.trim_end()` call would already have crashed on the linear path. Recover with
+  `git log --oneline -S "trim_end" -- planktos/fluid.py` if ever needed.
 
 ---
 
@@ -342,9 +368,9 @@ than closed forms — the same class as the least-squares already run at
 Substantial, delicate work in the most load-bearing code in the project.
 
 **Why deferred.** Accuracy only, no penetration, no false positives — and moving
-boundaries are **2D-only** while this branch's whole purpose is unblocking 3D. Revisit
-with Phase 3 (3D moving boundaries), where the moving slider gets rewritten for
-triangles anyway and this decision has to be made again from scratch.
+boundaries are **2D-only**. Revisit with 3D moving boundaries, where the moving slider
+gets rewritten for triangles anyway and this decision has to be made again from
+scratch. That work is **parked and not scheduled** — see the PARKED section below.
 
 ---
 
@@ -461,7 +487,7 @@ in `tests/test_flow_interface.py`.
 
 ---
 
-## Phase 2 — Dynamic loading in 3D against real data 🔴 (blocks 3D moving boundaries)
+## Phase 2 — Dynamic loading in 3D against real data ✅ COMPLETE (2026-08-11)
 
 The actual end goal (the ~100 GB case) and **the branch's remaining reason to exist.**
 
@@ -475,7 +501,8 @@ and `README_oral_arm_setup.md` with the full setup spec.
 laminar transient. Pulsing annular inlet, u_z(t) = 0.01·½(1−cos(2π·0.8·t)) m/s. Export
 covers the last two pulse cycles (t ≥ 7.5 s, period 1.25 s). Domain x,y ∈ [−0.05, 0.05],
 z ∈ [0.003, 0.271] m, **all lengths in meters**. Fields: `U`, `p` (kinematic),
-`vorticity`, `Q`. `oral_arm_disk.stl` is a ready-made 3D immersed boundary for Phase 3.
+`vorticity`, `Q`. `oral_arm_disk.stl` is a ready-made 3D immersed boundary, for whenever
+moving boundaries in 3D are taken off the parking lot.
 
 > ### ⛔ CORRECTION — no resample is needed
 >
@@ -610,7 +637,7 @@ arrays / parse the `U` `DataArray` directly / one-time `.npy` preprocess).
     dumps that exist**, not the set the index declares. Pinned by
     `test_openfoam_flow_times_span_the_surviving_series`.
 
-### Robustness follow-ups — deliberately deferred 🟡
+### Robustness follow-ups — 🔴 THE NEXT BLOCK OF WORK
 
 **Decision (2026-08-11): get it working for the data we have, then write fallbacks.**
 Only gap tolerance was built up front, because our dataset is truncated. Everything
@@ -641,6 +668,13 @@ fallbacks rather than a rewrite.
   fields live and when they are preferred — not on the reader.
 - [ ] **Whichever fallback is taken, say so.** Silently accepting a degraded timeline is
   the shape of the `VTK3dData` frozen-fluid bug.
+- [ ] 🔴 **Rectilinear (non-uniform) grid support in `calculate_FTLE`.** Moved here from
+  "deferred / low priority" on 2026-08-11, because Phase 2 created its urgency rather
+  than merely relating to it: the boundary splice produces a grid that is rectilinear
+  but **not uniform** — the outermost interval in each direction is half-width, being the
+  distance from the outermost cell centers to the domain wall. So FTLE on the oral-arm
+  dataset, the whole point of having it, needs this first. Not a diagnostic nicety any
+  more.
 - [ ] **Boundary-condition corners.** Where two faces meet, the 12 edges and 8 corners
   appear in no patch file and are filled from the adjoining faces — averaged, with a
   warning when they disagree. The real dataset **does** disagree there: the inlet ring
@@ -783,7 +817,10 @@ combinations are now locked rather than assumed.
   geometry, and the fluid is evaluated in `apply_agent_model` before it is used), so the
   combination is structurally orthogonal and a slow test would buy little.
 
-### Still open
+### Closed out by the Phase 2 work ✅
+
+Both of these were listed as remaining; neither is.
+
 - [x] ~~Update `docs/api/FluidData.rst` with the 3D figures.~~ **Done** — the
   "the 3D case has not yet been characterized" caveat is replaced by the 3D result, and
   the note now records that the orders quoted are the 2D ones because the 3D dataset
@@ -798,18 +835,25 @@ combinations are now locked rather than assumed.
   the 3-dump series is too short for windowed loading (`INUM>=4` needs 5 points), so
   that data exercises ingestion only.
 
-## Phase 3 — 3D moving immersed boundaries 🟢 (future)
+## PARKED — 3D moving immersed boundaries ⚪ (not scheduled; do not start)
 
-Blocked on Phase 2. Moving boundaries are currently 2D only. 3D immersed boundaries are
-**STL triangular (FEM) surface meshes** (3D vertex-point input deprecated; 2D vertex
-points still used). Inherited blockers from the overhaul's notes:
+> **This is a parking lot, not a plan.** 3D moving boundaries are **out of scope for
+> this release line** and no work on them should be picked up from this file. The list
+> survives only so the pieces are not rediscovered from scratch much later. Phase 2
+> unblocked this, which is a fact about dependencies, not a scheduling decision.
 
-- The 3D *moving*-mesh code path currently raises (not implemented; blocked on dyload).
+Moving boundaries are currently 2D only. 3D immersed boundaries are **STL triangular
+(FEM) surface meshes** (3D vertex-point input deprecated; 2D vertex points still used).
+Inherited blockers from the overhaul's notes:
+
+- The 3D *moving*-mesh code path currently raises (not implemented).
   Static 3D collision coverage is already in place (`test_collisions_static_3d.py`,
   `test_collisions_stl_3d.py`).
 - **Moving-mesh FTLE:** `calculate_FTLE` never advances `envir.time`, so a moving mesh
   is frozen at t0; it raises `NotImplementedError`. A real fix threads integration time
   into `interpolate_temporal_mesh` (forward + reversed) — delicate collision-path work.
+- `_ibc` **finding #3 / issue #73** (the mid-step excursion check) is deferred to here,
+  since the moving slider gets rewritten for triangles anyway. See that section above.
 
 ---
 
@@ -857,7 +901,7 @@ points still used). Inherited blockers from the overhaul's notes:
 > **Most source-specific fluid ingestion is out of scope for this branch.** Planktos
 > assumes a **rectilinear fluid grid**. Reading IBFE SAMRAI or COMSOL directly —
 > including porting the old VisIt `read_IBAMR3d_py27.py` SAMRAI→vtk script — is lower
-> priority than 3D moving boundaries and is scratched here.
+> priority than the robustness pass above and is scratched here.
 >
 > **The exception is the Phase 2 OpenFOAM reader, which is in scope and is 🔴.** That
 > dataset is already on a uniform Cartesian grid despite its `vtkUnstructuredGrid`
@@ -871,8 +915,6 @@ points still used). Inherited blockers from the overhaul's notes:
   (`tests/data/comsol/vtu_test_data.txt`) or stays gated.
 - [ ] **NetCDF** (`load_NetCDF` / `read_NetCDF_flow`) — existing, full-load only. Never
   actually used (reviewer-requested for a prior publication). Lowest priority.
-- [ ] **Rectilinear (non-uniform) grid support in `calculate_FTLE`**. Relevant since we
-  assume a rectilinear fluid grid, but a diagnostic and non-blocking.
 - [ ] ⚠️ **Watch: vtk emits a numpy 2.5 deprecation that would become fatal.**
   `vtkmodules/util/numpy_support.py` assigns `result.shape = shape`, which numpy 2.5
   deprecates in favour of `np.reshape`. Harmless today (a `DeprecationWarning`), but
@@ -929,9 +971,18 @@ path tried and discarded:
 2. **`valid_times` → deletion** — first a `valid_time_bnds` attribute tracked the
    trustworthy part of a freshly-splined window (`9710f98`); replaced hours later by
    simply **deleting** the boundary-contaminated coefficients (`7b385d7`, `trim_end`).
+   `trim_end` was itself deleted 2026-08-11, having outlived the approach unreferenced.
 3. **Left-based cubic spline — failed.** `_left_based_cspline` / `_extend_prev_spline`
    forced both boundary conditions onto the *left/known* end so the window could grow
    rightward. Abandoned as **numerically unstable** (`bbd093b`).
+   - **The code was deleted 2026-08-11** once it was confirmed unreachable, so this entry
+     is the only remaining description of it. Recovery anchors, checked rather than
+     assumed: it was **written** in `1a53915` ("Creates a left-based cubic spline"), the
+     only commit that ever touched the symbol, and the bodies are intact at `bbd093b`
+     via `git show bbd093b:planktos/fluid.py` — note `bbd093b` records the *decision* and
+     does not itself modify those functions. If both hashes go stale, use
+     `git log --oneline -S "_left_based_cspline" -- planktos/fluid.py`, which finds the
+     commit that wrote it and the one that removed it.
 4. **Pivot to `LinearSpline`** (`f70cc99`, `9183c0f`): piecewise-linear in time —
    unconditionally stable, trivially window-extensible (carry two raw boundary values,
    no derivatives to match), needs less held data. Dynamic load then worked for IB2d
@@ -944,7 +995,14 @@ models). Full **cubic** stays the default for in-memory datasets (`INUM=None`); 
 is the price of *dynamic* loading. Quantifying that gap is Phase 1(C).
 
 `INUM` regimes: `None` = cubic, all in memory (default/trusted) · `True` = linear, all in
-memory · odd `int` = dynamic windowed linear (`INUM` intervals held at a time).
+memory · `int` >= 4 = dynamic windowed linear (`INUM` intervals held at a time).
+
+⚠️ **`INUM` does not have to be odd**, despite what several docstrings said until
+2026-08-11. The only constraint the code has ever enforced is `INUM > 3`, and even
+values were measured to agree with full-linear to round-off and to slide correctly.
+The "odd integer >= 5" language was a leftover from the cubic-window approach of item 3,
+where a window symmetric about a center point plausibly needed one; `LinearSpline`
+carries no such requirement. Corrected in `_environment.py` and `fluid.py`.
 
 *(Supersedes the older `planktos/TODO for dynamic loading.txt`, folded in here, and the
 mvbnd overhaul's `TODO.md`, whose non-blocking follow-ups are merged into the sections

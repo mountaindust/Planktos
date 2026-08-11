@@ -11,7 +11,6 @@ Email: cstric12@utk.edu
 import warnings
 import numpy as np
 from scipy import interpolate
-from scipy.linalg import solve_banded
 from pathlib import Path
 from . import _dataio
 
@@ -234,39 +233,22 @@ class fCubicSpline(interpolate.CubicSpline):
     Extends Scipy's CubicSpline object to get info about original fluid data.
     '''
 
-    def __init__(self, flow_times, flow, dydx0=None, dydx1=None, 
-                 extrapolate=(True, True), bc_type='not-a-knot', direction=None):
+    def __init__(self, flow_times, flow, extrapolate=(True, True),
+                 bc_type='not-a-knot'):
         '''
-        Creates a PPoly instance spline instance with some additional info 
-        and capabilities. Will throw a custom error if times are requested 
+        Creates a PPoly instance spline instance with some additional info
+        and capabilities. Will throw a custom error if times are requested
         outside of spline time bounds and extrapolate is False on that side.
 
-        If dydx0 is None then use CubicSpline to construct the object. If 
-        bc_type is given as 'left', construct a CubicSpline using not-a-knot 
-        and natural BC on the starting side. This is for dynamic loading of 
-        data when only the first few time points of the data set are currently 
-        being splined. If bc_type is something else, it will be passed to 
-        scipy.interpolate.CubicSpline.
-        
-        If dydx0 isn't None, then dydx0 and dydx1 specify derivatives that 
-        will be used to extend an old spline either to the left or the right 
-        according to the direction argument; see _extend_prev_spline for 
-        further info. bc_type will be ignored.
+        bc_type is passed through to scipy.interpolate.CubicSpline.
+
+        Note that this class splines a whole dataset at once. Window-extensible
+        cubic splining was attempted for dynamic loading and abandoned as
+        numerically unstable; LinearSpline is what dynamic loading uses instead.
+        See the design-history section of TODO.md for what was tried.
         '''
-        if dydx0 is None:
-            if bc_type == 'left':
-                dydx = self._left_based_cspline(flow_times, flow)
-                interpolate.CubicHermiteSpline.__init__(self, flow_times, flow, dydx, 
-                                                        axis=0, extrapolate=True)
-            else:
-                super(fCubicSpline, self).__init__(flow_times, flow, axis=0, 
-                                                   extrapolate=True, bc_type=bc_type)
-        else:
-            assert dydx1 is not None, "dydx1 must be specified with dydx0"
-            assert direction is not None, "extension direction must be specified with dydx0"
-            dydx = self._extend_prev_spline(flow_times, flow, dydx0, dydx1, direction)
-            interpolate.CubicHermiteSpline.__init__(self, flow_times, flow, dydx, 
-                                                    axis=0, extrapolate=True)
+        super().__init__(flow_times, flow, axis=0, extrapolate=True,
+                         bc_type=bc_type)
 
         self._shape = flow.shape
         self.extrapolate = extrapolate
@@ -284,189 +266,6 @@ class fCubicSpline(interpolate.CubicSpline):
         # Make this property read-only
         raise AttributeError("shape is read-only in fCubicSpline")
 
-
-
-    def _extend_prev_spline(self, x, y, dydx0, dydx1, direction='right'):
-        '''Set new spline based on derivative data from an old spline.
-
-        Parameters
-        ----------
-        x : ndarray
-            time points corresponding to the flow data
-        y : ndarray
-            flow data points
-        dydx0 : ndarray
-            derivatives at first time point
-        dydx1 : ndarray
-            derivatievs at second time point
-        dir : 'right' or 'left'
-            if 'right', dydx0 and dydx1 are construed to be at the first and second
-            time points respectively (e.g., we are extending a spline to the right).
-            Otherwise, they are construed to be the next-to-last and last times 
-            (e.g., we are extending a spline to the left).
-
-        Returns
-        -------
-        ndarray of derivatives to be passed to CubicHermiteSpline
-
-        Notes
-        -----
-        This implementation is largely based on the source code scipy.interpolate._cubic.py
-        '''
-        n = len(x)
-        dx = np.diff(x)
-        if np.any(dx <= 0):
-            raise ValueError("flow times must be a strictly increasing sequence.")
-        dxr = dx.reshape([dx.shape[0]] + [1] * (y.ndim - 1))
-        slope = np.diff(y, axis=0) / dxr
-
-        # Find derivative values at each x[i] by solving a tridiagonal system.
-        A = np.zeros((3, n))  # This is a banded matrix representation.
-        b = np.empty((n,) + y.shape[1:], dtype=y.dtype)
-        if direction == 'right':
-            # Filling the system for i=2..n-1
-            #                         (x[i] - x[i-1]) * s[i-2] +\
-            # 2 * ((x[i-1] - x[i-2]) + (x[i] - x[i-1])) * s[i-1]   +\
-            #                         (x[i-1] - x[i-2]) * s[i] =\
-            #       3 * ((x[i] - x[i-1])*(y[i-1] - y[i-2])/(x[i-1] - x[i-2]) +\
-            #           (x[i-1] - x[i-2])*(y[i] - y[i-1])/(x[i] - x[i-1]))
-
-            A[-1, :-2] = dx[1:]                  # The lower lower diagonal
-            A[1, 1:-1] = 2 * (dx[:-1] + dx[1:])  # The lower diagonal
-            A[0, 2:] = dx[:-1]                   # The diagonal
-
-            b[2:] = 3 * (dxr[1:] * slope[:-1] + dxr[:-1] * slope[1:])
-
-            A[0,0] = 1; A[0,1] = 1
-            b[0] = dydx0; b[1] = dydx1
-            A[1,0] = 0 # derivative of second point is specified.
-            l_and_u = (2,0)
-        elif direction == 'left':
-            # Filling the system for i=0..n-3
-            #                         (x[i+2] - x[i+1]) * s[i] +\
-            # 2 * ((x[i+1] - x[i]) + (x[i+2] - x[i+1])) * s[i+1]   +\
-            #                         (x[i+1] - x[i]) * s[i+2] =\
-            #       3 * ((x[i+2] - x[i+1])*(y[i+1] - y[i])/(x[i+1] - x[i]) +\
-            #           (x[i+1] - x[i])*(y[i+2] - y[i+1])/(x[i+2] - x[i+1]))
-
-            A[-1, :-2] = dx[1:]                  # The diagonal
-            A[1, 1:-1] = 2 * (dx[:-1] + dx[1:])  # The upper diagonal
-            A[0, 2:] = dx[:-1]                   # The upper upper diagonal
-            
-            b[0:-3] = 3 * (dxr[1:] * slope[:-1] + dxr[:-1] * slope[1:])
-
-            A[-1,-2] = 1; A[-1,-1] = 1
-            b[-2] = dydx0; b[-1] = dydx1
-            A[1,-1] = 0 # derivative of next-to-last point is specified
-            l_and_u = (0,2)
-        
-        # Solve the system
-        m = b.shape[0]
-        # s is the derivatives of the spline at all data points
-        s = solve_banded(l_and_u, A, b.reshape(m,-1), overwrite_ab=True, 
-                            overwrite_b=True, check_finite=False)
-        s = s.reshape(b.shape)
-
-        return s
-    
-
-
-    def _left_based_cspline(self, x, y):
-        '''
-        THIS APPEARS TO NOT WORK. REPLACE WITH LINEAR INTERPOLATION.
-        
-        Create a cubic spline where both boundary conditions are specified
-        at the left (natural and 'not-a-knot'). This is extremely useful when 
-        only the first part of a fluid data set will be loaded.
-        
-        Parameters
-        ----------
-        x : ndarray
-            time points corresponding to the flow data
-        y : ndarray
-            flow data points
-
-        Returns
-        -------
-        ndarray of derivatives to be passed to CubicHermiteSpline
-
-        Notes
-        -----
-        This implementation is largely based on the source code scipy.interpolate._cubic.py
-        '''
-        n = len(x)
-        assert n>3, "At least 3 data points are needed for left-based spline."
-        dx = np.diff(x)
-        if np.any(dx <= 0):
-            raise ValueError("flow times must be a strictly increasing sequence.")
-        dxr = dx.reshape([dx.shape[0]] + [1] * (y.ndim - 1))
-        slope = np.diff(y, axis=0) / dxr
-
-        ##### Old implementation #####
-        # # Find derivative values at each x[i] by solving a tridiagonal system.
-        # A = np.zeros((3, n))  # This is a banded matrix representation.
-        # b = np.empty((n,) + y.shape[1:], dtype=y.dtype)
-
-        # # Filling the system for i=2..n-1
-        # #                         (x[i] - x[i-1]) * s[i-2] +\
-        # # 2 * ((x[i-1] - x[i-2]) + (x[i] - x[i-1])) * s[i-1]   +\
-        # #                         (x[i-1] - x[i-2]) * s[i] =\
-        # #       3 * ((x[i] - x[i-1])*(y[i-1] - y[i-2])/(x[i-1] - x[i-2]) +\
-        # #           (x[i-1] - x[i-2])*(y[i] - y[i-1])/(x[i] - x[i-1]))
-
-        # A[-1, :-2] = dx[1:]                  # The lower lower diagonal
-        # A[1, 1:-1] = 2 * (dx[:-1] + dx[1:])  # The lower diagonal
-        # A[0, 2:] = dx[:-1]                   # The diagonal
-
-        # b[2:] = 3 * (dxr[1:] * slope[:-1] + dxr[:-1] * slope[1:])
-
-        # d = x[2] - x[0]
-        # slp = (y[2]-y[0])/d
-        # # 'not-a-knot' at the start
-        # A[0, 1] = d
-        # A[1, 0] = dx[1]
-        # b[1] = ((dxr[0] + 2*d) * dxr[1] * slope[0] +
-        #         dxr[0]**2 * slope[1]) / d
-        # # natural bc at the start
-        # A[0, 0] = dx[0]**2 - d**2
-        # b[0] = slp*dx[0]**2 - slope[0]*d**2
-        # l_and_u = (2,0)
-        ##################################
-
-        A = np.zeros((4, n))  # This is a banded matrix representation.
-        b = np.empty((n,) + y.shape[1:], dtype=y.dtype)
-
-        # Filling the system for i=2..n-1
-        #                         (x[i] - x[i-1]) * s[i-2] +\
-        # 2 * ((x[i-1] - x[i-2]) + (x[i] - x[i-1])) * s[i-1]   +\
-        #                         (x[i-1] - x[i-2]) * s[i] =\
-        #       3 * ((x[i] - x[i-1])*(y[i-1] - y[i-2])/(x[i-1] - x[i-2]) +\
-        #           (x[i-1] - x[i-2])*(y[i] - y[i-1])/(x[i] - x[i-1]))
-
-        A[-1, :-2] = dx[1:]                  # The lower lower diagonal
-        A[2, 1:-1] = 2 * (dx[:-1] + dx[1:])  # The lower diagonal
-        A[1, 2:] = dx[:-1]                   # The diagonal
-
-        b[2:] = 3 * (dxr[1:] * slope[:-1] + dxr[:-1] * slope[1:])
-
-        # 'not-a-knot' and natural bc at the start
-        A[1, 0] = 2
-        A[0, 1] = 1 # only thing in the upper diagonal
-        b[0] = 3*slope[0]
-        A[2, 0] = -(3*dx[1]*dx[0]+dx[1]**2)
-        A[1, 1] = 3*dx[0]**2 + 3*dx[0]*dx[1] + dx[1]**2
-        b[1] = 3*slope[1]*dx[0]**2
-        l_and_u = (2,1)
-
-        # Solve the system
-        m = b.shape[0]
-        # s is the derivatives of the spline at all data points
-        s = solve_banded(l_and_u, A, b.reshape(m,-1), overwrite_ab=True, 
-                            overwrite_b=True, check_finite=False)
-        s = s.reshape(b.shape)
-
-        return s
-        
 
 
     def __call__(self, val):
@@ -517,14 +316,6 @@ class fCubicSpline(interpolate.CubicSpline):
         raise RuntimeError("Cannot assign to spline object. "+
                            "Use regenerate_data to recreate original data first.")
     
-    def trim_end(self, last_x_idx):
-        '''This is used to remove the end of the spline.
-        x points up to last_x_idx will be retained.
-        '''
-        self.c = self.c[:, 0:last_x_idx, ...]
-        self.x = self.x[0:last_x_idx+1]
-        self._shape = (len(self.x), *self._shape[1:])
-
     def max(self):
         '''This will return a data max based on the data used to build the spline.'''
         return self.data_max
@@ -659,11 +450,11 @@ class FluidData:
         flow_times : ndarray of floats
             if specified, the time stamp for each index t in the flow arrays (time 
             varying fluid velocity fields only)
-        INUM : int, optional
-            Used by subclasses to dynamically load data from storage. It corresponds
-            to the number of intervals loaded at any given time when dynamically 
-            loading data and linearly splining. True results in linearly splining 
-            all data, None results in cubic splining all data.
+        INUM : int > 3, True, or None (default)
+            Used by subclasses to dynamically load data from storage. It
+            corresponds to the number of intervals loaded at any given time when
+            dynamically loading data and linearly splining. True results in
+            linearly splining all data, None results in cubic splining all data.
         periodic_dim : bool (default=False), or tuple of bool
             Whether or not the fluid data is periodic in each spatial dimension.
             Periodicity of the fluid data is independent of the agent boundary
@@ -1369,7 +1160,7 @@ class IB2dData(FluidData):
         Can read in vector data with filenames u.####.vtk or scalar data
         with filenames uX.####.vtk and uY.####.vtk.
 
-        If INUM (interval number) is set to an odd integer >=5, then the data 
+        If INUM (interval number) is set to an integer >= 4, then the data 
         will be dynamically loaded as needed with INUM intervals between the 
         temporal data sets available at any given time.
 
@@ -1389,12 +1180,12 @@ class IB2dData(FluidData):
             number of first vtk dump to read in
         d_finish : int, optional
             number of last vtk dump to read in, or None to read to end
-        INUM : int > 3 or None (default)
-            max number of linearly splined intervals at any one time. Must be 
-            at least 4. If it is given as True, then all time-varying
-            fluid data will be linearly splined at once. If None, all will be 
-            cubically splined instead. Note the number of data sets 
-            needed is 1+INUM.
+        INUM : int > 3, True, or None (default)
+            max number of splined intervals held at any one time; the number of
+            time points held is 1+INUM, and INUM must be at least 4. None splines
+            the entire dataset at once and cubically in time; True holds the
+            entire dataset too but splines it linearly; an int streams a sliding
+            window from storage and splines that linearly.
         '''
 
         ##### Parse parameters and read in data #####
@@ -1612,7 +1403,7 @@ class VTK3dData(FluidData):
         Also, imported times will be translated backward so that the first time 
         loaded corresponds to a Planktos environment time of 0.0.
 
-        If INUM (interval number) is set to an odd integer >=5, then the data 
+        If INUM (interval number) is set to an integer >= 4, then the data 
         will be dynamically loaded as needed with INUM intervals between the 
         temporal data sets available at any given time.
 
@@ -1630,11 +1421,12 @@ class VTK3dData(FluidData):
             vtk dump number to start with.
         d_finish : int, optional
             vtk dump number to end with. If None, end with last one.
-        INUM : int > 3 or None (default)
-            max number of splined intervals at any one time. Must be  
-            at least 4. If it is given as None then all the time-varying
-            fluid data will be splined at once. Note the number of time points 
-            needed is 1+INUM.
+        INUM : int > 3, True, or None (default)
+            max number of splined intervals held at any one time; the number of
+            time points held is 1+INUM, and INUM must be at least 4. None splines
+            the entire dataset at once and cubically in time; True holds the
+            entire dataset too but splines it linearly; an int streams a sliding
+            window from storage and splines that linearly.
         periodic_dim : list of 2 or 3 bool, default=(True, True, False)
             True if that spatial dimension is periodic, otherwise False
         vel_conv : float, optional
@@ -2006,10 +1798,11 @@ class OpenFOAMData(FluidData):
             path to the directory holding the ``.vtm.series`` index (typically
             the ``VTK`` directory foamToVTK writes), or to the index file itself
         INUM : int > 3, True, or None (default)
-            max number of linearly splined intervals at any one time. If True,
-            all time-varying fluid data is linearly splined at once. If None, all
-            is cubically splined instead. Note the number of time points needed
-            is 1+INUM.
+            max number of splined intervals held at any one time; the number of
+            time points held is 1+INUM, and INUM must be at least 4. None splines
+            the entire dataset at once and cubically in time; True holds the
+            entire dataset too but splines it linearly; an int streams a sliding
+            window from storage and splines that linearly.
         periodic_dim : list of 3 bool, default=(False, False, False)
             True if that spatial dimension is periodic, otherwise False. Defaults
             to non-periodic throughout, since a finite-volume export of this shape
