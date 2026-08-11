@@ -33,24 +33,27 @@ asserted. That was the branch's stated remaining reason to exist.
 
 **Where the work goes next, in priority order:**
 
+Items 1 and 2 are **both active and run in parallel**, in separate sessions.
+
 1. 🔴 **The robustness pass on the OpenFOAM loader** — making the Phase 2 loader usable
    on the next dataset. The list is under Phase 2, "Robustness follow-ups".
-2. 🟡 **Note §9** (real position-wrapping tiling, 2D and 3D; whether `Environment.extend`
+2. 🔴 **Note §8 steps 3–4** — the recorder and the derived-quantity plot cache.
+   **In flight in a concurrent session; do not pick it up from this file.** Listed so
+   the priority order is complete, not as an invitation to start. Detail below.
+3. 🟡 **Note §9** (real position-wrapping tiling, 2D and 3D; whether `Environment.extend`
    returns) — still needs its design pass. §9.1 is the restoration checklist. This also
    **unblocks the prose-docs sweep**, which is deliberately held because §9 decides
    exactly what that prose would describe.
-3. 🟡 **The 1.0.3 decision** — whether to cut a patch release from `master` and
+4. 🟡 **The 1.0.3 decision** — whether to cut a patch release from `master` and
    cherry-pick the queue at the bottom of this file, or let 1.1.0 carry it.
 
-**Note §8 (plotting) is being handled in a concurrent session and its open design
-question is resolved there.** Do not pick it up from this file. For the record: the
-go/no-go on **steps 3–4** (recorder + derived-quantity cache) was **decided 2026-08-11
-in favor of building them**, in parallel with the work above — plotting is a measured
-bottleneck on our own runs, and it is cheapest to do while the memory architecture is
-in hand. The recorder interface was revised at the same time (capture is automatic and
-hooks the environment time advance; the cache format is crash-valid by construction
-rather than by finalization; a cache-backed render is cache-only). §8.3.2, §8.3.3 and
-§8.3.6 carry the reasoning; §8.4 has the four sub-steps and the two headline tests.
+**Note §8 (plotting), in detail.** The go/no-go on steps 3–4 was **decided 2026-08-11
+in favor of building them**: plotting is a measured bottleneck on our own runs, and it
+is cheapest to do while the memory architecture is in hand. The recorder interface was
+revised at the same time (capture is automatic and hooks the environment time advance;
+the cache format is crash-valid by construction rather than by finalization; a
+cache-backed render is cache-only). §8.3.2, §8.3.3 and §8.3.6 carry the reasoning; §8.4
+has the four sub-steps and the two headline tests, and §8.4.1 the entry points.
 
 **Also merged since:** `master`'s 1.0.1 documentation release and its 1.0.2 bug
 fixes. No dyload-specific behavior changed by either. **`v1.0.2` is released and
