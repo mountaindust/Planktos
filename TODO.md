@@ -43,7 +43,14 @@ asserted. That was the branch's stated remaining reason to exist.
    cherry-pick the queue at the bottom of this file, or let 1.1.0 carry it.
 
 **Note §8 (plotting) is being handled in a concurrent session and its open design
-question is resolved there.** Do not pick it up from this file.
+question is resolved there.** Do not pick it up from this file. For the record: the
+go/no-go on **steps 3–4** (recorder + derived-quantity cache) was **decided 2026-08-11
+in favor of building them**, in parallel with the work above — plotting is a measured
+bottleneck on our own runs, and it is cheapest to do while the memory architecture is
+in hand. The recorder interface was revised at the same time (capture is automatic and
+hooks the environment time advance; the cache format is crash-valid by construction
+rather than by finalization; a cache-backed render is cache-only). §8.3.2, §8.3.3 and
+§8.3.6 carry the reasoning; §8.4 has the four sub-steps and the two headline tests.
 
 **Also merged since:** `master`'s 1.0.1 documentation release and its 1.0.2 bug
 fixes. No dyload-specific behavior changed by either. **`v1.0.2` is released and

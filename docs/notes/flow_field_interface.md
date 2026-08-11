@@ -383,9 +383,20 @@ one.
 ## 8. Plotting streaming — implementation plan
 
 Status: **steps 1 and 2 built; steps 3–5 specified, not yet implemented** (design
-settled 2026-07-31). All design questions are decided; what follows is the
-specification and build order, not a discussion. The deliberation that produced these
-choices — the options weighed and rejected — is in this file's git history.
+settled 2026-07-31, recorder interface revised 2026-08-11). All design questions are
+decided; what follows is the specification and build order, not a discussion. The
+deliberation that produced these choices — the options weighed and rejected — is in
+this file's git history.
+
+**The §8.4 go/no-go on steps 3–4 was decided in favor of building them** (2026-08-11).
+The reason is not the one the original cost argument anticipated: plotting is a
+bottleneck in practice on this project's own runs, and the work is worth doing while
+the memory architecture is already in hand. Steps 3–4 proceed in parallel with Phase 2.
+
+The 2026-08-11 revision reversed three things, each recorded in place below: capture is
+now **automatic** rather than driven by a recorder method (§8.3.2), the cache format is
+**crash-valid by construction** rather than by finalization (§8.3.3), and a cache-backed
+`plot_all` is **cache-only** rather than falling back to the fluid (§8.3.6).
 
 **Starting cold?** Read §8.1–§8.2 for the problem and scope, then §8.4 for what to
 build first and §8.4.1 for the concrete entry points.
@@ -411,6 +422,10 @@ nothing.
 ---
 
 ### 8.1 Why — where the cost actually is
+
+*This section describes the situation before step 1; the first table row has since been
+fixed (§8.3.1) and `frames=None` no longer means one frame per `move()` (§8.3.5). It is
+kept because it is the rationale for everything that follows.*
 
 `plot_all`'s `animate(n)` is a random-access replay over `pos_history`; with
 `frames=None` it renders one frame per `move()` call. Each frame pulls fluid data at
@@ -448,6 +463,16 @@ Two facts drive the whole design:
 - **Not in scope:** agent-history retention (recorded in `TODO.md` as a possible
   future feature — a long-run memory question with consumers beyond plotting; nothing
   here depends on it).
+- **The cache replaces the fluid data, not the `Environment`** *(scope decided
+  2026-08-11)*. §8.3.3 justifies caching agent positions on the grounds that
+  `pos_history` "dies with the process", which invites the reading that a cache is
+  renderable on its own in a fresh session. It is not, and is not meant to be:
+  `plot_all` is a `Swarm` method and needs an `Environment` for `L`, `bndry`, `ibmesh`,
+  `units` and `_plot_setup`. A later session rebuilds the environment from its own
+  script — cheaply, since the fluid no longer has to be re-streamed to plot — and hands
+  the cache to `plot_all`. Serializing the whole `Environment`, moving `ibmesh`
+  included, is a much larger feature and is not this one. The cached `L` and
+  `flow_points` are there to *validate* that reconstruction, not to replace it.
 
 ---
 
@@ -513,43 +538,116 @@ Implementation notes:
 
 **The recorder captures data only — it never renders** (§8.3.7). All video production
 belongs to `plot_all`, reading the cache afterwards. So the recorder takes **no video
-parameters at all**: no `fps`, no `playback_rate`, no colormap, no figure size. It
-takes only what determines *what data is captured*.
+parameters of its own**: no `fps`, no `playback_rate`, no colormap, no figure size. The
+one apparent exception does not blur the line — `plot_all=` (below) carries a dict of
+keyword arguments the recorder never inspects and hands straight through.
 
-`Environment.record(...)` is the implementation; `Swarm.record(...)` is sugar that
-delegates with that swarm preselected. (A `Swarm`-level recorder could not express a
-multi-swarm capture, since `Environment.move_swarms()` is the multi-swarm path. Joint
-multi-swarm plotting is a known gap — issue #49 — and is not solved here, but the API
-must not foreclose it.)
+**`Environment.record(...)` is the only entry point.** *(Revised 2026-08-11; the
+original design added `Swarm.record(...)` as sugar delegating with that swarm
+preselected.)* That sugar existed to serve `rec.move(dt)`, which needed to know whether
+to call `Swarm.move` or `Environment.move_swarms`. With capture automatic and triggered
+by the environment's time advance, there is nothing left for it to preselect: every
+swarm in the environment is captured at every step.
+
+Worse, a `Swarm`-level entry point implies a per-swarm recorder, which cannot exist.
+The recorder is environment-scoped by construction — it hooks the environment's time
+advance, its metadata is environment state (`L`, `flow_points`, the fingerprint), and
+the expensive half of the cache is the **fluid**, which belongs to the environment and
+not to any swarm. Two `swrm.record()` calls in one environment would either be refused
+as a second concurrent recorder or duplicate every vorticity file on disk. So the method
+would fail precisely when used for the thing its name suggests.
+
+Restricting *which* swarms are captured is a real want — agent data runs a few hundred
+MB per large swarm (§8.3.3) — but that is an argument for a `swarms=` argument on
+`Environment.record`, defaulting to all of them, not for a second entry point. Joint
+multi-swarm plotting remains a known gap (issue #49); the cache stores every recorded
+swarm, so it does not foreclose a fix.
 
 ```python
-with envir.record('run_cache/', fluid='vort') as rec:
+with envir.record('run_cache/', fluid='vort'):
     for _ in range(steps):
-        rec.move(dt)            # advance + capture
+        swrm.move(dt)           # the user's ordinary loop, unchanged
 ```
 
 Note `fluid='vort'` here means **which fluid quantity to cache**, not what to draw —
 the same keyword on `plot_all` selects the backdrop. Same word, different side of the
 capture/render line; worth distinct wording in the docstrings.
+
+**Capture is automatic, and hooks the environment's time advance.** *(Reversed
+2026-08-11. The original design had `rec.move()` and `rec.capture()` and refused to hook
+`move()`, on the stated grounds that "users routinely subclass `Swarm` and override the
+move machinery." That premise contradicts the codebase: `move()`'s own docstring says
+"DO NOT override this method when subclassing", and `apply_agent_model` / `after_move`
+— the actual extension points — are called from inside `move()`, below any hook. A
+subclass that replaces `move()` without delegating has already lost history recording,
+boundary conditions, the velocity/acceleration finite difference and the time advance,
+so a missed capture is strictly subsumed by a far larger failure. That misuse is now
+warned about at class-definition time by `Swarm.__init_subclass__`, independently of
+§8.)*
+
+- **The trigger is the environment time step, not `Swarm.move`.** `move_swarms` calls
+  `s.move(dt, update_time=False)` for each swarm and *then* advances time, so a hook on
+  `Swarm.move` would fire once per swarm, at a time that has not advanced, with later
+  swarms not yet moved. Capture fires from exactly two places, both meaning "the
+  environment just advanced one step": the end of `Swarm.move` when `update_time=True`,
+  and the end of `Environment.move_swarms`. One `envir._notify_step_complete()` called
+  from both, a no-op when nothing is recording.
+- **Those two are the only paths that advance simulation time.** `calculate_FTLE`
+  inlines its own move loop rather than calling `move()`, so it cannot fire a capture —
+  which is what is wanted, since it would otherwise write FTLE probe trajectories into
+  the cache.
+- **There is no `capture()` method.** The manual multi-swarm pattern (move each swarm
+  with `update_time=False`, then bump time by hand) is not a real workflow; the same
+  thing is expressed by passing `update_time=True` on the last swarm, which fires the
+  hook after every swarm has moved and also satisfies `move()`'s own
+  "other swarms were not moved" check.
+- **`Environment.reset()` during recording raises.** It sets `time = 0.0` and clears
+  the histories, which would give the cache a rewound clock and two captures at t=0.
+
+**The lifecycle.** `envir.record(path, ...)` **starts recording immediately** and
+returns a handle — the `open()` model, where the call does the work and `with` only adds
+the guaranteed close. `__enter__` returns the handle; `__exit__` closes. This matters:
+if the work lived in `__enter__` instead, a bare `envir.record(path)` would silently
+record nothing, which is a very expensive thing to discover after a twelve-hour run.
+
+| Call | Does |
+|---|---|
+| `envir.record(path, ...)` | validate the directory, write the metadata, sweep resident dumps, take capture 0, register the hooks. Recording is live from here |
+| `envir.flush_cache()` | write buffered captures to disk. **Keeps recording** |
+| `envir.stop_recording()` | flush, then unregister the hooks. Idempotent |
+| `with envir.record(...)` | as above, plus `stop_recording()` on exit and the optional auto-plot |
+
+Both spellings are supported because a `with` block cannot span notebook cells, and
+interactive exploration — run 200 steps, plot, run 800 more — is a normal Planktos
+workflow. `stop_recording()` and `flush_cache()` live on the `Environment` rather than
+only on the handle because the `Environment` must hold a reference to the active
+recorder anyway (that is how the time-advance hook finds it), so no variable has to
+survive across cells.
+
+**`flush_cache()` is separate from `stop_recording()` on purpose.** A cache-backed
+`plot_all` is cache-only and does **not** flush on the reader's behalf (§8.3.6), so the
+mid-run notebook plot needs a flush that does not end the recording — otherwise the
+next `record()` would refuse the now-non-empty directory.
+
+**`plot_all=` renders automatically at the end of a `with` block.** Given a dict of
+`Swarm.plot_all` keyword arguments, `__exit__` flushes and then renders:
+
 ```python
-with envir.record('run_cache/', fluid='vort') as rec:
+with envir.record('run_cache/', plot_all=dict(movie_filename='out.mkv', fluid='vort')):
     for _ in range(steps):
-        swrm.move(dt)           # user's own loop body
-        do_something_custom()
-        rec.capture()           # explicit
+        swrm.move(dt)
 ```
 
-- `rec.move(dt, **kwargs)` forwards to `move()` / `move_swarms()` and captures — the
-  common case, with no way to forget it.
-- `rec.capture()` stays available for loops doing work the recorder should not own.
-  (Named `capture`, not `frame`: it records simulation state, and frames no longer
-  exist at record time.)
-- **No auto-hook on `move()`.** Users routinely subclass `Swarm` and override the move
-  machinery; a plain `move()` call must not acquire invisible side effects.
-- **`__exit__` finalizes on the exception path** — flush and write the cache metadata —
-  then **re-raises**. A run that dies at hour eleven of twelve keeps a
-  complete-to-that-point, fully renderable cache.
-- Returns a handle carrying the cache path, which `plot_all` consumes (§8.3.6).
+- **It renders when the run raises, and not when it is interrupted.** A crash is
+  unexpected and the movie is diagnostic; a `KeyboardInterrupt` is the user asking for
+  things to stop *now*, and kicking off a ten-minute render at that moment — requiring a
+  second Ctrl-C to escape — is the opposite of what was asked for. Both still flush.
+- **A failure inside the auto-plot must not mask the run's exception.** Catch it, warn
+  with it, and let the original propagate.
+- **Exactly one swarm.** `plot_all` is a `Swarm` method and joint multi-swarm plotting
+  is issue #49, so a recorder covering more than one swarm rejects `plot_all=` — at
+  `record()` time, before the run, not at the end of it. Inventing a filename-suffixing
+  convention here would be committing to an answer for #49 as a side effect.
 
 **Capture schedule.** Agent state is captured **every step by default**. A coarser
 schedule may be specified later if memory demands it; the framing is deliberately
@@ -570,14 +668,77 @@ conceptually identical but must not be called simply "dump" — always qualify, 
 
 Cache **derived quantities, not images**, so re-plotting stays possible without
 re-running: colormap, clip, agent subset, figure size and dpi all stay adjustable.
-Fixed at record time: the downsample factors and which fluid quantity was recorded.
+Fixed at record time: the quiver grid and which fluid quantity was recorded.
 
-**Container: a directory of `.npy` files — one per fluid dump, one per agent capture —
-plus a metadata sidecar.** `.npz` is unusable here: `np.savez` writes the archive in
-one call, so everything would have to be accumulated in memory first, defeating the
-streaming property that motivates the whole design (~1 GB for full-resolution
-vorticity over 500 dumps). HDF5/zarr would add a required dependency to a deliberately
-lean `install_requires`.
+**The format must be valid with nothing having run at the end.** A hard kill — HPC
+walltime, OOM, node failure — is `SIGKILL`, which defeats `__exit__`, `close()`,
+`atexit` and `__del__` alike; §8.3.4 already concedes this for the video, which is why
+it recommends `.mkv`. So metadata is written when recording **starts**, every chunk is
+self-describing, and the reader reconstructs the timeline by scanning what is on disk.
+Once that holds, no finalizer is load-bearing for correctness: the most any of them can
+save is one unflushed chunk. This is the property the interface rests on, not the
+context manager.
+
+**Container: a directory of `.npy` files — one per fluid dump, chunked for agent
+captures — plus a metadata sidecar.** `.npz` is unusable for the bulk data: `np.savez`
+writes the archive in one call, so everything would have to be accumulated in memory
+first, defeating the streaming property that motivates the whole design (~1 GB for
+full-resolution vorticity over 500 dumps). HDF5/zarr would add a required dependency to
+a deliberately lean `install_requires`.
+
+```
+run_cache/
+  meta.json                 written at record(): version, fingerprint, dimension, L,
+                            quantity recorded, quiver shape, dtype, swarm names, N
+  grid.npz                  flow_points, L, flow_times (the dump time base)
+  fluid/
+    vort_00042.npy          indexed by GLOBAL flow_times index, written as the dump lands
+    quiver_00042.npy        only when quiver was requested
+    dump_stats.npz          per-dump extrema and component means; rewritten per dump
+  agents/
+    swarm0_pos_000.npy      (chunk, N, D) float64
+    swarm0_vel_000.npy      (chunk, N, D) float64
+    swarm0_mask_000.npy     (chunk, N) bool
+    times_000.npy           (chunk,) float64, shared across swarms
+```
+
+**Agent captures are chunked, not one file per capture.** The original text said one
+`.npy` per capture; capture-every-step on a 10 000-step run makes that 10 000 files,
+which is punishing on network and HPC filesystems. Buffering `chunk_size` captures
+(default 100) and flushing a chunk bounds recording memory at a few MB, keeps the file
+count at tens, preserves the streaming property that ruled out `.npz`, and loses at most
+one chunk to a hard kill. The reader opens chunks with `mmap_mode='r'`, so **a cache
+larger than RAM stays readable** — which matters because this is continuous simulation
+data, useful for analysis and not only for display.
+
+**What a capture is.** Per environment time step, per swarm: `positions` data (`N×D`),
+the position row mask (`N` bools — agents leave whole rows), `velocities` data (`N×D`),
+and one timestamp shared across swarms. Live attributes are read, **not**
+`pos_history`: that decouples the cache from history retention, so the decimation
+maybe-feature in `TODO.md` could land without breaking it. Capture 0 is taken when
+recording starts, so capture *j* is exactly `full_pos_history[j]` at
+`(time_history + [envir.time])[j]` — the same index convention `_select_frames` and
+`animate(n)` already use, and therefore no index translation at render time.
+
+⚠️ **Capture 0's velocities are not zero, and `_calc_basic_stats` says they are.**
+`Swarm.__init__` initializes `velocities` to the *local fluid drift* when a flow exists,
+so `full_vel_history[0]` is generally non-zero — while `_calc_basic_stats(t_indx=0)`
+deliberately reports the zero vector, on the reasoning that velocity is undefined before
+the first step. The cache stores the truth. **Step 4 must therefore decide explicitly**
+whether a cache-backed render reproduces today's zero-at-index-0 display convention or
+shows the initial drift, because the two now differ and the difference is silent — a
+first frame whose statistics changed with no other visible cause.
+
+Budget ≈ `(2·D·8 + 1)` bytes per agent per capture — 49 B in 3D. A 1000-agent,
+10 000-step 3D run is ~490 MB of agent data, separate from the vorticity cache. A
+`store=` option selects which arrays are kept, defaulting to positions and velocities;
+`accelerations` and `ib_collision_idx` are reserved schema slots. Velocities are not
+practically optional — `_calc_basic_stats` needs them, and re-deriving them from
+positions is the trap described below.
+
+**`props_history` is not stored,** following the precedent `save_data` already sets
+("props_history is not saved"). It costs nothing on the default path: heading markers
+fall back to `arctan2` on velocities, which are cached. Reserve a schema slot.
 
 **Cadence is hybrid, and neither base is the video frame rate** — frames do not exist
 until render time:
@@ -594,23 +755,45 @@ Per-dump full-resolution vorticity is an accepted disk cost: 2D-only, and only w
 the user asks for vorticity. IB2d datasets commonly ship comparable vorticity fields
 already.
 
+**Which quantity is recorded, and the quiver-grid problem** *(decided 2026-08-11)*.
+`fluid=` on `record()` defaults to `'vort'` in 2D and is forced to `None` in 3D, where
+no fluid backdrop is drawn at all (§8.2). **Quiver is opt-in** — `fluid='quiver'` or
+`fluid=('vort','quiver')` — because vorticity is what gets plotted in almost every
+case, and quiver is a second full-cadence array on disk for a backdrop most runs never
+use.
+
+The quiver grid is the one genuine conflict between record time and render time.
+`plot_all` currently derives its downsample factors `M`, `N` from the **figure size and
+axis extent**, aiming at roughly 4.15 arrows per inch — quantities that do not exist
+while the simulation is running. The resolution: `record()` takes a target arrow grid
+(`quiver_shape`, default ~60×60), and a cache-backed `plot_all` uses the cached grid
+regardless of figure size, warning when the figure would have wanted a noticeably denser
+one. The rejected alternative was caching full-resolution velocity and downsampling at
+render time, which costs 2–3× the vorticity cache and gives back the disk saving that
+motivates downsampling at all. So `quiver_shape` joins the recorded quantity as the
+second thing fixed when recording starts.
+
 **Schema — the metadata must carry:**
 - format **version**;
 - **source fingerprint** (dump range and `flow_times` extent, or a hash) so a cache
   from a different run or dataset is refused;
-- **which quantity** was cached (`vort`, `quiver`, or both) and the **downsample
-  factors** `M`, `N`;
+- **which quantity** was cached (`vort`, `quiver`, or both) and the **quiver grid**
+  (`quiver_shape`, and the `M`/`N` it resolved to against this dataset's grid);
 - the **capture times** (agent time base) and the **dump times** (fluid time base) —
   there are no "frame times", since frames are chosen at render time;
-- the **capture interval** actually used, since it is the floor on any later
-  `Δt_frame` (§8.3.5);
+- ~~the **capture interval** actually used~~ — **not stored.** `_select_frames` already
+  derives `dt_state = span/(len(times)-1)` from the times themselves, and this section's
+  own rule against redundant derivable state applies. Capture times go in; the interval
+  comes out;
 - **axes**: `flow_points` and domain `L`, so the cache plots without touching fluid;
 - **per-dump extrema** for colour normalization (§8.3.4);
 - the **per-dump fluid component means** — the §8.3.1 sidecar, a few floats per dump,
   from which the surviving fluid statistics are exact at any time;
 - the **agent positions** per capture (`N×D` plus mask). Easy to omit as "already in
   `pos_history`" — but that lives in memory and dies with the process, so without it
-  the cache cannot render after a crash or be used in a later session;
+  the cache cannot render after a crash or be used in a later session. (A later session
+  still rebuilds its own `Environment`; the cache replaces the fluid, not the world —
+  §8.2.);
 - the **agent velocities** per capture. Do **not** plan to re-derive these from
   cached positions: `_calc_basic_stats` currently finite-differences consecutive
   history entries, which is only equivalent to the true velocity when capture is every
@@ -623,12 +806,34 @@ velocities, and the per-dump fluid means all present, every displayed statistic 
 derivable at render time — so caching them too would be redundant state that could
 drift from the data it summarizes.
 
+**There is no completeness status in the metadata, and no `allow_incomplete` on the
+reader.** *(Decided 2026-08-11, reversing an earlier `complete`/`interrupted`/`failed`
+field that gated rendering.)* The argument for it was that a truncated cache renders a
+video that looks like the whole run. It does not: `plot_all` draws the simulated time in
+every frame, so a movie that ends at t=7.3 says so. And a run that stopped at 200 steps
+**is** a run of 200 steps — the intended step count lives in the user's script, is never
+communicated to the `Environment`, and is not a property the data owes an account of.
+The corrupt case the flag seemed to protect against — a step half-applied across agents,
+some possibly inside an immersed boundary — never reaches the cache at all, because
+captures fire only after a step completes.
+
+The decisive point is symmetry: **`plot_all` has never had a concept of a finished
+run.** It renders `pos_history` plus the present state and has always worked mid-run
+(§8.3.6). A completeness gate would have made cache-backed rendering stricter than live
+rendering for a run in exactly the same state.
+
+The `KeyboardInterrupt`-versus-exception distinction survives, but only in memory and
+only at `__exit__`, where it decides whether the auto-plot runs (§8.3.2). Nothing is
+persisted.
+
 **Validation on load — missing ≠ mismatched:**
 - **Mismatched** (wrong fingerprint, wrong grid) → hard refusal with a clear message.
   Silently plotting a foreign cache is the worst available outcome.
-- **Missing** (a quantity not recorded) → **fall back to the fluid**. Free when
-  `INUM=None`; the §8.3.6 warn-and-re-stream path otherwise. This is what keeps
-  vorticity computable after the fact for someone who recorded without it.
+- **Missing** (a quantity not recorded) → **hard refusal too**, naming what is absent.
+  *(Revised 2026-08-11; the original text said "fall back to the fluid".)* A
+  cache-backed render is cache-only (§8.3.6), so there is no fluid path to fall back
+  onto and no way for a supposedly-free plot to quietly re-stream 100 GB. The remedy is
+  to re-record, or to plot live without a cache.
 - **Never derive vorticity from cached quiver arrays.** They are downsampled, so
   gradients taken on them are a coarser, different field — a plausible-looking wrong
   answer. Recording both `vort` and `quiver` is the cheap prevention.
@@ -659,7 +864,14 @@ colour scale is scientifically misleading — with a **global scale derived from
 cached per-dump extrema in a second pass over the cache** (small) rather than over the
 fluid (huge). Note `FluidData.fmin`/`fmax` are *not* usable for this: they are
 documented as covering "all the data seen so far", so under dynamic loading they grow
-during the run and would reintroduce the drift. Max-over-dumps is an exact upper bound
+during the run and would reintroduce the drift.
+
+**The same `fmax` drift reaches the quiver arrow scale, not just the colour scale**
+*(added 2026-08-11)*. `plot_all` sets `scale=max_mag*5` once at figure setup from
+`self.envir.flow.fmax`, so under dynamic loading the arrow length that represents a
+given speed depends on how far the run had progressed when plotting began — two movies
+of the same simulation are not comparable, and neither is comparable to itself across a
+re-plot. The cached per-dump extrema fix both; the fix is the same second pass. Max-over-dumps is an exact upper bound
 under linear interpolation and very tight under cubic. If a live one-pass render mode
 is ever offered it has no global scale available and must take an explicit
 `clip`/`vmin`/`vmax`, or disclose the drift on the colorbar.
@@ -707,8 +919,11 @@ lever: at `dt = 1e-3`, real-time playback demanded `fps = 1000`, while the defau
   capture interval is small**: at `dt = 0.025` captured every step, real time reaches
   40 fps but 10× slow motion caps at 4 fps. Document as: *smooth slow motion needs
   fine capture.*
-- When rendering from a cache, `Δt_capture` is read from the metadata; when replaying
-  live from `pos_history`, it is `dt`. Same rule, one substitution.
+- When rendering from a cache, `Δt_capture` is **derived from the cached capture
+  times** — the same `span/(n-1)` `_select_frames` already computes, just over a
+  different time list; when replaying live from `pos_history`, it is `dt`. Same rule,
+  one substitution. *(An earlier draft said the interval was read from the metadata;
+  §8.3.3 does not store it, on the rule against redundant derivable state.)*
 - **Frame times are not exactly uniform.** Frames are chosen at render time by picking,
   for each target time, the nearest available capture — so spacing jitters by up to one
   `Δt_capture` whenever `Δt_frame` is not an exact multiple of it. The video is encoded
@@ -723,7 +938,7 @@ lever: at `dt = 1e-3`, real-time playback demanded `fps = 1000`, while the defau
 - **Assumption to document:** "real time" presumes simulated time is in seconds.
   `Environment.units` covers *length* only; seconds is the convention throughout.
 - **`fps` is re-encodable after the fact**, because dump-cadence caching (§8.3.3) can
-  supply any `Δt_frame`. Only the downsample factors and recorded quantity are fixed.
+  supply any `Δt_frame`. Only the quiver grid and recorded quantity are fixed.
 
 **As built.**
 
@@ -792,9 +1007,31 @@ lever: at `dt = 1e-3`, real-time playback demanded `fps = 1000`, while the defau
 
 - **Reads the cache when given one** (explicit path, or the handle returned by the
   recorder). Frames are then *selected* from the cache's **capture times** — the
-  schema's capture-time list is the authority for what can be rendered, and
-  `Δt_capture` from the metadata is the floor on `Δt_frame` (§8.3.5). Never assume
-  cached entries correspond one-to-one with `pos_history` indices.
+  schema's capture-time list is the authority for what can be rendered, and the capture
+  spacing derived from it is the floor on `Δt_frame` (§8.3.5). Never assume cached
+  entries correspond one-to-one with `pos_history` indices.
+- **Given a cache, the render is cache-only** *(decided 2026-08-11)*. Every frame,
+  including the last, comes from the cache; nothing falls back to the fluid, to
+  `pos_history`, or to live attributes. Mixing sources is what would let a "free" plot
+  quietly re-stream the dataset, and it is what would make the last frame disagree with
+  the rest. A quantity the cache lacks is a refusal (§8.3.3), not a silent fluid read.
+- **This means the live final-frame branch has to be replaced, not reused.**
+  `animate(n)` for `n >= len(pos_history)` currently reads *live* state: `envir.time`,
+  `_calc_basic_stats(t_indx=None)` off `self.velocities`, and — the part that bites —
+  `envir.get_vorticity()` / `interpolate_temporal_flow()` with **no time argument**,
+  which evaluate at the current time and can trigger a load. Left alone, that one frame
+  leaks the whole "zero loads while plotting" property. In a later session there are no
+  live attributes to read at all.
+- **A stale cache warns; it does not silently flush.** Compare `envir.time` against the
+  cache's most recent capture time and warn on a mismatch, naming `envir.flush_cache()`
+  — a mismatch means captures are still buffered. The reader does not flush on the
+  user's behalf: flushing is the recorder's business, and a reader that mutates the
+  thing it is reading is the wrong shape. (This supersedes an earlier proposal that
+  `plot_all` ask an active recorder to flush.)
+- **`Swarm.plot(t=...)` prefers the cache for a historical time** when one is
+  available, which is what keeps a single-frame look-back from paying for a fluid load.
+  For `t=None` — the current time — live state is right there and may be newer than the
+  cache, so live wins.
 - **With no cache after a dynamically-loaded run: still works.** Re-streams as today,
   but emits a loud one-time warning with the estimated cost — detected by `INUM` being
   set and the requested frames spanning more than the resident window. Never break a
@@ -831,7 +1068,9 @@ Three consequences worth stating, because they simplify the build:
   `plot_all` keeps `FuncAnimation` and `animate()` essentially as they are; only the
   *source* of per-frame data changes.
 - **The recorder takes no video parameters** (§8.3.2), which removes the config-
-  duplication problem between it and `plot_all` entirely.
+  duplication problem between it and `plot_all` entirely. The `plot_all=` auto-render
+  dict is not an exception: the recorder never inspects it, so there is still exactly
+  one place that knows what any video parameter means.
 - **The video-writing machinery needs no work at all** (§8.3.4).
 
 ---
@@ -846,16 +1085,59 @@ Three consequences worth stating, because they simplify the build:
    computation (it already accepts a `frames` iterable), so it needed no caching and
    no recorder. See "As built" in §8.3.5.
 3. **Recorder + cache (§8.3.2, §8.3.3)** — the substantial piece, and pure data
-   capture: no rendering, no video parameters, no matplotlib.
+   capture: no rendering, no video parameters, no matplotlib. Four sub-steps, each
+   independently testable:
+   1. **`fluid.py` groundwork.** Extract the gradient math from
+      `FluidData.get_vorticity` into a module-level `_vorticity_from_field(flow,
+      flow_points)`, and add a dump-arrival observer dispatched from
+      `_record_dump_means`. That method is already called at every one of the four
+      places fluid lands in memory, with raw ndarrays and global time indices — the
+      hook exists, it just needs to fan out. Riding it inherits the correctness
+      argument for free, including the forward slide's deliberate `idx_start+2` skip of
+      the two holdover dumps. Two hazards: the jump-to-start branch re-reports dumps
+      already cached, so the observer must be idempotent; and static flow never calls
+      `_record_dump_means` at all, so it needs a one-shot capture when recording starts.
+      The recorder must compute vorticity from the raw arrays rather than through
+      `get_vorticity(time=)`, which calls `self(time)` and can trigger a load — exactly
+      what is being avoided.
+   2. **Cache writer** (`planktos/_plotcache.py`, new internal module): schema,
+      fingerprint, chunked agent writer, per-dump fluid writer.
+   3. **`Environment.record` / `flush_cache` / `stop_recording`** and the
+      `_notify_step_complete` hook in `Swarm.move` / `Environment.move_swarms`.
+   4. **Reader** with evaluation-at-time applying the same interpolation weights as the
+      field. Including it here makes step 3 testable end to end without touching a line
+      of rendering code, which is the natural place to cut.
+
+   Tests go in a new `tests/test_plot_cache.py`, except the loader-count assertion,
+   which belongs beside the machinery it counts in `test_dynamic_loading.py`.
+
+   **The headline test** is that recording a run against a windowed `FluidData` costs
+   *identically* many loader calls as the same run without it. That single assertion is
+   the property the whole design exists for, and `test_dynamic_loading.py`'s synthetic
+   subclass already supports counting them. The other one worth naming makes §8.5
+   executable: cached per-dump vorticity interpolated to a time between dumps equals
+   `envir.get_vorticity(time=t)` to round-off — under `INUM=int` *and* `INUM=None`,
+   since the two use different weights and getting the cubic case wrong would be silent.
+
+   Round out with: a round-trip against `pos_history`/`vel_history`/`time_history`;
+   chunk boundaries at exactly one, one-plus-one, and a partial chunk; a fingerprint
+   refusal against a differently-gridded environment; a raise mid-run leaving a
+   complete-to-that-point readable cache; the jump-to-start re-report leaving no
+   duplicate fluid files; `reset()` raising while recording; and a plain `swrm.move()`
+   inside a recording capturing exactly one state per step.
 4. **`plot_all` reads the cache; colour normalization (§8.3.6, §8.3.4)** — the only
    step that touches rendering, and it changes where per-frame data comes from rather
-   than how it is drawn.
+   than how it is drawn. The live final-frame branch of `animate()` is the specific
+   thing that has to be rewritten rather than reused.
 5. **Examples and docs rewrite (§8.6)**.
 
-Steps 1 and 2 are independently shippable and require no architectural commitment.
-**Re-evaluate 3–4 after they land**: given that 3D plotting is awaiting a vtk rewrite
-(§8.2), steps 1–2 may be the whole justified investment for now, with the cache
-warranted only if 2D re-plotting turns out to be a real workflow pain.
+Steps 1 and 2 were independently shippable and required no architectural commitment.
+~~**Re-evaluate 3–4 after they land**~~ — **done, 2026-08-11: build them.** The original
+reasoning was that steps 1–2 might be the whole justified investment, since 3D plotting
+awaits a vtk rewrite (§8.2) and 2D data usually fits in memory. What settled it was not
+that argument but a fact outside it: plotting is a measured bottleneck on this project's
+own simulations, and the work is cheapest to do while the memory architecture is already
+in hand. Steps 3–4 proceed in parallel with Phase 2.
 
 *Two earlier versions of this list are worth not repeating.* One had "stream the
 video" as an independent step, on the false premise that `plot_all` held frames in
@@ -911,6 +1193,19 @@ involved.
 - `Swarm.plot` (single frame) snaps a requested `t` to the nearest
   `Environment.time_history` entry without interpolation; that behavior is unchanged.
 
+**Step 3 — recorder + cache.** The names to search for:
+- `FluidData._record_dump_means` (`planktos/fluid.py`) — the dump-arrival hook, called
+  from `__init__` and from all three load sites in `update_spline`.
+- `FluidData.get_vorticity` — the gradient math to extract; note the time-invariant
+  branch, which is the case that never calls `_record_dump_means`.
+- `Swarm.move`, at the `update_time` block near the end, and `Environment.move_swarms`,
+  after its time bump — the two capture triggers.
+- `Environment.reset` — must raise while recording.
+- `Swarm.full_pos_history` / `full_vel_history` and `Swarm._select_frames` — the index
+  convention the capture schedule has to match.
+- `Swarm.save_data` — the precedent for "props_history is not saved", and the existing
+  model for a directory of run output.
+
 **Verification.** `pytest` (fast, ~1 s) plus `pytest --runslow` for the plotting
 smokes, which exercise `plot_*` on the Agg backend and will catch signature breakage.
 The movie test additionally needs ffmpeg on `PATH`.
@@ -934,11 +1229,15 @@ caching exact (§8.3.3), using weights the interpolator already computes.
 
 ### 8.6 Obligations
 
-- **Changelog (1.1.0)**, both user-visible relative to 1.0.x:
+- **Changelog (1.1.0)**, all user-visible relative to 1.0.x:
   - **[done]** fluid speed statistics replaced by agent-speed spread on plots;
   - **[done]** `playback_rate` added and defaulting to 1, changing existing video
     output. One line; `fps`'s default did not change and `per_dump` was not built,
     so neither is changelog material.
+  - **Owed at step 3:** `Environment.record` and the plot cache. Dyload-only — it
+    depends on `FluidData` — so it does **not** join the cherry-pick queue.
+  - **Owed at step 4:** `plot_all`/`plot` reading a cache, and the colour and quiver
+    scales becoming global rather than drifting (the latter changes existing output).
 - **Examples rewrite.** *The call sites are done (§8.3.5 "As built") — each example now
   names its playback rate explicitly, chosen to be the old `dt × fps` product, and the
   stale "one frame per time step" prose in `ex_ib2d_ibmesh.py` and its docs page is
