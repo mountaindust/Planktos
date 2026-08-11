@@ -10,6 +10,9 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - FluidData is documented in the API reference, including the INUM interpolation-in-time tradeoff.
 - Plots now show mean agent speed and its spread in place of mean and max fluid speed; plotting no longer loads fluid data for statistics.
 - New FluidData.get_mean_velocity returns the spatial mean of each velocity component at any time.
+- New Environment.read_openfoam_vtk_data reads OpenFOAM VTK exports (foamToVTK), including dynamic loading.
+- OpenFOAM cell-centered data is reordered onto its grid and the boundary patches spliced on to recover the full domain.
+- Fluid loaders warn and carry on when a dump the time series declares is missing, rather than failing.
 - plot_all: new playback_rate (simulated seconds per second of video) sets movie speed. Defaults to 1, real time, changing existing movies.
 - A time step that fails partway through now marks the Environment (time=None) and reports the state; move() refuses until it is restored.
 - Plotting after a failed time step shows the recorded history and leaves the incomplete step out.

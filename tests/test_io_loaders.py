@@ -278,8 +278,8 @@ def test_read_vtkxml_cell_data_warns_for_an_array_the_file_lacks():
 def test_read_vtkxml_cell_data_can_skip_the_cell_centers():
     # The mesh is static across the series, so the lattice is established once
     # and every later dump needs the field arrays only.
-    centers, data, _ = _dataio.read_vtkxml_cell_data(_of_internal(20),
-                                                     cell_centers=False)
+    centers, data, _ = _dataio.read_vtkxml_cell_data(
+        _of_internal(20), load_cell_coordinates=False)
     assert centers is None
     assert data['U'].shape == (80, 3)
 
@@ -317,6 +317,200 @@ def test_read_vtkxml_cell_data_rejects_an_unsupported_extension(tmp_path):
     p.write_text('not xml')
     with pytest.raises(ValueError, match='.vtu'):
         _dataio.read_vtkxml_cell_data(p)
+
+
+# --------------------------------------------------------------------------- #
+#            OpenFOAM finite-volume ingestion (fluid.OpenFOAMData)            #
+# --------------------------------------------------------------------------- #
+# Assembly of the same fixture into a Planktos grid. Three things happen here
+# that no other loader does: the cells are reordered out of the file's scrambled
+# order onto a lattice, the boundary patches are spliced onto the six faces to
+# undo the half-cell inset, and dumps the series declares but which are absent
+# are dropped from the timeline.
+#
+# The fixture's 4x4x5 interior assembles to 6x6x7. Its analytic fields make the
+# result closed-form: U = (t, x, t*z) in the interior and on the inlet/outlet
+# caps, and exactly 0 on the four lateral walls.
+
+OF_GRID_X = np.array([0., 0.125, 0.375, 0.625, 0.875, 1.])
+OF_GRID_Z = np.array([0., 0.2, 0.6, 1.0, 1.4, 1.8, 2.])
+# t=5 and t=7 are absent, so the surviving timeline is 0,1,2,3,4,6
+OF_KEPT = [0., 1., 2., 3., 4., 6.]
+
+
+def _openfoam(**kwargs):
+    from planktos import fluid
+    with pytest.warns(UserWarning):        # absent dumps; uneven spacing
+        return fluid.OpenFOAMData(str(OF_DIR), **kwargs)
+
+
+def test_openfoam_grid_spans_the_full_domain():
+    # The point of the boundary splice. Raw cell centers would report the domain
+    # as 0.75 x 0.75 x 1.6 instead of the true 1 x 1 x 2, and every coordinate in
+    # it would be shifted by half a cell.
+    fd = _openfoam()
+    assert fd.fshape == (6, 6, 6, 7)                   # (t, nx+2, ny+2, nz+2)
+    assert np.allclose(fd.flow_points[0], OF_GRID_X)
+    assert np.allclose(fd.flow_points[1], OF_GRID_X)
+    assert np.allclose(fd.flow_points[2], OF_GRID_Z)
+    assert np.allclose(fd.L, [1., 1., 2.])
+    # rectilinear but NOT uniform: the outermost interval in each direction is
+    # the half-cell from the outermost cell center out to the domain edge
+    for d in (0, 1, 2):
+        dg = np.diff(fd.flow_points[d])
+        assert np.isclose(dg[0], dg[1]/2) and np.isclose(dg[-1], dg[1]/2)
+
+
+def test_openfoam_drops_absent_dumps_and_warns():
+    from planktos import fluid
+    with pytest.warns(UserWarning, match='not on disk'):
+        fd = fluid.OpenFOAMData(str(OF_DIR))
+    # densely indexed over the dumps that exist, so d_start/d_finish line up with
+    # flow_times and load_dumpfiles is never handed an absent filename
+    assert fd.d_start == 0 and fd.d_finish == 5
+    assert np.allclose(fd.flow_times, OF_KEPT)
+
+
+def test_openfoam_warns_about_the_uneven_spacing_a_gap_leaves():
+    # Separate from the missing-dump warning: interpolation error scales with the
+    # dump interval, so the user should be told which stretch is degraded.
+    from planktos import fluid
+    with pytest.warns(UserWarning, match='not evenly spaced'):
+        fluid.OpenFOAMData(str(OF_DIR))
+
+
+def test_openfoam_interior_is_reordered_onto_the_lattice():
+    # THE permutation test. The file's cell order is scrambled, so a loader that
+    # reshaped without reordering would produce a field that is wrong everywhere
+    # but still the right shape. u = t, v = x, w = t*z is asserted cell by cell.
+    fd = _openfoam()
+    X, _, Z = np.meshgrid(OF_GRID_X[1:-1], OF_GRID_X[1:-1], OF_GRID_Z[1:-1],
+                          indexing='ij')
+    for t in (0., 3.):
+        u, v, w = fd(t)
+        assert np.allclose(u[1:-1, 1:-1, 1:-1], t)
+        assert np.allclose(v[1:-1, 1:-1, 1:-1], X)
+        assert np.allclose(w[1:-1, 1:-1, 1:-1], t*Z)
+
+
+def test_openfoam_faces_carry_their_own_patch_data():
+    # Each face is filled from whatever patch covers it -- not assumed no-slip.
+    # The lateral walls are zero here because the data says so; the inlet/outlet
+    # caps carry the analytic field.
+    fd = _openfoam()
+    t = 3.
+    u, v, w = fd(t)
+    X, _ = np.meshgrid(OF_GRID_X[1:-1], OF_GRID_X[1:-1], indexing='ij')
+    # inlet at z=0 and outlet at z=2, on the interior x/y lattice
+    for k, zc in ((0, 0.), (-1, 2.)):
+        assert np.allclose(u[1:-1, 1:-1, k], t)
+        assert np.allclose(v[1:-1, 1:-1, k], X)
+        assert np.allclose(w[1:-1, 1:-1, k], t*zc)
+    # the four lateral walls
+    for comp in (u, v, w):
+        assert not comp[0, 1:-1, 1:-1].any()
+        assert not comp[-1, 1:-1, 1:-1].any()
+        assert not comp[1:-1, 0, 1:-1].any()
+        assert not comp[1:-1, -1, 1:-1].any()
+
+
+def test_openfoam_edges_and_corners_are_filled_from_adjoining_faces():
+    # The 12 edges and 8 corners appear in no patch file. They are filled from
+    # the faces that meet there, NOT assumed to be zero -- this fixture has an
+    # inlet running into a no-slip wall, so the two sides genuinely disagree and
+    # the fill is their average.
+    fd = _openfoam()
+    t = 1.
+    u, v, w = fd(t)
+    # edge where the x=0 wall meets the z=0 inlet: wall says 0, inlet says
+    # (t, x_1, 0) at the first interior x center
+    assert np.allclose(u[0, 1:-1, 0], t/2)
+    assert np.allclose(v[0, 1:-1, 0], OF_GRID_X[1]/2)
+    assert np.allclose(w[0, 1:-1, 0], 0.)
+    # edge where two walls meet: both say 0, so no compromise is involved
+    assert np.allclose(u[0, 0, 1:-1], 0.)
+    # corner: the average of the three edges meeting at it, two of which are the
+    # wall/inlet compromise above and one of which is wall/wall
+    assert np.isclose(u[0, 0, 0], (t/2 + t/2 + 0.)/3)
+    assert np.isclose(v[0, 0, 0], (OF_GRID_X[1]/2)*2/3)
+
+
+def test_openfoam_warns_when_boundary_conditions_disagree_at_an_edge():
+    # A real discontinuity in the boundary conditions, not a data error -- but
+    # the fill there is a compromise and the user should know.
+    from planktos import fluid
+    with pytest.warns(UserWarning, match='disagree'):
+        fluid.OpenFOAMData(str(OF_DIR))
+
+
+def test_openfoam_rejects_a_mesh_that_is_not_a_lattice():
+    # Planktos interpolates on a tensor-product grid, and an unstructured
+    # container says nothing about the mesh inside it. Verified, not assumed.
+    from planktos import fluid
+    fd = _openfoam()
+    good = np.array([[x, y, z] for x in (0., 1.) for y in (0., 1.)
+                     for z in (0., 1.)])
+    fd._build_lattice(good)                     # 2x2x2, fine
+    bad = good.copy()
+    bad[0, 0] = 0.5                             # 3 x-levels, 8 cells: not 3*2*2
+    with pytest.raises(ValueError, match='not on a rectilinear grid'):
+        fd._build_lattice(bad)
+
+
+def _openfoam_manifest_without(tmp_path, drop):
+    '''A copy of the fixture series whose manifests omit one boundary patch.'''
+    lines = ["<?xml version='1.0'?>",
+             "<VTKFile type='vtkMultiBlockDataSet' version='1.0'>",
+             "  <vtkMultiBlockDataSet>"]
+    entries = []
+    for num in (10, 20, 30, 40, 50, 70):
+        datasets, time = _dataio.read_vtm_manifest(OF_DIR / f'case_min_{num}.vtm')
+        body = list(lines)
+        for name, path in datasets.items():
+            if name == drop:
+                continue
+            body.append(f"    <DataSet name='{name}' "
+                        f"file='{path.resolve().as_posix()}' />")
+        body += ["  </vtkMultiBlockDataSet>",
+                 "  <FieldData>",
+                 "    <DataArray type='Float32' Name='TimeValue' "
+                 "NumberOfTuples='1' format='ascii'>",
+                 f"{time}", "    </DataArray>", "  </FieldData>", "</VTKFile>"]
+        (tmp_path / f'case_min_{num}.vtm').write_text('\n'.join(body))
+        entries.append({'name': f'case_min_{num}.vtm', 'time': time})
+    import json
+    (tmp_path / 'case_min.vtm.series').write_text(json.dumps(
+        {'file-series-version': '1.0', 'files': entries}))
+    return tmp_path
+
+
+def test_openfoam_requires_a_patch_on_every_face(tmp_path):
+    # Without the walls patch the x and y faces have no data, so the domain would
+    # come out half a cell short in both -- an error nothing downstream could
+    # detect. Raise rather than hand back a quietly wrong domain.
+    from planktos import fluid
+    path = _openfoam_manifest_without(tmp_path, 'walls')
+    with pytest.raises(RuntimeError, match='No boundary patch covers'):
+        fluid.OpenFOAMData(str(path))
+
+
+def test_openfoam_require_boundary_false_is_not_implemented_yet(tmp_path):
+    from planktos import fluid
+    path = _openfoam_manifest_without(tmp_path, 'inlet')
+    with pytest.raises(NotImplementedError, match='require_boundary=False'):
+        fluid.OpenFOAMData(str(path), require_boundary=False)
+
+
+def test_openfoam_environment_reader():
+    envir = planktos.Environment()
+    with pytest.warns(UserWarning):
+        envir.read_openfoam_vtk_data(str(OF_DIR))
+    assert np.allclose(envir.L, [1., 1., 2.])
+    assert envir.flow.fshape == (6, 6, 6, 7)
+    # the fluid is reachable through the normal Environment interface, and
+    # reads back (u, v, w) = (t, x, t*z) at an interior point
+    got = envir.interpolate_flow(np.array([[0.5, 0.5, 1.0]]), time=2.0)
+    assert np.allclose(np.squeeze(got), [2.0, 0.5, 2.0])
 
 
 # --------------------------------------------------------------------------- #

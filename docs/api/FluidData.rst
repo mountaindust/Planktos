@@ -133,5 +133,9 @@ than directly.
     :members:
     :exclude-members: load_dumpfiles
 
+.. autoclass:: planktos.fluid.OpenFOAMData
+    :members:
+    :exclude-members: load_dumpfiles
+
 .. autoclass:: planktos.fluid.ComsolVTUData
     :members:

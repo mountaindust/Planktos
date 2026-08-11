@@ -664,6 +664,84 @@ def test_short_flow_times_is_rejected():
 
 
 # --------------------------------------------------------------------------- #
+#       OpenFOAMData end-to-end -- the finite-volume path, against files       #
+# --------------------------------------------------------------------------- #
+# The same questions as the VTK3dData block above, for the loader whose timeline
+# is the one most able to go wrong: it is built from a series index, filtered by
+# what is actually on disk, and indexed densely over the survivors. The fixture
+# declares 8 dumps and 2 are absent, so 6 remain at t = 0,1,2,3,4,6.
+#
+# The field assembles to u = t, v = x, w = t*z over the interior, so u(t) reads
+# back the simulation time and a frozen or mis-indexed timeline is obvious.
+
+OPENFOAM = str(FIXTURES / 'openfoam_min')
+
+
+def _openfoam(INUM):
+    with pytest.warns(UserWarning):     # absent dumps, uneven spacing, BC corner
+        return fluid.OpenFOAMData(OPENFOAM, INUM=INUM)
+
+
+@pytest.mark.parametrize('INUM', [None, True, 4])
+def test_openfoam_flow_times_span_the_surviving_series(INUM):
+    # The VTK3dData trap, in the form it takes here. "The whole series" means the
+    # dumps that EXIST, not the ones the index declares: building flow_times from
+    # the manifest while indexing dumps by what is on disk would put the two
+    # index spaces silently out of step.
+    fd = _openfoam(INUM)
+    assert fd.d_start == 0 and fd.d_finish == 5
+    assert len(fd.flow_times) == 6
+    assert np.allclose(fd.flow_times, [0., 1., 2., 3., 4., 6.])
+
+
+def test_openfoam_windowed_actually_slides():
+    fd = _openfoam(4)
+    assert isinstance(fd._flow[0], fluid.LinearSpline)
+    assert fd._flow[0].extrapolate == (True, False)
+    assert fd.loaded_idx_bnds == (0, 4)
+    assert len(fd._flow[0].x) == 5          # the window, not all 6
+    fd(6.0)
+    assert fd.loaded_idx_bnds[1] == 5       # it really moved
+
+
+def test_openfoam_windowed_does_not_freeze_at_the_end_of_the_first_window():
+    # u = t over the interior, so a frozen fluid reports the last time of the
+    # opening window forever.
+    fd = _openfoam(4)
+    for q in (0.0, 2.0, 4.0, 4.5, 6.0):
+        assert np.allclose(fd(q)[0][1:-1, 1:-1, 1:-1], q)
+
+
+def test_openfoam_windowed_matches_full_load():
+    dyn = _openfoam(4)
+    full = _openfoam(True)
+    for q in np.linspace(0.0, 6.0, 31):
+        ref = full(q)
+        assert _diff(dyn(q), ref) <= _tol(ref)
+
+
+def test_openfoam_the_gap_is_interpolated_across_not_skipped():
+    # t=5 is missing, so the interval 4->6 is twice as wide. The timeline must
+    # still be in simulation time: a loader that indexed by dump position would
+    # put the last dump at t=5 and shift everything after the hole.
+    fd = _openfoam(4)
+    assert np.allclose(fd(6.0)[0][1:-1, 1:-1, 1:-1], 6.0)
+    # halfway across the wide interval, linear in time
+    assert np.allclose(fd(5.0)[0][1:-1, 1:-1, 1:-1], 5.0)
+
+
+def test_openfoam_boundary_data_follows_the_timestep():
+    # The caps carry real data that varies in time, so each dump must read its
+    # own patch files rather than the ones resolved when the mesh was built.
+    fd = _openfoam(4)
+    for q in (1.0, 6.0):
+        u, _, w = fd(q)
+        assert np.allclose(u[1:-1, 1:-1, 0], q)     # inlet cap
+        assert np.allclose(u[1:-1, 1:-1, -1], q)    # outlet cap
+        assert np.allclose(w[1:-1, 1:-1, -1], q*2.0)
+
+
+# --------------------------------------------------------------------------- #
 #        IB2dData end-to-end -- the 2D reference path, against real files       #
 # --------------------------------------------------------------------------- #
 # 2D IB2d is the dynamic-loading path that has actually been exercised by hand,

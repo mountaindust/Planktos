@@ -4,7 +4,7 @@
 (a sliding window of timesteps) instead of holding the whole dataset in memory, so
 that large 3D time-varying flows (~100 GB raw, larger once splined) can be used.
 
-**Current state (2026-08-10).** The architecture is built and the API has settled —
+**Current state (2026-08-11).** The architecture is built and the API has settled —
 all fluid data is a `FluidData` object (`planktos/fluid.py`). Dynamic windowed
 loading works and is tested in **both** 2D and 3D against committed fixtures.
 Temporal interpolation of dynamically-loaded data is **linear in time**
@@ -12,7 +12,7 @@ Temporal interpolation of dynamically-loaded data is **linear in time**
 (`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
 story.
 
-**Suite is green: 551 passed / 22 skipped (`pytest`), 571 passed / 2 skipped
+**Suite is green: 570 passed / 22 skipped (`pytest`), 590 passed / 2 skipped
 (`pytest --runslow`).** No failures, no xfails.
 
 **What is done:**
@@ -29,9 +29,11 @@ story.
 
 **Where the work goes next, in priority order:**
 
-1. **Phase 2 — 3D dynamic loading against the real OpenFOAM dataset.** This is the
-   branch's remaining reason to exist and it blocks 3D moving boundaries. The
-   dataset is staged; the task is a **loader**, not data prep. See Phase 2.
+1. **Phase 2 — 3D dynamic loading against the real OpenFOAM dataset.** The **loader is
+   done** (2026-08-11) and the real dataset loads, streams and drives agents. What
+   remains is the validation work under "Then, once it loads" — re-running the Phase 1
+   (A)–(D) equivalents on 3D data, the memory profiling that is the branch's headline
+   claim, and the interpolation-error re-measurement.
 2. **Note §8 steps 3–4** (recorder + derived-quantity cache) — explicitly **due a
    re-evaluation before being built**, since steps 1–2 removed most of the cost they
    were designed for. Step 5 (prose pass) follows whatever is decided.
@@ -481,7 +483,7 @@ It was originally written into the gitignored data directory and was therefore
 untracked; moved into `docs/notes/` 2026-08-10. §7 of that note is the loader work
 list — it is not restated here.
 
-### The real work: a loader for this format 🔴
+### The real work: a loader for this format ✅ COMPLETE (2026-08-11)
 
 Nothing in `planktos` read it before 2026-08-10. `VTK3dData` reads *legacy* rectilinear
 vtk; `ComsolVTUData` reads a single `.vtu` holding all times. This data is a
@@ -507,9 +509,31 @@ Verified against the real 1.5 GB dataset during development; per the decision th
 data lives on one machine, **no permanent test depends on it.** Full loader details in
 note §7.
 
-**Step 2 — `OpenFOAMData(FluidData)` in `fluid.py`** — the permutation, the boundary
-splice, the gap policy, and `flow_times`. Not started; everything unchecked below is
-its work.
+**Step 2 of 2 — `OpenFOAMData(FluidData)` + `Environment.read_openfoam_vtk_data` — ✅
+DONE (2026-08-11).** The real dataset loads, streams, and drives agents: 17 dumps,
+`fshape (17, 68, 68, 180)`, `L = [0.1, 0.1, 0.268]` — the true domain, not the
+half-cell-short 0.0985 x 0.0985 x 0.2665 raw cell centers report. Construction with
+`INUM=4` takes 5.8 s; a full sweep with three window slides 12.2 s; 200 agents over
+20 steps ran with none lost and a finite material derivative. 19 tests
+(`test_io_loaders.py` for ingestion, `test_dynamic_loading.py` for the timeline and
+the slide), all closed-form against the fixture.
+
+Three implementation notes worth keeping:
+
+- **Dump numbers are a dense 0-based index over the dumps that exist**, not the numbers
+  in the directory names. This is forced, not chosen: `update_spline` does index
+  arithmetic on `d_start`/`d_finish` (`d_start = loaded_dump_bnds[1]+1`, and so on), so
+  dump numbers must step by one in lockstep with `flow_times`. OpenFOAM's (787, 800, …
+  1034, with holes) are neither. Indexing the survivors makes the `FluidData` guard hold
+  by construction and needs no change to `update_spline`.
+- **Faces are identified geometrically, not by patch name.** Each is decided by which
+  interior axis range its cells fall outside of. So one file holding four planes
+  (`walls.vtp`) splits correctly, case-specific names (`inlet`/`outlet`/`walls`) do not
+  leak into the loader, and a future flow tank whose top is not a wall works unchanged.
+  Every face carries its own patch data rather than an assumed no-slip zero.
+- **The mesh is assumed static across the series** (verified for this dataset: the point
+  arrays are bit-identical). Only a differing cell *count* is caught; a same-count
+  reordering would pass silently. See the robustness list below.
 
 Four things make it more than a format swap (all detailed in the note):
 
@@ -519,15 +543,24 @@ Four things make it more than a format swap (all detailed in the note):
   (hexahedron **corners**, the wrong lattice). Written as a **new** function rather
   than an edit to `read_vtu_Unstructured_Grid_Points_FEM` as originally planned —
   that one is live for `ComsolVTUData`, which wants point data on FEM corner points.
-- [ ] **Cell ordering is not lexicographic.** A bare `.reshape((66,66,178))` silently
-  scrambles the field. A permutation index is required — built by snapping coordinates
-  to an integer lattice, **not** by `lexsort` on raw floats, which fails on float32
-  roundoff. Computed **once**, since the mesh is static.
-  - ⚠️ **`np.unique` is unusable here too, not just `lexsort`** — measured through the
-    new reader: the float64 cell centers show **79 distinct y-levels where 66 exist**.
-    Snapping recovers 66/66/178 exactly (max deviation 8.5e-7 of a cell in x/y, 8.0e-6
-    in z). Note §2.
-- [ ] **Cell centers are inset half a cell**, so raw centers report the domain as
+- [x] **Cell ordering is not lexicographic.** A bare `.reshape((66,66,178))` silently
+  scrambles the field. Handled by `OpenFOAMData._build_lattice`, computed **once** since
+  the mesh is static.
+  - Built by **clustering** each coordinate into levels, not by the note's
+    `np.rint((x-min)/dx)`: rint needs `dx`, i.e. a *uniform* lattice, whereas Planktos
+    assumes only *rectilinear* — and the assembled grid stops being uniform the moment
+    the boundary patches are spliced on. Robust across `rel_tol` from 1e-3 to 1e-8 on
+    the real data (roundoff sits ~1e-8 below, true spacing ~5.6e-3 above).
+  - ⚠️ **`np.unique` is unusable here too, not just `lexsort`** — the float64 cell
+    centers show **79 distinct y-levels where 66 exist**. But the *values* are exact:
+    a level holds at most 8 distinct float64s spanning 7.6e-19, which is **5e-16 of a
+    cell width**, and mean/first/min all reproduce an independently-written boundary
+    patch's lattice bit-for-bit. What `np.unique` gets wrong is the grouping, not the
+    coordinates. Note §2.
+  - The completeness check — the linear index must be a permutation of `arange` — is
+    what verifies Planktos' rectilinear-grid assumption for a given dataset. It is
+    total: it fails on a missing cell, a duplicate, refinement, or any non-tensor mesh.
+- [x] **Cell centers are inset half a cell**, so raw centers report the domain as
   0.0985 × 0.0985 × 0.2665 instead of the true 0.1 × 0.1 × 0.268. The `.vtp` boundary
   patches close this **exactly**: `inlet`/`outlet` carry real data on the identical x/y
   lattice, `walls` is exactly zero (no-slip) and can simply be padded. Assembly is
@@ -548,47 +581,62 @@ geometry that never changes. Going through `vtkXMLUnstructuredGridReader` re-rea
 arrays / parse the `U` `DataArray` directly / one-time `.npy` preprocess).
 **Get the VTK path correct first; treat this as an optimization.**
 
-- [ ] 🔴 **The loader must tolerate missing *metadata* files, not just missing dumps.**
-  Fluid data arrives from collaborators through a pipeline nobody remembers choosing
-  last time, so which index/manifest layer is present varies between deliveries. The
-  three `_dataio` readers were deliberately built as independent functions so this
-  degradation can be a chain of fallbacks in `FluidData` rather than a rewrite:
-
-  | Missing | Fallback |
-  |---|---|
-  | `.vtm.series` | glob the `.vtm` files; take each time from its `TimeValue` |
-  | `.vtm` manifests too | glob the dump directories; read `TimeValue` from `internal.vtu` |
-  | all time info | warn, assume unit steps (the `VTK3dData._read_all_times` precedent) |
-  | boundary `.vtp` patches | interior only, and say so — the domain is then a half cell short in every direction, which is the failure the `center_cell_regrid` docstring describes |
-
-  Sort order is the trap in the glob paths: dump directories are named with unpadded
-  numbers (`case08_alpha2_1e8_787`, `..._1008`), so a lexical sort puts 1008 before
-  787. Parse the number and sort numerically. Warn about **which** fallback was taken —
-  silently accepting a degraded timeline is the `VTK3dData` frozen-fluid bug's shape.
-- [ ] 🔴 **The loader must tolerate a dump series with holes — warn, do not fail.**
+- [x] ✅ **The loader tolerates a dump series with holes — warns, does not fail.**
   4 of 21 timesteps in this dataset are missing (t = 9.0, 9.375, 9.75, 10.0): the
   `.vtm` manifests exist but the directories they name do not, a truncated transfer.
-  17 are present, confirmed 2026-08-10. **Decision: work with the data as-is** rather
-  than waiting on a re-send, and treat gap tolerance as a loader requirement in its
-  own right — truncated or interrupted exports are normal in practice.
+  **Decision was to work with the data as-is** and treat gap tolerance as a loader
+  requirement in its own right — truncated or interrupted exports are normal.
+  As built: existence resolved **eagerly at construction** (never at the window slide
+  that needs it, which under streaming would land arbitrarily deep into a run); one
+  warning naming the missing times and the count; `flow_times` and the dump index built
+  **densely over the survivors**; and a **separate** warning about the resulting uneven
+  spacing, naming where it widens, since interpolation error scales with the dump
+  interval (Phase 1 (C)). Confirmed on the real data: 17 dumps kept, the three widened
+  intervals correctly identified.
+  - ⚠️ The `flow_times`-must-span-the-whole-series guard reads "whole series" as **the
+    dumps that exist**, not the set the index declares. Pinned by
+    `test_openfoam_flow_times_span_the_surviving_series`.
 
-  Requirements:
-  - **Resolve which dumps actually exist eagerly, at construction**, when the
-    timeline is built. Do *not* discover a missing file at the window slide that
-    needs it. Under dynamic loading that raise could land hours into a long run,
-    which is the worst possible time for it and exactly what streaming makes likely.
-  - **Warn once**, naming the missing times and how many were dropped. Silence here
-    would be worse than the failure: the run completes and nothing indicates the
-    timeline has holes.
-  - **Build `flow_times` and the dump index over the present dumps only**, densely.
-    Then `d_start`/`d_finish` index the surviving series, `load_dumpfiles` is never
-    handed a filename that is not there, and everything downstream is unchanged. The
-    only visible effect is a wider interval between two adjacent entries.
-  - **Warn separately about the resulting non-uniform spacing.** Interpolation error
-    scales with the dump interval (Phase 1 (C)), so a 0.125 s series with a 0.5 s hole
-    is measurably worse across that hole and the user should know where.
-  - ⚠️ Interacts with the `flow_times`-must-span-the-whole-series guard below: the
-    "whole series" is the set of dumps that exist, not the set the manifest declares.
+### Robustness follow-ups — deliberately deferred 🟡
+
+**Decision (2026-08-11): get it working for the data we have, then write fallbacks.**
+Only gap tolerance was built up front, because our dataset is truncated. Everything
+below is speculative until a delivery actually exhibits it — fallbacks written against
+input nobody has sent tend to be wrong when the input finally arrives. The three
+`_dataio` readers are independent functions specifically so these can be a chain of
+fallbacks rather than a rewrite.
+
+- [ ] **Missing `.vtm.series`** → glob the `.vtm` files; take each time from its
+  `TimeValue`.
+- [ ] **Missing `.vtm` manifests too** → glob the dump directories; read `TimeValue`
+  from `internal.vtu`. ⚠️ Sort **numerically**: directories are named with unpadded
+  numbers (`case08_alpha2_1e8_787`, `..._1008`), so a lexical sort puts 1008 before 787.
+- [ ] **No time information anywhere** → warn, assume unit steps (the
+  `VTK3dData._read_all_times` precedent).
+- [ ] **`require_boundary=False`** → currently raises `NotImplementedError`. The
+  intended behavior is to restore `center_cell_regrid` (commented out at the bottom of
+  `fluid.py`) to regrid the cell-centered data out to the domain edge, with a warning.
+  Note that function is documented as not robust to rectilinear grids, which is exactly
+  what this loader produces.
+- [ ] **Per-dump mesh verification.** The mesh is assumed static across the series and
+  the permutation is built once. A differing cell *count* raises with a clear message;
+  a same-count reordering (a series stitched from two runs, a corrupt file) would pass
+  silently. An opt-in re-read of the cell coordinates per dump costs ~7%.
+- [ ] **Surface the stored `vorticity`** instead of regenerating it. Exports usually
+  ship it; `_dataio.read_vtkxml_cell_data(arrays=...)` already reads it on request. The
+  work is on the `FluidData`/`get_vorticity` side — deciding where stored derived
+  fields live and when they are preferred — not on the reader.
+- [ ] **Whichever fallback is taken, say so.** Silently accepting a degraded timeline is
+  the shape of the `VTK3dData` frozen-fluid bug.
+- [ ] **Boundary-condition corners.** Where two faces meet, the 12 edges and 8 corners
+  appear in no patch file and are filled from the adjoining faces — averaged, with a
+  warning when they disagree. The real dataset **does** disagree there: the inlet ring
+  is exactly zero at every phase, but the *outlet* is an outflow BC that does not impose
+  no-slip, so its ring runs to ~7e-4 against the walls' 0 (~10% of local peak speed,
+  over 272 of 832,320 cells). Physically the wall should win, since the wall is no-slip
+  along its whole length — but knowing that requires the BC types, which the VTK export
+  does not carry. Revisit if the artifact ever matters; a `bc_corner` policy argument is
+  the obvious shape.
 
 ### Already fixed ahead of the real data ✅
 

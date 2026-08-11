@@ -517,7 +517,7 @@ def read_vtm_manifest(filename):
 
 
 
-def read_vtkxml_cell_data(filename, arrays=('U',), cell_centers=True):
+def read_vtkxml_cell_data(filename, arrays=('U',), load_cell_coordinates=True):
     '''Read cell data, and the cell-center lattice it lives on, from a VTK XML
     unstructured grid (``.vtu``) or polydata (``.vtp``) file.
 
@@ -541,14 +541,14 @@ def read_vtkxml_cell_data(filename, arrays=('U',), cell_centers=True):
         names of the cell data arrays to read. Any other array present in the
         file is deselected before reading. A requested name that the file does
         not carry warns and is absent from the result. If None, read everything.
-    cell_centers : bool, default=True
-        whether to compute and return the cell centers. Skip it when the mesh is
-        known to be static and the lattice has already been established from an
-        earlier file in the series.
+    load_cell_coordinates : bool, default=True
+        whether to compute and return the coordinates of the cell centers. Skip
+        it when the mesh is known to be static and the lattice has already been
+        established from an earlier file in the series.
 
     Returns
     -------
-    centers : Nx3 ndarray, or None if cell_centers is False
+    centers : Nx3 ndarray, or None if load_cell_coordinates is False
         center of each cell, in the file's own cell order -- which is not
         necessarily lexicographic in the coordinates, even for a grid-like mesh
     data : dict of ndarray, keyed by array name
@@ -601,7 +601,7 @@ def read_vtkxml_cell_data(filename, arrays=('U',), cell_centers=True):
         data[name] = numpy_support.vtk_to_numpy(vtkcell_data.GetArray(n))
 
     # Get the cell centers, which are the points this data is specified at
-    if cell_centers:
+    if load_cell_coordinates:
         center_filter = vtk.vtkCellCenters()
         center_filter.SetInputData(vtk_data)
         center_filter.Update()

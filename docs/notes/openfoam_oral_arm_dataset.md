@@ -246,9 +246,10 @@ COMSOL packs three scalar arrays per timestep with `t=` in the name; OpenFOAM wr
 one `Nx3` vector array named `U` per file. Times come from the `.vtm.series` JSON
 (or the per-file `TimeValue` field array).
 
-### A dump series with holes must not break the loader
+### A dump series with holes must not break the loader ✅ DONE (2026-08-11)
 
-Required behavior, not an optional nicety — this dataset has three interior holes and
+Built as specified below, in `OpenFOAMData._read_series`. Required behavior, not an
+optional nicety — this dataset has three interior holes and
 one end truncation (§6), and a truncated or interrupted export is a normal thing to be
 handed:
 
@@ -310,9 +311,32 @@ Notes on the shape they landed in:
   speed win. The 51 MB of geometry dominates and this reader cannot skip it (§7,
   I/O budget).
 
-### No regridding, but a permutation
+### No regridding, but a permutation ✅ DONE (2026-08-11)
 No `LinearNDInterpolator` step is needed. The permutation of §2 is required instead,
 and since the mesh is static it is computed **once** and reused for every timestep.
+Implemented as `OpenFOAMData._build_lattice`, which **clusters** each coordinate into
+levels rather than using the `np.rint` snap suggested in §2 — rint needs `dx`, i.e. a
+uniform lattice, and the grid stops being uniform as soon as the boundary patches are
+spliced on. Its completeness check (the linear index must be a permutation of `arange`)
+is what verifies the rectilinear assumption for a given dataset.
+
+### Boundary splice ✅ DONE (2026-08-11), but not by patch name
+
+Faces are identified **geometrically** — by which interior axis range a patch's cells
+fall outside of — rather than by the names `inlet`/`outlet`/`walls`. That splits
+`walls.vtp`'s four planes correctly, keeps case-specific names out of the loader, and
+means every face carries its own data instead of an assumed no-slip zero, so a future
+case whose top is not a wall works unchanged.
+
+⚠️ **The no-slip assumption for the edges was wrong, and only half-checked.** §5 says
+the 12 edges and 8 corners "lie on no-slip walls, so filling zeros there is exact."
+Measured through the loader: the **inlet** ring is exactly zero at every phase of the
+pulse, but the **outlet** is an outflow BC that does not impose no-slip, and its
+outermost ring runs to ~7e-4 against the walls' 0 — about 10% of local peak speed, over
+272 of 832,320 cells. Edges are now filled with the average of the two adjoining faces
+and warn when they disagree. Physically the wall should win (it is no-slip along its
+whole length), but establishing that needs the BC types, which the VTK export does not
+carry.
 
 ### I/O budget — relevant to the dyload goal
 

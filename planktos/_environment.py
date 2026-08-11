@@ -1111,6 +1111,66 @@ class Environment:
 
 
 
+    def read_openfoam_vtk_data(self, path, INUM=None,
+                               periodic_dim=(False, False, False),
+                               vel_conv=None, require_boundary=True):
+        '''Reads in fluid velocity data from an OpenFOAM VTK export, as written
+        by ``foamToVTK``: a ``.vtm.series`` index naming one ``.vtm`` manifest
+        per timestep, each naming an ``internal.vtu`` of volume data plus a
+        ``.vtp`` per boundary patch. Imported times will be translated backward
+        so that the first time loaded corresponds to a Planktos environment time
+        of 0.0.
+
+        OpenFOAM is finite-volume, so the velocity is specified at cell centers
+        rather than at grid points. Those centers are inset half a cell from the
+        domain, so the boundary patches are spliced onto the six faces of the
+        interior block to recover the true domain extent. The resulting grid is
+        rectilinear but not uniform: the outermost interval in each direction is
+        half-width.
+
+        The mesh must be rectilinear, which is checked rather than assumed --
+        OpenFOAM writes an unstructured container regardless of the mesh inside
+        it, so a plain ``blockMesh`` box and a refined ``snappyHexMesh`` are not
+        distinguishable by file type. A mesh that is not a complete
+        tensor-product grid raises.
+
+        Dumps that the series index declares but which are not on disk are
+        skipped with a warning, and the timeline is built over those that remain.
+
+        If INUM (interval number) is set to an integer >= 4, then the data will
+        be dynamically loaded as needed with INUM intervals between the temporal
+        data sets available at any given time.
+
+        All environment variables will be reset.
+
+        Parameters
+        ----------
+        path : string
+            path to the directory holding the ``.vtm.series`` index (typically
+            the ``VTK`` directory foamToVTK writes), or to the index file itself
+        INUM : int > 3, True, or None (default)
+            max number of splined intervals at any one time. Must be at least 4.
+            If None, all the time-varying fluid data will be splined at once.
+            Note the number of time points needed is 1+INUM.
+        periodic_dim : list of 3 bool, default=(False, False, False)
+            True if that spatial dimension is periodic, otherwise False
+        vel_conv : float, optional
+            scalar to multiply the velocity by in order to convert units to
+            match the spatial grid units
+        require_boundary : bool, default=True
+            whether to require that a boundary patch covers each of the six
+            domain faces. Without one, the domain is short by half a cell in
+            that direction and nothing downstream can detect it, so this raises
+            by default. False is not yet implemented.
+        '''
+
+        self.flow = fluid.OpenFOAMData(path, INUM, periodic_dim, vel_conv,
+                                       require_boundary)
+        self.L = self.flow.L
+        self._reset_flow_variables()
+
+
+
     def read_comsol_vtu_data(self, filename, periodic_dim=(False, False, False),
                              res=101, linear_interp=False, vel_conv=None):
         '''Reads in vtu flow data from a single source. It is assumed this 

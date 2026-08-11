@@ -1941,6 +1941,552 @@ class ComsolVTUData(FluidData):
 
 
 
+class OpenFOAMData(FluidData):
+
+    def __init__(self, path, INUM=None, periodic_dim=(False, False, False),
+                 vel_conv=None, require_boundary=True):
+        '''Reads finite-volume fluid velocity data from an OpenFOAM VTK export
+        (the output of ``foamToVTK``) and creates a FluidData instance from it.
+
+        The export is a ``.vtm.series`` JSON index naming one ``.vtm`` manifest
+        per timestep, each of which names an ``internal.vtu`` holding the volume
+        data plus one ``.vtp`` per boundary patch. Times are read from the series
+        index and shifted so that the first dump loaded is at a Planktos
+        environment time of 0.0.
+
+        Two properties of such an export need handling, and both are done once at
+        construction because the mesh never moves:
+
+        **The data is cell data on a cell-center lattice.** OpenFOAM is
+        finite-volume, so ``U`` is specified per cell, and the cells arrive in no
+        particular order -- reshaping them without reordering scrambles the field.
+        The lattice and the reordering permutation are recovered by
+        ``_build_lattice``.
+
+        **The cell centers are inset half a cell from the domain.** Taken alone
+        they would report a domain one cell narrower than the real one in every
+        direction. The boundary patches close that gap exactly, and are spliced
+        onto the six faces of the interior block to recover the true extent.
+
+        Note that the resulting grid is rectilinear but *not* uniform: the two
+        outermost intervals in each direction are half-width, being the distance
+        from the outermost cell centers to the domain boundary.
+
+        Despite the ``vtkUnstructuredGrid`` container, the mesh is required to be
+        rectilinear -- Planktos interpolates on a tensor-product grid. That is
+        verified rather than assumed; see ``_build_lattice``.
+
+        A dump that the series index declares but which is not on disk is skipped
+        with a warning, and the timeline is built densely over the dumps that do
+        exist. A truncated or interrupted export is an ordinary thing to be
+        handed, and discovering the gap partway through a long streaming run
+        would be the worst possible moment for it.
+
+        If INUM (interval number) is set to an integer >= 4, the data will be
+        dynamically loaded as needed with INUM intervals between the temporal
+        data sets available at any given time.
+
+        Parameters
+        ----------
+        path : string
+            path to the directory holding the ``.vtm.series`` index (typically
+            the ``VTK`` directory foamToVTK writes), or to the index file itself
+        INUM : int > 3, True, or None (default)
+            max number of linearly splined intervals at any one time. If True,
+            all time-varying fluid data is linearly splined at once. If None, all
+            is cubically splined instead. Note the number of time points needed
+            is 1+INUM.
+        periodic_dim : list of 3 bool, default=(False, False, False)
+            True if that spatial dimension is periodic, otherwise False. Defaults
+            to non-periodic throughout, since a finite-volume export of this shape
+            is bounded by patches rather than by periodic images.
+        vel_conv : float, optional
+            scalar to multiply the velocity by in order to convert units to
+            match the spatial grid units
+        require_boundary : bool, default=True
+            whether to require that every one of the six domain faces is covered
+            by a boundary patch. If a face is missing, the domain would be short
+            by half a cell in that direction, shifting every coordinate in it
+            with nothing downstream able to detect the error, so this raises by
+            default. False is not yet implemented; the intended behavior is to
+            regrid the cell-centered data out to the domain edges and warn.
+        '''
+
+        ##### Parse parameters #####
+        self.path = path
+        self.vel_conv = vel_conv
+        self.require_boundary = require_boundary
+        # The boundary-condition corner warning is a property of the dataset,
+        # not of the timestep, so say it once rather than on every window slide.
+        self._warned_bc_corner = False
+        if INUM is not None and INUM is not True:
+            assert INUM > 3, 'INUM must be at least 4.'
+
+        ##### Resolve the series index and the dumps that actually exist #####
+        self._dumps, flow_times = self._read_series(path)
+        # Dump "numbers" are a dense 0-based index over the dumps that exist, NOT
+        # the numbers in the directory names (787, 800, ... 1034, which are
+        # neither consecutive nor gap-free). FluidData.update_spline does index
+        # arithmetic on d_start/d_finish -- d_start = loaded_dump_bnds[1]+1, and
+        # so on -- so dump numbers must step by one in lockstep with flow_times.
+        # Indexing the surviving series makes that true by construction, and
+        # keeps load_dumpfiles from ever being handed a filename that is absent.
+        self.d_start = 0
+        self.d_finish = len(self._dumps) - 1
+
+        ##### Establish the grid, once: the mesh does not move #####
+        print('Reading OpenFOAM mesh...')
+        self._build_grid(self._dumps[0])
+
+        ##### Load fluid data #####
+        print('Reading OpenFOAM fluid data...')
+        if flow_times is None:
+            # Single dump: time-invariant flow.
+            flow = [f[0] for f in self.load_dumpfiles(0, 0)]
+        elif INUM is None or INUM is True:
+            flow = self.load_dumpfiles(self.d_start, self.d_finish)
+        else:
+            flow = self.load_dumpfiles(self.d_start, self.d_start+INUM)
+            # record the inclusive bounds of the starting dump numbers to be used
+            self.loaded_dump_bnds = (self.d_start, self.d_start+INUM)
+            # same, but based off of zero to correspond with flow_times indices
+            self.loaded_idx_bnds = (0, INUM)
+        print('Done!')
+
+        # shift domain to quadrant 1
+        mesh = self._grid
+        flow_points = tuple(m - m[0] for m in mesh)
+        fluid_domain_LLC = tuple(m[0] for m in mesh)
+        # The boundary splice above is what makes this true: the spatial grid
+        # includes all domain boundaries.
+        self.L = [fp[-1] for fp in flow_points]
+
+        super().__init__(flow, flow_points, flow_times, INUM, periodic_dim,
+                         fluid_domain_LLC=fluid_domain_LLC)
+
+
+
+    def load_dumpfiles(self, d_start, d_finish):
+        '''
+        Dynamically load additional OpenFOAM data.
+
+        d_start and d_finish are inclusive indices into the series of dumps that
+        exist on disk, not the dump numbers in the directory names.
+        '''
+        flow = [[], [], []]
+        for n in range(d_start, d_finish+1):
+            vel = self._read_dump(self._dumps[n])
+            for dim in range(3):
+                flow[dim].append(vel[..., dim])
+        flow = [np.array(f) for f in flow]
+
+        if self.vel_conv is not None:
+            for ii, d in enumerate(flow):
+                flow[ii] = d*self.vel_conv
+        return flow
+
+
+
+    def _read_series(self, path):
+        '''Resolve the series index and work out which of its dumps are present.
+
+        Returns
+        -------
+        dumps : list of dict
+            the resolved {dataset name: path} manifest of each dump that exists,
+            in time order
+        flow_times : ndarray of floats, or None if there is only one dump
+            time of each entry of dumps, shifted so the first is 0.0
+        '''
+
+        path = Path(path)
+        if path.is_dir():
+            found = sorted(path.glob('*.vtm.series'))
+            if len(found) == 0:
+                raise FileNotFoundError(
+                    "No .vtm.series index found in {}. ".format(str(path))+
+                    "Expected the VTK directory written by foamToVTK.")
+            if len(found) > 1:
+                raise RuntimeError(
+                    "Found {} .vtm.series indices in {}: {}. Pass the one to "
+                    "read.".format(len(found), str(path),
+                                   [f.name for f in found]))
+            series = found[0]
+        elif path.is_file():
+            series = path
+        else:
+            raise FileNotFoundError("{} not found!".format(str(path)))
+        self.series_path = series
+
+        files, times = _dataio.read_vtm_series(series)
+
+        ##### Resolve which dumps actually exist, eagerly #####
+        # Eagerly, at construction, rather than at the window slide that needs a
+        # missing file: under dynamic loading that raise lands arbitrarily deep
+        # into a run, which is the worst possible moment and exactly what
+        # streaming makes likely.
+        def _fmt(t):
+            return 'unknown' if t is None or np.isnan(t) else '{:g}'.format(t)
+
+        dumps = []; keep_times = []; missing = []
+        for f, t in zip(files, times):
+            if not f.is_file():
+                missing.append(_fmt(t))
+                continue
+            datasets, mtime = _dataio.read_vtm_manifest(f)
+            if 'internal' not in datasets:
+                raise RuntimeError(
+                    "Manifest {} names no 'internal' dataset. Expected the "
+                    "volume data written by foamToVTK.".format(f.name))
+            # The series index is the primary time source; fall back to the
+            # manifest's own TimeValue for an entry it failed to describe.
+            dtime = mtime if np.isnan(t) else t
+            if not datasets['internal'].is_file():
+                missing.append(_fmt(dtime))
+                continue
+            dumps.append(datasets)
+            keep_times.append(dtime)
+
+        if len(dumps) == 0:
+            raise FileNotFoundError(
+                "None of the {} dumps declared by {} are present on "
+                "disk.".format(len(files), series.name))
+
+        if len(missing) > 0:
+            # Warn rather than fail: a truncated or interrupted export is normal.
+            # But warn loudly -- silence here would be worse than the failure,
+            # since the run would complete with nothing indicating that the
+            # timeline is not the one the index declared.
+            warnings.warn(
+                "{} of {} dumps declared by {} are not on disk and have been "
+                "skipped: t = {}. The timeline is built over the {} dumps that "
+                "remain.".format(len(missing), len(files), series.name,
+                                 ', '.join(missing), len(dumps)), UserWarning)
+
+        if None in keep_times:
+            raise RuntimeError(
+                "No time information for at least one dump in {}: the series "
+                "index gave none and the manifest carries no TimeValue.".format(
+                    series.name))
+
+        if len(dumps) == 1:
+            return dumps, None
+
+        flow_times = np.array(keep_times, dtype=float)
+        # shift so that the first dump loaded corresponds to environment time 0
+        flow_times = flow_times - flow_times[0]
+
+        ##### Warn about non-uniform spacing left behind by any gaps #####
+        # Interpolation error scales with the dump interval, so a series with a
+        # hole is measurably worse across that hole and the user should be told
+        # where, separately from being told which dumps are absent.
+        dt = np.diff(flow_times)
+        if not np.allclose(dt, dt[0], rtol=1e-6):
+            wide = np.nonzero(dt > dt.min()*(1+1e-6))[0]
+            warnings.warn(
+                "Dump times are not evenly spaced: intervals range from {:g} to "
+                "{:g}. Temporal interpolation is less accurate across the wider "
+                "ones, which begin at t = {}.".format(
+                    dt.min(), dt.max(),
+                    ', '.join('{:g}'.format(flow_times[i]) for i in wide)),
+                UserWarning)
+
+        return dumps, flow_times
+
+
+
+    @staticmethod
+    def _cluster_axis(v, rel_tol=1e-5):
+        '''Group the values of one coordinate into the levels of a grid axis.
+
+        The cells of an unstructured export arrive in no particular order, so the
+        grid has to be recovered from the coordinates themselves: this returns
+        the sorted coordinate of each level and the level index of each cell.
+
+        Grouping, not averaging, is the point. The coordinates are exact -- what
+        is not available is the knowledge of which cells share a level. Sorting
+        and splitting at gaps supplies it. A level's coordinate is then taken as
+        the mean of its members, but any member would do: measured on a real
+        775k-cell export, a level held at most 8 distinct float64 values spanning
+        7.6e-19, which is 5e-16 of a cell width, and mean/first/min all reproduce
+        the lattice of an independently-written boundary patch bit-for-bit.
+
+        That tiny spread is why np.unique cannot be used for this. It reported 79
+        levels where 66 existed on that same data -- the values are right, but
+        cells that share a level do not always land on the same float64.
+
+        rel_tol is a fraction of the axis' full span, and is not delicate: it
+        needs only to sit between the roundoff spread and the true grid spacing.
+        On the real data any value from 1e-3 to 1e-8 gave identical results.
+        '''
+
+        order = np.argsort(v, kind='stable')
+        s = v[order]
+        tol = (s[-1] - s[0])*rel_tol
+        brk = np.nonzero(np.diff(s) > tol)[0]
+        starts = np.concatenate(([0], brk+1))
+        ends = np.concatenate((brk+1, [len(s)]))
+
+        vals = np.array([s[a:b].mean() for a, b in zip(starts, ends)])
+        lvl = np.empty(len(v), dtype=np.int64)
+        for k, (a, b) in enumerate(zip(starts, ends)):
+            lvl[order[a:b]] = k
+        return vals, lvl
+
+
+
+    def _build_lattice(self, centers, axes=(0, 1, 2)):
+        '''Recover a rectilinear grid, and the cell ordering, from cell centers.
+
+        Parameters
+        ----------
+        centers : Nx3 ndarray
+            cell center coordinates, in the order the file stores them
+        axes : tuple of int
+            which spatial axes the cells vary over. Two axes for a boundary
+            patch, which is planar in the third.
+
+        Returns
+        -------
+        grid : list of 1D ndarray
+            coordinates along each axis in axes
+        perm : ndarray of int
+            ordering such that ``field[perm].reshape(shape)`` is indexed by the
+            axes in order, each increasing with its coordinate
+        shape : tuple of int
+
+        Raises
+        ------
+        ValueError
+            if the cells do not form a complete tensor-product grid. This is the
+            check that Planktos' rectilinear-grid assumption actually holds for
+            the dataset in hand -- an unstructured container says nothing about
+            the mesh inside it, so it is verified rather than assumed. Requiring
+            the linear index to be a permutation of arange is total: it fails on
+            a missing cell, a duplicated one, refinement, or any non-tensor mesh.
+        '''
+
+        grid = []; idx = []
+        for d in axes:
+            vals, lvl = self._cluster_axis(centers[:, d])
+            grid.append(vals); idx.append(lvl)
+        shape = tuple(len(g) for g in grid)
+
+        lin = np.zeros(len(centers), dtype=np.int64)
+        for k in range(len(axes)):
+            lin = lin*shape[k] + idx[k]
+
+        total = int(np.prod(shape))
+        if len(centers) != total or \
+                not np.array_equal(np.sort(lin), np.arange(total)):
+            raise ValueError(
+                "Fluid data is not on a rectilinear grid: {} cells do not form "
+                "a complete {} lattice. Planktos interpolates on a "
+                "tensor-product grid, so a refined or genuinely unstructured "
+                "mesh must be resampled before it can be read.".format(
+                    len(centers), ' x '.join(str(s) for s in shape)))
+
+        return grid, np.argsort(lin), shape
+
+
+
+    def _build_grid(self, datasets):
+        '''Establish the spatial grid and every reordering the loader will need.
+
+        Done once, from one dump, because the mesh does not move -- the point
+        coordinates of an OpenFOAM export are written redundantly into every
+        timestep but are bit-identical across them. Only field arrays are read
+        thereafter.
+
+        Sets ``_grid`` (the assembled coordinate arrays, boundary included),
+        ``_perm``/``_shape`` for the interior, and ``_faces``, which says where
+        each of the six domain faces gets its data.
+        '''
+
+        ##### Interior #####
+        centers, _, _ = _dataio.read_vtkxml_cell_data(datasets['internal'],
+                                                      arrays=())
+        interior, self._perm, self._shape = self._build_lattice(centers)
+
+        ##### Boundary patches #####
+        # Faces are identified by geometry, not by patch name. A patch file may
+        # hold several faces (foamToVTK writes all four lateral walls into one
+        # walls.vtp), and names are case-specific -- inlet/outlet/walls here,
+        # something else in the next export. Which face a cell belongs to is
+        # decided by which interior axis range it falls outside of.
+        self._faces = {}
+        for name, fname in datasets.items():
+            if name == 'internal':
+                continue
+            pcenters, _, _ = _dataio.read_vtkxml_cell_data(fname, arrays=())
+            # For each axis, is this cell outside the interior cell-center range?
+            outside = np.stack(
+                [np.where(pcenters[:, d] < interior[d][0], 0,
+                          np.where(pcenters[:, d] > interior[d][-1], 1, -1))
+                 for d in range(3)], axis=1)
+            n_out = (outside >= 0).sum(axis=1)
+            if np.any(n_out != 1):
+                raise RuntimeError(
+                    "Boundary patch '{}' has {} cells that do not lie on "
+                    "exactly one domain face. A patch is expected to be planar "
+                    "and to sit just outside the interior cell centers.".format(
+                        name, int((n_out != 1).sum())))
+            for d in range(3):
+                for side in (0, 1):
+                    sel = np.nonzero(outside[:, d] == side)[0]
+                    if len(sel) == 0:
+                        continue
+                    tan = tuple(a for a in range(3) if a != d)
+                    fgrid, fperm, fshape = self._build_lattice(pcenters[sel],
+                                                               axes=tan)
+                    # The patch has to sit on the interior's own in-plane
+                    # lattice, or it could not be spliced on without resampling.
+                    for k, a in enumerate(tan):
+                        if len(fgrid[k]) != len(interior[a]) or \
+                                not np.allclose(fgrid[k], interior[a]):
+                            raise RuntimeError(
+                                "Boundary patch '{}' does not share the "
+                                "interior grid in the {} direction, so it "
+                                "cannot be spliced on.".format(
+                                    name, 'xyz'[a]))
+                    plane = float(pcenters[sel, d].mean())
+                    if (d, side) in self._faces:
+                        raise RuntimeError(
+                            "Two boundary patches cover the {} face of the "
+                            "domain.".format('xyz'[d]+'-+'[side]))
+                    # Keyed by dataset NAME, not by the path it resolved to in
+                    # this dump: the patch geometry is fixed but its data varies
+                    # in time, so each timestep must read its own file. sel[fperm]
+                    # is a single index array doing selection and reordering at
+                    # once, so a timestep's read is one fancy-index and a reshape.
+                    self._faces[(d, side)] = (name, sel[fperm], fshape, plane)
+
+        missing = [(d, side) for d in range(3) for side in (0, 1)
+                   if (d, side) not in self._faces]
+        if len(missing) > 0:
+            names = ', '.join('{}{}'.format('xyz'[d], '-+'[s])
+                              for d, s in missing)
+            if self.require_boundary:
+                raise RuntimeError(
+                    "No boundary patch covers the {} face(s) of the "
+                    "domain. Cell centers are inset half a cell, so without "
+                    "them the domain would be reported short by half a cell "
+                    "there, shifting every coordinate in it with nothing "
+                    "downstream able to detect it. Pass require_boundary=False "
+                    "once regridding to the domain edge is implemented.".format(
+                        names))
+            raise NotImplementedError(
+                "require_boundary=False is not implemented yet. Recovering the "
+                "domain edge without a boundary patch means regridding the "
+                "cell-centered data outward, which is planned but not built; "
+                "the {} face(s) have no patch.".format(names))
+
+        ##### Assemble the grid coordinates #####
+        self._grid = []
+        for d in range(3):
+            self._grid.append(np.concatenate((
+                [self._faces[(d, 0)][3]], interior[d],
+                [self._faces[(d, 1)][3]])))
+            if not np.all(np.diff(self._grid[-1]) > 0):
+                raise RuntimeError(
+                    "Boundary patches for the {} direction do not lie outside "
+                    "the interior cell centers.".format('xyz'[d]))
+
+
+
+    def _read_dump(self, datasets, atol=1e-12):
+        '''Read one timestep and assemble it onto the full domain grid.
+
+        Returns an (nx+2, ny+2, nz+2, 3) array: the interior block surrounded by
+        a shell of boundary values.
+
+        The shell is filled in three stages, because the patch files cover the
+        six faces but not the lines and points where faces meet. An edge cell of
+        the assembled grid lies on two faces at once and appears in neither
+        patch; it is filled from the two faces that meet there, and a corner from
+        the three edges. Where the two sides disagree the fill is a compromise
+        and says so -- that is a genuine discontinuity in the boundary
+        conditions, e.g. an inlet running into a no-slip wall.
+        '''
+
+        nx, ny, nz = self._shape
+        vel = np.zeros((nx+2, ny+2, nz+2, 3))
+
+        _, data, _ = _dataio.read_vtkxml_cell_data(
+            datasets['internal'], arrays=('U',), load_cell_coordinates=False)
+        U = data['U']
+        if len(U) != nx*ny*nz:
+            raise RuntimeError(
+                "{} has {} cells; the mesh established from the first dump has "
+                "{}. The mesh is assumed not to change across the "
+                "series.".format(datasets['internal'].name, len(U), nx*ny*nz))
+        vel[1:-1, 1:-1, 1:-1, :] = U[self._perm].reshape(nx, ny, nz, 3)
+
+        ##### Stage 1: the six faces, from the patch files #####
+        patches = {}
+        for (d, side), (name, sel, fshape, _) in self._faces.items():
+            if name not in patches:
+                if name not in datasets:
+                    raise RuntimeError(
+                        "Dump {} has no '{}' boundary patch, but the mesh "
+                        "established from the first dump needs it for the {} "
+                        "face.".format(datasets['internal'].parent.name, name,
+                                       'xyz'[d]+'-+'[side]))
+                _, pdata, _ = _dataio.read_vtkxml_cell_data(
+                    datasets[name], arrays=('U',), load_cell_coordinates=False)
+                patches[name] = pdata['U']
+            face = patches[name][sel].reshape(*fshape, 3)
+            idx = [slice(1, -1)]*3
+            idx[d] = 0 if side == 0 else -1
+            vel[tuple(idx)] = face
+
+        ##### Stage 2: the twelve edges, from the two faces meeting there #####
+        # Each edge runs along axis c with axes a and b at their extremes. Only
+        # the interior run of it is defined by the faces; the two ends are
+        # corners, where three faces meet, and are left to stage 3.
+        disagreement = 0.
+        for a in range(3):
+            for b in range(a+1, 3):
+                for sa in (0, -1):
+                    for sb in (0, -1):
+                        idx = [slice(1, -1)]*3
+                        idx[a] = sa; idx[b] = sb
+                        # Step one cell inward along a and the point lands on
+                        # face b; step inward along b and it lands on face a.
+                        # Both were filled in stage 1.
+                        from_b = list(idx); from_b[a] = 1 if sa == 0 else -2
+                        from_a = list(idx); from_a[b] = 1 if sb == 0 else -2
+                        va = vel[tuple(from_a)]
+                        vb = vel[tuple(from_b)]
+                        vel[tuple(idx)] = 0.5*(va + vb)
+                        disagreement = max(disagreement,
+                                           float(np.abs(va-vb).max()))
+
+        ##### Stage 3: the eight corners, from the three edges meeting there ###
+        for sx in (0, -1):
+            for sy in (0, -1):
+                for sz in (0, -1):
+                    ix = 1 if sx == 0 else -2
+                    iy = 1 if sy == 0 else -2
+                    iz = 1 if sz == 0 else -2
+                    vel[sx, sy, sz, :] = (vel[ix, sy, sz, :] +
+                                          vel[sx, iy, sz, :] +
+                                          vel[sx, sy, iz, :])/3
+
+        if disagreement > atol and not self._warned_bc_corner:
+            self._warned_bc_corner = True
+            warnings.warn(
+                "Boundary patches disagree by up to {:g} where they meet along "
+                "the edges of the domain; those cells have been filled with the "
+                "average of the two faces. This is a discontinuity in the "
+                "boundary conditions themselves (an inflow meeting a no-slip "
+                "wall, say), not an error in the data.".format(disagreement),
+                UserWarning)
+
+        return vel
+
+
+
 ######## Legacy function for regridding fluid velocity data ########
 # This was in the Environment class, but is no longer used.
 # It's here in case we need to port it later.
