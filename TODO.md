@@ -971,16 +971,41 @@ section above; that is the reference for *why*, this is the reference for *what 
 | What | Where | Applies cleanly to `master`? |
 |---|---|---|
 | **Free-flight termination guards** (finding #2) — three `if not t_edge > 0: return newstartpt` / `if not t_rot > 0:` guards | `planktos/_ibc.py`, in `_project_and_slide_static` (the static free-flight release) and `_project_and_slide_moving` (the rotate-away and free-flight releases) | **Yes.** `git diff master -- planktos/_ibc.py` is *exactly* these 12 added lines, so the file is otherwise identical |
-| **Failed-step error handling** (finding #1) — the `try`/`except` around `apply_boundary_conditions` + `after_move` that appends `time_history` and sets `envir.time = None`, plus the `if self.envir.time is None` check at the top of `move()` | `planktos/_swarm.py`, `Swarm.move` only | **Yes, by hunk.** `_swarm.py` as a whole diverges heavily (~280+/141- vs master, mostly the §8 plotting work), but the two touched regions are byte-identical on `master` — its `move()` has the same `apply_boundary_conditions`/`after_move`/`time_history.append` block |
-| **Tests** — `test_failed_step_closes_histories_and_marks_the_environment`, `test_error_state_blocks_moves_until_it_is_backed_out`, and the `_wall_swarm` / `_fail_on_third_agent` helpers above them | `tests/test_swarm_lifecycle.py` | **Yes.** Both `tests/test_swarm_lifecycle.py` and `tests/_ib_harness.py` exist on `master`, including the `horizontal_wall` and `max_meshpt_dist` builders these use |
+| **Failed-step error handling** (finding #1) — the `try`/`except BaseException` around `apply_boundary_conditions` + `after_move` that appends `time_history` and sets `envir.time = None`, plus the `if self.envir.time is None` check at the top of `move()` | `planktos/_swarm.py`, `Swarm.move` only | **Yes, by hunk.** `_swarm.py` as a whole diverges heavily (~280+/141- vs master, mostly the §8 plotting work), but the two touched regions are byte-identical on `master` — its `move()` has the same `apply_boundary_conditions`/`after_move`/`time_history.append` block and no `try`/`except` of its own |
+| **Interrupt handling** (2026-08-11 follow-up) — the same `except` catches `BaseException`, so a Ctrl-C landing in the boundary-condition loop marks the state like an error does, then re-raises as itself rather than being wrapped in `RuntimeError` (an outer `except Exception` must not swallow an interrupt) | `planktos/_swarm.py`, `Swarm.move` only — same hunk as the row above | **Yes**, and it must move *with* the row above: `master` has no `try`/`except` here at all, so the two are one change |
+| **Tests** — `test_failed_step_closes_histories_and_marks_the_environment`, `test_interrupted_step_is_marked_and_the_interrupt_propagates`, `test_error_state_blocks_moves_until_it_is_backed_out`, and the `_wall_swarm` / `_fail_on_third_agent` helpers above them | `tests/test_swarm_lifecycle.py` | **Yes.** Both `tests/test_swarm_lifecycle.py` and `tests/_ib_harness.py` exist on `master`, including the `horizontal_wall` and `max_meshpt_dist` builders these use |
 
 **Corresponding `changelog.txt` lines**, currently under 1.1.0 — move these two to a
 1.0.3 section on `master` (they stay under 1.1.0 here as well, since 1.1.0 ships them
 too if no 1.0.3 happens first):
 
 ```
-- A time step that fails partway through now marks the Environment (time=None) and reports the state; move() refuses until it is restored.
+- A time step that fails or is interrupted partway through now marks the Environment (time=None) and reports the state; move() refuses until it is restored.
 - Bug fix: a sliding agent released back into free flight can no longer recurse without limit on a degenerate step.
+```
+
+**Note the commit split:** the failed-step work is all in `816e6d7`, but the interrupt
+row above is a later follow-up, so cherry-picking `816e6d7` alone leaves `except
+Exception` in place and Ctrl-C still corrupting silently. Take both.
+
+### Queued — the `move()` override guard (2026-08-11)
+
+`Swarm.__init_subclass__` warns when a subclass puts a `move` in its own namespace
+without appearing to delegate to the base (`super` or `move` in the override's
+`co_names`). Replacing `move()` silently drops history recording, boundary
+conditions, the velocity/acceleration finite difference and the time advance;
+`apply_agent_model` and `after_move` are the extension points. Warns rather than
+raises, so an existing subclass that extends-and-delegates keeps importing.
+
+| What | Where | Applies cleanly to `master`? |
+|---|---|---|
+| `__init_subclass__` inserted between the class docstring and `__init__` | `planktos/_swarm.py` | **Yes.** The anchor is byte-identical on `master` and `warnings` is already imported there |
+| **Tests** — the five in the "guard on overriding move()" section at the end of the file | `tests/test_agent_models.py` | **Yes.** The module and its `_still_envir` helper exist on `master` |
+
+**Corresponding `changelog.txt` line**, currently under 1.1.0:
+
+```
+- A Swarm subclass that replaces move() instead of apply_agent_model now warns at class definition.
 ```
 
 ### ⛔ Explicitly NOT cherry-pickable — dyload-only

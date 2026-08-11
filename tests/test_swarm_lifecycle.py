@@ -246,14 +246,14 @@ def _wall_swarm(N=6):
     return envir, swrm
 
 
-def _fail_on_third_agent(monkeypatch):
+def _fail_on_third_agent(monkeypatch, exc=RuntimeError):
     real = _ibc.apply_internal_static_BC
     calls = [0]
 
     def flaky(*args, **kwargs):
         calls[0] += 1
         if calls[0] == 3:
-            raise RuntimeError('synthetic collision failure')
+            raise exc('synthetic collision failure')
         return real(*args, **kwargs)
 
     monkeypatch.setattr(_ibc, 'apply_internal_static_BC', flaky)
@@ -278,6 +278,31 @@ def test_failed_step_closes_histories_and_marks_the_environment(monkeypatch):
 
     # the partial step itself is left alone, for inspection
     assert not np.array_equal(np.asarray(swrm.positions), np.asarray(last_good))
+
+
+def test_interrupted_step_is_marked_and_the_interrupt_propagates(monkeypatch):
+    '''Ctrl-C partway through a step leaves the same half-applied state an error
+    does, so it gets marked the same way -- but it must still arrive as a
+    KeyboardInterrupt, not wrapped into something an outer "except Exception"
+    would swallow.'''
+    envir, swrm = _wall_swarm()
+    for _ in range(2):
+        swrm.move(0.5, silent=True)
+    last_good = swrm.positions.copy()
+
+    _fail_on_third_agent(monkeypatch, exc=KeyboardInterrupt)
+    with pytest.raises(KeyboardInterrupt):
+        swrm.move(0.5, silent=True)
+    monkeypatch.undo()
+
+    assert envir.time is None
+    assert len(swrm.pos_history) == len(envir.time_history) == 3
+    assert envir.time_history[-1] == pytest.approx(1.0)
+    assert np.array_equal(np.asarray(swrm.pos_history[-1]), np.asarray(last_good))
+
+    # and the mark is enforced, exactly as on the error path
+    with pytest.raises(RuntimeError, match='error state'):
+        swrm.move(0.5, silent=True)
 
 
 def test_error_state_blocks_moves_until_it_is_backed_out(monkeypatch):

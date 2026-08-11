@@ -14,7 +14,8 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - OpenFOAM cell-centered data is reordered onto its grid and the boundary patches spliced on to recover the full domain.
 - Fluid loaders warn and carry on when a dump the time series declares is missing, rather than failing.
 - plot_all: new playback_rate (simulated seconds per second of video) sets movie speed. Defaults to 1, real time, changing existing movies.
-- A time step that fails partway through now marks the Environment (time=None) and reports the state; move() refuses until it is restored.
+- A time step that fails or is interrupted partway through now marks the Environment (time=None) and reports the state; move() refuses until it is restored.
+- A Swarm subclass that replaces move() instead of apply_agent_model now warns at class definition.
 - Plotting after a failed time step shows the recorded history and leaves the incomplete step out.
 - Bug fix: a sliding agent released back into free flight can no longer recurse without limit on a degenerate step.
 - other minor bug fixes
