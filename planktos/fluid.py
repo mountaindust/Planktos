@@ -984,8 +984,22 @@ class FluidData:
             ####### get info about what we will be loading #######
             d_start = self.loaded_dump_bnds[1]+1 # first dump to load
             idx_start = self.loaded_idx_bnds[1]-1 # first index in new spline
-            if self.loaded_dump_bnds[1]-1 + self.INUM > self.d_finish:
-                # We are at the end of the dataset.
+            if self.loaded_dump_bnds[1]-1 + self.INUM >= self.d_finish:
+                # We are at the end of the dataset. Note >=, not >: a window
+                # reaching exactly the last dump IS the final one, and used to
+                # fall through to the middle branch and be flagged
+                # extrapolate=(False, False) -- claiming there was more data to
+                # the right when there was none. Latent rather than live, since
+                # __call__ clamps to flow_times[-1] and so never asks for a time
+                # past a window that already ends there. But it made the flag
+                # dishonest for anything else reading it, and left the degenerate
+                # "slide past the end" path reachable by a direct update_spline
+                # call, where load_dumpfiles would be handed d_start > d_finish.
+                # Triggered only when the arithmetic lands exactly on the last
+                # index, which is why it survived: forward slides advance the
+                # window end by INUM-1, so with INUM=4 it needs a dump count
+                # congruent to 2 mod 3 -- 17, 20, 23... The real OpenFOAM series
+                # has 17, which is how it was finally found.
                 d_finish = self.d_finish
                 # Last valid index, matching the inclusive convention used by
                 # loaded_dump_bnds and by the middle branch below. (This was
@@ -2073,6 +2087,16 @@ class OpenFOAMData(FluidData):
         d_start and d_finish are inclusive indices into the series of dumps that
         exist on disk, not the dump numbers in the directory names.
         '''
+        if d_finish < d_start:
+            # An empty range. Reachable only from a degenerate slide past the
+            # end of the dataset; return correctly shaped empties rather than
+            # np.array([]), whose (0,) shape would fail to concatenate against
+            # the window with a message naming neither the range nor the cause.
+            # The array-slicing loaders get this shape for free from their
+            # slices; this one builds a list, so it has to be explicit.
+            empty = np.zeros((0, *(n+2 for n in self._shape)))
+            return [empty.copy() for _ in range(3)]
+
         flow = [[], [], []]
         for n in range(d_start, d_finish+1):
             vel = self._read_dump(self._dumps[n])

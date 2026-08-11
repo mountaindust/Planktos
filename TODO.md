@@ -12,7 +12,7 @@ Temporal interpolation of dynamically-loaded data is **linear in time**
 (`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
 story.
 
-**Suite is green: 570 passed / 22 skipped (`pytest`), 590 passed / 2 skipped
+**Suite is green: 585 passed / 22 skipped (`pytest`), 605 passed / 2 skipped
 (`pytest --runslow`).** No failures, no xfails.
 
 **What is done:**
@@ -399,8 +399,18 @@ in `tests/test_flow_interface.py`.
   |---|---|---|---|
   | velocity, rms err / U_rms | 1.27% | 0.54% | 2.4× |
   | ∂u/∂t, rms err / \|∂u/∂t\|_rms | 5.62% | 2.40% | 2.3× |
-  | convergence order, **median** point | 1.75 | **4.85** | — |
-  | convergence order, 99th-pct point | 1.62 | 2.40 | — |
+  | convergence order, **median** point | 1.68 | **4.75** | — |
+  | convergence order, 99th-pct point | 1.44 | 2.20 | — |
+
+  ⚠️ **The two convergence-order rows were corrected 2026-08-11** (from 1.75/4.85 and
+  1.62/2.40). The withheld set included dumps lying *past the last build point*, where
+  `FluidData` clamps and neither scheme interpolates — so both returned the same value
+  and the "error" recorded there did not scale with Δt at all. It affected only the
+  subsample factors that do not divide the series evenly (s=3, 1 sample of 99; s=6,
+  4 of 124), which is why the shift is small and the qualitative picture is unchanged.
+  **The velocity and ∂u/∂t rows never depended on it** — those are built at s=2, which
+  divides 149 evenly and was always clean. Found while building the 3D counterpart,
+  where 12 dumps made it 1 sample in 6 and it moved the ratio from 1.9× to 8.4×.
 
   - **Windowing is inert on real data too**, confirming the (A) result end to end:
     `INUM=4` vs `INUM=True` differ by 1.1e-16 (4e-17 of U_rms). So the whole question
@@ -408,8 +418,8 @@ in `tests/test_flow_interface.py`.
   - **Do not quote the 2.4× ratio on its own — it blends two regimes.** Interpolation
     error is wildly concentrated (cubic max/median = 2.4e4×), so an rms-over-everything
     ratio is set by a rough minority. Where the flow is temporally smooth, both schemes
-    hit their theoretical orders (cubic **4.85**, linear 1.75) and cubic is decisively
-    better; where it is temporally rough, both stall (2.40 / 1.62) and the gap nearly
+    hit their theoretical orders (cubic **4.75**, linear 1.68) and cubic is decisively
+    better; where it is temporally rough, both stall (2.20 / 1.44) and the gap nearly
     closes — there the *data* is the limit, not the scheme. The rough regions are not
     the immersed-boundary neighbourhood (none of the worst 1% of points lie within 8
     cells of the mesh); peak error tracks local |∂²u/∂t²|, correlation ≈0.7.
@@ -426,9 +436,12 @@ in `tests/test_flow_interface.py`.
     agree to **within 0.6%, most under 0.3%** (mean/std of x and y, mean/std of net
     displacement, and its 10th/50th/90th percentiles).
   - ⚠️ One dataset, one Δt, tracer particles, no immersed boundary in the trajectory
-    run (deliberately, to isolate the interpolation). Re-run on 3D data in Phase 2
-    before generalizing; `INUM` docs should quote the orders and the ensemble result,
-    not the bare ratio.
+    run (deliberately, to isolate the interpolation). `INUM` docs should quote the
+    orders and the ensemble result, not the bare ratio.
+  - **Re-run on real 3D data 2026-08-11** — see Phase 2, "the machinery is vetted in
+    3D". The ensemble result replicates (0.35% there vs 0.6% here); the convergence
+    orders could **not** be measured on the 3D dataset, so these remain the only
+    measured orders and the ones to quote.
 - [x] **(D) `get_dudt` under linear splining — DONE.** Pinned as a piecewise-constant,
   discontinuous finite difference: the value on each interval, the jump at a
   breakpoint, zero beyond the data bounds, and agreement with full-linear across
@@ -659,20 +672,131 @@ fallbacks rather than a rewrite.
   - **Coverage:** `tests/fixtures/vtk3d_min/` — 8 tiny rectilinear vtk dumps with `TIME`
     (`u=t, v=x, w=t*z`, so a frozen or truncated timeline is unmistakable).
 
-### Then, once it loads
+### The machinery is vetted in 3D ✅ (2026-08-11)
 
-- [ ] Re-run the Phase 1 (A)–(D) equivalents on real 3D data.
-- [ ] **Periodic × dynamic** — carried over from Phase 1; still untested in either
-  dimension. Note this dataset has walls, not periodic sides, so it may not be the
-  vehicle for it.
-- [ ] Re-check the Phase 1 (C) interpolation-error numbers on 3D data and update
-  `docs/api/FluidData.rst`, which currently carries 2D figures with that caveat stated.
-- [ ] 3D material derivative end-to-end for massive / inertial particle models.
-- [ ] **Memory profiling:** confirm RAM stays bounded to one window across a long 3D run.
-  This is the branch's headline claim and is still unmeasured on real data.
-- [ ] Un-skip / fix the IBAMR load tests on real data.
+Run by **`tests/manual/vet_dynamic_loading_3d.py`**, the 3D counterpart to
+`quantify_temporal_interp.py`, against the real 17-dump OpenFOAM export. It is
+self-documenting and reproducible; run it with no arguments, or with part numbers
+(`0 1 2 3`) to pick sections. It needs the gitignored dataset, which is why it lives in
+`tests/manual/`.
 
----
+- [x] **(A) Windowed-linear == full-linear on real 3D data.** Forward sweep, backward
+  sweep, non-monotone random access, exactly-on-node times, out-of-bounds clamping:
+  **max |diff| = 0.0 exactly** on the sweeps and the clamp, 1.2e-33 on random access,
+  5.1e-21 on-node. Holdover round-off stays at **0.0 across six alternating sweeps** —
+  it does not merely fail to accumulate, it does not arise. (2D saw 1–2 ulp.)
+- [x] **(B) Slider bookkeeping.** Window bounded to 5 samples; both index spaces agree at
+  every slide and match `flow_times`; a monotone sweep costs **4 loads / 12 dumps read**
+  for 17 dumps of data; no load when the query stays inside the window; jump-to-start is
+  **one** load; `fmin`/`fmax` stay tuples and bracket the true extrema exactly; indexing
+  a streaming object is refused.
+- [x] **(D) `get_dudt`.** Matches full linear to **0.0** across slides; constant within an
+  interval; equal to the interval finite difference to 0.0; jumps at a breakpoint.
+- [x] 🔴 **Memory profiling — the branch's headline claim, now measured.** Streaming at
+  `INUM=4` costs **+106 MB** against **340 MB** for the whole series resident — one
+  window (5 dumps x 20 MB), as designed. Flat across 122 queries spanning two full
+  sweeps (**end − ctor = −0 MB**), so nothing leaks per slide.
+- [x] **3D material derivative end to end.** `DuDt` finite and correctly shaped
+  (|DuDt| rms 9.9e-4 m/s²); an `inertial_particles` swarm runs 20 steps on streamed
+  fluid with 200/200 agents retained.
+- [x] **(C) Interpolation error re-checked on 3D data.** At the only interval a
+  withholding study can reach here (Δt = 0.25 s, subsampled from 0.125), linear is
+  **9.46%** of U_rms against cubic's **1.13%** — a **8.4× ratio**, much wider than 2D's
+  2.4×. ∂u/∂t: 10.42% vs 3.36%, ratio 3.1×.
+  - ⚠️ **The convergence orders could NOT be measured on this dataset, and the fitted
+    values it produces are meaningless.** Twelve uniform dumps allows only subsample
+    factors 2 and 3 — a Δt lever arm of 1.5×, far too short for a log-log slope — and at
+    factor 3 the cubic has just 4 knots, where not-a-knot degenerates to a single cubic
+    polynomial and comes out *worse than linear*. The script now detects both conditions
+    and says so rather than printing an order.
+  - **The underlying reason is physical and is the real finding: this export's cadence is
+    marginal.** The pulse period is 1.25 s, so Δt = 0.125 s is 10 samples per cycle and
+    the subsampled 0.25 s is 5. Neither is deep into the asymptotic regime. **Quote the
+    2D orders**; treat the 3D dataset as evidence about error *size* at a coarse cadence.
+  - **The practical answer replicates.** 512 tracers over 60 steps: rms separation 0.209%
+    of path travelled (0.001% of the domain diagonal), and ensemble statistics — mean/std
+    of each coordinate, mean/std of net displacement, its 10th/50th/90th percentiles —
+    agree to **within 0.348%**, against 0.6% in 2D.
+
+### Found by the vetting ✅
+
+- [x] **`update_spline` mislabelled the final window** (`fluid.py`). The end-of-dataset
+  test was `> d_finish` where it needed `>= d_finish`, so a window landing *exactly* on
+  the last dump fell through to the middle branch and was flagged
+  `extrapolate=(False, True)`→`(False, False)` — claiming there was more data to the
+  right when there was none. Forward slides advance the window end by `INUM-1`, so for
+  `INUM=4` it needs `len(flow_times) ≡ 2 (mod 3)`; **17 dumps lands exactly**, which is
+  why the real dataset exposed it and the fixtures never did.
+  - **Latent, not live:** `__call__` clamps to `flow_times[-1]`, so it never asks for a
+    time past a window that already ends there, and the degenerate branch stays
+    unreachable. The damage was a dishonest flag for anything else reading it.
+  - ⚠️ **The new loader had a sharper edge than the old ones here.** Had that branch been
+    reached, `load_dumpfiles` would get `d_start > d_finish`; `IB2dData`/`VTK3dData` slice
+    arrays and get a correctly-shaped `(0, …)` empty for free, but `OpenFOAMData` builds a
+    list and produced `np.array([])` of shape `(0,)`, which fails to concatenate against
+    the window with a message naming neither the range nor the cause. Now returns properly
+    shaped empties.
+  - Pinned by `test_final_window_is_flagged_as_the_end_whatever_the_dataset_length`,
+    parametrized over nt=17..21 — verified to fail at 17 and 20 without the fix.
+- [x] **A methodology bug in the withholding studies**, in the harness rather than the
+  library: the withheld set included dumps past the last build point, where `FluidData`
+  clamps and neither scheme interpolates. Corrected in both scripts; it moved the 3D
+  ratio from 1.9× to 8.4× and the 2D convergence orders slightly (see Phase 1 (C)).
+
+### A second pass over what else exercises the slider ✅ (2026-08-11)
+
+Everything above calls the `FluidData` object directly. A pass over the paths a *user*
+goes through found six that had never been run against a streaming source, all now
+pinned in `test_dynamic_loading.py` under "the slider driven through the public API".
+Each asserts the streamed answer equals the everything-in-memory answer, so a slide
+landing on the wrong dumps cannot pass. **No new defects** — the value is that these
+combinations are now locked rather than assumed.
+
+- [x] **Periodic × dynamic** — the surviving half of Phase 1 (E), untested in either
+  dimension until now. Verified in 2D and 3D, sampled at the upper grid edge where
+  wrapping decides the answer, after the window has moved off the opening one. They are
+  independent, as expected: `periodic_dim` is a property of the spatial grid and the
+  slider only ever touches the time axis. Expected, but no longer only expected.
+- [x] **A slide inside `Swarm.move()`** — the usage that actually matters, and the one
+  nothing drove before: 38 steps carry the window from (0,4) to (15,19). With diffusion
+  off, the streamed trajectory matches the resident-fluid trajectory to 1e-12.
+  - ⚠️ Needed a **gentler test field**: `_field_2d`'s `v = t²y` ejects every agent within
+    a few steps, and a test whose agents have all left the domain proves nothing about
+    the slider. `_field_gentle` exists for that.
+- [x] **`Environment.move_swarms`** — several swarms sharing one environment reload the
+  window once per slide, not once per swarm.
+- [x] **`calculate_FTLE`, forward and backward** — walks the window across the dataset,
+  and `backward=True` walks it the other way, the direction least exercised elsewhere.
+  Matches a resident fluid to 1e-10.
+- [x] **`get_vorticity(time=)`** — the `fluid='vort'` plot backdrop is the one plotting
+  path that still pulls the field (the statistics come from the mean cache), so it can
+  trigger a load.
+- [x] **`save_fluid(flow_times=True)` from a window parked at the end** — jumps back to
+  the beginning, then sweeps forward writing every dump. The strongest of these: what is
+  checked is the *bytes on disk* against a resident fluid, so a slide landing on the
+  wrong dumps shows up as wrong data rather than a wrong index.
+- [x] **The OpenFOAM loader's own mean cache and `get_dudt` across a slide**, mirroring
+  the `VTK3dData` coverage.
+- [x] **Parallel immersed boundaries × dynamic loading** — verified by hand that serial,
+  threads and processes give bit-identical results with the window sliding. **No test
+  added:** the fluid never crosses the process boundary (the pool receives collision
+  geometry, and the fluid is evaluated in `apply_agent_model` before it is used), so the
+  combination is structurally orthogonal and a slow test would buy little.
+
+### Still open
+- [x] ~~Update `docs/api/FluidData.rst` with the 3D figures.~~ **Done** — the
+  "the 3D case has not yet been characterized" caveat is replaced by the 3D result, and
+  the note now records that the orders quoted are the 2D ones because the 3D dataset
+  cannot support the fit. One conclusion changed: the old text said a coarser cadence
+  means "a smaller gap between them", but the 3D dataset is the more coarsely sampled
+  and shows the **wider** gap (8.4x vs 2.4x), so that claim is withdrawn.
+- [x] ~~Un-skip / fix the IBAMR load tests on real data.~~ **Stale item — they were
+  never skipped.** `tests/IBAMR_test_data/` (3 dumps + mesh) is **tracked in git**, and
+  the `vtk` marker's gate resolves to True because vtk is a mandatory dependency, so
+  `test_IBAMR_load_single_time`, `test_IBAMR_load_time_series` and
+  `test_unstructured_grid_points_reader` run everywhere, including CI, and pass. Note
+  the 3-dump series is too short for windowed loading (`INUM>=4` needs 5 points), so
+  that data exercises ingestion only.
 
 ## Phase 3 — 3D moving immersed boundaries 🟢 (future)
 

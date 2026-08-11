@@ -117,6 +117,24 @@ def build(idx, INUM_):
                            fpoints, t_all[idx].copy(), INUM=INUM_)
 
 
+def withheld(coarse):
+    '''The dumps left out, EXCLUDING any past the last build point.
+
+    FluidData clamps outside its time range, so a withheld dump beyond the last
+    coarse one is not interpolated by either scheme -- both return the last build
+    point's raw values, identically. Scoring that as interpolation error inflates
+    both by the same amount, which flatters linear, and its error does not scale
+    with the dump interval at all, so it corrupts the convergence fit. Affects
+    only the subsample factors that do not divide the series evenly: here s=3
+    (1 sample of 99) and s=6 (4 of 124); s=2 and s=4 were always clean, so the
+    Part 1 headline numbers never depended on this.''' + '''
+    Found while building the 3D counterpart (tests/manual/vet_dynamic_loading_3d.py),
+    where 12 dumps made it 1 sample in 6 and it moved the ratio from 1.9x to 8.4x.
+    '''
+    held = np.setdiff1d(np.arange(len(t_all)), coarse)
+    return held[held < coarse[-1]]
+
+
 # --------------------------------------------------------------------------- #
 #      Part 0 -- the reduction: windowed-linear == full-linear on real data    #
 # --------------------------------------------------------------------------- #
@@ -138,7 +156,7 @@ print('=> windowing contributes nothing; the rest of this is linear vs cubic.')
 
 banner('PART 1 -- velocity error vs withheld dumps (built on every 2nd dump)')
 coarse = np.arange(0, len(t_all), 2)
-held = np.setdiff1d(np.arange(len(t_all)), coarse)
+held = withheld(coarse)
 lin, cub = build(coarse, True), build(coarse, None)
 print('built on {} dumps (spacing {:.3g} s); tested at {} withheld dumps'.format(
     len(coarse), 2 * dt_dump, len(held)))
@@ -205,7 +223,7 @@ pools = {}
 print('{:>3} {:>12} {:>14} {:>14}'.format('s', 'dt', 'linear rms', 'cubic rms'))
 for s in SUBSAMPLE_FACTORS:
     c_idx = np.arange(0, len(t_all), s)
-    h_idx = np.setdiff1d(np.arange(len(t_all)), c_idx)
+    h_idx = withheld(c_idx)
     l_s, c_s = build(c_idx, True), build(c_idx, None)
     el, ec = [], []
     for n in h_idx:

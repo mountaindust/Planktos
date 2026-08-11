@@ -97,20 +97,35 @@ dumps withheld:
   the 10th, 50th and 90th percentiles of displacement, all agreed to within
   0.6%, most to within 0.3%.
 
+The same comparison on a **3D OpenFOAM dataset** (17 dumps, 68×68×180 grid, a
+pulsed flow of period 1.25 s sampled every 0.125 s) reaches the same practical
+conclusion by a different route. There the dump interval is coarse relative to
+the flow's own timescale -- ten samples per pulse cycle, and the withholding
+study necessarily halves that to five -- so both schemes carry much larger
+errors, and cubic's advantage is correspondingly wider: linear 9.5% of the rms
+speed against cubic's 1.1%. Yet advecting 512 tracers under each scheme, the same
+ensemble statistics agreed to within 0.35%.
+
 The practical reading: for **dispersal and other ensemble statistics**, dynamic
-loading is unlikely to change your answer. For anything that depends on the
-smoothness of the velocity field or on ∂u/∂t -- inertial particles in
-particular -- prefer ``INUM=None`` when the data fits, and be aware of the
-tradeoff when it does not.
+loading is unlikely to change your answer -- this now holds across two datasets,
+two dimensionalities, and two very different sampling regimes. For anything that
+depends on the smoothness of the velocity field or on ∂u/∂t -- inertial particles
+in particular -- prefer ``INUM=None`` when the data fits, and be aware of the
+tradeoff when it does not. That preference matters most when your dumps are
+widely spaced relative to your flow's timescales, which is exactly when cubic's
+advantage is largest.
 
 .. note::
    Absolute error figures are a property of a given dump interval relative to a
    given flow's own timescales, and do not transfer between datasets. The
    convergence orders do. If your dumps are more widely spaced relative to your
-   flow's timescales, expect a larger error from both schemes and a smaller gap
-   between them. These numbers come from one 2D dataset; the 3D case has not yet
-   been characterized. The measurement is reproducible with
-   ``tests/manual/quantify_temporal_interp.py``.
+   flow's timescales, expect a larger error from both schemes -- though not
+   necessarily a smaller gap between them, since the 3D dataset above is the more
+   coarsely sampled of the two and shows the *wider* gap. The orders quoted here
+   are the 2D ones; the 3D dataset has too few equally spaced dumps to fit a
+   convergence order at all. Both measurements are reproducible, with
+   ``tests/manual/quantify_temporal_interp.py`` and
+   ``tests/manual/vet_dynamic_loading_3d.py`` respectively.
 
 FluidData
 ---------

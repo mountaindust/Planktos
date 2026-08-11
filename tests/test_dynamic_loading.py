@@ -45,7 +45,7 @@ import numpy as np
 import pytest
 
 import planktos
-from planktos import fluid
+from planktos import fluid, _dataio
 
 FIXTURES = Path(__file__).parent / 'fixtures'
 
@@ -300,6 +300,23 @@ def test_extrapolate_flags_track_position_in_the_dataset():
     dyn(t[len(t) // 2])
     assert dyn._flow[0].extrapolate == (False, False)
     dyn(t[-1])
+    assert dyn._flow[0].extrapolate == (False, True)
+
+
+@pytest.mark.parametrize('nt', [17, 18, 19, 20, 21])
+def test_final_window_is_flagged_as_the_end_whatever_the_dataset_length(nt):
+    # Regression lock. The end-of-dataset test was `> d_finish` where it needed
+    # `>= d_finish`, so a window landing EXACTLY on the last dump fell through to
+    # the middle branch and was flagged (False, False) -- claiming there was more
+    # data to the right when there was none. It only triggers when the arithmetic
+    # lands exactly on the last index: forward slides advance the window end by
+    # INUM-1, so for INUM=4 it needs nt = 2 (mod 3) -- 17, 20, 23... Every other
+    # length overshoots and takes the correct branch, which is how it survived.
+    # Found by vetting the 3D loader against the real OpenFOAM series, which has
+    # 17 dumps and so lands exactly.
+    dyn, _, t = _pair(_field_2d(nt=nt), 4)
+    dyn(t[-1])
+    assert dyn.loaded_idx_bnds[1] == nt - 1, "window should reach the last dump"
     assert dyn._flow[0].extrapolate == (False, True)
 
 
@@ -664,6 +681,192 @@ def test_short_flow_times_is_rejected():
 
 
 # --------------------------------------------------------------------------- #
+#     the slider driven through the public API, rather than called directly    #
+# --------------------------------------------------------------------------- #
+# Everything above calls the FluidData object itself. These drive it the way a
+# user does -- through Swarm.move, calculate_FTLE, save_fluid, the plotting
+# backdrop -- because that is where a window slide actually happens in practice
+# and none of those paths had ever been run against a streaming source. Each
+# asserts the streamed answer equals the everything-in-memory answer, so a slide
+# landing in the wrong place cannot pass.
+
+
+def _field_gentle(nt=21, nx=6, ny=5, t_end=4.0):
+    '''A bounded, slowly varying field that keeps agents inside the domain.
+
+    _field_2d's v = t^2*y is deliberately violent, which is right for checking
+    interpolation but ejects every agent within a few steps -- and a test whose
+    agents have all left the domain proves nothing about the slider.
+    '''
+    t = np.linspace(0.0, t_end, nt)
+    x = np.linspace(0.0, 10.0, nx)
+    y = np.linspace(0.0, 8.0, ny)
+    X, Y = np.meshgrid(x, y, indexing='ij')
+    u = np.stack([0.5*np.sin(tt)*np.ones_like(X) for tt in t])
+    v = np.stack([0.3*np.cos(tt)*np.ones_like(Y) for tt in t])
+    return t, (x, y), [u, v]
+
+
+def _envir(INUM, field=None):
+    '''An Environment whose flow is windowed (int INUM) or fully resident.'''
+    t, fpoints, comps = field if field is not None else _field_gentle()
+    if INUM is True or INUM is None:
+        flow = fluid.FluidData([c.copy() for c in comps], fpoints, t.copy(),
+                               INUM=INUM)
+    else:
+        flow = _InMemorySource([c.copy() for c in comps], fpoints, t.copy(), INUM)
+    envir = planktos.Environment(Lx=10.0, Ly=8.0)
+    envir.flow = flow
+    envir.L = [10.0, 8.0]
+    envir._reset_flow_variables()
+    return envir, t
+
+
+@pytest.mark.parametrize('ndim', [2, 3])
+def test_periodic_fluid_survives_a_window_slide(ndim):
+    # TODO Phase 1 (E)'s surviving half: periodic x dynamic, never tested in
+    # either dimension. periodic_dim is a property of the spatial grid and the
+    # slider only ever touches the time axis, so these are expected to be
+    # independent -- but "expected to be" is what this is here to replace.
+    # Sampled at the upper grid edge, where periodic wrapping is what decides
+    # the answer, and after the window has moved off the opening one.
+    if ndim == 2:
+        t, fpoints, comps = _field_2d()
+        per = (True, False)
+        edge = np.array([[fpoints[0][-1], 4.0], [0.0, 4.0]])
+    else:
+        t, fpoints, comps = _field_3d()
+        per = (True, True, False)
+        edge = np.array([[fpoints[0][-1], 3.0, 3.0], [0.0, 3.0, 3.0]])
+
+    class _Periodic(_InMemorySource):
+        def __init__(self, full_flow, flow_points, flow_times, INUM):
+            self._full = [np.asarray(f) for f in full_flow]
+            self.load_calls = []
+            self.d_start = 0
+            self.d_finish = len(flow_times) - 1
+            self.loaded_dump_bnds = (0, INUM)
+            self.loaded_idx_bnds = (0, INUM)
+            fluid.FluidData.__init__(self, self.load_dumpfiles(0, INUM),
+                                     flow_points, flow_times, INUM,
+                                     periodic_dim=per)
+
+    dyn = _Periodic([c.copy() for c in comps], fpoints, t.copy(), 4)
+    full = fluid.FluidData([c.copy() for c in comps], fpoints, t.copy(),
+                           INUM=True, periodic_dim=per)
+    assert dyn.periodic_dim == full.periodic_dim == per
+
+    envir_d = planktos.Environment(Lx=10.0, Ly=8.0)
+    envir_f = planktos.Environment(Lx=10.0, Ly=8.0)
+    for e, f in ((envir_d, dyn), (envir_f, full)):
+        e.flow = f
+        e.L = [fp[-1] for fp in fpoints]
+
+    for q in np.linspace(t[0], t[-1], 23):
+        ref = full(q)
+        assert _diff(dyn(q), ref) <= _tol(ref)
+        assert np.allclose(envir_d.interpolate_flow(edge, time=q),
+                           envir_f.interpolate_flow(edge, time=q))
+    assert dyn.loaded_idx_bnds[0] > 0, "the window should have moved"
+
+
+def test_swarm_move_drives_the_window_and_matches_a_resident_fluid():
+    # The usage that matters: the slide happens inside the agent loop, not from a
+    # test calling the fluid object. Diffusion is switched off so the two runs are
+    # deterministic and any difference is the fluid, not the RNG.
+    dyn_e, t = _envir(4)
+    full_e, _ = _envir(True)
+    swarms = []
+    for e in (dyn_e, full_e):
+        e.set_boundary_conditions(('noflux', 'noflux'), ('noflux', 'noflux'))
+        sw = planktos.Swarm(swarm_size=25, envir=e, init='random', seed=7)
+        sw.shared_props['cov'] = np.zeros((2, 2))       # pure advection
+        swarms.append(sw)
+    assert np.allclose(swarms[0].positions, swarms[1].positions), "same start"
+
+    opening = dyn_e.flow.loaded_idx_bnds
+    for _ in range(38):
+        for sw in swarms:
+            sw.move(0.1)
+
+    assert dyn_e.flow.loaded_idx_bnds[0] > opening[0], "the window should have moved"
+    assert len(dyn_e.flow.load_calls) > 1
+    assert np.ma.count(swarms[0].positions[:, 0]) == 25, "agents should be retained"
+    assert np.allclose(swarms[0].positions, swarms[1].positions, rtol=0, atol=1e-12)
+
+
+def test_move_swarms_with_a_streaming_fluid():
+    # Several swarms sharing one Environment must not each trigger their own
+    # reload of the same window.
+    envir, t = _envir(4)
+    for _ in range(2):
+        sw = planktos.Swarm(swarm_size=8, envir=envir)
+        sw.shared_props['cov'] = np.eye(2)*1e-4
+    n0 = len(envir.flow.load_calls)
+    for _ in range(25):
+        envir.move_swarms(0.1)
+    assert envir.flow.loaded_idx_bnds[0] > 0
+    assert len(envir.flow.load_calls) - n0 <= 5, "one reload per slide, not per swarm"
+
+
+def test_get_vorticity_across_a_slide():
+    # The plotting backdrop path: unlike the statistics, fluid='vort' does pull
+    # the field, so it can trigger a load.
+    dyn, _ = _envir(4)
+    full, t = _envir(True)
+    for q in (0.5, 3.5):
+        got, ref = dyn.flow.get_vorticity(time=q), full.flow.get_vorticity(time=q)
+        assert np.all(np.isfinite(got))
+        assert np.allclose(got, ref, rtol=0, atol=1e-12)
+    assert dyn.flow.loaded_idx_bnds[0] > 0
+
+
+@pytest.mark.parametrize('backward', [False, True])
+def test_calculate_FTLE_over_a_streaming_fluid(backward):
+    # FTLE integrates many tracers over a long span, so it walks the window
+    # across the dataset -- and backward=True walks it the other way, the
+    # direction least exercised elsewhere.
+    dyn, t = _envir(4)
+    full, _ = _envir(True)
+    for e in (dyn, full):
+        e.calculate_FTLE((10, 8), T=2.0, dt=0.1, backward=backward)
+    assert np.all(np.isfinite(dyn.FTLE_largest.compressed()))
+    assert np.allclose(dyn.FTLE_largest, full.FTLE_largest, rtol=0, atol=1e-10)
+
+
+def test_save_fluid_walks_the_whole_series_from_a_window(tmp_path):
+    # save_fluid(flow_times=True) asks for every dump in turn. Starting with the
+    # window parked at the END makes it jump back to the beginning and then sweep
+    # forward, and the bytes it writes are checked against a resident fluid --
+    # so a slide landing on the wrong dumps shows up as wrong data on disk, not
+    # merely as a wrong index.
+    dyn, t = _envir(4)
+    full, _ = _envir(True)
+    dyn.flow(t[-1])
+    assert dyn.flow.loaded_idx_bnds[1] == len(t) - 1
+
+    dyn.save_fluid(str(tmp_path), 'vel', time_history=False, flow_times=True)
+    files = sorted(f for f in os.listdir(tmp_path) if f.endswith('.vtk'))
+    assert len(files) == len(t), "one file per dump in the series"
+
+    worst = 0.0
+    tol = 0.0
+    for cyc, time in enumerate(t):
+        fname = tmp_path / 'vel_{:04d}.vtk'.format(cyc)
+        assert fname.is_file(), "no file written for dump {}".format(cyc)
+        data, _, _ = _dataio.read_vtk_Rectilinear_Grid_Vector(str(fname))
+        ref = full.flow(time)
+        worst = max(worst, max(np.abs(np.squeeze(data[k]) - np.squeeze(ref[k])).max()
+                               for k in range(2)))
+        tol = max(tol, _tol(ref))
+    # Round-off, not exactness: a value written from a window boundary was
+    # carried there by evaluating the outgoing spline, which costs an ulp (see
+    # the module docstring). A slide landing on the wrong dumps would be wrong by
+    # the size of the field, not by 1e-17.
+    assert worst <= tol, "streamed save differs from a resident fluid"
+
+
+# --------------------------------------------------------------------------- #
 #       OpenFOAMData end-to-end -- the finite-volume path, against files       #
 # --------------------------------------------------------------------------- #
 # The same questions as the VTK3dData block above, for the loader whose timeline
@@ -728,6 +931,27 @@ def test_openfoam_the_gap_is_interpolated_across_not_skipped():
     assert np.allclose(fd(6.0)[0][1:-1, 1:-1, 1:-1], 6.0)
     # halfway across the wide interval, linear in time
     assert np.allclose(fd(5.0)[0][1:-1, 1:-1, 1:-1], 5.0)
+
+
+def test_openfoam_windowed_mean_velocity_matches_full_load():
+    # The plot-statistics cache, on the finite-volume loader and a real slide.
+    # u = t over the interior, so a frozen or mis-indexed cache is visible in the
+    # x-component mean; the wall shell and caps shift it off t, hence the
+    # comparison against a full load rather than against t itself.
+    dyn = _openfoam(4)
+    full = _openfoam(True)
+    for q in np.linspace(0.0, 6.0, 19):
+        assert np.allclose(dyn.get_mean_velocity(time=q),
+                           full.get_mean_velocity(time=q), rtol=0, atol=1e-12)
+
+
+def test_openfoam_windowed_dudt_matches_full_load():
+    # get_dudt through the real loader: piecewise constant under linear splining,
+    # and it must not change with which window happens to be resident.
+    dyn = _openfoam(4)
+    full = _openfoam(True)
+    for q in (0.5, 2.5, 3.5, 5.0):
+        assert _diff(dyn.get_dudt(time=q), full.get_dudt(time=q)) <= 1e-12
 
 
 def test_openfoam_boundary_data_follows_the_timestep():
