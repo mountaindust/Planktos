@@ -470,11 +470,12 @@ parallelization tests and the plotting smokes — which brings it to roughly 20s
   - `test_io_loaders.py` — IB2d moving/static mesh import (committed fixtures),
     the IB2d fluid `uX`/`uY` scalar branch, `_dataio.read_vtk_time_only` (the
     header-only `TIME` scan), IBAMR vtk (`@vtk`), COMSOL vtu (`@vtu`).
-  - `test_frame_selection.py` — `Swarm._select_frames`, the `fps`/`playback_rate`
-    frame choice behind `plot_all`: frame spacing in simulated time, snapping to
-    the nearest recorded state, index alignment with `pos_history`, a run whose
-    `dt` changed partway, and the clamp and uneven-spacing warnings. Drives real
-    tiny runs but renders nothing; rendering is `test_plotting_smoke.py`.
+  - `test_frame_selection.py` — the parts of `plot_all` that decide a frame
+    without drawing one. `Swarm._select_frames` (frame spacing in simulated time,
+    snapping to the nearest recorded state, index alignment with `pos_history`, a
+    run whose `dt` changed partway, the clamp and uneven-spacing warnings), and
+    `_vorticity_norm`, the colour limits of the RdBu backdrop. Drives real tiny
+    runs but renders nothing; rendering is `test_plotting_smoke.py`.
   - `test_parallel_ib.py` — serial == threads == processes (`@slow`).
   - `test_plotting_smoke.py` — `plot_*` methods run without error on the Agg
     backend (`@slow`; the movie test also needs ffmpeg).

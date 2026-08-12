@@ -643,12 +643,13 @@ arrays / parse the `U` `DataArray` directly / one-time `.npy` preprocess).
     dumps that exist**, not the set the index declares. Pinned by
     `test_openfoam_flow_times_span_the_surviving_series`.
 
-### Robustness follow-ups — 🔴 IN PROGRESS
+### Robustness follow-ups — 🟡 ONE LEFT
 
 **Done (2026-08-11): the time-source fallback chain — items 1, 2, 3 and 7.**
-**Done (2026-08-12): mesh verification — item 5.**
-Still open: `require_boundary=False` (4), surfacing a stored `vorticity` (6), and the
-`bc_corner` policy (8).
+**Done (2026-08-12): mesh verification (5), `require_boundary=False` (4), and the
+boundary-condition corner policy (8).**
+Still open: **surfacing a stored `vorticity` (6)**, which is the last item in the
+Phase 2 block that is not explicitly deferred.
 
 **Decision (2026-08-11), superseded the same day.** The original call was to write
 fallbacks only against a delivery that actually exhibits the problem, since fallbacks
@@ -748,8 +749,42 @@ were written as independent functions precisely so this could be a chain.
     across a slide to the end of the series and back.
 - [ ] **Surface the stored `vorticity`** instead of regenerating it. Exports usually
   ship it; `_dataio.read_vtkxml_cell_data(arrays=...)` already reads it on request. The
-  work is on the `FluidData`/`get_vorticity` side — deciding where stored derived
-  fields live and when they are preferred — not on the reader.
+  work is on the `FluidData`/`get_vorticity` side, not on the reader.
+  - **Decided (2026-08-12): load on demand, do not carry it in the window.** A stored
+    field is the same shape as the velocity, so holding one would roughly double the
+    resident fluid (the measured +106 MB streaming window at `INUM=4` becomes ~212 MB,
+    the 340 MB full load ~680 MB) — against the constraint this whole branch exists
+    for. Reading it costs little: 0.87 s → 0.94 s per dump, only +8%, because 61% of
+    every file is geometry re-read regardless. And `get_vorticity` is an analysis and
+    plotting call, not something the move loop touches, so paying a read at call time
+    is fine. Shape: a per-subclass hook returning None by default, which
+    `OpenFOAMData` implements by reading the bracketing dumps and interpolating with
+    the same weights the velocity uses.
+  - ⚠️ **The measurement that motivates it — recomputation is exact except in one cell
+    layer.** Comparing `get_vorticity` against the solver's stored field, dump 0 of the
+    reference dataset, by depth from the nearest domain face:
+
+    | cells in from nearest face | count | rms difference | % of stored rms |
+    |---|---|---|---|
+    | 0 | 54,472 | 0.0969 | **84%** |
+    | 1 | 52,040 | 2.3e-08 | 0.00% |
+    | 2 | 49,656 | 3.4e-08 | 0.00% |
+    | ≥5 | 526,848 | 1.7e-08 | 0.00% |
+
+    So in the bulk Planktos and OpenFOAM compute literally the same central-difference
+    curl — 1e-7 relative agreement validates `get_vorticity` rather than indicting it.
+    The whole problem is one cell deep, over 7% of the domain, where it is unusable
+    (worst cell 11× the field's own rms). Suspected cause, **unverified**: at the
+    outermost interior cell `np.gradient` differences against the spliced boundary
+    plane across a half-cell, where that plane holds the boundary *condition* value,
+    while the solver uses its own finite-volume wall treatment.
+  - For contrast, on a plain (unspliced) 2D grid the edge is merely less accurate, not
+    broken: 2.81% of rms against 0.11% in the interior, on an analytic Taylor-Green
+    field. **Trimming the boundary layer out of 2D vorticity plots is therefore not
+    warranted** — and would not reach the 84% case anyway, which is 3D, where no fluid
+    backdrop is drawn at all.
+  - Consumer side is specified in `docs/notes/flow_field_interface.md` §8.3.3: the plot
+    cache must not record vorticity a source already carries.
 - [x] ✅ **Whichever fallback is taken, say so.** Silently accepting a degraded timeline
   is the shape of the `VTK3dData` frozen-fluid bug. Every step of the chain past the
   first warns, and the step taken is recorded on the object as `dump_source` /
@@ -1201,6 +1236,23 @@ continuously, that band is not a rim.
 ```
 - Bug fix: FTLE is now normalized by the time actually integrated, correcting values where neighboring tracers left the domain early.
 ```
+
+### Queued — the vorticity backdrop flash (2026-08-12)
+
+`plot_all` called `ScalarMappable.autoscale()` on every animation frame, which sets the
+colour limits to that frame's own min/max. Two consequences, both visible: RdBu is a
+diverging map with white at its midpoint, so asymmetric limits put zero somewhere other
+than white and tinted the whole quiescent background — and since the limits changed
+every frame, the tint flickered through the video. It also silently discarded any
+`clip` the caller passed, so the documented way to stabilize a movie did not work.
+
+Fixed by `_vorticity_norm`: limits symmetric about zero, grown across a movie but never
+shrunk, and left alone entirely when `clip` is given.
+
+| What | Where | Applies cleanly to `master`? |
+|---|---|---|
+| `_vorticity_norm` helper, and the four call sites using it (`Swarm.plot`, the `plot_all` movie setup, and both movie update branches) | `planktos/_swarm.py` | **Yes, by hunk.** `_swarm.py` diverges heavily overall (347+/141- vs master), but master carries the same defect — `git show master:planktos/_swarm.py \| grep autoscale` finds the same two calls, at its lines 2709 and 2997 |
+| **Tests** — the `_vorticity_norm` section of `tests/test_frame_selection.py` | `tests/test_frame_selection.py` | ⚠️ **Not the module.** `test_frame_selection.py` was added for the §8.3.5 frame-selection work and does not exist on master. Port the seven tests into a plotting test module there, or add the file carrying only this section |
 
 ### ⛔ Explicitly NOT cherry-pickable — dyload-only
 

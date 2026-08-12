@@ -752,8 +752,38 @@ Together these make the entire frame-rate choice post-hoc: any `Δt_frame ≥
 Δt_capture` can be rendered from the same cache.
 
 Per-dump full-resolution vorticity is an accepted disk cost: 2D-only, and only when
-the user asks for vorticity. IB2d datasets commonly ship comparable vorticity fields
-already.
+the user asks for vorticity.
+
+⚠️ **Do not cache vorticity the source already carries** *(2026-08-12)*. Several export
+formats ship a vorticity field alongside velocity, in which case caching a recomputed
+copy per dump writes a second copy of data already on disk — the ~1 GB/500-dump figure
+above, spent twice. Before recording, ask the `FluidData` subclass whether it can supply
+vorticity for a dump, and record only when it cannot.
+
+Availability is a per-source *capability*, not an assumption, and it differs:
+
+| Source | Ships vorticity? |
+|---|---|
+| OpenFOAM (`OpenFOAMData`) | **Always**, as a `vorticity` cell array on `internal.vtu` *and* on every boundary patch — verified on the reference export |
+| IB2d (`IB2dData`) | **Optionally** — `Omega.####.vtk`, present only if the run's `input2d` asked for it. `tests/data/leaf_data` has `u` dumps only, so the reference 2D dataset does **not** have it |
+| everything else | no |
+
+This is the consumer side of `TODO.md` Phase 2 robustness item 6, which decided that
+`get_vorticity` should read a stored field **on demand** rather than carrying one in the
+sliding window. Note the two interact in the useful direction: an on-demand read is
+exactly what a recorder needs, since it wants one dump at a time as that dump lands.
+
+Two further points, since they are easy to get wrong here:
+
+- **3D does not currently cache vorticity at all** — `fluid=` is forced to `None` in 3D
+  (§8.2), where no fluid backdrop is drawn. So today the redundancy bites only in 2D,
+  i.e. only for IB2d runs that printed `Omega`. It would bite much harder if a 3D
+  backdrop arrives with the vtk rewrite, which is when OpenFOAM's always-present field
+  starts to matter.
+- **A stored field is not merely cheaper, it is better near the boundary.** Recomputing
+  by finite difference agrees with the solver's own vorticity to roundoff in the
+  interior but not in the outermost cell layer; see `TODO.md` item 6 for the measured
+  profile. A cache of the recomputed field therefore preserves that error permanently.
 
 **Which quantity is recorded, and the quiver-grid problem** *(decided 2026-08-11)*.
 `fluid=` on `record()` defaults to `'vort'` in 2D and is forced to `None` in 3D, where

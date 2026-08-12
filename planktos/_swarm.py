@@ -28,6 +28,49 @@ __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
+
+def _vorticity_norm(vort, clip=None, norm=None):
+    '''Colour limits for the RdBu vorticity backdrop, symmetric about zero.
+
+    RdBu is a diverging colormap, white at its midpoint, so limits that are not
+    symmetric put zero somewhere other than white and tint the whole quiescent
+    background red or blue. Rescaling to each frame's own extremes then makes
+    that tint change frame to frame, which is what made vorticity movies flash.
+
+    So limits are symmetric, and over a movie they only ever grow: pass the
+    previous norm back in and a later, quieter frame cannot shrink the scale and
+    re-tint everything. An explicit clip fixes them outright and is never
+    rescaled.
+
+    Parameters
+    ----------
+    vort : ndarray
+        the vorticity field being drawn
+    clip : float, optional
+        symmetric pseudocolor limit; overrides everything else
+    norm : matplotlib Normalize, optional
+        the norm in use, to be grown rather than replaced
+
+    Returns
+    -------
+    matplotlib Normalize
+    '''
+
+    if clip is not None:
+        return colors.Normalize(-abs(clip), abs(clip), clip=True)
+    finite = np.abs(np.asarray(vort)[np.isfinite(vort)])
+    vmax = float(finite.max()) if finite.size > 0 else 0.
+    if vmax == 0.:
+        # A uniformly zero field should read as uniformly white. Limits of
+        # (0, 0) would instead send every cell to the bottom of the colormap.
+        vmax = 1.
+    if norm is None:
+        return colors.Normalize(-vmax, vmax)
+    if norm.vmax is None or vmax > norm.vmax:
+        norm.vmin, norm.vmax = -vmax, vmax
+    return norm
+
+
 class Swarm:
     '''
     Fundamental Planktos object describing a group of similar agents.
@@ -2048,11 +2091,8 @@ class Swarm:
             # fluid visualization
             if fluid == 'vort' and self.envir.flow is not None:
                 vort = self.envir.get_vorticity(t_indx=loc)
-                if clip is not None:
-                    norm = colors.Normalize(-abs(clip),abs(clip),clip=True)
-                else:
-                    norm = None
-                ax.pcolormesh(self.envir.flow.flow_points[0], self.envir.flow.flow_points[1], 
+                norm = _vorticity_norm(vort, clip)
+                ax.pcolormesh(self.envir.flow.flow_points[0], self.envir.flow.flow_points[1],
                               vort.T, shading='gouraud', cmap='RdBu',
                               norm=norm, alpha=0.9, antialiased=True)
             elif fluid == 'quiver' and self.envir.flow is not None:
@@ -2583,11 +2623,11 @@ class Swarm:
 
             # fluid visualization
             if fluid == 'vort' and self.envir.flow is not None:
-                if clip is not None:
-                    norm = colors.Normalize(-abs(clip),abs(clip),clip=True)
-                else:
-                    norm = None
-                fld = ax.pcolormesh(self.envir.flow.flow_points[0], self.envir.flow.flow_points[1], 
+                # Limits start symmetric and are grown by each frame; see
+                # _vorticity_norm. Without a clip the placeholder is (-1, 1),
+                # which the first frame drawn replaces.
+                norm = _vorticity_norm(np.zeros(1), clip)
+                fld = ax.pcolormesh(self.envir.flow.flow_points[0], self.envir.flow.flow_points[1],
                            np.zeros(self.envir.flow.fshape[1:]).T, shading='gouraud',
                            cmap='RdBu', norm=norm, alpha=0.9)
             elif fluid == 'quiver' and self.envir.flow is not None:
@@ -2919,8 +2959,12 @@ class Swarm:
                     if fluid == 'vort' and self.envir.flow is not None:
                         vort = self.envir.get_vorticity(t_indx=n)
                         fld.set_array(vort.T)
+                        # NOT autoscale(): it rescales to this frame's own
+                        # min/max, which discards any clip the caller asked for
+                        # and moves zero off the white centre of RdBu, differently
+                        # every frame. That was the background flashing.
+                        fld.norm = _vorticity_norm(vort, clip, fld.norm)
                         fld.changed()
-                        fld.autoscale()
                     elif fluid == 'quiver' and self.envir.flow is not None:
                         if self.envir.flow.flow_times is not None:
                             flow = self.envir.interpolate_temporal_flow(t_index=n)
@@ -3204,8 +3248,8 @@ class Swarm:
                     if fluid == 'vort' and self.envir.flow is not None:
                         vort = self.envir.get_vorticity()
                         fld.set_array(vort.T)
+                        fld.norm = _vorticity_norm(vort, clip, fld.norm)
                         fld.changed()
-                        fld.autoscale()
                     elif fluid == 'quiver' and self.envir.flow is not None:
                         if self.envir.flow.flow_times is not None:
                             flow = self.envir.interpolate_temporal_flow()
