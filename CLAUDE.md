@@ -218,8 +218,15 @@ The cost, worth stating plainly because it reaches the physics: smoothness drops
 C²→C⁰ (velocity kinks at each timestamp), between-sample accuracy goes
 O(Δt⁴)→O(Δt²), and ∂u/∂t becomes a piecewise-constant step function — which feeds
 `get_dudt` → the material derivative → the inertial-particle models. Full cubic
-stays the default for datasets that fit in memory. **Quantifying that gap is still
-an open task** (TODO.md Phase 1C); do not assert a magnitude for it until then.
+stays the default for datasets that fit in memory.
+
+**That gap has been measured** — Phase 1(C), done 2026-08-11; detail in `TODO.md`,
+reproducible via `tests/manual/quantify_temporal_interp.py` and
+`vet_dynamic_loading_3d.py`. Linear vs cubic rms error: **1.27% vs 0.54% of U_rms** in
+2D (Δt=1e-3 s), **9.46% vs 1.13%** in 3D at the coarser cadence reachable there. Quote
+the **2D convergence orders** (median point: linear 1.68, cubic 4.75) — the 3D export
+is too coarsely sampled to fit one, and the script refuses to print a meaningless
+slope. Ensemble agent statistics agree to within 0.35% (3D) / 0.6% (2D).
 
 **Velocity components are plain `np.ndarray`.** Index a `FluidData` (`envir.flow[0]`)
 for a static component, or call it (`envir.flow(t)`) for a temporally interpolated

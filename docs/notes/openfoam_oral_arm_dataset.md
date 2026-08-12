@@ -290,34 +290,28 @@ timeline, so the loader tries them in turn (`OpenFOAMData._find_dumps`):
 
 Points worth keeping:
 
-- **The announcement is the feature, not the recovery.** Every step past the first
-  warns, and the step taken is recorded as `dump_source` / `time_source`. A run
-  completing on a quietly rebuilt timeline is the same shape as the `VTK3dData`
-  frozen-fluid bug, which is the worst thing that has happened on this branch.
-- **Tier 3 timestamps via a header scan**, new `_dataio.read_vtkxml_time_only` — the
-  `.vtu`/`.vtp` counterpart of `read_vtk_time_only`. VTK XML puts `<FieldData>` ahead
-  of the `<Piece>`, so the time is in the first few hundred bytes. Measured on this
-  dataset: **1.0 ms against 0.75 s** for a full read of one 84.2 MB `internal.vtu`, a
-  factor of ~750, and *constant* in file size. All 17 surviving dumps scan in 0.01 s
-  and agree with the `.vtm.series` index exactly; without it, timing the series would
-  re-read ~1.4 GB of static mesh to recover 17 floats. Inline ascii and uncompressed
-  base64 are decoded; a compressed or appended array returns `None` and falls back to
-  the full reader, which is a slow path rather than a wrong answer. (Note that VTK
-  declares `compressor=` on the root element even in ascii data mode, where it applies
-  to nothing — so it can only be judged once an array is known to be binary.)
-- **Tier 3 cannot see a missing dump.** With no manifest, nothing declares the dumps
-  that never arrived, so the widened interval and the uneven-spacing warning are the
-  only remaining trace. This is a real loss relative to tiers 1–2, not an oversight.
+- **Every step past the first warns**, and the step taken is recorded as
+  `dump_source` / `time_source`. A quietly rebuilt timeline is the same shape as the
+  `VTK3dData` frozen-fluid bug.
+- **Tier 3 timestamps via a header scan**, new `_dataio.read_vtkxml_time_only`: VTK
+  XML puts `<FieldData>` ahead of the `<Piece>`, so the time is in the first few
+  hundred bytes. **1.0 ms against 0.75 s** for a full read of one 84.2 MB
+  `internal.vtu`, and constant in file size; all 17 dumps scan in 0.01 s and agree
+  with the index exactly. Compressed or appended arrays return `None` and fall back to
+  the full reader. ⚠️ VTK declares `compressor=` on the root element even in ascii
+  data mode, where it applies to nothing — so it can only be judged once an array is
+  known to be binary.
+- ⚠️ **Tier 3 cannot see a missing dump.** With no manifest, nothing declares the
+  dumps that never arrived; the widened interval and its warning are the only trace.
+  A real loss relative to tiers 1–2, not an oversight.
 - **Unit steps only when nothing is timed.** `VTK3dData._read_all_times` falls back
-  when *any* dump is untimed; here a partly timed series raises instead, since unit
+  when *any* dump is untimed; a partly timed series raises here instead, since unit
   steps would displace every dump that did carry a time.
-- **Sort numerically.** Dump directories are named with unpadded numbers, so a
-  lexical sort puts `..._1008` before `..._787` — confirmed against the real names,
-  where the lexical order does begin at 1008 and the numeric one at 787. Globbed
-  dumps are then reordered by their recovered times where those disagree with the
-  filenames; the numeric sort is load-bearing exactly in tier 4, where the filename
-  order *is* the timeline.
-- A timeline that is not strictly increasing raises. Both splines divide by the
+- **Sort numerically** — confirmed against the real names, where the lexical order
+  begins at 1008 and the numeric one at 787. Globbed dumps are then reordered by their
+  recovered times where those disagree; the numeric sort is load-bearing in tier 4,
+  where the filename order *is* the timeline.
+- A timeline that is not strictly increasing raises — both splines divide by the
   interval between successive times.
 
 ### Low-level read ✅ DONE (2026-08-10)
@@ -365,6 +359,37 @@ levels rather than using the `np.rint` snap suggested in §2 — rint needs `dx`
 uniform lattice, and the grid stops being uniform as soon as the boundary patches are
 spliced on. Its completeness check (the linear index must be a permutation of `arange`)
 is what verifies the rectilinear assumption for a given dataset.
+
+### The static-mesh assumption is checkable ✅ DONE (2026-08-12)
+
+§3 establishes that the sample points are bit-identical across all 21 dumps, which is
+what lets the lattice and the permutation be built once. Two ways that breaks for a
+series that is *not* one run — dumps stitched from two cases, a file rewritten by
+another tool:
+
+- **Changed cell count** — caught on every dump, for a comparison. The interior check
+  existed; each patch gained one, since a patch is indexed by a selection built at
+  construction and a shorter one would take the wrong cells or raise a bare
+  `IndexError`.
+- **Same count, different order** — the reshape succeeds and every value lands in the
+  wrong place, with nothing downstream able to see it. The **second dump** is checked
+  against the mesh for this, interior and each patch face.
+
+**Second dump only.** Checking every dump costs **+8.2%** here (18.2 s → 19.7 s for a
+full load of the 17 survivors), consistent with the `cell_centers=False` figure above.
+Checking one is free: dump 1 is always in the opening load, so the only added work is
+its cell centers. And the benefit falls off after the first comparison — cell ordering
+is a property of the writer and its decomposition, and §2's rectilinear requirement
+means the mesh is not adaptively refined, so it was built that way or resampled rather
+than reordered partway through.
+
+⚠️ The residue is the named case: a series stitched **mid-run** passes the two-dump
+check and is still silently wrong. Widening to every dump is a one-line change at the
+caller — `_read_dump` takes the flag per call.
+
+Tolerance is `_cluster_axis`'s own `rel_tol=1e-5` of the axis span: a smaller
+deviation could not have moved a cell to another level, so it cannot change where a
+value lands.
 
 ### Boundary splice ✅ DONE (2026-08-11), but not by patch name
 

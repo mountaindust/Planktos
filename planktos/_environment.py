@@ -1137,6 +1137,12 @@ class Environment:
         distinguishable by file type. A mesh that is not a complete
         tensor-product grid raises.
 
+        The mesh is read once, from the first dump, and every later dump is
+        reordered onto it. The second dump is checked against it automatically,
+        since a dump whose cells were merely reordered would otherwise load with
+        every value in the wrong place and no symptom; a changed cell count is
+        caught on every dump.
+
         Dumps that the series index declares but which are not on disk are
         skipped with a warning, and the timeline is built over those that remain.
         Missing pieces of the export are tolerated the same way: absent the

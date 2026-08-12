@@ -13,6 +13,7 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - New Environment.read_openfoam_vtk_data reads OpenFOAM VTK exports (foamToVTK), including dynamic loading.
 - OpenFOAM cell-centered data is reordered onto its grid and the boundary patches spliced on to recover the full domain.
 - The OpenFOAM reader rebuilds the timeline from the .vtm manifests, then the dump files, then unit steps, warning which source it fell back to.
+- The OpenFOAM reader checks the second dump against the mesh read from the first, catching a series whose cell ordering changes.
 - Fluid loaders warn and carry on when a dump the time series declares is missing, rather than failing.
 - plot_all: new playback_rate (simulated seconds per second of video) sets movie speed. Defaults to 1, real time, changing existing movies.
 - A time step that fails or is interrupted partway through now marks the Environment (time=None) and reports the state; move() refuses until it is restored.

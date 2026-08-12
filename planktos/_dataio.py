@@ -523,18 +523,14 @@ def read_vtkxml_time_only(filename, nbytes=4096):
     '''Read just the ``TimeValue`` field-data entry from a VTK XML file's header.
 
     VTK XML writes ``<FieldData>`` immediately inside the dataset element, ahead
-    of the ``<Piece>`` holding the mesh, so a ``TimeValue`` entry lands within the
-    first few hundred bytes of a ``.vtu``/``.vtp`` no matter how large the file
-    is. Recovering it therefore costs one small header read rather than a full
-    parse -- which is what makes it practical to timestamp a whole dump series
-    from the files themselves. Dynamic loading needs the entire timeline before
-    it can slice windows out of it, and an unstructured-grid export repeats its
-    full mesh in every dump: for the reference dataset that is 51 MB of geometry
-    per file, so parsing all of them merely to recover one float apiece would
-    read gigabytes to answer a question the headers already answer.
+    of the ``<Piece>`` holding the mesh, so a ``TimeValue`` entry lands within
+    the first few hundred bytes however large the file is. Dynamic loading needs
+    the whole timeline before it can slice windows out of it, and an
+    unstructured export repeats its full mesh in every dump -- 51 MB of geometry
+    per file in the reference dataset -- so parsing the series to recover one
+    float apiece would read gigabytes for what the headers already carry.
 
-    This is the ``.vtu``/``.vtp`` counterpart of read_vtk_time_only, which does
-    the same job for legacy VTK files.
+    The ``.vtu``/``.vtp`` counterpart of read_vtk_time_only.
 
     Parameters
     ----------
@@ -553,12 +549,11 @@ def read_vtkxml_time_only(filename, nbytes=4096):
 
     Notes
     -----
-    Inline ``ascii`` and uncompressed inline ``binary`` (base64) storage are
-    decoded here; those are what VTK writes by default and what the reference
-    OpenFOAM export uses. ``appended`` and compressed arrays return None rather
-    than growing a second, barely-exercised decoder for a single float -- the
-    full reader handles them, and the cost of falling back to it is one slow
-    path, not a wrong answer.
+    Inline ``ascii`` and uncompressed inline ``binary`` (base64) are decoded --
+    what VTK writes by default and what the reference export uses. ``appended``
+    and compressed arrays return None rather than growing a second,
+    barely-exercised decoder for one float; falling back to the full reader is a
+    slow path, not a wrong answer.
     '''
 
     with open(filename, 'rb') as f:

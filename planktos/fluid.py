@@ -1779,6 +1779,10 @@ class OpenFOAMData(FluidData):
         outermost intervals in each direction are half-width, being the distance
         from the outermost cell centers to the domain boundary.
 
+        Because the mesh is read once and every later dump is reshaped through
+        it, the second dump is checked against it automatically, and a changed
+        cell count is caught on every dump. See ``_verify_dump_mesh``.
+
         Despite the ``vtkUnstructuredGrid`` container, the mesh is required to be
         rectilinear -- Planktos interpolates on a tensor-product grid. That is
         verified rather than assumed; see ``_build_lattice``.
@@ -1800,15 +1804,10 @@ class OpenFOAMData(FluidData):
         4. failing that, unit time steps.
 
         Every step past the first warns, and the one taken is recorded in
-        ``dump_source`` and ``time_source``. Announcing it matters more than the
-        recovery does: a run that completes on a timeline other than the one the
-        user believes they loaded is the failure mode this loader most needs to
-        avoid.
-
-        Dumps discovered by globbing (2 and 3) are ordered by their recovered
-        times, falling back to a numeric-aware sort of their names -- foamToVTK
-        numbers them without zero padding, so a lexical sort would put dump 1008
-        ahead of dump 787.
+        ``dump_source`` and ``time_source``: a run completing on a timeline other
+        than the one the user believes they loaded is the failure this most needs
+        to avoid. Dumps discovered by globbing (2 and 3) are ordered by their
+        recovered times, falling back to a numeric-aware sort of their names.
 
         If INUM (interval number) is set to an integer >= 4, the data will be
         dynamically loaded as needed with INUM intervals between the temporal
@@ -1860,6 +1859,9 @@ class OpenFOAMData(FluidData):
         # The boundary-condition corner warning is a property of the dataset,
         # not of the timestep, so say it once rather than on every window slide.
         self._warned_bc_corner = False
+        # The mesh check runs on the second dump and only the first time it is
+        # read -- a window sliding back to the start must not pay for it again.
+        self._mesh_verified = False
         if INUM is not None and INUM is not True:
             assert INUM > 3, 'INUM must be at least 4.'
 
@@ -1926,7 +1928,13 @@ class OpenFOAMData(FluidData):
 
         flow = [[], [], []]
         for n in range(d_start, d_finish+1):
-            vel = self._read_dump(self._dumps[n])
+            # Dump 1 is always in the opening load -- the whole series if it
+            # fits, else dumps 0..INUM -- so the mesh check lands at
+            # construction and costs no read of its own.
+            verify = n == 1 and not self._mesh_verified
+            vel = self._read_dump(self._dumps[n], verify=verify)
+            if verify:
+                self._mesh_verified = True
             for dim in range(3):
                 flow[dim].append(vel[..., dim])
         flow = [np.array(f) for f in flow]
@@ -1942,14 +1950,10 @@ class OpenFOAMData(FluidData):
     def _natural_key(name):
         '''Sort key that orders the numbers embedded in a name numerically.
 
-        foamToVTK names its dumps with unpadded numbers -- case08_alpha2_1e8_787
-        through case08_alpha2_1e8_1034 -- so a plain lexical sort puts 1008
-        ahead of 787 and silently reverses part of the timeline. Splitting on
-        digit runs and comparing those runs as integers puts them back in order.
-
-        The split always alternates non-digit, digit, non-digit, ..., beginning
-        with a (possibly empty) non-digit, so two keys always compare like with
-        like at every position.
+        foamToVTK numbers its dumps without zero padding -- case08_..._787
+        through case08_..._1034 -- so a lexical sort puts 1008 ahead of 787 and
+        silently reverses part of the timeline. The split always alternates
+        non-digit, digit, ..., so two keys compare like with like throughout.
         '''
         return tuple(int(s) if s.isdigit() else s
                      for s in re.split(r'(\d+)', name))
@@ -1971,11 +1975,9 @@ class OpenFOAMData(FluidData):
         Three sources are tried in turn, each a fallback for the one before it:
         the ``.vtm.series`` index, the ``.vtm`` manifests, and the dump
         directories themselves. Which one answered is recorded in
-        ``dump_source`` / ``time_source`` and, whenever it is not the first,
-        announced with a warning. That announcement is the point of the chain
-        rather than an aside: a degraded timeline accepted in silence is the
-        exact shape of the worst bug this branch has had, where a run completed
-        normally with the fluid quietly frozen.
+        ``dump_source`` / ``time_source``, and warned about whenever it is not
+        the first -- a degraded timeline accepted in silence is the shape of the
+        VTK3dData frozen-fluid bug.
 
         Returns
         -------
@@ -2360,6 +2362,74 @@ class OpenFOAMData(FluidData):
 
 
 
+    def _verify_dump_mesh(self, centers, perm, shape, axes, source,
+                          plane=None, rel_tol=1e-5):
+        '''Check that a dump's cells still lie where the mesh says they do.
+
+        The mesh is read once and every later dump reshaped through its
+        permutation, which is sound for one OpenFOAM run and not for a series
+        stitched from two. A changed cell count is caught elsewhere, on every
+        dump; a reordering at the same count is the dangerous one, since the
+        reshape succeeds and every value lands in the wrong place.
+
+        Only the second dump is checked -- see TODO.md item 5 for why, and for
+        what that leaves uncovered. `_read_dump` takes the flag per call, so
+        widening it is a one-line change at the caller.
+
+        Parameters
+        ----------
+        centers : Nx3 ndarray
+            cell centers of this dump, in the file's own order. For a patch file
+            holding several faces this is all of them; perm selects.
+        perm : ndarray of int
+            the selection/reordering established at construction. Its length,
+            not that of centers, is what must match shape.
+        shape : tuple of int
+            lattice shape the permuted cells are expected to fill
+        axes : tuple of int
+            spatial axes the block varies over, in the order of shape
+        source : string
+            name of the file, for the error message
+        plane : (int, float), optional
+            axis and coordinate of the constant direction of a planar patch
+        rel_tol : float, default=1e-5
+            tolerance as a fraction of each axis' span. The same figure
+            _cluster_axis separates levels with: a smaller deviation could not
+            have moved a cell to another level, so it cannot change where a
+            value lands.
+        '''
+
+        ordered = centers[perm].reshape(*shape, centers.shape[1])
+        # _grid[d] is [boundary plane, *interior cell centers, boundary plane],
+        # so the interior lattice -- which is what the permutation indexes, and
+        # what a patch shares in its two tangential directions -- is the middle.
+        # NB this assumes the boundary splice happened. If require_boundary=False
+        # is ever implemented (TODO.md item 4), whatever it does to _grid has to
+        # keep this slice meaning "the cell centers" or update it here.
+        def along(k):
+            '''grid vector of the k'th axis of shape, shaped to broadcast'''
+            return self._grid[axes[k]][1:-1].reshape(
+                [-1 if j == k else 1 for j in range(len(shape))])
+
+        # A planar patch's constant coordinate is a scalar and broadcasts as is.
+        checks = [(d, along(k)) for k, d in enumerate(axes)]
+        if plane is not None:
+            checks.append(plane)
+
+        for d, ref in checks:
+            off = float(np.abs(ordered[..., d] - ref).max())
+            tol = float(np.ptp(self._grid[d]))*rel_tol
+            if off > tol:
+                raise RuntimeError(
+                    "The cells of {} do not lie on the mesh established from "
+                    "the first dump: along {}, they are off by up to {:g} "
+                    "(tolerance {:g}). The series is assumed to be one run, "
+                    "with one fixed cell ordering; a dump whose cells are "
+                    "merely reordered would otherwise load with every value in "
+                    "the wrong place.".format(source, 'xyz'[d], off, tol))
+
+
+
     def _build_grid(self, datasets):
         '''Establish the spatial grid and every reordering the loader will need.
 
@@ -2385,10 +2455,15 @@ class OpenFOAMData(FluidData):
         # something else in the next export. Which face a cell belongs to is
         # decided by which interior axis range it falls outside of.
         self._faces = {}
+        self._patch_cells = {}
         for name, fname in datasets.items():
             if name == 'internal':
                 continue
             pcenters, _, _ = _dataio.read_vtkxml_cell_data(fname, arrays=())
+            # Every later dump indexes this patch with the selection built here,
+            # so a patch that changes length would take the wrong cells (or
+            # raise a bare IndexError). Cheap to check, so it always is.
+            self._patch_cells[name] = len(pcenters)
             # For each axis, is this cell outside the interior cell-center range?
             outside = np.stack(
                 [np.where(pcenters[:, d] < interior[d][0], 0,
@@ -2464,7 +2539,7 @@ class OpenFOAMData(FluidData):
 
 
 
-    def _read_dump(self, datasets, atol=1e-12):
+    def _read_dump(self, datasets, atol=1e-12, verify=False):
         '''Read one timestep and assemble it onto the full domain grid.
 
         Returns an (nx+2, ny+2, nz+2, 3) array: the interior block surrounded by
@@ -2477,24 +2552,33 @@ class OpenFOAMData(FluidData):
         the three edges. Where the two sides disagree the fill is a compromise
         and says so -- that is a genuine discontinuity in the boundary
         conditions, e.g. an inlet running into a no-slip wall.
+
+        verify additionally checks this dump's cells against the mesh, which
+        costs computing the cell centers on top of a read that happens anyway.
+        The caller passes it for the second dump of the series; see
+        ``_verify_dump_mesh``.
         '''
 
         nx, ny, nz = self._shape
         vel = np.zeros((nx+2, ny+2, nz+2, 3))
 
-        _, data, _ = _dataio.read_vtkxml_cell_data(
-            datasets['internal'], arrays=('U',), load_cell_coordinates=False)
+        centers, data, _ = _dataio.read_vtkxml_cell_data(
+            datasets['internal'], arrays=('U',),
+            load_cell_coordinates=verify)
         U = data['U']
         if len(U) != nx*ny*nz:
             raise RuntimeError(
                 "{} has {} cells; the mesh established from the first dump has "
                 "{}. The mesh is assumed not to change across the "
                 "series.".format(datasets['internal'].name, len(U), nx*ny*nz))
+        if verify:
+            self._verify_dump_mesh(centers, self._perm, self._shape, (0, 1, 2),
+                                   datasets['internal'].name)
         vel[1:-1, 1:-1, 1:-1, :] = U[self._perm].reshape(nx, ny, nz, 3)
 
         ##### Stage 1: the six faces, from the patch files #####
         patches = {}
-        for (d, side), (name, sel, fshape, _) in self._faces.items():
+        for (d, side), (name, sel, fshape, plane) in self._faces.items():
             if name not in patches:
                 if name not in datasets:
                     raise RuntimeError(
@@ -2502,10 +2586,26 @@ class OpenFOAMData(FluidData):
                         "established from the first dump needs it for the {} "
                         "face.".format(datasets['internal'].parent.name, name,
                                        'xyz'[d]+'-+'[side]))
-                _, pdata, _ = _dataio.read_vtkxml_cell_data(
-                    datasets[name], arrays=('U',), load_cell_coordinates=False)
-                patches[name] = pdata['U']
-            face = patches[name][sel].reshape(*fshape, 3)
+                pcenters, pdata, _ = _dataio.read_vtkxml_cell_data(
+                    datasets[name], arrays=('U',),
+                    load_cell_coordinates=verify)
+                # A patch is indexed by the selection built at construction, so
+                # one that changed length would take the wrong cells rather than
+                # fail. Always checked; it costs a comparison.
+                if len(pdata['U']) != self._patch_cells[name]:
+                    raise RuntimeError(
+                        "Boundary patch {} has {} cells; the mesh established "
+                        "from the first dump has {}. The mesh is assumed not "
+                        "to change across the series.".format(
+                            datasets[name].name, len(pdata['U']),
+                            self._patch_cells[name]))
+                patches[name] = (pdata['U'], pcenters)
+            if verify:
+                self._verify_dump_mesh(
+                    patches[name][1], sel, fshape,
+                    tuple(a for a in range(3) if a != d),
+                    datasets[name].name, plane=(d, plane))
+            face = patches[name][0][sel].reshape(*fshape, 3)
             idx = [slice(1, -1)]*3
             idx[d] = 0 if side == 0 else -1
             vel[tuple(idx)] = face

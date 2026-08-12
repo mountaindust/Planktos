@@ -598,15 +598,12 @@ def test_openfoam_environment_reader():
 # need not be fatal. The loader tries them in that order and then falls back to
 # unit steps.
 #
-# What is actually being pinned here is not the recovery so much as the
-# announcement. A timeline quietly rebuilt from a worse source is the same shape
-# as this branch's worst bug -- a run that completed normally with the fluid
-# frozen -- so every step past the first has to warn and to leave a record on
-# the object saying which source answered.
+# What is pinned here is the announcement as much as the recovery: a timeline
+# quietly rebuilt from a worse source is the shape of the VTK3dData frozen-fluid
+# bug, so every step past the first warns and records which source answered.
 #
-# The variants are derived from the committed fixture rather than committed
-# separately, so they cannot drift from the export they are meant to be a
-# damaged copy of.
+# Variants are derived from the committed fixture rather than committed
+# separately, so they cannot drift from what they are a damaged copy of.
 
 # Renaming the surviving dumps 10,20,30,40,50,70 -> 7,8,9,10,11,12 makes the
 # lexical and numeric orderings of the directory names disagree: sorted as text,
@@ -852,6 +849,137 @@ def test_openfoam_raises_when_there_is_nothing_to_read(tmp_path):
     (tmp_path / 'empty').mkdir()
     with pytest.raises(FileNotFoundError, match='No .vtm.series index'):
         fluid.OpenFOAMData(str(tmp_path / 'empty'))
+
+
+# --------------------------------------------------------------------------- #
+#              OpenFOAM: the mesh is assumed static across the series         #
+# --------------------------------------------------------------------------- #
+# The lattice and permutation are built once from the first dump, and every
+# later dump reshaped through them. A changed cell COUNT is caught on every
+# dump; a reordering at the SAME count is the dangerous one, since the reshape
+# succeeds and every value lands in the wrong place. The second dump is checked
+# against the mesh for it.
+#
+# Second dump only, deliberately; TODO.md item 5 records why, and what that
+# leaves uncovered.
+
+
+def _of_reorder(path, seed, drop=0):
+    '''Rewrite a .vtu/.vtp with its cells in a different order, in place.
+
+    Cell data is permuted with the cells, so the file describes exactly the same
+    physical field -- only the order it is stored in changes. That is the shape
+    of a series stitched together from two runs, and the case that a permutation
+    built once from the first dump silently gets wrong.
+
+    drop discards that many cells instead, giving the changed-count case.
+    '''
+    import pyvista as pv
+    src = pv.read(path)
+    n = src.n_cells
+    order = np.random.default_rng(seed).permutation(n)
+    if drop:
+        order = order[:-drop]
+
+    pts = np.asarray(src.points)
+    if path.suffix == '.vtu':
+        cells = src.cells.reshape(-1, 9)               # all hexahedra
+        out = pv.UnstructuredGrid(cells[order].ravel(),
+                                  np.full(len(order), pv.CellType.HEXAHEDRON),
+                                  pts)
+    else:
+        faces = src.faces.reshape(-1, 5)               # all quads
+        out = pv.PolyData(pts, faces[order].ravel())
+    for k in src.cell_data:
+        out.cell_data[k] = np.asarray(src.cell_data[k])[order]
+
+    import vtk
+    w = (vtk.vtkXMLUnstructuredGridWriter() if path.suffix == '.vtu'
+         else vtk.vtkXMLPolyDataWriter())
+    w.SetFileName(str(path))
+    w.SetInputData(out)
+    w.SetDataModeToBinary()
+    w.SetCompressorTypeToNone()
+    w.SetHeaderTypeToUInt64()
+    w.Write()
+
+
+def test_openfoam_catches_a_reordered_second_dump(tmp_path):
+    # THE check. Same cells, same field, different storage order -- so the count
+    # check cannot see it and the reshape succeeds.
+    from planktos import fluid
+    path = _of_variant(tmp_path)
+    _of_reorder(path / 'case_min_20' / 'internal.vtu', seed=0)
+    with pytest.raises(RuntimeError, match='do not lie on the mesh'):
+        fluid.OpenFOAMData(str(path))
+
+
+def test_openfoam_catches_a_reordered_patch_on_the_second_dump(tmp_path):
+    # The patches carry their own permutation, built the same way, and are
+    # equally exposed.
+    from planktos import fluid
+    path = _of_variant(tmp_path)
+    _of_reorder(path / 'case_min_20' / 'boundary' / 'inlet.vtp', seed=1)
+    with pytest.raises(RuntimeError, match='do not lie on the mesh'):
+        fluid.OpenFOAMData(str(path))
+
+
+@pytest.mark.parametrize('INUM', [None, 4])
+def test_openfoam_the_mesh_check_runs_on_the_windowed_path_too(tmp_path, INUM):
+    # The check rides on the opening load, which is the whole series when it
+    # fits and dumps 0..INUM when it does not. Dump 1 is in both, so streaming
+    # must not skip it -- that would be the check quietly not running in the
+    # exact configuration this branch exists for.
+    from planktos import fluid
+    path = _of_variant(tmp_path)
+    _of_reorder(path / 'case_min_20' / 'internal.vtu', seed=0)
+    with pytest.raises(RuntimeError, match='do not lie on the mesh'):
+        fluid.OpenFOAMData(str(path), INUM=INUM)
+
+
+def test_openfoam_the_mesh_check_costs_one_read_not_one_per_dump(tmp_path):
+    # Cell coordinates are computed for dump 1 and no other. If a slide back to
+    # the start re-verified, or every dump did, the cost would be per-dump and
+    # the design decision silently undone.
+    from planktos import fluid
+    path = _of_variant(tmp_path)
+    fd = fluid.OpenFOAMData(str(path), INUM=4)
+    assert fd._mesh_verified
+    seen = []
+    real = _dataio.read_vtkxml_cell_data
+
+    def spy(filename, arrays=('U',), load_cell_coordinates=True):
+        seen.append(load_cell_coordinates)
+        return real(filename, arrays, load_cell_coordinates)
+
+    from planktos import fluid as fluid_mod
+    fluid_mod._dataio.read_vtkxml_cell_data = spy
+    try:
+        fd.update_spline(fd.flow_times[-1])            # slide to the end
+        fd.update_spline(fd.flow_times[0])             # and back to the start
+    finally:
+        fluid_mod._dataio.read_vtkxml_cell_data = real
+    assert len(seen) > 0 and not any(seen)
+
+
+def test_openfoam_a_changed_cell_count_raises_on_any_dump(tmp_path):
+    # Not limited to the second dump: it costs one comparison, so every dump
+    # gets it. case_min_30 is the third, past the coordinate check.
+    from planktos import fluid
+    path = _of_variant(tmp_path)
+    _of_reorder(path / 'case_min_30' / 'internal.vtu', seed=0, drop=1)
+    with pytest.raises(RuntimeError, match='cells; the mesh established'):
+        fluid.OpenFOAMData(str(path))
+
+
+def test_openfoam_a_changed_patch_cell_count_raises_on_any_dump(tmp_path):
+    # A patch is indexed by a selection built at construction, so a shorter one
+    # would take the wrong cells or raise a bare IndexError naming nothing.
+    from planktos import fluid
+    path = _of_variant(tmp_path)
+    _of_reorder(path / 'case_min_30' / 'boundary' / 'inlet.vtp', seed=1, drop=1)
+    with pytest.raises(RuntimeError, match='cells; the mesh established'):
+        fluid.OpenFOAMData(str(path))
 
 
 # --------------------------------------------------------------------------- #

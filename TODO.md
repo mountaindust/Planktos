@@ -645,19 +645,16 @@ arrays / parse the `U` `DataArray` directly / one-time `.npy` preprocess).
 ### Robustness follow-ups — 🔴 IN PROGRESS
 
 **Done (2026-08-11): the time-source fallback chain — items 1, 2, 3 and 7.**
-Still open: `require_boundary=False` (4), per-dump mesh verification (5), surfacing a
-stored `vorticity` (6), and the `bc_corner` policy (8).
+**Done (2026-08-12): mesh verification — item 5.**
+Still open: `require_boundary=False` (4), surfacing a stored `vorticity` (6), and the
+`bc_corner` policy (8).
 
-**Decision (2026-08-11), superseded the same day: the time-source fallbacks were
-built rather than deferred.** The original call was to get it working for the data we
-have and write fallbacks only against a delivery that actually exhibits the problem —
-fallbacks written against input nobody has sent tend to be wrong when the input
-finally arrives. That still holds for what remains open below. What changed is that
-the *timeline* fallbacks (1–3) were judged cheap enough and load-bearing enough to
-build up front: they are pure reads of information the export already carries, and
-each of the three `_dataio` readers was written as an independent function precisely
-so this could be a chain rather than a rewrite. Items 4–6 and 8 are still deferred on
-the original reasoning.
+**Decision (2026-08-11), superseded the same day.** The original call was to write
+fallbacks only against a delivery that actually exhibits the problem, since fallbacks
+built for input nobody has sent tend to be wrong when it arrives. That still governs
+items 4, 6 and 8. The *timeline* fallbacks (1–3) were built up front instead: they are
+pure reads of information the export already carries, and the three `_dataio` readers
+were written as independent functions precisely so this could be a chain.
 
 - [x] ✅ **Missing `.vtm.series`** → glob the `.vtm` files; take each time from its
   `TimeValue`. Built as `OpenFOAMData._candidates_from_manifests`. The manifests
@@ -666,15 +663,13 @@ the original reasoning.
   from `internal.vtu`. ⚠️ Sort **numerically**: directories are named with unpadded
   numbers (`case08_alpha2_1e8_787`, `..._1008`), so a lexical sort puts 1008 before 787.
   Built as `_candidates_from_dirs` + `_natural_key`. Two notes on how it landed:
-  - Time comes from a **bounded header scan**, new `_dataio.read_vtkxml_time_only` —
-    the `.vtu`/`.vtp` counterpart of `read_vtk_time_only`, decoding inline ascii and
-    uncompressed base64 and falling back to the full reader otherwise. Without it,
-    timestamping the real 21-dump series would re-read ~1.8 GB of static mesh to
-    recover 21 floats. Patches are found at `boundary/*.vtp` beside each
-    `internal.vtu`, since no manifest names them any more.
-  - **This tier cannot see a missing dump.** Nothing declares the dumps that never
-    arrived once the manifests are gone, so the only remaining trace is the widened
-    interval and the uneven-spacing warning. Pinned as such.
+  - Time comes from a **bounded header scan**, new `_dataio.read_vtkxml_time_only`
+    (1.0 ms vs 0.75 s per 84 MB file). Without it, timestamping the series would
+    re-read ~1.4 GB of static mesh to recover 17 floats. Patches are found at
+    `boundary/*.vtp`, since no manifest names them any more.
+  - ⚠️ **This tier cannot see a missing dump** — nothing declares the ones that never
+    arrived once the manifests are gone, so the widened interval and its warning are
+    the only trace. Pinned as such.
 - [x] ✅ **No time information anywhere** → warn, assume unit steps (the
   `VTK3dData._read_all_times` precedent). Deliberately narrower than that precedent,
   which takes unit steps when *any* dump is untimed: a **partly** timed series raises
@@ -686,10 +681,31 @@ the original reasoning.
   `fluid.py`) to regrid the cell-centered data out to the domain edge, with a warning.
   Note that function is documented as not robust to rectilinear grids, which is exactly
   what this loader produces.
-- [ ] **Per-dump mesh verification.** The mesh is assumed static across the series and
-  the permutation is built once. A differing cell *count* raises with a clear message;
-  a same-count reordering (a series stitched from two runs, a corrupt file) would pass
-  silently. An opt-in re-read of the cell coordinates per dump costs ~7%.
+  - ⚠️ **`_verify_dump_mesh` (item 5) reads the interior lattice as `_grid[d][1:-1]`**,
+    which is only the cell centers because the boundary splice put a plane at each end.
+    Whatever this does to `_grid` must keep that slice meaning "the cell centers", or
+    update the helper. Flagged in a comment there too.
+- [x] ✅ **Mesh verification (second dump).** The mesh is read once and the permutation
+  built from it; a same-count reordering (a series stitched from two runs, a corrupt
+  file) would otherwise pass silently with every value in the wrong place. Built as an
+  **automatic check of the second dump**, interior and boundary patches alike, plus
+  **unconditional cell-count checks** on every dump — the interior one that existed,
+  and a new one per patch, since a patch is indexed by a selection built at
+  construction and a shorter one would take the wrong cells or raise a bare
+  `IndexError`. Tolerance is `_cluster_axis`'s own `rel_tol=1e-5` of the axis span.
+  - **Automatic, and second-dump rather than every-dump.** An opt-in gets forgotten by
+    the people who need it, and per-dump checking measured **+8.2%** on the real
+    series (18.2 s → 19.7 s for a full load). Checking one dump is free — dump 1 is
+    always in the opening load, so it adds only that dump's cell centers — and the
+    benefit falls off after the first comparison, since cell ordering is a property of
+    the writer and a rectilinear mesh is not adaptively refined.
+  - ⚠️ **Does not catch a series stitched mid-run** (dumps 0–11 from one case, 12–20
+    from another). Widening to every dump is a one-line change at the caller —
+    `_read_dump` already takes the flag per call.
+  - Pinned on the **windowed path as well as full-load**, since a check that quietly
+    stopped running under streaming would be missing in the configuration this branch
+    exists for. A separate test asserts no other dump ever loads cell coordinates,
+    across a slide to the end of the series and back.
 - [ ] **Surface the stored `vorticity`** instead of regenerating it. Exports usually
   ship it; `_dataio.read_vtkxml_cell_data(arrays=...)` already reads it on request. The
   work is on the `FluidData`/`get_vorticity` side — deciding where stored derived
