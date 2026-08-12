@@ -491,33 +491,123 @@ def test_openfoam_faces_carry_their_own_patch_data():
         assert not comp[1:-1, -1, 1:-1].any()
 
 
-def test_openfoam_edges_and_corners_are_filled_from_adjoining_faces():
-    # The 12 edges and 8 corners appear in no patch file. They are filled from
-    # the faces that meet there, NOT assumed to be zero -- this fixture has an
-    # inlet running into a no-slip wall, so the two sides genuinely disagree and
-    # the fill is their average.
+def _of_write(dataset, path):
+    '''Write a .vtu/.vtp the way the fixture generator does.
+
+    Binary, uncompressed, UInt64 headers -- pyvista's save() defaults to zlib
+    with UInt32, which read_vtkxml_time_only declines to decode. Matching the
+    generator keeps a rewritten fixture honest about its byte layout.
+    '''
+    import vtk
+    w = (vtk.vtkXMLUnstructuredGridWriter() if path.suffix == '.vtu'
+         else vtk.vtkXMLPolyDataWriter())
+    w.SetFileName(str(path))
+    w.SetInputData(dataset)
+    w.SetDataModeToBinary()
+    w.SetCompressorTypeToNone()
+    w.SetHeaderTypeToUInt64()
+    w.Write()
+
+
+def _of_set_patch_velocity(path, value, only=None):
+    '''Overwrite a boundary patch's U with a constant vector, in place.
+
+    only is an optional predicate on the (N,3) cell centers, for setting one
+    plane of a multi-plane patch -- walls.vtp holds all four lateral planes.
+    '''
+    import pyvista as pv
+    p = pv.read(path)
+    cen = np.asarray(p.cell_centers().points)
+    m = np.ones(p.n_cells, bool) if only is None else only(cen)
+    U = np.asarray(p.cell_data['U'], dtype=float).copy()
+    U[m] = np.asarray(value, dtype=float)
+    p.cell_data['U'] = U
+    _of_write(p, path)
+
+
+def test_openfoam_edges_and_corners_take_a_no_slip_zero_over_the_average():
+    # The 12 edges and 8 corners appear in no patch file and are filled from the
+    # faces meeting there; where those disagree, an exactly-zero velocity wins
+    # as no-slip. Every edge of this fixture touches one of the four no-slip
+    # lateral walls, so the whole shell comes out zero -- which means the
+    # averaging branch needs walls that are not zero. That is the next test.
     fd = _openfoam()
+    u, v, w = fd(1.)
+    for comp in (u, v, w):
+        assert not comp[0, 1:-1, 0].any()            # x=0 wall meets z=0 inlet
+        assert not comp[-1, 1:-1, -1].any()          # x=1 wall meets z=2 outlet
+        assert not comp[0, 0, 1:-1].any()            # two walls meeting
+        for sx in (0, -1):
+            for sy in (0, -1):
+                for sz in (0, -1):
+                    assert comp[sx, sy, sz] == 0.
+
+
+def test_openfoam_edges_average_when_neither_face_is_no_slip(tmp_path):
+    # Give the walls a nonzero velocity and nothing meeting at an edge is
+    # no-slip any more, so the fill falls back to the average of the two faces.
+    from planktos import fluid
+    path = _of_variant(tmp_path)
+    wall = np.array([1., 2., 3.])
+    for num in (10, 20, 30, 40, 50, 70):
+        _of_set_patch_velocity(path / f'case_min_{num}' / 'boundary' / 'walls.vtp',
+                               wall)
+    with pytest.warns(UserWarning):
+        fd = fluid.OpenFOAMData(str(path))
     t = 1.
     u, v, w = fd(t)
-    # edge where the x=0 wall meets the z=0 inlet: wall says 0, inlet says
-    # (t, x_1, 0) at the first interior x center
-    assert np.allclose(u[0, 1:-1, 0], t/2)
-    assert np.allclose(v[0, 1:-1, 0], OF_GRID_X[1]/2)
-    assert np.allclose(w[0, 1:-1, 0], 0.)
-    # edge where two walls meet: both say 0, so no compromise is involved
-    assert np.allclose(u[0, 0, 1:-1], 0.)
-    # corner: the average of the three edges meeting at it, two of which are the
-    # wall/inlet compromise above and one of which is wall/wall
-    assert np.isclose(u[0, 0, 0], (t/2 + t/2 + 0.)/3)
-    assert np.isclose(v[0, 0, 0], (OF_GRID_X[1]/2)*2/3)
+    # The x=0 edge at z=0 averages the wall against the inlet one cell inward,
+    # where the inlet carries (t, x_1, t*0).
+    inlet = np.array([t, OF_GRID_X[1], 0.])
+    for comp, k in ((u, 0), (v, 1), (w, 2)):
+        assert np.allclose(comp[0, 1:-1, 0], (wall[k] + inlet[k])/2)
+    # wall against wall: both nonzero and equal, so the average is that value
+    assert np.allclose(u[0, 0, 1:-1], wall[0])
+    # and the corner is now the mean of its three edges rather than zero
+    corner = np.array([u[0, 0, 0], v[0, 0, 0], w[0, 0, 0]])
+    assert corner.any()
+    edges = np.array([[c[1, 0, 0], c[0, 1, 0], c[0, 0, 1]] for c in (u, v, w)])
+    assert np.allclose(corner, edges.mean(axis=1))
+
+
+def test_openfoam_corner_takes_a_no_slip_edge_over_the_average(tmp_path):
+    # The corner rule needs a corner whose adjoining edges DISAGREE about
+    # no-slip, which neither of the two cases above provides: in the stock
+    # fixture all three are zero, and with every wall nonzero none of them is.
+    # Making only the x=0 plane nonzero gives a mixed corner.
+    from planktos import fluid
+    path = _of_variant(tmp_path)
+    for num in (10, 20, 30, 40, 50, 70):
+        _of_set_patch_velocity(
+            path / f'case_min_{num}' / 'boundary' / 'walls.vtp', [1., 2., 3.],
+            only=lambda cen: cen[:, 0] < 1e-9)       # the x = 0 plane alone
+    with pytest.warns(UserWarning):
+        fd = fluid.OpenFOAMData(str(path))
+    u, v, w = fd(1.)
+    # Of the three edges at the (0,0,0) corner: the one running in y averages
+    # the nonzero x=0 wall against the inlet, while the other two still meet a
+    # no-slip plane and are zero.
+    assert (u[0, 1, 0], v[0, 1, 0], w[0, 1, 0]) != (0., 0., 0.)
+    assert not any((u[1, 0, 0], v[1, 0, 0], w[1, 0, 0]))
+    assert not any((u[0, 0, 1], v[0, 0, 1], w[0, 0, 1]))
+    # so averaging the three would give something nonzero; no-slip wins instead
+    assert (u[0, 0, 0], v[0, 0, 0], w[0, 0, 0]) == (0., 0., 0.)
 
 
 def test_openfoam_warns_when_boundary_conditions_disagree_at_an_edge():
     # A real discontinuity in the boundary conditions, not a data error -- but
-    # the fill there is a compromise and the user should know.
+    # the user should be told, and told how it was resolved.
     from planktos import fluid
-    with pytest.warns(UserWarning, match='disagree'):
+    with pytest.warns(UserWarning, match='disagree') as rec:
         fluid.OpenFOAMData(str(OF_DIR))
+    msg = next(str(w.message) for w in rec if 'disagree' in str(w.message))
+    assert 'no-slip' in msg
+    # The count is cells where the rule CHANGED the answer -- exactly one side
+    # zero -- not every edge cell. The 4 edges running in x and the 4 running in
+    # y each put a wall against the inlet or outlet, so all their cells count
+    # (4 + 4 edges x 4 cells). The 4 running in z have a wall on both sides,
+    # which already averaged to zero, so they contribute nothing.
+    assert ' {} of those cells'.format(4*4 + 4*4) in msg
 
 
 def test_openfoam_rejects_a_mesh_that_is_not_a_lattice():
@@ -976,16 +1066,7 @@ def _of_reorder(path, seed, drop=0):
         out = pv.PolyData(pts, faces[order].ravel())
     for k in src.cell_data:
         out.cell_data[k] = np.asarray(src.cell_data[k])[order]
-
-    import vtk
-    w = (vtk.vtkXMLUnstructuredGridWriter() if path.suffix == '.vtu'
-         else vtk.vtkXMLPolyDataWriter())
-    w.SetFileName(str(path))
-    w.SetInputData(out)
-    w.SetDataModeToBinary()
-    w.SetCompressorTypeToNone()
-    w.SetHeaderTypeToUInt64()
-    w.Write()
+    _of_write(out, path)
 
 
 def test_openfoam_catches_a_reordered_second_dump(tmp_path):

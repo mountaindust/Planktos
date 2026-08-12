@@ -609,8 +609,9 @@ Four things make it more than a format swap (all detailed in the note):
   0.0985 × 0.0985 × 0.2665 instead of the true 0.1 × 0.1 × 0.268. The `.vtp` boundary
   patches close this **exactly**: `inlet`/`outlet` carry real data on the identical x/y
   lattice, `walls` is exactly zero (no-slip) and can simply be padded. Assembly is
-  66×66×178 → 66×66×180 → 68×68×180. The 12 edges and 8 corners appear in no file but
-  lie on no-slip walls, so filling zeros there is exact.
+  66×66×178 → 66×66×180 → 68×68×180. ⚠️ The 12 edges and 8 corners appear in no file;
+  the claim that they all lie on no-slip walls was **half right** — see the corner item
+  below, where the outlet turns out to impose no no-slip.
   - Both claims now **verified through the reader** rather than asserted: once snapped,
     the inlet's x/y grid vectors match the interior's bit-for-bit, and `walls.vtp` `U`
     is exactly zero everywhere.
@@ -758,15 +759,24 @@ were written as independent functions precisely so this could be a chain.
   (warning if so), and a timeline that is not strictly increasing **raises** — both
   splines divide by the interval between successive times, so a repeat is unusable
   rather than merely degraded.
-- [ ] **Boundary-condition corners.** Where two faces meet, the 12 edges and 8 corners
-  appear in no patch file and are filled from the adjoining faces — averaged, with a
-  warning when they disagree. The real dataset **does** disagree there: the inlet ring
-  is exactly zero at every phase, but the *outlet* is an outflow BC that does not impose
-  no-slip, so its ring runs to ~7e-4 against the walls' 0 (~10% of local peak speed,
-  over 272 of 832,320 cells). Physically the wall should win, since the wall is no-slip
-  along its whole length — but knowing that requires the BC types, which the VTK export
-  does not carry. Revisit if the artifact ever matters; a `bc_corner` policy argument is
-  the obvious shape.
+- [x] ✅ **Boundary-condition corners — zero wins.** The 12 edges and 8 corners appear
+  in no patch file and are filled from the faces meeting there. Where those disagree,
+  **a velocity of exactly zero is taken as no-slip and wins**; everything else is still
+  the average. A wall is no-slip along its whole length, including where an inflow runs
+  into it, so averaging smeared a nonzero velocity onto a surface the fluid cannot move
+  along.
+  - **Exact zero, whole vector** — no-slip makes every component vanish and the
+    exporter writes 0.0, whereas one component vanishing is ordinary (w = 0 on a
+    z-normal inlet plane). A tolerance would misread slow near-wall flow as no-slip.
+    Corners apply the same rule to their three edges.
+  - **264 edge cells on the real dataset**, with the wall strips now reading exactly
+    0.0 where they carried about half the outlet's 7e-4. The count is exact, not
+    approximate: 2 of the 4 edges running in x and 2 of the 4 in y put a wall against
+    the *outlet* (2×66 + 2×66). The inlet ring is itself zero, and the 4 edges running
+    in z are wall-against-wall, so neither is affected. Supersedes the "~272" estimate.
+  - **No `bc_corner` argument** — an option nobody sets is dead weight, and this is a
+    strict improvement for any export marking no-slip as zero. Restoring pure averaging
+    is a one-line change at the two sites.
 
 ### Already fixed ahead of the real data ✅
 

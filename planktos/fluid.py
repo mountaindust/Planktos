@@ -98,10 +98,8 @@ def _wrap_flow(flow, flow_points, periodic_dim=(True, True, False)):
 def _infer_domain_edges(c):
     '''Locate a cell-centered axis' domain boundaries from its own spacing.
 
-    n cell centers give n equations in the n+1 cell faces, so the sequence is
-    short one piece of information. Only the two outermost faces are wanted
-    here, and they are taken half the distance to the neighboring center --
-    exact on a uniform grid, a guess on a stretched one. See center_cell_regrid.
+    Half the distance to the neighboring center: exact on a uniform grid, a
+    guess on a stretched one. See center_cell_regrid for why it is a guess.
     '''
     return c[0] - (c[1] - c[0])/2, c[-1] + (c[-1] - c[-2])/2
 
@@ -122,21 +120,13 @@ def center_cell_regrid(flow, flow_points, periodic_dim=None, bounds=None):
     extrapolation of the interior, whereas a patch carries the boundary
     condition the solver actually applied.
 
-    Where the boundary is
-    ---------------------
-    Cell centers do not determine the cell faces: n centers give n equations in
-    the n+1 unknown faces, so the whole sequence is short one piece of
-    information. Only the two outermost faces are needed here, and they are
-    taken half the distance to the neighboring center::
-
-        lower edge = c[0]  - (c[1] - c[0])/2
-        upper edge = c[-1] + (c[-1] - c[-2])/2
-
-    On a uniform grid that is exact. On a **stretched** grid it is a guess, and
-    a biased one: if the first two cells have widths w and rw, the true half
-    width is w/2 while this gives w(1+r)/4. A warning names any axis inferred
-    that way. Pass ``bounds`` for any end whose true coordinate is known --
-    ``OpenFOAMData`` does, from the boundary patches it does have.
+    **Where the boundary is, is underdetermined.** n cell centers give n
+    equations in the n+1 cell faces. Only the two outermost faces are needed
+    here, and ``_infer_domain_edges`` takes them half the distance to the
+    neighboring center -- exact on a uniform grid, but on a stretched one a
+    biased guess: first two cells of width w and rw give w(1+r)/4 against a true
+    w/2. A warning names any axis inferred that way. Pass ``bounds`` for an end
+    whose true coordinate is known, as ``OpenFOAMData`` does from its patches.
 
     Parameters
     ----------
@@ -2732,9 +2722,10 @@ class OpenFOAMData(FluidData):
         six faces but not the lines and points where faces meet. An edge cell of
         the assembled grid lies on two faces at once and appears in neither
         patch; it is filled from the two faces that meet there, and a corner from
-        the three edges. Where the two sides disagree the fill is a compromise
-        and says so -- that is a genuine discontinuity in the boundary
-        conditions, e.g. an inlet running into a no-slip wall.
+        the three edges. Where the two sides disagree -- a genuine discontinuity
+        in the boundary conditions, e.g. an outflow running into a no-slip wall
+        -- an exactly zero velocity is taken as no-slip and wins, and anything
+        else is averaged. Either way it warns.
 
         verify additionally checks this dump's cells against the mesh, which
         costs computing the cell centers on top of a read that happens anyway.
@@ -2803,13 +2794,10 @@ class OpenFOAMData(FluidData):
         if len(self._regrid_faces) > 0:
             inner = vel[1:-1, 1:-1, 1:-1, :]
             # bounds= are the edges _build_grid already published, so the field
-            # is extended to exactly the grid the loader reports rather than to
-            # wherever an independent inference would land. The two coincide
-            # whenever the mesh is uniform and the patches sit half a cell out
-            # -- as they do in the reference dataset, which is why no test here
-            # can tell the difference; center_cell_regrid's own tests pin it.
-            # It matters for a stretched mesh, where a patch plane is a real
-            # measurement and the inference is a guess.
+            # is extended to exactly the grid the loader reports. The two
+            # coincide on a uniform mesh whose patches sit half a cell out -- as
+            # the reference dataset's do, which is why no test here can tell the
+            # difference; center_cell_regrid's own tests pin it.
             ext, _ = center_cell_regrid(
                 [inner[..., k] for k in range(3)],
                 [g[1:-1] for g in self._grid], self._periodic_dim,
@@ -2824,7 +2812,17 @@ class OpenFOAMData(FluidData):
         # Each edge runs along axis c with axes a and b at their extremes. Only
         # the interior run of it is defined by the faces; the two ends are
         # corners, where three faces meet, and are left to stage 3.
+        # Where the two faces disagree an exactly zero velocity wins: it marks a
+        # no-slip wall, and a wall is no-slip right up to where something else
+        # runs into it, so averaging would smear a nonzero velocity onto a
+        # surface the fluid cannot move along.
+        #
+        # Whole vector, exact zero -- no-slip makes every component vanish and
+        # the exporter writes 0.0, whereas one component vanishing is ordinary
+        # (w = 0 on a z-normal inlet plane) and means nothing. A tolerance would
+        # misread slow near-wall flow as no-slip.
         disagreement = 0.
+        zeroed = 0
         for a in range(3):
             for b in range(a+1, 3):
                 for sa in (0, -1):
@@ -2838,30 +2836,42 @@ class OpenFOAMData(FluidData):
                         from_a = list(idx); from_a[b] = 1 if sb == 0 else -2
                         va = vel[tuple(from_a)]
                         vb = vel[tuple(from_b)]
-                        vel[tuple(idx)] = 0.5*(va + vb)
+                        za = ~np.any(va, axis=-1)
+                        zb = ~np.any(vb, axis=-1)
+                        vel[tuple(idx)] = np.where((za | zb)[..., None], 0.,
+                                                   0.5*(va + vb))
+                        # Count only where the rule changed the answer: both
+                        # zero already averages to zero.
+                        zeroed += int(np.count_nonzero(za ^ zb))
                         disagreement = max(disagreement,
                                            float(np.abs(va-vb).max()))
 
         ##### Stage 3: the eight corners, from the three edges meeting there ###
+        # Same rule. A corner sits on all three faces meeting there, so if any
+        # of its edges came out no-slip the corner is on that wall too.
         for sx in (0, -1):
             for sy in (0, -1):
                 for sz in (0, -1):
                     ix = 1 if sx == 0 else -2
                     iy = 1 if sy == 0 else -2
                     iz = 1 if sz == 0 else -2
-                    vel[sx, sy, sz, :] = (vel[ix, sy, sz, :] +
-                                          vel[sx, iy, sz, :] +
-                                          vel[sx, sy, iz, :])/3
+                    edges = (vel[ix, sy, sz, :], vel[sx, iy, sz, :],
+                             vel[sx, sy, iz, :])
+                    if any(not np.any(e) for e in edges):
+                        vel[sx, sy, sz, :] = 0.
+                    else:
+                        vel[sx, sy, sz, :] = sum(edges)/3
 
         if disagreement > atol and not self._warned_bc_corner:
             self._warned_bc_corner = True
             warnings.warn(
                 "Boundary patches disagree by up to {:g} where they meet along "
-                "the edges of the domain; those cells have been filled with the "
-                "average of the two faces. This is a discontinuity in the "
+                "the edges of the domain. This is a discontinuity in the "
                 "boundary conditions themselves (an inflow meeting a no-slip "
-                "wall, say), not an error in the data.".format(disagreement),
-                UserWarning)
+                "wall, say), not an error in the data. Where one side is "
+                "exactly zero it is taken as no-slip and wins, which is the "
+                "case for {} of those cells; the rest are the average of the "
+                "two faces.".format(disagreement, zeroed), UserWarning)
 
         return vel
 

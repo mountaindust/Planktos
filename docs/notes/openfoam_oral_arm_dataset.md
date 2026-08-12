@@ -179,8 +179,10 @@ there is inferred from the cell spacing, which is exact for this uniform mesh.
 Assembly: interior 66×66×178 → glue inlet/outlet caps → 66×66×**180** → pad the
 four lateral walls → **68×68×180**, spanning the full domain.
 
-The 12 edges and 8 corners appear in no file, but every one lies on a no-slip wall,
-so filling zeros there is **exact**, not an approximation.
+The 12 edges and 8 corners appear in no file. ⚠️ This section originally claimed every
+one lies on a no-slip wall, so filling zeros there is exact — **half right, corrected
+in §7**: the outlet imposes no no-slip and its ring is nonzero against the walls' 0.
+The loader takes the zero where one side has it, and averages otherwise.
 
 Practical notes:
 - `walls.vtp` is **optional** — padding zeros is equivalent, and skips parsing
@@ -405,15 +407,23 @@ fall outside of — rather than by the names `inlet`/`outlet`/`walls`. That spli
 means every face carries its own data instead of an assumed no-slip zero, so a future
 case whose top is not a wall works unchanged.
 
-⚠️ **The no-slip assumption for the edges was wrong, and only half-checked.** §5 says
-the 12 edges and 8 corners "lie on no-slip walls, so filling zeros there is exact."
-Measured through the loader: the **inlet** ring is exactly zero at every phase of the
-pulse, but the **outlet** is an outflow BC that does not impose no-slip, and its
-outermost ring runs to ~7e-4 against the walls' 0 — about 10% of local peak speed, over
-272 of 832,320 cells. Edges are now filled with the average of the two adjoining faces
-and warn when they disagree. Physically the wall should win (it is no-slip along its
-whole length), but establishing that needs the BC types, which the VTK export does not
-carry.
+**Edges and corners: an exact zero wins.** §5 assumed the 12 edges and 8 corners "lie
+on no-slip walls, so filling zeros there is exact." That was half right. Measured
+through the loader, the **inlet** ring is exactly zero at every phase of the pulse, but
+the **outlet** is an outflow BC imposing no no-slip, and its outermost ring runs to
+~7e-4 against the walls' 0 — about 10% of local peak speed.
+
+So the two faces genuinely disagree, and the resolution is that **an exactly zero
+velocity is taken as no-slip and wins**; anything else is averaged, with a warning
+either way. A wall is no-slip right up to where the outflow runs into it, so averaging
+smeared a nonzero velocity onto a surface the fluid cannot move along. The test is the
+whole vector against exact zero — one component vanishing is ordinary and means
+nothing. Corners apply the same rule to their three edges.
+
+That is **264 edge cells** here, and the count is exact: 2 of the 4 edges running in x
+and 2 of the 4 in y put a wall against the outlet (2×66 + 2×66). The inlet edges were
+zero on both sides and the 4 edges running in z are wall-against-wall, so neither is
+affected. (Supersedes the "~272 cells" estimate recorded before the rule existed.)
 
 ### I/O budget — relevant to the dyload goal
 
