@@ -571,11 +571,95 @@ def test_openfoam_requires_a_patch_on_every_face(tmp_path):
         fluid.OpenFOAMData(str(path))
 
 
-def test_openfoam_require_boundary_false_is_not_implemented_yet(tmp_path):
+# ---- require_boundary=False: extrapolate the faces that have no patch -------
+# The domain still has to come out the right size, and it is recovered from the
+# cell spacing rather than from a patch. What changes is where the values on
+# that face come from: the linear extension of the interior, not the boundary
+# condition the solver applied. Done per FACE, so a dataset missing one patch
+# keeps using the five it has.
+
+
+def test_openfoam_regrids_a_face_with_no_patch(tmp_path):
+    # Dropping inlet leaves the z- face uncovered. The domain must still span
+    # 0..2 in z -- the half-cell out from the first cell center at 0.2.
     from planktos import fluid
     path = _openfoam_manifest_without(tmp_path, 'inlet')
-    with pytest.raises(NotImplementedError, match='require_boundary=False'):
-        fluid.OpenFOAMData(str(path), require_boundary=False)
+    with pytest.warns(UserWarning, match='No boundary patch covers'):
+        fd = fluid.OpenFOAMData(str(path), require_boundary=False)
+    assert fd.fshape == (6, 6, 6, 7)
+    assert np.allclose(fd.flow_points[2], OF_GRID_Z)
+    assert np.allclose(fd.flow_points[0], OF_GRID_X)
+    assert np.allclose(fd.L, [1., 1., 2.])
+    # The walls still have their patch and are exactly zero (no-slip). The
+    # linear extension of the interior there is u = t, so this is what shows
+    # the regrid is per FACE and did not touch the faces that are covered.
+    u = fd(3.)[0]
+    assert not u[0, 1:-1, 1:-1].any()
+    assert not u[1:-1, -1, 1:-1].any()
+
+
+def test_openfoam_regridded_face_is_the_linear_extension(tmp_path):
+    # The fixture's field is linear (u = t, v = x, w = t*z), so extrapolating
+    # is exact and can be asserted in closed form. Here the inlet patch it
+    # replaces carried that same field, so the two happen to agree -- which is
+    # what makes this a clean check of the extrapolation itself.
+    from planktos import fluid
+    path = _openfoam_manifest_without(tmp_path, 'inlet')
+    with pytest.warns(UserWarning):
+        fd = fluid.OpenFOAMData(str(path), require_boundary=False)
+    t = 3.
+    u, v, w = fd(t)
+    X, _ = np.meshgrid(OF_GRID_X[1:-1], OF_GRID_X[1:-1], indexing='ij')
+    assert np.allclose(u[1:-1, 1:-1, 0], t)
+    assert np.allclose(v[1:-1, 1:-1, 0], X)
+    assert np.allclose(w[1:-1, 1:-1, 0], 0.)       # w = t*z, and z = 0 there
+
+
+def test_openfoam_regrid_does_not_displace_the_patches_it_does_have(tmp_path):
+    # Per face, not per dataset. Dropping walls uncovers the four lateral faces;
+    # inlet and outlet still have patches and must still be read from them. The
+    # walls are exactly zero (no-slip) and the linear extension is NOT zero, so
+    # this also shows the regridded faces really are extrapolated.
+    from planktos import fluid
+    path = _openfoam_manifest_without(tmp_path, 'walls')
+    with pytest.warns(UserWarning, match='No boundary patch covers'):
+        fd = fluid.OpenFOAMData(str(path), require_boundary=False)
+    t = 3.
+    u, v, w = fd(t)
+    # inlet/outlet still carry their patch data, on the interior x/y lattice
+    X, _ = np.meshgrid(OF_GRID_X[1:-1], OF_GRID_X[1:-1], indexing='ij')
+    for k, zc in ((0, 0.), (-1, 2.)):
+        assert np.allclose(u[1:-1, 1:-1, k], t)
+        assert np.allclose(v[1:-1, 1:-1, k], X)
+        assert np.allclose(w[1:-1, 1:-1, k], t*zc)
+    # the lateral faces are now the linear extension, u = t, NOT the wall's 0
+    assert np.allclose(u[0, 1:-1, 1:-1], t)
+    assert np.allclose(u[-1, 1:-1, 1:-1], t)
+    # v = x extrapolates to the domain edge in x
+    assert np.allclose(v[0, 1:-1, 1:-1], OF_GRID_X[0])
+    assert np.allclose(v[-1, 1:-1, 1:-1], OF_GRID_X[-1])
+
+
+def test_openfoam_regrid_still_raises_by_default(tmp_path):
+    # require_boundary defaults True, and the message now points at the option.
+    from planktos import fluid
+    path = _openfoam_manifest_without(tmp_path, 'inlet')
+    with pytest.raises(RuntimeError, match='require_boundary=False'):
+        fluid.OpenFOAMData(str(path))
+
+
+@pytest.mark.parametrize('INUM', [None, True, 4])
+def test_openfoam_regrid_holds_across_the_loading_modes(tmp_path, INUM):
+    # The regrid happens per dump inside _read_dump, so it has to survive
+    # streaming as well as a full load -- and give the same answer.
+    from planktos import fluid
+    path = _openfoam_manifest_without(tmp_path, 'walls')
+    with pytest.warns(UserWarning):
+        fd = fluid.OpenFOAMData(str(path), require_boundary=False, INUM=INUM)
+    t = 2.
+    u = fd(t)[0]
+    assert np.allclose(u[0, 1:-1, 1:-1], t)
+    assert np.allclose(u[1:-1, 1:-1, 1:-1], t)
 
 
 def test_openfoam_environment_reader():

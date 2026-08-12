@@ -156,13 +156,19 @@ r ≈ 0.025, z ∈ [0.015, 0.021], matching the README).
 
 ## 5. Boundary patches — they splice in exactly
 
-The half-cell inset is precisely the failure mode the commented-out
-`center_cell_regrid` docstring warns about (`planktos/fluid.py`, ~line 2070).
-`ComsolVTUData.__init__` sets `self.L` from `flow_points[i][-1]`, so raw cell
+The half-cell inset is precisely the failure mode `fluid.center_cell_regrid` exists
+to fix. `ComsolVTUData.__init__` sets `self.L` from `flow_points[i][-1]`, so raw cell
 centers would report the domain as 0.09848 × 0.09848 × 0.26649 instead of the true
 0.1 × 0.1 × 0.268.
 
-The `.vtp` patches close that gap **exactly** — no extrapolation needed:
+The `.vtp` patches close that gap **exactly** — no extrapolation needed, which is why
+they are preferred over regridding wherever they exist: a patch carries the boundary
+condition the solver applied, where regridding extrapolates the interior. (The walls
+here are no-slip zero; the linear extension of the interior is not.)
+
+`require_boundary=False` falls back to `fluid.center_cell_regrid` for any face no
+patch covers, **per face** — the faces that do have one still use it. The domain edge
+there is inferred from the cell spacing, which is exact for this uniform mesh.
 
 | Patch | Cells | Geometry | `U` |
 |---|---|---|---|

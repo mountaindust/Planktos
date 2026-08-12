@@ -1179,7 +1179,11 @@ class Environment:
             whether to require that a boundary patch covers each of the six
             domain faces. Without one, the domain is short by half a cell in
             that direction and nothing downstream can detect it, so this raises
-            by default. False is not yet implemented.
+            by default. False extrapolates the interior out to any uncovered
+            face instead, with a warning; it is applied per face, so the faces
+            that do have a patch still use it. A patch carries the boundary
+            condition the solver applied and is the better source wherever one
+            exists.
         '''
 
         self.flow = fluid.OpenFOAMData(path, INUM, periodic_dim, vel_conv,

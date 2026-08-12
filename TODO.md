@@ -676,15 +676,54 @@ were written as independent functions precisely so this could be a chain.
   instead, because overwriting a mostly-real timeline with indices would move every
   dump that did carry a time. This is also the only place the numeric sort is
   load-bearing — with no times to sort by, the filename order *is* the timeline.
-- [ ] **`require_boundary=False`** → currently raises `NotImplementedError`. The
-  intended behavior is to restore `center_cell_regrid` (commented out at the bottom of
-  `fluid.py`) to regrid the cell-centered data out to the domain edge, with a warning.
-  Note that function is documented as not robust to rectilinear grids, which is exactly
-  what this loader produces.
-  - ⚠️ **`_verify_dump_mesh` (item 5) reads the interior lattice as `_grid[d][1:-1]`**,
-    which is only the cell centers because the boundary splice put a plane at each end.
-    Whatever this does to `_grid` must keep that slice meaning "the cell centers", or
-    update the helper. Flagged in a comment there too.
+- [x] ✅ **`require_boundary=False`** → extrapolates the interior out to any face with
+  no boundary patch, instead of raising. Two steps, both done.
+  - [x] ✅ **(2026-08-12) `fluid.center_cell_regrid` is back as a module-level
+    function, extended to rectilinear grids and tested.** Takes `(flow, flow_points)`
+    and returns them with one grid plane added at each end of each spatial axis, at the
+    domain boundary. Handles 2D/3D, a leading time axis, and periodic axes; returns
+    points in the input coordinate system, so shifting to quadrant 1 stays the caller's
+    business as it is for the loaders' own grids.
+    - **Rewritten, not restored.** The legacy body assembled the shell of boundary
+      points, interpolated it in one call, and unpacked the flat result back into
+      faces/edges/corners — ~150 lines of index bookkeeping, and the 3D corner list
+      and its unpacker disagreed, so corner `(x+,y-,z-)` was silently filled from
+      `(x+,y-,z+)`. Extending one axis at a time is ~20 lines, gets edges and corners
+      for free as the tensor-product extension, and has no corner table to get wrong.
+      **The commented-out legacy block has been deleted**: its useful parts are back
+      in force, and leaving it would invite restoring the bug.
+    - ⚠️ **Where the boundary is, is a guess on a stretched grid.** n cell centers
+      give n equations in n+1 faces, so the sequence is short one piece of
+      information; the two outermost faces are taken half the distance to the
+      neighboring center. Exact on a uniform grid, biased by the local stretch ratio
+      otherwise (widths w, rw give w(1+r)/4 against a true w/2). Warns, naming the
+      axis. A `bounds=` argument takes the true edge per end where the caller knows
+      it, which suppresses both the inference and the warning for that end.
+  - [x] ✅ **(2026-08-12) Folded into the OpenFOAM loader.** `require_boundary=False`
+    now fills each uncovered face from `center_cell_regrid` and warns; `True` still
+    raises, with the message pointing at the option.
+    - **Per face, not per dataset.** A patch carries the boundary condition the solver
+      applied and is strictly better than extrapolating, so every face that has one
+      keeps using it. Dropping `walls` from the fixture leaves inlet/outlet on their
+      patches while the four lateral faces are extrapolated — and since the walls are
+      no-slip zero while the linear extension is not, that difference is what the test
+      asserts.
+    - `_build_grid` resolves all six edges (patch plane where there is one, the
+      `_infer_domain_edges` closure otherwise) and `_read_dump` passes those back as
+      `bounds=`, so the grid the loader publishes and the grid the field was extended
+      onto cannot disagree.
+    - Edges and corners are still decided by the existing stage 2/3 averaging, whatever
+      mix of patched and extrapolated faces meets there — one rule, unchanged, so the
+      mixed case needed no new policy. The regrid's own edge/corner values are
+      discarded; only each face's interior run is taken, which depends solely on the
+      sweep along that face's own axis.
+    - ⚠️ **`_verify_dump_mesh` (item 5) reads the interior lattice as `_grid[d][1:-1]`.**
+      Still true: `_build_grid` always puts an edge coordinate at each end, inferred
+      or from a patch, so the slice still means "the cell centers".
+    - ⚠️ **The `bounds=` pass-through is not distinguishable on the reference
+      dataset** — its mesh is uniform and its patches sit exactly half a cell out, so
+      the inferred and true edges coincide. `center_cell_regrid`'s own tests pin the
+      mechanism; the loader-level call is correctness insurance for a stretched mesh.
 - [x] ✅ **Mesh verification (second dump).** The mesh is read once and the permutation
   built from it; a same-count reordering (a series stitched from two runs, a corrupt
   file) would otherwise pass silently with every value in the wrong place. Built as an

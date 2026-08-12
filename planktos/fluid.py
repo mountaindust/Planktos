@@ -94,6 +94,162 @@ def _wrap_flow(flow, flow_points, periodic_dim=(True, True, False)):
     return flow, flow_pts, [flow_pts[d][-1] for d in range(dim)]
 
 
+
+def _infer_domain_edges(c):
+    '''Locate a cell-centered axis' domain boundaries from its own spacing.
+
+    n cell centers give n equations in the n+1 cell faces, so the sequence is
+    short one piece of information. Only the two outermost faces are wanted
+    here, and they are taken half the distance to the neighboring center --
+    exact on a uniform grid, a guess on a stretched one. See center_cell_regrid.
+    '''
+    return c[0] - (c[1] - c[0])/2, c[-1] + (c[-1] - c[-2])/2
+
+
+
+def center_cell_regrid(flow, flow_points, periodic_dim=None, bounds=None):
+    '''Extend cell-centered fluid data out to the edges of its domain.
+
+    Finite-volume solvers specify velocity at the center of each cell, so the
+    outermost samples sit half a cell inside the domain and the data reports it
+    one cell narrower than it is. This adds one grid plane at each end of each
+    spatial axis, at the domain boundary, and fills it by extending the field.
+
+    The result is rectilinear but not uniform: the two outermost intervals along
+    each axis are the half-cell from the outermost centers out to the boundary.
+    That is the same shape ``OpenFOAMData`` builds when it splices real boundary
+    patches on, and the reason to prefer patches when they exist -- this is an
+    extrapolation of the interior, whereas a patch carries the boundary
+    condition the solver actually applied.
+
+    Where the boundary is
+    ---------------------
+    Cell centers do not determine the cell faces: n centers give n equations in
+    the n+1 unknown faces, so the whole sequence is short one piece of
+    information. Only the two outermost faces are needed here, and they are
+    taken half the distance to the neighboring center::
+
+        lower edge = c[0]  - (c[1] - c[0])/2
+        upper edge = c[-1] + (c[-1] - c[-2])/2
+
+    On a uniform grid that is exact. On a **stretched** grid it is a guess, and
+    a biased one: if the first two cells have widths w and rw, the true half
+    width is w/2 while this gives w(1+r)/4. A warning names any axis inferred
+    that way. Pass ``bounds`` for any end whose true coordinate is known --
+    ``OpenFOAMData`` does, from the boundary patches it does have.
+
+    Parameters
+    ----------
+    flow : list of ndarray
+        one array per velocity component, each indexed [x,y(,z)] for
+        time-invariant flow or [t,x,y(,z)] for time-varying. Not modified.
+    flow_points : tuple of ndarray
+        1D cell-center coordinates along each spatial axis, increasing. At least
+        two per axis, since the boundary is located from the spacing.
+    periodic_dim : list of bool, optional
+        per spatial axis; defaults to non-periodic throughout. A periodic axis
+        wraps rather than extrapolating, so both of its new planes hold the same
+        values and the field stays periodic on the returned grid.
+    bounds : sequence of (float or None, float or None), optional
+        the true domain boundary of each spatial axis, where it is known. A None
+        entry -- or None throughout -- is inferred as above. Supplying an end
+        both places the new plane exactly and extends the field to it, so the
+        two need not be half a cell out.
+
+    Returns
+    -------
+    flow : list of ndarray
+        each grown by two along every spatial axis
+    flow_points : tuple of ndarray
+        cell centers with the two boundary coordinates added, in the same
+        coordinate system as the input -- shifting to the first quadrant is the
+        caller's business, as it is for the loaders' own grids
+    '''
+
+    ndim = len(flow_points)
+    flow_points = [np.asarray(c, dtype=float) for c in flow_points]
+    flow = [np.asarray(f) for f in flow]
+
+    if periodic_dim is None:
+        periodic_dim = [False]*ndim
+    for d, c in enumerate(flow_points):
+        if len(c) < 2:
+            raise ValueError(
+                "Axis {} has {} grid point(s). At least two are needed: the "
+                "domain boundary is located from the spacing between "
+                "them.".format('xyz'[d], len(c)))
+    if flow[0].ndim == ndim:
+        toff = 0
+    elif flow[0].ndim == ndim + 1:
+        toff = 1                          # leading time axis
+    else:
+        raise ValueError(
+            "Flow components have {} dimensions against {} spatial axes; "
+            "expected {} (time-invariant) or {} (time-varying).".format(
+                flow[0].ndim, ndim, ndim, ndim+1))
+
+    if bounds is None:
+        bounds = [(None, None)]*ndim
+
+    ##### Resolve each end, and say where that was a guess rather than exact ###
+    edges = []
+    inferred = []
+    for d, c in enumerate(flow_points):
+        guess = _infer_domain_edges(c)
+        ends = tuple(guess[e] if bounds[d][e] is None else float(bounds[d][e])
+                     for e in (0, 1))
+        if not (ends[0] < c[0] and ends[1] > c[-1]):
+            raise ValueError(
+                "Domain bounds ({:g}, {:g}) for axis {} do not lie outside its "
+                "cell centers ({:g}, {:g}).".format(
+                    ends[0], ends[1], 'xyz'[d], c[0], c[-1]))
+        edges.append(ends)
+        # Only an end that was actually inferred can be wrong, and only a
+        # stretched axis makes the inference more than a restatement of dx.
+        if any(bounds[d][e] is None for e in (0, 1)) and \
+                not np.allclose(np.diff(c), c[1]-c[0], rtol=1e-6):
+            inferred.append(d)
+
+    if len(inferred) > 0:
+        warnings.warn(
+            "Cell-center spacing is not uniform along {}, so the domain "
+            "boundary there is inferred as half the distance to the "
+            "neighboring cell center. That is exact only for a uniform grid; "
+            "on a stretched one it is biased by the local stretch ratio. Pass "
+            "bounds= if the true extent is known.".format(
+                ', '.join('xyz'[d] for d in inferred)), UserWarning)
+
+    ##### Extend one axis at a time #####
+    # Axis by axis rather than by assembling the shell of boundary points and
+    # interpolating it in one go. Sweeping this way gets the edges and corners
+    # for free -- the second axis extends planes the first has already extended,
+    # which is exactly the tensor-product (multilinear) extension those corners
+    # need -- and the axes commute, so the order does not matter.
+    new_points = []
+    for d in range(ndim):
+        c = flow_points[d]
+        ax = d + toff
+        h_lo = c[0] - edges[d][0]
+        h_hi = edges[d][1] - c[-1]
+        new_points.append(np.concatenate(([edges[d][0]], c, [edges[d][1]])))
+
+        for ii, f in enumerate(flow):
+            v0 = np.take(f, 0, axis=ax); v1 = np.take(f, 1, axis=ax)
+            u0 = np.take(f, -1, axis=ax); u1 = np.take(f, -2, axis=ax)
+            if periodic_dim[d]:
+                # The two edges are the same place, so they hold the same value:
+                # the field across the wrap, weighted by the two half-widths
+                # meeting there.
+                lo = hi = (h_lo*u0 + h_hi*v0)/(h_lo + h_hi)
+            else:
+                lo = v0 - (v1 - v0)*h_lo/(c[1] - c[0])
+                hi = u0 + (u0 - u1)*h_hi/(c[-1] - c[-2])
+            flow[ii] = np.concatenate((np.expand_dims(lo, ax), f,
+                                       np.expand_dims(hi, ax)), axis=ax)
+
+    return flow, tuple(new_points)
+
+
 #######################################################################
 #####                BASE-LEVEL FLUID DATA CLASSES                #####
 #######################################################################
@@ -1837,8 +1993,11 @@ class OpenFOAMData(FluidData):
             by a boundary patch. If a face is missing, the domain would be short
             by half a cell in that direction, shifting every coordinate in it
             with nothing downstream able to detect the error, so this raises by
-            default. False is not yet implemented; the intended behavior is to
-            regrid the cell-centered data out to the domain edges and warn.
+            default. False fills any uncovered face by extrapolating the
+            interior out to it instead, with a warning -- per face, so every
+            face that does have a patch still uses it. Prefer a patch where one
+            exists: it carries the boundary condition the solver applied, and a
+            no-slip wall is not the linear extension of the flow beside it.
 
         Attributes
         ----------
@@ -1856,6 +2015,9 @@ class OpenFOAMData(FluidData):
         self.path = path
         self.vel_conv = vel_conv
         self.require_boundary = require_boundary
+        # FluidData.__init__ runs last and is what sets self.periodic_dim, but
+        # the regrid of an uncovered face needs it during the opening load.
+        self._periodic_dim = periodic_dim
         # The boundary-condition corner warning is a property of the dataset,
         # not of the timestep, so say it once rather than on every window slide.
         self._warned_bc_corner = False
@@ -2506,11 +2668,15 @@ class OpenFOAMData(FluidData):
                     # once, so a timestep's read is one fancy-index and a reshape.
                     self._faces[(d, side)] = (name, sel[fperm], fshape, plane)
 
-        missing = [(d, side) for d in range(3) for side in (0, 1)
-                   if (d, side) not in self._faces]
-        if len(missing) > 0:
+        # Faces with no patch. Kept per face rather than per dataset: a patch
+        # carries the boundary condition the solver applied, which extrapolating
+        # the interior cannot, so every face that has one keeps using it and
+        # only the uncovered faces are regridded.
+        self._regrid_faces = [(d, side) for d in range(3) for side in (0, 1)
+                              if (d, side) not in self._faces]
+        if len(self._regrid_faces) > 0:
             names = ', '.join('{}{}'.format('xyz'[d], '-+'[s])
-                              for d, s in missing)
+                              for d, s in self._regrid_faces)
             if self.require_boundary:
                 raise RuntimeError(
                     "No boundary patch covers the {} face(s) of the "
@@ -2518,20 +2684,37 @@ class OpenFOAMData(FluidData):
                     "them the domain would be reported short by half a cell "
                     "there, shifting every coordinate in it with nothing "
                     "downstream able to detect it. Pass require_boundary=False "
-                    "once regridding to the domain edge is implemented.".format(
-                        names))
-            raise NotImplementedError(
-                "require_boundary=False is not implemented yet. Recovering the "
-                "domain edge without a boundary patch means regridding the "
-                "cell-centered data outward, which is planned but not built; "
-                "the {} face(s) have no patch.".format(names))
+                    "to extrapolate the interior out to those faces "
+                    "instead.".format(names))
+            stretched = [d for d in range(3)
+                         if not np.allclose(np.diff(interior[d]),
+                                            interior[d][1]-interior[d][0],
+                                            rtol=1e-6)
+                         and any((d, s) in self._regrid_faces for s in (0, 1))]
+            warnings.warn(
+                "No boundary patch covers the {} face(s); the fluid there is "
+                "extrapolated from the interior and the domain edge is placed "
+                "half a cell out. A patch would carry the boundary condition "
+                "the solver applied, which this cannot -- a no-slip wall, for "
+                "one, is not the linear extension of the flow beside it.".format(
+                    names) +
+                ("" if len(stretched) == 0 else
+                 " Cell spacing along {} is also non-uniform, so the edge "
+                 "placement there is biased by the local stretch ratio.".format(
+                     ', '.join('xyz'[d] for d in stretched))), UserWarning)
 
         ##### Assemble the grid coordinates #####
+        # Where a patch covers a face its plane is the domain edge exactly.
+        # Where none does, it is inferred from the cell spacing -- the same
+        # closure center_cell_regrid uses, which is then handed those resolved
+        # edges as `bounds` so the grid and the data cannot disagree.
         self._grid = []
         for d in range(3):
-            self._grid.append(np.concatenate((
-                [self._faces[(d, 0)][3]], interior[d],
-                [self._faces[(d, 1)][3]])))
+            guess = _infer_domain_edges(interior[d])
+            ends = [self._faces[(d, s)][3] if (d, s) in self._faces else guess[s]
+                    for s in (0, 1)]
+            self._grid.append(np.concatenate(
+                ([ends[0]], interior[d], [ends[1]])))
             if not np.all(np.diff(self._grid[-1]) > 0):
                 raise RuntimeError(
                     "Boundary patches for the {} direction do not lie outside "
@@ -2610,6 +2793,33 @@ class OpenFOAMData(FluidData):
             idx[d] = 0 if side == 0 else -1
             vel[tuple(idx)] = face
 
+        ##### Stage 1b: any face with no patch, by extending the interior #####
+        # Only the faces' interior runs are taken; the edges and corners
+        # center_cell_regrid also fills are discarded, so that stages 2 and 3
+        # below decide those by one rule whatever mix of patched and
+        # extrapolated faces meet there. Each face's interior run depends only
+        # on the sweep along its own axis, so the discarded parts cannot affect
+        # what is kept.
+        if len(self._regrid_faces) > 0:
+            inner = vel[1:-1, 1:-1, 1:-1, :]
+            # bounds= are the edges _build_grid already published, so the field
+            # is extended to exactly the grid the loader reports rather than to
+            # wherever an independent inference would land. The two coincide
+            # whenever the mesh is uniform and the patches sit half a cell out
+            # -- as they do in the reference dataset, which is why no test here
+            # can tell the difference; center_cell_regrid's own tests pin it.
+            # It matters for a stretched mesh, where a patch plane is a real
+            # measurement and the inference is a guess.
+            ext, _ = center_cell_regrid(
+                [inner[..., k] for k in range(3)],
+                [g[1:-1] for g in self._grid], self._periodic_dim,
+                bounds=[(g[0], g[-1]) for g in self._grid])
+            for d, side in self._regrid_faces:
+                idx = [slice(1, -1)]*3
+                idx[d] = 0 if side == 0 else -1
+                vel[tuple(idx)] = np.stack([e[tuple(idx)] for e in ext],
+                                           axis=-1)
+
         ##### Stage 2: the twelve edges, from the two faces meeting there #####
         # Each edge runs along axis c with axes a and b at their extremes. Only
         # the interior run of it is defined by the faces; the two ends are
@@ -2656,284 +2866,3 @@ class OpenFOAMData(FluidData):
         return vel
 
 
-
-######## Legacy function for regridding fluid velocity data ########
-# This was in the Environment class, but is no longer used.
-# It's here in case we need to port it later.
-# Also, it is not robust to rectilinear grids.
-
-# def center_cell_regrid(self):
-#     '''Re-grids data that was specified at the center of cells instead of
-#     at the corners.
-
-#     NOTE! This needs to be called *before* any immersed meshes are loaded.
-#     It will NOT look for and properly shift these meshes.
-    
-#     Software has a tendency to output data files where the fluid mesh is 
-#     specified at the center of cells rather than at the corners. This will 
-#     be readily apparent if Planktos loads your fluid velocity data and 
-#     reports spatial dimensions one dx, dy, and dz smaller than you were
-#     expecting. To fix this, Planktos will interpolate/extrapolate the fluid 
-#     velocity mesh using the default method to get additional grid points on 
-#     the edge of the domain.
-
-#     Periodicity can be enforced in specified dimensions.
-
-#     Parameters
-#     ----------
-#     periodic_dim : list-like of 2 or 3 bool, default=(True, True, False)
-#         True if that spatial dimension is periodic, otherwise False.
-#         The 3rd entry will be ignored in the 2D case.
-#     '''
-    
-#     fpoints = self.flow.flow_points
-
-#     # Detect cell width in each dimension based on the first two coordinates 
-#     #   in each spatial dimension
-#     dx = fpoints[0][1] - fpoints[0][0]
-#     dy = fpoints[1][1] - fpoints[1][0]
-#     if len(self.L) > 2:
-#         dz = fpoints[2][1] - fpoints[2][0]
-#         DIM3 = True
-#     else:
-#         DIM3 = False
-
-#     ### Create a list of positions at which we need to extrapolate the ###
-#     ###   velocity field                                               ###
-#     x_ends = [-dx/2, fpoints[0][-1]+dx/2]
-#     y_ends = [-dy/2, fpoints[1][-1]+dy/2]
-#     bndry_list = []
-#     if not DIM3:
-#         # edges
-#         bndry_list += [[x, y_ends[0]] for x in fpoints[0]]
-#         bndry_list += [[x, y_ends[1]] for x in fpoints[0]]
-#         bndry_list += [[x_ends[0], y] for y in fpoints[1]]
-#         bndry_list += [[x_ends[1], y] for y in fpoints[1]]
-#         # points
-#         bndry_list += [[x_ends[0],y_ends[0]],[x_ends[0],y_ends[1]],
-#                         [x_ends[1],y_ends[0]],[x_ends[1],y_ends[1]]]
-#     else:
-#         z_ends = [-dz/2, fpoints[2][-1]+dz/2]
-#         # sides
-#         bndry_list += [[x,y,z_ends[0]] for x in fpoints[0] for y in fpoints[1]]
-#         bndry_list += [[x,y,z_ends[1]] for x in fpoints[0] for y in fpoints[1]]
-#         bndry_list += [[x,y_ends[0],z] for x in fpoints[0] for z in fpoints[2]]
-#         bndry_list += [[x,y_ends[1],z] for x in fpoints[0] for z in fpoints[2]]
-#         bndry_list += [[x_ends[0],y,z] for y in fpoints[1] for z in fpoints[2]]
-#         bndry_list += [[x_ends[1],y,z] for y in fpoints[1] for z in fpoints[2]]
-#         # edges
-#         bndry_list += [[x, y_ends[0], z_ends[0]] for x in fpoints[0]]
-#         bndry_list += [[x, y_ends[0], z_ends[1]] for x in fpoints[0]]
-#         bndry_list += [[x, y_ends[1], z_ends[0]] for x in fpoints[0]]
-#         bndry_list += [[x, y_ends[1], z_ends[1]] for x in fpoints[0]]
-#         bndry_list += [[x_ends[0], y, z_ends[0]] for y in fpoints[1]]
-#         bndry_list += [[x_ends[0], y, z_ends[1]] for y in fpoints[1]]
-#         bndry_list += [[x_ends[1], y, z_ends[0]] for y in fpoints[1]]
-#         bndry_list += [[x_ends[1], y, z_ends[1]] for y in fpoints[1]]
-#         bndry_list += [[x_ends[0], y_ends[0], z] for z in fpoints[2]]
-#         bndry_list += [[x_ends[0], y_ends[1], z] for z in fpoints[2]]
-#         bndry_list += [[x_ends[1], y_ends[0], z] for z in fpoints[2]]
-#         bndry_list += [[x_ends[1], y_ends[1], z] for z in fpoints[2]]
-#         # points
-#         bndry_list += [[x_ends[0],y_ends[0],z_ends[0]],
-#                         [x_ends[0],y_ends[0],z_ends[1]],
-#                         [x_ends[0],y_ends[1],z_ends[0]],
-#                         [x_ends[1],y_ends[0],z_ends[1]],
-#                         [x_ends[0],y_ends[1],z_ends[1]],
-#                         [x_ends[1],y_ends[0],z_ends[1]],
-#                         [x_ends[1],y_ends[1],z_ends[0]],
-#                         [x_ends[1],y_ends[1],z_ends[1]]]
-
-#     ### Include periodicity, if applicable, by extending out the fluid field ###
-#     flowshape = np.array(self.flow.fshape)
-#     idx = []
-#     if len(self.flow.fshape) == len(self.L):
-#         # non time-varying flow
-#         startdim = 0
-#     else:
-#         startdim = 1
-#     for ii in range(2):
-#         if self.flow.periodic_dim[ii]:
-#             flowshape[startdim+ii] += 2
-#             idx.append([1,flowshape[startdim+ii]-1])
-#         else:
-#             idx.append([0,flowshape[startdim+ii]])
-#     if DIM3:
-#         if self.flow.periodic_dim[2]:
-#             flowshape[startdim+2] += 2
-#             idx.append([1,flowshape[startdim+2]-1])
-#         else:
-#             idx.append([0,flowshape[startdim+2]])
-    
-#     if DIM3:
-#         flow = [np.zeros(flowshape) for ii in range(3)]
-#         flow_points = []
-#         for ii in range(3):
-#             flow[ii][...,idx[0][0]:idx[0][1],idx[1][0]:idx[1][1],idx[2][0]:idx[2][1]] = self.flow[ii]
-#         if self.flow.periodic_dim[0]:
-#             for ii in range(3):
-#                 flow[ii][...,0,:,:] = flow[ii][...,-2,:,:]
-#                 flow[ii][...,-1,:,:] = flow[ii][...,1,:,:]
-#             flow_points.append(np.insert(fpoints[0], # what
-#                                             [0,len(fpoints[0])], # loc
-#                                             [-dx,fpoints[0][-1]+dx])) # vals
-#         else:
-#             flow_points.append(fpoints[0])
-#         if self.flow.periodic_dim[1]:
-#             for ii in range(3):
-#                 flow[ii][...,0,:] = flow[ii][...,-2,:]
-#                 flow[ii][...,-1,:] = flow[ii][...,1,:]
-#             flow_points.append(np.insert(fpoints[1],
-#                                             [0,len(fpoints[1])],
-#                                             [-dy,fpoints[1][-1]+dy]))
-#         else:
-#             flow_points.append(fpoints[1])
-#         if self.flow.periodic_dim[2]:
-#             for ii in range(3):
-#                 flow[ii][...,0] = flow[ii][...,-2]
-#                 flow[ii][...,-1] = flow[ii][...,1]
-#             flow_points.append(np.insert(fpoints[2],
-#                                             [0,len(fpoints[2])],
-#                                             [-dz,fpoints[2][-1]+dz]))
-#         else:
-#             flow_points.append(fpoints[2])
-#     else:
-#         flow = [np.zeros(flowshape) for ii in range(2)]
-#         flow_points = []
-#         for ii in range(2):
-#             flow[ii][...,idx[0][0]:idx[0][1],idx[1][0]:idx[1][1]] = self.flow[ii]
-#         if self.flow.periodic_dim[0]:
-#             for ii in range(2):
-#                 flow[ii][...,0,:] = flow[ii][...,-2,:]
-#                 flow[ii][...,-1,:] = flow[ii][...,1,:]
-#             flow_points.append(np.insert(fpoints[0], # what
-#                                             [0,len(fpoints[0])], # loc
-#                                             [-dx,fpoints[0][-1]+dx])) # vals
-#         else:
-#             flow_points.append(fpoints[0])
-#         if self.flow.periodic_dim[1]:
-#             for ii in range(2):
-#                 flow[ii][...,0] = flow[ii][...,-2]
-#                 flow[ii][...,-1] = flow[ii][...,1]
-#             flow_points.append(np.insert(fpoints[1],
-#                                             [0,len(fpoints[1])],
-#                                             [-dy,fpoints[1][-1]+dy]))
-#         else:
-#             flow_points.append(fpoints[1])
-
-#     ### Interpolate the new points ###
-#     if startdim == 0:
-#         # non time-varying flow
-#         new_vecs = self.interpolate_flow(bndry_list, flow, flow_points)
-#     else:
-#         new_vecs = []
-#         for t_idx in range(self.flow.fshape[0]):
-#             this_flow = [flow[ii][t_idx,...] for ii in range(len(flow))]
-#             new_vecs.append(self.interpolate_flow(bndry_list, this_flow, flow_points))
-
-#     ### Incorporate the new points into the fluid field and mesh ###
-#     if DIM3:
-#         intervals = [dx,dy,dz]
-#     else:
-#         intervals = [dx,dy]
-#     flow_points = [np.insert(fpoints[ii]+interval/2,
-#                                 [0,len(fpoints[ii])],
-#                                 [0,fpoints[ii][-1]+interval])
-#                                 for ii,interval in enumerate(intervals)]
-#     flowshape = np.array(self.flow.fshape)
-#     if startdim == 0:
-#         flowshape += 2
-#     else:
-#         flowshape[1:] += 2
-#     shp = [len(points) for points in fpoints]
-
-#     def bndry_add3d(fshape, shp, this_vecs):
-#         f = [np.zeros(fshape) for ii in range(3)]
-#         for dim in range(3):
-#             # sides
-#             f[dim][1:-1,1:-1,0] = np.reshape(this_vecs[:shp[0]*shp[1],dim],(shp[0],shp[1]))
-#             s = shp[0]*shp[1]
-#             f[dim][1:-1,1:-1,-1] = np.reshape(this_vecs[s:s+shp[0]*shp[1],dim],(shp[0],shp[1]))
-#             s += shp[0]*shp[1]
-#             f[dim][1:-1,0,1:-1] = np.reshape(this_vecs[s:s+shp[0]*shp[2],dim],(shp[0],shp[2]))
-#             s += shp[0]*shp[2]
-#             f[dim][1:-1,-1,1:-1] = np.reshape(this_vecs[s:s+shp[0]*shp[2],dim],(shp[0],shp[2]))
-#             s += shp[0]*shp[2]
-#             f[dim][0,1:-1,1:-1] = np.reshape(this_vecs[s:s+shp[1]*shp[2],dim],(shp[1],shp[2]))
-#             s += shp[1]*shp[2]
-#             f[dim][-1,1:-1,1:-1] = np.reshape(this_vecs[s:s+shp[1]*shp[2],dim],(shp[1],shp[2]))
-#             s += shp[1]*shp[2]
-#             # edges
-#             f[dim][1:-1,0,0] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
-#             f[dim][1:-1,0,-1] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
-#             f[dim][1:-1,-1,0] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
-#             f[dim][1:-1,-1,-1] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
-#             f[dim][0,1:-1,0] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
-#             f[dim][0,1:-1,-1] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
-#             f[dim][-1,1:-1,0] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
-#             f[dim][-1,1:-1,-1] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
-#             f[dim][0,0,1:-1] = this_vecs[s:s+shp[2],dim]; s+=shp[2]
-#             f[dim][0,-1,1:-1] = this_vecs[s:s+shp[2],dim]; s+=shp[2]
-#             f[dim][-1,0,1:-1] = this_vecs[s:s+shp[2],dim]; s+=shp[2]
-#             f[dim][-1,-1,1:-1] = this_vecs[s:s+shp[2],dim]; s+=shp[2]
-#             # points
-#             f[dim][0,0,0] = this_vecs[s,dim]
-#             f[dim][0,0,-1] = this_vecs[s+1,dim]
-#             f[dim][0,-1,0] = this_vecs[s+2,dim]
-#             f[dim][-1,0,0] = this_vecs[s+3,dim]
-#             f[dim][0,-1,-1] = this_vecs[s+4,dim]
-#             f[dim][-1,0,-1] = this_vecs[s+5,dim]
-#             f[dim][-1,-1,0] = this_vecs[s+6,dim]
-#             f[dim][-1,-1,-1] = this_vecs[s+7,dim]
-#         return f
-
-#     def bndry_add2d(fshape, shp, this_vecs):
-#         f = [np.zeros(fshape) for ii in range(2)]
-#         for dim in range(2):
-#             s=0
-#             # edges
-#             f[dim][1:-1,0] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
-#             f[dim][1:-1,-1] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
-#             f[dim][0,1:-1] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
-#             f[dim][-1,1:-1] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
-#             # points
-#             f[dim][0,0] = this_vecs[s,dim]
-#             f[dim][0,-1] = this_vecs[s+1,dim]
-#             f[dim][-1,0] = this_vecs[s+2,dim]
-#             f[dim][-1,-1] = this_vecs[s+3,dim]
-#         return f
-
-#     if DIM3 and startdim == 0:
-#         # time invariant, 3D
-#         flow = bndry_add3d(flowshape, shp, new_vecs)
-#     elif DIM3 and startdim == 1:
-#         flow = [np.zeros(flowshape) for ii in range(3)]
-#         for n, this_vecs in enumerate(new_vecs):
-#             f = bndry_add3d(flowshape[1:], shp, this_vecs)
-#             flow[0][n,...]=f[0]; flow[1][n,...]=f[1]; flow[2][n,...]=f[2]
-#     elif not DIM3 and startdim == 0:
-#         flow = bndry_add2d(flowshape, shp, new_vecs)
-#     else:
-#         flow = [np.zeros(flowshape) for ii in range(2)]
-#         for n, this_vecs in enumerate(new_vecs):
-#             f = bndry_add2d(flowshape[1:], shp, this_vecs)
-#             flow[0][n,...]=f[0]; flow[1][n,...]=f[1]
-
-#     ### Add back the original fluid data ###
-#     for dim in range(len(flow)):
-#         if DIM3:
-#             flow[dim][...,1:-1,1:-1,1:-1] = self.flow[dim]
-#         else:
-#             flow[dim][...,1:-1,1:-1] = self.flow[dim]
-
-#     ### Replace fluid and update domain ###
-#     flow_points = tuple(flow_points)
-#     fluid_domain_LLC = tuple(np.array(self.flow.fluid_domain_LLC)
-#                                 -np.array(intervals)*0.5)
-#     self.flow = fluid.FluidData(flow, flow_points, 
-#                                 self.flow.flow_times, 
-#                                 periodic_dim=self.flow.periodic_dim,
-#                                 fluid_domain_LLC=fluid_domain_LLC)
-#     self.L = [flow_points[d][-1] for d in range(len(flow_points))]
-    
-#     self._reset_flow_variables()
