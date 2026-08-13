@@ -785,6 +785,15 @@ were written as independent functions precisely so this could be a chain.
     backdrop is drawn at all.
   - Consumer side is specified in `docs/notes/flow_field_interface.md` §8.3.3: the plot
     cache must not record vorticity a source already carries.
+  - 📋 **Implementation plan: `docs/notes/stored_derived_fields.md`** (2026-08-12).
+    Nothing built yet. Headlines: no new `_dataio` work is needed, `Omega` is already
+    named in `_read_IB2d_dumpfiles`' reference block and the scalar read path is the one
+    `uX`/`uY` use; a sidecar reader borrows `flow_times` and maps index → dump as
+    `d_start + i` for every source; a two-slot cache makes a movie cost one read per
+    dump rather than two per frame. ⚠️ The one real catch is that a not-a-knot cubic
+    spline is **not local**, so serving stored vorticity with the field's own weights is
+    exact only when the fluid is splined linearly — see §5 there for the three options
+    and the recommendation.
 - [x] ✅ **Whichever fallback is taken, say so.** Silently accepting a degraded timeline
   is the shape of the `VTK3dData` frozen-fluid bug. Every step of the chain past the
   first warns, and the step taken is recorded on the object as `dump_source` /
@@ -1236,6 +1245,38 @@ continuously, that band is not a rim.
 ```
 - Bug fix: FTLE is now normalized by the time actually integrated, correcting values where neighboring tracers left the domain early.
 ```
+
+### Queued — the periodic vorticity edge ring (2026-08-13)
+
+`get_vorticity` never consulted `periodic_dim`. A periodic axis carries a duplicated end
+line — the contract `FluidData` documents — so the field genuinely continues past either
+end, but `np.gradient` cannot know that and fell back to a **first-order one-sided**
+difference there (its default `edge_order=1`). The outermost ring of every vorticity
+plot was therefore wrong, and wrong at a lower order than the interior.
+
+Measured against IB2d's own `Omega` on `tests/data/Rubberband_with_Damped_Springs`:
+the edge ring was **5.0–8.4% off** across three dumps while the interior matched
+**exactly**. Differencing across the wrap brings the edge to 0.00% as well — i.e. the
+recomputed curl then reproduces the solver's stored vorticity everywhere. Reproduce
+with `tests/manual/bench_vorticity_sources.py`.
+
+New `fluid._spatial_gradient` adds one ghost point from the far side at each end, calls
+`np.gradient`, and trims — which keeps its non-uniform-spacing handling and leaves the
+interior bit-identical.
+
+| What | Where | Applies cleanly to `master`? |
+|---|---|---|
+| `_spatial_gradient`, and `get_vorticity` calling it per axis with `periodic_dim[axis]` | `planktos/fluid.py` | ⚠️ **Not as a hunk — needs a port.** Master has no `fluid.py`; the method is `Environment.get_2D_vorticity` (its line 3386), 2D only, and carries the identical two `np.gradient` calls |
+| — | — | ⚠️ **And master has no `periodic_dim` state to consult.** It appears there only as an argument passed to `_wrap_flow` at IB2d load time (its line 1071) and to `center_cell_regrid`; there is no `self.periodic_dim`. So the port needs one of: (i) store `periodic_dim` on `Environment` at load time, or (ii) detect it in `get_2D_vorticity` by testing whether the last grid line duplicates the first, which is exactly the documented contract and is self-contained. **(ii) is the smaller patch-release change**; (i) is the right long-term shape and is what `dyload` already has |
+| **Tests** — the "2D vorticity on a periodic grid" section of `tests/test_analysis.py` | `tests/test_analysis.py` | **Mostly.** The file exists on master. The 3D case must be dropped (master's is 2D-only), and `_periodic_envir` must set `flow_points` the way master expects |
+
+⚠️ **The same defect is in two more places, deliberately left alone here** because they
+feed the physics rather than a plot, and changing simulation results in a patch release
+is a separate decision: `FluidData.calculate_DuDt` (the spatial gradient of the material
+derivative, feeding the inertial-particle models) and
+`Environment.calculate_mag_gradient` (the gradient of fluid speed, which behaviors read
+via `get_fluid_mag_gradient`). Both call `np.gradient` over `flow_points` with no
+periodic handling. Fixing them is the same one-line substitution per call site.
 
 ### Queued — the vorticity backdrop flash (2026-08-12)
 

@@ -95,6 +95,49 @@ def _wrap_flow(flow, flow_points, periodic_dim=(True, True, False)):
 
 
 
+def _spatial_gradient(f, coords, axis, periodic=False):
+    '''Differentiate along one spatial axis, wrapping if that axis is periodic.
+
+    A periodic axis carries a duplicated end line -- ``FluidData`` requires the
+    upper grid edge to repeat the lower one -- so the field genuinely continues
+    past either end, and the one-sided difference ``np.gradient`` falls back to
+    there is simply wrong. It has no way to know that on its own.
+
+    One ghost point is taken from the far side at each end, ``np.gradient`` is
+    applied to the extended array, and the ghosts trimmed. Going through
+    ``np.gradient`` rather than differencing by hand keeps its treatment of
+    non-uniform spacing, and keeps the interior identical to what it was.
+
+    Parameters
+    ----------
+    f : ndarray
+        the field, indexed [x,y(,z)]
+    coords : 1D ndarray
+        grid coordinates along this axis
+    axis : int
+    periodic : bool, default=False
+
+    Returns
+    -------
+    ndarray, the same shape as f
+    '''
+
+    if not periodic:
+        return np.gradient(f, coords, axis=axis)
+
+    # The point before index 0 is index -2, not -1: the last line repeats the
+    # first. Likewise the point after the last is index 1.
+    period = coords[-1] - coords[0]
+    x = np.concatenate(([coords[-2] - period], coords, [coords[1] + period]))
+    ext = np.concatenate((np.take(f, [-2], axis=axis), f,
+                          np.take(f, [1], axis=axis)), axis=axis)
+    grad = np.gradient(ext, x, axis=axis)
+    trim = [slice(None)]*f.ndim
+    trim[axis] = slice(1, -1)
+    return grad[tuple(trim)]
+
+
+
 def _infer_domain_edges(c):
     '''Locate a cell-centered axis' domain boundaries from its own spacing.
 
@@ -1158,19 +1201,25 @@ class FluidData:
                 warnings.warn("Flow is time-invariant; ignoring time and t_idx.")
             flow = self
 
-        if self.ndim == 2:
-            dvydx = np.gradient(flow[1][:], self.flow_points[0], axis=0)
-            dvxdy = np.gradient(flow[0][:], self.flow_points[1], axis=1)
+        # Periodic axes are differenced across the wrap. Without this the edge
+        # ring of every plot is a one-sided difference of a field that actually
+        # continues past it -- on IB2d data, which is periodic in both
+        # directions, that ring was 5-8% wrong against the solver's own vorticity
+        # while the interior matched it exactly.
+        def d(f, axis):
+            return _spatial_gradient(f, self.flow_points[axis], axis,
+                                     self.periodic_dim[axis])
 
-            vort = dvydx - dvxdy
+        if self.ndim == 2:
+            vort = d(flow[1][:], 0) - d(flow[0][:], 1)
         else:
             # Handle 3D case
-            dvxdy = np.gradient(flow[0][:], self.flow_points[1], axis=1)
-            dvxdz = np.gradient(flow[0][:], self.flow_points[2], axis=2)
-            dvydx = np.gradient(flow[1][:], self.flow_points[0], axis=0)
-            dvydz = np.gradient(flow[1][:], self.flow_points[2], axis=2)
-            dvzdx = np.gradient(flow[2][:], self.flow_points[0], axis=0)
-            dvzdy = np.gradient(flow[2][:], self.flow_points[1], axis=1)
+            dvxdy = d(flow[0][:], 1)
+            dvxdz = d(flow[0][:], 2)
+            dvydx = d(flow[1][:], 0)
+            dvydz = d(flow[1][:], 2)
+            dvzdx = d(flow[2][:], 0)
+            dvzdy = d(flow[2][:], 1)
 
             vort = (dvzdy - dvydz, dvxdz - dvzdx, dvydx - dvxdy)
 

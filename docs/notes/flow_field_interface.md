@@ -770,8 +770,9 @@ Availability is a per-source *capability*, not an assumption, and it differs:
 
 This is the consumer side of `TODO.md` Phase 2 robustness item 6, which decided that
 `get_vorticity` should read a stored field **on demand** rather than carrying one in the
-sliding window. Note the two interact in the useful direction: an on-demand read is
-exactly what a recorder needs, since it wants one dump at a time as that dump lands.
+sliding window; the producer side is planned in `stored_derived_fields.md`. Note the two
+interact in the useful direction: an on-demand read is exactly what a recorder needs,
+since it wants one dump at a time as that dump lands.
 
 Two further points, since they are easy to get wrong here:
 

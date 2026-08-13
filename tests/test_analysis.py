@@ -348,3 +348,141 @@ def test_FTLE_rejects_nonpositive_extent():
     envir = planktos.Environment(Lx=10, Ly=10, flow=[Y, np.zeros_like(Y)])
     with pytest.raises(ValueError):
         envir.calculate_FTLE(grid_dim=(8, 8), t0=0, T=-1.0, dt=0.05, backward=True)
+
+
+# --------------------------------------------------------------------------- #
+#                    2D vorticity on a periodic grid                          #
+# --------------------------------------------------------------------------- #
+# periodic_dim=True means the upper grid edge duplicates the lower one, so the
+# field continues past either end. np.gradient cannot know that and falls back
+# to a one-sided difference there, which made the outermost ring of every
+# vorticity plot wrong -- measured at 5-8% against IB2d's own Omega, where the
+# interior matched it exactly. Periodic axes are now differenced across the wrap.
+
+
+def _periodic_envir(n=33, L=2*np.pi, periodic=True):
+    '''Taylor-Green on a periodic grid, endpoint duplicated as the contract asks.
+
+    u = sin(x+a)cos(y+b), v = -cos(x+a)sin(y+b) => vorticity = 2 sin(x+a) sin(y+b)
+
+    The phases matter: unshifted, that vorticity is identically zero along every
+    edge of [0,L]^2, so an edge test against it passes no matter how the edge is
+    differenced.
+    '''
+    a, b = 0.7, 0.3
+    x = np.linspace(0.0, L, n)                       # x[-1] wraps to x[0]
+    X, Y = np.meshgrid(x, x, indexing='ij')
+    u = np.sin(X+a)*np.cos(Y+b)
+    v = -np.cos(X+a)*np.sin(Y+b)
+    envir = planktos.Environment(Lx=L, Ly=L, flow=[u, v], periodic_dim=periodic)
+    envir.flow.flow_points = (x, x)
+    return envir, 2*np.sin(X+a)*np.sin(Y+b)
+
+
+def _edge_mask(shape):
+    m = np.zeros(shape, bool)
+    m[0] = m[-1] = True
+    m[:, 0] = m[:, -1] = True
+    return m
+
+
+def test_vorticity_of_a_periodic_field_is_itself_periodic():
+    # The exact invariant, needing no analytic answer: if the field wraps, its
+    # curl wraps. A one-sided difference at the edge breaks this.
+    envir, _ = _periodic_envir()
+    vort = envir.get_vorticity()
+    assert np.allclose(vort[0, :], vort[-1, :], atol=1e-12)
+    assert np.allclose(vort[:, 0], vort[:, -1], atol=1e-12)
+
+
+def test_vorticity_periodic_edge_is_as_accurate_as_the_interior():
+    # The point of the fix. Central differencing is second order everywhere, so
+    # the edge ring should be no worse than the bulk -- not merely closer than
+    # it was.
+    envir, exact = _periodic_envir()
+    err = np.abs(envir.get_vorticity() - exact)
+    edge = _edge_mask(err.shape)
+    rms_edge = np.sqrt(np.mean(err[edge]**2))
+    rms_interior = np.sqrt(np.mean(err[~edge]**2))
+    assert rms_edge < 2*rms_interior
+
+
+def test_vorticity_periodic_converges_at_second_order_including_the_edge():
+    # Halving h must quarter the error on the edge ring too. Under the old
+    # one-sided treatment the edge converged at first order and dominated.
+    errs = []
+    for n in (33, 65):
+        envir, exact = _periodic_envir(n=n)
+        err = np.abs(envir.get_vorticity() - exact)
+        errs.append(np.sqrt(np.mean(err[_edge_mask(err.shape)]**2)))
+    assert errs[0]/errs[1] > 3.5                     # 4 in the limit
+
+
+def test_vorticity_non_periodic_is_unchanged():
+    # Regression guard: the non-periodic path must still be exactly np.gradient,
+    # so nothing that was not periodic moves.
+    envir, _ = _periodic_envir(periodic=False)
+    x = envir.flow.flow_points[0]
+    u, v = envir.flow[0], envir.flow[1]
+    expected = (np.gradient(v, x, axis=0) - np.gradient(u, x, axis=1))
+    assert np.array_equal(envir.get_vorticity(), expected)
+
+
+def test_vorticity_periodic_in_one_dimension_only():
+    # Mixed periodicity: only the wrapped axis changes, and only at its own ends.
+    envir, _ = _periodic_envir()
+    envir.flow.periodic_dim = (True, False)
+    vort = envir.get_vorticity()
+    # x wraps, so the curl still wraps in x...
+    assert np.allclose(vort[0, :], vort[-1, :], atol=1e-12)
+    # ...but nothing forces agreement across the non-periodic y ends
+    assert not np.allclose(vort[:, 0], vort[:, -1], atol=1e-12)
+
+
+def test_vorticity_3d_periodic_axis_wraps():
+    n, L = 17, 2*np.pi
+    a = np.linspace(0.0, L, n)
+    X, Y, Z = np.meshgrid(a, a, a, indexing='ij')
+    u = np.sin(Y); v = np.sin(Z); w = np.sin(X)
+    envir = planktos.Environment(Lx=L, Ly=L, Lz=L, flow=[u, v, w],
+                                 periodic_dim=True)
+    envir.flow.flow_points = (a, a, a)
+    vort = envir.get_vorticity()
+    for comp in vort:
+        assert np.allclose(comp[0], comp[-1], atol=1e-12)
+        assert np.allclose(comp[:, 0], comp[:, -1], atol=1e-12)
+        assert np.allclose(comp[..., 0], comp[..., -1], atol=1e-12)
+
+
+# ---- the helper itself ------------------------------------------------------
+
+def test_spatial_gradient_non_periodic_defers_to_numpy():
+    from planktos.fluid import _spatial_gradient
+    rng = np.random.default_rng(0)
+    f = rng.normal(size=(7, 5))
+    x = np.sort(rng.uniform(0, 3, 7)); x[0] = 0.
+    assert np.array_equal(_spatial_gradient(f, x, 0, periodic=False),
+                          np.gradient(f, x, axis=0))
+
+
+def test_spatial_gradient_periodic_handles_uneven_spacing():
+    from planktos.fluid import _spatial_gradient
+    # Non-uniform periodic axis. Checked against the unequal-spacing central
+    # difference by hand at index 0, which is where the ghost point lands: its
+    # left neighbour is x[-2] one period back, NOT x[-1] (the duplicate).
+    # A constant-step formula, or a ghost taken from x[-1], gets this wrong.
+    x = np.array([0., 0.5, 1.7, 3.0, 4.0])           # x[-1] wraps to x[0]
+    rng = np.random.default_rng(3)
+    f = rng.normal(size=(5, 3))
+    f[-1] = f[0]                                     # the periodic contract
+    g = _spatial_gradient(f, x, 0, periodic=True)
+
+    period = x[-1] - x[0]
+    hs = x[0] - (x[-2] - period)                     # back to the wrapped point
+    hd = x[1] - x[0]
+    expected = (-hd/(hs*(hs+hd))*f[-2] + (hd-hs)/(hs*hd)*f[0]
+                + hs/(hd*(hs+hd))*f[1])
+    assert np.allclose(g[0], expected)
+    assert np.allclose(g[0], g[-1], atol=1e-12)      # wraps
+    # the interior is untouched by any of this
+    assert np.allclose(g[1:-1], np.gradient(f, x, axis=0)[1:-1])
