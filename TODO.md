@@ -1165,7 +1165,32 @@ above.)*
 
 ---
 
-## Candidates for a 1.0.3 patch release (cherry-pick queue) 🟡
+## Candidates for a 1.0.3 patch release (cherry-pick queue) 🟢 MOSTLY SHIPPED
+
+✅ **Ported to `master` and released as 1.0.3 (2026-08-13, commit `bf7112c`).** Four of
+the five entries below are done: the `move()`/`_ibc` work, the `move()` override guard,
+the FTLE normalization, and the vorticity backdrop flash. `master`'s `__version__` is
+now `1.0.3` and its changelog carries a 1.0.3 section; the same section was added here
+and those lines removed from 1.1.0, since they are no longer new in it.
+
+⚠️ **Still queued: the periodic edge-ring fixes** (`get_vorticity`, `calculate_DuDt`,
+`calculate_mag_gradient`). They were **not** ported, and the reason is a decision, not
+an oversight — see the ⛔ note in that entry.
+
+Three things the port turned up, worth knowing before the next one:
+
+- The FTLE fix broke four shear assertions exactly as its entry predicted; they were
+  reworked onto full-integration stencils.
+- `test_frame_selection_in_the_error_state_plots_history_only` came along with the
+  failed-step tests and had to be dropped — it needs `Swarm._select_frames`, which is
+  dyload's fps/playback_rate work.
+- The `_vorticity_norm` tests had nowhere to live on `master`, so they became
+  `tests/test_plot_helpers.py` there. **If `master` is merged here, fold that file into
+  `test_frame_selection.py` rather than keeping both.**
+- Every ported fix was mutation-checked on `master`. One is not covered *on either
+  branch*: the `_ibc` free-flight guard survives being mutated away, because it fires
+  only when `t_edge` rounds to exactly 0 or NaN on a near-tangent hit, which is not
+  constructible on demand. Pre-existing, not introduced by the port.
 
 **Why this list exists.** `v1.0.2` is **released and tagged**, so master-applicable
 fixes made here can no longer be filed under it. They currently land under **1.1.0** in
@@ -1275,6 +1300,33 @@ Rows for the two physics call sites, fixed the same day:
 | `calculate_mag_gradient` likewise, plus the `speed` expression lifted out of the two branches so both share one gradient call | `planktos/_environment.py` | **Closer.** The method exists on master with the same body; it still needs a `periodic_dim` source |
 | `_spatial_gradient` gained an `edge_order` argument, so the non-periodic path is bit-for-bit what it was | `planktos/fluid.py` | port with the helper |
 | **Tests** — the "periodic dimensions: the edge is not a boundary" section | `tests/test_material_derivative.py` | **Yes**, the file exists on master |
+
+⛔ **NOT ported to 1.0.3 — this one needs a decision.** Every other queued entry shipped
+in `bf7112c`; these three did not, because **`master` has no `periodic_dim` state to
+consult.** It exists there only as an argument passed to `_wrap_flow` at IB2d load time
+and to `center_cell_regrid`; there is no `self.periodic_dim` anywhere.
+
+⚠️ **An earlier row above suggested detecting periodicity by testing whether the last
+grid line duplicates the first. That suggestion was wrong and must not be taken.**
+Equality of the end lines does not imply periodicity: `f = sin(pi x / L)` is zero at
+both ends and is not periodic, and wrapping it gives a derivative of **0.0 at x=0 where
+the truth is pi/L — 100% wrong**, where the current one-sided difference is accurate to
+0.1%. Detection would silently corrupt any field that happens to vanish, or be equal,
+at both ends.
+
+So the real options are:
+
+1. **Add `periodic_dim` state to `Environment` on `master`**, as `dyload` has. Correct,
+   but it is a new user-facing parameter in a patch release — arguably a feature.
+2. **Leave these dyload-only** until 1.1.0 carries `periodic_dim` across anyway.
+3. Port with an explicit opt-in argument on the three methods, which nobody would set.
+
+Recommendation: **(2)**, given the measured magnitude. `get_vorticity`'s edge ring was
+first-order and genuinely wrong (5-8% against IB2d's own `Omega`); that is the one worth
+wanting on `master`. But `calculate_DuDt` and `calculate_mag_gradient` already used
+`edge_order=2`, converge at order 2.00 either way, and improve only from 1.72-2.19x the
+interior error to 1.08-1.25x — a uniformity fix, not a wrong-answer fix, and thin
+justification for adding state to a patch release.
 
 
 **The same defect in `calculate_DuDt` and `calculate_mag_gradient` is now fixed too**
