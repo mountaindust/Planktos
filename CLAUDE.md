@@ -329,7 +329,18 @@ lives in the pandas DataFrame `Swarm.props`; shared values in `Swarm.shared_prop
 ## Correctness invariants & development priorities
 
 This code prioritizes **scientific accuracy and robustness above all** — "nothing
-breaks" is a hard requirement, not an aspiration. Treat the following as load-bearing:
+breaks" is a hard requirement, not an aspiration.
+
+**Correctness outranks reproducing previous output.** This is a research code, so a fix
+that makes results *more correct* ships even when it changes numbers users have already
+published — including in a patch release, and including where the change is small. Do
+not propose keeping a known-wrong result for compatibility, and do not pin a defect with
+a regression test "to make the change visible": that leaves a lock encoding the bug.
+Test the correct answer instead, and record the size of the shift in the changelog and
+the cherry-pick queue so users can tell whether it reaches them. (Decided 2026-08-13,
+over the periodic-gradient fixes.)
+
+Treat the following as load-bearing:
 
 - **The workhorses are the agent–boundary intersection routines** (`_geom.py`)
   and the **collision/interaction handlers** (`_ibc.py`). These are the riskiest,

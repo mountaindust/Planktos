@@ -95,7 +95,7 @@ def _wrap_flow(flow, flow_points, periodic_dim=(True, True, False)):
 
 
 
-def _spatial_gradient(f, coords, axis, periodic=False):
+def _spatial_gradient(f, coords, axis, periodic=False, edge_order=1):
     '''Differentiate along one spatial axis, wrapping if that axis is periodic.
 
     A periodic axis carries a duplicated end line -- ``FluidData`` requires the
@@ -116,6 +116,12 @@ def _spatial_gradient(f, coords, axis, periodic=False):
         grid coordinates along this axis
     axis : int
     periodic : bool, default=False
+    edge_order : int, default=1
+        passed to np.gradient, which uses it only at the ends of the array. It
+        therefore has no effect on a periodic axis, where the ends are ghost
+        points that get trimmed -- but callers differ on it (get_vorticity takes
+        numpy's default, calculate_DuDt asks for 2), so it is threaded through
+        rather than fixed, and the non-periodic path stays exactly what it was.
 
     Returns
     -------
@@ -123,7 +129,7 @@ def _spatial_gradient(f, coords, axis, periodic=False):
     '''
 
     if not periodic:
-        return np.gradient(f, coords, axis=axis)
+        return np.gradient(f, coords, axis=axis, edge_order=edge_order)
 
     # The point before index 0 is index -2, not -1: the last line repeats the
     # first. Likewise the point after the last is index 1.
@@ -131,7 +137,7 @@ def _spatial_gradient(f, coords, axis, periodic=False):
     x = np.concatenate(([coords[-2] - period], coords, [coords[1] + period]))
     ext = np.concatenate((np.take(f, [-2], axis=axis), f,
                           np.take(f, [1], axis=axis)), axis=axis)
-    grad = np.gradient(ext, x, axis=axis)
+    grad = np.gradient(ext, x, axis=axis, edge_order=edge_order)
     trim = [slice(None)]*f.ndim
     trim[axis] = slice(1, -1)
     return grad[tuple(trim)]
@@ -1324,13 +1330,15 @@ class FluidData:
             # temporally constant flow
             flow = self
 
-        if self.ndim == 3:
-            axis_tuple = (1,2,3)
-        else:
-            axis_tuple = (1,2)
-
-        flow_grad = np.gradient(np.array(flow), *self.flow_points, edge_order=2, 
-                                axis=axis_tuple)
+        # Per axis rather than one call over all of them, because periodicity is
+        # a per-axis property: a periodic axis is differenced across the wrap,
+        # where np.gradient would one-side against data that actually continues.
+        # np.array(flow) puts the components on axis 0, so spatial axis d is
+        # array axis d+1.
+        stacked = np.array(flow)
+        flow_grad = [_spatial_gradient(stacked, self.flow_points[d], d+1,
+                                       self.periodic_dim[d], edge_order=2)
+                     for d in range(self.ndim)]
 
         # Take dot product
         DuDt = []

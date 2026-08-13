@@ -1267,13 +1267,38 @@ interior bit-identical.
 | — | — | ⚠️ **And master has no `periodic_dim` state to consult.** It appears there only as an argument passed to `_wrap_flow` at IB2d load time (its line 1071) and to `center_cell_regrid`; there is no `self.periodic_dim`. So the port needs one of: (i) store `periodic_dim` on `Environment` at load time, or (ii) detect it in `get_2D_vorticity` by testing whether the last grid line duplicates the first, which is exactly the documented contract and is self-contained. **(ii) is the smaller patch-release change**; (i) is the right long-term shape and is what `dyload` already has |
 | **Tests** — the "2D vorticity on a periodic grid" section of `tests/test_analysis.py` | `tests/test_analysis.py` | **Mostly.** The file exists on master. The 3D case must be dropped (master's is 2D-only), and `_periodic_envir` must set `flow_points` the way master expects |
 
-⚠️ **The same defect is in two more places, deliberately left alone here** because they
-feed the physics rather than a plot, and changing simulation results in a patch release
-is a separate decision: `FluidData.calculate_DuDt` (the spatial gradient of the material
-derivative, feeding the inertial-particle models) and
-`Environment.calculate_mag_gradient` (the gradient of fluid speed, which behaviors read
-via `get_fluid_mag_gradient`). Both call `np.gradient` over `flow_points` with no
-periodic handling. Fixing them is the same one-line substitution per call site.
+Rows for the two physics call sites, fixed the same day:
+
+| What | Where | Applies cleanly to `master`? |
+|---|---|---|
+| `calculate_DuDt` unrolled from one all-axes `np.gradient` into a per-axis `_spatial_gradient` loop, `edge_order=2` preserved | `planktos/fluid.py` | ⚠️ **Port, not a hunk.** Master has no `fluid.py`; the method is `Environment.calculate_DuDt`. Same `periodic_dim` problem as the vorticity row above |
+| `calculate_mag_gradient` likewise, plus the `speed` expression lifted out of the two branches so both share one gradient call | `planktos/_environment.py` | **Closer.** The method exists on master with the same body; it still needs a `periodic_dim` source |
+| `_spatial_gradient` gained an `edge_order` argument, so the non-periodic path is bit-for-bit what it was | `planktos/fluid.py` | port with the helper |
+| **Tests** — the "periodic dimensions: the edge is not a boundary" section | `tests/test_material_derivative.py` | **Yes**, the file exists on master |
+
+
+**The same defect in `calculate_DuDt` and `calculate_mag_gradient` is now fixed too**
+*(2026-08-13)*, and queued below. It was held back one commit because those feed the
+physics rather than a plot; the call was that **correctness outranks reproducing
+previous output** for a research code, now written into `CLAUDE.md`.
+
+⚠️ **The magnitude is much smaller than the vorticity case, and the difference is worth
+understanding before assuming otherwise.** Both of these already passed `edge_order=2`,
+so their edge was a *second-order* one-sided difference — converging at the same rate as
+the interior, just with a larger constant. `get_vorticity` took numpy's default of 1 and
+was therefore first-order at the edge, which is why it disagreed with IB2d's own `Omega`
+by 5–8% there. Measured on an analytic periodic field, all four affected components:
+
+| | edge error vs interior |
+|---|---|
+| one-sided (before) | 1.72–2.19× |
+| across the wrap (after) | 1.08–1.25× |
+
+and a convergence check confirms **order 2.00 either way** — so this is a uniformity and
+accuracy fix, not a wrong-answer fix. Results in the outermost ring of a periodic domain
+shift by roughly a factor of two in their error, which reaches agents through
+`Swarm.get_DuDt` (the inertial-particle models) and `get_fluid_mag_gradient` (behavior
+code).
 
 ### Queued — the vorticity backdrop flash (2026-08-12)
 

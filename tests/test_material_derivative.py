@@ -176,3 +176,122 @@ def test_dudt_time_boundaries_and_extrapolation():
         assert d.shape == PTS_2D.shape
         assert np.allclose(d, 0.0, atol=1e-9)
         assert np.allclose(swrm.get_DuDt(positions=PTS_2D, time=t_out), 0.0, atol=1e-9)
+
+
+# --------------------------------------------------------------------------- #
+#            periodic dimensions: the edge is not a boundary                  #
+# --------------------------------------------------------------------------- #
+# A periodic domain has no edge, so no cell should be differenced as though it
+# did. Both spatial-gradient consumers -- the convective term of Du/Dt here, and
+# Environment.calculate_mag_gradient -- used a one-sided difference at the array
+# ends regardless of periodic_dim. That is second order (both pass edge_order=2)
+# and so converges to the right answer, but with a noticeably larger constant
+# than the interior it borders; differencing across the wrap makes the treatment
+# uniform. This is a smaller effect than the same defect had in get_vorticity,
+# which was using numpy's first-order default.
+
+
+def _periodic_field(n=65, L=2*np.pi, a=0.7, b=0.3):
+    '''u = (2 + sin(y+b), sin(x+a)) on a periodic grid, endpoint duplicated.
+
+    Steady, so Du/Dt is the convective term alone:
+        (u.grad)u = ( sin(x+a)cos(y+b), (2+sin(y+b))cos(x+a) )
+    The +2 keeps |u| >= 1 so that grad|u| has no singularity to trip over. The
+    phases keep every quantity non-zero along the edges, which an unshifted
+    field would not -- an edge test against zero passes however it is computed.
+    '''
+    g = np.linspace(0.0, L, n)
+    X, Y = np.meshgrid(g, g, indexing='ij')
+    u = 2 + np.sin(Y+b)
+    v = np.sin(X+a)
+    exact_DuDt = (np.sin(X+a)*np.cos(Y+b), (2+np.sin(Y+b))*np.cos(X+a))
+    spd = np.sqrt(u**2 + v**2)
+    exact_mag_grad = (np.sin(X+a)*np.cos(X+a)/spd,
+                      (2+np.sin(Y+b))*np.cos(Y+b)/spd)
+    return g, u, v, exact_DuDt, exact_mag_grad
+
+
+def _edge_mask(shape):
+    m = np.zeros(shape, bool)
+    m[0] = m[-1] = True
+    m[:, 0] = m[:, -1] = True
+    return m
+
+
+def _periodic_envir(periodic=True, n=65):
+    g, u, v, dudt, mg = _periodic_field(n)
+    envir = planktos.Environment(Lx=float(g[-1]), Ly=float(g[-1]),
+                                 flow=[u, v], periodic_dim=periodic)
+    envir.flow.flow_points = (g, g)
+    return envir, dudt, mg
+
+
+def _edge_vs_interior(got, exact):
+    err = np.abs(np.asarray(got) - exact)
+    m = _edge_mask(err.shape)
+    return (np.sqrt(np.mean(err[m]**2)), np.sqrt(np.mean(err[~m]**2)))
+
+
+def test_DuDt_wrap_beats_one_sided_at_the_edge():
+    # Stated as a comparison of the two treatments rather than of the edge
+    # against the interior: the edge ring samples one particular part of the
+    # field, so its truncation error is not expected to equal the interior
+    # average exactly even when the stencil is identical.
+    on, exact, _ = _periodic_envir()
+    off, _, _ = _periodic_envir(periodic=False)
+    for k in range(2):
+        wrapped = _edge_vs_interior(on.flow.calculate_DuDt()[k], exact[k])[0]
+        onesided, interior = _edge_vs_interior(
+            off.flow.calculate_DuDt()[k], exact[k])
+        # measured spread over both quantities and both components:
+        # wrapped/one-sided 0.55-0.63, wrapped/interior 1.08-1.25,
+        # one-sided/interior 1.72-2.19
+        assert wrapped < 0.8*onesided         # the wrap is the better stencil
+        assert wrapped < 1.4*interior         # and lands near the interior
+        assert onesided > 1.6*interior        # where one-siding did not
+
+
+def test_mag_gradient_wrap_beats_one_sided_at_the_edge():
+    on, _, exact = _periodic_envir()
+    off, _, _ = _periodic_envir(periodic=False)
+    on.calculate_mag_gradient()
+    off.calculate_mag_gradient()
+    for k in range(2):
+        wrapped = _edge_vs_interior(on.mag_grad[k], exact[k])[0]
+        onesided, interior = _edge_vs_interior(off.mag_grad[k], exact[k])
+        assert wrapped < 0.8*onesided
+        assert wrapped < 1.4*interior
+        assert onesided > 1.6*interior
+
+
+def test_periodic_dimensions_are_handled_independently():
+    # Periodicity is per axis, which is why both call sites had to be unrolled
+    # from a single all-axes np.gradient. With only x periodic, the x edges get
+    # the wrap and the y edges keep the one-sided difference.
+    envir, exact, _ = _periodic_envir()
+    envir.flow.periodic_dim = (True, False)
+    DuDt = envir.flow.calculate_DuDt()
+    full, _, _ = _periodic_envir()
+    both = full.flow.calculate_DuDt()
+    # x edges agree with the fully-periodic answer; y edges do not
+    assert np.allclose(DuDt[0][0, 1:-1], both[0][0, 1:-1])
+    assert np.allclose(DuDt[0][-1, 1:-1], both[0][-1, 1:-1])
+    assert not np.allclose(DuDt[0][1:-1, 0], both[0][1:-1, 0])
+
+
+def test_non_periodic_gradients_are_untouched_by_the_change():
+    # Regression guard. Both call sites were rewritten from one np.gradient over
+    # every axis into a per-axis loop; the non-periodic result must be bit-for-bit
+    # what it was, edge_order=2 included.
+    envir, _, _ = _periodic_envir(periodic=False)
+    g = envir.flow.flow_points[0]
+    stacked = np.array([envir.flow[0], envir.flow[1]])
+    expected = np.gradient(stacked, g, g, edge_order=2, axis=(1, 2))
+    DuDt = np.sum([grad*f for grad, f in zip(expected, stacked)], axis=0)
+    assert np.array_equal(np.asarray(envir.flow.calculate_DuDt()), DuDt)
+
+    speed = np.sqrt(np.sum(stacked**2, axis=0))
+    envir.calculate_mag_gradient()
+    for got, want in zip(envir.mag_grad,
+                         np.gradient(speed, g, g, edge_order=2)):
+        assert np.array_equal(got, want)

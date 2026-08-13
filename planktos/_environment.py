@@ -2267,23 +2267,26 @@ class Environment:
 
 
     def calculate_mag_gradient(self):
-        '''Calculate and store the gradient of the magnitude of the fluid velocity 
-        at the current time, along with the time at which it was calculated. 
-        Gradient is calculated via second order accurate central differences 
-        (using numpy) with second order accuracy at the boundaries and saved in 
-        case it is needed again.'''
+        '''Calculate and store the gradient of the magnitude of the fluid velocity
+        at the current time, along with the time at which it was calculated.
+        Gradient is calculated via second order accurate central differences
+        (using numpy) with second order accuracy at the boundaries and saved in
+        case it is needed again. A periodic dimension is differenced across the
+        wrap instead, since the field continues past the edge there.'''
 
         TIME_DEP = self.flow.flow_times is not None
         if not TIME_DEP:
-            flow_grad = np.gradient(np.sqrt(
-                            np.sum(np.array(self.flow)**2, axis=0)
-                            ), *self.flow.flow_points, edge_order=2)
+            speed = np.sqrt(np.sum(np.array(self.flow)**2, axis=0))
         else:
             # first, interpolate flow in time. Then calculate gradient.
-            flow_grad = np.gradient(
-                            np.sqrt(np.sum(
-                            np.array(self.interpolate_temporal_flow())**2,
-                            axis=0)), *self.flow.flow_points, edge_order=2)
+            speed = np.sqrt(np.sum(
+                        np.array(self.interpolate_temporal_flow())**2, axis=0))
+        # Per axis, not one call over all of them: periodicity is a per-axis
+        # property, and np.gradient would one-side against data that continues.
+        flow_grad = [fluid._spatial_gradient(speed, self.flow.flow_points[d], d,
+                                             self.flow.periodic_dim[d],
+                                             edge_order=2)
+                     for d in range(len(self.flow.flow_points))]
         # save the newly calculate gradient
         self.mag_grad = flow_grad
         self.mag_grad_time = self.time
