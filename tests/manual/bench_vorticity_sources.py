@@ -1,20 +1,28 @@
-'''Where does vorticity cost the least: recompute, in-memory cache, or disk?
+'''Where does vorticity cost less: recomputed from velocity, or read from disk?
 
-Supports the decision in docs/notes/stored_derived_fields.md sections 5 and 6.
-Three ways to answer get_vorticity(t), against two fluid regimes:
+Supports the vorticity rule in docs/notes/flow_field_interface.md section
+8.3.3.
+Vorticity is LAZY in every strategy here -- nothing is preloaded, because
+holding a whole series of it is exactly what item 6 ruled out. So the two ways
+to answer get_vorticity(t) are:
 
-    recompute   np.gradient on the temporally interpolated velocity (today)
-    cache       per-dump vorticity computed once, held, blended linearly
-    disk        per-dump vorticity READ from the solver's own Omega dumps,
-                blended linearly, with a two-slot cache
+    recompute   np.gradient on the temporally interpolated velocity (today).
+                Cost is per FRAME.
+    disk        read the solver's own Omega for the two bracketing dumps and
+                blend, with a two-slot cache. Cost is per DUMP, plus a cheap
+                blend per frame.
+
+against two fluid regimes:
 
     INUM=None   whole dataset resident, velocity splined cubically in time
     INUM=int    sliding window, velocity splined linearly
 
-The interesting axis turns out not to be the strategy but whether the run needs
-the VELOCITY as well. Rendering a backdrop does not; a live simulation does.
+Because one cost scales with dumps and the other with frames, which wins is
+decided by the frames-per-dump ratio, not by any single choice of frame count
+-- see crossover(). The other axis that matters is whether the run needs the
+VELOCITY anyway: rendering a backdrop does not, a live simulation does.
 
-Run:  python tests/manual/bench_vorticity_sources.py [nframes]
+Run:  python tests/manual/bench_vorticity_sources.py
 Needs tests/data/Rubberband_with_Damped_Springs (76 dumps, 32x32, with Omega),
 and uses tests/data/leaf_data (149 dumps, 128x192, no Omega) for scaling where
 it is present.
@@ -116,24 +124,6 @@ class OmegaReader:
         return (1-w)*self._dump(i) + w*self._dump(i+1)
 
 
-class CachedVorticity:
-    '''Per-dump vorticity computed once from resident velocity, then blended.'''
-
-    def __init__(self, fd):
-        self.flow_times = fd.flow_times
-        self.fields = [fd.get_vorticity(t_idx=i) for i in range(len(fd.flow_times))]
-
-    def __call__(self, t):
-        ft = self.flow_times
-        if t <= ft[0]:
-            return self.fields[0]
-        if t >= ft[-1]:
-            return self.fields[-1]
-        i = int(np.searchsorted(ft, t) - 1)
-        w = (t - ft[i]) / (ft[i+1] - ft[i])
-        return (1-w)*self.fields[i] + w*self.fields[i+1]
-
-
 # --------------------------------------------------------------------------- #
 
 def components(fd, path, label):
@@ -180,17 +170,6 @@ def scenarios(path, dt, print_dump, nframes):
         fd.get_vorticity(time=t)
     rows.append(('INUM=None', 'recompute (today)', time.perf_counter()-t0, ''))
 
-    # -- velocity resident, vorticity computed once per dump then blended
-    fd = _load(path, dt, print_dump, INUM=None)
-    t0 = time.perf_counter()
-    cache = CachedVorticity(fd)
-    build = time.perf_counter()-t0
-    t0 = time.perf_counter()
-    for t in times:
-        cache(t)
-    rows.append(('INUM=None', 'in-memory cache', time.perf_counter()-t0,
-                 '+{:.2f}s to build'.format(build)))
-
     # -- velocity resident, but read Omega from disk anyway
     fd = _load(path, dt, print_dump, INUM=None)
     rdr = OmegaReader(fd, path)
@@ -222,6 +201,37 @@ def scenarios(path, dt, print_dump, nframes):
     for regime, how, secs, note in rows:
         print('  {:<10s} {:<20s} {:>10.3f}   {}'.format(regime, how, secs, note))
     return rows
+
+
+def crossover(fd, path, label):
+    '''Where does paying per DUMP beat paying per FRAME?
+
+    Every strategy is (fixed cost per dump) x D + (marginal cost per frame) x F,
+    so which wins is decided entirely by the frames-per-dump ratio F/D, not by
+    any one benchmark's choice of F. Disk beats recompute when
+
+        D*c_read + F*c_blend  <  F*c_recompute
+        F/D  >  c_read / (c_recompute - c_blend)
+
+    which is the number this prints. Below it, recompute; above it, disk.
+    '''
+    rdr = OmegaReader(fd, path)
+    c_read, _ = _t(lambda: (rdr.cache.clear(), rdr._dump(3))[1])
+    mid = float(fd.flow_times[len(fd.flow_times)//2])
+    c_recompute, _ = _t(lambda: fd.get_vorticity(time=mid))
+    a = np.asarray(fd(mid)[0])
+    c_blend, _ = _t(lambda: 0.5*a + 0.5*a)
+
+    print('\n--- break-even for {} ---'.format(label))
+    print('  per dump : read Omega            {:8.3f} ms'.format(c_read*1e3))
+    print('  per frame: recompute from u      {:8.3f} ms'.format(c_recompute*1e3))
+    print('  per frame: blend two dumps       {:8.3f} ms'.format(c_blend*1e3))
+    ratio = c_read/(c_recompute - c_blend)
+    print('  => disk beats recompute only above {:.0f} frames per dump'.format(ratio))
+    print('     (and per-dump COMPUTE beats both above'
+          ' {:.1f} frames per dump)'.format(
+              c_recompute/(c_recompute - c_blend)))
+    return ratio
 
 
 def _periodic_curl(fd, t):
@@ -285,7 +295,15 @@ if __name__ == '__main__':
     del fd
 
     agreement(RUBBER, 1e-3, 20)
-    scenarios(RUBBER, 1e-3, 20, nframes)
+
+    fd = _load(RUBBER, 1e-3, 20, INUM=None)
+    crossover(fd, RUBBER, 'rubberband (33x33)')
+    del fd
+
+    # The ranking depends on frames per dump, so sweep it rather than asserting
+    # one number. 76 dumps here, so F = 76 is one frame per dump.
+    for F in (76, 300, 1520):
+        scenarios(RUBBER, 1e-3, 20, F)
 
     if LEAF.is_dir():
         # No Omega on disk, so only the two velocity-backed strategies can run.
@@ -303,15 +321,6 @@ if __name__ == '__main__':
             print('  {:<10s} {:<20s} {:>10.3f}'.format(
                 regime, 'recompute (today)', time.perf_counter()-t0))
             del fd
-        fd = _load(LEAF, 1e-3, 1, d_start=1)
-        t0 = time.perf_counter()
-        cache = CachedVorticity(fd)
-        build = time.perf_counter()-t0
-        t0 = time.perf_counter()
-        for t in times:
-            cache(t)
-        print('  {:<10s} {:<20s} {:>10.3f}   +{:.2f}s to build'.format(
-            'INUM=None', 'in-memory cache', time.perf_counter()-t0, build))
         # bound the disk strategy without Omega files: a u dump is a vector, so
         # reading one is an upper bound on reading a scalar Omega
         dt_u, _ = _t(lambda: _dataio.read_2DEulerian_Data_From_vtk(

@@ -398,6 +398,13 @@ now **automatic** rather than driven by a recorder method (§8.3.2), the cache f
 **crash-valid by construction** rather than by finalization (§8.3.3), and a cache-backed
 `plot_all` is **cache-only** rather than falling back to the fluid (§8.3.6).
 
+**The 2026-08-13 revision settled vorticity** (§8.3.3), which had been assumed to be
+just another cached array. It is not: it is a quantity solvers already write and
+Planktos can write back in the same format, so it is *sourced* by regime rather than
+cached — nothing on disk under `INUM=None`, the source's own field under `INUM=int`
+where one exists, and a Planktos-written file in the source's format otherwise. Two
+plotting bugs were fixed along the way and are noted where they land (§8.3.4).
+
 **Starting cold?** Read §8.1–§8.2 for the problem and scope, then §8.4 for what to
 build first and §8.4.1 for the concrete entry points.
 
@@ -569,9 +576,12 @@ with envir.record('run_cache/', fluid='vort'):
         swrm.move(dt)           # the user's ordinary loop, unchanged
 ```
 
-Note `fluid='vort'` here means **which fluid quantity to cache**, not what to draw —
-the same keyword on `plot_all` selects the backdrop. Same word, different side of the
-capture/render line; worth distinct wording in the docstrings.
+Note `fluid='vort'` here means **which fluid quantity the render will need**, not what
+to draw — the same keyword on `plot_all` selects the backdrop. Same word, different side
+of the capture/render line; worth distinct wording in the docstrings. It is deliberately
+*not* "which quantity to write": asking for `'vort'` frequently writes nothing at all,
+because the field is already available or is cheap to recompute (§8.3.3). What the
+keyword guarantees is that the render will have it.
 
 **Capture is automatic, and hooks the environment's time advance.** *(Reversed
 2026-08-11. The original design had `rec.move()` and `rec.capture()` and refused to hook
@@ -689,11 +699,16 @@ a deliberately lean `install_requires`.
 ```
 run_cache/
   meta.json                 written at record(): version, fingerprint, dimension, L,
-                            quantity recorded, quiver shape, dtype, swarm names, N
+                            quantity recorded, quiver shape, dtype, swarm names, N,
+                            and where vorticity lives (source dir / here / nowhere)
   grid.npz                  flow_points, L, flow_times (the dump time base)
   fluid/
-    vort_00042.npy          indexed by GLOBAL flow_times index, written as the dump lands
-    quiver_00042.npy        only when quiver was requested
+    quiver_00042.npy        indexed by GLOBAL flow_times index, written as the dump
+                            lands; only when quiver was requested
+    Omega.0042.vtk          vorticity, ONLY in the fall-back case where the source
+                            directory could not be written -- see below; normally it
+                            goes beside the source's own dumps instead, and under
+                            INUM=None it is not written at all
     dump_stats.npz          per-dump extrema and component means; rewritten per dump
   agents/
     swarm0_pos_000.npy      (chunk, N, D) float64
@@ -730,7 +745,7 @@ shows the initial drift, because the two now differ and the difference is silent
 first frame whose statistics changed with no other visible cause.
 
 Budget ≈ `(2·D·8 + 1)` bytes per agent per capture — 49 B in 3D. A 1000-agent,
-10 000-step 3D run is ~490 MB of agent data, separate from the vorticity cache. A
+10 000-step 3D run is ~490 MB of agent data, separate from any fluid arrays. A
 `store=` option selects which arrays are kept, defaulting to positions and velocities;
 `accelerations` and `ib_collision_idx` are reserved schema slots. Velocities are not
 practically optional — `_calc_basic_stats` needs them, and re-deriving them from
@@ -743,24 +758,105 @@ fall back to `arctan2` on velocities, which are cached. Reserve a schema slot.
 **Cadence is hybrid, and neither base is the video frame rate** — frames do not exist
 until render time:
 - **Fluid-derived quantities (vorticity, downsampled quiver): once per fluid dump.**
-  Permitted by linearity (§8.5) — exact reconstruction at *any* time. Usually smaller
-  than per-frame would be (149 dumps vs 500 frames for the leaf dataset).
+  Permitted by linearity (§8.5) — exact reconstruction at *any* time, using the
+  interpolator's own weights. Usually smaller than per-frame would be (149 dumps vs 500
+  frames for the leaf dataset).
 - **Agent-derived quantities: once per capture step** (every simulation step by
   default, §8.3.2).
 
 Together these make the entire frame-rate choice post-hoc: any `Δt_frame ≥
 Δt_capture` can be rendered from the same cache.
 
-Per-dump full-resolution vorticity is an accepted disk cost: 2D-only, and only when
-the user asks for vorticity.
+Quiver is written per dump into the cache whenever it is requested. **Vorticity follows
+its own rule** — often nothing is written at all — set out next.
 
-⚠️ **Do not cache vorticity the source already carries** *(2026-08-12)*. Several export
-formats ship a vorticity field alongside velocity, in which case caching a recomputed
-copy per dump writes a second copy of data already on disk — the ~1 GB/500-dump figure
-above, spent twice. Before recording, ask the `FluidData` subclass whether it can supply
-vorticity for a dump, and record only when it cannot.
+##### Vorticity is not cached — it is sourced, by regime *(decided 2026-08-13)*
 
-Availability is a per-source *capability*, not an assumption, and it differs:
+Vorticity gets its own rule, because unlike quiver it is a quantity solvers already
+write and Planktos can write back in the same format. **Which of three things happens is
+decided by `INUM` and by whether the source has vorticity already:**
+
+| regime | during the run | at render | interpolation in time |
+|---|---|---|---|
+| `INUM=None` | **nothing written** | compute from the resident velocity | cubic |
+| `INUM=int`, source **has** vorticity | **nothing written** | read the source's per-dump field | linear |
+| `INUM=int`, source has **none** | write one file per dump as it lands | read back what was written | linear |
+
+The reasoning, measured on `tests/data/Rubberband_with_Damped_Springs` (76 dumps, 33×33,
+with `Omega`) and `tests/data/leaf_data` (149 dumps, 129×193, without) — reproduce with
+`tests/manual/bench_vorticity_sources.py`:
+
+- **`INUM=None` needs nothing on disk.** The whole field is resident, so recomputing
+  costs 0.34 ms per frame at 129×193 and rendering 300 frames takes 0.129 s. Sourcing
+  the same frames from disk is *slower* — 0.066 s against 0.023 s on the smaller dataset
+  where both could be measured — so writing ~1 GB would buy negative performance.
+- **The compute is never the cost; the write is.** Deriving a dump's vorticity as it
+  lands is +0.4% on a streaming sweep (4.738 s → 4.755 s over 149 dumps) — free. Writing
+  it is ~1 ms per dump and ~1 GB per 500 dumps at 512×512. So the only thing worth
+  avoiding is the write, and it is avoidable exactly when the source already has the
+  field.
+- **Under `INUM=int` the velocity is not resident**, so recomputing at render drags
+  `load_dumpfiles` behind it: 4.76 s against 0.165 s resident, for the same 300 frames,
+  essentially all of it velocity I/O. Worse, velocity is a *vector* and vorticity a
+  scalar in 2D, so recomputing reads roughly twice the bytes to produce a field it then
+  discards. Reading per-dump vorticity is 3–4× faster and is why this regime sources
+  from disk at all.
+
+**Both `INUM` regimes come out exactly consistent with the velocity in use, which is the
+point of splitting them.** Under `INUM=int`, blending per-dump vorticity with
+`LinearSpline`'s two weights *is* the curl of the interpolated velocity, by §8.5. Under
+`INUM=None` the cubic weights are not local (§8.5's caveat), so that regime does not try
+to reconstruct from dumps — it differentiates the interpolated velocity directly, which
+is the same field by construction. So vorticity inherits the velocity's cubic-vs-linear
+tradeoff exactly, rather than stacking a second, different approximation on top of it.
+That is the tradeoff `INUM` already documents, and no new one.
+
+⚠️ One caveat on the middle row: it serves the *solver's* vorticity, not Planktos'
+curl of the solver's velocity. For IB2d those coincide — 0.00% difference at every
+dump tested, once the periodic edge fix landed (`TODO.md` cherry-pick queue,
+2026-08-13). That is an empirical property of IB2d computing the same central
+difference, not a guarantee for every source.
+
+**Where the written files go.** Into the **source's own fluid directory**, in the
+source's own naming — `Omega.0042.vtk` beside `u.0042.vtk` — so that a later run,
+ParaView, or IB2d's own tooling reads them with no knowledge of Planktos, and so that
+the source becomes indistinguishable from one whose solver had printed vorticity all
+along. Two guards:
+
+- **Never clobber.** If `Omega` for a dump already exists, that is the middle row of the
+  table, not this one.
+- **Fall back to `run_cache/fluid/` if the source directory cannot be written** —
+  read-only mounts and shared datasets are normal. `meta.json` records which of the two
+  happened, so the reader knows where to look.
+
+**Format: binary VTK, not ascii, and not `.npy`.** Measured at 512×512 over 500 dumps:
+
+| format | write | read | disk |
+|---|---|---|---|
+| `.npy` | 0.69 s | 0.28 s | 1.049 GB |
+| **VTK binary** | **5.85 s** | **1.12 s** | **1.049 GB** |
+| VTK ascii | 35.10 s | 47.04 s | 1.941 GB |
+
+Binary VTK costs ~5 s of writing across an entire run and ~1 s at render for *identical*
+disk — negligible against the simulation, and interoperability is worth far more than
+that. Ascii is not negligible: 6× the write, 42× the read, 1.85× the disk. Write binary
+even though IB2d writes ascii; `vtkStructuredPointsReader` takes both, verified by
+round-trip. (Small grids are dominated by fixed pyvista overhead — a 33×33 binary write
+is *slower* than a 512×512 one — so this only matters at scale, where it is cheap.)
+
+⚠️ **This requires scalar rectilinear-grid I/O, which does not exist yet.**
+`STRUCTURED_POINTS` carries only an origin and a spacing, so it can express IB2d's
+uniform grid but not a rectilinear one — and the OpenFOAM grid is deliberately
+non-uniform at its two outermost intervals. `_dataio` has
+`write_vtk_2D_rectilinear_grid_scalars` (used by `save_2D_vorticity`) but **no matching
+scalar reader**; only `read_vtk_Rectilinear_Grid_Vector` exists. Both halves are needed:
+write `RECTILINEAR_GRID` where the grid is non-uniform, and read it back.
+
+**Quiver stays `.npy` in the cache.** It is a downsampled subsample of velocity chosen
+at record time (below), not a quantity any solver writes or any other tool would want,
+so none of the above applies to it.
+
+Availability is a per-source *capability*, to be asked rather than assumed:
 
 | Source | Ships vorticity? |
 |---|---|
@@ -768,23 +864,50 @@ Availability is a per-source *capability*, not an assumption, and it differs:
 | IB2d (`IB2dData`) | **Optionally** — `Omega.####.vtk`, present only if the run's `input2d` asked for it. `tests/data/leaf_data` has `u` dumps only, so the reference 2D dataset does **not** have it |
 | everything else | no |
 
-This is the consumer side of `TODO.md` Phase 2 robustness item 6, which decided that
-`get_vorticity` should read a stored field **on demand** rather than carrying one in the
-sliding window; the producer side is planned in `stored_derived_fields.md`. Note the two
-interact in the useful direction: an on-demand read is exactly what a recorder needs,
-since it wants one dump at a time as that dump lands.
+**Reading a source's per-dump field — the mechanics.** Nothing new is needed in
+`_dataio`: `read_2DEulerian_Data_From_vtk(path, numSim, 'Omega')` already reads IB2d's
+scalar dumps (the branch `uX`/`uY` use, and `Omega` is already named in the reference
+comment block inside `_read_IB2d_dumpfiles`), and
+`read_vtkxml_cell_data(f, arrays=('vorticity',))` already reads OpenFOAM's. Four things
+must line up, none of them obvious:
 
-Two further points, since they are easy to get wrong here:
+- **A time resolves to dumps as `d_start + i`**, uniformly: IB2d's `d_start` is the first
+  dump number, OpenFOAM's is 0 over a dense index into `_dumps`. ⚠️ `IB2dData` stores
+  neither `dt` nor `print_dump`, and does not need to — do not add them as attributes to
+  make a reader work.
+- **Transpose.** `read_2DEulerian_Data_From_vtk` returns `[y,x]`; the velocity path does
+  `.T` to reach `[x,y]`. A derived field must do the same.
+- **Restore the periodic endpoint** IB2d omits, so a 6×5 dump becomes a 7×6 field.
+  ⚠️ **`_wrap_flow` cannot be reused**: it loops over `range(len(flow_points))` and so
+  assumes one array per spatial dimension. Passing a single scalar raises `IndexError`.
+  Generalize it, or write the four-line scalar version.
+- **Do not re-shift the domain** — `flow_points` is already in quadrant 1.
 
-- **3D does not currently cache vorticity at all** — `fluid=` is forced to `None` in 3D
-  (§8.2), where no fluid backdrop is drawn. So today the redundancy bites only in 2D,
-  i.e. only for IB2d runs that printed `Omega`. It would bite much harder if a 3D
-  backdrop arrives with the vtk rewrite, which is when OpenFOAM's always-present field
-  starts to matter.
-- **A stored field is not merely cheaper, it is better near the boundary.** Recomputing
-  by finite difference agrees with the solver's own vorticity to roundoff in the
-  interior but not in the outermost cell layer; see `TODO.md` item 6 for the measured
-  profile. A cache of the recomputed field therefore preserves that error permanently.
+**Two-slot read cache.** A movie renders many frames per dump interval, so the naive
+path re-reads two files per frame. Keeping the two most recent dumps reduces that to one
+read per dump for any monotone sweep, forward or backward: consecutive frames share a
+bracketing pair, and advancing evicts only the trailing one. Two slots and no more —
+holding more field data than the interpolation needs is the thing being avoided. Key on
+the **global** dump index so it stays correct across a velocity-window slide it knows
+nothing about.
+
+**Probe availability once, and check it covers the range.** Glob for the field at
+construction; a *partial* series is the same trap as a partial timeline (`TODO.md`
+Phase 2) and deserves the same treatment — refuse, or warn and fall back to writing —
+but never silently serve one dump's field for another's.
+
+Two points that are easy to get wrong:
+
+- **3D writes no vorticity at all** — `fluid=` is forced to `None` in 3D (§8.2), where no
+  fluid backdrop is drawn. All of the above is 2D-only today. It becomes live for 3D if
+  a backdrop arrives with the vtk rewrite, which is when OpenFOAM's always-present field
+  starts to matter and when the rectilinear reader above stops being optional.
+- **Reading the source is not merely cheaper, it can also be more accurate — but no
+  longer for IB2d.** Recomputing by finite difference used to disagree with the solver
+  in the outermost cell ring; for a *periodic* source that was the missing wrap, now
+  fixed, and the two agree exactly. For OpenFOAM the ring sits against a spliced
+  boundary-condition plane instead, no wrap can fix it, and the stored field remains the
+  better one (`TODO.md` item 6 has the measured depth profile).
 
 **Which quantity is recorded, and the quiver-grid problem** *(decided 2026-08-11)*.
 `fluid=` on `record()` defaults to `'vort'` in 2D and is forced to `None` in 3D, where
@@ -800,7 +923,7 @@ while the simulation is running. The resolution: `record()` takes a target arrow
 (`quiver_shape`, default ~60×60), and a cache-backed `plot_all` uses the cached grid
 regardless of figure size, warning when the figure would have wanted a noticeably denser
 one. The rejected alternative was caching full-resolution velocity and downsampling at
-render time, which costs 2–3× the vorticity cache and gives back the disk saving that
+render time, which costs 2–3× a per-dump scalar and gives back the disk saving that
 motivates downsampling at all. So `quiver_shape` joins the recorded quantity as the
 second thing fixed when recording starts.
 
@@ -808,7 +931,9 @@ second thing fixed when recording starts.
 - format **version**;
 - **source fingerprint** (dump range and `flow_times` extent, or a hash) so a cache
   from a different run or dataset is refused;
-- **which quantity** was cached (`vort`, `quiver`, or both) and the **quiver grid**
+- **which quantity** the render will need (`vort`, `quiver`, or both); for vorticity,
+  **where it lives** — the source directory, this cache, or nowhere because it is
+  recomputed (the three regimes of the vorticity rule above) — and the **quiver grid**
   (`quiver_shape`, and the `M`/`N` it resolved to against this dataset's grid);
 - the **capture times** (agent time base) and the **dump times** (fluid time base) —
   there are no "frame times", since frames are chosen at render time;
@@ -890,12 +1015,21 @@ checking on a long run mid-flight. Remuxing afterwards is lossless and one call:
 `ffmpeg -i out.mkv -c copy out.mp4`. Fragmented mp4
 (`-movflags frag_keyframe+empty_moov`) is the alternative, passed via `writer_kwargs`.
 
-**Colour normalization.** Replace the current per-frame `fld.autoscale()` — a drifting
-colour scale is scientifically misleading — with a **global scale derived from the
-cached per-dump extrema in a second pass over the cache** (small) rather than over the
-fluid (huge). Note `FluidData.fmin`/`fmax` are *not* usable for this: they are
-documented as covering "all the data seen so far", so under dynamic loading they grow
-during the run and would reintroduce the drift.
+**Colour normalization — half done (2026-08-13).** The per-frame `fld.autoscale()` this
+section was written against **is gone**; `Swarm._vorticity_norm` replaced it. That call
+rescaled to each frame's own min/max, which put zero off the white centre of RdBu and
+tinted the background differently every frame — the reported "flashing" — and silently
+discarded any `clip` the caller passed. Limits are now symmetric about zero, grow across
+a movie but never shrink, and are left alone entirely when `clip` is given.
+
+**What remains is the *global* scale.** Monotone growth removes the flicker but the
+scale still changes during a movie, so two renders of the same run still differ. The fix
+stands as written: derive it from the **cached per-dump extrema in a second pass over
+the cache** (small) rather than over the fluid (huge), and set it once before the first
+frame. `_vorticity_norm` is where it plugs in — pass the global maximum as `clip` and it
+is already fixed and never rescaled. Note `FluidData.fmin`/`fmax` are *not* usable for
+this: they are documented as covering "all the data seen so far", so under dynamic
+loading they grow during the run and would reintroduce the drift.
 
 **The same `fmax` drift reaches the quiver arrow scale, not just the colour scale**
 *(added 2026-08-11)*. `plot_all` sets `scale=max_mag*5` once at figure setup from
@@ -1120,7 +1254,8 @@ Three consequences worth stating, because they simplify the build:
    independently testable:
    1. **`fluid.py` groundwork.** Extract the gradient math from
       `FluidData.get_vorticity` into a module-level `_vorticity_from_field(flow,
-      flow_points)`, and add a dump-arrival observer dispatched from
+      flow_points, periodic_dim)` — note the third argument, which the periodic edge fix
+      made load-bearing — and add a dump-arrival observer dispatched from
       `_record_dump_means`. That method is already called at every one of the four
       places fluid lands in memory, with raw ndarrays and global time indices — the
       hook exists, it just needs to fan out. Riding it inherits the correctness
@@ -1131,6 +1266,15 @@ Three consequences worth stating, because they simplify the build:
       The recorder must compute vorticity from the raw arrays rather than through
       `get_vorticity(time=)`, which calls `self(time)` and can trigger a load — exactly
       what is being avoided.
+
+      Also here: a **per-source probe** for whether the fluid already carries vorticity,
+      and a **per-dump reader** for it, since two of the three regimes in §8.3.3 need
+      one and neither needs the observer to fire at all.
+   1b. **Scalar rectilinear VTK I/O in `_dataio`** — `RECTILINEAR_GRID` scalar *reader*
+      to pair with the existing `write_vtk_2D_rectilinear_grid_scalars`, plus a
+      `STRUCTURED_POINTS` scalar writer for uniform grids so a written field is
+      indistinguishable from the solver's own. §8.3.3 sets out why. Independent of
+      everything else in step 3 and testable on its own with a round-trip.
    2. **Cache writer** (`planktos/_plotcache.py`, new internal module): schema,
       fingerprint, chunked agent writer, per-dump fluid writer.
    3. **`Environment.record` / `flush_cache` / `stop_recording`** and the
@@ -1145,10 +1289,15 @@ Three consequences worth stating, because they simplify the build:
    **The headline test** is that recording a run against a windowed `FluidData` costs
    *identically* many loader calls as the same run without it. That single assertion is
    the property the whole design exists for, and `test_dynamic_loading.py`'s synthetic
-   subclass already supports counting them. The other one worth naming makes §8.5
-   executable: cached per-dump vorticity interpolated to a time between dumps equals
-   `envir.get_vorticity(time=t)` to round-off — under `INUM=int` *and* `INUM=None`,
-   since the two use different weights and getting the cubic case wrong would be silent.
+   subclass already supports counting them.
+
+   The other one worth naming makes §8.5 executable: **under `INUM=int`**, per-dump
+   vorticity blended to a time between dumps equals `envir.get_vorticity(time=t)`
+   computed live, to round-off — for both the sourced and the written case, which must
+   agree with each other as well. Under `INUM=None` there is nothing to compare, since
+   the render calls `get_vorticity` itself; what to assert there is that **no vorticity
+   file was written anywhere**, which is the regime's whole content and would otherwise
+   fail silently by costing disk nobody asked for.
 
    Round out with: a round-trip against `pos_history`/`vel_history`/`time_history`;
    chunk boundaries at exactly one, one-plus-one, and a partial chunk; a fingerprint
@@ -1227,8 +1376,18 @@ involved.
 **Step 3 — recorder + cache.** The names to search for:
 - `FluidData._record_dump_means` (`planktos/fluid.py`) — the dump-arrival hook, called
   from `__init__` and from all three load sites in `update_spline`.
-- `FluidData.get_vorticity` — the gradient math to extract; note the time-invariant
-  branch, which is the case that never calls `_record_dump_means`.
+- `FluidData.get_vorticity` — the gradient math to extract. Two things to carry with it:
+  the time-invariant branch, which is the case that never calls `_record_dump_means`;
+  and `fluid._spatial_gradient`, which it now calls per axis with `periodic_dim[axis]`,
+  so an extracted `_vorticity_from_field` needs `periodic_dim` as an argument.
+- `IB2dData._read_IB2d_dumpfiles` — its reference comment block names every quantity
+  IB2d writes (`Omega`, `P`, `uMag`, `Fx`, `Fy`), and the `uX`/`uY` branch beside it is
+  the scalar read path a vorticity reader reuses unchanged.
+- `_dataio.write_vtk_2D_rectilinear_grid_scalars` — the existing scalar *writer* (used
+  by `Environment.save_2D_vorticity`); the matching reader is what §8.3.3 says is
+  missing.
+- `_dataio.read_2DEulerian_Data_From_vtk` / `read_vtk_Structured_Points` — what must
+  read back whatever gets written, unchanged, for the interoperability claim to hold.
 - `Swarm.move`, at the `update_time` block near the end, and `Environment.move_swarms`,
   after its time bump — the two capture triggers.
 - `Environment.reset` — must raise while recording.
@@ -1236,6 +1395,10 @@ involved.
   convention the capture schedule has to match.
 - `Swarm.save_data` — the precedent for "props_history is not saved", and the existing
   model for a directory of run output.
+
+**Step 4 — colour normalization.** `Swarm._vorticity_norm` (`planktos/_swarm.py`) is
+where the global scale plugs in; it already takes a `clip` that it never rescales, so a
+global maximum passed there is the whole change on the rendering side.
 
 **Verification.** `pytest` (fast, ~1 s) plus `pytest --runslow` for the plotting
 smokes, which exercise `plot_*` on the Agg backend and will catch signature breakage.
@@ -1251,12 +1414,29 @@ functional of the field commutes with temporal interpolation:
 F(u(t)) = Σᵢ wᵢ(t)·F(uᵢ)          for linear F
 ```
 
-`mean`, `np.gradient` (hence vorticity), and subsampling (hence quiver arrays) are all
+`mean`, the curl (hence vorticity), and subsampling (hence quiver arrays) are all
 linear. This is what makes the per-dump mean sidecar exact (§8.3.1) and dump-cadence
-caching exact (§8.3.3), using weights the interpolator already computes.
+caching exact (§8.3.3), using weights the interpolator already computes. The periodic
+wrap added to the curl in 2026-08 does not disturb this: differencing across the wrap is
+still a fixed linear combination of nodal values, just a different one.
 
 `max` and `mean(√(u²+v²))` are **not** linear and do not commute — which is why
 `max_spd` and `avg_spd` were dropped rather than cached.
+
+⚠️ **Linearity makes it exact; it does not make it *local*, and the difference decides
+the design.** `LinearSpline`'s weights are two and adjacent, so a per-dump file supports
+them directly. `fCubicSpline` is not-a-knot, whose coefficients come from a **global**
+tridiagonal solve — every `wᵢ(t)` depends on every node — so applying its weights from
+per-dump files would mean holding the entire series, which is the memory cost the whole
+design exists to avoid. Two consequences, both already taken:
+
+- The per-dump **mean** sidecar can afford it: three floats per dump, so it keeps them
+  all and splines them with the real weights (`_interp_dump_means` has exactly this
+  cubic/linear split, and its cubic branch is reachable only because everything was
+  resident anyway).
+- A per-dump **field** cannot. So §8.3.3 does not try: under `INUM=None` it computes
+  vorticity from the interpolated velocity instead of reconstructing it from dumps.
+  That is why the rule is written by regime rather than as one mechanism.
 
 ### 8.6 Obligations
 
@@ -1265,10 +1445,18 @@ caching exact (§8.3.3), using weights the interpolator already computes.
   - **[done]** `playback_rate` added and defaulting to 1, changing existing video
     output. One line; `fps`'s default did not change and `per_dump` was not built,
     so neither is changelog material.
+  - **[done]** vorticity backdrops no longer flashing (symmetric, non-shrinking colour
+    limits; a supplied `clip` honoured). Changes existing video output. Queued for a
+    1.0.3 — master carries the same defect.
+  - **[done]** vorticity differenced across the wrap on periodic dimensions, which
+    changes the outermost ring of every vorticity plot. Also queued for a 1.0.3.
   - **Owed at step 3:** `Environment.record` and the plot cache. Dyload-only — it
-    depends on `FluidData` — so it does **not** join the cherry-pick queue.
+    depends on `FluidData` — so it does **not** join the cherry-pick queue. If Planktos
+    writes vorticity into the source directory (§8.3.3) that is user-visible in its own
+    right and needs its own line.
   - **Owed at step 4:** `plot_all`/`plot` reading a cache, and the colour and quiver
-    scales becoming global rather than drifting (the latter changes existing output).
+    scales becoming global rather than drifting (the latter changes existing output
+    again, on top of the already-shipped symmetric limits).
 - **Examples rewrite.** *The call sites are done (§8.3.5 "As built") — each example now
   names its playback rate explicitly, chosen to be the old `dt × fps` product, and the
   stale "one frame per time step" prose in `ex_ib2d_ibmesh.py` and its docs page is

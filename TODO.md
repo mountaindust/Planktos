@@ -783,17 +783,14 @@ were written as independent functions precisely so this could be a chain.
     field. **Trimming the boundary layer out of 2D vorticity plots is therefore not
     warranted** — and would not reach the 84% case anyway, which is 3D, where no fluid
     backdrop is drawn at all.
-  - Consumer side is specified in `docs/notes/flow_field_interface.md` §8.3.3: the plot
-    cache must not record vorticity a source already carries.
-  - 📋 **Implementation plan: `docs/notes/stored_derived_fields.md`** (2026-08-12).
-    Nothing built yet. Headlines: no new `_dataio` work is needed, `Omega` is already
-    named in `_read_IB2d_dumpfiles`' reference block and the scalar read path is the one
-    `uX`/`uY` use; a sidecar reader borrows `flow_times` and maps index → dump as
-    `d_start + i` for every source; a two-slot cache makes a movie cost one read per
-    dump rather than two per frame. ⚠️ The one real catch is that a not-a-knot cubic
-    spline is **not local**, so serving stored vorticity with the field's own weights is
-    exact only when the fluid is splined linearly — see §5 there for the three options
-    and the recommendation.
+  - 📋 **Folded into `docs/notes/flow_field_interface.md` §8.3.3** *(2026-08-13)*, which
+    is now the single plan — the standalone `stored_derived_fields.md` was merged into
+    it and deleted. Item 6 is subsumed there rather than standing alone, because what
+    settled it was the plot cache's needs. In short: nothing is written under
+    `INUM=None` (recompute from resident velocity, cubic); under `INUM=int` the source's
+    field is read if it has one, and otherwise Planktos writes one in the source's own
+    format. Reproduce the measurements with
+    `tests/manual/bench_vorticity_sources.py`.
 - [x] ✅ **Whichever fallback is taken, say so.** Silently accepting a degraded timeline
   is the shape of the `VTK3dData` frozen-fluid bug. Every step of the chain past the
   first warns, and the step taken is recorded on the object as `dump_source` /
