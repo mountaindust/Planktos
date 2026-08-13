@@ -227,3 +227,57 @@ def test_rk45_tolerance_kwargs_passed_to_solver():
 def test_rk45_rejects_non_2d_initial_state():
     with pytest.raises(TypeError):
         motion.RK45(lambda t, x: x, 0.0, np.array([1.0, 2.0]), 1.0)
+
+
+# --------------------------------------------------------------------------- #
+#                     the guard on overriding move()                          #
+# --------------------------------------------------------------------------- #
+# move() is the harness; replacing it drops history, boundary conditions, the
+# velocity/acceleration finite difference and the time advance, all silently.
+# The guard fires at class definition, so each subclass below is defined inside
+# its test.
+
+def test_replacing_move_warns():
+    with pytest.warns(UserWarning, match='overrides Swarm.move'):
+        class BadSwarm(planktos.Swarm):
+            def move(self, dt=1.0, **kwargs):
+                self.positions[:, 0] += 0.5
+
+
+def test_extending_move_via_super_does_not_warn(recwarn):
+    class ExtendingSwarm(planktos.Swarm):
+        def move(self, dt=0.1, **kwargs):
+            super().move(dt, **kwargs)
+
+    assert not [w for w in recwarn if 'overrides Swarm.move' in str(w.message)]
+
+
+def test_extending_move_by_explicit_class_call_does_not_warn(recwarn):
+    class ExplicitSwarm(planktos.Swarm):
+        def move(self, dt=0.1, **kwargs):
+            planktos.Swarm.move(self, dt, **kwargs)
+
+    assert not [w for w in recwarn if 'overrides Swarm.move' in str(w.message)]
+
+
+def test_overriding_the_documented_extension_points_does_not_warn(recwarn):
+    class GoodSwarm(planktos.Swarm):
+        def apply_agent_model(self, dt):
+            return self.positions.copy()
+
+        def after_move(self, dt):
+            pass
+
+    assert not [w for w in recwarn if 'overrides Swarm.move' in str(w.message)]
+
+
+def test_the_guard_does_not_break_a_subclass_that_still_works():
+    with pytest.warns(UserWarning, match='overrides Swarm.move'):
+        class StillUsableSwarm(planktos.Swarm):
+            def move(self, dt=1.0, **kwargs):
+                self.moved = True
+
+    envir = _still_envir()
+    swrm = StillUsableSwarm(swarm_size=3, envir=envir, seed=1)
+    swrm.move(0.1)
+    assert swrm.moved

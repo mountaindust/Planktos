@@ -957,6 +957,14 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
             newstartpt = Q_edge + EPS*Q_norm_u
         elif DIM == 3:
             newstartpt = x_edge + EPS*Q_norm_u
+        # The recursion hands on (1-t_edge)*vec, so it terminates only if that is
+        #   strictly shorter than vec, i.e. only if t_edge > 0. Nothing in the
+        #   arithmetic above guarantees that in floating point: a near-tangent hit
+        #   could round t_edge to 0, and the recursion would then re-pose this
+        #   exact problem forever. Stop the agent at the separation point instead;
+        #   it is already displaced EPS along the outward normal, so it ends up
+        #   outside the boundary. Spelled "not t_edge > 0" so a NaN stops too.
+        if not t_edge > 0: return newstartpt
         newendpt = newstartpt + (1-t_edge)*vec
         # recursion on prev. eligible mesh elements and treating t_edge 
         #   as the start time. Only look for intersections with subset
@@ -1407,6 +1415,8 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
         norm_out_u = side_signum*np.array([Qvec(t_rot)[1],-Qvec(t_rot)[0]])
         norm_out_u /= np.linalg.norm(norm_out_u)
         newstartpt = proj_to_pt(t_rot) + EPS*norm_out_u
+        # Same termination guard as the static slider: see the comment there.
+        if not t_rot > 0: return newstartpt
         newendpt = newstartpt + (1-t_rot)*vec
         mesh_now = mesh_start*(1-t_rot) + mesh_end*t_rot
         # for debugging
@@ -1415,6 +1425,8 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
     elif went_past_el_bool:
         # Slid off the end and encountered nothing.
         newstartpt = Q_edge(t_edge) + EPS*norm_out_u
+        # Same termination guard as the static slider: see the comment there.
+        if not t_edge > 0: return newstartpt
         newendpt = newstartpt + (1-t_edge)*vec
         mesh_now = mesh_start*(1-t_edge) + mesh_end*t_edge
         # for debugging

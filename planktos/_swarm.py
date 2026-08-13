@@ -28,6 +28,49 @@ __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
+
+def _vorticity_norm(vort, clip=None, norm=None):
+    '''Colour limits for the RdBu vorticity backdrop, symmetric about zero.
+
+    RdBu is a diverging colormap, white at its midpoint, so limits that are not
+    symmetric put zero somewhere other than white and tint the whole quiescent
+    background red or blue. Rescaling to each frame's own extremes then makes
+    that tint change frame to frame, which is what made vorticity movies flash.
+
+    So limits are symmetric, and over a movie they only ever grow: pass the
+    previous norm back in and a later, quieter frame cannot shrink the scale and
+    re-tint everything. An explicit clip fixes them outright and is never
+    rescaled.
+
+    Parameters
+    ----------
+    vort : ndarray
+        the vorticity field being drawn
+    clip : float, optional
+        symmetric pseudocolor limit; overrides everything else
+    norm : matplotlib Normalize, optional
+        the norm in use, to be grown rather than replaced
+
+    Returns
+    -------
+    matplotlib Normalize
+    '''
+
+    if clip is not None:
+        return colors.Normalize(-abs(clip), abs(clip), clip=True)
+    finite = np.abs(np.asarray(vort)[np.isfinite(vort)])
+    vmax = float(finite.max()) if finite.size > 0 else 0.
+    if vmax == 0.:
+        # A uniformly zero field should read as uniformly white. Limits of
+        # (0, 0) would instead send every cell to the bottom of the colormap.
+        vmax = 1.
+    if norm is None:
+        return colors.Normalize(-vmax, vmax)
+    if norm.vmax is None or vmax > norm.vmax:
+        norm.vmin, norm.vmax = -vmax, vmax
+    return norm
+
+
 class Swarm:
     '''
     Fundamental Planktos object describing a group of similar agents.
@@ -273,6 +316,47 @@ class Swarm:
     >>> swrm = Swarm(envir=envir)
 
     '''
+
+    def __init_subclass__(cls, **kwargs):
+        '''Warn when a subclass replaces move() instead of extending it.
+
+        move() is the harness, not the behavior: it records the position,
+        velocity and property histories, applies boundary conditions,
+        recomputes velocity and acceleration by finite difference, and advances
+        the Environment's time. Agent behavior belongs in apply_agent_model and
+        post-step bookkeeping in after_move, both of which move() calls at the
+        right moment. A subclass that replaces move() outright silently loses
+        all of that, and the damage is quiet -- agents keep moving, but nothing
+        is recorded and no boundary is enforced.
+
+        Overriding in order to *extend* -- say, to change a default and then
+        call super().move(...) -- keeps the harness intact and is fine, so it
+        passes without a warning. Whether the override delegates is judged by
+        looking for a reference to super or to move in its code, which an
+        unusual spelling could slip past. That is the safe direction to be
+        wrong in: this only ever warns, so a miss costs a warning that might
+        have helped, never a working subclass that stops importing.
+        '''
+
+        super().__init_subclass__(**kwargs)
+        move = cls.__dict__.get('move')
+        if move is None:
+            return
+        code = getattr(move, '__code__', None)
+        if code is not None and ('super' in code.co_names or
+                                 'move' in code.co_names):
+            return
+        warnings.warn(
+            "{} overrides Swarm.move without appearing to call it. move() is "
+            "the harness that records history, applies boundary conditions, "
+            "recomputes velocity and acceleration, and advances time; "
+            "replacing it drops all of that silently. Override "
+            "apply_agent_model to change how agents move, and after_move to "
+            "act on the result. If you meant to extend move(), call "
+            "super().move(...) from the override.".format(cls.__name__),
+            UserWarning, stacklevel=3)
+
+
 
     def __init__(self, swarm_size=100, envir=None, init='random',
                  ib_condition='sliding', seed=None, shared_props=None,
@@ -976,6 +1060,26 @@ class Swarm:
             to specify their own, custom agent behavior.
         '''
 
+        # A time of None marks an Environment left in an error state by a
+        #   time step that raised partway through (see the except clause
+        #   below). Everything the agents currently hold is a half-applied
+        #   step, so there is nothing sensible to move on from.
+        if self.envir.time is None:
+            raise RuntimeError(
+                "Cannot move: this Swarm/Environment is in an error state. A "
+                "previous time step raised or was interrupted while boundary "
+                "conditions were being applied, so agent positions, "
+                "velocities, accelerations "
+                "and ib_collision_idx hold a step that was applied to some "
+                "agents but not others -- some may be inside an immersed "
+                "boundary. envir.time was set to None to mark this.\n"
+                "The recorded histories are complete and consistent up to and "
+                "including the failed step. To back that step out and carry "
+                "on, pop the last entry off each:\n"
+                "    envir.time = envir.time_history.pop()\n"
+                "    swrm.positions = swrm.pos_history.pop()\n"
+                "    swrm.velocities = swrm.vel_history.pop()")
+
         if ib_collisions == 'default':
             ib_collisions = self.ib_condition
 
@@ -1004,8 +1108,63 @@ class Swarm:
 
         # Apply boundary conditions (if anything was moving)
         if not np.all(self.positions.mask):
-            self.apply_boundary_conditions(dt, ib_collisions=ib_collisions)
-            self.after_move(dt)
+            try:
+                self.apply_boundary_conditions(dt, ib_collisions=ib_collisions)
+                self.after_move(dt)
+            except BaseException as err:
+                # Boundary conditions are applied one agent at a time, so this
+                #   leaves the step applied to some agents and not others. The
+                #   partial state is left alone -- it is what there is to debug
+                #   -- but two things are done to make it legible. First,
+                #   record the time this step started, so that time_history
+                #   matches the pos_history entry appended above and the
+                #   histories stay a consistent record. Second, set the time to
+                #   None, which marks everything current as untrustworthy and
+                #   is what move() refuses to run on.
+                # BaseException rather than Exception: interrupting a long run
+                #   with Ctrl-C is the most common way one ends, and a
+                #   KeyboardInterrupt lands here exactly as an error does,
+                #   leaving the same half-applied step. The state is marked the
+                #   same way for both; only the reporting differs, because an
+                #   interrupt has to keep propagating as itself instead of
+                #   being wrapped into something an outer "except Exception"
+                #   would swallow.
+                self.envir.time_history.append(self.envir.time)
+                self.envir.time = None
+                if not isinstance(err, Exception):
+                    print("\nInterrupted partway through applying boundary "
+                          "conditions or after_move, after agent positions had "
+                          "already been updated. The step was applied to some "
+                          "agents and not others, so positions, velocities, "
+                          "accelerations and ib_collision_idx are all "
+                          "unreliable and agents may be sitting inside an "
+                          "immersed boundary. They are left as they are so the "
+                          "state can be inspected.\n"
+                          "envir.time has been set to None to mark this, and "
+                          "no further moves are permitted until it is restored. "
+                          "The histories were closed off consistently. To back "
+                          "the step out and carry on:\n"
+                          "    envir.time = envir.time_history.pop()\n"
+                          "    swrm.positions = swrm.pos_history.pop()\n"
+                          "    swrm.velocities = swrm.vel_history.pop()")
+                    raise
+                raise RuntimeError(
+                    "Boundary conditions or after_move raised partway through this time "
+                    "step, after agent positions had already been updated. "
+                    "The step was applied to some agents and not others, so "
+                    "positions, velocities, accelerations and "
+                    "ib_collision_idx are all unreliable and agents may be "
+                    "sitting inside an immersed boundary. They are left as "
+                    "they are so the failure can be inspected.\n"
+                    "envir.time has been set to None to mark this state, and "
+                    "no further moves are permitted until it is restored. The "
+                    "histories were closed off consistently: time_history now "
+                    "matches pos_history, both ending with the state as it "
+                    "was when this step began. To back the step out and carry "
+                    "on, pop the last entry off each:\n"
+                    "    envir.time = envir.time_history.pop()\n"
+                    "    swrm.positions = swrm.pos_history.pop()\n"
+                    "    swrm.velocities = swrm.vel_history.pop()") from err
 
         # Record new time
         if update_time:
@@ -1930,10 +2089,7 @@ class Swarm:
             # fluid visualization
             if fluid == 'vort' and self.envir.flow is not None:
                 vort = self.envir.get_2D_vorticity(t_indx=loc)
-                if clip is not None:
-                    norm = colors.Normalize(-abs(clip),abs(clip),clip=True)
-                else:
-                    norm = None
+                norm = _vorticity_norm(vort, clip)
                 ax.pcolormesh(self.envir.flow_points[0], self.envir.flow_points[1], 
                               vort.T, shading='gouraud', cmap='RdBu',
                               norm=norm, alpha=0.9, antialiased=True)
@@ -2366,10 +2522,10 @@ class Swarm:
 
             # fluid visualization
             if fluid == 'vort' and self.envir.flow is not None:
-                if clip is not None:
-                    norm = colors.Normalize(-abs(clip),abs(clip),clip=True)
-                else:
-                    norm = None
+                # Limits start symmetric and are grown by each frame; see
+                # _vorticity_norm. Without a clip the placeholder is (-1, 1),
+                # which the first frame drawn replaces.
+                norm = _vorticity_norm(np.zeros(1), clip)
                 fld = ax.pcolormesh([self.envir.flow_points[0]], self.envir.flow_points[1], 
                            np.zeros(self.envir.flow[0].shape[1:]).T, shading='gouraud',
                            cmap='RdBu', norm=norm, alpha=0.9)
@@ -2705,8 +2861,12 @@ class Swarm:
                     if fluid == 'vort' and self.envir.flow is not None:
                         vort = self.envir.get_2D_vorticity(t_indx=n)
                         fld.set_array(vort.T)
+                        # NOT autoscale(): it rescales to this frame's own
+                        # min/max, which discards any clip the caller asked for
+                        # and moves zero off the white centre of RdBu, differently
+                        # every frame. That was the background flashing.
+                        fld.norm = _vorticity_norm(vort, clip, fld.norm)
                         fld.changed()
-                        fld.autoscale()
                     elif fluid == 'quiver' and self.envir.flow is not None:
                         if self.envir.flow_times is not None:
                             flow = self.envir.interpolate_temporal_flow(t_index=n)
@@ -2993,8 +3153,12 @@ class Swarm:
                     if fluid == 'vort' and self.envir.flow is not None:
                         vort = self.envir.get_2D_vorticity()
                         fld.set_array(vort.T)
+                        # NOT autoscale(): it rescales to this frame's own
+                        # min/max, which discards any clip the caller asked for
+                        # and moves zero off the white centre of RdBu, differently
+                        # every frame. That was the background flashing.
+                        fld.norm = _vorticity_norm(vort, clip, fld.norm)
                         fld.changed()
-                        fld.autoscale()
                     elif fluid == 'quiver' and self.envir.flow is not None:
                         if self.envir.flow_times is not None:
                             flow = self.envir.interpolate_temporal_flow()

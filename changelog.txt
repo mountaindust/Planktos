@@ -1,3 +1,13 @@
+1.0.3
+-----------------------
+Bug fixes.
+- Bug fix: vorticity backdrops no longer flash through a movie; colour limits are symmetric about zero and never shrink, and a supplied clip is no longer discarded.
+- Bug fix: FTLE is now normalized by the time actually integrated, correcting values where neighboring tracers left the domain early.
+- Bug fix: a sliding agent released back into free flight can no longer recurse without limit on a degenerate step.
+- A time step that fails or is interrupted partway through now marks the Environment (time=None) and reports the state; move() refuses until it is restored.
+- A Swarm subclass that replaces move() instead of apply_agent_model now warns at class definition.
+
+
 1.0.2
 -----------------------
 Bug fixes.
