@@ -1188,9 +1188,27 @@ Three things the port turned up, worth knowing before the next one:
   `tests/test_plot_helpers.py` there. **If `master` is merged here, fold that file into
   `test_frame_selection.py` rather than keeping both.**
 - Every ported fix was mutation-checked on `master`. One is not covered *on either
-  branch*: the `_ibc` free-flight guard survives being mutated away, because it fires
-  only when `t_edge` rounds to exactly 0 or NaN on a near-tangent hit, which is not
-  constructible on demand. Pre-existing, not introduced by the port.
+  branch*: the `_ibc` free-flight guard survives being mutated away.
+
+  ⛔ **Investigated 2026-08-13 and deliberately left untested.** With the static guard
+  removed, **20,000 randomized trials found no input that reaches it** — half of them
+  near-tangent (the case its own comment names), all aimed exactly at a mesh vertex,
+  over 1–3 element chains. Degenerate zero-length elements and duplicated vertices do
+  not reach it either. That is consistent with the arithmetic: in the 2D static branch
+  `t_edge` is `norm(...)/norm(...)`, so it is non-negative by construction and can only
+  be 0 on an exact vector cancellation.
+
+  Reaching it at all would mean calling the private `_project_and_slide_static` with
+  hand-forged internal state — testing the forgery, and freezing internal structure the
+  collision code is explicitly allowed to change. Against that: if the guard were ever
+  removed the failure is a **loud** `RecursionError`, and
+  `test_exhausting_the_stack_reports_the_cause` already pins that a stack exhaustion
+  reports its cause legibly.
+
+  ⚠️ **The moving-mesh guards are the ones to revisit if this ever does fire.** They
+  take `t_rot`/`t_edge` from a numerical solver (`sol.x[0]`) rather than from a
+  closed-form norm, so 0 or NaN is far more plausible there than in the static case
+  tested above. A real case would be worth a test; a manufactured one would not.
 
 **Why this list exists.** `v1.0.2` is **released and tagged**, so master-applicable
 fixes made here can no longer be filed under it. They currently land under **1.1.0** in
@@ -1321,7 +1339,8 @@ So the real options are:
 2. **Leave these dyload-only** until 1.1.0 carries `periodic_dim` across anyway.
 3. Port with an explicit opt-in argument on the three methods, which nobody would set.
 
-Recommendation: **(2)**, given the measured magnitude. `get_vorticity`'s edge ring was
+**Decided (2026-08-13): (2) — leave them on `dyload`.** They arrive on `master` with
+1.1.0, which carries `periodic_dim` across anyway. The magnitude supports it: `get_vorticity`'s edge ring was
 first-order and genuinely wrong (5-8% against IB2d's own `Omega`); that is the one worth
 wanting on `master`. But `calculate_DuDt` and `calculate_mag_gradient` already used
 `edge_order=2`, converge at order 2.00 either way, and improve only from 1.72-2.19x the
