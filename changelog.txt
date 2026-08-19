@@ -1,6 +1,6 @@
 1.0.3
 -----------------------
-Bug fixes.
+Bug fixes, plus adds a link to the repo the on documentation landing page.
 - Bug fix: vorticity backdrops no longer flash through a movie; colour limits are symmetric about zero and never shrink, and a supplied clip is no longer discarded.
 - Bug fix: FTLE is now normalized by the time actually integrated, correcting values where neighboring tracers left the domain early.
 - Bug fix: a sliding agent released back into free flight can no longer recurse without limit on a degenerate step.
