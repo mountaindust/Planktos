@@ -50,8 +50,10 @@ Items 1 and 2 are **both active and run in parallel**, in separate sessions.
    returns) — the design pass is now written up in `run_persistence.md` §9; §9.3 is the
    restoration checklist. This also **unblocks the prose-docs sweep**, which is
    deliberately held because §9 decides exactly what that prose would describe.
-4. 🟡 **The 1.0.3 decision** — whether to cut a patch release from `master` and
-   cherry-pick the queue at the bottom of this file, or let 1.1.0 carry it.
+4. ✅ **The 1.0.3 decision — settled (2026-08-19).** The patch release was cut from
+   `master` and tagged `v1.0.3`; the cherry-pick queue at the bottom of this file is the
+   record of what moved and what deliberately did not. **The next release is meant to be
+   `1.1.0`, with no `1.0.4`** — see that queue for the one thing that would change it.
 
 **The run archive, in detail.** The go/no-go was **decided 2026-08-11 in favor of
 building it**: plotting is a measured bottleneck on our own runs, and it is cheapest to
@@ -72,9 +74,10 @@ reasoning; §6.1 has the build order and §6.3 the entry points. **Start with §
 prerequisite bug fixes found during the reframe (see the cherry-pick queue).
 
 **Also merged since:** `master`'s 1.0.1 documentation release and its 1.0.2 bug
-fixes. No dyload-specific behavior changed by either. **`v1.0.2` is released and
-tagged**, so master-applicable fixes made here now queue for a possible **1.0.3** —
-see the cherry-pick queue at the bottom of this file.
+fixes. No dyload-specific behavior changed by either. **`v1.0.3` is released and
+tagged** (2026-08-19), and **the next release is meant to be `1.1.0`, not a `1.0.4`**.
+Master-applicable fixes made here are still logged in the cherry-pick queue at the bottom
+of this file, against the chance that enough accumulates to be worth cutting one.
 
 Priority key: 🔴 do first · 🟡 next · 🟢 later · ⚪ deferred / low priority.
 
@@ -1183,17 +1186,20 @@ above.)*
 
 ---
 
-## Candidates for a patch release (cherry-pick queue) 🟢 1.0.3 PREPARED, NOT YET TAGGED
+## Candidates for a patch release (cherry-pick queue) ✅ 1.0.3 RELEASED AND TAGGED
 
-✅ **Ported to `master` and released as 1.0.3 (2026-08-13, commit `bf7112c`).** Four of
-the five entries below are done: the `move()`/`_ibc` work, the `move()` override guard,
-the FTLE normalization, and the vorticity backdrop flash. `master`'s `__version__` is
-now `1.0.3` and its changelog carries a 1.0.3 section; the same section was added here
-and those lines removed from 1.1.0, since they are no longer new in it.
+✅ **Ported to `master` and shipped: `v1.0.3` is tagged (2026-08-19, at `a1c2128`).**
+Five of the six entries below are in it — the `move()`/`_ibc` work, the `move()` override
+guard, the FTLE normalization and the vorticity backdrop flash by commit `bf7112c`
+(2026-08-13); the agent-velocity statistics and `reset()` histories by `1c5334c`
+(2026-08-19). `master`'s `__version__` is `1.0.3` and its changelog carries a 1.0.3
+section; the same section was added here and those lines removed from 1.1.0, since they
+are no longer new in it.
 
-⚠️ **Still queued: the periodic edge-ring fixes** (`get_vorticity`, `calculate_DuDt`,
-`calculate_mag_gradient`). They were **not** ported, and the reason is a decision, not
-an oversight — see the ⛔ note in that entry.
+⛔ **Not ported, and not waiting on a later patch: the periodic edge-ring fixes**
+(`get_vorticity`, `calculate_DuDt`, `calculate_mag_gradient`). They stay on `dyload` by
+decision rather than oversight and reach `master` with 1.1.0 — see the ⛔ note in that
+entry.
 
 Three things the port turned up, worth knowing before the next one:
 
@@ -1230,20 +1236,31 @@ Three things the port turned up, worth knowing before the next one:
 
 **Why this list exists.** A released tag closes to new fixes, so master-applicable work
 done here lands under **1.1.0** in `changelog.txt` and `master` does not get it until
-1.1.0 ships. If enough accumulates first, cut a patch release from `master` and
-cherry-pick the entries below.
+1.1.0 ships. This list is what would be cherry-picked if waiting that long ever stops
+being acceptable.
 
-⚠️ **`1.0.3` is prepared but NOT shipped.** `master` carries `__version__ = '1.0.3'` and
-a 1.0.3 changelog section (commit `bf7112c`, 2026-08-13), but **the latest tag is still
-`v1.0.2`** — nothing has been released. So 1.0.3 is still open, and master-applicable
-fixes made here go into *it* rather than accumulating for a 1.0.4. When a line ships in
-the patch section it moves there on both branches and is **not** duplicated under 1.1.0.
+✅ **`1.0.3` shipped and is closed.** `master` carries `__version__ = '1.0.3'`, a 1.0.3
+changelog section, and the tag `v1.0.3` (2026-08-19, at `a1c2128`). When a line does ship
+in a patch section it moves there on both branches and is **not** duplicated under 1.1.0
+— which is what happened to the eight lines now under 1.0.3.
+
+**Decided (2026-08-19): the next release is `1.1.0`, and there is no `1.0.4`.** So keep
+filing master-applicable fixes under **1.1.0** and logging them below, but treat the
+1.0.4 queue as a holding pen rather than a release in preparation: **do not propose
+porting anything to `master` unless asked.** The trigger is the list growing long enough
+that a patch release becomes worth cutting, and that call is the user's.
 
 Add to this list whenever a fix made on `dyload` is not dyload-specific. The test for
 that is simple: does the code it touches look the same on `master`? Check with
 `git diff master -- <file>` before assuming.
 
-### Queued — the 2026-08-10 `move()`/`_ibc` work
+### Queued for a possible 1.0.4 — empty
+
+Nothing has been queued since `v1.0.3`; new entries go here. Everything below this
+heading is history — it shipped, or was deliberately not ported — kept for the porting
+notes rather than because anything is pending.
+
+### Shipped in 1.0.3 — the 2026-08-10 `move()`/`_ibc` work
 
 Both findings are written up in full in the "`_ibc.py` — the 2026-08 collision passes"
 section above; that is the reference for *why*, this is the reference for *what to move*.
@@ -1255,9 +1272,7 @@ section above; that is the reference for *why*, this is the reference for *what 
 | **Interrupt handling** (2026-08-11 follow-up) — the same `except` catches `BaseException`, so a Ctrl-C landing in the boundary-condition loop marks the state like an error does, then re-raises as itself rather than being wrapped in `RuntimeError` (an outer `except Exception` must not swallow an interrupt) | `planktos/_swarm.py`, `Swarm.move` only — same hunk as the row above | **Yes**, and it must move *with* the row above: `master` has no `try`/`except` here at all, so the two are one change |
 | **Tests** — `test_failed_step_closes_histories_and_marks_the_environment`, `test_interrupted_step_is_marked_and_the_interrupt_propagates`, `test_error_state_blocks_moves_until_it_is_backed_out`, and the `_wall_swarm` / `_fail_on_third_agent` helpers above them | `tests/test_swarm_lifecycle.py` | **Yes.** Both `tests/test_swarm_lifecycle.py` and `tests/_ib_harness.py` exist on `master`, including the `horizontal_wall` and `max_meshpt_dist` builders these use |
 
-**Corresponding `changelog.txt` lines**, currently under 1.1.0 — move these two to a
-1.0.3 section on `master` (they stay under 1.1.0 here as well, since 1.1.0 ships them
-too if no 1.0.3 happens first):
+**Corresponding `changelog.txt` lines**, now under 1.0.3 on both branches:
 
 ```
 - A time step that fails or is interrupted partway through now marks the Environment (time=None) and reports the state; move() refuses until it is restored.
@@ -1268,7 +1283,7 @@ too if no 1.0.3 happens first):
 row above is a later follow-up, so cherry-picking `816e6d7` alone leaves `except
 Exception` in place and Ctrl-C still corrupting silently. Take both.
 
-### Queued — the `move()` override guard (2026-08-11)
+### Shipped in 1.0.3 — the `move()` override guard (2026-08-11)
 
 `Swarm.__init_subclass__` warns when a subclass puts a `move` in its own namespace
 without appearing to delegate to the base (`super` or `move` in the override's
@@ -1282,13 +1297,13 @@ raises, so an existing subclass that extends-and-delegates keeps importing.
 | `__init_subclass__` inserted between the class docstring and `__init__` | `planktos/_swarm.py` | **Yes.** The anchor is byte-identical on `master` and `warnings` is already imported there |
 | **Tests** — the five in the "guard on overriding move()" section at the end of the file | `tests/test_agent_models.py` | **Yes.** The module and its `_still_envir` helper exist on `master` |
 
-**Corresponding `changelog.txt` line**, currently under 1.1.0:
+**Corresponding `changelog.txt` line**, now under 1.0.3 on both branches:
 
 ```
 - A Swarm subclass that replaces move() instead of apply_agent_model now warns at class definition.
 ```
 
-### Queued — the FTLE normalization fix (2026-08-11)
+### Shipped in 1.0.3 — the FTLE normalization fix (2026-08-11)
 
 `calculate_FTLE` divided by `T` even where a stencil point had left the domain early
 and the flow map had therefore only been integrated to `t_calc`. Stretching from one
@@ -1304,13 +1319,13 @@ continuously, that band is not a rim.
 | **Tests** — `test_FTLE_normalizes_by_the_time_actually_integrated` and the `_full_stencil_values` helper | `tests/test_analysis.py` | **Yes** |
 | **The four shear assertions**, reworked off `nanmax` onto full-integration stencils | `tests/test_analysis.py` | **Yes, and required.** Master has the same `nanmax(envir.FTLE_largest)` assertions at its lines 115 / 150 / 202. They break under the fix: the shear field's FTLE depends on integration time, so `nanmax` picks up a truncated point with a legitimately *higher* rate |
 
-**Corresponding `changelog.txt` line**, currently under 1.1.0:
+**Corresponding `changelog.txt` line**, now under 1.0.3 on both branches:
 
 ```
 - Bug fix: FTLE is now normalized by the time actually integrated, correcting values where neighboring tracers left the domain early.
 ```
 
-### Queued — the periodic vorticity edge ring (2026-08-13)
+### Not ported, by decision — the periodic vorticity edge ring (2026-08-13)
 
 `get_vorticity` never consulted `periodic_dim`. A periodic axis carries a duplicated end
 line — the contract `FluidData` documents — so the field genuinely continues past either
@@ -1343,8 +1358,8 @@ Rows for the two physics call sites, fixed the same day:
 | `_spatial_gradient` gained an `edge_order` argument, so the non-periodic path is bit-for-bit what it was | `planktos/fluid.py` | port with the helper |
 | **Tests** — the "periodic dimensions: the edge is not a boundary" section | `tests/test_material_derivative.py` | **Yes**, the file exists on master |
 
-⛔ **NOT ported to 1.0.3 — this one needs a decision.** Every other queued entry shipped
-in `bf7112c`; these three did not, because **`master` has no `periodic_dim` state to
+⛔ **NOT ported to 1.0.3 — by decision, recorded below.** Every other queued entry
+shipped in 1.0.3; these three did not, because **`master` has no `periodic_dim` state to
 consult.** It exists there only as an argument passed to `_wrap_flow` at IB2d load time
 and to `center_cell_regrid`; there is no `self.periodic_dim` anywhere.
 
@@ -1395,7 +1410,7 @@ shift by roughly a factor of two in their error, which reaches agents through
 `Swarm.get_DuDt` (the inertial-particle models) and `get_fluid_mag_gradient` (behavior
 code).
 
-### Queued — the vorticity backdrop flash (2026-08-12)
+### Shipped in 1.0.3 — the vorticity backdrop flash (2026-08-12)
 
 `plot_all` called `ScalarMappable.autoscale()` on every animation frame, which sets the
 colour limits to that frame's own min/max. Two consequences, both visible: RdBu is a
@@ -1412,10 +1427,10 @@ shrunk, and left alone entirely when `clip` is given.
 | `_vorticity_norm` helper, and the four call sites using it (`Swarm.plot`, the `plot_all` movie setup, and both movie update branches) | `planktos/_swarm.py` | **Yes, by hunk.** `_swarm.py` diverges heavily overall (347+/141- vs master), but master carries the same defect — `git show master:planktos/_swarm.py \| grep autoscale` finds the same two calls, at its lines 2709 and 2997 |
 | **Tests** — the `_vorticity_norm` section of `tests/test_frame_selection.py` | `tests/test_frame_selection.py` | ⚠️ **Not the module.** `test_frame_selection.py` was added for the frame-selection work (`run_persistence.md` §4.1) and does not exist on master. Port the seven tests into a plotting test module there, or add the file carrying only this section |
 
-### Queued for 1.0.3 — agent-velocity statistics and `reset()` histories (2026-08-19)
+### Shipped in 1.0.3 — agent-velocity statistics and `reset()` histories (2026-08-19)
 
-✅ **Ported to `master` in commit `1c5334c` (2026-08-19)**, into its still-open 1.0.3
-section. Kept here as the record of what moved and how, since 1.0.3 is not tagged yet.
+✅ **Ported to `master` in commit `1c5334c` (2026-08-19)**, into its 1.0.3 section, and
+released in `v1.0.3`. Kept here as the record of what moved and how.
 
 Two latent defects found while reframing the plotting plan into
 `docs/notes/run_persistence.md`; §5 there carries the full analysis. Both predate this
@@ -1447,8 +1462,8 @@ rather than intent.
 | **The `_calc_basic_stats` velocity read**, plus the docstring paragraphs explaining it | `planktos/_swarm.py`, `_calc_basic_stats` only | ⚠️ **Port, not a hunk.** `master`'s version returns only `avg_swrm_vel` — the mean speed and its spread are dyload additions — and its branch structure differs, computing `avg_swrm_vel` separately inside each branch. The *defect* is the same two lines; the code around them is not |
 | **Tests** — `test_calc_basic_stats_agent_velocity_at_initial_time_is_the_recorded_drift`, `..._agent_speed_at_initial_time_is_zero_without_flow`, `..._velocity_survives_a_periodic_wrap` | `tests/test_flow_interface.py` | ⚠️ **Not the module.** `test_flow_interface.py` does not exist on `master` — it was written for the `FlowArray` removal. Port the three into a statistics/plotting module there, dropping the mean-speed and spread assertions, which pin dyload-only return values |
 
-**Corresponding `changelog.txt` lines**, filed under **1.0.3** on both branches since
-1.0.3 is still open:
+**Corresponding `changelog.txt` lines**, filed under **1.0.3** on both branches and
+shipped there:
 
 ```
 - Bug fix: plotted agent velocity statistics use recorded velocities instead of differenced positions, which were wrong after any collision or periodic wrap.

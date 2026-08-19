@@ -33,17 +33,20 @@ number and the changelog** — these are easy to forget. Be proactive about it:
   it via `attr: planktos.__version__`, and `docs/conf.py` imports it — so the one
   string in `__init__.py` is the single source of truth. The current development
   version on this branch is `1.1.0`.
-- **`v1.0.0`, `v1.0.1` (documentation-only) and `v1.0.2` are all released and
-  tagged.** `master`'s `__version__` is still `1.0.2` — i.e. it currently sits
-  *on* a released version, so the next change landing there needs a bump to
-  `1.0.3` first. The existing `1.0.2` entries in `changelog.txt` are shipped
+- **`v1.0.0`, `v1.0.1` (documentation-only), `v1.0.2` and `v1.0.3` are all
+  released and tagged.** `master`'s `__version__` is `1.0.3` — i.e. it currently
+  sits *on* a released version, so the next change landing there needs a bump
+  first. The existing `1.0.2` and `1.0.3` entries in `changelog.txt` are shipped
   history: leave them alone, on both branches.
 - **A fix made here that is not dyload-specific has nowhere to go but `1.1.0`,**
-  since `1.0.2` is closed. File it under `1.1.0` in `changelog.txt` *and* add it
-  to the **cherry-pick queue at the bottom of `TODO.md`**, which tracks what
-  would make up a `1.0.3` if enough accumulates before `1.1.0` ships. Check
-  portability with `git diff master -- <file>` before assuming it applies —
-  `_swarm.py` in particular has diverged a long way.
+  since `1.0.3` is closed. File it under `1.1.0` in `changelog.txt` *and* add it
+  to the **cherry-pick queue at the bottom of `TODO.md`**. Check portability with
+  `git diff master -- <file>` before assuming it applies — `_swarm.py` in
+  particular has diverged a long way.
+- **The plan is that the next release is `1.1.0`, with no `1.0.4`.** That queue is
+  a holding pen in case the plan changes, not a release in preparation: log fixes
+  there, but **do not propose cherry-picking them to `master`.** The user will ask
+  if the list ever grows long enough to be worth a patch release.
 - `changelog.txt` is hand-maintained, terse, and grouped by version. When a
   change is user-facing, prompt to add an entry under the appropriate version.
 - When work looks release-worthy (or a user-facing change lands) but the version
