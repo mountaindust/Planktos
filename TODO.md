@@ -1414,6 +1414,9 @@ shrunk, and left alone entirely when `clip` is given.
 
 ### Queued for 1.0.3 — agent-velocity statistics and `reset()` histories (2026-08-19)
 
+✅ **Ported to `master` in commit `1c5334c` (2026-08-19)**, into its still-open 1.0.3
+section. Kept here as the record of what moved and how, since 1.0.3 is not tagged yet.
+
 Two latent defects found while reframing the plotting plan into
 `docs/notes/run_persistence.md`; §5 there carries the full analysis. Both predate this
 branch and both are on `master`.
