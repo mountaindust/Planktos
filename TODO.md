@@ -26,9 +26,10 @@ story.
   (`docs/notes/flow_field_interface.md`) was deleted 2026-08-18 once everything still
   load-bearing had moved into `docs/notes/run_persistence.md`; Appendix A there is the
   surviving summary, and the git history has the full analysis.
-- **Run persistence / plotting** (`docs/notes/run_persistence.md`) — **§3.1 and §4.1
-  complete** (plot statistics served from a per-dump mean cache; `fps`/`playback_rate`
-  frame selection). The rest is the plan below.
+- **Run persistence / plotting** (`docs/notes/run_persistence.md`) — **§3.1, §4.1 and
+  §5 complete** (plot statistics served from a per-dump mean cache; `fps`/`playback_rate`
+  frame selection; the two prerequisite bug fixes). The rest is the plan below, starting
+  at **A0**.
 - **`_ibc.py` collision passes** — done on `master` and merged here; coverage 91% → 99%.
 
 **Phase 2 is complete (2026-08-11).** The loader reads the real OpenFOAM dataset, the
@@ -1182,7 +1183,7 @@ above.)*
 
 ---
 
-## Candidates for a 1.0.3 patch release (cherry-pick queue) 🟢 MOSTLY SHIPPED
+## Candidates for a patch release (cherry-pick queue) 🟢 1.0.3 PREPARED, NOT YET TAGGED
 
 ✅ **Ported to `master` and released as 1.0.3 (2026-08-13, commit `bf7112c`).** Four of
 the five entries below are done: the `move()`/`_ibc` work, the `move()` override guard,
@@ -1227,10 +1228,16 @@ Three things the port turned up, worth knowing before the next one:
   closed-form norm, so 0 or NaN is far more plausible there than in the static case
   tested above. A real case would be worth a test; a manufactured one would not.
 
-**Why this list exists.** `v1.0.2` is **released and tagged**, so master-applicable
-fixes made here can no longer be filed under it. They currently land under **1.1.0** in
-`changelog.txt`, which means `master` does not get them until 1.1.0 ships. If enough
-accumulates first, cut a **1.0.3** from `master` and cherry-pick the entries below.
+**Why this list exists.** A released tag closes to new fixes, so master-applicable work
+done here lands under **1.1.0** in `changelog.txt` and `master` does not get it until
+1.1.0 ships. If enough accumulates first, cut a patch release from `master` and
+cherry-pick the entries below.
+
+⚠️ **`1.0.3` is prepared but NOT shipped.** `master` carries `__version__ = '1.0.3'` and
+a 1.0.3 changelog section (commit `bf7112c`, 2026-08-13), but **the latest tag is still
+`v1.0.2`** — nothing has been released. So 1.0.3 is still open, and master-applicable
+fixes made here go into *it* rather than accumulating for a 1.0.4. When a line ships in
+the patch section it moves there on both branches and is **not** duplicated under 1.1.0.
 
 Add to this list whenever a fix made on `dyload` is not dyload-specific. The test for
 that is simple: does the code it touches look the same on `master`? Check with
@@ -1404,6 +1411,47 @@ shrunk, and left alone entirely when `clip` is given.
 |---|---|---|
 | `_vorticity_norm` helper, and the four call sites using it (`Swarm.plot`, the `plot_all` movie setup, and both movie update branches) | `planktos/_swarm.py` | **Yes, by hunk.** `_swarm.py` diverges heavily overall (347+/141- vs master), but master carries the same defect — `git show master:planktos/_swarm.py \| grep autoscale` finds the same two calls, at its lines 2709 and 2997 |
 | **Tests** — the `_vorticity_norm` section of `tests/test_frame_selection.py` | `tests/test_frame_selection.py` | ⚠️ **Not the module.** `test_frame_selection.py` was added for the frame-selection work (`run_persistence.md` §4.1) and does not exist on master. Port the seven tests into a plotting test module there, or add the file carrying only this section |
+
+### Queued for 1.0.3 — agent-velocity statistics and `reset()` histories (2026-08-19)
+
+Two latent defects found while reframing the plotting plan into
+`docs/notes/run_persistence.md`; §5 there carries the full analysis. Both predate this
+branch and both are on `master`.
+
+**1. `_calc_basic_stats` finite-differenced `pos_history`** rather than reading
+`vel_history`. `move()` sets `velocities` from *pre*-boundary-condition positions and
+`apply_boundary_conditions` then mutates positions, so the two part company for any agent
+that hit an immersed boundary or the domain edge. Across a **periodic wrap** the position
+difference is nearly the whole domain, so the reported agent speed spikes to a fictitious
+value — 9 against a true 1 in the regression test. On `dyload` this also fed the mean
+agent speed and its spread, which the run-persistence §3.1 work added on top of the same
+quantity.
+
+A second, deliberate effect: `t_indx=0` no longer reports the zero vector. `Swarm.__init__`
+sets the initial velocities to the local fluid drift, so the first frame's statistics show
+that drift. Flow-free runs are unchanged, their initial velocities being zeros.
+
+**2. `Environment.reset()` cleared `pos_history` only,** leaving `vel_history` and
+`props_history` behind and permanently misaligned with it — which reaches the plotted
+heading markers, and `_calc_basic_stats` once fix 1 lands. The FTLE stencil copy in the
+same file already gets this right, which is what makes `reset()` look like an oversight
+rather than intent.
+
+| What | Where | Applies cleanly to `master`? |
+|---|---|---|
+| **`reset()` clearing all three histories** | `planktos/_environment.py`, `Environment.reset` only | **Yes.** Byte-identical on `master` (its line 3670) |
+| **Tests** — `test_reset_clears_every_history_not_just_positions`, `test_reset_leaves_props_history_off_when_it_was_never_on` | `tests/test_swarm_lifecycle.py` | **Yes.** The module and its `_envir` helper exist on `master` |
+| **The `_calc_basic_stats` velocity read**, plus the docstring paragraphs explaining it | `planktos/_swarm.py`, `_calc_basic_stats` only | ⚠️ **Port, not a hunk.** `master`'s version returns only `avg_swrm_vel` — the mean speed and its spread are dyload additions — and its branch structure differs, computing `avg_swrm_vel` separately inside each branch. The *defect* is the same two lines; the code around them is not |
+| **Tests** — `test_calc_basic_stats_agent_velocity_at_initial_time_is_the_recorded_drift`, `..._agent_speed_at_initial_time_is_zero_without_flow`, `..._velocity_survives_a_periodic_wrap` | `tests/test_flow_interface.py` | ⚠️ **Not the module.** `test_flow_interface.py` does not exist on `master` — it was written for the `FlowArray` removal. Port the three into a statistics/plotting module there, dropping the mean-speed and spread assertions, which pin dyload-only return values |
+
+**Corresponding `changelog.txt` lines**, filed under **1.0.3** on both branches since
+1.0.3 is still open:
+
+```
+- Bug fix: plotted agent velocity statistics use recorded velocities instead of differenced positions, which were wrong after any collision or periodic wrap.
+- Bug fix: Environment.reset clears velocity and props history alongside position history, which it left behind and misaligned.
+- Plot statistics at the initial time now show the agents' starting fluid drift instead of zero.
+```
 
 ### ⛔ Explicitly NOT cherry-pickable — dyload-only
 

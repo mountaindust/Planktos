@@ -348,3 +348,44 @@ def test_frame_selection_in_the_error_state_plots_history_only(monkeypatch):
     # len(pos_history)) must never appear.
     assert frames.max() == len(swrm.pos_history) - 1
     assert len(swrm.pos_history) == len(envir.time_history)
+
+
+def test_reset_clears_every_history_not_just_positions():
+    # reset() used to clear pos_history alone, leaving vel_history (and
+    # props_history) behind. The lists are indexed together -- full_vel_history
+    # lines up with full_pos_history -- so one survivor misaligns them for the
+    # rest of the session, which reaches the plotted heading markers and the
+    # agent-velocity statistics.
+    envir = _envir('zero')
+    swrm = planktos.Swarm(swarm_size=5, envir=envir, init=np.full((5, 2), 0.5),
+                          seed=1, store_prop_history=True)
+    for _ in range(3):
+        swrm.move(0.1, silent=True)
+    assert len(swrm.pos_history) == len(swrm.vel_history) == 3
+    assert len(swrm.props_history) == 3
+
+    envir.reset()
+
+    assert envir.time == 0.0
+    assert envir.time_history == []
+    assert swrm.pos_history == []
+    assert swrm.vel_history == []
+    assert swrm.props_history == []
+
+    # and they stay in step as the run continues past the reset
+    for _ in range(2):
+        swrm.move(0.1, silent=True)
+    assert len(swrm.pos_history) == len(swrm.vel_history) == 2
+    assert len(swrm.props_history) == 2
+    assert len(envir.time_history) == 2
+
+
+def test_reset_leaves_props_history_off_when_it_was_never_on():
+    # store_prop_history=False means props_history is None, not an empty list.
+    # Clearing it must not quietly turn the feature on.
+    envir = _envir('zero')
+    swrm = planktos.Swarm(swarm_size=3, envir=envir, init=np.full((3, 2), 0.5),
+                          seed=1)
+    swrm.move(0.1, silent=True)
+    envir.reset()
+    assert swrm.props_history is None

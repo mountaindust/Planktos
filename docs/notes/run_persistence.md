@@ -69,14 +69,13 @@ full.
 
 In order:
 
-1. **§5 — the two prerequisite bug fixes.** Small, independent, and one of them
-   (`_calc_basic_stats`) decides a number the archive is going to store, so it wants
-   settling before anything writes it to disk.
-2. **§2 — build the run archive** (§6.1 step A, six sub-steps). ⚠️ **A0 comes first
-   and comes alone**: `apply_boundary_conditions` currently takes each agent's movement
-   start point from `pos_history[-1]`, so a coarser capture schedule would silently
-   break collision detection. It is the riskiest edit in the plan and everything else
-   in step A waits on it (§2.2).
+1. ~~**§5 — the two prerequisite bug fixes.**~~ **[done 2026-08-19]** They settled a
+   number the archive was going to store, so they came before anything wrote it to disk.
+2. **§2 — build the run archive** (§6.1 step A, six sub-steps) — **this is the front of
+   the queue.** ⚠️ **A0 comes first and comes alone**: `apply_boundary_conditions`
+   currently takes each agent's movement start point from `pos_history[-1]`, so a
+   coarser capture schedule would silently break collision detection. It is the riskiest
+   edit in the plan and everything else in step A waits on it (§2.2).
 3. **§3 — fluid-side streaming** and **§4 — rendering**, which sit on top of it.
 4. **§9 — tiling**, afterwards, as cleanup. It has its own restoration checklist
    (§9.3) because gating it off left notices scattered across source, tests,
@@ -1503,11 +1502,13 @@ long run mid-flight. Remuxing afterwards is lossless and one call:
 
 ---
 
-## 5. Prerequisite bug fixes
+## 5. Prerequisite bug fixes — **[done]**
 
 Two defects found while reframing this plan (2026-08-18). Both predate all of it, both
 are present on `master`, and both touch numbers the archive is about to persist — so
-they are settled first, not folded into the build.
+they were settled first, not folded into the build. **Both landed 2026-08-19**, with
+tests, changelog lines, and entries in `TODO.md`'s cherry-pick queue; what follows is
+kept as the record of what was wrong and why the fix is what it is.
 
 ### 5.1 `_calc_basic_stats` finite-differences positions instead of using recorded velocities
 
@@ -1545,11 +1546,18 @@ is the initial local fluid drift and is the truth. §4.3 decides this and carrie
 consequences — it is listed separately there because it is the user-visible half, but
 there is one line of code and it changes here.
 
-- **Applies to `master`:** yes — the same two lines are at its `_swarm.py:1935`. Queue
-  for a patch release (1.0.3 has shipped; the next would be 1.0.4) and add a changelog
-  line under 1.1.0.
-- **Test:** a periodic domain with an agent that wraps, asserting the reported mean
-  speed is the physical one and not the domain width over `dt`. Closed-form.
+- **Applies to `master`:** the defect does, at its `_swarm.py:1935` — but as a **port,
+  not a hunk**: `master`'s `_calc_basic_stats` returns only `avg_swrm_vel` and computes
+  it separately in each branch. Filed under **1.0.3**, which is prepared but not yet
+  tagged, so it is still open (`TODO.md`, cherry-pick queue).
+- **As landed.** `vel_data` reads `self.full_vel_history[t_indx]`, the `t_indx == 0`
+  branch is gone, and the docstring says both why the history is read and what index 0
+  now reports. Three tests in `tests/test_flow_interface.py`:
+  `..._agent_velocity_at_initial_time_is_the_recorded_drift` (closed-form drift on the
+  exactly-linear field, and *not* zero), `..._agent_speed_at_initial_time_is_zero_without_flow`
+  (the same numbers the retired convention gave, now for a true reason), and
+  `..._velocity_survives_a_periodic_wrap` — an agent stepping 9.5 → 0.5 across a periodic
+  edge, whose reported speed is 1 and would have been 9 under the old derivation.
 
 ### 5.2 `Environment.reset()` leaves `vel_history` behind
 
@@ -1562,12 +1570,17 @@ The FTLE stencil copy in the same file gets this right (`_environment.py:2721-27
 clears both, with a comment explaining why), which is what makes `reset()` look like an
 oversight rather than intent.
 
-**Fix:** clear `vel_history` and `props_history` alongside `pos_history`. Do it in the
-same change as §2.2's rule that `reset()` raises while recording.
+**Fix:** clear `vel_history` and `props_history` alongside `pos_history`.
 
-- **Applies to `master`:** yes — byte-identical there.
-- **Test:** reset mid-run, then assert the histories are consistent and a subsequent
-  `move()` keeps them so.
+- **Applies to `master`:** yes — byte-identical there. Filed under **1.0.3**
+  (`TODO.md`, cherry-pick queue).
+- **As landed.** All three cleared, with `props_history` left as `None` when the swarm
+  was never storing it — clearing must not quietly switch the feature on. Two tests in
+  `tests/test_swarm_lifecycle.py`: `test_reset_clears_every_history_not_just_positions`
+  (including that the histories stay in step as the run continues past the reset) and
+  `test_reset_leaves_props_history_off_when_it_was_never_on`.
+- ⚠️ **§2.2's rule that `reset()` must *raise* while recording is not part of this**, and
+  is still owed: there is no recorder yet. It lands with §6.1 **A3**.
 
 ---
 
@@ -1575,8 +1588,8 @@ same change as §2.2's rule that `reset()` raises while recording.
 
 ### 6.1 Steps
 
-**Step 0 — the two bug fixes (§5).** Independent, small, and §5.1 settles a number the
-archive persists.
+**Step 0 — the two bug fixes (§5). [done 2026-08-19]** Independent, small, and §5.1
+settled a number the archive persists. See "As landed" in §5.1 and §5.2.
 
 **Step A — the run archive (§2).** Pure data capture: no rendering, no video
 parameters, no matplotlib. Six sub-steps, each independently testable:
@@ -1771,14 +1784,15 @@ Line numbers drift; search for the names.
   One line; `fps`'s default did not change and `per_dump` was not built, so neither is
   changelog material;
 - **[done]** vorticity backdrops no longer flashing (symmetric, non-shrinking colour
-  limits; a supplied `clip` honoured). Shipped in 1.0.3;
+  limits; a supplied `clip` honoured). Filed under 1.0.3;
 - **[done]** vorticity differenced across the wrap on periodic dimensions, changing the
-  outermost ring of every vorticity plot. Shipped in 1.0.3;
-- **Owed at step 0:** the `_calc_basic_stats` velocity fix (§5.1) — user-visible, it
-  changes plotted statistics on any run with collisions or a periodic domain, and it
-  changes the first frame (§4.3). The `reset()` history fix (§5.2) is a regression-class
-  fix and gets no line of its own. **Both apply to `master`** — add them to the
-  cherry-pick queue at the bottom of `TODO.md` for a future patch release;
+  outermost ring of every vorticity plot. Filed under 1.0.3;
+- **[done]** the `_calc_basic_stats` velocity fix (§5.1), on two lines: recorded
+  velocities replacing differenced positions, and the initial frame showing the starting
+  fluid drift instead of zero (§4.3). The `reset()` history fix (§5.2) took a third.
+  All three are filed under **1.0.3**, which is prepared but not yet tagged and so is
+  still open — `reset()` ported to `master` as a clean hunk, `_calc_basic_stats` as a
+  genuine port, since `master`'s version of that method is shaped differently;
 - **Owed at step A:** `Environment.record`, the run archive, and `planktos.load_run`.
   Dyload-only in its fluid half — it depends on `FluidData` — but the *agent* half does
   not, so check portability with `git diff master -- <file>` before assuming the whole

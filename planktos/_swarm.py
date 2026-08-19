@@ -1891,6 +1891,19 @@ class Swarm:
         moving coherently. Whole-field values are still available on demand from
         FluidData.fmin/fmax and Environment.get_mean_fluid_speed().
 
+        Agent velocities are read from vel_history, which records the velocity
+        each agent actually had. They are not recovered by differencing
+        pos_history: velocities are set in move() from pre-boundary-condition
+        positions, so the two quantities part company for any agent that
+        collided with an immersed boundary or the domain edge, and across a
+        periodic wrap the difference of positions is meaningless.
+
+        At t_indx=0 this reports the initial velocities, which Swarm.__init__
+        sets to the local fluid drift where a flow exists. An earlier version
+        reported the zero vector there on the grounds that velocity is
+        undefined before the first step; the recorded value is the truth and
+        agrees with what the agents were actually doing.
+
         Parameters
         ----------
         DIM3 : bool
@@ -1927,16 +1940,17 @@ class Swarm:
             num_orig = num_left
         perc_left = 100*num_left/num_orig
 
-        # get agent velocities
+        # get agent velocities. these are READ from the recorded history, not
+        #   finite-differenced from positions: move() sets velocities from
+        #   pre-boundary-condition positions and then apply_boundary_conditions
+        #   mutates positions, so the two differ for any agent that collided
+        #   with an immersed boundary or the domain edge. On a periodic
+        #   dimension a wrap makes the difference of positions a spurious
+        #   near-domain-width velocity.
         if t_indx is None:
             vel_data = self.velocities
-        elif t_indx == 0:
-            # velocity is defined as zero at the initial time, so the mean
-            # velocity is the zero vector and the spread of speeds is zero.
-            vel_data = np.zeros((1,len(self.envir.L)))
         else:
-            vel_data = (self.pos_history[t_indx] - self.pos_history[t_indx-1])/(
-                        self.envir.time_history[t_indx]-self.envir.time_history[t_indx-1])
+            vel_data = self.full_vel_history[t_indx]
 
         # only agents still in the domain contribute. agents leave whole rows at
         # a time, so dropping masked rows loses nothing from the survivors.

@@ -400,16 +400,71 @@ def test_calc_basic_stats_agent_speed_vs_mean_velocity():
     assert not np.isclose(avg_swrm_spd, np.linalg.norm(avg_swrm_vel))
 
 
-def test_calc_basic_stats_agent_speed_at_initial_time_is_zero():
-    # t_indx == 0 defines the agent velocity as zero, so both the mean speed and
-    # its spread must be zero there rather than masked or nan.
-    envir, _, _ = _linear_2d()
-    swrm = planktos.Swarm(swarm_size=10, envir=envir, seed=1)
+def test_calc_basic_stats_agent_velocity_at_initial_time_is_the_recorded_drift():
+    # t_indx=0 reports the velocity the agents actually had. Swarm.__init__ sets
+    # that to the local fluid drift, so it is generally NOT zero -- an earlier
+    # version reported the zero vector here on the grounds that velocity is
+    # undefined before the first step. The recorded value is the truth, and the
+    # run archive stores the truth, so live and archive-backed statistics have to
+    # agree (run_persistence.md §4.3).
+    envir, _, _ = _linear_2d()                          # u = x, v = 2y
+    swrm = planktos.Swarm(swarm_size=4, envir=envir, seed=1)
+    # place the agents by hand so the drift is closed-form. The field is exactly
+    # linear, so linear interpolation reproduces it exactly.
+    pts = np.array([[1.0, 1.0], [2.0, 3.0], [7.0, 2.0], [4.0, 6.0]])
+    swrm.positions[:, :] = pts
+    swrm.velocities[:, :] = swrm.get_fluid_drift()
     swrm.move(0.1)
-    stats = swrm._calc_basic_stats(DIM3=False, t_indx=0)
-    assert np.allclose(stats[3], 0.0)
-    assert np.isclose(stats[4], 0.0)
-    assert np.isclose(stats[5], 0.0)
+
+    drift = np.column_stack((pts[:, 0], 2 * pts[:, 1]))
+    speeds = np.linalg.norm(drift, axis=1)
+    _, _, _, avg_vel, avg_spd, std_spd = swrm._calc_basic_stats(DIM3=False, t_indx=0)
+    assert np.allclose(avg_vel, drift.mean(axis=0))
+    assert np.isclose(avg_spd, speeds.mean())
+    assert np.isclose(std_spd, speeds.std())
+    # emphatically not the zero the old convention reported
+    assert avg_spd > 1.0
+
+
+def test_calc_basic_stats_agent_speed_at_initial_time_is_zero_without_flow():
+    # With no fluid there is no drift to inherit, so Swarm.__init__ leaves the
+    # initial velocities at zero and the t_indx=0 statistics are zero -- the same
+    # numbers the retired convention produced, now for a reason that is true.
+    envir = planktos.Environment(Lx=10, Ly=10)
+    swrm = planktos.Swarm(swarm_size=6, envir=envir, seed=1)
+    swrm.move(0.1)
+    _, _, _, avg_vel, avg_spd, std_spd = swrm._calc_basic_stats(DIM3=False, t_indx=0)
+    assert np.allclose(avg_vel, 0.0)
+    assert np.isclose(avg_spd, 0.0)
+    assert np.isclose(std_spd, 0.0)
+
+
+def test_calc_basic_stats_velocity_survives_a_periodic_wrap():
+    # The statistics used to finite-difference pos_history. An agent that wraps
+    # has a position difference of nearly the whole domain, which as a velocity
+    # is enormous and fictitious; the recorded velocity is the real one. This is
+    # the sharpest case of a defect that applies to every agent that collides
+    # with anything, since move() sets velocities from PRE-boundary-condition
+    # positions and apply_boundary_conditions then moves them.
+    class _Rightward(planktos.Swarm):
+        def apply_agent_model(self, dt):
+            return self.positions + np.array([1.0, 0.0]) * dt
+
+    envir = planktos.Environment(Lx=10, Ly=10, x_bndry=('periodic', 'periodic'))
+    swrm = _Rightward(swarm_size=1, envir=envir, seed=1)
+    swrm.positions[:, :] = [9.5, 5.0]
+    swrm.velocities[:, :] = 0.0
+
+    swrm.move(1.0)                      # 9.5 -> 10.5, wrapped back to 0.5
+    assert swrm.positions[0, 0] < 1.0, 'the agent did not actually wrap'
+    swrm.move(1.0)                      # 0.5 -> 1.5, no wrap
+
+    # index 1 is the state just after the wrap, so the position difference
+    # spanning it is -9: the value the old derivation would have reported.
+    _, _, _, avg_vel, avg_spd, std_spd = swrm._calc_basic_stats(DIM3=False, t_indx=1)
+    assert np.allclose(avg_vel, [1.0, 0.0])
+    assert np.isclose(avg_spd, 1.0)
+    assert np.isclose(std_spd, 0.0)
 
 
 def test_calc_basic_stats_returns_plain_scalars():
