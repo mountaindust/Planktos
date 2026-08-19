@@ -1907,6 +1907,21 @@ class Swarm:
             average z-component of fluid velocity
         avg_swrm_vel : array
             average agent velocity
+
+        Notes
+        -----
+        Agent velocities are read from vel_history, which records the velocity
+        each agent actually had. They are not recovered by differencing
+        pos_history: velocities are set in move() from pre-boundary-condition
+        positions, so the two quantities part company for any agent that
+        collided with an immersed boundary or the domain edge, and across a
+        periodic wrap the difference of positions is meaningless.
+
+        At t_indx=0 this reports the initial velocities, which Swarm.__init__
+        sets to the local fluid drift where a flow exists. An earlier version
+        reported the zero vector there on the grounds that velocity is
+        undefined before the first step; the recorded value is the truth and
+        agrees with what the agents were actually doing.
         '''
 
         # get % of agents left in domain
@@ -1920,21 +1935,25 @@ class Swarm:
             num_orig = num_left
         perc_left = 100*num_left/num_orig
 
-        # get average swarm velocity
+        # get average swarm velocity. this is READ from the recorded history,
+        #   not finite-differenced from positions: move() sets velocities from
+        #   pre-boundary-condition positions and then apply_boundary_conditions
+        #   mutates positions, so the two differ for any agent that collided
+        #   with an immersed boundary or the domain edge. On a periodic
+        #   dimension a wrap makes the difference of positions a spurious
+        #   near-domain-width velocity.
         if t_indx is None:
-            if np.all(self.velocities.mask):
-                vel_data = np.zeros(self.velocities.shape)
-            elif np.any(self.velocities.mask):
-                vel_data = self.velocities[~self.velocities.mask.any(axis=1)]
-            else:
-                vel_data = self.velocities
-            avg_swrm_vel = vel_data.mean(axis=0)
-        elif t_indx == 0:
-            avg_swrm_vel = np.zeros(len(self.envir.L))
+            vel_all = self.velocities
         else:
-            vel_data = (self.pos_history[t_indx] - self.pos_history[t_indx-1])/(
-                        self.envir.time_history[t_indx]-self.envir.time_history[t_indx-1])
-            avg_swrm_vel = vel_data.mean(axis=0)
+            vel_all = self.full_vel_history[t_indx]
+        vel_mask = ma.getmaskarray(vel_all)
+        if np.all(vel_mask):
+            vel_data = np.zeros(vel_all.shape)
+        elif np.any(vel_mask):
+            vel_data = vel_all[~vel_mask.any(axis=1)]
+        else:
+            vel_data = vel_all
+        avg_swrm_vel = vel_data.mean(axis=0)
 
         if self.envir.flow is None and not DIM3:
             return perc_left, 0, 0, 0, 0, avg_swrm_vel

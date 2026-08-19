@@ -1,12 +1,15 @@
 '''Plotting helpers that decide what a frame looks like without drawing one.
 
-_vorticity_norm sets the colour limits of the RdBu vorticity backdrop. It is a
-pure function, so unlike the rendering smokes in test_plotting_smoke.py these
-stay in the fast run.
+_vorticity_norm sets the colour limits of the RdBu vorticity backdrop, and
+_calc_basic_stats produces the numbers printed in the corner of a frame. Both
+are pure computation, so unlike the rendering smokes in test_plotting_smoke.py
+these stay in the fast run.
 
-(On the dyload branch this section lives in test_frame_selection.py alongside the
-frame-selection arithmetic, which master does not have. If the two branches are
-ever merged, fold this file into that one rather than keeping both.)
+(On the dyload branch the _vorticity_norm section lives in test_frame_selection.py
+alongside the frame-selection arithmetic, which master does not have, and the
+_calc_basic_stats section lives in test_flow_interface.py, which master also does
+not have. If the branches are ever merged, fold this file into those rather than
+keeping both.)
 '''
 
 import matplotlib
@@ -15,6 +18,7 @@ matplotlib.use('Agg')
 import numpy as np
 import pytest
 
+import planktos
 from planktos._swarm import _vorticity_norm
 
 
@@ -92,3 +96,81 @@ def test_vorticity_norm_is_grown_in_place():
     norm = _vorticity_norm(np.array([[1.0]]))
     same = _vorticity_norm(np.array([[9.0]]), norm=norm)
     assert same is norm and np.isclose(norm.vmax, 9.0)
+
+
+# --------------------------------------------------------------------------- #
+#          agent velocity statistics (the text printed on a frame)            #
+# --------------------------------------------------------------------------- #
+# _calc_basic_stats used to build the agent velocity by differencing consecutive
+# pos_history entries. That is not the velocity the agents had: move() sets
+# velocities from PRE-boundary-condition positions and apply_boundary_conditions
+# then mutates positions, so the two part company for any agent that hit an
+# immersed boundary or the domain edge -- and across a periodic wrap the
+# difference of positions is nearly the whole domain. vel_history records the
+# real thing and is what is read now. avg_swrm_vel is the last element of the
+# returned tuple in every branch, so these index it from the end.
+
+
+def _linear_2d(nx=11, ny=9, Lx=10.0, Ly=8.0):
+    '''Static 2D environment with u = x, v = 2y (exactly linear in space).'''
+    x = np.linspace(0, Lx, nx)
+    y = np.linspace(0, Ly, ny)
+    X, Y = np.meshgrid(x, y, indexing='ij')
+    return planktos.Environment(Lx=Lx, Ly=Ly, flow=[X.copy(), 2 * Y.copy()],
+                                x_bndry=('zero', 'zero'),
+                                y_bndry=('zero', 'zero'))
+
+
+def test_calc_basic_stats_agent_velocity_at_initial_time_is_the_recorded_drift():
+    # t_indx=0 reports the velocity the agents actually had. Swarm.__init__ sets
+    # that to the local fluid drift, so it is generally NOT zero -- an earlier
+    # version reported the zero vector here on the grounds that velocity is
+    # undefined before the first step. The recorded value is the truth.
+    envir = _linear_2d()                                # u = x, v = 2y
+    swrm = planktos.Swarm(swarm_size=4, envir=envir, seed=1)
+    # place the agents by hand so the drift is closed-form. The field is exactly
+    # linear, so linear interpolation reproduces it exactly.
+    pts = np.array([[1.0, 1.0], [2.0, 3.0], [7.0, 2.0], [4.0, 6.0]])
+    swrm.positions[:, :] = pts
+    swrm.velocities[:, :] = swrm.get_fluid_drift()
+    swrm.move(0.1)
+
+    drift = np.column_stack((pts[:, 0], 2 * pts[:, 1]))
+    avg_swrm_vel = swrm._calc_basic_stats(DIM3=False, t_indx=0)[-1]
+    assert np.allclose(avg_swrm_vel, drift.mean(axis=0))
+    # emphatically not the zero the old convention reported
+    assert np.linalg.norm(avg_swrm_vel) > 1.0
+
+
+def test_calc_basic_stats_agent_velocity_at_initial_time_is_zero_without_flow():
+    # With no fluid there is no drift to inherit, so Swarm.__init__ leaves the
+    # initial velocities at zero and the t_indx=0 statistics are zero -- the same
+    # numbers the retired convention produced, now for a reason that is true.
+    envir = planktos.Environment(Lx=10, Ly=10)
+    swrm = planktos.Swarm(swarm_size=6, envir=envir, seed=1)
+    swrm.move(0.1)
+    assert np.allclose(swrm._calc_basic_stats(DIM3=False, t_indx=0)[-1], 0.0)
+
+
+def test_calc_basic_stats_velocity_survives_a_periodic_wrap():
+    # An agent that wraps has a position difference of nearly the whole domain,
+    # which as a velocity is enormous and fictitious; the recorded velocity is
+    # the real one. This is the sharpest case of a defect that reaches every
+    # agent that collides with anything.
+    class _Rightward(planktos.Swarm):
+        def apply_agent_model(self, dt):
+            return self.positions + np.array([1.0, 0.0]) * dt
+
+    envir = planktos.Environment(Lx=10, Ly=10, x_bndry=('periodic', 'periodic'))
+    swrm = _Rightward(swarm_size=1, envir=envir, seed=1)
+    swrm.positions[:, :] = [9.5, 5.0]
+    swrm.velocities[:, :] = 0.0
+
+    swrm.move(1.0)                      # 9.5 -> 10.5, wrapped back to 0.5
+    assert swrm.positions[0, 0] < 1.0, 'the agent did not actually wrap'
+    swrm.move(1.0)                      # 0.5 -> 1.5, no wrap
+
+    # index 1 is the state just after the wrap, so the position difference
+    # spanning it is -9: the value the old derivation would have reported.
+    avg_swrm_vel = swrm._calc_basic_stats(DIM3=False, t_indx=1)[-1]
+    assert np.allclose(avg_swrm_vel, [1.0, 0.0])

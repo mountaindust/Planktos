@@ -3678,7 +3678,14 @@ class Environment:
             self.swarms = []
         else:
             for sw in self.swarms:
+                # every history goes, not just positions: they are indexed
+                #   together (full_vel_history lines up with full_pos_history),
+                #   so clearing one and keeping the others leaves them
+                #   misaligned for the rest of the session.
                 sw.pos_history = []
+                sw.vel_history = []
+                if sw.props_history is not None:
+                    sw.props_history = []
 
 
 
