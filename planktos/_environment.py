@@ -1883,7 +1883,7 @@ class Environment:
            for why: tiling was implemented as a virtual ndarray view that modern
            scipy defeats, and that view has been removed. Tiling will return as a
            position-wrapping implementation covering both 2D and 3D, after the
-           plotting work. See ``docs/notes/flow_field_interface.md``.
+           plotting work. See ``docs/notes/run_persistence.md``.
 
            Raising here rather than in ``tile_flow`` alone keeps the environment
            from being left half-tiled (mesh and ``L`` updated, fluid not) when
@@ -1892,7 +1892,7 @@ class Environment:
            The previous body is preserved commented-out below. Only its *fluid*
            call is superseded by position-wrapping; the ibmesh tiling and ``L``
            scaling are still correct as written and should be reused rather than
-           rewritten. See §9.1 of the note for the full restoration checklist.
+           rewritten. See §9.3 of the note for the full restoration checklist.
 
         Parameters
         ----------
@@ -1912,7 +1912,7 @@ class Environment:
             'relied on the FlowArray view, which modern scipy defeats by '
             'coercing array-API objects with np.asarray; FlowArray has been '
             'removed. Tiling will return as a position-wrapping implementation '
-            'for 2D and 3D. See docs/notes/flow_field_interface.md.')
+            'for 2D and 3D. See docs/notes/run_persistence.md.')
 
         # --- PREVIOUS IMPLEMENTATION, KEPT FOR RESTORATION ------------------
         # Retained deliberately rather than left to git history: the mesh and

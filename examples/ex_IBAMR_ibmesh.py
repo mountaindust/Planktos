@@ -12,7 +12,7 @@ Agents should not be able to move through the cylinder boundaries.
 The tile_domain call below raises NotImplementedError: tiling is temporarily
 unavailable while the fluid-data interface is reworked. It returns as a
 position-wrapping implementation covering 2D and 3D. Delete this notice and
-re-run when that lands. See docs/notes/flow_field_interface.md.'''
+re-run when that lands. See docs/notes/run_persistence.md.'''
 
 import planktos
 

@@ -18,7 +18,7 @@ Tiling is central to this example, and the tile_domain call below raises
 NotImplementedError: tiling is temporarily unavailable while the fluid-data
 interface is reworked. It returns as a position-wrapping implementation
 covering 2D and 3D. Delete this notice and re-run when that lands. See
-docs/notes/flow_field_interface.md.
+docs/notes/run_persistence.md.
 '''
 
 import numpy as np

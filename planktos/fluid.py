@@ -913,7 +913,7 @@ class FluidData:
         computing them from the field would re-stream the entire dataset.
 
         The value is exact, not approximate -- see the note on linearity in
-        docs/notes/flow_field_interface.md §8.5.
+        docs/notes/run_persistence.md §3.2.
 
         Parameters
         ----------
@@ -1111,8 +1111,8 @@ class FluidData:
 
            It will return as a position-wrapping implementation that works in
            both 2D and 3D without materializing the tiled field, after the
-           plotting work. See ``docs/notes/flow_field_interface.md`` for the
-           design and the reasoning -- and §9.1 there for the checklist of every
+           plotting work. See ``docs/notes/run_persistence.md`` for the
+           design and the reasoning -- and §9.3 there for the checklist of every
            notice and replaced test to undo when it lands.
 
            The previous body is preserved commented-out below. Its
@@ -1138,7 +1138,7 @@ class FluidData:
             'relied on the FlowArray view, which modern scipy defeats by '
             'coercing array-API objects with np.asarray; FlowArray has been '
             'removed. Tiling will return as a position-wrapping implementation '
-            'for 2D and 3D. See docs/notes/flow_field_interface.md.')
+            'for 2D and 3D. See docs/notes/run_persistence.md.')
 
         # --- PREVIOUS IMPLEMENTATION, KEPT FOR RESTORATION ------------------
         # Retained deliberately rather than left to git history. The `f.tiling`

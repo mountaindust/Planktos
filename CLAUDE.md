@@ -190,7 +190,7 @@ against `master`.
   with the same interpolation weights the field uses — exact, because the mean is
   linear and both splines are weighted sums of nodal fields. This is what lets
   plotting print fluid statistics without re-streaming the dataset (see
-  `docs/notes/flow_field_interface.md` §8.3.1). A mean stays valid after the
+  `docs/notes/run_persistence.md` §3.1). A mean stays valid after the
   sliding window has moved past its dump; only a never-loaded dump costs a load.
 - `FluidData.get_raw_loaded_data()` is the nearest thing to the old
   `Environment.regenerate_flow_data()`. Note *loaded*: under dynamic loading only
@@ -239,18 +239,20 @@ overriding `.shape`/`__getitem__`. It was **deleted** in the fluid-interface
 refactor: modern scipy defeats the trick (`RegularGridInterpolator` calls
 `np.asarray` on any array-API object, discarding the virtual shape), so the tiled
 interpolation path never actually worked, while the subclass corrupted ordinary
-numpy operations on flow data. `docs/notes/flow_field_interface.md` is the full
-record.
+numpy operations on flow data. `docs/notes/run_persistence.md` Appendix A is the
+surviving record; the full analysis is in the git history of the deleted
+`docs/notes/flow_field_interface.md`.
 
 **Domain tiling currently raises `NotImplementedError`** (`FluidData.tile_flow`,
 `Environment.tile_domain`) — it went away with `FlowArray` and returns as a
 position-wrapping implementation covering 2D *and* 3D, after the plotting work.
 `Environment.extend` remains removed, and is decided at the same time. Do not
-reintroduce a materializing tiling stopgap; see §5/§9 of the note for why.
+reintroduce a materializing tiling stopgap — nor a virtualizing one; see
+`docs/notes/run_persistence.md` §9.2 for why both failed.
 
 **When tiling comes back, work from the restoration checklist at
-`docs/notes/flow_field_interface.md` §9.1.** Gating it off left notices and
-replaced tests across source, tests, examples, docs, and prose; §9.1 lists every
+`docs/notes/run_persistence.md` §9.3.** Gating it off left notices and
+replaced tests across source, tests, examples, docs, and prose; §9.3 lists every
 one. Both old bodies are preserved **commented out beneath their `raise`**, under a
 `PREVIOUS IMPLEMENTATION, KEPT FOR RESTORATION` banner — reuse them rather than
 rewriting. Only the fluid halves are superseded; `tile_domain`'s ibmesh/`L` logic
@@ -287,7 +289,7 @@ entirely** from the 2D path. Two working consequences:
 
 Already visible in the code: `Swarm.plot_all`'s `fluid='vort'|'quiver'` backdrops
 are 2D-only, so a 3D frame draws nothing about the fluid. See
-`docs/notes/flow_field_interface.md` §8.2.
+`docs/notes/run_persistence.md` §0.2.
 
 ## Customizing agent behavior — the one rule that matters
 
@@ -452,7 +454,7 @@ parallelization tests and the plotting smokes — which brings it to roughly 20s
     `get_raw_loaded_data`, `fshape`, the plotting strided-slice path, the
     `LinearSpline`/`INUM` temporal path (the in-memory half of dynamic loading —
     `test_temporal_interp.py` covers only `fCubicSpline`), and 3D vorticity. All
-    closed-form. See `docs/notes/flow_field_interface.md` §7.2 — **this is the
+    closed-form. See `docs/notes/run_persistence.md` Appendix A — **this is the
     safety net for that refactor; keep it green as the work lands.**
   - `test_dynamic_loading.py` — the **windowed** (`INUM=int`) path, i.e. this
     branch's headline feature: `FluidData.update_spline`. Covers TODO Phase 1

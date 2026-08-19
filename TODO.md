@@ -21,10 +21,14 @@ story.
 - **Phase 1** (2D dynamic loading) — complete, including **(C)**, the
   linear-vs-cubic error measurement, which is answered with numbers. Only
   periodic × dynamic testing is left over, folded into Phase 2.
-- **Flow-field interface refactor** (`docs/notes/flow_field_interface.md`) — **§7
-  complete** (`FlowArray` deleted, tiling gated off, `test_flow_interface.py` pinning
-  the consumer contract) and **§8 steps 1–2 complete** (plot statistics served from a
-  per-dump mean cache; `fps`/`playback_rate` frame selection).
+- **Flow-field interface refactor** — **complete.** `FlowArray` deleted, tiling gated
+  off, `test_flow_interface.py` pinning the consumer contract. Its design note
+  (`docs/notes/flow_field_interface.md`) was deleted 2026-08-18 once everything still
+  load-bearing had moved into `docs/notes/run_persistence.md`; Appendix A there is the
+  surviving summary, and the git history has the full analysis.
+- **Run persistence / plotting** (`docs/notes/run_persistence.md`) — **§3.1 and §4.1
+  complete** (plot statistics served from a per-dump mean cache; `fps`/`playback_rate`
+  frame selection). The rest is the plan below.
 - **`_ibc.py` collision passes** — done on `master` and merged here; coverage 91% → 99%.
 
 **Phase 2 is complete (2026-08-11).** The loader reads the real OpenFOAM dataset, the
@@ -37,23 +41,34 @@ Items 1 and 2 are **both active and run in parallel**, in separate sessions.
 
 1. 🔴 **The robustness pass on the OpenFOAM loader** — making the Phase 2 loader usable
    on the next dataset. The list is under Phase 2, "Robustness follow-ups".
-2. 🔴 **Note §8 steps 3–4** — the recorder and the derived-quantity plot cache.
-   **In flight in a concurrent session; do not pick it up from this file.** Listed so
-   the priority order is complete, not as an invitation to start. Detail below.
+2. 🔴 **The run archive and the plotting work it feeds** — `docs/notes/run_persistence.md`,
+   components A–C. **In flight in a concurrent session; do not pick it up from this
+   file.** Listed so the priority order is complete, not as an invitation to start.
+   Detail below.
 3. 🟡 **Note §9** (real position-wrapping tiling, 2D and 3D; whether `Environment.extend`
-   returns) — still needs its design pass. §9.1 is the restoration checklist. This also
-   **unblocks the prose-docs sweep**, which is deliberately held because §9 decides
-   exactly what that prose would describe.
+   returns) — the design pass is now written up in `run_persistence.md` §9; §9.3 is the
+   restoration checklist. This also **unblocks the prose-docs sweep**, which is
+   deliberately held because §9 decides exactly what that prose would describe.
 4. 🟡 **The 1.0.3 decision** — whether to cut a patch release from `master` and
    cherry-pick the queue at the bottom of this file, or let 1.1.0 carry it.
 
-**Note §8 (plotting), in detail.** The go/no-go on steps 3–4 was **decided 2026-08-11
-in favor of building them**: plotting is a measured bottleneck on our own runs, and it
-is cheapest to do while the memory architecture is in hand. The recorder interface was
-revised at the same time (capture is automatic and hooks the environment time advance;
-the cache format is crash-valid by construction rather than by finalization; a
-cache-backed render is cache-only). §8.3.2, §8.3.3 and §8.3.6 carry the reasoning; §8.4
-has the four sub-steps and the two headline tests, and §8.4.1 the entry points.
+**The run archive, in detail.** The go/no-go was **decided 2026-08-11 in favor of
+building it**: plotting is a measured bottleneck on our own runs, and it is cheapest to
+do while the memory architecture is in hand. The recorder interface was revised at the
+same time (capture is automatic and hooks the environment time advance; the format is
+crash-valid by construction rather than by finalization).
+
+**Reframed 2026-08-18.** What was specified as a *plot cache* is in fact a general
+**run archive**: chunked, append-only, crash-valid, mmap-readable capture of agent state
+written on the fly. That solves three problems the plan was only incidentally touching —
+plotting a dynamically-loaded run without re-streaming it, capping `pos_history` memory
+on long runs without losing data, and (with the provenance record designed in) reloading
+or restarting a run at all, none of which Planktos can do today. The note was rewritten
+around that framing and split into four components: **A** the archive, **B** fluid-side
+streaming, **C** rendering, **D** tiling. A and B are independently shippable.
+`run_persistence.md` §0 is the orientation; §2.1–§2.3 and §4.2 carry the interface
+reasoning; §6.1 has the build order and §6.3 the entry points. **Start with §5**, two
+prerequisite bug fixes found during the reframe (see the cherry-pick queue).
 
 **Also merged since:** `master`'s 1.0.1 documentation release and its 1.0.2 bug
 fixes. No dyload-specific behavior changed by either. **`v1.0.2` is released and
@@ -81,7 +96,7 @@ that pin them:
 
 | Defect | Where | Now pinned by |
 |---|---|---|
-| `FlowArray` returned stale data from any derived array | `fluid.py` | resolved by **deleting** `FlowArray` (note §7.3) |
+| `FlowArray` returned stale data from any derived array | `fluid.py` | resolved by **deleting** `FlowArray` (`run_persistence.md` Appendix A) |
 | `FluidData` defaulted `periodic_dim=True`, wrapping the upper grid edge to the lower — corrupted every FTLE field | `fluid.py` | `test_flow_generation.py` edge tests + `test_analysis.py` closed-forms |
 | `fmin`/`fmax` were generator *expressions*, not tuples — `TypeError` on every window slide | `fluid.py` | `test_flow_interface.py`, `test_dynamic_loading.py` |
 | `Swarm.get_dudt` called the pre-rename `envir.dudt` | `_swarm.py` | `test_material_derivative.py` |
@@ -485,7 +500,7 @@ in `tests/test_flow_interface.py`.
   `NotImplementedError` for the duration of the plotting work, and the `tiling`
   propagation (and its `assert ... "Tiling did not propagate correctly"` guards) is
   gone from `update_spline`, so there is nothing to test here yet. Revisit as part of
-  the real tiling implementation (`docs/notes/flow_field_interface.md` §9), which
+  the real tiling implementation (`docs/notes/run_persistence.md` §9), which
   covers 2D and 3D together and must define how `tiling` interacts with
   `periodic_dim`. **Periodic × dynamic on its own is still worth testing** and stays
   in scope for Phase 1.
@@ -783,7 +798,7 @@ were written as independent functions precisely so this could be a chain.
     field. **Trimming the boundary layer out of 2D vorticity plots is therefore not
     warranted** — and would not reach the 84% case anyway, which is 3D, where no fluid
     backdrop is drawn at all.
-  - 📋 **Folded into `docs/notes/flow_field_interface.md` §8.3.3** *(2026-08-13)*, which
+  - 📋 **Folded into `docs/notes/run_persistence.md` §3.3** *(2026-08-13)*, which
     is now the single plan — the standalone `stored_derived_fields.md` was merged into
     it and deleted. Item 6 is subsumed there rather than standing alone, because what
     settled it was the plot cache's needs. In short: nothing is written under
@@ -1083,25 +1098,27 @@ Inherited blockers from the overhaul's notes:
 - [ ] Changelog housekeeping (`changelog.txt`, 1.1.0): drop "TODO: test dynamic loading"
   once Phases 1–2 land; resolve the `tiling`-setter TODO (make tiling a setter of
   `FluidData.tiling`, with `Environment.L` updating off it) — folded into the real
-  tiling implementation, `docs/notes/flow_field_interface.md` §9.
+  tiling implementation, `docs/notes/run_persistence.md` §9.
 - [ ] `Environment.extend` was removed (extrapolation is the intended replacement).
-  Whether it returns is decided in `docs/notes/flow_field_interface.md` §9, alongside
+  Whether it returns is decided in `docs/notes/run_persistence.md` §9, alongside
   the real tiling work — the two are the same class of operation (reported domain ≠
   stored grid) and should share a mechanism. The parked test
   `test_flow_generation.py::test_extend_grows_domain_and_copies_edges` un-skips if so.
 - [ ] **Optional agent-history retention (maybe-feature).** `Swarm.pos_history` grows
   every step, so long runs accumulate memory whether or not anyone plots them. A flag
   along the lines of `store_pos_history='all' | 'frames' | None` would let a user cap
-  it (`store_prop_history` is the naming precedent, and `'frames'` — keep history only
-  where plot frames were captured — keeps history and the plotting cache mutually
-  consistent).
-  - **Not free, and the loss is unrecoverable:** decimating history breaks `plot_all`
-    at full step resolution, `save_data`, `save_pos_to_csv`, `save_pos_to_vtk`, and any
-    post-hoc agent analysis (per-step displacement/dispersal statistics). Must be
-    opt-in, off by default, and loudly documented.
-  - Considered for the §8 plotting redesign and **deliberately left out** — it is a
-    long-run memory question with consumers well beyond plotting, and nothing in §8
-    depends on it (`docs/notes/flow_field_interface.md` §8.2, "Not in scope").
+  it (`store_prop_history` is the naming precedent).
+  - **Without an archive the loss is unrecoverable:** decimating history breaks
+    `plot_all` at full step resolution, `save_data`, `save_pos_to_csv`,
+    `save_pos_to_vtk`, and any post-hoc agent analysis (per-step
+    displacement/dispersal statistics). Opt-in, off by default, loudly documented.
+  - ⚠️ **Revisit this once the run archive lands** (`docs/notes/run_persistence.md`
+    component A). The archive writes agent state to disk as the run proceeds, so disk
+    then holds what memory drops and every one of those consumers can read it back.
+    The feature changes character completely — from "lossy, opt-in, loudly documented"
+    to "cap memory, lose nothing, provided you are recording." `run_persistence.md`
+    §2.10 records the reasoning. It was left out of the original plotting redesign as
+    out of scope; the reframe brought it in.
 
 ---
 
@@ -1227,7 +1244,7 @@ section above; that is the reference for *why*, this is the reference for *what 
 | What | Where | Applies cleanly to `master`? |
 |---|---|---|
 | **Free-flight termination guards** (finding #2) — three `if not t_edge > 0: return newstartpt` / `if not t_rot > 0:` guards | `planktos/_ibc.py`, in `_project_and_slide_static` (the static free-flight release) and `_project_and_slide_moving` (the rotate-away and free-flight releases) | **Yes.** `git diff master -- planktos/_ibc.py` is *exactly* these 12 added lines, so the file is otherwise identical |
-| **Failed-step error handling** (finding #1) — the `try`/`except BaseException` around `apply_boundary_conditions` + `after_move` that appends `time_history` and sets `envir.time = None`, plus the `if self.envir.time is None` check at the top of `move()` | `planktos/_swarm.py`, `Swarm.move` only | **Yes, by hunk.** `_swarm.py` as a whole diverges heavily (~280+/141- vs master, mostly the §8 plotting work), but the two touched regions are byte-identical on `master` — its `move()` has the same `apply_boundary_conditions`/`after_move`/`time_history.append` block and no `try`/`except` of its own |
+| **Failed-step error handling** (finding #1) — the `try`/`except BaseException` around `apply_boundary_conditions` + `after_move` that appends `time_history` and sets `envir.time = None`, plus the `if self.envir.time is None` check at the top of `move()` | `planktos/_swarm.py`, `Swarm.move` only | **Yes, by hunk.** `_swarm.py` as a whole diverges heavily (~280+/141- vs master, mostly the plotting work), but the two touched regions are byte-identical on `master` — its `move()` has the same `apply_boundary_conditions`/`after_move`/`time_history.append` block and no `try`/`except` of its own |
 | **Interrupt handling** (2026-08-11 follow-up) — the same `except` catches `BaseException`, so a Ctrl-C landing in the boundary-condition loop marks the state like an error does, then re-raises as itself rather than being wrapped in `RuntimeError` (an outer `except Exception` must not swallow an interrupt) | `planktos/_swarm.py`, `Swarm.move` only — same hunk as the row above | **Yes**, and it must move *with* the row above: `master` has no `try`/`except` here at all, so the two are one change |
 | **Tests** — `test_failed_step_closes_histories_and_marks_the_environment`, `test_interrupted_step_is_marked_and_the_interrupt_propagates`, `test_error_state_blocks_moves_until_it_is_backed_out`, and the `_wall_swarm` / `_fail_on_third_agent` helpers above them | `tests/test_swarm_lifecycle.py` | **Yes.** Both `tests/test_swarm_lifecycle.py` and `tests/_ib_harness.py` exist on `master`, including the `horizontal_wall` and `max_meshpt_dist` builders these use |
 
@@ -1386,7 +1403,7 @@ shrunk, and left alone entirely when `clip` is given.
 | What | Where | Applies cleanly to `master`? |
 |---|---|---|
 | `_vorticity_norm` helper, and the four call sites using it (`Swarm.plot`, the `plot_all` movie setup, and both movie update branches) | `planktos/_swarm.py` | **Yes, by hunk.** `_swarm.py` diverges heavily overall (347+/141- vs master), but master carries the same defect — `git show master:planktos/_swarm.py \| grep autoscale` finds the same two calls, at its lines 2709 and 2997 |
-| **Tests** — the `_vorticity_norm` section of `tests/test_frame_selection.py` | `tests/test_frame_selection.py` | ⚠️ **Not the module.** `test_frame_selection.py` was added for the §8.3.5 frame-selection work and does not exist on master. Port the seven tests into a plotting test module there, or add the file carrying only this section |
+| **Tests** — the `_vorticity_norm` section of `tests/test_frame_selection.py` | `tests/test_frame_selection.py` | ⚠️ **Not the module.** `test_frame_selection.py` was added for the frame-selection work (`run_persistence.md` §4.1) and does not exist on master. Port the seven tests into a plotting test module there, or add the file carrying only this section |
 
 ### ⛔ Explicitly NOT cherry-pickable — dyload-only
 
@@ -1394,7 +1411,7 @@ shrunk, and left alone entirely when `clip` is given.
   (`test_frame_selection_in_the_error_state_plots_history_only`), plus the changelog
   line `- Plotting after a failed time step shows the recorded history and leaves the
   incomplete step out.` **`Swarm._select_frames` does not exist on `master`** — it
-  arrived with the `fps`/`playback_rate` work (note §8 step 2). On `master`, `plot_all`
+  arrived with the `fps`/`playback_rate` work (`run_persistence.md` §4.1). On `master`, `plot_all`
   still expands `frames=None` to one frame per recorded state and never builds a time
   axis, so there is nothing there to guard and no equivalent failure. This line stays
   under 1.1.0 only.

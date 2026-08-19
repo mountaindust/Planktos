@@ -1,20 +1,20 @@
 '''Pins the fluid-velocity-field interface contract of Environment.flow.
 
 This module was written as the safety net required by
-docs/notes/flow_field_interface.md §7.2: it fixed the *observable behavior* of
+docs/notes/run_persistence.md Appendix A: it fixed the *observable behavior* of
 every consumer of Environment.flow before the FlowArray removal (§7.3), so that
 the deletion could be shown to be behavior-preserving rather than merely assumed
 so. It served that purpose -- FlowArray is gone and every assertion here passed
 unchanged, including after the defensive np.asarray wrappers were stripped out --
 and it now stands as the general contract test for the fluid interface. Keep it
-green through the tiling (§9) and plotting (§8) work still to come.
+green through the tiling (§9) and persistence/plotting (§2-§4) work still to come.
 
 Scope is deliberately the surfaces that had no direct coverage:
   * Environment.interpolate_flow / interpolate_temporal_flow — the per-move hot
     path, and the single most important thing not to break.
   * Swarm._calc_basic_stats — the summary printed on every plot frame, and
     FluidData.get_mean_velocity, the per-dump mean cache behind its fluid half.
-  * FluidData.fmin/fmax — the tuple contract (regression lock for §3.3).
+  * FluidData.fmin/fmax — the tuple contract (regression lock, Appendix A).
   * 3D vorticity — a known-answer test the mvbnd overhaul deferred to this branch.
 2D vorticity (test_analysis.py) and save_fluid round-trips (test_io_loaders.py)
 are already pinned elsewhere and are not duplicated here.
@@ -246,7 +246,7 @@ def test_flow_points_match_component_shape():
 
 
 # --------------------------------------------------------------------------- #
-#                    fmin / fmax — tuple contract (§3.3 lock)                  #
+#                    fmin / fmax — tuple contract (Appendix A lock)                  #
 # --------------------------------------------------------------------------- #
 
 def test_fmin_fmax_are_reusable_tuples_static():
@@ -282,7 +282,7 @@ def test_fmin_fmax_are_reusable_tuples_time_varying():
 #                _calc_basic_stats — the summary shown on plots                #
 # --------------------------------------------------------------------------- #
 #
-# §8.3.1 of the refactor note replaced the whole-grid fluid reductions (mean and
+# §3.1 of the run-persistence note replaced the whole-grid fluid reductions (mean and
 # max fluid speed) with the spread of agent speeds, so that a frame needs no
 # fluid field at all: the surviving fluid statistics are the component means,
 # and those come from FluidData's per-dump mean cache. The old assertion that
@@ -349,7 +349,7 @@ def test_calc_basic_stats_time_varying_uses_requested_time_index():
 
 
 def test_calc_basic_stats_pulls_no_fluid_field(monkeypatch):
-    # The whole point of §8.3.1: a frame must cost no fluid data. Under dynamic
+    # The whole point of §3.1: a frame must cost no fluid data. Under dynamic
     # loading, reaching for the field here is what re-streams the dataset a
     # second time, so make any such reach a hard failure.
     from planktos import fluid
@@ -432,7 +432,7 @@ def test_calc_basic_stats_returns_plain_scalars():
 #
 # The cache is exact, not an approximation: both spline classes evaluate as a
 # weighted sum of the nodal fields and the spatial mean is linear, so the mean
-# commutes with interpolation in time (§8.5). The fields below are deliberately
+# commutes with interpolation in time (§3.2). The fields below are deliberately
 # NOT linear in time, so agreement is a statement about that identity rather
 # than about both schemes being trivially exact.
 

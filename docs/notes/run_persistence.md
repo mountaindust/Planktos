@@ -1,0 +1,2070 @@
+# Run persistence, plot streaming, and tiling — design and implementation plan
+
+Status: **working plan.** Components A–D below; each carries its own **[done]**
+markers. Started 2026-07 as "plotting streaming" (§8 of the now-deleted
+`flow_field_interface.md`), reframed 2026-08-18 around data persistence, which is
+what the plan had quietly become.
+
+**This note supersedes and replaces `docs/notes/flow_field_interface.md`,** which was
+deleted once everything still load-bearing in it had been folded in here. That note
+recorded the `FlowArray` analysis and removal — work that is complete and needs no
+further reference; Appendix A summarizes what it concluded and where the code now
+stands. Its git history holds the deliberation behind every decision restated here,
+including the options weighed and rejected:
+`git log --follow -- docs/notes/flow_field_interface.md`.
+
+This note lives with the other `docs/notes/` design notes. It is the source of truth
+for *why* run state is persisted the way it is on `dyload`; keep it current as the
+work lands.
+
+---
+
+## 0. Orientation — read this first
+
+### 0.1 The problem, in one paragraph
+
+Planktos holds an entire run in memory and can only write it out at the end.
+`Swarm.pos_history` and `vel_history` grow one masked `N×D` array per step forever;
+the three save methods (`save_data`, `save_pos_to_csv`, `save_pos_to_vtk`) all
+require the whole history resident, and `save_pos_to_csv` additionally materializes
+a dense text copy of it in a single `np.savetxt` call. **Nothing reads any of them
+back** — there is no loader for any Planktos output anywhere in the package, so a run
+cannot be reloaded, only re-run. Meanwhile `plot_all` replays a finished run by
+pulling fluid data at every frame, which under dynamic loading re-streams the entire
+dataset a second time. These look like two problems. They are one: **run state has
+nowhere to go except memory.**
+
+The symmetry worth holding onto: **dynamic loading streams the fluid *in*; this
+streams the agents *out*.** Same architecture, opposite direction, same reason — the
+thing is too big to hold at once.
+
+### 0.2 The four components
+
+| | What | Why | Status |
+|---|---|---|---|
+| **A** | **Run archive** — append-only, chunked, crash-valid on-the-fly capture of agent state, with a public reader and a capture schedule that also governs history retention | persistence: crash survival, later sessions, larger-than-RAM analysis, bounded history memory, run speed, and eventually restart | specified (§2), not built |
+| **B** | **Fluid-side streaming** — per-dump means, vorticity by regime, per-dump extrema | dyload: never re-stream the dataset to draw a picture of it | statistics **[done]**; rest specified (§3) |
+| **C** | **Rendering** — frame selection by time, archive-backed `plot_all`, global colour/arrow scales | consumes A and B | `fps`/`playback_rate` **[done]**; rest specified (§4) |
+| **D** | **Tiling and `extend`** — the real position-wrapping implementation | cleanup: tiling has raised `NotImplementedError` since the `FlowArray` removal | specified (§9), not built |
+
+**A and B are independently shippable and should be shipped independently.** B is a
+dyload optimization that writes nothing at all under `INUM=None` — i.e. it does
+nothing for the majority of users. A is a persistence feature everyone benefits from.
+The original plan interleaved them into one build step; that entanglement was an
+artifact of both being called "the cache", not a dependency.
+
+**Two standing scope rules, from `CLAUDE.md`, that constrain B and C throughout.**
+All plotting is matplotlib today, and the 3D plotting is explicitly a placeholder
+awaiting a vtk-powered library, at which point 3D plotting **splits out entirely**
+from the 2D path. Therefore: **do not invest in matplotlib 3D rendering** — effort
+spent enriching 3D frames is written off at the rewrite — and **do not contort 2D
+designs to stay symmetric with 3D**, since shared abstractions spanning both would
+only have to be unpicked at the split. 2D and 3D diverging is the intended direction.
+Concretely: everything in B and C beyond the frame statistics is **2D-only**, and the
+statistics fix (§3.1, done) was the entire 3D deliverable. **A is dimension-agnostic**
+— agent state is agent state — and is the one component of this plan 3D users get in
+full.
+
+### 0.3 What to do next
+
+In order:
+
+1. **§5 — the two prerequisite bug fixes.** Small, independent, and one of them
+   (`_calc_basic_stats`) decides a number the archive is going to store, so it wants
+   settling before anything writes it to disk.
+2. **§2 — build the run archive** (§6.1 step A, six sub-steps). ⚠️ **A0 comes first
+   and comes alone**: `apply_boundary_conditions` currently takes each agent's movement
+   start point from `pos_history[-1]`, so a coarser capture schedule would silently
+   break collision detection. It is the riskiest edit in the plan and everything else
+   in step A waits on it (§2.2).
+3. **§3 — fluid-side streaming** and **§4 — rendering**, which sit on top of it.
+4. **§9 — tiling**, afterwards, as cleanup. It has its own restoration checklist
+   (§9.3) because gating it off left notices scattered across source, tests,
+   examples, docs and prose.
+
+⚠️ **Branch-level priority this note cannot see:** check `TODO.md` before assuming
+"next section in this note" means "next work to do."
+
+---
+
+## 1. How this plan got here, and why it changed shape
+
+Kept because the reframe is not obvious from the specification that follows, and
+because the original framing is still visible in commit messages, `TODO.md`, and
+several source comments.
+
+### 1.1 The original problem: plotting re-streams the fluid
+
+`Swarm.plot_all`'s `animate(n)` is a random-access replay over `pos_history`. Each
+frame pulled fluid data at `envir.time_history[n]`:
+
+| Per-frame call | Cost | Applies to |
+|---|---|---|
+| `_calc_basic_stats(t_indx=n)` → `interpolate_temporal_flow` | **full field**, then `.mean()`/`.max()` | 2D **and 3D**, unconditionally |
+| `get_vorticity(t_indx=n)` (`fluid='vort'`) | full field + `np.gradient` | 2D only |
+| `interpolate_temporal_flow(t_index=n)` (`fluid='quiver'`) | full field, then `[::M,::N]` | 2D only |
+| `interpolate_temporal_mesh(...)` | mesh only, cheap | moving meshes |
+
+Under dynamic loading each of those goes through `FluidData.__call__`, which reloads
+from disk when the requested time leaves the resident window. Replaying frames `0..N`
+therefore slides the window back to the start and forward again — a full second pass
+over a dataset that may be ~100 GB.
+
+Two facts drove the original design and still hold:
+
+1. **In 3D the statistics text was the entire per-frame fluid cost.** `fluid='vort'`
+   and `'quiver'` are 2D-only, so a 3D frame draws nothing about the fluid — yet
+   `_calc_basic_stats` pulled the whole 3D field every frame to print `Fluid v_max`
+   in a corner. A ~100 GB second pass to render a text label.
+2. **2D and 3D are different problems.** The expensive *visualization* is 2D-only,
+   where data usually fits in memory and replay is cheap. The expensive *data volume*
+   is 3D, where the only fluid-dependent thing drawn is text.
+
+> **A correction worth not re-discovering.** The original outline claimed plotting was
+> also a *memory* bottleneck, because "the whole animation is built before anything is
+> written", and proposed streaming frames to disk as an independent win. **This is
+> false.** `Animation.save()` already wraps `writer.saving(...)` and calls
+> `grab_frame()` per frame, so `plot_all` has always streamed into the ffmpeg pipe
+> with O(one frame) encoding memory; `FuncAnimation` holds a single figure and redraws
+> it, and `cache_frame_data` caches only the frame *indices*. The 2D bottleneck is
+> **time** — recomputing vorticity and re-rendering every frame. There is no "stream
+> the video" work item, and the video-writing machinery needs no work at all.
+
+### 1.2 What the agent arrays were actually doing in a plot cache
+
+The original spec cached agent positions, velocities and times alongside the fluid
+quantities. Three separate reasons got bundled, and only one is a plotting reason:
+
+- **Times — intrinsic.** Once frames are chosen by *simulated time* rather than by
+  step index (§4.1, built), the renderer selects frames against a list of capture
+  times. A render backed by anything other than live history must carry that list.
+- **Velocities — second-order.** Removing the whole-grid fluid reductions and
+  replacing them with agent-speed statistics (§3.1) made the statistics box depend on
+  agent velocities. Caching them exists only because that substitution happened.
+- **Positions — not a plotting or a dyload reason at all.** The stated justification
+  was that `pos_history` "lives in memory and dies with the process, so without it the
+  cache cannot render after a crash or be used in a later session." That is a
+  **persistence** argument. It was in the very first draft of the spec (2026-07-31)
+  and was never re-derived. Under dyload alone there is nothing to solve: `plot_all`
+  is a `Swarm` method, the swarm is in hand, `pos_history` is right there, and reading
+  it re-streams zero bytes of fluid.
+
+A later revision (2026-08-11) made the agent arrays *structural* rather than optional,
+by ruling that a cache-backed render is cache-only. But that rule's own stated
+motivation — "mixing sources is what would let a 'free' plot quietly re-stream the
+dataset" — is about the **fluid**. Reading agents live re-streams nothing. The rule
+was broader than its justification, and that over-breadth is what promoted a
+persistence nice-to-have into a mandatory plotting component. §4.2 narrows it back to
+the fluid.
+
+Meanwhile the scope section disowned the original reason outright — "the cache
+replaces the fluid data, not the `Environment`", explicitly *not* renderable in a
+fresh session. So the plan carried agent data for a purpose it had declared out of
+scope. That incoherence is what this reframe resolves: the agent half was always a
+persistence feature and needed a persistence design rather than a plotting one.
+
+### 1.3 Persistence in Planktos today
+
+Verified 2026-08-18:
+
+- **Everything writes; nothing reads.** `Swarm.save_data`, `save_pos_to_csv`,
+  `save_pos_to_vtk`. There is no loader for any of them in the package.
+- **`save_pos_to_csv` is the worst-shaped output in the codebase for a long run.** One
+  `np.savetxt` of a dense `N+1 × (1+D)·T` matrix: the entire history must be resident
+  *and* a full text copy is materialized. 1000 agents × 10 000 steps in 3D at `%.18e`
+  is over a gigabyte of ascii in a single call.
+- **`save_data` saves only the *current* velocity and acceleration**, not their
+  histories. `props_history` is explicitly not saved. `rndState`, `envir.time`,
+  boundary conditions, `ibmesh` and fluid provenance are saved nowhere.
+- **History is unbounded and single-copy.** `TODO.md`'s optional-history-retention
+  maybe-feature correctly notes that decimating history is "unrecoverable" and breaks
+  `plot_all`, `save_data`, `save_pos_to_csv`, `save_pos_to_vtk` and all post-hoc
+  analysis — **but that is true only because the in-memory copy is the only copy.**
+  §2.10.
+
+### 1.4 The reframe
+
+Strip the word "plot" from the original cache specification and read what is left:
+chunked `.npy` written incrementally; metadata written when recording *starts*; every
+chunk self-describing; the timeline reconstructed by scanning disk; no finalizer
+load-bearing for correctness, so a `SIGKILL` costs at most one buffer; the reader
+opening with `mmap_mode='r'` so a store larger than RAM stays readable; a `store=`
+option selecting which arrays are kept; reserved schema slots for `accelerations` and
+`ib_collision_idx`; capture hooked to the environment's time advance. The
+specification even half-admits it — "this is continuous simulation data, useful for
+analysis and not only for display."
+
+That is not a plot cache. It is a **run archive with a plotting consumer.** Almost all
+of the expensive thinking already done — crash validity, chunking, self-description,
+mmap, the capture/render split, the linearity property (§3.2) — transfers unchanged.
+What changes is the label, the public surface (§2.7), and four additions (§2.6, §2.7,
+§2.10, §2.11) that turn it into something more than one consumer can use.
+
+---
+
+## 2. Component A — the run archive
+
+### 2.1 Recorder API and lifecycle
+
+**`Environment.record(...)` is the only entry point.** *(Decided 2026-08-11; an
+earlier design added `Swarm.record(...)` as sugar with that swarm preselected.)*
+
+A `Swarm`-level entry point implies a per-swarm recorder, which cannot exist. The
+recorder is environment-scoped by construction: it hooks the environment's time
+advance, its metadata is environment state (`L`, `flow_points`, the fingerprint), and
+the fluid half of the output belongs to the environment and not to any swarm. Two
+`swrm.record()` calls in one environment would either be refused as a second
+concurrent recorder or duplicate every fluid file on disk — so the method would fail
+precisely when used for the thing its name suggests.
+
+Restricting *which* swarms are captured is a real want — agent data runs a few hundred
+MB per large swarm (§2.4) — but that is an argument for a `swarms=` argument on
+`Environment.record`, defaulting to all of them, not for a second entry point. Joint
+multi-swarm plotting remains a known gap (issue #49); the archive stores every
+recorded swarm, so it does not foreclose a fix.
+
+```python
+with envir.record('run_archive/', fluid='vort'):
+    for _ in range(steps):
+        swrm.move(dt)           # the user's ordinary loop, unchanged
+```
+
+**The signature**, gathering parameters the rest of this section and §3.4 justify
+individually. Collected here because they were previously scattered across six
+sections, which is how a specification drifts from its implementation:
+
+```python
+Environment.record(path, *, fluid='vort', swarms=None,
+                   store=('positions', 'velocities'), capture_interval=1,
+                   chunk_size=100, quiver_shape=(60, 60), plot_all=None)
+```
+
+| Parameter | Default | Meaning | Specified in |
+|---|---|---|---|
+| `path` | — | archive directory; created if missing (below) | §2.1 |
+| `fluid` | `'vort'` (2D) | which fluid quantity the render will need: `'vort'`, `'quiver'`, a tuple of both, or `None` | §3.3, §3.4 |
+| `swarms` | all of them | which swarms to capture | §2.1 |
+| `store` | positions + velocities | which per-agent arrays to keep | §2.4 |
+| `capture_interval` | `1` | capture — and retain history — every *k*-th step | §2.2 |
+| `chunk_size` | `100` | captures buffered before a chunk is written | §2.3 |
+| `quiver_shape` | `(60, 60)` | target arrow grid, fixed at record time | §3.4 |
+| `plot_all` | `None` | dict of `Swarm.plot_all` kwargs to render on `__exit__` | §2.1 |
+
+`fluid` is **forced to `None`** in two cases, neither an error and both silent, because
+in neither is there anything the user could have meant: in **3D**, where no fluid
+backdrop is drawn at all (§0.2), and when **`envir.flow is None`** — an analytic or
+flow-free run has no vorticity to record, and defaulting to `'vort'` there would fail
+on several of the examples and much of the test suite.
+
+**The directory.** Created if missing, parents included. **If it exists and is
+non-empty, the archive goes to a sibling directory with a timestamp appended** —
+`run_archive/` becomes `run_archive_20260818143052/` (`_%Y%m%d%H%M%S`, no separators).
+Overwriting a previous run's data is never the right default, and refusing outright
+would strand a long job that was ready to start. **The redirect is never silent:** the
+recorder warns naming the path it actually chose, and the handle exposes it as
+`.path`, which is also what `plot_all=` renders from. Without that, a user's later
+`load_run('run_archive/')` would quietly read the *previous* run.
+
+⚠️ **Recording must start before the fluid window has moved.** Under `INUM=int` the
+per-dump fluid quantities (§3.3) are written as each dump lands, by an observer riding
+`_record_dump_means`. Dumps the sliding window has already passed are gone and are
+never re-reported, so a recording started mid-run would have holes in its fluid series
+— which §2.8 refuses at *render* time, i.e. after the run instead of before it. So
+`record()` **raises** when the fluid is dynamically loaded and the resident window no
+longer starts at the first dump of the series. The message names the two remedies:
+start recording before the loop, or load with `INUM=None`.
+
+**Backfilling was considered and rejected** *(2026-08-18)*: re-reading the passed dumps
+is a second streaming pass over exactly the data this design exists to avoid
+re-streaming, built to serve a workflow — start recording partway through a long
+dynamically-loaded run — with no evident use. Refusing early is the whole fix.
+
+⚠️ One nuance that does **not** rescue the mid-run case, and must not be mistaken for a
+backfill: `FluidData._dump_means` is populated for every dump ever loaded and is never
+evicted, so means for already-passed dumps are still in memory and the opening sweep
+can harvest them. Per-dump **extrema** (§3.5) and any written vorticity or quiver
+cannot be — those are new work the observer does as a dump lands.
+
+**`envir.record(path, ...)` starts recording immediately** and returns a handle — the
+`open()` model, where the call does the work and `with` only adds the guaranteed
+close. `__enter__` returns the handle; `__exit__` closes. This matters: if the work
+lived in `__enter__`, a bare `envir.record(path)` would silently record nothing, which
+is a very expensive thing to discover after a twelve-hour run.
+
+| Call | Does |
+|---|---|
+| `envir.record(path, ...)` | resolve and create the directory, check the fluid window, write the metadata, sweep the fluid state already in memory (component means, plus extrema and any per-dump quantity for currently resident dumps), take capture 0, register the hooks. Recording is live from here |
+| `envir.flush_recording()` | write buffered captures to disk. **Keeps recording** |
+| `envir.stop_recording()` | flush, then unregister the hooks. Idempotent |
+| `with envir.record(...)` | as above, plus `stop_recording()` on exit and the optional auto-plot |
+
+*(Naming: the original spec called the middle one `flush_cache()`. Renamed with the
+reframe so the triple reads coherently; the stored data is an archive, not a cache.)*
+
+Both spellings are supported because a `with` block cannot span notebook cells, and
+interactive exploration — run 200 steps, plot, run 800 more — is a normal Planktos
+workflow. `stop_recording()` and `flush_recording()` live on the `Environment` rather
+than only on the handle because the `Environment` must hold a reference to the active
+recorder anyway (that is how the time-advance hook finds it), so no variable has to
+survive across cells.
+
+**`flush_recording()` is separate from `stop_recording()` on purpose.** A mid-run
+notebook plot needs a flush that does not end the recording — otherwise the next
+`record()` would refuse the now-non-empty directory. Readers never flush on the
+writer's behalf (§4.2).
+
+**`plot_all=` renders automatically at the end of a `with` block.** Given a dict of
+`Swarm.plot_all` keyword arguments, `__exit__` flushes and then renders:
+
+```python
+with envir.record('run_archive/', plot_all=dict(movie_filename='out.mkv', fluid='vort')):
+    for _ in range(steps):
+        swrm.move(dt)
+```
+
+- **It renders when the run raises, and not when it is interrupted.** A crash is
+  unexpected and the movie is diagnostic; a `KeyboardInterrupt` is the user asking for
+  things to stop *now*, and kicking off a ten-minute render at that moment — requiring
+  a second Ctrl-C to escape — is the opposite of what was asked for. Both still flush.
+- **A failure inside the auto-plot must not mask the run's exception.** Catch it, warn
+  with it, and let the original propagate.
+- **Exactly one swarm.** `plot_all` is a `Swarm` method and joint multi-swarm plotting
+  is issue #49, so a recorder covering more than one swarm rejects `plot_all=` — at
+  `record()` time, before the run, not at the end of it. Inventing a filename-suffixing
+  convention here would be committing to an answer for #49 as a side effect.
+
+The recorder takes **no video parameters of its own** — no `fps`, no `playback_rate`,
+no colormap, no figure size (§2.9). `plot_all=` is not an exception: it carries a dict
+the recorder never inspects and hands straight through.
+
+Note `fluid='vort'` on `record()` means **which fluid quantity the render will need**,
+not what to draw — the same keyword on `plot_all` selects the backdrop. Same word,
+different side of the capture/render line; worth distinct wording in the docstrings.
+It is deliberately *not* "which quantity to write": asking for `'vort'` frequently
+writes nothing at all, because the field is already available or cheap to recompute
+(§3.3). What the keyword guarantees is that the render will have it.
+
+### 2.2 Capture trigger and schedule
+
+**Capture is automatic and hooks the environment's time advance.** *(Reversed
+2026-08-11. The original design had `rec.move()` and `rec.capture()` and refused to
+hook `move()`, on the stated grounds that "users routinely subclass `Swarm` and
+override the move machinery." That premise contradicts the codebase: `move()`'s own
+docstring says "DO NOT override this method when subclassing", and `apply_agent_model`
+/ `after_move` — the actual extension points — are called from inside `move()`, below
+any hook. A subclass that replaces `move()` without delegating has already lost
+history recording, boundary conditions, the velocity/acceleration finite difference
+and the time advance, so a missed capture is strictly subsumed by a far larger
+failure. That misuse is now warned about at class-definition time by
+`Swarm.__init_subclass__`, independently of this plan.)*
+
+- **The trigger is the environment time step, not `Swarm.move`.** `move_swarms` calls
+  `s.move(dt, update_time=False)` for each swarm and *then* advances time, so a hook on
+  `Swarm.move` would fire once per swarm, at a time that has not advanced, with later
+  swarms not yet moved. Capture fires from exactly two places, both meaning "the
+  environment just advanced one step": the end of `Swarm.move` when `update_time=True`,
+  and the end of `Environment.move_swarms`. One `envir._notify_step_complete()` called
+  from both, a no-op when nothing is recording.
+- **Those two are the only paths that advance simulation time.** `calculate_FTLE`
+  inlines its own move loop rather than calling `move()`, so it cannot fire a capture —
+  which is what is wanted, since it would otherwise write FTLE probe trajectories into
+  the archive.
+- **There is no `capture()` method.** The manual multi-swarm pattern (move each swarm
+  with `update_time=False`, then bump time by hand) is not a real workflow; the same
+  thing is expressed by passing `update_time=True` on the last swarm, which fires the
+  hook after every swarm has moved and also satisfies `move()`'s own "other swarms were
+  not moved" check.
+- **`Environment.reset()` during recording raises.** It sets `time = 0.0` and clears
+  the histories, which would give the archive a rewound clock and two captures at t=0.
+  (See also §5.2 — `reset()` has a latent bug of its own.)
+
+**Capture schedule — `capture_interval`, and it governs history too.** *(Brought into
+scope 2026-08-18; the original spec deferred it.)* Agent state is captured every step by
+default (`capture_interval=1`). A coarser schedule is a **data-fidelity** choice fixed
+at run time, and the framing is deliberately *not* "capture every N video frames" but
+**"as if `dt` were larger"** — the archive then looks exactly like a run performed at
+the coarser timestep, and everything downstream is unchanged with `Δt_capture`
+substituted for `dt`. Keeping it orthogonal to video frame rate matters: frame rate is a
+**presentation** choice changeable forever after (§4.1). Conflating them would be the
+original `dt`↔`fps` footgun in a new costume.
+
+It earns its place on two counts, not one. Space is the obvious one. **Speed is the
+larger one:** writing every step to disk is a per-step I/O cost paid against the
+physics, and on a long run that is the dominant reason to coarsen.
+
+**A *captured time* is t₀, t_k, t_2k, … and everything records exactly those states.**
+That includes `Environment.time_history` and each swarm's `pos_history` / `vel_history`,
+which under `capture_interval=k` are appended only at captured steps. This is the
+decision that keeps the whole design aligned:
+
+> capture *j* ↔ `pos_history[j]` ↔ `vel_history[j]` ↔ `time_history[j]` ↔ archive
+> capture *j*, always, with no index translation anywhere and no second concept of
+> "a recorded state".
+
+`time_history` becomes what its name has always suggested and only accidentally been:
+**the simulation times at which state is available.** Today that is every `dt`; with a
+coarser interval it is every *k*·`dt`. `plot_all`'s existing `frames=` argument indexes
+that same list and needs no change in meaning.
+
+Three consequences, in descending order of how much work they are:
+
+⚠️ **Blocker — `apply_boundary_conditions` takes its start point from
+`pos_history[-1]`.** This is step **A0** in §6.1. It lands first and alone, before
+anything else in this plan, because `capture_interval` silently corrupts collision
+handling without it.
+
+**What the coupling is.** `Swarm.move` runs:
+
+```python
+old_positions = self.positions.copy()              # where agents are now
+self.positions[:,:] = self.apply_agent_model(dt)   # propose new positions
+self.pos_history.append(old_positions)             # record
+...
+self.apply_boundary_conditions(dt, ib_collisions=ib_collisions)
+```
+
+and `apply_boundary_conditions` then does
+
+```python
+prev_pos = self.pos_history[-1]
+args = [(int(n), prev_pos[n,:].copy(), self.positions[n,:].copy()) for n in active]
+```
+
+That `(start, end)` pair is the **movement segment** handed to `_ibc` — the line tested
+against every mesh element to decide whether the agent crossed a boundary and, if so,
+where to project it. It is correct today for an incidental reason: after the append two
+lines earlier, `pos_history[-1]` **is** `old_positions`, the same object. The history
+list is serving as a free alias for a local variable, so the physics reads its start
+point out of a structure whose only other job is recording.
+
+**What decimation does to it.** At `capture_interval=3`, history is appended at steps
+0, 3, 6, …:
+
+| step | append? | `pos_history[-1]` holds | segment actually tested |
+|---|---|---|---|
+| 0 | yes | P₀ | P₀ → P₁ ✅ |
+| 1 | no | **P₀** | **P₀ → P₂** ❌ spans two steps |
+| 2 | no | **P₀** | **P₀ → P₃** ❌ spans three |
+| 3 | yes | P₃ | P₃ → P₄ ✅ |
+
+On *k*−1 steps out of every *k*, the collision code is told the agent started somewhere
+it has not been for up to *k*−1 steps.
+
+**Three ways that goes wrong, none of which raises:**
+
+- **The chord cuts corners the agent went around.** An agent that legitimately traveled
+  around the end of a wall over three steps has a straight chord P₀→P₃ passing *through*
+  that wall. The collision code sees a crossing that never happened and relocates the
+  agent.
+- **Already-applied collisions are re-litigated from the wrong origin.** If step 0
+  pushed the agent onto a wall, P₁ lies *on* it; at step 1 the segment starts back at P₀,
+  off the wall on the free side. Project-and-slide is recursive — it projects the
+  movement vector onto the boundary and continues with the remainder — so a wrong origin
+  makes the remaining-movement vector wrong in magnitude *and* direction. The output is
+  not a slightly-off position; it is an unrelated one.
+- **An agent can end up on the wrong side.** That is the no-penetration invariant
+  `CLAUDE.md` calls hard and non-negotiable.
+
+It degrades in the worst direction, too: the larger *k*, the longer the stale chord and
+the worse the corruption — so the setting reached for on the longest and most expensive
+runs is the one that breaks them most.
+
+**It is the only site of its kind.** A sweep of every read of `pos_history` /
+`vel_history` in the package (2026-08-19) finds roughly sixty, of which exactly **one**
+is in the movement path: the line above. The rest are plotting (~40 across
+`plot`/`plot_all`), saving, statistics, the multi-swarm warning in `move()`, and FTLE's
+extraction of its own flow map. This is a single line, not a pattern.
+
+**`vel_history` needs no equivalent.** `move()` takes `old_velocities` as a local and
+uses *that local* for the acceleration difference
+(`accelerations = (velocities - old_velocities)/dt`); it never reads back through
+`vel_history`. The motion generators read the live `swarm.velocities`, not history. So
+positions were the only quantity whose history entry got used as a control value, and
+velocities already have the shape A0 is giving positions. What decimation means for the
+recorded velocity *values* is a separate and benign question — §2.4.
+
+**The fix, and where.** Publish the local:
+
+```python
+old_positions = self.positions.copy()
+self._prev_positions = old_positions        # added
+...
+prev_pos = self._prev_positions             # was self.pos_history[-1]
+```
+
+**Three sites take that local and then call `apply_boundary_conditions`** — `Swarm.move`,
+and the two inlined loops inside `Environment.calculate_FTLE` — and all three must set
+it. Plus an `__init__` default (the positions at construction), and a docstring
+correction: `apply_boundary_conditions` currently documents the `pos_history` dependency
+in prose, so that contract changes with it.
+
+⚠️ **The decimation gate must never reach FTLE.** `calculate_FTLE` appends history every
+step as its *integration state* — the flow map is built by indexing `s.pos_history` — so
+decimating it would corrupt the result outright. It is safe automatically, because the
+gate lives in `Swarm.move` and FTLE inlines its own loop (which is also why FTLE cannot
+fire a capture, above). Stated so that nobody later unifies the two loops and quietly
+breaks FTLE.
+
+**Why it is risky, and how it is verified.** The edit is four lines, but it lands in the
+code `CLAUDE.md` singles out as the most subtle in the project. Verification is unusually
+strong, though: at `capture_interval=1`, `self._prev_positions` and `pos_history[-1]` are
+**the same object**, so the refactor is provably a no-op — and the existing collision
+suite pins *exact* post-collision positions plus a golden multi-step moving-boundary
+trajectory. If those stay bit-identical, A0 is correct by construction. The new test is
+the forward-looking one: a run at `capture_interval=k` produces **bit-identical
+trajectories** to the same run captured every step, driven through a mesh so the
+collision path is exercised. What is recorded must not change what happens.
+
+**This knot needed untying anyway.** `TODO.md` records an earlier refactor — reordering
+the history appends to after the boundary stage — that was **rejected specifically
+because** `apply_boundary_conditions` reads `pos_history[-1]`. So A0 is not a tax
+`capture_interval` imposes; it is a coupling that has already blocked one desirable
+change, and `capture_interval` is what finally forces it.
+
+- **The environment owns the counter.** `len(time_history)` is no longer the step count,
+  so `Environment` keeps its own step counter and both trigger sites ask it the same
+  question. History appends and archive captures are gated on that one answer, so they
+  cannot diverge. Precisely: `Swarm.move` appends history at the *start* of step *n*
+  when *n* ≡ 0 (mod *k*), and the capture hook fires at the *end* of step *n* when
+  *n*+1 ≡ 0 (mod *k*) — the same set of states, seen from the two ends of a step.
+  Capture 0 at `record()` covers t₀.
+- **The failed-step handler appends `envir.time` to `time_history` unconditionally**
+  (`move()`'s `except BaseException` block, which keeps the histories consistent for
+  debugging). Under decimation it must append only when the failed step was a capture
+  step, or it pushes `time_history` one ahead of `pos_history` — the exact inconsistency
+  that block exists to prevent.
+
+⚠️ **`capture_interval` counts steps, not time.** §4.1 rejects a step count (`every=k`)
+as a *frame* specifier because users vary `dt` between `move()` calls, so it silently
+means different things within one run. The objection is weaker here and is accepted
+deliberately: a capture schedule only has to produce a defensible *subset* of states,
+`_select_frames` derives `Δt_capture` from the recorded times rather than from the
+interval, and "as if `dt` were larger" stays true under varying `dt`. What follows is
+that with varying `dt` the capture spacing is uneven and `Δt_capture` is a mean —
+already stated and already warned about in §4.1.
+
+*Naming hazard:* `dump` is already this codebase's word for **fluid** data dumps
+(`d_start`, `d_finish`, `load_dumpfiles`, `loaded_dump_bnds`), and IB2d's `print_dump`
+is the same concept for its own output. An agent capture schedule is conceptually
+identical but must not be called simply "dump" — always qualify, or use
+`capture_interval` and reserve "dump" for fluid.
+
+### 2.3 Container and schema
+
+**A directory of `.npy` files — chunked for agent captures, one per dump for fluid
+quantities — plus a metadata sidecar.** `.npz` is unusable for the bulk data:
+`np.savez` writes the archive in one call, so everything would have to be accumulated
+in memory first, defeating the streaming property that motivates the whole design
+(~1 GB for full-resolution vorticity over 500 dumps). HDF5/zarr would add a required
+dependency to a deliberately lean `install_requires`.
+
+```
+run_archive/
+  meta.json                 written at record(): version, fingerprint, dimension, L,
+                            quantity recorded, quiver shape, dtype, swarm names, N,
+                            where vorticity lives (source dir / here / nowhere), and
+                            the provenance record (§2.6)
+  grid.npz                  flow_points, L, flow_times (the dump time base)
+  fluid/
+    quiver_00042.npy        indexed by GLOBAL flow_times index, written as the dump
+                            lands; only when quiver was requested
+    Omega.0042.vtk          vorticity, ONLY in the fall-back case where the source
+                            directory could not be written -- see §3.3; normally it
+                            goes beside the source's own dumps instead, and under
+                            INUM=None it is not written at all
+    dump_stats.npz          per-dump extrema and component means; rewritten per dump
+  agents/
+    swarm00_pos_000.npy     (rows, N, D) float64   -- swarm index, then chunk index
+    swarm00_vel_000.npy     (rows, N, D) float64
+    swarm00_mask_000.npy    (rows, N) bool
+    times_000.npy           (rows,) float64, shared across swarms
+```
+
+**Files are keyed by swarm *index*, names live in the metadata.** The default `Swarm`
+name is `'organism'` for every swarm, so two swarms in one environment collide by name
+by default — a filename built from the name would silently overwrite. The index is the
+position in the recorder's `swarms` list, fixed when recording starts (plus any added
+later, below). `meta.json` maps index → name, `N`, `D`, and `first_capture`.
+
+**Chunk *j* covers global capture indices [j·chunk_size, (j+1)·chunk_size) for every
+swarm.** Aligning chunk boundaries across swarms on a global index — rather than
+counting each swarm's own rows — is what makes a swarm added mid-run work without a
+second indexing scheme: its first chunk is simply short at the front. So a chunk file
+is `chunk_size` rows except the last (short at the end) and a late swarm's first (short
+at the start); `first_capture` in the metadata resolves the offset. Everything else is
+`rows == chunk_size`.
+
+**Agent captures are chunked, not one file per capture.** Capture-every-step on a
+10 000-step run would make 10 000 files, which is punishing on network and HPC
+filesystems. Buffering `chunk_size` captures (default 100) and flushing a chunk bounds
+recording memory at a few MB, keeps the file count at tens, preserves the streaming
+property that ruled out `.npz`, and loses at most one chunk to a hard kill. The reader
+opens chunks with `mmap_mode='r'`, so **an archive larger than RAM stays readable** —
+which matters because this is continuous simulation data, useful for analysis and not
+only for display.
+
+**The metadata must carry:**
+
+- format **version**;
+- **source fingerprint** (dump range and `flow_times` extent, or a hash) so an archive
+  from a different run or dataset is refused;
+- the **provenance record** (§2.6);
+- **which fluid quantity** the render will need (`vort`, `quiver`, or both); for
+  vorticity, **where it lives** — the source directory, this archive, or nowhere
+  because it is recomputed (the three regimes of §3.3) — and the **quiver grid**
+  (`quiver_shape`, and the `M`/`N` it resolved to against this dataset's grid);
+- the **capture times** (agent time base) and the **dump times** (fluid time base) —
+  there are no "frame times", since frames are chosen at render time;
+- ~~the **capture interval** actually used~~ — **not stored.** `_select_frames` already
+  derives `dt_state = span/(len(times)-1)` from the times themselves, and the rule
+  against redundant derivable state applies. Capture times go in; the interval comes
+  out;
+- **axes**: `flow_points` and domain `L`, so the archive plots without touching fluid;
+- **per-dump extrema** for colour and arrow normalization (§3.5);
+- the **per-dump fluid component means** — the §3.1 sidecar, a few floats per dump,
+  from which the surviving fluid statistics are exact at any time;
+- the **per-swarm block**: for each recorded swarm, its index, `name`, `N`, `D`, and
+  `first_capture` — the global capture index at which it starts, which is 0 for every
+  swarm present when recording began and later for one added mid-run (below). Names are
+  metadata, not filenames, because they collide (above);
+- the **agent positions** per capture (`N×D` plus mask);
+- the **agent velocities** per capture. Do **not** plan to re-derive these from cached
+  positions — §5.1 explains why the derivation is wrong even today, and it becomes
+  wronger under any capture schedule coarser than every step. Storing velocities
+  doubles this part of the archive and removes the trap entirely.
+
+**A swarm added mid-recording is captured from that point on.** `Environment.add_swarm`
+can be called at any time, so the swarm set is not fixed at `record()`. The new swarm
+gets the next index, its metadata entry is written **immediately** — metadata is always
+written when a thing starts, never at the end (§2.5) — and its `first_capture` is the
+global capture index the other swarms are already at, so indices correspond across all
+swarms with no per-swarm time base. This needs a hook on `add_swarm` that notifies an
+active recorder. Reading is by time regardless (§2.7), so a consumer never has to think
+about the offset.
+
+Note what is *not* stored: **the `_calc_basic_stats` scalars.** With positions,
+velocities, and the per-dump fluid means all present, every displayed statistic is
+derivable at render time — so caching them too would be redundant state that could
+drift from the data it summarizes.
+
+**There is no completeness status in the metadata, and no `allow_incomplete` on the
+reader.** *(Decided 2026-08-11, reversing an earlier `complete`/`interrupted`/`failed`
+field that gated rendering.)* The argument for it was that a truncated archive renders
+a video that looks like the whole run. It does not: `plot_all` draws the simulated time
+in every frame, so a movie that ends at t=7.3 says so. And a run that stopped at 200
+steps **is** a run of 200 steps — the intended step count lives in the user's script,
+is never communicated to the `Environment`, and is not a property the data owes an
+account of. The corrupt case the flag seemed to protect against — a step half-applied
+across agents, some possibly inside an immersed boundary — never reaches the archive at
+all, because captures fire only after a step completes.
+
+The decisive point is symmetry: **`plot_all` has never had a concept of a finished
+run.** It renders `pos_history` plus the present state and has always worked mid-run.
+A completeness gate would have made archive-backed rendering stricter than live
+rendering for a run in exactly the same state.
+
+The `KeyboardInterrupt`-versus-exception distinction survives, but only in memory and
+only at `__exit__`, where it decides whether the auto-plot runs (§2.1). Nothing is
+persisted.
+
+### 2.4 What a capture is
+
+Per environment time step, per swarm: `positions` data (`N×D`), the position row mask
+(`N` bools — agents leave whole rows), `velocities` data (`N×D`), and one timestamp
+shared across swarms.
+
+**Live attributes are read, not `pos_history`.** The archive therefore does not depend
+on history *existing*, only on the two agreeing about *when* a state is recorded (§2.2).
+That is what would let a future "no history at all, archive only" mode work (§2.10),
+and it costs nothing now.
+
+Capture 0 is taken when recording starts, so capture *j* is exactly `full_pos_history[j]`
+at `(time_history + [envir.time])[j]` — the same index convention `_select_frames` and
+`animate(n)` already use, and therefore no index translation at render time. ⚠️ That
+identity assumes the recording covers the run from t=0 and the swarm existed at the
+start; when either is false the archive carries the offset explicitly and consumers
+resolve by time instead (§2.3, §2.7, §4.2).
+
+Budget ≈ `(2·D·8 + 1)` bytes per agent per capture — 49 B in 3D. A 1000-agent,
+10 000-step 3D run is ~490 MB of agent data, separate from any fluid arrays. A `store=`
+option selects which arrays are kept, defaulting to positions and velocities;
+`accelerations` and `ib_collision_idx` are reserved schema slots. Velocities are not
+practically optional — `_calc_basic_stats` needs them (§5.1), and re-deriving them from
+positions is the trap described there.
+
+**What a coarser schedule means for the recorded velocities.** `self.velocities` is
+recomputed every step from consecutive positions, so `vel_history[j]` is the
+**instantaneous, one-`dt` velocity at capture time *j*** — a *sample* of a per-step
+quantity, not an average over the *k* steps since the previous capture. That is the
+right thing to store: it is the velocity the agent actually had at that moment, it is
+what the statistics box should show, and it costs nothing extra. (It is also why A0 has
+no velocity counterpart — §2.2.)
+
+⚠️ It is the one place where "**as if `dt` were larger**" (§2.2) is not literally true.
+A run genuinely performed at *k*·`dt` would carry velocities `(P_j − P_{j−1})/(k·dt)` —
+displacement over the long step, a smoothed quantity. The archive's are not those, and
+should not be. This is the precise reason velocities are **stored rather than differenced
+from stored positions** (§2.3, §5.1): differencing recovers the smoothed coarse-step
+quantity instead, which is a different physical thing that happens to look plausible.
+
+**`props_history` is not stored,** following the precedent `save_data` already sets
+("props_history is not saved"). It costs nothing on the default path: heading markers
+fall back to `arctan2` on velocities, which are stored. Reserve a schema slot.
+
+⚠️ **Capture 0's velocities are not zero, and `_calc_basic_stats` today says they
+are.** `Swarm.__init__` initializes `velocities` to the *local fluid drift* when a flow
+exists, so `full_vel_history[0]` is generally non-zero — while `_calc_basic_stats(
+t_indx=0)` deliberately reports the zero vector, on the reasoning that velocity is
+undefined before the first step. The archive stores the truth. **§4.3 decides this**,
+and decides it in favor of the truth, in both the live and the archive-backed path — so
+the two cannot silently disagree.
+
+**Cadence is hybrid, and neither base is the video frame rate** — frames do not exist
+until render time:
+
+- **Fluid-derived quantities (vorticity, downsampled quiver): once per fluid dump.**
+  Permitted by linearity (§3.2) — exact reconstruction at *any* time, using the
+  interpolator's own weights. Usually smaller than per-frame would be (149 dumps vs 500
+  frames for the leaf dataset).
+- **Agent-derived quantities: once per capture step** (every simulation step by
+  default, §2.2).
+
+Together these make the entire frame-rate choice post-hoc: any `Δt_frame ≥ Δt_capture`
+can be rendered from the same archive.
+
+### 2.5 Crash validity
+
+**The format must be valid with nothing having run at the end.** A hard kill — HPC
+walltime, OOM, node failure — is `SIGKILL`, which defeats `__exit__`, `close()`,
+`atexit` and `__del__` alike; §4.4 concedes the same for the video, which is why it
+recommends `.mkv`. So:
+
+- metadata is written when recording **starts**, not when it ends;
+- every chunk is self-describing;
+- the reader reconstructs the timeline by **scanning what is on disk**, not by
+  trusting a recorded count;
+- **every file appears atomically.** Write to a temporary name in the same directory
+  and `os.replace` it into place, which is atomic on POSIX and on Windows for an
+  existing-or-not destination on one volume. Without this the guarantee is wrong in a
+  way that is worse than a missing chunk: a kill *during* `np.save` leaves a **truncated
+  `.npy`** that raises on read, so one unlucky moment costs the whole archive rather
+  than one buffer. The same applies to `meta.json` and to `dump_stats.npz`, which is
+  rewritten on every dump and would otherwise be the likeliest file to catch a kill.
+
+Once that holds, **no finalizer is load-bearing for correctness**: the most any of them
+can save is one unflushed chunk. This is the property the interface rests on, not the
+context manager. It is also what makes the archive worth having for HPC work at all —
+the runs most likely to be killed are exactly the ones most expensive to repeat.
+
+### 2.6 Provenance — recording the world without serializing it
+
+*(New with the reframe, 2026-08-18.)*
+
+An archive holds agent state. It does **not** hold the `Environment`: `plot_all` needs
+`L`, `bndry`, `ibmesh`, `units` and `_plot_setup`, and serializing all of that — moving
+mesh included — is a much larger feature and is not this one. The original scope note
+was right about that and the conclusion stands.
+
+But the gap between "cannot deserialize the world" and "cannot reconstruct it" is
+almost entirely bookkeeping, and closing it is nearly free **if it is designed in now
+and awkward to retrofit later.** So `meta.json` carries a **provenance record**: the
+loader calls that produced the fluid and the mesh, by name and arguments, plus the
+fingerprint already required for validation.
+
+```json
+"provenance": {
+  "planktos_version": "1.1.0",
+  "environment": {"L": [...], "units": "m", "bndry": [...], "rho": ..., "mu": ...},
+  "fluid":  {"loader": "read_IB2d_fluid_data",
+             "kwargs": {"path": "...", "dt": ..., "print_dump": ..., "d_start": ...,
+                        "d_finish": ..., "INUM": 4}},
+  "ibmesh": {"loader": "read_IB2d_mesh_data", "kwargs": {"path": "..."}}
+}
+```
+
+Three things this buys, in increasing order of ambition:
+
+1. **A stronger validation message.** "This archive was recorded against
+   `read_IB2d_fluid_data(path='leaf_data', ...)`; this environment's fluid is
+   `read_openfoam_vtk_data(...)`" beats a bare fingerprint mismatch.
+2. **A self-describing dataset.** Six months later the archive says what produced it
+   without anyone having to find the script.
+3. **Reconstruction, and therefore restart** (§2.11). Reload becomes "re-run the
+   recorded loader calls", which is cheap to implement and honest about its cost — the
+   fluid is re-read from its own files, which is where it lives anyway.
+
+**Provenance is captured at load time, by the loaders — which is the real work in
+it.** The information exists only at the moment `read_IB2d_fluid_data(...)` is called;
+by the time `record()` runs it is gone. So **every loader records its own call** into
+environment state (`Environment._fluid_provenance` / `._ibmesh_provenance`, say) and the
+recorder merely serializes what it finds. Nothing in the codebase does this today —
+there is no such attribute anywhere — so this is a small edit to each of
+`read_IB2d_fluid_data`, `read_vtk_data`, `read_openfoam_vtk_data`, `read_comsol_vtu_data`,
+`read_npy_data`/`load_NetCDF` and the analytic generators (`set_brinkman_flow`,
+`set_channel_flow`, `set_canopy_flow`), plus `read_IB2d_mesh_data`,
+`read_stl_mesh_data` and `read_vertex_data`. It is easy to overlook when planning
+step A because §2.6 reads like a serialization task; it is a *loader* task. §6.1 A1
+carries it.
+
+**The environment scalars are deliberately duplicated.** `L` and `units` also appear at
+`meta.json`'s top level and in `grid.npz`, which the rule against redundant derivable
+state (§2.3) would normally forbid. The exception is worth it: the provenance block is
+what someone opens to see what a run *was*, months later, and a block that omits the
+domain size and the fluid density to avoid three duplicated numbers is worse at exactly
+the job it exists for. The cost is nil and the values are written once, at the start,
+from one source — they cannot drift within a run.
+
+**What provenance is not:** a guarantee. Paths go stale, datasets move, and a user who
+built the environment by hand (an analytic field, a programmatically-modified `bndry`)
+leaves a record that is accurate but not sufficient. Record what can be recorded, mark
+the rest `null`, and never let a reader *silently* act on a provenance record it could
+not verify.
+
+### 2.7 The reader — public, and not only for plotting
+
+*(New with the reframe.)* The original spec's reader existed solely to feed `plot_all`
+and was internal. For persistence it has to be a documented object in its own right:
+
+```python
+import planktos
+run = planktos.load_run('run_archive/')      # -> RunArchive
+
+run.times                 # (n_captures,) float64 -- the global capture time base
+run.swarms                # [('organism', 0), ('organism', 1)] -- name, index
+run.positions(0)          # (n_captures, N, D) masked, mmap-backed
+run.velocities(0)
+run.capture_at(t=3.4)     # -> int: index of the nearest capture time
+run.meta                  # the schema dict, provenance included
+```
+
+**Swarms are addressed by index, with names as a convenience.** `run.positions(0)` is
+always unambiguous; `run.positions('organism')` also works and **raises** when the name
+is not unique, which the default name makes common (§2.3). `run.swarms` lists both so
+the caller can see the collision rather than guess.
+
+**`capture_at(t)` returns an index, and there is no interpolation of agent state.**
+An earlier draft left this as "nearest capture, or the interpolation weights for it";
+it is the former. Agent state is *snapped*, never blended — that is already what
+`Swarm.plot(t)` and `_select_frames` do (§4.1, §4.2), and interpolating positions across
+a domain wrap or an immersed-boundary slide would invent trajectories that never
+happened. Temporal interpolation weights belong to the **fluid** side, where the field
+is smooth and §3.2 licenses it.
+
+**Reading is by time, not by index into someone else's list.** A swarm added mid-run
+starts at `first_capture > 0`, and a recording started after t=0 (permitted when
+`INUM=None` — §2.1) has its capture 0 partway into the run. Resolving a request by time
+against `run.times` is correct in every one of those cases; assuming archive index *j*
+equals history index *j* is correct only in the common one. Per-swarm arrays are padded
+at the front with fully-masked rows up to `first_capture`, so every swarm's array is
+`n_captures` long and aligned to `run.times` — masked meaning "not present", which is
+already what a masked row means everywhere in Planktos.
+
+Requirements that follow from being public rather than a plotting detail:
+
+- **mmap-backed and lazily concatenated.** Never load every chunk to answer a question
+  about one time. An archive larger than RAM must stay usable — that is half the point
+  of chunking.
+- **Masked-array semantics preserved.** A masked row means the agent has left the
+  domain, and every downstream consumer in Planktos depends on that. The mask goes in
+  as its own array and comes back out attached.
+- **Read-only.** A reader that mutates the thing it reads is the wrong shape (§4.2).
+- **Documented in `docs/api/`,** exported from `planktos/__init__.py`.
+
+**Module placement: `planktos/archive.py`, not `_archive.py`.** The convention is that
+underscored modules are internal; `fluid.py` is un-underscored precisely because
+`FluidData` is user-visible through `Environment.flow`. `RunArchive` is user-visible
+through `load_run`, so it follows `fluid.py` exactly. The recorder (`RunRecorder`,
+returned by `Environment.record`) lives in the same module, as `fluid.py` holds both
+`FluidData` and its loaders.
+
+### 2.8 Validation on load — missing ≠ mismatched
+
+- **Mismatched** (wrong fingerprint, wrong grid) → hard refusal with a clear message,
+  naming the provenance of both sides (§2.6). Silently plotting a foreign archive is
+  the worst available outcome.
+- **Missing** (a quantity not recorded) → **hard refusal too**, naming what is absent.
+  For fluid quantities there is no fallback path by design (§4.2), and no way for a
+  supposedly-free plot to quietly re-stream 100 GB. The remedy is to re-record, or to
+  plot live without an archive.
+- **Never derive vorticity from stored quiver arrays.** They are downsampled, so
+  gradients taken on them are a coarser, different field — a plausible-looking wrong
+  answer. Recording both `vort` and `quiver` is the cheap prevention.
+- **Partial fluid series are a refusal, not a silent fill.** Same trap as a partial
+  timeline (`TODO.md` Phase 2) and the same treatment: refuse, or warn and fall back to
+  writing — but never serve one dump's field for another's.
+
+### 2.9 Capture versus render — the separation
+
+**DECIDED: the recorder captures data only; `plot_all` does all rendering.**
+
+| | Recorder | `plot_all` |
+|---|---|---|
+| When | during the run | any time after |
+| Job | write the archive while data is resident | turn an archive (or live history) into pixels |
+| Knows about | fluid dumps, capture schedule | `fps`, `playback_rate`, colormap, clip, figure |
+
+`plot_all` is not made obsolete by the recorder — it drives the interactive on-screen
+animation, replay is free when `INUM=None`, and the recorder requires deciding before
+the run.
+
+Rationale: the archive already holds everything needed to render, so rendering during
+the run buys convenience only — and costs the thing the archive was chosen for. Every
+video parameter stays adjustable forever, which an image cache or live rendering would
+have re-fixed at run time. Cache **derived quantities, not images**: colormap, clip,
+agent subset, figure size and dpi all stay adjustable. Fixed at record time: the quiver
+grid, and which fluid quantity was recorded.
+
+Three consequences that simplify the build:
+
+- **There is exactly one rendering path**, so no shared-renderer refactor is needed.
+  `plot_all` keeps `FuncAnimation` and `animate()` essentially as they are; only the
+  *source* of per-frame data changes.
+- **The recorder takes no video parameters** (§2.1), which removes the
+  config-duplication problem between it and `plot_all` entirely.
+- **The video-writing machinery needs no work at all** (§1.1's correction).
+
+### 2.10 What the archive unlocks downstream
+
+Not in the first build, but the reason the first build is worth more than a plot cache.
+Each of these becomes cheap once A exists, and none is possible without it.
+
+**Bounded history memory — the `TODO.md` maybe-feature is mostly *subsumed*, not just
+enabled.** That item proposes `store_pos_history='all' | 'frames' | None` and correctly
+calls the loss "unrecoverable", because decimating history breaks `plot_all` at full
+resolution, `save_data`, `save_pos_to_csv`, `save_pos_to_vtk` and every post-hoc
+analysis. **With an archive recording, none of that is true**: disk holds what memory
+drops, and every one of those consumers can read it back.
+
+`capture_interval` (§2.2) then *is* the `'frames'` case, and better than the item
+imagined it: history and archive are not merely "mutually consistent", they are the same
+set of states, so there is no second retention concept to reason about. What remains
+distinct is the `None` case — no history at all, archive only — which **A0 makes
+possible** by decoupling collision handling from `pos_history`, but which is not built
+here: it would leave live `plot_all` and `_calc_basic_stats` with nothing to read
+without an archive, and that interaction wants its own pass. Update the `TODO.md` item
+when A lands, narrowing it to that residue.
+
+**`save_*` become exports rather than the primary path.** `save_data` and
+`save_pos_to_csv` are public API and are not going anywhere, but once an archive
+exists they are naturally re-expressed as *exports from* one (or from memory) — which
+is also the fix for `save_pos_to_csv`'s all-at-once dense text write. **Not first-pass
+work**, and a behavior change there needs its own changelog line; noted so it is not
+re-derived.
+
+**Post-hoc analysis.** Per-step displacement, dispersal statistics, residence times,
+trajectory clustering — all of it currently requires either holding the run in memory
+or re-running it. An mmap-backed `RunArchive` makes a finished run an ordinary data
+object.
+
+### 2.11 Checkpoint and restart — the follow-on
+
+**A follow-on feature, not part of the first build.** Recorded here because the
+metadata designed in §2.6 is what makes it cheap, and retrofitting provenance later
+would not be.
+
+The distinction that keeps it simple:
+
+- an **archive** is append-only history — every capture, no state that history does not
+  contain;
+- a **checkpoint** is one latest state plus everything history cannot give you.
+
+Same format, different file, written on request (and optionally every *k* captures).
+What a checkpoint needs beyond the archive's last capture:
+
+| | Where it lives now | Note |
+|---|---|---|
+| `Swarm.rndState` | `np.random.Generator` | `gen.bit_generator.state` is a plain dict — JSON-able. **Without it a restart is not reproducible**, which is most of the point |
+| `Swarm.props` | pandas DataFrame | `save_data` already writes json |
+| `Swarm.shared_props` | dict of scalars/arrays | `save_data` already writes npz |
+| `accelerations`, `ib_collision_idx` | live arrays | already reserved schema slots (§2.4) |
+| `ib_condition`, `name`, `color`, `store_prop_history` | Swarm construction args | small |
+| `envir.time`, `time_history` | Environment | the archive has the time base already |
+| `L`, `units`, `bndry`, `rho`/`mu`/`nu`, `char_L`, `U`, `g`, `h_p` | Environment scalars | small |
+| `flow`, `ibmesh` | external datasets | **do not serialize** — §2.6's provenance record re-runs the loader |
+
+Restart then reads as: rebuild the `Environment` from provenance, rebuild the `Swarm`
+from the checkpoint, restore the RNG, and continue. **Planktos has no simulation
+checkpointing today**, and adding it is the third problem this architecture solves.
+Scope it separately; design the metadata for it now.
+
+---
+
+## 3. Component B — fluid-side streaming
+
+The dyload half. Note what it does *not* do: **under `INUM=None` this component writes
+nothing at all**, because the whole field is resident and recomputation is cheaper than
+I/O (§3.3). The fluid half of an archive is empty for the common in-memory case.
+
+### 3.1 Frame statistics — **[done]**
+
+**Removed** `avg_spd` and `max_spd` (whole-grid fluid reductions). **Added** the
+standard deviation of agent speed. Result: `_calc_basic_stats` needs **no fluid field
+at any frame**, in 2D or 3D — which was the entire 3D deliverable.
+
+Surviving fluid statistics are the component means `avg_spd_x`, `avg_spd_y`,
+`avg_spd_z`, served from a **per-dump mean sidecar**: cache `mean(uᵢ)` per component per
+dump as each dump loads (a few floats, free), then evaluate exactly at any time via the
+interpolation weights (§3.2, linearity). Agent statistics come from `velocities` /
+`pos_history` and involve no fluid at all.
+
+Rationale for the substitution, beyond cost: whole-grid reductions include regions
+containing no agents. In an agent-based model a statistic over the agent population is
+more informative, and the spread of agent speeds speaks directly to whether the
+population is moving coherently. Whole-field values remain available on demand via
+`FluidData.fmin`/`fmax` and `Environment.get_mean_fluid_speed()`.
+
+**As built:**
+
+- `_calc_basic_stats` returns `(perc_left, avg_spd_x, avg_spd_y[, avg_spd_z],
+  avg_swrm_vel, avg_swrm_spd, std_swrm_spd)`. Both new agent statistics are computed
+  from the same masked-row-filtered velocity data as `avg_swrm_vel`.
+- The plot box shows **both** agent quantities, notated to say which is which:
+  `Agent $|\overline{v}|$` (the norm of the mean velocity — net transport) and
+  `Agent $\overline{|v|}$: m ± s` (mean speed and its spread). These measure different
+  things and are paired deliberately: `‖⟨v⟩‖` cancels for opposed motion, `⟨|v|⟩` does
+  not. The `Fluid v_max` / `Fluid v̄` lines are gone; the per-axis `Fluid v̄ₓ` lines on
+  the histogram axes stay, now served from the sidecar.
+- The 3D statistics box moved from `text2D(0.75, 0.9)` to `0.65` — the `±` line is
+  wider than the lines it replaced and ran off the right edge of the axes.
+- Only in-domain agents contribute (the mask is respected).
+- The sidecar is `FluidData._dump_means`, an `(n_times, n_components)` array of NaN
+  filled in by `_record_dump_means` at every point where data lands in memory
+  (`__init__`, and all three load sites in `update_spline`). `get_mean_velocity(time=,
+  t_idx=)` is the public reader. For cubic splining it evaluates an `fCubicSpline`
+  built over the means themselves — same class, same knots, therefore exactly the mean
+  of the splined field, since the construction is linear in the data. For linear
+  splining it interpolates the sidecar directly against `flow_times` rather than
+  against the resident window, so **a mean stays available after the window has moved
+  past it** — which is what makes replaying a finished run free. A time whose bracketing
+  dumps were never loaded falls back to a load (a cache miss, not a cache lie).
+- **Measured effect**, 25-dump IB2d dataset at `INUM=4`, 48 steps, then `plot_all` to a
+  movie: fluid loader calls during plotting went **8 → 0** (25 dumps re-read → none).
+  With `fluid='vort'` it stays at 8, because the vorticity backdrop genuinely needs the
+  field — that is §3.3's problem, not this one's. In 3D, where nothing fluid is drawn,
+  the 0-load case is the only case.
+- **Tests:** the four that pinned the removed behavior were rewritten, not treated as
+  breakage. The retired `max_spd` regression lock is replaced by
+  `test_calc_basic_stats_agent_speed_vs_mean_velocity`, pinning that `⟨|v|⟩` and `‖⟨v⟩‖`
+  are genuinely different quantities (four agents, two at +1 and two at −3 in x:
+  `‖⟨v⟩‖ = 1`, `⟨|v|⟩ = 2`, `std = 1`). The strongest new test is
+  `test_calc_basic_stats_pulls_no_fluid_field`, which monkeypatches `FluidData.__call__`
+  and `Environment.interpolate_temporal_flow` to raise — reaching for the field is now
+  a hard failure rather than a silent cost. `get_mean_velocity` is covered in
+  `test_flow_interface.py` (static, cubic, linear, `t_idx`, extrapolation, the "requires
+  a time" error) and, for the sliding window, in `test_dynamic_loading.py` — including
+  that a **replay after a full sweep triggers zero loads**, and that the jump-to-start
+  fast path records means too.
+
+⚠️ §5.1 revisits the *agent* half of this method: the velocity it reduces is derived
+the wrong way, and both new statistics inherit the error.
+
+### 3.2 The property everything rests on
+
+Both spline classes evaluate as a **weighted sum of nodal fields**,
+`u(t) = Σᵢ wᵢ(t)·uᵢ`, for `LinearSpline` and `fCubicSpline` alike. So any **linear**
+functional of the field commutes with temporal interpolation:
+
+```
+F(u(t)) = Σᵢ wᵢ(t)·F(uᵢ)          for linear F
+```
+
+`mean`, the curl (hence vorticity), and subsampling (hence quiver arrays) are all
+linear. This is what makes the per-dump mean sidecar exact (§3.1) and dump-cadence
+caching exact (§2.4), using weights the interpolator already computes. The periodic
+wrap added to the curl in 2026-08 does not disturb this: differencing across the wrap
+is still a fixed linear combination of nodal values, just a different one.
+
+`max` and `mean(√(u²+v²))` are **not** linear and do not commute — which is why
+`max_spd` and `avg_spd` were dropped rather than cached.
+
+⚠️ **Linearity makes it exact; it does not make it *local*, and the difference decides
+the design.** `LinearSpline`'s weights are two and adjacent, so a per-dump file supports
+them directly. `fCubicSpline` is not-a-knot, whose coefficients come from a **global**
+tridiagonal solve — every `wᵢ(t)` depends on every node — so applying its weights from
+per-dump files would mean holding the entire series, which is the memory cost the whole
+design exists to avoid. Two consequences, both already taken:
+
+- The per-dump **mean** sidecar can afford it: three floats per dump, so it keeps them
+  all and splines them with the real weights (`_interp_dump_means` has exactly this
+  cubic/linear split, and its cubic branch is reachable only because everything was
+  resident anyway).
+- A per-dump **field** cannot. So §3.3 does not try: under `INUM=None` it computes
+  vorticity from the interpolated velocity instead of reconstructing it from dumps.
+  That is why the rule is written by regime rather than as one mechanism.
+
+### 3.3 Vorticity is not cached — it is sourced, by regime
+
+*(Decided 2026-08-13.)* Unlike quiver, vorticity is a quantity solvers already write
+and Planktos can write back in the same format. **Which of three things happens is
+decided by `INUM` and by whether the source has vorticity already:**
+
+| regime | during the run | at render | interpolation in time |
+|---|---|---|---|
+| `INUM=None` | **nothing written** | compute from the resident velocity | cubic |
+| `INUM=int`, source **has** vorticity | **nothing written** | read the source's per-dump field | linear |
+| `INUM=int`, source has **none** | write one file per dump as it lands | read back what was written | linear |
+
+The reasoning, measured on `tests/data/Rubberband_with_Damped_Springs` (76 dumps,
+33×33, with `Omega`) and `tests/data/leaf_data` (149 dumps, 129×193, without) —
+reproduce with `tests/manual/bench_vorticity_sources.py`:
+
+- **`INUM=None` needs nothing on disk.** The whole field is resident, so recomputing
+  costs 0.34 ms per frame at 129×193 and rendering 300 frames takes 0.129 s. Sourcing
+  the same frames from disk is *slower* — 0.066 s against 0.023 s on the smaller dataset
+  where both could be measured — so writing ~1 GB would buy negative performance.
+- **The compute is never the cost; the write is.** Deriving a dump's vorticity as it
+  lands is +0.4% on a streaming sweep (4.738 s → 4.755 s over 149 dumps) — free. Writing
+  it is ~1 ms per dump and ~1 GB per 500 dumps at 512×512. So the only thing worth
+  avoiding is the write, and it is avoidable exactly when the source already has the
+  field.
+- **Under `INUM=int` the velocity is not resident**, so recomputing at render drags
+  `load_dumpfiles` behind it: 4.76 s against 0.165 s resident, for the same 300 frames,
+  essentially all of it velocity I/O. Worse, velocity is a *vector* and vorticity a
+  scalar in 2D, so recomputing reads roughly twice the bytes to produce a field it then
+  discards. Reading per-dump vorticity is 3–4× faster and is why this regime sources
+  from disk at all.
+
+**Both `INUM` regimes come out exactly consistent with the velocity in use, which is
+the point of splitting them.** Under `INUM=int`, blending per-dump vorticity with
+`LinearSpline`'s two weights *is* the curl of the interpolated velocity, by §3.2. Under
+`INUM=None` the cubic weights are not local (§3.2's caveat), so that regime does not try
+to reconstruct from dumps — it differentiates the interpolated velocity directly, which
+is the same field by construction. So vorticity inherits the velocity's cubic-vs-linear
+tradeoff exactly, rather than stacking a second, different approximation on top of it.
+That is the tradeoff `INUM` already documents, and no new one.
+
+⚠️ One caveat on the middle row: it serves the *solver's* vorticity, not Planktos' curl
+of the solver's velocity. For IB2d those coincide — 0.00% difference at every dump
+tested, once the periodic edge fix landed. That is an empirical property of IB2d
+computing the same central difference, not a guarantee for every source.
+
+**Where the written files go.** Into the **source's own fluid directory**, in the
+source's own naming — `Omega.0042.vtk` beside `u.0042.vtk` — so that a later run,
+ParaView, or IB2d's own tooling reads them with no knowledge of Planktos, and so that
+the source becomes indistinguishable from one whose solver had printed vorticity all
+along. Two guards:
+
+- **Never clobber.** If `Omega` for a dump already exists, that is the middle row of the
+  table, not this one.
+- **Fall back to `run_archive/fluid/` if the source directory cannot be written** —
+  read-only mounts and shared datasets are normal. `meta.json` records which of the two
+  happened, so the reader knows where to look.
+
+**Format: binary VTK, not ascii, and not `.npy`.** Measured at 512×512 over 500 dumps:
+
+| format | write | read | disk |
+|---|---|---|---|
+| `.npy` | 0.69 s | 0.28 s | 1.049 GB |
+| **VTK binary** | **5.85 s** | **1.12 s** | **1.049 GB** |
+| VTK ascii | 35.10 s | 47.04 s | 1.941 GB |
+
+Binary VTK costs ~5 s of writing across an entire run and ~1 s at render for *identical*
+disk — negligible against the simulation, and interoperability is worth far more than
+that. Ascii is not negligible: 6× the write, 42× the read, 1.85× the disk. Write binary
+even though IB2d writes ascii; `vtkStructuredPointsReader` takes both, verified by
+round-trip. (Small grids are dominated by fixed pyvista overhead — a 33×33 binary write
+is *slower* than a 512×512 one — so this only matters at scale, where it is cheap.)
+
+Availability is a per-source *capability*, to be asked rather than assumed:
+
+| Source | Ships vorticity? |
+|---|---|
+| OpenFOAM (`OpenFOAMData`) | **Always**, as a `vorticity` cell array on `internal.vtu` *and* on every boundary patch — verified on the reference export |
+| IB2d (`IB2dData`) | **Optionally** — `Omega.####.vtk`, present only if the run's `input2d` asked for it. `tests/data/leaf_data` has `u` dumps only, so the reference 2D dataset does **not** have it |
+| everything else | no |
+
+**Reading a source's per-dump field — the mechanics.** Nothing new is needed in
+`_dataio` for the read itself: `read_2DEulerian_Data_From_vtk(path, numSim, 'Omega')`
+already reads IB2d's scalar dumps (the branch `uX`/`uY` use, and `Omega` is already
+named in the reference comment block inside `_read_IB2d_dumpfiles`), and
+`read_vtkxml_cell_data(f, arrays=('vorticity',))` already reads OpenFOAM's. Four things
+must line up, none of them obvious:
+
+- **A time resolves to dumps as `d_start + i`**, uniformly: IB2d's `d_start` is the
+  first dump number, OpenFOAM's is 0 over a dense index into `_dumps`. ⚠️ `IB2dData`
+  stores neither `dt` nor `print_dump`, and does not need to — do not add them as
+  attributes to make a reader work.
+- **Transpose.** `read_2DEulerian_Data_From_vtk` returns `[y,x]`; the velocity path does
+  `.T` to reach `[x,y]`. A derived field must do the same.
+- **Restore the periodic endpoint** IB2d omits, so a 6×5 dump becomes a 7×6 field.
+  ⚠️ **`_wrap_flow` cannot be reused**: it loops over `range(len(flow_points))` and so
+  assumes one array per spatial dimension. Passing a single scalar raises `IndexError`.
+  Generalize it, or write the four-line scalar version.
+- **Do not re-shift the domain** — `flow_points` is already in quadrant 1.
+
+**Two-slot read cache.** A movie renders many frames per dump interval, so the naive
+path re-reads two files per frame. Keeping the two most recent dumps reduces that to one
+read per dump for any monotone sweep, forward or backward: consecutive frames share a
+bracketing pair, and advancing evicts only the trailing one. Two slots and no more —
+holding more field data than the interpolation needs is the thing being avoided. Key on
+the **global** dump index so it stays correct across a velocity-window slide it knows
+nothing about.
+
+**Probe availability once, and check it covers the range.** Glob for the field at
+construction; a *partial* series gets §2.8's treatment.
+
+Two points that are easy to get wrong:
+
+- **3D writes no vorticity at all** — `fluid=` is forced to `None` in 3D, where no
+  fluid backdrop is drawn. All of the above is 2D-only today. It becomes live for 3D if
+  a backdrop arrives with the vtk rewrite, which is when OpenFOAM's always-present field
+  starts to matter and when the rectilinear reader (§3.6) stops being optional.
+- **Reading the source is not merely cheaper, it can also be more accurate — but no
+  longer for IB2d.** Recomputing by finite difference used to disagree with the solver
+  in the outermost cell ring; for a *periodic* source that was the missing wrap, now
+  fixed, and the two agree exactly. For OpenFOAM the ring sits against a spliced
+  boundary-condition plane instead, no wrap can fix it, and the stored field remains the
+  better one (`TODO.md` item 6 has the measured depth profile).
+
+### 3.4 Quiver
+
+**Quiver is opt-in** — `fluid='quiver'` or `fluid=('vort','quiver')` — because
+vorticity is what gets plotted in almost every case, and quiver is a second
+full-cadence array on disk for a backdrop most runs never use. `fluid=` on `record()`
+defaults to `'vort'` in 2D and is forced to `None` in 3D and on a flow-free
+environment — see the signature table in §2.1.
+
+**Quiver stays `.npy` in the archive.** It is a downsampled subsample of velocity chosen
+at record time, not a quantity any solver writes or any other tool would want, so none
+of §3.3's format reasoning applies to it. Written per dump whenever it is requested.
+
+**The quiver grid is the one genuine conflict between record time and render time.**
+`plot_all` currently derives its downsample factors `M`, `N` from the **figure size and
+axis extent**, aiming at roughly 4.15 arrows per inch — quantities that do not exist
+while the simulation is running. The resolution: `record()` takes a target arrow grid
+(`quiver_shape`, default ~60×60), and an archive-backed `plot_all` uses the stored grid
+regardless of figure size, warning when the figure would have wanted a noticeably
+denser one. The rejected alternative was caching full-resolution velocity and
+downsampling at render time, which costs 2–3× a per-dump scalar and gives back the disk
+saving that motivates downsampling at all. So `quiver_shape` joins the recorded quantity
+as the second thing fixed when recording starts.
+
+### 3.5 Per-dump extrema and the global colour and arrow scales
+
+**Colour normalization — half done (2026-08-13).** The per-frame `fld.autoscale()` this
+was written against **is gone**; `Swarm._vorticity_norm` replaced it. That call rescaled
+to each frame's own min/max, which put zero off the white centre of RdBu and tinted the
+background differently every frame — the reported "flashing" — and silently discarded
+any `clip` the caller passed. Limits are now symmetric about zero, grow across a movie
+but never shrink, and are left alone entirely when `clip` is given.
+
+**What remains is the *global* scale.** Monotone growth removes the flicker but the
+scale still changes during a movie, so two renders of the same run still differ. Derive
+it from the **stored per-dump extrema in a second pass over the archive** (small) rather
+than over the fluid (huge), and set it once before the first frame. `_vorticity_norm` is
+where it plugs in — pass the global maximum as `clip` and it is already fixed and never
+rescaled.
+
+⚠️ `FluidData.fmin`/`fmax` are **not** usable for this: they are documented as covering
+"all the data seen so far", so under dynamic loading they grow during the run and would
+reintroduce the drift.
+
+**The same `fmax` drift reaches the quiver arrow scale, not just the colour scale.**
+`plot_all` sets `scale=max_mag*5` once at figure setup from `self.envir.flow.fmax`, so
+under dynamic loading the arrow length representing a given speed depends on how far the
+run had progressed when plotting began — two movies of the same simulation are not
+comparable, and neither is comparable to itself across a re-plot. The stored per-dump
+extrema fix both, in the same second pass. Max-over-dumps is an exact upper bound under
+linear interpolation and very tight under cubic. A live one-pass render mode, if ever
+offered, has no global scale available and must take an explicit `clip`/`vmin`/`vmax`,
+or disclose the drift on the colorbar.
+
+### 3.6 Scalar rectilinear VTK I/O — the missing half
+
+⚠️ **§3.3's write-back requires scalar rectilinear-grid I/O that does not exist yet.**
+`STRUCTURED_POINTS` carries only an origin and a spacing, so it can express IB2d's
+uniform grid but not a rectilinear one — and the OpenFOAM grid is deliberately
+non-uniform at its two outermost intervals. `_dataio` has
+`write_vtk_2D_rectilinear_grid_scalars` (used by `Environment.save_2D_vorticity`) but
+**no matching scalar reader**; only `read_vtk_Rectilinear_Grid_Vector` exists.
+
+Both halves are needed:
+
+- a `RECTILINEAR_GRID` scalar **reader**, to pair with the existing writer;
+- a `STRUCTURED_POINTS` scalar **writer**, for uniform grids, so a written field is
+  indistinguishable from the solver's own.
+
+Independent of everything else, and testable on its own with a round-trip.
+
+---
+
+## 4. Component C — rendering
+
+### 4.1 Frame rate: `fps` and `playback_rate` — **[done]**
+
+Users set two quantities they already understand; `dt` leaves the user-facing API
+entirely:
+
+| Parameter | Meaning | Default |
+|---|---|---|
+| `fps` | frames per second of output — *smoothness*, comparable to standard 24/25/30/60 | `10` |
+| `playback_rate` | simulated seconds per second of video — *speed* vs real time | `1` |
+
+```
+Δt_frame = playback_rate / fps
+```
+
+| `playback_rate` | `fps` | `Δt_frame` | Reads as |
+|---|---|---|---|
+| 1 | 30 | 0.0333 s | real time, smooth |
+| 0.5 | 30 | 0.0167 s | 2× slow motion |
+| 10 | 24 | 0.417 s | 10× fast forward |
+
+This replaced a long-standing footgun. With frames pinned to steps, `fps` was the only
+lever: at `dt = 1e-3`, real-time playback demanded `fps = 1000`, while the default
+`fps = 10` turned 10 s of simulation (10 000 steps, hence 10 000 frames) into a
+**17-minute** movie. At `dt = 1e-4` the same settings give 2.8 hours.
+
+**Constraints that survive into archive-backed rendering:**
+
+- **`Δt_frame < Δt_capture` is the one failure mode.** Frames cannot be produced between
+  captured states. Clamp to every captured state and **warn with the numbers**,
+  including the achieved rate `Δt_capture × fps`.
+- **`fps ≤ playback_rate / Δt_capture`** follows. With capture-every-step,
+  `Δt_capture = dt`, so **slow motion and smoothness trade off unless the capture
+  interval is small**: at `dt = 0.025` captured every step, real time reaches 40 fps but
+  10× slow motion caps at 4 fps. Document as: *smooth slow motion needs fine capture.*
+- **Frame times are not exactly uniform.** Frames are chosen by picking, for each target
+  time, the nearest available capture — so spacing jitters by up to one `Δt_capture`
+  whenever `Δt_frame` is not an exact multiple of it. Warn when `Δt_frame` is only a
+  small multiple (< 3×).
+- **`Δt_capture` is always derived from the recorded times**, never from a nominal
+  `dt` — the `span/(n-1)` `_select_frames` already computes, over the archive's capture
+  times or over `time_history`, which since §2.2 hold the same states. It equals `dt`
+  only at the default `capture_interval=1`; at interval *k* it is *k*·`dt`, and under a
+  varying `dt` it is a mean either way. *(The interval itself is deliberately not stored
+  — §2.3.)*
+- **Assumption to document:** "real time" presumes simulated time is in seconds.
+  `Environment.units` covers *length* only; seconds is the convention throughout.
+- **`fps` is re-encodable after the fact**, because dump-cadence caching supplies any
+  `Δt_frame`. Only the quiver grid and recorded quantity are fixed.
+- **`per_dump=True` was deliberately dropped.** It is a second way to say what
+  `playback_rate` already says, and the user can say it exactly:
+  `playback_rate = np.diff(envir.flow.flow_times).mean() * fps`. **A raw step count
+  (`every=k`) is rejected** — users vary `dt` between `move()` calls, so it silently
+  means different things within one run.
+
+**As built:**
+
+- `Swarm.plot_all` gained exactly one parameter, `playback_rate=1`, immediately after
+  `fps`. `frames`, if given, still overrides the selection entirely — it is an explicit
+  list of history indices and always was.
+- The selection is `Swarm._select_frames(fps, playback_rate)`, one private method: it
+  assembles the recorded times (`time_history[:len(pos_history)]` plus the present time,
+  index-aligned with what `animate(n)` expects), places the frames, and issues both
+  warnings. **A first pass split this into a module-level pure function plus a method
+  that fed it**; that was the wrong trade — `_swarm.py` has no module-level code at all,
+  so it bought a new structural precedent and ~25 extra lines to save constructing a
+  Swarm in tests that are testing a Swarm method.
+- **`fps` stays at 10.** At the examples' `dt = 0.025` and `playback_rate=1`, `fps=10`
+  gives `Δt_frame` exactly 4×`dt` — even spacing, silent. `fps=30` would give 1.33×,
+  precisely the case the jitter warning exists to flag, so the friendlier-looking
+  default would have shipped a warning on the runs people actually have.
+- **Both warnings are computed from the selection itself, not from a nominal `dt`**,
+  because `dt` may vary between `move()` calls. The clamp fires when `Δt_frame <
+  Δt_capture` *or* when two frames would land on the same recorded state; the jitter
+  warning fires when achieved spacing departs from `Δt_frame` by more than a sixth.
+- **Roundoff tolerance on the clamp is load-bearing.** `playback_rate/fps` is a division
+  and `time_history` accumulates `dt` by repeated addition (0.3 arrives as
+  0.30000000000000004), so an exact choice like `playback_rate=0.075, fps=3` at
+  `dt=0.025` compares as *just* under the recording interval. Without the `1e-9` relative
+  slack it would warn and clamp on every such call — i.e. on the examples, which are
+  written that way. Pinned by
+  `test_frame_interval_equal_to_the_recording_interval_is_not_clamped`.
+- **The first and last recorded states are always frames**, so the movie spans the run
+  even when the span is not a whole multiple of `Δt_frame`.
+- **On-screen playback honors the same numbers.** `FuncAnimation`'s `interval` is
+  `1000/fps` ms instead of the old `dt*100` heuristic, so preview and saved movie agree.
+- **Tests:** `tests/test_frame_selection.py`, 19 closed-form tests, no rendering, in the
+  fast run (~0.2 s). Each drives a real, tiny run. `test_plotting_smoke.py`'s movie test
+  is parametrized over `fps`, `playback_rate`, and explicit `frames`.
+- **Examples updated at the call sites**: `ex_ib2d_ibmesh.py` and `ex_ib2d_sticky.py`
+  `playback_rate=0.075`, `ex_ib2d_mvbnd_sticky.py` `0.15`, `ex_ind_var.py` `2`,
+  `ex_sticky_seafan_3d.py` `2` — each the old `dt × fps` product, so their movies are
+  unchanged. The two Vicsek examples needed no edit. `ex_ib2d_ibmesh.py`'s prose about
+  "one frame per time step" was rewritten, along with the same passage in
+  `docs/examples/ib2d_ibmesh.rst`; `docs/quickstart.rst` gained the model and its `dt`
+  ceiling.
+
+### 4.2 `plot_all` reads an archive
+
+**The rule is about the fluid, and only the fluid: no render may trigger a fluid load
+without saying so.** *(Narrowed 2026-08-18 from the original "an archive-backed render
+is archive-only".)* Agent state is small, in memory, and — after §4.3 — numerically
+identical wherever it is read from, so where it comes from is an availability question,
+not a correctness one. The fluid is neither.
+
+**`Swarm.plot_all` and `Swarm.plot` gain one parameter, `archive=None`**, accepting a
+path (`str` or `Path`), a `RunArchive`, or the handle returned by `Environment.record`
+— from which the archive's own `.path` is taken, so that a redirected directory (§2.1)
+cannot be missed. `plot_all`'s existing `frames=` argument is unchanged in meaning: it
+indexes `time_history`, which is exactly the list of captured times (§2.2), so it
+selects the same states whether or not an archive is in play.
+
+Three modes, and they are distinguished by what is available, not by a flag:
+
+| Mode | Agent data from | Fluid data from |
+|---|---|---|
+| `plot_all(archive='run/')`, or any later session | the archive | the archive / the source (§3.3) |
+| live, no archive | `pos_history` / `vel_history` | re-streams, with a loud warning |
+| live, recorder active | live history (the same states by construction, §2.2) | the archive / the source |
+
+- **Frames are selected from the archive's capture times** when one is given — the
+  schema's capture-time list is the authority for what can be rendered, and the capture
+  spacing derived from it is the floor on `Δt_frame` (§4.1).
+- **Resolve archive entries against the live histories by *time*, not by index.** They
+  do coincide in the ordinary case, because history now holds exactly the captured
+  states (§2.2) — but not when a swarm was added mid-run (`first_capture > 0`, §2.3) or
+  when recording started after t=0, which §2.1 permits under `INUM=None`. Matching on
+  `run.times` is correct in all of those; assuming index equality is correct only in the
+  common one, and fails silently rather than loudly when it is wrong.
+- **A quantity the archive lacks is a refusal, not a silent fluid read** (§2.8).
+- **The live final-frame branch still has to be rewritten, but for one reason instead of
+  three.** `animate(n)` for `n >= len(pos_history)` currently reads live state:
+  `envir.time`, `_calc_basic_stats(t_indx=None)`, and — the part that bites —
+  `envir.get_vorticity()` / `interpolate_temporal_flow()` with **no time argument**,
+  which evaluate at the current time and can trigger a load. Left alone, that one frame
+  leaks the whole "zero loads while plotting" property. The fix is to pass the time
+  explicitly and source the fluid quantity the way every other frame does. The *agent*
+  half of that branch may stay as it is when live state exists; in a later session there
+  is no live state and the archive path supplies it.
+- **A stale archive warns; it does not silently flush.** Compare `envir.time` against
+  the most recent capture time and warn on a mismatch, naming `envir.flush_recording()`
+  — a mismatch means captures are still buffered. Flushing is the recorder's business,
+  and a reader that mutates the thing it is reading is the wrong shape.
+  ⚠️ **Guard that comparison against `envir.time is None`.** A step that failed or was
+  interrupted sets it to `None` (`move()`'s `except BaseException` block), and that is
+  precisely the state the `plot_all=` auto-render fires in (§2.1, "it renders when the
+  run raises"), so the comparison would raise on a `NoneType` at the worst possible
+  moment — while reporting a crash. `_select_frames` already special-cases the same
+  state and warns; follow it, and skip the staleness check rather than inventing a
+  second message.
+- **`Swarm.plot(t=...)` prefers the archive for a historical time** when one is
+  available, which keeps a single-frame look-back from paying for a fluid load. For
+  `t=None` — the current time — live state is right there and may be newer, so live wins.
+  Its snapping behavior is unchanged either way: a requested `t` snaps to the nearest
+  recorded state without interpolation (`Environment.time_history` live, the capture
+  times from an archive).
+- **With no archive after a dynamically-loaded run: still works.** Re-streams as today,
+  but emits a loud one-time warning with the estimated cost — detected by `INUM` being
+  set and the requested frames spanning more than the resident window. Never break a
+  working workflow silently; never let someone accidentally re-stream 100 GB unwarned.
+- With `INUM=None` the whole dataset is in memory, replay costs nothing extra, and
+  today's random-access behavior is otherwise preserved.
+- **`playback_rate=1` is the default here too.** Existing scripts produce different
+  videos. Accepted as a deliberate 1.1.0 change: the old behavior *is* the footgun.
+
+**A later session rebuilds its own `Environment`** — cheaply, since the fluid no longer
+has to be re-streamed to plot — and hands the archive to `plot_all`. `plot_all` is a
+`Swarm` method and needs an `Environment` for `L`, `bndry`, `ibmesh`, `units` and
+`_plot_setup`; the stored `L` and `flow_points` are there to *validate* that
+reconstruction, not to replace it. §2.6's provenance is what makes the rebuild
+mechanical rather than a matter of finding the original script.
+
+### 4.3 One definition of agent velocity
+
+*(New with the reframe. Depends on §5.1 and must be decided with it.)*
+
+Once agent velocity can be read from two places — live history and an archive — the two
+must agree, and today they would not. §5.1 fixes the derivation so that both read the
+recorded velocity. Two consequences to accept deliberately:
+
+1. **The zero-at-index-0 display convention goes away.** `Swarm.__init__` sets
+   `velocities` to the local fluid drift when a flow exists, so the first frame's agent
+   statistics become that drift instead of zeros. This is the truth, it is meaningful
+   (it is the velocity the agents actually have), and `CLAUDE.md`'s rule that
+   correctness outranks reproducing previous output applies. For flow-free runs the
+   initial velocities are zeros anyway and nothing changes.
+2. **The change is visible and silent-looking** — a first frame whose statistics
+   changed with no other visible cause. It gets a changelog line (§7).
+
+Do this *before* the archive writes anything, so no archive is ever recorded against the
+losing convention.
+
+### 4.4 Video output and containers
+
+`plot_all` is the sole video producer and already streams: `Animation.save()` internally
+uses `writer.saving(...)` + `grab_frame()` per frame, so encoding memory is O(one
+frame). **No change is required to the video-writing machinery at all** — this component
+is about where the *data* comes from, not how pixels reach ffmpeg.
+
+**No PNG-frames option.** Every argument for one is covered better elsewhere: truncation
+and mid-run inspection by container choice; crash re-render by the archive; single
+publication stills by `Swarm.plot(t, filename=...)`; resume by §2.11 if it is ever
+built.
+
+**Document `.mkv` for long or unattended runs.** A hard kill (HPC walltime, OOM, node
+failure) is `SIGKILL`: `__exit__` never runs, the pipe is never closed, and an `.mp4` is
+then usually unplayable because ffmpeg writes the `moov` atom last. `.mkv` survives
+truncation *and* is playable while still being written, which also covers checking on a
+long run mid-flight. Remuxing afterwards is lossless and one call:
+`ffmpeg -i out.mkv -c copy out.mp4`. Fragmented mp4
+(`-movflags frag_keyframe+empty_moov`) is the alternative, passed via `writer_kwargs`.
+
+---
+
+## 5. Prerequisite bug fixes
+
+Two defects found while reframing this plan (2026-08-18). Both predate all of it, both
+are present on `master`, and both touch numbers the archive is about to persist — so
+they are settled first, not folded into the build.
+
+### 5.1 `_calc_basic_stats` finite-differences positions instead of using recorded velocities
+
+[`planktos/_swarm.py`, `_calc_basic_stats`] computes
+
+```python
+vel_data = (self.pos_history[t_indx] - self.pos_history[t_indx-1]) / (
+            self.envir.time_history[t_indx] - self.envir.time_history[t_indx-1])
+```
+
+while `vel_history` sits unused except for heading arrows (`arctan2` in the plotting
+code). **These are not the same quantity.** In `Swarm.move`:
+
+1. `apply_agent_model` updates `positions`;
+2. the pre-move state is appended to `pos_history` / `vel_history`;
+3. `velocities` is set to `(positions - old_positions)/dt` — **from pre-boundary-
+   condition positions**;
+4. `apply_boundary_conditions` then mutates `positions` in place.
+
+So `vel_history[j]` is the velocity that actually carried the agents over the interval
+ending at time `j`, while `pos_history[j] - pos_history[j-1]` is the *post*-boundary
+displacement. They differ for any agent that collided with an immersed boundary or a
+domain boundary — and on a **periodic domain a wrap makes the finite difference a
+spurious near-domain-width velocity**, which then contaminates the mean and, since
+§3.1, the mean speed and its spread as well.
+
+**Fix:** read `full_vel_history[t_indx]` (index-aligned with `pos_history` — see §2.4),
+falling back to `self.velocities` for `t_indx is None` as it already does. This also
+makes the live and archive-backed paths agree by construction (§4.3), which is why it
+comes first.
+
+**Delete the `elif t_indx == 0` branch in the same edit.** It substitutes a zero vector
+on the reasoning that velocity is undefined before the first step; `full_vel_history[0]`
+is the initial local fluid drift and is the truth. §4.3 decides this and carries the
+consequences — it is listed separately there because it is the user-visible half, but
+there is one line of code and it changes here.
+
+- **Applies to `master`:** yes — the same two lines are at its `_swarm.py:1935`. Queue
+  for a patch release (1.0.3 has shipped; the next would be 1.0.4) and add a changelog
+  line under 1.1.0.
+- **Test:** a periodic domain with an agent that wraps, asserting the reported mean
+  speed is the physical one and not the domain width over `dt`. Closed-form.
+
+### 5.2 `Environment.reset()` leaves `vel_history` behind
+
+[`planktos/_environment.py`, `Environment.reset`] clears `time_history` and each
+swarm's `pos_history`, but **not** `vel_history` or `props_history`. After a reset the
+lists are misaligned, so `full_vel_history` is wrong for the remainder of the session —
+which reaches heading markers today and `_calc_basic_stats` after §5.1.
+
+The FTLE stencil copy in the same file gets this right (`_environment.py:2721-2723`
+clears both, with a comment explaining why), which is what makes `reset()` look like an
+oversight rather than intent.
+
+**Fix:** clear `vel_history` and `props_history` alongside `pos_history`. Do it in the
+same change as §2.2's rule that `reset()` raises while recording.
+
+- **Applies to `master`:** yes — byte-identical there.
+- **Test:** reset mid-run, then assert the histories are consistent and a subsequent
+  `move()` keeps them so.
+
+---
+
+## 6. Build order
+
+### 6.1 Steps
+
+**Step 0 — the two bug fixes (§5).** Independent, small, and §5.1 settles a number the
+archive persists.
+
+**Step A — the run archive (§2).** Pure data capture: no rendering, no video
+parameters, no matplotlib. Six sub-steps, each independently testable:
+
+  A0. ⚠️ **Decouple collision handling from `pos_history`.** `apply_boundary_conditions`
+      takes each agent's movement start point from `pos_history[-1]`; publish `move()`'s
+      existing `old_positions` local instead (as `self._prev_positions`), at all
+      **three** sites that take it — `Swarm.move` and the two inlined loops in
+      `Environment.calculate_FTLE` — plus an `__init__` default and the docstring that
+      documents the old dependency. **This touches the riskiest code in the project**
+      (`CLAUDE.md`: the no-penetration invariant), so it lands first and alone, with the
+      existing collision suite bit-identical and a new test that a `capture_interval=k`
+      run reproduces an every-step run's trajectory exactly. Nothing else in step A is
+      safe until it is done, because `capture_interval` silently corrupts collisions
+      without it. **§2.2 carries the failure analysis, the three failure modes, the
+      sweep showing this is the only such site, and the verification argument** — read
+      it before touching the code.
+  A1. **Provenance at load time** (§2.6). Each fluid and mesh loader, and each analytic
+      flow generator, records its own call into `Environment` state. Independent of
+      everything else, testable on its own, and easy to under-scope: it is a *loader*
+      edit across ~11 methods, not a serialization detail of the writer.
+  A2. **`planktos/archive.py`: the writer.** Schema, fingerprint, atomic file
+      replacement (§2.5), chunked agent writer keyed on the global capture index.
+  A3. **`Environment.record` / `flush_recording` / `stop_recording`**, the environment
+      step counter and capture-step predicate (§2.2), the `_notify_step_complete` hook
+      in `Swarm.move` / `Environment.move_swarms`, the history-append gating in both,
+      the `add_swarm` notification (§2.3), and the `reset()` refusal.
+  A4. **The reader** (`RunArchive`, `planktos.load_run`), mmap-backed, resolving by
+      time and snapping — **not** interpolating — agent state (§2.7). Including it here
+      makes A testable end to end without touching a line of rendering code, which is
+      the natural place to cut.
+  A5. **Docs and export** — `docs/api/`, `__init__.py`, quickstart mention.
+
+**Step B — fluid-side streaming (§3).** Independent of A except that it writes into the
+same directory.
+
+  B1. **`fluid.py` groundwork.** Extract the gradient math from `FluidData.get_vorticity`
+      into a module-level `_vorticity_from_field(flow, flow_points, periodic_dim)` —
+      note the third argument, which the periodic edge fix made load-bearing — and add a
+      dump-arrival observer dispatched from `_record_dump_means`. That method is already
+      called at every one of the four places fluid lands in memory, with raw ndarrays
+      and global time indices — the hook exists, it just needs to fan out. Riding it
+      inherits the correctness argument for free, including the forward slide's
+      deliberate `idx_start+2` skip of the two holdover dumps. **Two hazards:** the
+      jump-to-start branch re-reports dumps already recorded, so the observer must be
+      idempotent; and static flow never calls `_record_dump_means` at all, so it needs a
+      one-shot capture when recording starts. The recorder must compute vorticity from
+      the raw arrays rather than through `get_vorticity(time=)`, which calls `self(time)`
+      and can trigger a load — exactly what is being avoided.
+
+      Also here: a **per-source probe** for whether the fluid already carries vorticity,
+      and a **per-dump reader** for it, since two of the three regimes in §3.3 need one
+      and neither needs the observer to fire at all.
+  B2. **Scalar rectilinear VTK I/O in `_dataio`** (§3.6). Independent of everything else
+      and testable on its own with a round-trip.
+  B3. **The per-dump fluid writer** and the extrema/means sidecars.
+
+**Step C — rendering (§4).** The only step that touches rendering, and it changes where
+per-frame data comes from rather than how it is drawn.
+
+  C1. `plot_all` / `plot` read an archive (§4.2); rewrite the live final-frame branch's
+      fluid reads.
+  C2. Global colour and arrow normalization (§3.5) — `Swarm._vorticity_norm` already
+      takes a `clip` it never rescales, so a global maximum passed there is the whole
+      change on the rendering side.
+
+**Step D — examples and docs prose pass (§7).**
+
+*Two earlier versions of this list are worth not repeating.* One had "stream the video"
+as an independent step, on the false premise that `plot_all` held frames in memory (see
+§1.1's correction). The other had "extract a shared frame renderer" as a prerequisite,
+which §2.9's capture/render split removes: with exactly one rendering path there is
+nothing to share.
+
+### 6.2 Tests
+
+New `tests/test_run_archive.py`, except the loader-count assertion, which belongs beside
+the machinery it counts in `test_dynamic_loading.py`.
+
+**The headline test** is that recording a run against a windowed `FluidData` costs
+*identically* many loader calls as the same run without it. That single assertion is the
+property the whole design exists for, and `test_dynamic_loading.py`'s synthetic subclass
+already supports counting them.
+
+**The second one makes §3.2 executable:** under `INUM=int`, per-dump vorticity blended
+to a time between dumps equals `envir.get_vorticity(time=t)` computed live, to
+round-off — for both the sourced and the written case, which must agree with each other
+as well. Under `INUM=None` there is nothing to compare, since the render calls
+`get_vorticity` itself; what to assert there is that **no vorticity file was written
+anywhere**, which is the regime's whole content and would otherwise fail silently by
+costing disk nobody asked for.
+
+**The third belongs to A0 and is the one that protects the physics:** a run at
+`capture_interval=k` produces **bit-identical agent trajectories** to the same run
+captured every step. What is recorded must not change what happens. Drive it through a
+mesh so the collision path is exercised, since that is the path A0 rewires.
+
+Round out with:
+
+- a round-trip against `pos_history` / `vel_history` / `time_history`;
+- chunk boundaries at exactly one, one-plus-one, and a partial chunk;
+- a fingerprint refusal against a differently-gridded environment;
+- a raise mid-run leaving a complete-to-that-point readable archive;
+- **a hard-kill simulation** — write chunks, then read without any finalizer having run
+  (§2.5). This is the crash-validity property and nothing else tests it;
+- **a truncated chunk file must not be produced** — assert the writer's temp-then-
+  replace discipline, e.g. that no partially-written `.npy` is ever visible under the
+  archive path (§2.5);
+- the jump-to-start re-report leaving no duplicate fluid files;
+- `reset()` raising while recording;
+- `record()` raising on a dynamically-loaded fluid whose window has already slid, and
+  **not** raising under `INUM=None` (§2.1);
+- a non-empty target directory redirecting to a timestamped sibling, with the handle's
+  `.path` and the warning both naming it (§2.1);
+- `capture_interval=k` giving `len(time_history) == len(pos_history)` and a capture
+  count of `steps//k + 1`, with `time_history` holding only captured times (§2.2);
+- a failed step under `capture_interval=k` leaving the histories consistent (§2.2);
+- `add_swarm` mid-recording: the late swarm's `first_capture`, its short first chunk,
+  and its front-padded masked rows aligning to `run.times` (§2.3, §2.7);
+- two swarms with the same default name: index access works, name access raises (§2.7);
+- a plain `swrm.move()` inside a recording capturing exactly one state per step;
+- **reading an archive larger than one chunk without materializing it** — assert the
+  reader returns mmapped arrays, which is what makes §2.10 possible;
+- a masked agent round-tripping as masked;
+- `fluid=` forced to `None` on a flow-free environment rather than failing (§2.1).
+
+**Verification:** `pytest` (fast) plus `pytest --runslow` for the plotting smokes, which
+exercise `plot_*` on the Agg backend and will catch signature breakage. The movie test
+additionally needs ffmpeg on `PATH`.
+
+### 6.3 Entry points for a cold start
+
+Line numbers drift; search for the names.
+
+**Step 0 / §5:**
+- `Swarm._calc_basic_stats` (`planktos/_swarm.py`) — the `vel_data` derivation, and note
+  **eight** unpack sites consume its tuple (`grep -n "_calc_basic_stats" planktos/_swarm.py`).
+- `Swarm.move` — the `old_velocities` / `velocities` / `apply_boundary_conditions`
+  ordering that §5.1 turns on.
+- `Environment.reset` (`planktos/_environment.py`) — §5.2, and §2.2's raise.
+
+**Step A:**
+- `Swarm.apply_boundary_conditions` (`planktos/_swarm.py`) — `prev_pos =
+  self.pos_history[-1]`, the A0 dependency; its docstring documents it, so that changes
+  too. The other two sites taking `old_positions` are both inside
+  `Environment.calculate_FTLE`, which inlines its own move loop (and is therefore also
+  why FTLE cannot fire a capture).
+- `Swarm.move`, at the `update_time` block near the end, and `Environment.move_swarms`,
+  after its time bump — the two capture triggers, and the two history-append sites that
+  `capture_interval` gates.
+- `Swarm.move`'s `except BaseException` block — the unconditional `time_history.append`
+  that §2.2 makes conditional.
+- `Environment.add_swarm` — the mid-run notification hook (§2.3).
+- `Swarm.full_pos_history` / `full_vel_history` and `Swarm._select_frames` — the index
+  convention the capture schedule has to match.
+- `Swarm.save_data` — the precedent for "props_history is not saved", and the existing
+  model for a directory of run output; also the §2.11 checkpoint's nearest relative
+  (it already writes `props` to json and `shared_props` to npz).
+- `Swarm.__init__` — `rndState`, `store_prop_history`, `ib_condition`: the checkpoint
+  inventory in §2.11.
+- `Environment.read_IB2d_fluid_data` / `read_vtk_data` / `read_openfoam_vtk_data` /
+  `read_IB2d_mesh_data` / `read_stl_mesh_data` — the loader calls §2.6's provenance
+  record has to name and reproduce.
+
+**Step B:**
+- `FluidData._record_dump_means` (`planktos/fluid.py`) — the dump-arrival hook, called
+  from `__init__` and from all three load sites in `update_spline`.
+- `FluidData.get_vorticity` — the gradient math to extract. Two things to carry with it:
+  the time-invariant branch, which is the case that never calls `_record_dump_means`;
+  and `fluid._spatial_gradient`, which it calls per axis with `periodic_dim[axis]`, so
+  an extracted `_vorticity_from_field` needs `periodic_dim` as an argument.
+- `IB2dData._read_IB2d_dumpfiles` — its reference comment block names every quantity
+  IB2d writes (`Omega`, `P`, `uMag`, `Fx`, `Fy`), and the `uX`/`uY` branch beside it is
+  the scalar read path a vorticity reader reuses unchanged.
+- `_dataio.write_vtk_2D_rectilinear_grid_scalars` — the existing scalar *writer* (used by
+  `Environment.save_2D_vorticity`); the matching reader is what §3.6 says is missing.
+- `_dataio.read_2DEulerian_Data_From_vtk` / `read_vtk_Structured_Points` — what must read
+  back whatever gets written, unchanged, for the interoperability claim to hold.
+
+**Step C:**
+- `Swarm._vorticity_norm` (`planktos/_swarm.py`) — where the global scale plugs in.
+- `animate(n)`'s `n >= len(pos_history)` branch — the live final-frame reads (§4.2).
+
+---
+
+## 7. Obligations
+
+**Changelog (1.1.0)**, all user-visible relative to 1.0.x:
+
+- **[done]** fluid speed statistics replaced by agent-speed spread on plots;
+- **[done]** `playback_rate` added and defaulting to 1, changing existing video output.
+  One line; `fps`'s default did not change and `per_dump` was not built, so neither is
+  changelog material;
+- **[done]** vorticity backdrops no longer flashing (symmetric, non-shrinking colour
+  limits; a supplied `clip` honoured). Shipped in 1.0.3;
+- **[done]** vorticity differenced across the wrap on periodic dimensions, changing the
+  outermost ring of every vorticity plot. Shipped in 1.0.3;
+- **Owed at step 0:** the `_calc_basic_stats` velocity fix (§5.1) — user-visible, it
+  changes plotted statistics on any run with collisions or a periodic domain, and it
+  changes the first frame (§4.3). The `reset()` history fix (§5.2) is a regression-class
+  fix and gets no line of its own. **Both apply to `master`** — add them to the
+  cherry-pick queue at the bottom of `TODO.md` for a future patch release;
+- **Owed at step A:** `Environment.record`, the run archive, and `planktos.load_run`.
+  Dyload-only in its fluid half — it depends on `FluidData` — but the *agent* half does
+  not, so check portability with `git diff master -- <file>` before assuming the whole
+  feature is dyload-only. Two further lines belong to step A in their own right:
+  **`capture_interval`**, which changes what `time_history`, `pos_history` and
+  `vel_history` contain and so is visible to any script that indexes them; and the fact
+  that recording into a **non-empty directory redirects to a timestamped sibling**
+  (§2.1). A0 is an internal refactor with no behavior change and gets no line —
+  if it changes a trajectory, that is a bug, not a changelog entry;
+- **Owed at step B:** if Planktos writes vorticity into the source directory (§3.3) that
+  is user-visible in its own right and needs its own line;
+- **Owed at step C:** `plot_all`/`plot` reading an archive, and the colour and quiver
+  scales becoming global rather than drifting.
+
+**Docs:** **[done]** the `fps`/`playback_rate` model and its `dt` ceiling, and the
+seconds assumption, in `docs/quickstart.rst`. Still owed: `.mkv` guidance for long runs;
+what the archive stores and when it is refused; and an API page for `RunArchive` /
+`load_run` (§2.7) — a public class needs one, unlike everything else in this plan.
+
+**Examples.** The call sites are done (§4.1 "As built") — each example names its
+playback rate explicitly, chosen to be the old `dt × fps` product, and the stale "one
+frame per time step" prose in `ex_ib2d_ibmesh.py` and its docs page is rewritten. What
+remains is the wider prose pass. Current effective playback rates show the footgun's
+fingerprint — a 27× spread with no evident intent:
+
+| Example | `dt` | `fps` | Effective rate |
+|---|---|---|---|
+| `ex_ib2d_ibmesh.py` | 0.025 | 3 | 0.075 — 13× slow motion |
+| `ex_ib2d_sticky.py` | 0.025 | 3 | 0.075 — 13× slow motion |
+| `ex_ib2d_mvbnd_sticky.py` | 0.025 | 6 | 0.15 — 6.7× slow motion |
+| `ex_ind_var.py` | 0.1 | 20 | 2.0 — 2× fast forward |
+
+Under the old scheme `Δt_frame = dt` identically, so the effective rate was just
+`dt × fps` — users could only choose `fps`, and the playback rate fell out wherever it
+fell. That is why the spread is incoherent: nobody chose these rates. Stating the rate
+they already had was the conservative starting point; the fluid examples genuinely want
+slow motion for legible vortices. The real constraint when re-timing: at `dt = 0.025`,
+`playback_rate = 0.075` permits at most 3 fps, so a smoother version of those examples
+needs a **smaller `dt`**, not a different `fps`.
+
+**`TODO.md`:** update the optional-history-retention item when step A lands — the
+archive changes what that feature costs (§2.10).
+
+---
+
+## 8. Deferred
+
+- **Async frame writing.** Matplotlib rendering is slow and currently serializes with
+  the physics. Matplotlib is not thread-safe, but rendering in the main thread and
+  handing only the encode/write to a writer thread would hide most of the I/O cost.
+  **Measure before building** — it may be irrelevant next to the physics.
+- **A live one-pass render mode** (rendering without an archive). Only meaningful if a
+  workflow appears that cannot afford the archive; it inherits the colour-normalization
+  problem (§3.5).
+- **Checkpoint / restart** (§2.11) — designed for, not built.
+- **History-free running** (`store_pos_history=None`): keep no `pos_history` at all and
+  rely on the archive. A0 removes the collision-path obstacle (§2.2) and
+  `capture_interval` covers the rest of the `TODO.md` maybe-feature (§2.10), leaving
+  only this residue — which needs its own pass, because live `plot_all` and
+  `_calc_basic_stats` would then have nothing to read without an archive.
+- **`save_*` re-expressed as archive exports** (§2.10) — deliberately not first-pass.
+
+---
+
+## 9. Component D — tiling and `extend`, as cleanup afterwards
+
+Done once, for 2D **and** 3D together, with `tests/IBAMR_test_data/` available to verify
+the 3D path end-to-end. This is the last thing gated off by the `FlowArray` removal
+(Appendix A) that has not come back.
+
+**It pairs naturally with the work above:** a tiled quiver wraps coordinates the same
+way the interpolator does, so plotting never materializes a tiled array — and doing the
+plotting work first gives tiling a working renderer to validate tiled visualization
+against.
+
+### 9.1 The design: position-wrapping, memory-free, dimension-agnostic
+
+A tiled domain is a periodic extension, and `interpolate_flow` *already* implements
+periodic extension by wrapping query positions (`positions[:,n] % flow_points[n][-1]`).
+So tiling never needs a big array on any hot path:
+
+- store `tiling = (tx, ty[, tz])` + the one base tile on `FluidData`;
+- interpolation wraps agent positions into the base tile, then `interpn` against the base
+  tile — identical in 2D and 3D;
+- vorticity / `|u|`-gradient over a tiled domain = the base tile's field replicated, so
+  compute on the tile and replicate the *result* only if a consumer needs the full field;
+- reported `.shape` / domain extent = arithmetic on `base_shape × tiling`, no allocation.
+
+**The naming rule, adopted when tiling was gated off and still binding:**
+
+> **Public geometry (domain `L`, plot extent, reported grid shape) reflects the *tiled*
+> domain. Stored data and all interpolation use the *base tile*. Nothing materializes
+> the full tiled grid-data array on a hot path.**
+
+If a consumer ever truly needs the big array, that is one explicit
+`materialize_tiled()`-style method that documents its memory cost.
+
+**Reconcile with `periodic_dim`:** a tiled dimension is effectively periodic for
+interpolation. The implementation must define the interaction of `tiling` and
+`periodic_dim` explicitly (a tiled dim implies wrapping regardless of the `periodic_dim`
+flag for that dim), and test it.
+
+**Revisit `extend` here.** `Environment.extend` (pad the fluid domain with copies of the
+edge values) was removed on `dyload` in favor of extrapolation. Decide at this point
+whether to bring it back for the specific fluid fields where padding is the physically
+right answer — it is the same class of operation as tiling (reported domain ≠ stored
+grid) and should share the mechanism rather than re-materializing arrays. If it returns,
+un-skip `test_extend_grows_domain_and_copies_edges` in `tests/test_flow_generation.py`.
+
+### 9.2 Why nothing may be virtualized — the constraint that killed the last attempt
+
+**Do not reintroduce a materializing tiling stopgap, and do not reintroduce a virtualized
+one either.** Both were tried; here is why each failed, because the failure modes are not
+obvious and the second one is genuinely surprising.
+
+**Virtualization is defeated by modern scipy.** The deleted `FlowArray` was an `ndarray`
+subclass that overrode `.shape` and `__getitem__` to report a virtual `k×` grid off one
+stored tile, so that `interpn` / `np.gradient` / matplotlib could index it as if it were
+the big array. NumPy offers `__array_ufunc__` and `__array_function__`, but **neither can
+intercept a bare `values.shape` read or a `values[index_tuple]` index** — which is
+exactly what those consumers do — so overriding on the subclass is forced. That is the
+path the NumPy docs warn against: C-level numpy code reads the true shape from the array
+struct, not the Python property.
+
+And it does not work. `scipy.interpolate.RegularGridInterpolator._check_values` calls
+`np.asarray(values)` on any array-API object, **materializing the real (untiled) buffer
+and discarding the virtual `.shape`/`__getitem__` entirely** (verified on scipy 1.17.1 /
+numpy 2.4.6). So the tiled interpolation path never actually worked — no test ever called
+`interpolate_flow` after `tile_domain`, which is why the breakage went unnoticed for as
+long as it did. Meanwhile the subclass corrupted ordinary numpy operations on flow data.
+
+**Materialization was considered as a 2D-only stopgap and dropped (2026-07-31)** because
+it would not have bought much: of the tiling consumers in the tree,
+`examples/ex_IBAMR_ibmesh.py` (`tile_domain(3,3)`), `examples/ex_sticky_seafan_3d.py`
+(`tile_domain(x=13)`), and the tiling discussion in `examples/basic_ex_3d.py` are all
+**3D** and would have hit `NotImplementedError` anyway. `tests/IBAMR_test_data/` is now
+present, so the real dimension-agnostic implementation can be verified end-to-end against
+actual 3D data — a throwaway 2D materializer would be work that had to be deleted again.
+It also contradicts the naming rule above: better to have the feature clearly and loudly
+unavailable than to have it quietly behave one way in 2D and another way eventually in 3D.
+
+### 9.3 Restoration checklist — everything the gating touched
+
+Gating tiling off left notices, stubs, and replaced tests across source, tests, examples,
+docs, and prose. **This is the complete list**; work down it when tiling returns, and
+delete this subsection once it is empty.
+
+⚠️ **Read this first: the old bodies are preserved in place, commented out.**
+`FluidData.tile_flow` and `Environment.tile_domain` both had their entire bodies replaced
+by a `raise`, but the previous implementations sit directly beneath each raise under a
+`PREVIOUS IMPLEMENTATION, KEPT FOR RESTORATION` banner. **Reuse them rather than
+rewriting from memory** — parts of both are still correct:
+
+- `tile_domain` — only its `self.flow.tile_flow(x,y)` call is superseded by
+  position-wrapping. The ibmesh tiling (offsetting copies by `L[0]*ii`, `L[1]*jj`), the
+  `self.L` scaling, and the `_reset_flow_deriv()` call are still correct verbatim.
+- `tile_flow` — the `f.tiling` propagation is dead (`FlowArray` and the spline `tiling`
+  attributes are gone), but the `fshape` arithmetic and the `flow_points` extension are
+  the shape/geometry half of the naming rule and carry over as-is. The reported
+  coordinate arrays still have to grow with the tiling even though the velocity data
+  will not.
+
+**Source — remove the gates:**
+- [ ] `planktos/fluid.py` — `FluidData.tile_flow`: replace the `raise` and its
+      `.. note::` with the position-wrapping implementation, reusing the commented-out
+      `fshape`/`flow_points` handling. Delete the commented block once its useful parts
+      are back in force.
+- [ ] `planktos/_environment.py` — `Environment.tile_domain`: same, restoring the
+      commented-out ibmesh/`L`/`_reset_flow_deriv` logic. Note the docstring currently
+      explains *why* it raises before mutating anything — that rationale stops applying
+      once the call succeeds. Delete the commented block afterward.
+- [ ] `planktos/_swarm.py` — the `Swarm` class docstring example lost its
+      `>>> envir.tile_domain(3,3)` line (it would have raised). Restore if you want the
+      example to show tiling again.
+
+**Tests — replace the interim contract with a behavioral one:**
+- [ ] `tests/test_flow_generation.py` — delete `test_tile_domain_raises_not_implemented`,
+      `test_tile_domain_leaves_environment_untouched`, and
+      `test_tile_flow_raises_on_fluiddata_directly`, plus the section comment above them.
+      Restore a real check: the pre-gating `test_tile_flow_replicates_and_resizes` is in
+      git history and is a reasonable starting point, **but it only covered 2D and only
+      the stored values** — the new implementation needs interpolation-through-tiling and
+      3D coverage, which is exactly what was missing before (§9.2: no test ever called
+      `interpolate_flow` after `tile_domain`, which is why the breakage went unnoticed).
+- [ ] Add the `tiling` × `periodic_dim` interaction tests §9.1 calls for.
+
+**Examples — delete the notices:**
+- [ ] `examples/ex_IBAMR_ibmesh.py` — "!!! THIS EXAMPLE DOES NOT CURRENTLY RUN TO
+      COMPLETION !!!" block in the module docstring.
+- [ ] `examples/ex_sticky_seafan_3d.py` — same block in the module docstring.
+- [ ] `examples/basic_ex_3d.py` — the `# NOTE: tile_domain currently raises ...` comment.
+- [ ] `examples/old_examples/old_ex_pltcyl.py` calls `tile_domain(3,3)` and was
+      **deliberately left unflagged** — it is archived record-keeping code whose own
+      header says to skip it. Nothing to undo; listed so its absence above does not read
+      as an oversight.
+
+**Docs — delete the warnings:**
+- [ ] `docs/examples/IBAMR_ibmesh.rst` — the `.. warning::` after the `tile_domain`
+      snippet.
+- [ ] `docs/examples/basic_3d.rst` — the `.. warning::` after the tiling paragraph.
+- [ ] When `docs/api/FluidData.rst` finally exists (an open `TODO.md` item), make sure
+      `tile_flow`'s docstring no longer carries the unavailability note.
+
+**Prose — retract the "temporarily unavailable" framing:**
+- [ ] `CLAUDE.md` — the "**Domain tiling currently raises `NotImplementedError`**"
+      paragraph in "Fluid data architecture", and the `test_flow_generation.py` bullet in
+      the Tests section.
+- [ ] `TODO.md` — Phase 1 item **(E)**, and the deferred `Environment.extend` item.
+- [ ] This note — §9 in its entirety, and the tiling row in §0.2.
+
+### 9.4 Release coordination
+
+`changelog.txt` under 1.1.0 carries
+`- Domain tiling temporarily raises NotImplementedError; it returns with 2D and 3D support.`
+That line is accurate **only if 1.1.0 ships before tiling returns.** If tiling lands
+first, delete it and describe the new implementation instead. Do not let both statements
+ship together.
+
+---
+
+## Appendix A — what the deleted fluid-interface note established
+
+`docs/notes/flow_field_interface.md` was the design record for reshaping
+`Environment.flow` on `dyload`. Its §1–§7 are **complete**; this appendix is all that
+needs to survive as reference. The full analysis, the defect reproductions, and the
+consumer audit are in git.
+
+**What it concluded and what shipped:**
+
+- `Environment.flow` is a `fluid.FluidData` (or subclass), or `None`. Container
+  (`len(flow)`, `flow[dim]`, iteration, `np.array(flow)`) and callable (`flow(time)`,
+  triggering `update_spline` on out-of-window times) contracts unchanged.
+- **`FlowArray` was deleted.** Velocity components — stored static arrays and spline
+  returns alike — are **plain `np.ndarray`**. Every numpy/scipy/matplotlib operation
+  works natively; there are no interop caveats and **no `np.asarray()` defensive
+  wrapping**. If you find such a wrapper, it is a leftover. Roughly 380 lines net came
+  out: the ~165-line class, the tiling index-mapping branches inside
+  `LinearSpline.__getitem__` / `fCubicSpline.__getitem__` (~73 lines each), and the
+  `tiling`/`dshape` attributes throughout.
+- **Its sole justification was tiling**, which it did not actually deliver (§9.2). Tiling
+  and `Environment.extend` were therefore deferred wholesale rather than stopgapped;
+  §9 is the real implementation.
+- **`fmin`/`fmax` are tuples**, not single-use generators.
+- Three live bugs surfaced and were fixed: `fmin`/`fmax` (above), `max_spd` /
+  `get_mean_fluid_speed` corrupted by the subclass, and `get_raw_loaded_data` broken on
+  the entire dynamic path (`LinearSpline.regenerate_data` did not exist).
+- **`tests/test_flow_interface.py` is the safety net** for all of it, and pins the
+  `Environment.flow` consumer contract: `interpolate_flow` /
+  `interpolate_temporal_flow` values (2D + 3D, on/off-node, extrapolation), the container
+  and spline-indexing surface, `fmin`/`fmax` tuples, `_calc_basic_stats` (including that
+  it pulls **no** fluid field), `get_mean_velocity`, `get_mean_fluid_speed`,
+  `calculate_mag_gradient`, `get_raw_loaded_data`, `fshape`, the plotting strided-slice
+  path, the `LinearSpline`/`INUM` temporal path, and 3D vorticity. All closed-form. Keep
+  it green.
+
+  The `LinearSpline` coverage matters disproportionately: `test_temporal_interp.py` unit-
+  tests `fCubicSpline` thoroughly but never touched `LinearSpline`, even though it is what
+  *every* dynamically-loaded run interpolates with. `Environment(flow=...)` hardcodes
+  `INUM=None`, so those tests construct `FluidData` directly.
+
+**The durable lesson**, which is why §9.2 exists: the interface's blast radius is
+`_environment.py` + a few `_swarm.py` accessors + plotting. `_geom.py`, `_ibc.py`,
+`_dataio.py` and `__init__.py` do not touch the flow field, and `motion.py` never touches
+`Environment.flow` directly — it goes through the four `Swarm` accessors
+(`get_fluid_drift`, `get_dudt`, `get_DuDt`, `get_fluid_mag_gradient`), all of which funnel
+into `Environment.interpolate_flow`.
+
+## Appendix B — re-running the consumer audit
+
+Line-number catalogues went stale the moment work landed and are not worth maintaining.
+If an exhaustive per-site list is needed again, re-run the audit rather than trusting a
+recorded one:
+
+```
+grep -rn "\.flow\|flow_points\|flow_times\|np\.asarray\|interpolat" \
+    planktos/ tests/ examples/
+```
+
+Highest-signal sites, by role:
+
+- **Spatial interpolation (hot path):** `_environment.py` `interpolate_flow`,
+  `interpolate_temporal_flow`.
+- **Swarm accessors → interpolation:** `_swarm.py` `get_fluid_drift`, `get_dudt`,
+  `get_DuDt`, `get_fluid_mag_gradient`.
+- **Gradient / analysis:** `calculate_mag_gradient`, `get_mean_fluid_speed`,
+  `get_vorticity`, `get_dudt`, `calculate_DuDt`, `_calc_basic_stats`.
+- **Save / round-trip:** `save_fluid`, `save_2D_vorticity`.
+- **Plotting:** `plot_flow`, `plot_2D_vort`, `Swarm.plot` / `plot_all` (quiver strided
+  slices `flow[k][::M,::N].T`, `fmax` unpack, `fshape[1:]` frame sizing).

@@ -11,7 +11,7 @@ Two of them, both pure enough to test in the fast run:
 
 The rendering side of plot_all is covered by test_plotting_smoke.py.
 
-See docs/notes/flow_field_interface.md sections 8.3.4 and 8.3.5.
+See docs/notes/run_persistence.md sections 3.5 and 4.1.
 '''
 
 import warnings

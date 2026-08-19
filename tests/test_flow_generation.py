@@ -68,7 +68,7 @@ def test_brinkman_3D_static_shape():
 # olator calls np.asarray on any array-API object, discarding the virtual shape --
 # so the tiled interpolation path was broken and untested, and FlowArray has been
 # removed. Tiling returns later as a position-wrapping implementation covering 2D
-# and 3D. See docs/notes/flow_field_interface.md.
+# and 3D. See docs/notes/run_persistence.md.
 #
 # These pin the *interim* contract: a loud failure, and no partial mutation.
 

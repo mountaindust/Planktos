@@ -1,7 +1,7 @@
 '''Where does vorticity cost less: recomputed from velocity, or read from disk?
 
-Supports the vorticity rule in docs/notes/flow_field_interface.md section
-8.3.3.
+Supports the vorticity rule in docs/notes/run_persistence.md section
+3.3.
 Vorticity is LAZY in every strategy here -- nothing is preloaded, because
 holding a whole series of it is exactly what item 6 ruled out. So the two ways
 to answer get_vorticity(t) are:

@@ -1,6 +1,6 @@
 '''Pins the dynamic (windowed) fluid-loading machinery -- TODO.md Phase 1 (A),
 (B) and (D), plus the per-dump mean cache that plotting reads instead of the
-field (flow_field_interface.md §8.3.1).
+field (run_persistence.md §3.1).
 
 `FluidData.update_spline` is the workhorse of this branch: it responds to a
 request for a time outside the currently loaded window by loading the next or
@@ -339,7 +339,7 @@ def test_no_load_when_query_stays_inside_the_window():
 
 
 def test_fmin_fmax_stay_tuples_and_widen_across_slides():
-    # Regression lock for the generator bug (flow_field_interface.md §3.3) on the
+    # Regression lock for the generator bug (run_persistence.md Appendix A) on the
     # path where it actually bit: update_spline subscripts self.fmin on every
     # slide, which raised TypeError when it was a generator expression.
     dyn, _, t = _pair(_field_2d(), 5)
@@ -466,14 +466,14 @@ def test_dudt_3d_matches_full_linear():
 
 
 # --------------------------------------------------------------------------- #
-#        per-dump mean cache under a sliding window (plotting, §8.3.1)         #
+#        per-dump mean cache under a sliding window (plotting, §3.1)         #
 # --------------------------------------------------------------------------- #
 # Plot frames need the spatial mean of each velocity component. Computing it
 # from the field would make plotting re-stream the whole dataset a second time,
 # so FluidData caches the mean of each dump as that dump loads and evaluates it
 # with the same interpolation weights the field uses. The mean is linear and the
 # interpolation is a weighted sum of nodal fields, so this is exact, not an
-# approximation (§8.5).
+# approximation (§3.2).
 #
 # The field here is not linear in time, so agreement with the field's own mean is
 # a statement about that identity rather than about both being trivially exact.
