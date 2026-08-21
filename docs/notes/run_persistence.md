@@ -69,8 +69,9 @@ full.
 
 In order:
 
-1. ~~**§5 — the two prerequisite bug fixes.**~~ **[done 2026-08-19]** They settled a
-   number the archive was going to store, so they came before anything wrote it to disk.
+1. ~~**§5 — the prerequisite bug fixes.**~~ **[done]** §5.1 and §5.2 on 2026-08-19,
+   §5.3 on 2026-08-21. Each settled state the archive was going to store, so they came
+   before anything wrote it to disk.
 2. **§2 — build the run archive** (§6.1 step A, six sub-steps) — **this is the front of
    the queue.** ⚠️ **A0 comes first and comes alone**: `apply_boundary_conditions`
    currently takes each agent's movement start point from `pos_history[-1]`, so a
@@ -297,6 +298,16 @@ is a very expensive thing to discover after a twelve-hour run.
 | `envir.stop_recording()` | flush, then unregister the hooks. Idempotent |
 | `with envir.record(...)` | as above, plus `stop_recording()` on exit and the optional auto-plot |
 
+**A second `record()` while one is active raises**, naming `stop_recording()`. There is
+one recorder per environment by construction — the time-advance hook finds it through a
+single reference on the `Environment` — so a second call could only replace the first,
+which would abandon a partly-written archive without saying so, or run beside it, which
+the hook cannot express. Refusing is the only honest option, and the directory-redirect
+rule above means the remedy (stop, then record again) never overwrites anything either.
+Note this is the same argument §2.1 opens with, applied to the environment-scoped
+recorder that survived it, so it is not a new constraint — only one that was never
+written down as a behavior.
+
 *(Naming: the original spec called the middle one `flush_cache()`. Renamed with the
 reframe so the triple reads coherently; the stored data is an archive, not a cache.)*
 
@@ -509,10 +520,12 @@ code `CLAUDE.md` singles out as the most subtle in the project. Verification is 
 strong, though: at `capture_interval=1`, `self._prev_positions` and `pos_history[-1]` are
 **the same object**, so the refactor is provably a no-op — and the existing collision
 suite pins *exact* post-collision positions plus a golden multi-step moving-boundary
-trajectory. If those stay bit-identical, A0 is correct by construction. The new test is
-the forward-looking one: a run at `capture_interval=k` produces **bit-identical
-trajectories** to the same run captured every step, driven through a mesh so the
-collision path is exercised. What is recorded must not change what happens.
+trajectory. If those stay bit-identical, A0 is correct by construction. §6.1 A0 lists the
+four checks in full, including the one that proves the decoupling outright by making
+`pos_history` unusable before the boundary stage and asserting the trajectory does not
+move. The forward-looking test — a `capture_interval=k` run reproducing an every-step
+run's trajectory bit-for-bit — belongs to **A3**, since the interval does not exist until
+then.
 
 **This knot needed untying anyway.** `TODO.md` records an earlier refactor — reordering
 the history appends to after the boundary stage — that was **rejected specifically
@@ -527,6 +540,26 @@ change, and `capture_interval` is what finally forces it.
   when *n* ≡ 0 (mod *k*), and the capture hook fires at the *end* of step *n* when
   *n*+1 ≡ 0 (mod *k*) — the same set of states, seen from the two ends of a step.
   Capture 0 at `record()` covers t₀.
+  - ⚠️ **The counter has exactly two advance sites, and a hand-rolled time bump is
+    neither of them.** `Swarm.move(update_time=True)` and `Environment.move_swarms` are
+    where it moves. A user who instead writes `swrm.move(dt, update_time=False)` and
+    then `envir.time += dt` by hand leaves the counter frozen at whatever *n* it held —
+    so under `capture_interval=k` history appends on *every* such step if that frozen
+    *n* ≡ 0 (mod *k*) and on *none* of them otherwise, while `time_history` grows by
+    hand each step either way. `len(time_history) == len(pos_history)` — the invariant
+    this whole schedule rests on — breaks, and no capture ever fires because the hook
+    is on the paths that were bypassed. **Today this is harmless**, because nothing is
+    gated: history appends unconditionally and the hand-rolled `time_history.append`
+    keeps step with it. The counter is what makes it reachable.
+  - **§5.3 closes the multi-swarm half of this and leaves the single-swarm half.** A
+    bare per-swarm `move()` loop over several swarms now raises, so the pattern the
+    codebase used to document is gone. What survives is one swarm moved with
+    `update_time=False` and the clock advanced by hand, which has no legitimate use —
+    `update_time=False` exists for `move_swarms` to call. **So `Swarm.move` warns when
+    it is passed `update_time=False` while a recorder is active**, naming
+    `move_swarms`. A warning rather than a raise: it is legal today, it is nobody's
+    documented workflow, and only a recording makes it wrong. Lands with **A3**, beside
+    the counter that creates the hazard.
 - **The failed-step handler appends `envir.time` to `time_history` unconditionally**
   (`move()`'s `except BaseException` block, which keeps the histories consistent for
   debugging). Under decimation it must append only when the failed step was a capture
@@ -573,11 +606,35 @@ run_archive/
                             INUM=None it is not written at all
     dump_stats.npz          per-dump extrema and component means; rewritten per dump
   agents/
-    swarm00_pos_000.npy     (rows, N, D) float64   -- swarm index, then chunk index
-    swarm00_vel_000.npy     (rows, N, D) float64
-    swarm00_mask_000.npy    (rows, N) bool
-    times_000.npy           (rows,) float64, shared across swarms
+    swarm00_pos_0000.npy    (rows, N, D) float64   -- swarm index, then chunk index
+    swarm00_vel_0000.npy    (rows, N, D) float64
+    swarm00_mask_0000.npy   (rows, N) bool
+    times_0000.npy          (rows,) float64, shared across swarms
 ```
+
+**Indices in filenames are zero-padded to four digits, and the reader sorts them
+numerically — the padding is for humans, the parse is for correctness.** Four digits at
+the default `chunk_size=100` covers 10 000 chunks, i.e. a million captures, which is
+past any run this is built for; five-digit `quiver_00042.npy` is keyed on the dump index
+and already had the room. But padding is not the rule and must not be relied on as one:
+`%04d` simply grows a fifth digit at chunk 10 000, at which point lexical order puts
+`_10000` before `_9999` and a reader that globbed-and-sorted would silently assemble the
+run out of order. **This exact failure has already been paid for once on this branch**
+— the OpenFOAM dump directories are named with unpadded numbers, and a lexical sort put
+`..._1008` before `..._787` (`TODO.md`, Phase 2, `_natural_key`). So the reader parses
+the integer out of each name and sorts on that, and the same rule covers the fluid
+files.
+
+Two checks come with the scan, since §2.5 makes disk the authority on the timeline:
+
+- **The recovered chunk indices must be a contiguous run** from 0 (or from the chunk
+  holding a late swarm's `first_capture`). Chunks are written in order, so a hard kill
+  costs the *last* buffer and never a middle one — a gap therefore means a lost or
+  corrupt file, not an interrupted run, and gets §2.8's refusal naming the missing
+  index rather than a silent short read.
+- **Every chunk but the permitted short ones has exactly `chunk_size` rows** (the last
+  chunk is short at the end, a late swarm's first is short at the front). This is what
+  turns a chunk index into a global capture index without trusting a recorded count.
 
 **Files are keyed by swarm *index*, names live in the metadata.** The default `Swarm`
 name is `'organism'` for every swarm, so two swarms in one environment collide by name
@@ -690,6 +747,18 @@ option selects which arrays are kept, defaulting to positions and velocities;
 `accelerations` and `ib_collision_idx` are reserved schema slots. Velocities are not
 practically optional — `_calc_basic_stats` needs them (§5.1), and re-deriving them from
 positions is the trap described there.
+
+⚠️ **`store=` without velocities produces an analysis-only archive, and that is
+allowed — but say so at `record()` time, not at render time.** §2.8 makes a missing
+quantity a hard refusal, so `store=('positions',)` yields an archive `plot_all` will
+decline, twelve hours later, for a reason chosen twelve hours earlier. The two are
+consistent; what is missing is the notice. So: `record()` **warns** when `store` omits
+velocities, naming what will not be renderable, and the reader's refusal names `store=`
+as the cause. Dropping positions is different — there is no consumer at all without
+them, in or out of plotting — so `store` must include `'positions'` and **raises**
+otherwise. *(The `dtype` field §2.3 lists in `meta.json` records what was written; it is
+`float64` throughout and no parameter offers anything else. It is in the schema so a
+later single-precision option cannot silently change what an old archive means.)*
 
 **What a coarser schedule means for the recorded velocities.** `self.velocities` is
 recomputed every step from consecutive positions, so `vel_history[j]` is the
@@ -804,6 +873,23 @@ there is no such attribute anywhere — so this is a small edit to each of
 `read_stl_mesh_data` and `read_vertex_data`. It is easy to overlook when planning
 step A because §2.6 reads like a serialization task; it is a *loader* task. §6.1 A1
 carries it.
+
+⚠️ **`Environment.__init__` is a fluid entry point too, and it is the one the test
+suite uses.** `Environment(flow=[u, v], flow_times=t)` takes a list of ndarrays and
+never calls a loader at all — it is a documented constructor argument, it is how most
+of `tests/` builds fluid, and Appendix A notes it hardcodes `INUM=None`. A1 that edits
+only the eleven loaders therefore leaves the most-exercised construction path with **no
+provenance attribute at all**, and the writer meets an `AttributeError` on the first
+archive anyone records in a test. Two things follow, both one-liners, both easy to miss
+precisely because they are not loaders:
+
+- **Initialize `_fluid_provenance` and `_ibmesh_provenance` to `None` in `__init__`**,
+  so the attribute always exists and the writer never has to `getattr`-with-default
+  around a hole in its own schema.
+- **Record `flow=` as honestly unreconstructible.** Arrays handed over in process have
+  no call to replay, so the record is `{"loader": null, "note": "arrays supplied to
+  Environment()"}` rather than a fabricated loader name. That is exactly the case the
+  paragraph below is about: mark it `null`, and never let a reader silently act on it.
 
 **The environment scalars are deliberately duplicated.** `L` and `units` also appear at
 `meta.json`'s top level and in `grid.npz`, which the rule against redundant derivable
@@ -1504,11 +1590,12 @@ long run mid-flight. Remuxing afterwards is lossless and one call:
 
 ## 5. Prerequisite bug fixes — **[done]**
 
-Two defects found while reframing this plan (2026-08-18). Both predate all of it, both
-are present on `master`, and both touch numbers the archive is about to persist — so
-they were settled first, not folded into the build. **Both landed 2026-08-19**, with
-tests, changelog lines, and entries in `TODO.md`'s cherry-pick queue; what follows is
-kept as the record of what was wrong and why the fix is what it is.
+Three defects found while reframing this plan and while planning step A. All three
+predate the plan, all three are present on `master`, and all three touch state the
+archive is about to persist — so they were settled first, not folded into the build.
+§5.1 and §5.2 **landed 2026-08-19**; §5.3 **landed 2026-08-21**. Each came with tests, a
+changelog line, and an entry in `TODO.md`'s cherry-pick queue; what follows is kept as
+the record of what was wrong and why the fix is what it is.
 
 ### 5.1 `_calc_basic_stats` finite-differences positions instead of using recorded velocities
 
@@ -1582,6 +1669,77 @@ oversight rather than intent.
 - ⚠️ **§2.2's rule that `reset()` must *raise* while recording is not part of this**, and
   is still owed: there is no recorder yet. It lands with §6.1 **A3**.
 
+
+### 5.3 A bare `Swarm.move()` froze the other swarms into an inconsistent history
+
+*(Found 2026-08-21 while scoping A3, which rewrites this exact block.)*
+
+[`planktos/_swarm.py`, `Swarm.move`] ended its `update_time` block by freezing every
+other swarm in the environment:
+
+```python
+for s in self.envir.swarms:
+    if s is not self and len(s.pos_history) < len(self.pos_history):
+        s.pos_history.append(s.positions.copy())      # and nothing else
+```
+
+**`vel_history` and `props_history` were not appended.** So a frozen swarm's histories
+came apart and stayed apart for the rest of the session — the same failure mode as
+§5.2, from a different site. Measured, two swarms, three moves of the first:
+
+```
+s1 pos/vel: 3 3
+s2 pos/vel: 3 0
+s2 full_pos 4  full_vel 1
+```
+
+Both consumers that pair the two by index then raise `IndexError`: `_calc_basic_stats(
+t_indx=2)` (which reads `full_vel_history` after §5.1) and the `plot_all` heading arrows
+(`np.arctan2(vel_history[n][:,1], ...)`). A warning was issued, but it named the wrong
+problem — it said the other swarms had not been moved, not that their records had been
+corrupted.
+
+**Fix: raise instead of freezing.** *(Decided 2026-08-21.)* Advancing the environment
+clock on behalf of one swarm while the others stand still is no longer supported at all.
+`Swarm.move` refuses when `update_time` is true and the environment holds more than one
+swarm, and points at `Environment.move_swarms`. The freeze-append and its warning are
+**deleted**, not repaired.
+
+Repairing it was the obvious alternative and is the worse one. A frozen swarm has no
+velocity for the interval — it did not move, but neither did it hold still as a modelled
+fact — so any value appended to `vel_history` would be an invention, and appending zeros
+would flow straight into the statistics box and the heading arrows as a real measurement.
+There is no half-moved state worth recording. The plan already disowns the workflow on
+independent grounds (§2.2: "the manual multi-swarm pattern … is not a real workflow"),
+so the archive loses nothing it wanted.
+
+- **Applies to `master`:** yes — the block is byte-identical there. ⚠️ But it is a
+  **behavior break**, a warning becoming a raise, so it is semver-visible and belongs in
+  **1.1.0** rather than a patch. Logged in the cherry-pick queue with that caveat.
+- **As landed.** The guard sits directly after `move()`'s existing `envir.time is None`
+  check (that one keeps precedence: it carries recovery instructions for a broken state,
+  where this one is a usage error). `update_time`'s docstring now says what it is
+  actually for — `move_swarms` calls it, users do not — and a `Raises` section was added.
+  Three tests in `tests/test_swarm_lifecycle.py`:
+  `test_bare_move_refuses_when_the_environment_holds_more_than_one_swarm` (including that
+  nothing was moved, recorded, or advanced on the way to the raise),
+  `test_move_swarms_keeps_every_history_in_step` (which exercises the two consumers that
+  used to raise), and `test_a_single_swarm_still_moves_itself`.
+- ⚠️ **It surfaced a latent test bug**, which is the kind of thing this change is for:
+  `test_agent_models.py::test_brownian_is_seed_reproducible_and_seed_sensitive` built one
+  `Environment` outside a helper that was called four times, so it was quietly stacking
+  four swarms into it. The runs were meant to be independent; the environment is now
+  constructed per run.
+- **Three consequences for the rest of this plan**, all simplifications:
+  - §2.2's rule that capture fires from "the end of `Swarm.move` when `update_time=True`,
+    and the end of `Environment.move_swarms`" is now unambiguous: with more than one
+    swarm only the second path exists, so a capture can never fire against a
+    partly-moved environment.
+  - The multi-swarm warning is gone, so it cannot become intermittent under
+    `capture_interval` (it lived inside the freeze-append, which A3 gates).
+  - `full_vel_history` and `full_pos_history` are now the same length for every swarm in
+    every reachable state, which is what §2.4's capture-index identity assumes.
+
 ---
 
 ## 6. Build order
@@ -1600,23 +1758,57 @@ parameters, no matplotlib. Six sub-steps, each independently testable:
       **three** sites that take it — `Swarm.move` and the two inlined loops in
       `Environment.calculate_FTLE` — plus an `__init__` default and the docstring that
       documents the old dependency. **This touches the riskiest code in the project**
-      (`CLAUDE.md`: the no-penetration invariant), so it lands first and alone, with the
-      existing collision suite bit-identical and a new test that a `capture_interval=k`
-      run reproduces an every-step run's trajectory exactly. Nothing else in step A is
-      safe until it is done, because `capture_interval` silently corrupts collisions
-      without it. **§2.2 carries the failure analysis, the three failure modes, the
-      sweep showing this is the only such site, and the verification argument** — read
-      it before touching the code.
+      (`CLAUDE.md`: the no-penetration invariant), so it lands first and alone. Nothing
+      else in step A is safe until it is done, because `capture_interval` silently
+      corrupts collisions without it. **§2.2 carries the failure analysis, the three
+      failure modes, the sweep showing this is the only such site, and the verification
+      argument** — read it before touching the code.
+
+      **How A0 is validated — all of it available at A0.** The obvious test, that a
+      `capture_interval=k` run reproduces an every-step run's trajectory exactly, cannot
+      be written here: `capture_interval` does not exist until **A3**, and that is where
+      it now lives. What A0 can prove, it can prove more directly:
+
+      - **The existing collision suite, bit-identical.** `test_collisions_*` pin *exact*
+        post-collision positions plus a golden multi-step moving-boundary trajectory,
+        and at `capture_interval=1` `self._prev_positions` and `pos_history[-1]` are
+        **the same object** — so the refactor is a no-op by construction and the suite
+        is the check on that.
+      - **Assert the object identity, don't just argue it.** `self._prev_positions is
+        self.pos_history[-1]` holds at every step today. Pinning it leaves behind a
+        guard that fails the moment A3's gating touches one append site and not the
+        other — which is the way this decoupling would silently come undone.
+      - **Prove the decoupling behaviorally, without `capture_interval`.** Make
+        `pos_history` unusable immediately before the boundary stage — replace it with
+        `[]`, or with rows of `nan` — and assert the trajectory through a mesh is
+        unchanged. That is the actual claim A0 makes ("the physics no longer reads the
+        recording"), it is stronger than any interval test, and nothing in it waits on
+        A3.
+      - **FTLE bit-identical.** `test_analysis.py`'s closed-form forward and backward
+        fields cover the two inlined `calculate_FTLE` loops, which are the two of the
+        three edit sites most easily missed — they are in a different file from the one
+        the change is *about*.
   A1. **Provenance at load time** (§2.6). Each fluid and mesh loader, and each analytic
       flow generator, records its own call into `Environment` state. Independent of
       everything else, testable on its own, and easy to under-scope: it is a *loader*
-      edit across ~11 methods, not a serialization detail of the writer.
+      edit across ~11 methods, not a serialization detail of the writer. ⚠️ **Plus
+      `Environment.__init__`**, which is not a loader but is a fluid entry point
+      (`Environment(flow=[u, v], flow_times=t)`) and is the one most of `tests/` uses —
+      it initializes both attributes to `None` and records the direct-array case as
+      unreconstructible. Miss it and the writer raises `AttributeError` on the first
+      archive recorded in a test.
   A2. **`planktos/archive.py`: the writer.** Schema, fingerprint, atomic file
       replacement (§2.5), chunked agent writer keyed on the global capture index.
   A3. **`Environment.record` / `flush_recording` / `stop_recording`**, the environment
       step counter and capture-step predicate (§2.2), the `_notify_step_complete` hook
       in `Swarm.move` / `Environment.move_swarms`, the history-append gating in both,
-      the `add_swarm` notification (§2.3), and the `reset()` refusal.
+      the `add_swarm` notification (§2.3), the refusal of a second concurrent
+      `record()` (§2.1), and the `reset()` refusal.
+
+      **A0's forward-looking test lands here**, because this is where the thing it tests
+      first exists: a run at `capture_interval=k` produces **bit-identical agent
+      trajectories** to the same run captured every step. Drive it through a mesh so the
+      collision path is exercised. What is recorded must not change what happens.
   A4. **The reader** (`RunArchive`, `planktos.load_run`), mmap-backed, resolving by
       time and snapping — **not** interpolating — agent state (§2.7). Including it here
       makes A testable end to end without touching a line of rendering code, which is
@@ -1682,10 +1874,13 @@ as well. Under `INUM=None` there is nothing to compare, since the render calls
 anywhere**, which is the regime's whole content and would otherwise fail silently by
 costing disk nobody asked for.
 
-**The third belongs to A0 and is the one that protects the physics:** a run at
+**The third belongs to A3 and is the one that protects the physics:** a run at
 `capture_interval=k` produces **bit-identical agent trajectories** to the same run
 captured every step. What is recorded must not change what happens. Drive it through a
-mesh so the collision path is exercised, since that is the path A0 rewires.
+mesh so the collision path is exercised, since that is the path A0 rewires. *(It reads
+like an A0 test and was filed there through several drafts, but `capture_interval` does
+not exist until A3 — §6.1 A0 lists the four checks that do land with the refactor
+itself, one of which proves the decoupling more directly than this one does.)*
 
 Round out with:
 
@@ -1707,6 +1902,14 @@ Round out with:
 - `capture_interval=k` giving `len(time_history) == len(pos_history)` and a capture
   count of `steps//k + 1`, with `time_history` holding only captured times (§2.2);
 - a failed step under `capture_interval=k` leaving the histories consistent (§2.2);
+- `move(update_time=False)` warning while a recorder is active (§2.2), and
+  `move_swarms` under `capture_interval=k` keeping every swarm's histories the same
+  length as `time_history`;
+- a second `record()` on an environment already recording raising (§2.1);
+- `store=` omitting velocities warning at `record()`, and omitting positions raising
+  (§2.4);
+- chunk files recovered in **numeric** and not lexical order, and a deliberately removed
+  middle chunk refusing rather than short-reading (§2.3);
 - `add_swarm` mid-recording: the late swarm's `first_capture`, its short first chunk,
   and its front-padded masked rows aligning to `run.times` (§2.3, §2.7);
 - two swarms with the same default name: index access works, name access raises (§2.7);

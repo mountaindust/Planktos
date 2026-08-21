@@ -12,7 +12,7 @@ Temporal interpolation of dynamically-loaded data is **linear in time**
 (`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
 story.
 
-**Suite is green: 591 passed / 22 skipped (`pytest`), 611 passed / 2 skipped
+**Suite is green: 669 passed / 22 skipped (`pytest`), 689 passed / 2 skipped
 (`pytest --runslow`).** No failures, no xfails.
 
 **What is done:**
@@ -38,14 +38,16 @@ asserted. That was the branch's stated remaining reason to exist.
 
 **Where the work goes next, in priority order:**
 
-Items 1 and 2 are **both active and run in parallel**, in separate sessions.
+Item 2 is the active work; item 1 has one sub-item left and can run beside it.
 
 1. 🔴 **The robustness pass on the OpenFOAM loader** — making the Phase 2 loader usable
-   on the next dataset. The list is under Phase 2, "Robustness follow-ups".
+   on the next dataset. The list is under Phase 2, "Robustness follow-ups". **One item
+   is left** — surfacing a stored `vorticity` — and it was folded into
+   `run_persistence.md` §3.3, so it is really component B of item 2 rather than a
+   competing thread.
 2. 🔴 **The run archive and the plotting work it feeds** — `docs/notes/run_persistence.md`,
-   components A–C. **In flight in a concurrent session; do not pick it up from this
-   file.** Listed so the priority order is complete, not as an invitation to start.
-   Detail below.
+   components A–C. **This is the work in hand.** Start at §6.1 step **A0**; §5.3 is a
+   prerequisite that lands with it. Detail below.
 3. 🟡 **Note §9** (real position-wrapping tiling, 2D and 3D; whether `Environment.extend`
    returns) — the design pass is now written up in `run_persistence.md` §9; §9.3 is the
    restoration checklist. This also **unblocks the prose-docs sweep**, which is
@@ -1254,11 +1256,15 @@ Add to this list whenever a fix made on `dyload` is not dyload-specific. The tes
 that is simple: does the code it touches look the same on `master`? Check with
 `git diff master -- <file>` before assuming.
 
-### Queued for a possible 1.0.4 — empty
+### Queued for a possible 1.0.4 — one entry
 
-Nothing has been queued since `v1.0.3`; new entries go here. Everything below this
-heading is history — it shipped, or was deliberately not ported — kept for the porting
-notes rather than because anything is pending.
+Everything below the next heading is history — it shipped, or was deliberately not
+ported — kept for the porting notes rather than because anything is pending. Per the
+release plan there is no `1.0.4` in preparation; this is a holding pen.
+
+| What | Where | Applies cleanly to `master`? |
+|---|---|---|
+| **`Swarm.move` raises when the Environment holds more than one Swarm** (2026-08-21), replacing the warn-and-freeze block that appended to `pos_history` alone and left `vel_history` / `props_history` behind. Ships with the docstring rewrite of `update_time`, three tests in `test_swarm_lifecycle.py`, and the `test_agent_models.py` fix for a test that was accidentally stacking four Swarms into one Environment | `planktos/_swarm.py` (`Swarm.move`), `tests/test_swarm_lifecycle.py`, `tests/test_agent_models.py`, `docs/quickstart.rst` | **Yes, by hunk.** The freeze-append block is byte-identical on `master` (`git show master:planktos/_swarm.py`, the `len(s.pos_history) < len(self.pos_history)` guard). ⚠️ It is a **behavior break** — a warning becomes a raise — so it is semver-visible and belongs in a minor release, not a patch |
 
 ### Shipped in 1.0.3 — the 2026-08-10 `move()`/`_ibc` work
 

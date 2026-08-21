@@ -567,9 +567,11 @@ worth knowing (`calculate_FTLE`):
 - **Masked arrays everywhere** for agent state — use `.copy()` before mutating
   `self.positions`/`velocities`/`accelerations`; direct assignment is by reference
   and the auto-update in `move()` will overwrite velocity/acceleration anyway.
-- Multiple swarms in one environment: advance them with `Environment.move_swarms()`
-  (or call each `Swarm.move(update_time=False)` then bump time), not a bare
-  per-swarm `move()` loop, which warns about un-advanced swarms.
+- Multiple swarms in one environment: advance them with `Environment.move_swarms()`.
+  A bare `Swarm.move()` **raises** when the environment holds more than one swarm —
+  one swarm advancing the clock while the others stand still is no longer supported
+  (it used to warn and freeze the others, which desynchronized their histories).
+  `update_time=False` exists for `move_swarms` to call and is not a user-facing knob.
 - **FFmpeg** must be on `$PATH` to save animation videos.
 - **Data files are gitignored** (`*.vtk`, `*.vtu`, `*.vertex`, `*.stl`, `*.mp4`,
   `*.npz`, `data/`, etc.). Large example/test datasets are downloaded separately.

@@ -113,8 +113,11 @@ def test_shared_mu_adds_constant_drift():
 # --------------------------------------------------------------------------- #
 
 def test_brownian_is_seed_reproducible_and_seed_sensitive():
-    envir = _still_envir()
     def run(seed):
+        # a fresh Environment per run: the runs are meant to be independent,
+        #   and a Swarm registers itself with the Environment it is given, so
+        #   sharing one would stack four Swarms into it.
+        envir = _still_envir()
         s = planktos.Swarm(swarm_size=50, envir=envir, init=np.array([[50., 50.]] * 50), seed=seed)
         s.shared_props['cov'] = np.eye(2) * 0.2
         for _ in range(5):

@@ -217,6 +217,51 @@ def test_move_swarms_and_reset():
     assert len(a.full_pos_history) == 1               # just the (reset) current positions
 
 
+def test_bare_move_refuses_when_the_environment_holds_more_than_one_swarm():
+    # One Swarm cannot advance the environment clock while the others stand
+    #   still. This used to warn and then freeze the others by appending to
+    #   pos_history alone, which left vel_history and props_history behind for
+    #   the rest of the session.
+    envir = planktos.Environment()
+    a = envir.add_swarm(swarm_size=3)
+    envir.add_swarm(swarm_size=3)
+    with pytest.raises(RuntimeError, match='move_swarms'):
+        a.move(0.5)
+    # nothing was moved, recorded, or advanced on the way to the raise
+    assert envir.time == 0.0
+    assert envir.time_history == []
+    assert all(len(s.pos_history) == 0 for s in envir.swarms)
+
+
+def test_move_swarms_keeps_every_history_in_step():
+    # The freeze-append that used to run here grew pos_history without
+    #   vel_history, so full_vel_history fell out of alignment with
+    #   full_pos_history and every consumer pairing the two read the wrong
+    #   entry or raised.
+    envir = planktos.Environment()
+    a = envir.add_swarm(swarm_size=3)
+    b = envir.add_swarm(swarm_size=3)
+    for _ in range(3):
+        envir.move_swarms(0.5)
+    for s in (a, b):
+        assert len(s.pos_history) == len(s.vel_history) == len(envir.time_history)
+        assert len(s.full_pos_history) == len(s.full_vel_history)
+        # the two consumers that pair the histories by index
+        s._calc_basic_stats(False, t_indx=2)
+        np.arctan2(s.vel_history[2][:, 1], s.vel_history[2][:, 0])
+
+
+def test_a_single_swarm_still_moves_itself():
+    # the guard keys on there being more than one Swarm, so the ordinary
+    #   one-Swarm workflow is untouched
+    envir = planktos.Environment()
+    swrm = envir.add_swarm(swarm_size=3)
+    for _ in range(3):
+        swrm.move(0.5)
+    assert envir.time == pytest.approx(1.5)
+    assert len(swrm.pos_history) == len(swrm.vel_history) == 3
+
+
 # --------------------------------------------------------------------------- #
 #                    a time step that fails partway through                   #
 # --------------------------------------------------------------------------- #

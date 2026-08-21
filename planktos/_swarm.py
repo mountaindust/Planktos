@@ -1044,19 +1044,28 @@ class Swarm:
             vector is exhausted. In sticky collisions, just return the point of 
             intersection.
         update_time : bool, default=True
-            whether or not to update the Environment's time by dt. Probably 
-            The only reason to change this to False is if there are multiple 
-            Swarm objects in the same Environment - then you want to update 
-            each before incrementing the time in the Environment.
+            whether or not to update the Environment's time by dt. This exists
+            for Environment.move_swarms, which moves every Swarm with
+            update_time=False and then advances the time once for all of them.
+            There is no reason for a user to pass False.
         silent : bool, default=False
             If True, suppress printing the updated time.
 
+        Raises
+        ------
+        RuntimeError
+            if the Environment holds more than one Swarm and update_time is
+            True. One Swarm cannot advance the environment time on its own
+            while the others stand still; call Environment.move_swarms instead.
+
         See Also
         --------
-        apply_agent_model : 
-            method that returns (but does not assign) the new positions of the 
-            swarm after the time step dt, which Planktos users override in order 
+        apply_agent_model :
+            method that returns (but does not assign) the new positions of the
+            swarm after the time step dt, which Planktos users override in order
             to specify their own, custom agent behavior.
+        Environment.move_swarms :
+            moves every Swarm in the Environment and then advances the time.
         '''
 
         # A time of None marks an Environment left in an error state by a
@@ -1078,6 +1087,24 @@ class Swarm:
                 "    envir.time = envir.time_history.pop()\n"
                 "    swrm.positions = swrm.pos_history.pop()\n"
                 "    swrm.velocities = swrm.vel_history.pop()")
+
+        # Advancing the environment clock on behalf of one Swarm while the
+        #   others stand still is not supported. It used to warn and then
+        #   freeze the other swarms by appending their current positions to
+        #   pos_history -- but only to pos_history, so vel_history and
+        #   props_history fell behind and full_vel_history no longer lined up
+        #   with full_pos_history for the rest of the session. Every consumer
+        #   that pairs the two (plot_all's heading arrows, _calc_basic_stats)
+        #   then read the wrong entry or raised. There is no half-moved state
+        #   worth recording, so this is an error rather than a repaired
+        #   approximation of one.
+        if update_time and len(self.envir.swarms) > 1:
+            raise RuntimeError(
+                "This Environment holds {} Swarms, so no single Swarm can "
+                "advance its time. Call\n"
+                "    envir.move_swarms(dt)\n"
+                "instead, which moves every Swarm and then advances the time "
+                "once for all of them.".format(len(self.envir.swarms)))
 
         if ib_collisions == 'default':
             ib_collisions = self.ib_condition
@@ -1171,20 +1198,6 @@ class Swarm:
             self.envir.time += dt
             if not silent:
                 print('time = {}'.format(np.round(self.envir.time,11)))
-
-            # Check for other Swarms in Environment and freeze them
-            warned = False
-            for s in self.envir.swarms:
-                if s is not self and len(s.pos_history) < len(self.pos_history):
-                    s.pos_history.append(s.positions.copy())
-                    if not warned:
-                        warnings.warn("Other Swarms in the Environment were not"+
-                                      " moved during this environmental timestep.\n"+
-                                      "If this was not your intent, call"+
-                                      " envir.move_swarms instead of this method"+
-                                      " to move all the swarms at once.",
-                                      UserWarning)
-                        warned = True
 
 
 

@@ -229,8 +229,9 @@ dispatch overhead can outweigh the work, so benchmark before relying on it.
 
 Multiple agent species (Swarms) may share a single Environment. Advance them
 together with ``Environment.move_swarms``, which moves every Swarm before
-incrementing the environment time; calling ``Swarm.move`` directly on a single
-Swarm will warn you that the others were not advanced. Each Swarm keeps its own
+incrementing the environment time; calling ``Swarm.move`` directly raises once
+there is more than one Swarm, since a single Swarm cannot advance the
+environment clock while the others stand still. Each Swarm keeps its own
 agent model, properties, and history, so different species can use entirely
 different behaviors. Two caveats: there is no built-in mechanism for agents in
 one Swarm to sense or interact with agents in another (a subclass can reach the
