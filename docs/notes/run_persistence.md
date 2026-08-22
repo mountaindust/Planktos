@@ -73,10 +73,10 @@ In order:
    §5.3 on 2026-08-21. Each settled state the archive was going to store, so they came
    before anything wrote it to disk.
 2. **§2 — build the run archive** (§6.1 step A, six sub-steps) — **this is the front of
-   the queue.** ⚠️ **A0 comes first and comes alone**: `apply_boundary_conditions`
-   currently takes each agent's movement start point from `pos_history[-1]`, so a
-   coarser capture schedule would silently break collision detection. It is the riskiest
-   edit in the plan and everything else in step A waits on it (§2.2).
+   the queue.** ~~A0 comes first and comes alone~~ **[done 2026-08-21]**: the movement
+   start point now comes from `Swarm._prev_positions` rather than `pos_history[-1]`, so
+   a capture schedule can no longer reach collision detection. **A1 is done too**
+   (provenance at load time, `planktos/_provenance.py`). **Next up is A2**, the writer.
 3. **§3 — fluid-side streaming** and **§4 — rendering**, which sit on top of it.
 4. **§9 — tiling**, afterwards, as cleanup. It has its own restoration checklist
    (§9.3) because gating it off left notices scattered across source, tests,
@@ -1752,7 +1752,7 @@ settled a number the archive persists. See "As landed" in §5.1 and §5.2.
 **Step A — the run archive (§2).** Pure data capture: no rendering, no video
 parameters, no matplotlib. Six sub-steps, each independently testable:
 
-  A0. ⚠️ **Decouple collision handling from `pos_history`.** `apply_boundary_conditions`
+  A0. ✅ **[done 2026-08-21] Decouple collision handling from `pos_history`.** `apply_boundary_conditions`
       takes each agent's movement start point from `pos_history[-1]`; publish `move()`'s
       existing `old_positions` local instead (as `self._prev_positions`), at all
       **three** sites that take it — `Swarm.move` and the two inlined loops in
@@ -1788,15 +1788,112 @@ parameters, no matplotlib. Six sub-steps, each independently testable:
         fields cover the two inlined `calculate_FTLE` loops, which are the two of the
         three edit sites most easily missed — they are in a different file from the one
         the change is *about*.
-  A1. **Provenance at load time** (§2.6). Each fluid and mesh loader, and each analytic
-      flow generator, records its own call into `Environment` state. Independent of
-      everything else, testable on its own, and easy to under-scope: it is a *loader*
-      edit across ~11 methods, not a serialization detail of the writer. ⚠️ **Plus
-      `Environment.__init__`**, which is not a loader but is a fluid entry point
-      (`Environment(flow=[u, v], flow_times=t)`) and is the one most of `tests/` uses —
-      it initializes both attributes to `None` and records the direct-array case as
-      unreconstructible. Miss it and the writer raises `AttributeError` on the first
-      archive recorded in a test.
+
+      **As landed.** `Swarm._prev_positions` is set in `__init__` (to the construction
+      positions, since `apply_boundary_conditions` is reachable on step 1 while
+      `pos_history` is still empty) and at all three loops that move agents and then
+      apply boundary conditions. `apply_boundary_conditions` reads it; its docstring no
+      longer documents the history dependency. No `pos_history[-1]` remains anywhere in
+      `planktos/`.
+
+      Verified three ways, all bit-identical:
+
+      - **A 13-array numeric fingerprint** taken before and after — the static and
+        moving `_ib_harness` scenarios (positions, velocities, and `ib_collision_idx`
+        per step), the golden moving-boundary trajectory under both `ib_condition`s,
+        and five FTLE fields covering both inlined loops (forward, backward, smallest,
+        and the `swrm=` path). Bit-identical, as the same-object argument requires.
+      - **The suite**, 694 passed / 2 skipped with `--runslow`.
+      - ⚠️ **The new decoupling test was checked against the old coupling**, which is
+        the step that makes it worth having. With `prev_pos = self.pos_history[-1]`
+        restored, `test_collisions_do_not_read_the_position_history` fails exactly as
+        §2.2 predicts: the poisoned history makes the collision check miss entirely and
+        all four agents pass **through** the wall to the far domain edge at x=10. That
+        is the no-penetration invariant breaking, reproduced on demand. A test that
+        passes both before and after would have proved nothing.
+
+      Tests live in `tests/test_swarm_lifecycle.py`, since what they pin is `move()`'s
+      contract rather than any geometry: `test_collisions_do_not_read_the_position_history`
+      (parametrized over sliding/sticky, collecting the trajectory from the live
+      `positions` attribute rather than from the recording it is poisoning — reading the
+      answer out of the history would be the very coupling under test),
+      `test_prev_positions_is_the_history_entry_while_capture_is_every_step` (the object
+      identity, left behind as the guard for A3),
+      `test_prev_positions_is_set_before_the_first_step`, and
+      `test_ftle_sets_the_start_point_in_its_own_move_loops`.
+  A1. ✅ **[done 2026-08-21] Provenance at load time** (§2.6). Each fluid and mesh
+      loader, and each analytic flow generator, records its own call into `Environment`
+      state. Independent of everything else, testable on its own, and easy to
+      under-scope: it is a *loader* edit across ~11 methods, not a serialization detail
+      of the writer. ⚠️ **Plus `Environment.__init__`**, which is not a loader but is a
+      fluid entry point (`Environment(flow=[u, v], flow_times=t)`) and is the one most
+      of `tests/` uses — it initializes both attributes to `None` and records the
+      direct-array case as unreconstructible. Miss it and the writer raises
+      `AttributeError` on the first archive recorded in a test.
+
+      **As landed — the mechanism, which is a decorator rather than a line per loader.**
+      `planktos/_provenance.py` (new, internal) holds `records_provenance(slot)`,
+      `note_modifier(slot)` and `jsonable(value)`; `_environment.py` imports it and
+      carries one decorator line per entry point. A decorator beat the obvious
+      alternative — an explicit `self._record_provenance(path=path, dt=dt, ...)` call
+      inside each loader — on three counts, and the third is the one that would have
+      bitten:
+
+      - **No drift.** The record is built from `inspect.signature`, so a parameter added
+        to a loader later is recorded without anyone remembering to. A hand-written
+        argument list silently goes stale, and a *silently incomplete* provenance record
+        is precisely what §2.6 says must not exist.
+      - **It cannot record a failure as a success**, because the wrapper records only
+        after the call returns.
+      - **The outer call wins when loaders nest.** Recording at the top of each method
+        would let an inner helper overwrite the user's actual call.
+
+      **A failed load clears the slot rather than leaving the previous record.** A loader
+      that raises partway can leave the fluid in any state, so the honest record is
+      "unknown" — and specifically not the record of whatever was loaded before it, which
+      would now describe data that has been partly overwritten.
+
+      **In-place modifiers append to `modified_by`.** `shift_ibmesh_to_match_LLC` and
+      `add_vertices_to_static_2D_ibmesh` both alter a loaded mesh, and a record that kept
+      claiming the mesh is exactly what the loader produced would let a reconstruction
+      silently differ from the mesh the run actually used — the one failure mode §2.6
+      exists to prevent. Both are deterministic given the loaded data, so replaying the
+      loader and then the listed modifiers reproduces the mesh; what a reader must not do
+      is replay the loader alone and assume it matches.
+
+      **NetCDF needed a two-call record.** `load_NetCDF` opens the dataset and
+      `read_NetCDF_flow` reads a field out of it; neither reconstructs the fluid alone.
+      `records_provenance(..., preceded_by=...)` folds the first into the second, so
+      replaying the record means replaying both in order.
+
+      ⚠️ **Four method names in this note were wrong**, which is why A1 starts by
+      listing them from the source rather than from here: `read_vtk_data` is
+      **`read_IBAMR3d_vtk_data`**, `set_channel_flow` is
+      **`set_two_layer_channel_flow`**, `read_vertex_data` is
+      **`read_3D_vertex_data_to_convex_hull`**, and there is **no `read_npy_data`** at
+      all. Eleven entry points plus `__init__`, and `tests/test_provenance.py` asserts
+      structurally that every one of them is wrapped — a loader nobody decorated
+      produces no error, just an environment that cannot say what it is.
+
+      **`jsonable` records what can be recorded and marks the rest.** An ndarray records
+      its shape and dtype but never its contents (those are the data this design exists
+      to avoid duplicating); a callable records its name; a non-finite float becomes a
+      marker, because bare `NaN`/`Infinity` are what Python's `json` emits by default and
+      are not valid JSON. ⚠️ **The type checks are ordered numpy-first, and the tests
+      caught this:** `np.float64` *is* a subclass of `float`, so a plain
+      `isinstance(value, float)` branch ahead of the numpy ones passed numpy scalars
+      straight through while claiming to have converted them. `np.bool_` and `np.integer`
+      are the opposite case, subclassing neither `bool` nor `int`.
+
+      **Sphinx was verified, not assumed.** `functools.wraps` plus `inspect.signature`
+      following `__wrapped__` means autodoc renders a decorated loader exactly as before;
+      the built `api/Environment.html` shows full argument lists on decorated and
+      undecorated methods alike. Losing that would have silently emptied the API
+      reference for every loader.
+
+      Nothing here is user-visible — the attributes are private and nothing reads them
+      yet — so A1 gets no changelog line; the entry owed at step A (§7) covers the
+      feature they serve.
   A2. **`planktos/archive.py`: the writer.** Schema, fingerprint, atomic file
       replacement (§2.5), chunked agent writer keyed on the global capture index.
   A3. **`Environment.record` / `flush_recording` / `stop_recording`**, the environment

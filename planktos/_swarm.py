@@ -445,6 +445,18 @@ class Swarm:
         self.pos_history = []
         self.vel_history = []
 
+        # Where the agents started the current time step. This is the movement
+        #   segment's start point: apply_boundary_conditions tests the line
+        #   from here to self.positions against every mesh element to decide
+        #   whether an agent crossed a boundary and where to put it if it did.
+        #   It is control state for the physics, kept separate from the
+        #   recording in pos_history so that what gets recorded, and how often,
+        #   cannot change what happens. Set by every loop that moves agents and
+        #   then applies boundary conditions -- Swarm.move and the two inlined
+        #   loops in Environment.calculate_FTLE. Before the first step the
+        #   agents have not moved, so they start where they were constructed.
+        self._prev_positions = self.positions.copy()
+
         # Initialize IB collision detection
         self.ib_collision_idx = np.full(swarm_size, -1) # will be set to mesh index if collision occurs
         self.ib_condition = ib_condition
@@ -1113,6 +1125,11 @@ class Swarm:
         old_positions = self.positions.copy()
         old_velocities = self.velocities.copy()
 
+        # ...and hand the same array to the boundary stage as this step's
+        #   movement start point. It reads this rather than pos_history[-1] so
+        #   that the physics does not depend on the recording; see __init__.
+        self._prev_positions = old_positions
+
         # Conditionally save props to put in the history too
         if self.props_history is not None:
             old_props = self.props.copy()
@@ -1528,7 +1545,8 @@ class Swarm:
         according to the algorithm found in self.apply_agent_model.
 
         This method compares current agent positions (self.positions) to the
-        previous agent positions (last entry in self.pos_history) in order to
+        positions the agents started this time step from (self._prev_positions,
+        set by whichever loop just moved them) in order to
         first: determine if the agent collided with any immersed structures and
         if so, to update self.positions using a sliding collision algorithm 
         based on vector projection and second: assess whether or not any agents 
@@ -1574,7 +1592,7 @@ class Swarm:
                 # Build one small (idx, startpt, endpt) argument per active agent.
                 #   Cast to plain ndarrays so masked arrays are not handed to a
                 #   worker pool; .copy() matches the previous per-agent semantics.
-                prev_pos = self.pos_history[-1]
+                prev_pos = self._prev_positions
                 args = [(int(n),
                          np.asarray(prev_pos[n,:]).copy(),
                          np.asarray(self.positions[n,:]).copy())

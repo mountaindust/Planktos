@@ -434,3 +434,122 @@ def test_reset_leaves_props_history_off_when_it_was_never_on():
     swrm.move(0.1, silent=True)
     envir.reset()
     assert swrm.props_history is None
+
+
+# --------------------------------------------------------------------------- #
+#        the movement start point is control state, not the recording          #
+# --------------------------------------------------------------------------- #
+# apply_boundary_conditions tests the segment (start -> end) against every mesh
+# element to decide whether an agent crossed a boundary. That start point used
+# to be read out of pos_history[-1], which is a recording -- so anything that
+# changed what got recorded, or how often, would have silently changed the
+# physics. It now comes from Swarm._prev_positions, set by whichever loop just
+# moved the agents.
+
+
+class _HistoryHostileSwarm(planktos.Swarm):
+    '''Poisons the position history immediately before the boundary stage.
+
+    Every recorded entry becomes NaN while keeping the list's length and
+    structure, so anything still reading a start point out of the recording
+    gets NaN and produces a different trajectory -- while anything reading
+    _prev_positions is untouched.
+    '''
+    def apply_boundary_conditions(self, dt, **kwargs):
+        self.pos_history = [np.full_like(p, np.nan) for p in self.pos_history]
+        return super().apply_boundary_conditions(dt, **kwargs)
+
+
+def _wall_envir():
+    envir = planktos.Environment(Lx=10, Ly=10, x_bndry='noflux', y_bndry='noflux',
+                                 flow=[np.zeros((5, 5)), np.zeros((5, 5))])
+    # a vertical wall at x = 5, meshed finely enough to catch every crossing
+    M, y = 20, np.linspace(0.5, 9.5, 21)
+    mesh = np.zeros((M, 2, 2))
+    mesh[:, 0, 0] = mesh[:, 1, 0] = 5.0
+    mesh[:, 0, 1], mesh[:, 1, 1] = y[:-1], y[1:]
+    envir.ibmesh = mesh
+    envir.max_meshpt_dist = float(
+        np.linalg.norm(mesh[:, 0, :] - mesh[:, 1, :], axis=1).max())
+    return envir
+
+
+def _drive_into_wall(cls, ib_collisions='sliding'):
+    '''Four agents with fixed drift, driven into the wall for 6 steps.
+
+    The trajectory is collected here, step by step, from the live positions
+    attribute -- deliberately not from pos_history, which the hostile subclass
+    poisons. Reading the answer out of the recording is exactly the coupling
+    under test.
+    '''
+    envir = _wall_envir()
+    init = np.array([[4.0, 3.0], [4.0, 7.0], [2.0, 5.0], [4.5, 4.0]])
+    swrm = cls(swarm_size=4, envir=envir, init=init, seed=1)
+    swrm.shared_props['cov'] = np.zeros((2, 2))
+    swrm.shared_props['mu'] = np.array([1.0, 0.2])
+    traj = [np.ma.filled(swrm.positions, np.nan)]
+    hits = []
+    for _ in range(6):
+        swrm.move(1.0, ib_collisions=ib_collisions, silent=True)
+        traj.append(np.ma.filled(swrm.positions, np.nan))
+        hits.append(np.asarray(swrm.ib_collision_idx).copy())
+    return np.stack(traj), np.stack(hits)
+
+
+@pytest.mark.parametrize('ib_collisions', ['sliding', 'sticky'])
+def test_collisions_do_not_read_the_position_history(ib_collisions):
+    # The claim A0 makes: destroying the recording cannot change the physics.
+    control, control_hits = _drive_into_wall(planktos.Swarm, ib_collisions)
+    hostile, hostile_hits = _drive_into_wall(_HistoryHostileSwarm, ib_collisions)
+    assert np.isfinite(control).all(), 'control run should not produce NaN'
+    assert np.array_equal(control, hostile), (
+        'trajectory changed when pos_history was poisoned, so the collision '
+        'path is still reading its movement start point out of the recording')
+    assert np.array_equal(control_hits, hostile_hits)
+    # the test only means something if the wall was actually reached
+    assert (control_hits >= 0).any(), 'no collision was detected; test proves nothing'
+    assert (control[-1, :, 0] < 5.0 + 1e-12).all(), 'an agent got through the wall'
+
+
+def test_prev_positions_is_the_history_entry_while_capture_is_every_step():
+    # At capture_interval=1 the two are the same object, which is what makes
+    # A0 a provable no-op. When the capture schedule lands (run_persistence.md
+    # A3) this is the invariant that catches one append site being gated and
+    # the other not.
+    envir = _wall_envir()
+    swrm = planktos.Swarm(swarm_size=3, envir=envir,
+                          init=np.array([[4.0, 3.0], [4.0, 5.0], [4.0, 7.0]]),
+                          seed=1)
+    swrm.shared_props['cov'] = np.zeros((2, 2))
+    swrm.shared_props['mu'] = np.array([1.0, 0.0])
+    for _ in range(4):
+        swrm.move(1.0, silent=True)
+        assert swrm._prev_positions is swrm.pos_history[-1]
+
+
+def test_prev_positions_is_set_before_the_first_step():
+    # apply_boundary_conditions can be reached on step 1, when pos_history is
+    # still empty, so the attribute has to exist from construction.
+    envir = _wall_envir()
+    init = np.array([[4.0, 5.0], [1.0, 1.0]])
+    swrm = planktos.Swarm(swarm_size=2, envir=envir, init=init, seed=1)
+    assert np.array_equal(np.ma.getdata(swrm._prev_positions), init)
+    assert swrm.pos_history == []
+
+
+def test_ftle_sets_the_start_point_in_its_own_move_loops():
+    # calculate_FTLE inlines its own move loops rather than calling move(), so
+    # both of them are edit sites for this decoupling. A miss shows up as an
+    # AttributeError or a wrong field, not as a warning.
+    L, n, a = 10.0, 21, 0.4
+    x = np.linspace(0, L, n)
+    X, Y = np.meshgrid(x, x, indexing='ij')
+    envir = planktos.Environment(Lx=L, Ly=L, flow=[a * (X - L / 2), -a * (Y - L / 2)])
+    envir.calculate_FTLE(grid_dim=(8, 8), T=0.5, dt=0.05)     # RK45 loop
+    assert np.isfinite(np.ma.filled(envir.FTLE_largest, np.nan)).any()
+
+    envir2 = planktos.Environment(Lx=L, Ly=L, flow=[a * (X - L / 2), -a * (Y - L / 2)])
+    swrm = planktos.Swarm(swarm_size=4, envir=envir2, seed=3)
+    swrm.shared_props['cov'] = np.zeros((2, 2))
+    envir2.calculate_FTLE(grid_dim=(8, 8), T=0.5, dt=0.05, swrm=swrm)  # discrete loop
+    assert np.isfinite(np.ma.filled(envir2.FTLE_largest, np.nan)).any()

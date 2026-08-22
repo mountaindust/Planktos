@@ -158,6 +158,7 @@ behind since the dynamic-loading work.)
 | `planktos/_geom.py` | internal | Pure geometry workhorses: segment/line/triangle intersections, closest distances, multilinear-polynomial intersection (for moving meshes). Formerly static methods of `Swarm`. |
 | `planktos/_ibc.py` | internal | Immersed-boundary collision handling: `apply_internal_static_BC`, `apply_internal_moving_BC`, and the project-and-slide routines for static and moving meshes. |
 | `planktos/_dataio.py` | internal | Low-level read/write of vtk, vtu, .vertex, stl, NetCDF. Use `Environment` loader methods instead of calling these directly. |
+| `planktos/_provenance.py` | internal | Records what produced an `Environment`'s fluid and ibmesh: every loader and analytic flow generator is decorated so it logs its own call into `_fluid_provenance` / `_ibmesh_provenance`. `jsonable()` is the JSON-safety guarantee the run archive's metadata relies on. |
 
 ## Core mental model
 
