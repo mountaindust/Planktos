@@ -75,8 +75,10 @@ In order:
 2. **§2 — build the run archive** (§6.1 step A, six sub-steps) — **this is the front of
    the queue.** ~~A0 comes first and comes alone~~ **[done 2026-08-21]**: the movement
    start point now comes from `Swarm._prev_positions` rather than `pos_history[-1]`, so
-   a capture schedule can no longer reach collision detection. **A1 is done too**
-   (provenance at load time, `planktos/_provenance.py`). **Next up is A2**, the writer.
+   a capture schedule can no longer reach collision detection. **A1 and A2 are done
+   too** (provenance at load time in `planktos/_provenance.py`; the archive writer and
+   the on-disk format in `planktos/archive.py`). **Next up is A3**, `Environment.record`
+   and the capture hooks.
 3. **§3 — fluid-side streaming** and **§4 — rendering**, which sit on top of it.
 4. **§9 — tiling**, afterwards, as cleanup. It has its own restoration checklist
    (§9.3) because gating it off left notices scattered across source, tests,
@@ -592,11 +594,13 @@ dependency to a deliberately lean `install_requires`.
 
 ```
 run_archive/
-  meta.json                 written at record(): version, fingerprint, dimension, L,
-                            quantity recorded, quiver shape, dtype, swarm names, N,
-                            where vorticity lives (source dir / here / nowhere), and
-                            the provenance record (§2.6)
-  grid.npz                  flow_points, L, flow_times (the dump time base)
+  meta.json                 written ONCE at record() and never rewritten: format
+                            version, the grid summary, dtype,
+                            chunk_size, quantity recorded, quiver shape, where
+                            vorticity lives (source dir / here / nowhere), and the
+                            provenance record (§2.6)
+  grid.npz                  flow_points, L, flow_times, periodic_dim -- the fingerprint
+                            itself, written once at record()
   fluid/
     quiver_00042.npy        indexed by GLOBAL flow_times index, written as the dump
                             lands; only when quiver was requested
@@ -606,6 +610,9 @@ run_archive/
                             INUM=None it is not written at all
     dump_stats.npz          per-dump extrema and component means; rewritten per dump
   agents/
+    swarm00.json            name, N, D, first_capture -- written when that swarm
+                            joins the recording, which is record() for most and
+                            mid-run for one added later
     swarm00_pos_0000.npy    (rows, N, D) float64   -- swarm index, then chunk index
     swarm00_vel_0000.npy    (rows, N, D) float64
     swarm00_mask_0000.npy   (rows, N) bool
@@ -640,15 +647,17 @@ Two checks come with the scan, since §2.5 makes disk the authority on the timel
 name is `'organism'` for every swarm, so two swarms in one environment collide by name
 by default — a filename built from the name would silently overwrite. The index is the
 position in the recorder's `swarms` list, fixed when recording starts (plus any added
-later, below). `meta.json` maps index → name, `N`, `D`, and `first_capture`.
+later, below). `agents/swarmNN.json` carries that swarm's `name`, `N`, `D` and
+`first_capture`; the roster is assembled by scanning for those files, like everything
+else on disk.
 
 **Chunk *j* covers global capture indices [j·chunk_size, (j+1)·chunk_size) for every
 swarm.** Aligning chunk boundaries across swarms on a global index — rather than
 counting each swarm's own rows — is what makes a swarm added mid-run work without a
 second indexing scheme: its first chunk is simply short at the front. So a chunk file
 is `chunk_size` rows except the last (short at the end) and a late swarm's first (short
-at the start); `first_capture` in the metadata resolves the offset. Everything else is
-`rows == chunk_size`.
+at the start); `first_capture` in that swarm's sidecar resolves the offset. Everything
+else is `rows == chunk_size`.
 
 **Agent captures are chunked, not one file per capture.** Capture-every-step on a
 10 000-step run would make 10 000 files, which is punishing on network and HPC
@@ -659,44 +668,147 @@ opens chunks with `mmap_mode='r'`, so **an archive larger than RAM stays readabl
 which matters because this is continuous simulation data, useful for analysis and not
 only for display.
 
-**The metadata must carry:**
+#### What goes where — the rule *(settled 2026-08-21, at the top of A2)*
 
-- format **version**;
-- **source fingerprint** (dump range and `flow_times` extent, or a hash) so an archive
-  from a different run or dataset is refused;
-- the **provenance record** (§2.6);
-- **which fluid quantity** the render will need (`vort`, `quiver`, or both); for
-  vorticity, **where it lives** — the source directory, this archive, or nowhere
-  because it is recomputed (the three regimes of §3.3) — and the **quiver grid**
-  (`quiver_shape`, and the `M`/`N` it resolved to against this dataset's grid);
-- the **capture times** (agent time base) and the **dump times** (fluid time base) —
-  there are no "frame times", since frames are chosen at render time;
-- ~~the **capture interval** actually used~~ — **not stored.** `_select_frames` already
-  derives `dt_state = span/(len(times)-1)` from the times themselves, and the rule
-  against redundant derivable state applies. Capture times go in; the interval comes
-  out;
-- **axes**: `flow_points` and domain `L`, so the archive plots without touching fluid;
-- **per-dump extrema** for colour and arrow normalization (§3.5);
-- the **per-dump fluid component means** — the §3.1 sidecar, a few floats per dump,
-  from which the surviving fluid statistics are exact at any time;
-- the **per-swarm block**: for each recorded swarm, its index, `name`, `N`, `D`, and
-  `first_capture` — the global capture index at which it starts, which is 0 for every
-  swarm present when recording began and later for one added mid-run (below). Names are
-  metadata, not filenames, because they collide (above);
-- the **agent positions** per capture (`N×D` plus mask);
-- the **agent velocities** per capture. Do **not** plan to re-derive these from cached
-  positions — §5.1 explains why the derivation is wrong even today, and it becomes
-  wronger under any capture schedule coarser than every step. Storing velocities
-  doubles this part of the archive and removes the trap entirely.
+> **`meta.json` holds only what is known when recording starts and never changes
+> afterwards. Anything that accumulates during the run lives in the files that
+> accumulate with it, and the reader learns it by scanning.**
+
+This resolves a contradiction the plan carried through several drafts. §2.5 requires
+that metadata be written when recording **starts** and that the reader reconstruct the
+timeline **by scanning what is on disk**, never by trusting a recorded count — yet the
+metadata list here used to include the capture times, which by definition do not exist
+at the start and grow with every flush. Putting an accumulating series in the one file
+whose defining property is "written once, at the beginning" is a contradiction, and it
+degrades badly: `meta.json` would be rewritten on every flush, making it the file most
+likely to catch a hard kill, and a killed run would leave chunks on disk that the
+metadata does not know about. The chunks would then be right and the metadata wrong —
+so the metadata cannot be the authority, and there is no reason for it to hold a second
+copy at all.
+
+With the rule applied, `meta.json` is written **once**, with a single `os.replace`, and
+never touched again. That is the strongest form of §2.5's crash validity available to it.
+
+| Lives in | What | Why |
+|---|---|---|
+| `meta.json` | format **version**; the **grid summary** (below — a description, not a checksum); **dtype** and **chunk_size**; **which fluid quantity** the render will need (`vort`, `quiver`, or both), where vorticity lives — source directory, this archive, or nowhere because it is recomputed (§3.3) — and the **quiver grid** (`quiver_shape` and the `M`/`N` it resolved to); the **provenance record** (§2.6) | all fixed when recording starts |
+| `grid.npz` | `flow_points`, `L`, `flow_times`, `periodic_dim` | the fingerprint itself, and the axes that let the archive plot without touching fluid. Fixed at `record()` — see the verification below |
+| `agents/swarmNN.json` | that swarm's `name`, `N`, `D`, `first_capture` | written when the swarm *joins*, which is `record()` for most and mid-run for one added later |
+| `agents/times_NNNN.npy` | the **capture times** — the sole authority for the agent time base | accumulates; nothing summarizes it anywhere |
+| `agents/swarmNN_{pos,vel,mask}_NNNN.npy` | positions (`N×D`), velocities, and the row mask, per capture | accumulates |
+| `fluid/dump_stats.npz` | per-dump **extrema** (§3.5) and **component means** (§3.1) | accumulates as dumps land |
+
+**The per-swarm roster moved out of `meta.json` into per-swarm sidecars,** and that
+falls straight out of the rule. This section used to require a late-added swarm's
+metadata entry to be written *immediately* — the one thing that broke "written once". A
+sidecar per swarm makes early and late swarms identical in the format, discovered by the
+same scan as everything else, with `first_capture` as the only thing distinguishing
+them. The format stops having a special case for the mid-run swarm; only the offset
+remains.
+
+Two further things are **not** stored, for the same reason:
+
+- ~~the **capture interval** actually used~~. `_select_frames` derives
+  `dt_state = span/(len(times)-1)` from the times themselves. Capture times go in; the
+  interval comes out.
+- ~~a **capture count or time span** summary~~, even as a human convenience. It would
+  accumulate, so it would either need rewriting or be written by a finalizer — and
+  §2.5's whole point is that no finalizer is load-bearing. `load_run(path).times` gives
+  it in one line.
+
+**Agent velocities are stored, not derived.** Do **not** plan to re-derive them from
+stored positions — §5.1 explains why the derivation is wrong even today, and §2.4 why it
+becomes a different physical quantity under any capture schedule coarser than every
+step. Storing them doubles this part of the archive and removes the trap entirely.
+
+#### The fingerprint *(settled 2026-08-21, at the top of A2)*
+
+**It is structural, it is stored as values rather than only as a hash, and it lives in
+`grid.npz`.** Contents: **dimension, `L`, `flow_points` (the per-axis coordinate
+arrays), `flow_times`, and `periodic_dim`.**
+
+**Hashing the fluid data itself is ruled out, and not narrowly.** It would mean
+streaming the whole dataset to compute it — exactly the ~100 GB cost this design exists
+to avoid — and under `INUM=int` only the opening window is resident when `record()`
+runs, so a hash over whatever happens to be in memory would depend on `INUM` and on
+where the window sat. Two recordings of the same dataset would disagree. The fingerprint
+has to be something small and complete, which the grid and the timeline are.
+
+**`periodic_dim` is in it** because it changes the vorticity computed in the outermost
+ring (the 2026-08 wrap fix), so a stored vorticity field recorded under a different
+setting is a different field.
+
+**Two questions, two mechanisms — keep them apart:**
+
+| Question | Answered by | On mismatch |
+|---|---|---|
+| Is this the same coordinate system and timeline? | the fingerprint | **hard refusal** (§2.8) — the stored arrays are not interpretable otherwise |
+| Did the same thing produce it? | the **provenance record** (§2.6) | **warn**, naming both sides |
+
+That split is what §2.6 promised when it said a provenance record "beats a bare
+fingerprint mismatch", and it gets the two realistic cases right: replotting a run whose
+script moved directories should not be refused, while a *different simulation* that
+happens to share a mesh and a cadence should at least say so out loud. ⚠️ Be plain about
+the residue: two runs on the same grid at the same timestamps fingerprint
+**identically**, and nothing cheap catches a dataset regenerated in place at the same
+path. The fingerprint bounds the damage; it does not eliminate it.
+
+**The comparison is over the arrays themselves, and there is no hash of them
+anywhere.** §2.8 requires "a hard refusal with a clear message, naming the provenance of
+both sides", and a hash can only ever say `3a7f… != 9b21…`. Reading the arrays lets the
+message say *what* differs — "this archive has 149 dump times spanning 0–14.9; this
+environment has 200 spanning 0–20". Cost is nil: `flow_points` is a few hundred floats
+even for a large 3D grid, `flow_times` one per dump, and this section already requires
+storing both so the archive can plot without touching fluid. The fingerprint is
+therefore **not a new stored artifact** — it is a comparison over `grid.npz`, which had
+to exist anyway. What `meta.json` carries is a `grid` **summary** (dimension, `L`,
+`periodic_dim`, grid shape, dump count and time span), which describes the archive for
+someone reading that file and is never the match test.
+
+> ⚠️ **A checksum was built here and then cut** *(2026-08-21, at review)*, because the
+> reason given for it was wrong. It was to "check `grid.npz` against itself" and catch a
+> truncated or edited file — but **`.npz` is a zip, and numpy verifies a CRC32 per
+> member on read**: a corrupted one raises `BadZipFile: Bad CRC-32`, a truncated one
+> raises too. So thirty lines, including byte-order normalization for cross-machine
+> stability, were duplicating an integrity check the container already performs. The
+> other justifications did not survive either — a "fast reject before loading
+> `grid.npz`" is worthless when `grid.npz` is a few kB, and it can never be the match
+> test for the reason above. Pinned by
+> `test_a_corrupted_grid_file_is_caught_by_the_container`. **Do not add one back**
+> without a job that the zip CRC and the summary do not already do.
+
+**Comparison is exact** — shape, dtype and `np.array_equal` on values — because a
+rebuilt environment re-runs the same loader over the same files and gets bit-identical
+arrays. ⚠️ **Verified rather than assumed (2026-08-21):** `flow_points`, `flow_times`
+and `L` are built in each loader's `__init__` and are **never reassigned by
+`load_dumpfiles` or `update_spline`** — driven across a full windowed sweep of a series
+and back, they remain not merely equal but the *same objects*. This is what makes
+"`grid.npz` written once at `record()`" true under dynamic loading, and it is the same
+property the `VTK3dData` fix established for `flow_times` (a dynamically-loading
+subclass must publish a timeline covering the whole dump range, not the opening window).
+If exactness ever proves too strict in practice, loosening to `allclose` is a one-line
+change; starting loose and discovering a run plotted against the wrong grid is not
+recoverable.
+
+**When `envir.flow is None`** — an analytic or flow-free run, where §2.1 forces
+`fluid=None` — the fingerprint is dimension and `L` alone, and `grid.npz` holds only
+those. Nothing about it becomes optional; it just gets smaller.
+
+⚠️ **A consequence for A3: loading a new fluid while recording must raise.** Every
+loader reassigns `flow_points`, `flow_times` and `L`, so it would invalidate a
+fingerprint already written to disk and leave the archive describing a grid the run
+stopped using. It joins `reset()` on the refusal list (§2.2).
 
 **A swarm added mid-recording is captured from that point on.** `Environment.add_swarm`
 can be called at any time, so the swarm set is not fixed at `record()`. The new swarm
-gets the next index, its metadata entry is written **immediately** — metadata is always
-written when a thing starts, never at the end (§2.5) — and its `first_capture` is the
-global capture index the other swarms are already at, so indices correspond across all
-swarms with no per-swarm time base. This needs a hook on `add_swarm` that notifies an
-active recorder. Reading is by time regardless (§2.7), so a consumer never has to think
-about the offset.
+gets the next index, its `agents/swarmNN.json` sidecar is written **immediately** —
+metadata is always written when a thing starts, never at the end (§2.5) — and its
+`first_capture` is the global capture index the other swarms are already at, so indices
+correspond across all swarms with no per-swarm time base. This needs a hook on
+`add_swarm` that notifies an active recorder. Reading is by time regardless (§2.7), so a
+consumer never has to think about the offset. Note that the sidecar is what makes this
+an ordinary case rather than a special one: `meta.json` is not touched, so "written once
+at `record()`" survives a swarm joining an hour into the run.
 
 Note what is *not* stored: **the `_calc_basic_stats` scalars.** With positions,
 velocities, and the per-dump fluid means all present, every displayed statistic is
@@ -807,7 +919,9 @@ walltime, OOM, node failure — is `SIGKILL`, which defeats `__exit__`, `close()
 `atexit` and `__del__` alike; §4.4 concedes the same for the video, which is why it
 recommends `.mkv`. So:
 
-- metadata is written when recording **starts**, not when it ends;
+- metadata is written when recording **starts**, not when it ends -- and, since §2.3's
+  what-goes-where rule, it is written *only once*: everything that accumulates lives
+  in the files that accumulate with it;
 - every chunk is self-describing;
 - the reader reconstructs the timeline by **scanning what is on disk**, not by
   trusting a recorded count;
@@ -1894,8 +2008,67 @@ parameters, no matplotlib. Six sub-steps, each independently testable:
       Nothing here is user-visible — the attributes are private and nothing reads them
       yet — so A1 gets no changelog line; the entry owed at step A (§7) covers the
       feature they serve.
-  A2. **`planktos/archive.py`: the writer.** Schema, fingerprint, atomic file
-      replacement (§2.5), chunked agent writer keyed on the global capture index.
+  A2. ✅ **[done 2026-08-21] `planktos/archive.py`: the writer.** Schema, fingerprint,
+      atomic file replacement (§2.5), chunked agent writer keyed on the global capture
+      index.
+
+      **As landed.** `_ArchiveWriter` is handed data and writes it: it knows nothing
+      about `Environment`, `Swarm`, time steps or hooks, and `Environment.record` (A3)
+      merely drives it. That split was a deliberate constraint rather than a
+      convenience — it is what keeps the format testable without running a simulation,
+      and it means a later change to the capture schedule cannot reach into the format.
+      Beside it: `build_fingerprint` / `fingerprint_summary` / `compare_fingerprints`,
+      `_resolve_archive_path`, and `_atomic_write`.
+
+      **The tests read the bytes back with raw `np.load` and `json.load`, not through a
+      reader of our own.** A round-trip through our own code can be self-consistently
+      wrong; reading the bytes pins the format. A4 gets its own tests.
+
+      ⚠️ **Crash validity was verified with an actual kill, not a simulation of one.** A
+      subprocess recorded continuously and was `SIGKILL`ed mid-run with no `close()`, no
+      `flush()`, no `atexit`: **400 captures across 40 chunks came back intact**, the
+      `grid.npz` on disk still matched the environment that wrote it, the recovered
+      chunk indices were contiguous, and no `.partial` file was left behind. This is the property the
+      whole design rests on, and it is the one that would otherwise be asserted rather
+      than demonstrated.
+
+      Four decisions the specification left open, taken here:
+
+      - **`fsync` before every `os.replace`, chunks included.** `os.replace` alone
+        survives process death, which is the common case — but node failure and power
+        loss take the page cache with them, and those are exactly the runs an archive
+        exists for. The cost is one sync per `chunk_size` captures, negligible against
+        the physics of that many steps. A knob to disable it would be dead weight.
+      - **`flush()` rewrites the open partial chunk in place**, atomically, and leaves
+        the buffers alone so recording continues into the same chunk. That makes it
+        idempotent and makes a mid-run plot free, which §2.1 requires.
+      - **A swarm that missed a chunk entirely gets no file for it**, rather than a
+        zero-row one. A zero-row file would contradict its own `first_capture`; absence
+        is the honest record and the sidecar resolves the offset.
+      - **A partially masked row is refused, not flattened.** A masked row means the
+        agent left the domain — agents leave whole rows — so the mask is stored per row.
+        Reducing a half-masked row would silently discard the evidence that an invariant
+        broke upstream.
+
+      `add_capture` also validates two things the writer is the only place that can:
+      that capture indices are **contiguous** (a gap would become a gap on disk, which a
+      reader could only read as a lost file), and that **exactly** the swarms whose
+      `first_capture` has been reached are present.
+
+      **`compare_fingerprints` describes both sides on any difference**, shape mismatches
+      included — `array_equal` is `False` rather than an error on mismatched shapes, so
+      one branch covers both, and "6 values spanning 0 to 1.4" tells a reader more than
+      "shape (6,) vs (9,)". That is what §2.8's requirement for an actionable refusal
+      comes down to in practice.
+
+      **Public surface is deliberately narrow**: `RunArchive` and `load_run` (A4), plus
+      the three fingerprint functions, which are what a refusal message is assembled from
+      and are worth having to hand when diagnosing one. Everything else is underscored.
+      The module is un-underscored because `RunArchive` is user-visible, exactly as
+      `fluid.py` is un-underscored for `FluidData`.
+
+      Nothing user-visible yet — the writer is private and unexported — so A2 gets no
+      changelog line, like A0 and A1. 51 tests in `tests/test_run_archive.py`.
   A3. **`Environment.record` / `flush_recording` / `stop_recording`**, the environment
       step counter and capture-step predicate (§2.2), the `_notify_step_complete` hook
       in `Swarm.move` / `Environment.move_swarms`, the history-append gating in both,

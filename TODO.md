@@ -12,7 +12,7 @@ Temporal interpolation of dynamically-loaded data is **linear in time**
 (`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
 story.
 
-**Suite is green: 731 passed / 22 skipped (`pytest`), 751 passed / 2 skipped
+**Suite is green: 782 passed / 22 skipped (`pytest`), 802 passed / 2 skipped
 (`pytest --runslow`).** No failures, no xfails.
 
 **What is done:**
@@ -30,8 +30,10 @@ story.
   and steps §6.1 A0–A1 complete** (plot statistics served from a per-dump mean cache;
   `fps`/`playback_rate` frame selection; the three prerequisite bug fixes; the movement
   start point decoupled from `pos_history`, which is what makes a capture schedule safe;
-  and provenance recorded at load time by every fluid and mesh entry point,
-  `planktos/_provenance.py`). The rest is the plan below, starting at **A2**.
+  provenance recorded at load time by every fluid and mesh entry point,
+  `planktos/_provenance.py`; and the archive writer and on-disk format,
+  `planktos/archive.py`, with crash validity demonstrated under a real kill). The rest
+  is the plan below, starting at **A3**.
 - **`_ibc.py` collision passes** — done on `master` and merged here; coverage 91% → 99%.
 
 **Phase 2 is complete (2026-08-11).** The loader reads the real OpenFOAM dataset, the
@@ -48,8 +50,9 @@ Item 2 is the active work; item 1 has one sub-item left and can run beside it.
    `run_persistence.md` §3.3, so it is really component B of item 2 rather than a
    competing thread.
 2. 🔴 **The run archive and the plotting work it feeds** — `docs/notes/run_persistence.md`,
-   components A–C. **This is the work in hand.** §5.3 and §6.1 steps **A0** and **A1**
-   are done (2026-08-21); **next is A2**, the archive writer. Detail below.
+   components A–C. **This is the work in hand.** §5.3 and §6.1 steps **A0–A2** are
+   done (2026-08-21); **next is A3**, `Environment.record` and the capture hooks.
+   Detail below.
 3. 🟡 **Note §9** (real position-wrapping tiling, 2D and 3D; whether `Environment.extend`
    returns) — the design pass is now written up in `run_persistence.md` §9; §9.3 is the
    restoration checklist. This also **unblocks the prose-docs sweep**, which is
