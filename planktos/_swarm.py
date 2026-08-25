@@ -1121,6 +1121,11 @@ class Swarm:
         if ib_collisions == 'default':
             ib_collisions = self.ib_condition
 
+        # Is the state this step begins from one of the ones kept? Asked once,
+        #   here, and used for every history append below and for the matching
+        #   time_history append at the end.
+        keep_state = self.envir._records_this_step()
+
         # Save current position to put in the history
         old_positions = self.positions.copy()
         old_velocities = self.velocities.copy()
@@ -1140,10 +1145,11 @@ class Swarm:
             self.positions[:,:] = self.apply_agent_model(dt)
 
         # Update history
-        self.pos_history.append(old_positions)
-        self.vel_history.append(old_velocities)
-        if self.props_history is not None:
-            self.props_history.append(old_props)
+        if keep_state:
+            self.pos_history.append(old_positions)
+            self.vel_history.append(old_velocities)
+            if self.props_history is not None:
+                self.props_history.append(old_props)
         
         # Update velocity and acceleration of swarm
         self.velocities[:,:] = (self.positions - old_positions)/dt
@@ -1172,7 +1178,11 @@ class Swarm:
                 #   interrupt has to keep propagating as itself instead of
                 #   being wrapped into something an outer "except Exception"
                 #   would swallow.
-                self.envir.time_history.append(self.envir.time)
+                if keep_state:
+                    # Only when this step appended to pos_history above --
+                    #   otherwise this closes the histories off *inconsistently*,
+                    #   which is the exact thing it exists to prevent.
+                    self.envir.time_history.append(self.envir.time)
                 self.envir.time = None
                 if not isinstance(err, Exception):
                     print("\nInterrupted partway through applying boundary "
@@ -1211,7 +1221,8 @@ class Swarm:
 
         # Record new time
         if update_time:
-            self.envir.time_history.append(self.envir.time)
+            if keep_state:
+                self.envir.time_history.append(self.envir.time)
             self.envir.time += dt
             if not silent:
                 print('time = {}'.format(np.round(self.envir.time,11)))

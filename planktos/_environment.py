@@ -285,6 +285,15 @@ class Environment:
         # The active RunRecorder, or None. The time-advance hook finds it here,
         #   which is why there can only be one per Environment.
         self._recorder = None
+        # Which step is being taken. len(time_history) is no longer the step
+        #   count once a capture schedule can skip steps, so the environment
+        #   keeps its own, and both trigger sites ask it the same question.
+        self._step_count = 0
+        # Capture every k-th step, counting from the step recording began at.
+        #   k == 1 makes the predicate below always true, which is the state
+        #   whenever nothing is recording.
+        self._capture_interval = 1
+        self._capture_phase = 0
         # True while move_swarms is looping over the swarms. Swarm.move uses it
         #   to tell its own update_time=False calls apart from a user's, and
         #   warns about the latter: captures fire on the environment's time
@@ -2068,7 +2077,7 @@ class Environment:
     #######################################################################
 
     def record(self, path, *, swarms=None, store=('positions', 'velocities'),
-               chunk_size=100):
+               capture_interval=1, chunk_size=100):
         '''Begin recording agent state to a run archive, and return the handle.
 
         Planktos otherwise holds an entire run in memory and can only write it
@@ -2102,6 +2111,20 @@ class Environment:
             Dropping ``'velocities'`` halves the archive but leaves it
             analysis-only: plotting needs them, and re-deriving them from
             positions is wrong for any agent that collided or wrapped.
+        capture_interval : int, default=1
+            capture -- and retain history -- every *k*-th step. The framing is
+            **"as if dt were larger"**: the archive then looks exactly like a
+            run performed at the coarser timestep, and ``time_history``,
+            ``pos_history`` and ``vel_history`` hold exactly the captured
+            states, so nothing downstream needs a second notion of "a recorded
+            state". It earns its place on two counts, and space is the smaller
+            one: writing every step to disk is a per-step cost paid against the
+            physics, and on a long run that is the dominant reason to coarsen.
+
+            Deliberately *not* a video frame rate. Frame rate is a presentation
+            choice that stays adjustable forever (see ``Swarm.plot_all``);
+            this is a data-fidelity choice fixed at run time. Conflating them
+            would be the old ``dt``/``fps`` footgun in a new costume.
         chunk_size : int, default=100
             captures buffered before a chunk is written. Bounds recording memory
             and the amount a hard kill can cost.
@@ -2168,8 +2191,20 @@ class Environment:
                 "agent that collided or wrapped. Pass "
                 "store=('positions','velocities') to keep them.", UserWarning)
 
-        self._recorder = archive.RunRecorder(self, path, swarms=swarms,
-                                             store=store, chunk_size=chunk_size)
+        if int(capture_interval) < 1:
+            raise ValueError('capture_interval must be at least 1')
+
+        # Captures are counted from the step recording starts at, so that they
+        #   are evenly spaced even when recording begins mid-run.
+        self._capture_interval = int(capture_interval)
+        self._capture_phase = self._step_count
+        try:
+            self._recorder = archive.RunRecorder(
+                self, path, swarms=swarms, store=store, chunk_size=chunk_size)
+        except BaseException:
+            # Nothing is recording, so nothing may be gated.
+            self._capture_interval = 1
+            raise
         return self._recorder
 
 
@@ -2197,19 +2232,40 @@ class Environment:
             self._recorder.stop()
 
 
+    def _records_this_step(self):
+        '''Is the state of the step now being taken one of the ones kept?
+
+        **One answer gates both the history appends and the archive capture**,
+        so the two cannot drift apart -- that identity is what lets capture *j*
+        be exactly ``full_pos_history[j]`` with no index translation anywhere.
+
+        Always true when nothing is recording, and when recording every step,
+        because the interval is then 1 and every step satisfies the modulus.
+        '''
+
+        return (self._step_count - self._capture_phase) % self._capture_interval == 0
+
+
     def _notify_step_complete(self):
-        '''One environmental time step has completed; capture if recording.
+        '''One environmental time step has completed: count it, and capture it
+        if it is a captured step.
 
         Called from exactly two places, both meaning "the environment just
         advanced one step": the end of ``Swarm.move`` when it updates the time,
-        and the end of :meth:`move_swarms`. A no-op when nothing is recording.
+        and the end of :meth:`move_swarms`.
+
+        The counter advances first, so the predicate is asked about the state
+        the step just produced. ``Swarm.move`` asks the same predicate at the
+        *start* of a step, about the state that step began from -- the two ends
+        of a step, and the same set of states.
 
         Deliberately not called from ``calculate_FTLE``, which inlines its own
         move loop -- otherwise FTLE probe trajectories would be written into the
         archive.
         '''
 
-        if self._recorder is not None:
+        self._step_count += 1
+        if self._recorder is not None and self._records_this_step():
             self._recorder._capture()
 
 
@@ -2253,6 +2309,12 @@ class Environment:
             If True, suppress printing the updated time.
         '''
 
+        # Asked before the loop so that every swarm's history append and this
+        #   time_history append are gated on one answer (the counter does not
+        #   move until the step completes, so each swarm would compute the same
+        #   value anyway -- but sharing it makes that structural).
+        keep_state = self._records_this_step()
+
         self._in_move_swarms = True
         try:
             for s in self.swarms:
@@ -2261,7 +2323,8 @@ class Environment:
             self._in_move_swarms = False
 
         # update time
-        self.time_history.append(self.time)
+        if keep_state:
+            self.time_history.append(self.time)
         self.time += dt
         if not silent:
             print('time = {}'.format(np.round(self.time,11)))
@@ -3574,6 +3637,8 @@ class Environment:
 
         self._refuse_while_recording()
         self.time = 0.0
+        self._step_count = 0
+        self._capture_phase = 0
         self.time_history = []
         if rm_swarms:
             self.swarms = []

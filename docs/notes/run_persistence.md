@@ -42,7 +42,7 @@ thing is too big to hold at once.
 
 | | What | Why | Status |
 |---|---|---|---|
-| **A** | **Run archive** — append-only, chunked, crash-valid on-the-fly capture of agent state, with a public reader and a capture schedule that also governs history retention | persistence: crash survival, later sessions, larger-than-RAM analysis, bounded history memory, run speed, and eventually restart | specified (§2), not built |
+| **A** | **Run archive** — append-only, chunked, crash-valid on-the-fly capture of agent state, with a public reader and a capture schedule that also governs history retention | persistence: crash survival, later sessions, larger-than-RAM analysis, bounded history memory, run speed, and eventually restart | writing **[done]** (§6.1 A0–A3b); the reader and the public surface are §6.1 **A4–A5** |
 | **B** | **Fluid-side streaming** — per-dump means, vorticity by regime, per-dump extrema | dyload: never re-stream the dataset to draw a picture of it | statistics **[done]**; rest specified (§3) |
 | **C** | **Rendering** — frame selection by time, archive-backed `plot_all`, global colour/arrow scales | consumes A and B | `fps`/`playback_rate` **[done]**; rest specified (§4) |
 | **D** | **Tiling and `extend`** — the real position-wrapping implementation | cleanup: tiling has raised `NotImplementedError` since the `FlowArray` removal | specified (§9), not built |
@@ -77,9 +77,9 @@ In order:
    start point now comes from `Swarm._prev_positions` rather than `pos_history[-1]`, so
    a capture schedule can no longer reach collision detection. **A1 and A2 are done
    too** (provenance at load time in `planktos/_provenance.py`; the archive writer and
-   the on-disk format in `planktos/archive.py`), **and so is A3a** — `Environment.record`
-   and the capture hooks. **Next up is A3b**, the capture schedule (A3 is split — see
-   §6.1).
+   the on-disk format in `planktos/archive.py`), **and so are A3a and A3b** —
+   `Environment.record`, the capture hooks, and `capture_interval`. **Next up is A4**,
+   the reader (`RunArchive`, `planktos.load_run`).
 3. **§3 — fluid-side streaming** and **§4 — rendering**, which sit on top of it.
 4. **§9 — tiling**, afterwards, as cleanup. It has its own restoration checklist
    (§9.3) because gating it off left notices scattered across source, tests,
@@ -303,7 +303,7 @@ is a very expensive thing to discover after a twelve-hour run.
 
 | Call | Does |
 |---|---|
-| `envir.record(path, ...)` | resolve and create the directory, check the fluid window, write the metadata, sweep the fluid state already in memory (component means, plus extrema and any per-dump quantity for currently resident dumps), take capture 0, register the hooks. Recording is live from here |
+| `envir.record(path, ...)` | resolve and create the directory, check the fluid window, write the metadata and the fingerprint, take capture 0, register the hooks. Recording is live from here. **At B** it also sweeps the fluid state already in memory — component means, plus extrema and any per-dump quantity for currently resident dumps |
 | `envir.flush_recording()` | write buffered captures to disk. **Keeps recording** |
 | `envir.stop_recording()` | flush, then unregister the hooks. Idempotent |
 | `with envir.record(...)` | as above, plus `stop_recording()` on exit and the optional auto-plot |
@@ -390,10 +390,10 @@ failure. That misuse is now warned about at class-definition time by
   which is what is wanted, since it would otherwise write FTLE probe trajectories into
   the archive.
 - **There is no `capture()` method.** The manual multi-swarm pattern (move each swarm
-  with `update_time=False`, then bump time by hand) is not a real workflow; the same
-  thing is expressed by passing `update_time=True` on the last swarm, which fires the
-  hook after every swarm has moved and also satisfies `move()`'s own "other swarms were
-  not moved" check.
+  with `update_time=False`, then bump time by hand) is not a real workflow — and since
+  §5.3 it is not even reachable, because a bare `Swarm.move` raises once the environment
+  holds more than one swarm. `Environment.move_swarms` is the way to advance them, and
+  it fires the hook itself.
 - **`Environment.reset()` during recording raises.** It sets `time = 0.0` and clears
   the histories, which would give the archive a rewound clock and two captures at t=0.
   (See also §5.2 — `reset()` has a latent bug of its own.)
@@ -428,10 +428,13 @@ that same list and needs no change in meaning.
 
 Three consequences, in descending order of how much work they are:
 
-⚠️ **Blocker — `apply_boundary_conditions` takes its start point from
-`pos_history[-1]`.** This is step **A0** in §6.1. It lands first and alone, before
-anything else in this plan, because `capture_interval` silently corrupts collision
-handling without it.
+⚠️ ~~**Blocker — `apply_boundary_conditions` takes its start point from
+`pos_history[-1]`.**~~ **[fixed 2026-08-21, step A0.]** It landed first and alone,
+before anything else in this plan, because `capture_interval` silently corrupts
+collision handling without it. **What follows is the analysis that justified it and the
+reason the fix is what it is** — kept because the coupling is the sort of thing that
+gets reintroduced by someone tidying up, and because §6.1 A3b's test is written directly
+against these three failure modes.
 
 **What the coupling is.** `Swarm.move` runs:
 
@@ -515,8 +518,9 @@ prev_pos = self._prev_positions             # was self.pos_history[-1]
 **Three sites take that local and then call `apply_boundary_conditions`** — `Swarm.move`,
 and the two inlined loops inside `Environment.calculate_FTLE` — and all three must set
 it. Plus an `__init__` default (the positions at construction), and a docstring
-correction: `apply_boundary_conditions` currently documents the `pos_history` dependency
-in prose, so that contract changes with it.
+correction: `apply_boundary_conditions` documented the `pos_history` dependency in
+prose, so that contract changed with it. All of that is in place; no `pos_history[-1]`
+remains anywhere in `planktos/`.
 
 ⚠️ **The decimation gate must never reach FTLE.** `calculate_FTLE` appends history every
 step as its *integration state* — the flow map is built by indexing `s.pos_history` — so
@@ -1010,8 +1014,8 @@ Three things this buys, in increasing order of ambition:
 it.** The information exists only at the moment `read_IB2d_fluid_data(...)` is called;
 by the time `record()` runs it is gone. So **every loader records its own call** into
 environment state (`Environment._fluid_provenance` / `._ibmesh_provenance`, say) and the
-recorder merely serializes what it finds. Nothing in the codebase does this today —
-there is no such attribute anywhere — so this is a small edit to each of
+recorder merely serializes what it finds. Nothing in the codebase did this before A1 —
+there was no such attribute anywhere — so it was a small edit to each of
 `read_IB2d_fluid_data`, `read_vtk_data`, `read_openfoam_vtk_data`, `read_comsol_vtu_data`,
 `read_npy_data`/`load_NetCDF` and the analytic generators (`set_brinkman_flow`,
 `set_channel_flow`, `set_canopy_flow`), plus `read_IB2d_mesh_data`,
@@ -1812,7 +1816,8 @@ oversight rather than intent.
   (including that the histories stay in step as the run continues past the reset) and
   `test_reset_leaves_props_history_off_when_it_was_never_on`.
 - ⚠️ **§2.2's rule that `reset()` must *raise* while recording is not part of this**, and
-  is still owed: there is no recorder yet. It lands with §6.1 **A3a**.
+  landed with §6.1 **A3a** (2026-08-25), alongside four other refusals — see the
+  `_refuse_while_recording` guard.
 
 
 ### 5.3 A bare `Swarm.move()` froze the other swarms into an inconsistent history
@@ -1896,7 +1901,9 @@ so the archive loses nothing it wanted.
 settled a number the archive persists. See "As landed" in §5.1 and §5.2.
 
 **Step A — the run archive (§2).** Pure data capture: no rendering, no video
-parameters, no matplotlib. Seven sub-steps, each independently testable:
+parameters, no matplotlib. Seven sub-steps, each independently testable. **A0 through
+A3b are done (2026-08-21 to 2026-08-25); A4 and A5 remain** — so the archive is written
+but cannot yet be read back, which is why §7 files all three changelog lines at A4/A5:
 
   A0. ✅ **[done 2026-08-21] Decouple collision handling from `pos_history`.** `apply_boundary_conditions`
       takes each agent's movement start point from `pos_history[-1]`; publish `move()`'s
@@ -2161,7 +2168,7 @@ parameters, no matplotlib. Seven sub-steps, each independently testable:
       site**: the traceback already names the call that raised, and a per-site variant
       would be one more thing to keep in step with the guard list.
 
-  A3b. **The capture schedule.** Adds `capture_interval=k` to the signature, the
+  A3b. ✅ **[done 2026-08-25] The capture schedule.** Adds `capture_interval=k` to the signature, the
       `Environment` step counter, the capture-step predicate, and the history-append
       gating in `Swarm.move` and `Environment.move_swarms`. Also `move()`'s
       `except BaseException` block, whose unconditional `time_history.append` must
@@ -2177,6 +2184,36 @@ parameters, no matplotlib. Seven sub-steps, each independently testable:
       first exists: a run at `capture_interval=k` produces **bit-identical agent
       trajectories** to the same run captured every step. Drive it through a mesh so the
       collision path is exercised. What is recorded must not change what happens.
+
+      **As landed.** One predicate, `Environment._records_this_step()`, gates the history
+      appends and the archive capture alike, so the two cannot drift: `Swarm.move` asks
+      it at the *start* of a step about the state that step begins from, and
+      `_notify_step_complete` asks it again after incrementing, about the state the step
+      produced — the two ends of a step, the same set of states. When nothing is
+      recording the interval is 1 and the modulus is satisfied by every step, so there is
+      no "are we recording" branch in the move loop at all.
+
+      **Captures are counted from the step recording began at**, not from step zero, so a
+      recording started mid-run is evenly spaced rather than short at the front. The
+      interval returns to 1 when recording stops, and `reset()` returns the counter and
+      the phase with the clock.
+
+      ⚠️ **The test was checked against the defect it exists for.** With A0 reverted —
+      `prev_pos = self.pos_history[-1]` restored — it fails on **5 of its 6 cases**,
+      exactly as §2.2 predicts. Both geometries earn their place, and for different
+      reasons:
+
+      - the **full-span wall** diverges only in `ib_collision_idx`, not in position:
+        collisions re-litigated from a stale origin resolve to a different mesh element
+        while landing in the same place. Asserting on positions alone would have missed
+        it.
+      - the **short wall** — agents travelling around its end over several steps, which
+        is the case a stale start point turns into a chord straight *through* the wall —
+        diverges in **position**, leaving an agent on the wrong side. That is the
+        no-penetration invariant breaking, reproduced on demand.
+
+      *The obvious single geometry would have been the full-span wall, and it would have
+      caught this only via a field most people would not think to assert on.*
   A4. **The reader** (`RunArchive`, `planktos.load_run`), mmap-backed, resolving by
       time and snapping — **not** interpolating — agent state (§2.7). Including it here
       makes A testable end to end without touching a line of rendering code, which is
@@ -2247,10 +2284,11 @@ nothing to share.
 New `tests/test_run_archive.py`, except the loader-count assertion, which belongs beside
 the machinery it counts in `test_dynamic_loading.py`.
 
-**The headline test** is that recording a run against a windowed `FluidData` costs
-*identically* many loader calls as the same run without it. That single assertion is the
-property the whole design exists for, and `test_dynamic_loading.py`'s synthetic subclass
-already supports counting them.
+**The headline test** ✅ **[A3a]** is that recording a run against a windowed
+`FluidData` costs *identically* many loader calls as the same run without it. That
+single assertion is the property the whole design exists for.
+`test_recording.py::test_recording_costs_no_extra_fluid_loads`, with a guard that the
+window actually slid — otherwise it would pass against a dataset that never streamed.
 
 **The second one makes §3.2 executable:** under `INUM=int`, per-dump vorticity blended
 to a time between dumps equals `envir.get_vorticity(time=t)` computed live, to
@@ -2260,19 +2298,26 @@ as well. Under `INUM=None` there is nothing to compare, since the render calls
 anywhere**, which is the regime's whole content and would otherwise fail silently by
 costing disk nobody asked for.
 
-**The third belongs to A3b and is the one that protects the physics:** a run at
-`capture_interval=k` produces **bit-identical agent trajectories** to the same run
-captured every step. What is recorded must not change what happens. Drive it through a
-mesh so the collision path is exercised, since that is the path A0 rewires. *(It reads
-like an A0 test and was filed there through several drafts, but `capture_interval` does
-not exist until A3b — §6.1 A0 lists the four checks that do land with the refactor
-itself, one of which proves the decoupling more directly than this one does.)*
+**The third belongs to A3b and is the one that protects the physics** ✅ **[A3b]**: a
+run at `capture_interval=k` produces **bit-identical agent trajectories** to the same
+run captured every step. What is recorded must not change what happens. *(It reads like
+an A0 test and was filed there through several drafts, but `capture_interval` does not
+exist until A3b — §6.1 A0 lists the four checks that do land with the refactor itself,
+one of which proves the decoupling more directly than this one does.)*
+
+⚠️ **Drive it through two meshes, not one.** §6.1 A3b records what validating this
+found: against the reverted A0 coupling, a wall spanning the domain diverges only in
+`ib_collision_idx` while positions match — so the obvious single geometry catches the
+defect only via a field most people would not think to assert on. A *short* wall, which
+agents round the end of over several steps, diverges in position instead. Assert on both
+positions and collision indices, over both geometries.
 
 Round out with the following, grouped by the step that makes each expressible. ✅ marks
-what already landed with **A2**, whose tests are in `tests/test_run_archive.py` and
-drive the writer directly, with no simulation involved.
+what has landed. The writer tests (`tests/test_run_archive.py`) drive the format directly
+with synthetic arrays and no simulation; the recorder tests (`tests/test_recording.py`)
+drive real runs.
 
-**Landed with A2:**
+**Landed with A2 — the format:**
 
 - ✅ chunk boundaries at exactly one, one-plus-one, and a partial chunk;
 - ✅ **a hard-kill simulation** — write chunks, then read without any finalizer having
@@ -2286,40 +2331,63 @@ drive the writer directly, with no simulation involved.
 - ✅ chunk files recovered in **numeric** and not lexical order;
 - ✅ two swarms with the same default name recorded without collision (index access and
   the name-ambiguity raise are §2.7, so they belong to **A4**);
-- ✅ a masked agent round-tripping as masked, and a partially masked row refused.
+- ✅ a masked agent round-tripping as masked, and a partially masked row refused;
+- ✅ a corrupted `grid.npz` caught by the zip CRC, which is why the archive carries no
+  checksum of its own (§2.3).
 
-**A3a — the recorder:**
+**Landed with A3a — the recorder:**
 
-- a round-trip against `pos_history` / `vel_history` / `time_history`;
-- a fingerprint refusal against a differently-gridded environment;
-- a raise mid-run leaving a complete-to-that-point readable archive;
-- a plain `swrm.move()` inside a recording capturing exactly one state per step;
-- a swarm added mid-recording: its `first_capture` and its short first chunk.
-  **Cover both spellings** — `envir.add_swarm(...)` and `planktos.Swarm(envir=envir)` —
-  since only the second exercises the registration site a hook on `add_swarm` would have
-  missed (§2.3);
-- `store=` omitting velocities warning at `record()`, and omitting positions raising
+- ✅ a round-trip against `pos_history` / `vel_history` / `time_history`;
+- ✅ the fingerprint matching the environment that wrote it, and differing from a
+  differently-gridded one in a way that names the field;
+- ✅ a raise mid-run leaving a complete-to-that-point readable archive;
+- ✅ a plain `swrm.move()` inside a recording capturing exactly one state per step, and
+  `move_swarms` capturing once per *step* rather than once per swarm;
+- ✅ a swarm added mid-recording: its `first_capture` and its short first chunk.
+  **Both spellings** — `envir.add_swarm(...)` and `planktos.Swarm(envir=envir)` —
+  since a hook on either would have been wrong; the recorder discovers swarms at capture
+  time instead (§2.3);
+- ✅ `store=` omitting velocities warning at `record()`, and omitting positions raising
   (§2.4);
-- the five refusals, which land together because they are one concern: `reset()` while
-  recording; a second `record()` on an environment already recording (§2.1); loading a
-  new fluid while recording (§2.3); `record()` on a dynamically-loaded fluid whose
-  window has already slid, and **not** raising under `INUM=None` (§2.1); and
-  `move(update_time=False)` warning while a recorder is active (§2.2).
+- ✅ restricting capture to a subset of swarms with `swarms=`;
+- ✅ `calculate_FTLE` firing no captures, and contributing no swarm;
+- ✅ the five refusals, which landed together because they are one concern: `reset()`
+  while recording; a second `record()` on an environment already recording (§2.1);
+  loading a new fluid while recording (§2.3); `record()` on a dynamically-loaded fluid
+  whose window has already slid, and **not** raising under `INUM=None` (§2.1); and
+  `move(update_time=False)` warning while a recorder is active (§2.2). Plus a
+  **structural** check that every fluid setter's guard is an executable statement rather
+  than text inside a docstring — a failure invisible to grep, and one that happened.
 
-**A3b — the capture schedule:**
+**Landed with A3b — the capture schedule:**
 
-- `capture_interval=k` giving `len(time_history) == len(pos_history)` and a capture
-  count of `steps//k + 1`, with `time_history` holding only captured times (§2.2);
-- a failed step under `capture_interval=k` leaving the histories consistent (§2.2);
-- `move_swarms` under `capture_interval=k` keeping every swarm's histories the same
-  length as `time_history`.
+- ✅ `capture_interval=k` giving `len(time_history) == len(pos_history) ==
+  len(vel_history)` and a capture count of `steps//k + 1`, with `time_history` holding
+  only captured times, over several (steps, k) combinations including k not dividing
+  steps (§2.2);
+- ✅ capture *j* equalling `full_pos_history[j]` under a coarse schedule, which is the
+  identity the whole design rests on;
+- ✅ captures spaced exactly *k*·`dt` apart — the "as if `dt` were larger" framing,
+  made executable;
+- ✅ a failed step under `capture_interval=k` leaving the histories consistent (§2.2);
+- ✅ `move_swarms` under `capture_interval=k` keeping every swarm's histories the same
+  length as `time_history`;
+- ✅ the histories returning to every step once recording stops — gating must not
+  outlive the recorder;
+- ✅ a recording started mid-run being evenly spaced, since captures count from the step
+  recording began at rather than from step zero;
+- ✅ `capture_interval` below 1 refused, leaving nothing gated.
 
 **A4 — the reader:**
 
 - **reading an archive larger than one chunk without materializing it** — assert the
   reader returns mmapped arrays, which is what makes §2.10 possible;
 - a deliberately removed middle chunk refusing rather than short-reading (§2.3);
-- two swarms with the same default name: index access works, name access raises (§2.7).
+- two swarms with the same default name: index access works, name access raises (§2.7);
+- a swarm added mid-run coming back front-padded with masked rows, aligned to
+  `run.times` (§2.3, §2.7);
+- a fingerprint refusal against a differently-gridded environment, with the message
+  naming the provenance of both sides (§2.8).
 
 **B — the fluid half:**
 
@@ -2339,33 +2407,34 @@ Line numbers drift; search for the names.
   **eight** unpack sites consume its tuple (`grep -n "_calc_basic_stats" planktos/_swarm.py`).
 - `Swarm.move` — the `old_velocities` / `velocities` / `apply_boundary_conditions`
   ordering that §5.1 turns on.
-- `Environment.reset` (`planktos/_environment.py`) — §5.2, and §2.2's raise.
+- `Environment.reset` (`planktos/_environment.py`) — §5.2, and §2.2's raise (both landed; `reset` now also returns the step counter and capture phase).
 
-**Step A:**
-- `Swarm.apply_boundary_conditions` (`planktos/_swarm.py`) — `prev_pos =
-  self.pos_history[-1]`, the A0 dependency; its docstring documents it, so that changes
-  too. The other two sites taking `old_positions` are both inside
-  `Environment.calculate_FTLE`, which inlines its own move loop (and is therefore also
-  why FTLE cannot fire a capture).
-- `Swarm.move`, at the `update_time` block near the end, and `Environment.move_swarms`,
-  after its time bump — the two capture triggers, and the two history-append sites that
-  `capture_interval` gates.
-- `Swarm.move`'s `except BaseException` block — the unconditional `time_history.append`
-  that §2.2 makes conditional.
-- `Swarm.__init__` and `Swarm._change_envir` (`planktos/_swarm.py`) — the two sites
-  where a swarm appends itself to `envir.swarms`, and therefore where the mid-run
-  notification hook goes. **Not `Environment.add_swarm`**, which only routes to
-  them and which `planktos.Swarm(envir=...)` bypasses entirely (§2.3).
+**Step A — what A0–A3b built** (for reading the code, not for building it again):
+- `planktos/archive.py` — the format and the writer (`_ArchiveWriter`), the fingerprint
+  functions, and `RunRecorder`, which `Environment.record` returns.
+- `planktos/_provenance.py` — `records_provenance` / `note_modifier` / `jsonable`, the
+  decorators every fluid and mesh entry point carries.
+- `Environment.record` / `flush_recording` / `stop_recording` /
+  `_notify_step_complete` / `_records_this_step` / `_refuse_while_recording`
+  (`planktos/_environment.py`).
+- `Swarm._prev_positions`, set in `__init__`, in `Swarm.move`, and in both inlined loops
+  in `Environment.calculate_FTLE` — the movement start point, which
+  `apply_boundary_conditions` reads instead of `pos_history[-1]` (A0).
+- `Swarm.move`'s `keep_state`, asked once at the top of a step and used for all three
+  history appends, for the `time_history` append in the `update_time` block, **and in
+  the `except BaseException` block** — which must gate too, or it closes the histories
+  off inconsistently, the exact thing it exists to prevent.
+
+**Step A — still to build (A4, A5):**
 - `Swarm.full_pos_history` / `full_vel_history` and `Swarm._select_frames` — the index
-  convention the capture schedule has to match.
+  convention the reader has to match. Capture *j* is `full_pos_history[j]`.
 - `Swarm.save_data` — the precedent for "props_history is not saved", and the existing
   model for a directory of run output; also the §2.11 checkpoint's nearest relative
   (it already writes `props` to json and `shared_props` to npz).
 - `Swarm.__init__` — `rndState`, `store_prop_history`, `ib_condition`: the checkpoint
   inventory in §2.11.
-- `Environment.read_IB2d_fluid_data` / `read_vtk_data` / `read_openfoam_vtk_data` /
-  `read_IB2d_mesh_data` / `read_stl_mesh_data` — the loader calls §2.6's provenance
-  record has to name and reproduce.
+- `archive._chunk_index_of` and `archive.compare_fingerprints` — what the reader scans
+  and validates with; both exist already.
 
 **Step B:**
 - `FluidData._record_dump_means` (`planktos/fluid.py`) — the dump-arrival hook, called
@@ -2414,11 +2483,13 @@ Line numbers drift; search for the names.
   Dyload-only in its fluid half — it depends on `FluidData` — but the *agent* half does
   not, so check portability with `git diff master -- <file>` before assuming the whole
   feature is dyload-only. Two further lines belong to step A in their own right:
-  **`capture_interval`** (at **A3b**), which changes what `time_history`, `pos_history`
-  and `vel_history` contain and so is visible to any script that indexes them — that one
-  *is* user-visible the moment it lands, since it needs no reader to be observed; and the
-  fact that recording into a **non-empty directory redirects to a timestamped sibling**
-  (§2.1). A0 is an internal refactor with no behavior change and gets no line —
+  **`capture_interval`**, which changes what `time_history`, `pos_history` and
+  `vel_history` contain and so is visible to any script that indexes them; and the fact
+  that recording into a **non-empty directory redirects to a timestamped sibling**
+  (§2.1). ⚠️ *An earlier version of this bullet filed `capture_interval` at A3b, on the
+  grounds that it is observable without a reader. True but beside the point: it is only
+  **reachable** through `record()`, which is itself unannounced until A4/A5, so a line
+  describing it would leave a reader asking where to set it. All three land together.* A0 is an internal refactor with no behavior change and gets no line —
   if it changes a trajectory, that is a bug, not a changelog entry;
 - **Owed at step B:** if Planktos writes vorticity into the source directory (§3.3) that
   is user-visible in its own right and needs its own line;

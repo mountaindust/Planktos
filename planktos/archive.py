@@ -816,6 +816,8 @@ class RunRecorder:
         self._writer.close()
         if self.envir._recorder is self:
             self.envir._recorder = None
+            # Nothing is being gated any more; history goes back to every step.
+            self.envir._capture_interval = 1
 
 
     ####################   hooks   ####################

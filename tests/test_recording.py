@@ -504,3 +504,194 @@ def test_every_fluid_setter_guards_against_loading_while_recording():
                 'read_comsol_vtu_data', 'read_NetCDF_flow', 'reset'}
     assert expected <= guarded, \
         'unguarded: {}'.format(sorted(expected - guarded))
+
+
+# --------------------------------------------------------------------------- #
+#                        the capture schedule (A3b)                            #
+# --------------------------------------------------------------------------- #
+# capture_interval=k keeps state every k-th step, in the archive AND in
+# time_history / pos_history / vel_history -- the same set of states, from one
+# predicate, so there is no second notion of "a recorded state" anywhere.
+
+def _wall_envir(span=(0.5, 9.5)):
+    """A vertical wall at x=5 over the given y-span, finely meshed.
+
+    Two spans are used below. A wall crossing the whole domain forces head-on
+    collisions; a short one lets agents travel around its end over several
+    steps, which is the case a stale movement start point turns into a chord
+    straight through the wall.
+    """
+    envir = planktos.Environment(Lx=10, Ly=10, x_bndry='noflux', y_bndry='noflux',
+                                 flow=[np.zeros((5, 5)), np.zeros((5, 5))])
+    y = np.linspace(span[0], span[1], 9)
+    mesh = np.zeros((len(y) - 1, 2, 2))
+    mesh[:, 0, 0] = mesh[:, 1, 0] = 5.0
+    mesh[:, 0, 1], mesh[:, 1, 1] = y[:-1], y[1:]
+    envir.ibmesh = mesh
+    envir.max_meshpt_dist = float(
+        np.linalg.norm(mesh[:, 0, :] - mesh[:, 1, :], axis=1).max())
+    return envir
+
+
+GEOMETRY = {
+    # span,          initial positions,                     drift
+    'across': ((0.5, 9.5), [[4., 3.], [4., 7.], [2., 5.], [4.5, 4.]], (1.0, 0.2)),
+    'around': ((4.0, 6.0), [[4., 3.], [4., 5.], [4.2, 3.5], [3., 2.]], (0.9, 0.9)),
+}
+
+
+def _drive_into_wall(tmp_path, capture_interval, geometry, steps=6, name='run'):
+    """Deterministic run against a wall, returning positions and collisions.
+
+    The trajectory is collected from the live positions attribute rather than
+    from history -- which capture_interval decimates, and which is exactly what
+    must not be allowed to matter.
+    """
+    span, init, mu = GEOMETRY[geometry]
+    envir = _wall_envir(span)
+    swrm = planktos.Swarm(swarm_size=len(init), envir=envir, seed=1,
+                          init=np.array(init, float))
+    swrm.shared_props['cov'] = np.zeros((2, 2))
+    swrm.shared_props['mu'] = np.array(mu, float)
+
+    traj, hits = [np.ma.filled(swrm.positions, np.nan)], []
+    with envir.record(tmp_path / name, capture_interval=capture_interval):
+        for _ in range(steps):
+            swrm.move(1.0, silent=True)
+            traj.append(np.ma.filled(swrm.positions, np.nan))
+            hits.append(np.asarray(swrm.ib_collision_idx).copy())
+    return np.stack(traj), np.stack(hits)
+
+
+@pytest.mark.parametrize('geometry', ['across', 'around'])
+@pytest.mark.parametrize('k', [2, 3, 5])
+def test_a_capture_schedule_does_not_change_what_happens(k, geometry, tmp_path):
+    # THE test for this step. What is recorded must not change the physics --
+    # and the collision path is where it could, since the movement start point
+    # used to be read straight out of pos_history (A0 decoupled it).
+    every_step, every_hit = _drive_into_wall(tmp_path, 1, geometry, name='every')
+    coarse, coarse_hit = _drive_into_wall(tmp_path, k, geometry, name='coarse')
+
+    assert np.array_equal(every_step, coarse), (
+        'capture_interval={} changed the {} trajectory; what is recorded must '
+        'not change what happens'.format(k, geometry))
+    assert np.array_equal(every_hit, coarse_hit)
+    assert (every_hit >= 0).any(), 'no collision occurred; the test proves nothing'
+    if geometry == 'across':
+        # the wall spans the domain, so nothing may reach the far side. (The
+        # 'around' wall is short on purpose -- passing its end is the legitimate
+        # multi-step path a stale start point would chord straight through.)
+        assert (every_step[-1, :, 0] < 5.0 + 1e-12).all(),             'an agent got through the wall'
+
+
+@pytest.mark.parametrize('steps, k', [(6, 1), (6, 3), (7, 3), (10, 5), (9, 4)])
+def test_the_histories_hold_exactly_the_captured_states(steps, k, tmp_path):
+    envir = _envir()
+    swrm = _swarm(envir)
+    with envir.record(tmp_path / 'run', capture_interval=k) as rec:
+        for _ in range(steps):
+            swrm.move(0.1, silent=True)
+
+    times = _chunks(rec.path / 'agents', 'times_*.npy')
+    # every history is the same length, and holds only captured states
+    assert len(envir.time_history) == len(swrm.pos_history) == len(swrm.vel_history)
+    assert len(times) == steps // k + 1
+    # capture j is exactly full_pos_history[j] -- no index translation anywhere
+    full = _stack(swrm.full_pos_history)
+    assert np.allclose(_chunks(rec.path / 'agents', 'swarm00_pos_*.npy'),
+                       full[:len(times)])
+    assert np.allclose(times, (envir.time_history + [envir.time])[:len(times)])
+
+
+def test_time_history_holds_only_the_captured_times(tmp_path):
+    envir = _envir()
+    swrm = _swarm(envir)
+    with envir.record(tmp_path / 'run', capture_interval=3):
+        for _ in range(9):
+            swrm.move(0.5, silent=True)
+    # t0, t3, t6 -- the run reached t=4.5, and t9 is the live state
+    assert np.allclose(envir.time_history, [0.0, 1.5, 3.0])
+
+
+def test_a_coarse_schedule_looks_like_a_run_at_a_larger_dt(tmp_path):
+    # The framing capture_interval is specified under: the archive should look
+    # exactly like the same run performed at k*dt.
+    envir = _envir()
+    swrm = _swarm(envir)
+    with envir.record(tmp_path / 'run', capture_interval=4) as rec:
+        for _ in range(12):
+            swrm.move(0.25, silent=True)
+    times = _chunks(rec.path / 'agents', 'times_*.npy')
+    assert np.allclose(np.diff(times), 1.0), 'captures should be 4*dt apart'
+
+
+def test_move_swarms_keeps_every_swarm_in_step_under_a_schedule(tmp_path):
+    envir = _envir()
+    a, b = _swarm(envir, seed=1), _swarm(envir, seed=2)
+    with envir.record(tmp_path / 'run', capture_interval=3) as rec:
+        for _ in range(9):
+            envir.move_swarms(0.1, silent=True)
+    for swrm in (a, b):
+        assert len(swrm.pos_history) == len(swrm.vel_history) \
+            == len(envir.time_history)
+    agents = rec.path / 'agents'
+    assert len(_chunks(agents, 'times_*.npy')) == 4
+    for prefix in ('swarm00', 'swarm01'):
+        assert len(_chunks(agents, prefix + '_pos_*.npy')) == 4
+
+
+def test_a_failed_step_under_a_schedule_leaves_the_histories_consistent(tmp_path):
+    # move()'s failure handler appends envir.time to close the histories off
+    # together. Under a schedule it must append only when the failed step was
+    # one that appended to pos_history, or it does the opposite of its job.
+    class _Exploding(planktos.Swarm):
+        def apply_agent_model(self, dt):
+            if self.envir._step_count == 4:
+                raise ValueError('boom')
+            return super().apply_agent_model(dt)
+
+    envir = _envir()
+    swrm = _Exploding(swarm_size=3, envir=envir, seed=1,
+                      init=np.full((3, 2), 2.0))
+    swrm.shared_props['cov'] = np.zeros((2, 2))
+    with envir.record(tmp_path / 'run', capture_interval=3):
+        with pytest.raises(ValueError, match='boom'):
+            for _ in range(9):
+                swrm.move(0.1, silent=True)
+    assert len(envir.time_history) == len(swrm.pos_history) == len(swrm.vel_history)
+
+
+def test_the_histories_go_back_to_every_step_once_recording_stops(tmp_path):
+    envir = _envir()
+    swrm = _swarm(envir)
+    with envir.record(tmp_path / 'run', capture_interval=4):
+        for _ in range(8):
+            swrm.move(0.1, silent=True)
+    assert len(swrm.pos_history) == 2
+    for _ in range(3):
+        swrm.move(0.1, silent=True)
+    assert len(swrm.pos_history) == 5, 'gating outlived the recording'
+    assert len(envir.time_history) == len(swrm.pos_history)
+
+
+def test_captures_are_evenly_spaced_when_recording_starts_mid_run(tmp_path):
+    # Counted from the step recording began at, not from step zero, so the
+    # spacing is k*dt throughout rather than short at the front.
+    envir = _envir()
+    swrm = _swarm(envir)
+    for _ in range(2):
+        swrm.move(0.5, silent=True)
+    with envir.record(tmp_path / 'run', capture_interval=3) as rec:
+        for _ in range(6):
+            swrm.move(0.5, silent=True)
+    times = _chunks(rec.path / 'agents', 'times_*.npy')
+    assert np.allclose(times, [1.0, 2.5, 4.0])
+
+
+def test_a_capture_interval_below_one_is_refused(tmp_path):
+    envir = _envir()
+    _swarm(envir)
+    with pytest.raises(ValueError, match='capture_interval'):
+        envir.record(tmp_path / 'run', capture_interval=0)
+    assert envir._recorder is None
+    assert envir._capture_interval == 1
