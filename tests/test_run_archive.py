@@ -38,13 +38,17 @@ def _fingerprint(dimension=2, L=(10.0, 5.0), n_dumps=4, npts=(5, 3)):
                                      periodic_dim=False)
 
 
-def _writer(tmp_path, chunk_size=100, meta=None, name='run'):
+def _writer(tmp_path, chunk_size=100, meta=None, name='run', **kwargs):
     return archive._ArchiveWriter(tmp_path / name, _fingerprint(), meta=meta,
-                                  chunk_size=chunk_size)
+                                  chunk_size=chunk_size, **kwargs)
 
 
 def _capture(N=3, D=2, value=0.0, masked=()):
-    '''An N x D masked position/velocity pair, filled with a recognizable value.'''
+    '''One swarm's named arrays for a capture, filled with recognizable values.
+
+    Velocities are the negated positions so a mix-up between the two files is
+    visible rather than plausible.
+    '''
     pos = ma.masked_array(np.full((N, D), value, dtype=float),
                           mask=np.zeros((N, D), dtype=bool))
     vel = ma.masked_array(np.full((N, D), -value, dtype=float),
@@ -52,7 +56,7 @@ def _capture(N=3, D=2, value=0.0, masked=()):
     for row in masked:
         pos[row, :] = ma.masked
         vel[row, :] = ma.masked
-    return pos, vel
+    return {'positions': pos, 'velocities': vel}
 
 
 def _run(writer, n_captures, swarm=0, N=3, D=2, start=0):
@@ -364,10 +368,10 @@ def test_a_partially_masked_row_is_refused_rather_than_flattened(tmp_path):
     # row-reduced mask would hide that.
     w = _writer(tmp_path)
     w.add_swarm(0, 'organism', 2, 2, 0)
-    pos, vel = _capture(2, 2)
-    pos[1, 0] = ma.masked
+    named = _capture(2, 2)
+    named['positions'][1, 0] = ma.masked
     with pytest.raises(ValueError, match='partially masked'):
-        w.add_capture(0, 0.0, {0: (pos, vel)})
+        w.add_capture(0, 0.0, {0: named})
 
 
 def test_a_wrongly_shaped_capture_is_refused(tmp_path):

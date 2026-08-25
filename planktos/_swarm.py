@@ -1215,6 +1215,20 @@ class Swarm:
             self.envir.time += dt
             if not silent:
                 print('time = {}'.format(np.round(self.envir.time,11)))
+            # The environment has advanced one step, with every swarm moved
+            #   (there is only one, or this would have raised above).
+            self.envir._notify_step_complete()
+        elif not self.envir._in_move_swarms and self.envir._recorder is not None:
+            # update_time=False exists for move_swarms to call. Reached any
+            #   other way it means the caller intends to advance the clock by
+            #   hand, and a hand-rolled advance fires no hook -- so the step
+            #   happens but the archive never sees it.
+            warnings.warn(
+                "move(update_time=False) while recording: this step will not "
+                "be captured, because nothing here advances the environment "
+                "time and the capture hook rides that advance. Use "
+                "envir.move_swarms(dt) to move every swarm and advance the "
+                "time together.", UserWarning)
 
 
 

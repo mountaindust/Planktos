@@ -28,7 +28,7 @@ from mpl_toolkits import mplot3d
 from matplotlib.collections import LineCollection
 
 import planktos
-from . import _dataio, _geom, _provenance, fluid, motion
+from . import _dataio, _geom, _provenance, archive, fluid, motion
 
 if _dataio.NETCDF:
     from cftime import date2num
@@ -281,6 +281,16 @@ class Environment:
         self._fluid_provenance = None
         self._ibmesh_provenance = None
         self._netcdf_provenance = None
+
+        # The active RunRecorder, or None. The time-advance hook finds it here,
+        #   which is why there can only be one per Environment.
+        self._recorder = None
+        # True while move_swarms is looping over the swarms. Swarm.move uses it
+        #   to tell its own update_time=False calls apart from a user's, and
+        #   warns about the latter: captures fire on the environment's time
+        #   advance, so a caller who advances the time by hand instead produces
+        #   a step the archive never sees.
+        self._in_move_swarms = False
 
         if flow is not None:
             # Arrays handed over in process have no call to replay: the data
@@ -554,6 +564,8 @@ class Environment:
         set_two_layer_channel_flow
         set_canopy_flow
         '''
+        self._refuse_while_recording()
+
 
         ##### Parse parameters #####
         if tspan is not None and not hasattr(U, '__iter__'):
@@ -717,6 +729,8 @@ class Environment:
         .. [3] A. Defina and A.C. Bixio, (2005). "Mean flow and turbulence in 
            vegetated open channel flow," Water Resources Research, 41(7).
         '''
+        self._refuse_while_recording()
+
         # Get channel height
         H = self.L[-1]
         # Get empirical length scale, Meijer and Van Valezen (1999)
@@ -837,6 +851,8 @@ class Environment:
             Society, 130(596), 1-29.
 
         '''
+        self._refuse_while_recording()
+
 
         ##### Parse parameters #####
         # Make sure that at least two of the three flow parameters have been specified
@@ -1091,6 +1107,8 @@ class Environment:
             entire dataset too but splines it linearly; an int streams a sliding
             window from storage and splines that linearly.
         '''
+        self._refuse_while_recording()
+
 
         self.flow = fluid.IB2dData(path, dt, print_dump, d_start, d_finish, INUM)
         self.L = self.flow.L
@@ -1138,6 +1156,8 @@ class Environment:
             scalar to multiply the velocity by in order to convert units to 
             match the spatial grid units
         '''
+        self._refuse_while_recording()
+
 
         self.flow = fluid.VTK3dData(path, title, d_start, d_finish, INUM,
                                     periodic_dim, vel_conv)
@@ -1218,6 +1238,8 @@ class Environment:
             condition the solver applied and is the better source wherever one
             exists.
         '''
+        self._refuse_while_recording()
+
 
         self.flow = fluid.OpenFOAMData(path, INUM, periodic_dim, vel_conv,
                                        require_boundary)
@@ -1253,6 +1275,8 @@ class Environment:
         vel_conv : float, optional
             scalar to multiply the velocity by in order to convert units
         '''
+        self._refuse_while_recording()
+
         path = Path(filename)
         if not path.is_file(): 
             raise FileNotFoundError("File {} not found!".format(str(filename)))
@@ -1394,6 +1418,8 @@ class Environment:
         ‘julian’, ‘all_leap’, ‘366_day’. Default is None which means the 
         calendar associated with the first input datetime instance will be used.
         '''
+        self._refuse_while_recording()
+
         
         if flow_y is None:
             assert vec_idx is not None, "vec_idx must be specified if there is only one fluid variable"
@@ -2012,6 +2038,176 @@ class Environment:
             
 
 
+    #######################################################################
+    #####                      RUN RECORDING                          #####
+    #######################################################################
+
+    def record(self, path, *, swarms=None, store=('positions', 'velocities'),
+               chunk_size=100):
+        '''Begin recording agent state to a run archive, and return the handle.
+
+        Planktos otherwise holds an entire run in memory and can only write it
+        out at the end. Recording streams it to disk as the run proceeds -- the
+        mirror image of what dynamic fluid loading does for the velocity field.
+
+        **Recording starts immediately.** The ``with`` form only adds the
+        guaranteed stop; a bare ``envir.record(path)`` records from that moment
+        on, which is why this is not a context manager that does its work in
+        ``__enter__``. Captures fire automatically on every environmental time
+        step, so the loop below is an ordinary Planktos loop, unchanged::
+
+            with envir.record('run_archive/'):
+                for _ in range(steps):
+                    swrm.move(dt)
+
+        Parameters
+        ----------
+        path : str or Path
+            directory to record into, created if missing. **If it exists and is
+            non-empty the archive goes to a timestamped sibling instead**, with
+            a warning naming it -- overwriting a previous run is never the right
+            default, and refusing outright would strand a job that was ready to
+            start. The handle's ``.path`` says where the data actually went.
+        swarms : list of Swarm, optional
+            which swarms to capture. Defaults to every swarm in the environment,
+            plus any added later. Agent data runs a few hundred MB per large
+            swarm, so restricting it is sometimes worth doing.
+        store : tuple of str, default=('positions', 'velocities')
+            which per-agent arrays to keep. ``'positions'`` is required.
+            Dropping ``'velocities'`` halves the archive but leaves it
+            analysis-only: plotting needs them, and re-deriving them from
+            positions is wrong for any agent that collided or wrapped.
+        chunk_size : int, default=100
+            captures buffered before a chunk is written. Bounds recording memory
+            and the amount a hard kill can cost.
+
+        Returns
+        -------
+        RunRecorder
+            usable as a context manager, and exposing ``.path``
+
+        Raises
+        ------
+        RuntimeError
+            if this environment is already recording, or if the fluid is
+            dynamically loaded and its window has already moved past the first
+            dump (see below)
+
+        Notes
+        -----
+        **Start recording before the fluid window has moved.** Under dynamic
+        loading, per-dump fluid quantities are written as each dump lands, and
+        dumps the sliding window has already passed are gone -- so a recording
+        started mid-run would have holes in its fluid series. Re-reading those
+        dumps would be a second streaming pass over exactly the data this design
+        exists to avoid re-streaming, so this refuses early instead. Start
+        before the loop, or load with ``INUM=None``.
+
+        See Also
+        --------
+        flush_recording : write buffered captures without stopping
+        stop_recording : flush and unhook
+        '''
+
+        if self._recorder is not None:
+            raise RuntimeError(
+                "This Environment is already recording to {}. There is one "
+                "recorder per Environment -- the time-advance hook finds it "
+                "through a single reference -- so a second would either "
+                "abandon the first archive partly written or run beside it, "
+                "which the hook cannot express. Call envir.stop_recording() "
+                "first.".format(self._recorder.path))
+
+        # Under a sliding window, dumps the window has already passed are gone
+        #   and are never re-reported, so a recording started after it moved
+        #   would have holes in its fluid series -- which would be refused at
+        #   render time, i.e. after the run instead of before it.
+        if self.flow is not None and getattr(self.flow, 'INUM', None) is not None:
+            bnds = getattr(self.flow, 'loaded_idx_bnds', None)
+            if bnds is not None and bnds[0] != 0:
+                raise RuntimeError(
+                    "Cannot start recording: the fluid is being loaded "
+                    "dynamically and its window has already moved past the "
+                    "first dump (it now covers indices {}-{}). Dumps the "
+                    "window has passed are gone, so the archive's fluid series "
+                    "would have holes in it.\n"
+                    "Either start recording before the run loop, or load the "
+                    "fluid with INUM=None so that all of it stays in "
+                    "memory.".format(*bnds))
+
+        if 'velocities' not in store:
+            warnings.warn(
+                "Recording without velocities: this archive will be usable for "
+                "analysis but not for plotting, since the plot statistics need "
+                "them and re-deriving them from positions is wrong for any "
+                "agent that collided or wrapped. Pass "
+                "store=('positions','velocities') to keep them.", UserWarning)
+
+        self._recorder = archive.RunRecorder(self, path, swarms=swarms,
+                                             store=store, chunk_size=chunk_size)
+        return self._recorder
+
+
+    def flush_recording(self):
+        '''Write buffered captures to disk, and keep recording.
+
+        Separate from :meth:`stop_recording` on purpose: a mid-run plot needs a
+        flush that does not end the recording, since the next ``record()`` would
+        refuse the now-non-empty directory. Harmless to call repeatedly.
+        '''
+
+        if self._recorder is not None:
+            self._recorder.flush()
+
+
+    def stop_recording(self):
+        '''Flush and unhook. Idempotent, and a no-op if nothing is recording.
+
+        Nothing here is load-bearing for correctness: the archive on disk is
+        valid whether or not this is ever reached. The most a hard kill can cost
+        is the captures buffered since the last chunk boundary.
+        '''
+
+        if self._recorder is not None:
+            self._recorder.stop()
+
+
+    def _notify_step_complete(self):
+        '''One environmental time step has completed; capture if recording.
+
+        Called from exactly two places, both meaning "the environment just
+        advanced one step": the end of ``Swarm.move`` when it updates the time,
+        and the end of :meth:`move_swarms`. A no-op when nothing is recording.
+
+        Deliberately not called from ``calculate_FTLE``, which inlines its own
+        move loop -- otherwise FTLE probe trajectories would be written into the
+        archive.
+        '''
+
+        if self._recorder is not None:
+            self._recorder._capture()
+
+
+    def _refuse_while_recording(self):
+        '''Raise if a recording is active.
+
+        Called by the operations that would invalidate an archive already being
+        written: reset(), which rewinds the clock, and every fluid setter, which
+        replaces the grid and timeline the archive fixed when it started. One
+        message covers all of them deliberately -- the traceback already names
+        the call that raised, and a per-site variant would be one more thing to
+        keep in step with the guard list.
+        '''
+
+        if self._recorder is not None:
+            raise RuntimeError(
+                "This is not allowed while recording to {}. An archive fixes "
+                "the domain, the fluid grid, and the timeline when recording "
+                "starts; resetting the clock or loading new fluid partway "
+                "through would leave it describing a run that no longer exists.\n"
+                "Call envir.stop_recording() first to proceed.".format(self._recorder.path))
+
+
     def move_swarms(self, dt=1.0, ib_collisions='sliding', 
                     silent=False):
         '''Move all Swarms in the Environment.
@@ -2032,14 +2228,24 @@ class Environment:
             If True, suppress printing the updated time.
         '''
 
-        for s in self.swarms:
-            s.move(dt, ib_collisions, update_time=False)
+        self._in_move_swarms = True
+        try:
+            for s in self.swarms:
+                s.move(dt, ib_collisions, update_time=False)
+        finally:
+            self._in_move_swarms = False
 
         # update time
         self.time_history.append(self.time)
         self.time += dt
         if not silent:
             print('time = {}'.format(np.round(self.time,11)))
+
+        # One environmental time step has completed, with every swarm moved.
+        #   This and the end of Swarm.move (when it advances the time itself)
+        #   are the only two places that mean that, and so the only two that
+        #   fire a capture.
+        self._notify_step_complete()
 
 
 
@@ -3332,8 +3538,16 @@ class Environment:
     def reset(self, rm_swarms=False):
         '''Resets environment to time=0. Swarm history will be lost, and all
         Swarms will maintain their last position and velocities.
-        If rm_swarms=True, remove all Swarms.'''
+        If rm_swarms=True, remove all Swarms.
 
+        Raises
+        ------
+        RuntimeError
+            if a recording is active. Rewinding the clock would give the archive
+            a second capture at t=0 and a timeline that goes backwards.
+        '''
+
+        self._refuse_while_recording()
         self.time = 0.0
         self.time_history = []
         if rm_swarms:

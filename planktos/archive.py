@@ -64,6 +64,9 @@ from pathlib import Path
 import numpy as np
 import numpy.ma as ma
 
+import planktos
+from . import _provenance
+
 __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
@@ -88,6 +91,13 @@ TMP_SUFFIX = '.partial'
 #   branch has paid for that mistake once already, in the OpenFOAM dump
 #   directories.
 INDEX_WIDTH = 4
+
+# Per-agent arrays the archive can store, mapped to the short name used in
+#   filenames -- the same shorthand Swarm already uses for its histories. The
+#   mask is not in here: it is derived from positions and always written, since
+#   it is how a reader knows an agent left the domain. 'accelerations' is a
+#   reserved slot, wired through but not yet offered by Environment.record.
+STORABLE = {'positions': 'pos', 'velocities': 'vel', 'accelerations': 'acc'}
 
 
 
@@ -463,9 +473,19 @@ class _ArchiveWriter:
         the directory actually being written to
     '''
 
-    def __init__(self, path, fingerprint, meta=None, chunk_size=100):
+    def __init__(self, path, fingerprint, meta=None, chunk_size=100,
+                 store=('positions', 'velocities')):
         if int(chunk_size) < 1:
             raise ValueError('chunk_size must be at least 1')
+        self.store = tuple(store)
+        unknown = [name for name in self.store if name not in STORABLE]
+        if unknown:
+            raise ValueError('cannot store {}; known arrays are {}'.format(
+                unknown, sorted(STORABLE)))
+        if 'positions' not in self.store:
+            raise ValueError(
+                'positions must be stored: nothing consumes an archive without '
+                'them, in or out of plotting')
         self.chunk_size = int(chunk_size)
         self.path = _resolve_archive_path(path)
         self.agent_dir = self.path / 'agents'
@@ -482,6 +502,7 @@ class _ArchiveWriter:
         record.update(version=FORMAT_VERSION,
                       dtype=str(DTYPE),
                       chunk_size=self.chunk_size,
+                      store=list(self.store),
                       grid=fingerprint_summary(self._fingerprint))
         _save_json(self.path / 'meta.json', record)
         self.meta = record
@@ -491,9 +512,8 @@ class _ArchiveWriter:
         # buffers for the chunk currently being filled
         self._chunk = None              # which chunk index that is
         self._times = []
-        self._pos = {}
-        self._vel = {}
-        self._mask = {}
+        # swarm index -> {'positions': [...], 'velocities': [...], 'mask': [...]}
+        self._buffers = {}
         self._next_capture = None       # the capture index expected next
         self._closed = False
 
@@ -530,9 +550,8 @@ class _ArchiveWriter:
                  'first_capture': int(first_capture)}
         self._swarms[index] = entry
         _save_json(self.agent_dir / (_swarm_prefix(index) + '.json'), entry)
-        self._pos[index] = []
-        self._vel[index] = []
-        self._mask[index] = []
+        self._buffers[index] = {name: [] for name in self.store}
+        self._buffers[index]['mask'] = []
 
 
     def add_capture(self, capture_index, time, arrays):
@@ -547,9 +566,9 @@ class _ArchiveWriter:
         time : float
             simulated time of this capture
         arrays : dict
-            swarm index -> (positions, velocities), each an ``N x D`` masked
-            array. Exactly the swarms whose ``first_capture`` has been reached
-            must be present.
+            swarm index -> {name: ``N x D`` masked array}, whose names must be
+            exactly this writer's ``store``. Exactly the swarms whose
+            ``first_capture`` has been reached must be present.
         '''
 
         if self._closed:
@@ -578,13 +597,20 @@ class _ArchiveWriter:
             self._chunk = chunk
 
         self._times.append(float(time))
-        for idx, (positions, velocities) in arrays.items():
+        for idx, named in arrays.items():
             entry = self._swarms[idx]
-            pos_data, row_mask = self._split(positions, entry, 'positions')
-            vel_data, _ = self._split(velocities, entry, 'velocities')
-            self._pos[idx].append(pos_data)
-            self._vel[idx].append(vel_data)
-            self._mask[idx].append(row_mask)
+            if set(named) != set(self.store):
+                raise ValueError(
+                    'swarm {} supplied {}, but this archive stores {}'.format(
+                        idx, sorted(named), sorted(self.store)))
+            for name in self.store:
+                data, row_mask = self._split(named[name], entry, name)
+                self._buffers[idx][name].append(data)
+                if name == 'positions':
+                    # The mask is per row and comes from positions: a masked row
+                    #   means the agent left the domain, and every other array
+                    #   for that agent is masked identically.
+                    self._buffers[idx]['mask'].append(row_mask)
 
         self._next_capture += 1
 
@@ -661,24 +687,212 @@ class _ArchiveWriter:
         _save_npy(self.agent_dir / _chunk_name('times', index),
                   np.asarray(self._times, dtype=DTYPE))
 
-        for idx in sorted(self._pos):
-            if not self._pos[idx]:
+        for idx in sorted(self._buffers):
+            buffers = self._buffers[idx]
+            if not buffers['mask']:
                 # A swarm that joined after this chunk started contributes
                 #   nothing to it. Writing a zero-row file would be a lie about
                 #   its first_capture; absence is the honest record, and the
                 #   reader resolves the offset from the sidecar.
                 continue
             prefix = _swarm_prefix(idx)
-            _save_npy(self.agent_dir / _chunk_name(prefix + '_pos', index),
-                      np.stack(self._pos[idx]))
-            _save_npy(self.agent_dir / _chunk_name(prefix + '_vel', index),
-                      np.stack(self._vel[idx]))
+            for name in self.store:
+                _save_npy(
+                    self.agent_dir / _chunk_name(
+                        '{}_{}'.format(prefix, STORABLE[name]), index),
+                    np.stack(buffers[name]))
             _save_npy(self.agent_dir / _chunk_name(prefix + '_mask', index),
-                      np.stack(self._mask[idx]))
+                      np.stack(buffers['mask']))
 
         if not keep:
             self._times = []
-            for idx in self._pos:
-                self._pos[idx] = []
-                self._vel[idx] = []
-                self._mask[idx] = []
+            for buffers in self._buffers.values():
+                for name in buffers:
+                    buffers[name] = []
+
+
+
+#############################################################################
+#                                                                           #
+#                              RECORDER                                     #
+#                                                                           #
+#############################################################################
+
+class RunRecorder:
+    '''Captures agent state to an archive as a run proceeds.
+
+    Returned by :meth:`planktos.Environment.record`, which is the only way to
+    make one -- a recorder is environment-scoped by construction. It hooks the
+    environment's time advance, its metadata is environment state, and the
+    fluid half of the output belongs to the environment rather than to any
+    swarm.
+
+    Recording is **live as soon as this exists**. That is the ``open()`` model:
+    the call does the work and ``with`` only adds the guaranteed close. If the
+    work happened in ``__enter__`` instead, a bare ``envir.record(path)`` would
+    silently record nothing, which is a very expensive thing to discover after
+    a twelve-hour run.
+
+    ::
+
+        with envir.record('run_archive/') as rec:
+            for _ in range(steps):
+                swrm.move(dt)
+
+    Both spellings work, because a ``with`` block cannot span notebook cells and
+    interactive exploration -- run 200 steps, plot, run 800 more -- is a normal
+    Planktos workflow. ``envir.flush_recording()`` and ``envir.stop_recording()``
+    live on the Environment for the same reason: no variable has to survive
+    across cells.
+
+    Attributes
+    ----------
+    path : Path
+        the directory being written to. **Not necessarily the one asked for** --
+        recording into a non-empty directory redirects to a timestamped sibling
+        (with a warning), and this is what says where the data actually went.
+    '''
+
+    def __init__(self, envir, path, swarms=None, store=('positions', 'velocities'),
+                 chunk_size=100, meta=None):
+        self.envir = envir
+        # Given an explicit list, capture exactly those. Given none, capture
+        #   whatever the environment holds -- including swarms that join later.
+        self._track_all = swarms is None
+        if swarms is None:
+            swarms = list(envir.swarms)
+        # Recorded swarms are keyed by their position in this list, fixed for
+        #   the run; a swarm joining later gets the next index (see _swarm_added).
+        self._swarms = list(swarms)
+        self._store = tuple(store)
+        self._stopped = False
+
+        record_meta = dict(meta) if meta else {}
+        record_meta['provenance'] = {
+            'planktos_version': planktos.__version__,
+            'environment': {'L': [float(v) for v in envir.L],
+                            'units': envir.units,
+                            'bndry': [list(b) for b in envir.bndry],
+                            'rho': _provenance.jsonable(envir.rho),
+                            'mu': _provenance.jsonable(envir.mu)},
+            'fluid': envir._fluid_provenance,
+            'ibmesh': envir._ibmesh_provenance}
+
+        self._writer = _ArchiveWriter(path, fingerprint_of(envir),
+                                      meta=record_meta, chunk_size=chunk_size,
+                                      store=self._store)
+        self.path = self._writer.path
+
+        self._n_captures = 0
+        for index, swarm in enumerate(self._swarms):
+            self._register(index, swarm, first_capture=0)
+        # Capture 0 covers t0, so that capture j is exactly full_pos_history[j].
+        self._capture()
+
+
+    ####################   lifecycle   ####################
+
+    def __enter__(self):
+        return self
+
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.stop()
+        return False
+
+
+    def flush(self):
+        '''Write buffered captures to disk. Keeps recording.'''
+
+        self._writer.flush()
+
+
+    def stop(self):
+        '''Flush, then unhook. Idempotent.'''
+
+        if self._stopped:
+            return
+        self._stopped = True
+        self._writer.close()
+        if self.envir._recorder is self:
+            self.envir._recorder = None
+
+
+    ####################   hooks   ####################
+
+    def _register(self, index, swarm, first_capture):
+        # The name lives in shared_props, and defaults to 'organism' for every
+        #   Swarm -- which is exactly why files are keyed by index instead.
+        name = swarm.shared_props.get('name', 'organism')
+        self._writer.add_swarm(index, name, swarm.N, swarm.positions.shape[1],
+                               first_capture)
+
+
+    def _sync_swarms(self):
+        '''Pick up any swarm that has joined the environment since last capture.
+
+        **Swarms are discovered here rather than notified from ``Swarm``**, and
+        the reason is that a swarm's existence only matters at a capture. Three
+        things follow, all of them why this is the right moment rather than a
+        convenient one:
+
+        - There is no hook in ``Swarm`` at all, so nothing has to know which of
+          the several ways of building one the user reached for. (An earlier
+          design hooked ``Environment.add_swarm``, which the usual spelling
+          ``planktos.Swarm(envir=envir)`` bypasses entirely; the next hooked
+          both sites where a Swarm appends itself, which fires *partway through*
+          ``Swarm.__init__``, before ``shared_props`` exists.)
+        - **A swarm that comes and goes between two captures is never seen.**
+          ``calculate_FTLE`` builds a grid of probe agents on the environment
+          and pops it again, so without this it would write a sidecar for its
+          own scratch swarm and then expect it in every later capture. FTLE
+          needs to know nothing about recording for that to come out right.
+        - ``first_capture`` is the capture index the swarm actually starts at,
+          by construction, so indices correspond across every swarm with no
+          per-swarm time base and no second indexing scheme.
+        '''
+
+        if not self._track_all:
+            return
+        known = {id(swarm) for swarm in self._swarms}
+        for swarm in self.envir.swarms:
+            if id(swarm) not in known:
+                index = len(self._swarms)
+                self._swarms.append(swarm)
+                self._register(index, swarm, first_capture=self._n_captures)
+
+
+    def _capture(self):
+        '''Record one state for every swarm. Called by the environment's hook.'''
+
+        if self._stopped:
+            return
+        self._sync_swarms()
+        arrays = {}
+        for index, swarm in enumerate(self._swarms):
+            named = {}
+            for name in self._store:
+                named[name] = getattr(swarm, name)
+            arrays[index] = named
+        # Live attributes are read, not the histories: the archive does not
+        #   depend on history existing, only on the two agreeing about when a
+        #   state is recorded.
+        self._writer.add_capture(self._n_captures, self.envir.time, arrays)
+        self._n_captures += 1
+
+
+
+def fingerprint_of(envir):
+    '''Build an Environment's fingerprint (§2.3).
+
+    A flow-free environment fingerprints on dimension and domain alone --
+    nothing becomes optional, it just gets smaller.
+    '''
+
+    dimension = len(envir.L)
+    if envir.flow is None:
+        return build_fingerprint(dimension, envir.L)
+    return build_fingerprint(dimension, envir.L,
+                             flow_points=envir.flow.flow_points,
+                             flow_times=envir.flow.flow_times,
+                             periodic_dim=envir.flow.periodic_dim)
