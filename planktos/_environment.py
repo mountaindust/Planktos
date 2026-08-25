@@ -853,6 +853,22 @@ class Environment:
         '''
         self._refuse_while_recording()
 
+        def zero_nonfinite(value):
+            """inf, -inf and nan -> zero, for scalars and arrays alike.
+
+            A zero flow parameter is meaningful here -- u_star == 0 or
+            U_h == 0 means no wind -- so the ratios below zero a non-finite
+            result rather than raising. This replaced `x[x == np.inf] = 0`,
+            which assumed x was an array and so raised TypeError on every
+            scalar-parameter call, and `x[x == np.nan] = 0`, which never
+            matched anything at all: nan compares equal to nothing, itself
+            included.
+            """
+
+            cleaned = np.where(np.isfinite(value), value, 0.0)
+            # np.where gives a 0-d array for scalar input; [()] unwraps that
+            #   back to a scalar and is a no-op for anything with a shape.
+            return cleaned[()]
 
         ##### Parse parameters #####
         # Make sure that at least two of the three flow parameters have been specified
@@ -917,25 +933,22 @@ class Environment:
         # calculate canopy mixing length and print
         if beta is None:
             with np.errstate(divide='ignore', invalid='ignore'):
-                beta = u_star/U_h
                 # U_h==0 and/or u_star==0 implies no flow
-                beta[beta == np.inf] = 0
-                beta[beta == -np.inf] = 0
-                beta[beta == np.nan] = 0
+                beta = zero_nonfinite(u_star/U_h)
         l = 2*beta**3*L_c
         print("Canopy mixing length, l = {} m".format(l))
 
         if u_star is not None:
             if U_h is not None:
-                assert np.isclose(U_h*beta, u_star), "Flow not set: the relation U_h=u_star/beta must be satisfied."
+                # np.all: with time-varying parameters np.isclose returns an
+                #   array, and asserting on one raises "truth value of an array
+                #   is ambiguous" rather than checking anything.
+                assert np.all(np.isclose(U_h*beta, u_star)), "Flow not set: the relation u_star = U_h*beta must be satisfied, and for time-varying parameters it must hold at every time point."
             else:
                 # calculate mean wind speed at top of the canopy
                 with np.errstate(divide='ignore', invalid='ignore'):
-                    U_h = u_star/beta
                     # beta==0 and/or u_star==0 implies no flow
-                    U_h[U_h == np.inf] = 0
-                    U_h[U_h == -np.inf] = 0
-                    U_h[U_h == np.nan] = 0
+                    U_h = zero_nonfinite(u_star/beta)
                 print("Mean wind speed at canopy top, U_h = {} {}/s".format(U_h, self.units))
         else:
             assert U_h is not None, "Flow not set: One of u_star or U_h must be specified."
@@ -946,22 +959,21 @@ class Environment:
         kappa = 0.4 # von Karman's constant
         d = l/kappa
 
+        # Both profile branches need these two ratios, and both divide by a
+        #   parameter the caller is allowed to set to zero. Compute them once,
+        #   guarded, rather than inline in one branch and guarded in the other.
+        with np.errstate(divide='ignore', invalid='ignore'):
+            beta_l = zero_nonfinite(beta/l)
+            kappa_beta = zero_nonfinite(kappa/beta)
+
         # calculate vertical wind profile at given resolution
         if iter_length is None:
             U_B = np.zeros_like(zmesh)
-            U_B[zmesh<=0] = U_h*np.exp(beta*zmesh[zmesh<=0]/l)
-            U_B[zmesh>0] = u_star/kappa*np.log((zmesh[zmesh>0]+d)/(d*np.exp(-kappa/beta)))
-        else:
+            U_B[zmesh<=0] = U_h*np.exp(beta_l*zmesh[zmesh<=0])
             with np.errstate(divide='ignore', invalid='ignore'):
-                beta_l = beta/l
-                kappa_beta = kappa/beta
-                if type(beta_l) is np.ndarray:
-                    beta_l[beta_l == np.inf] = 0
-                    kappa_beta[kappa_beta == np.inf] = 0
-                    beta_l[beta_l == -np.inf] = 0
-                    kappa_beta[kappa_beta == -np.inf] = 0
-                    beta_l[beta_l == np.nan] = 0
-                    kappa_beta[kappa_beta == np.nan] = 0
+                U_B[zmesh>0] = u_star/kappa*np.log(
+                    (zmesh[zmesh>0]+d)/(d*np.exp(-kappa_beta)))
+        else:
             U_B = np.zeros((iter_length,len(zmesh)))
             U_B[:,zmesh<=0] = np.tile(U_h,(len(zmesh[zmesh<=0]),1)).T*np.exp(
                             np.outer(beta_l,zmesh[zmesh<=0]))
@@ -969,6 +981,19 @@ class Environment:
             U_B[:,zmesh>0] = np.tile(u_star/kappa,(len(zmesh[zmesh>0]),1)).T*np.log(
                             np.add.outer(d,zmesh[zmesh>0])/z_0_mat)
             # each row is a different time point, and z is across columns
+
+        # The log profile above the canopy divides by the displacement height d,
+        #   which is zero when the canopy mixing length is -- so beta == 0 (or a
+        #   U_h of zero, which produces it) leaves the model with no roughness
+        #   length and no defined profile. Say so, rather than handing back a
+        #   field of nan that only shows up later as agents going nowhere.
+        if not np.all(np.isfinite(U_B)):
+            raise ValueError(
+                "Canopy flow is undefined for these parameters: the wind "
+                "profile came out non-finite. The usual cause is a canopy "
+                "mixing length of zero (beta={}, l={}), which leaves the "
+                "logarithmic profile above the canopy with no roughness length "
+                "to scale against.".format(beta, l))
 
         # broadcast to flow
         if iter_length is None:

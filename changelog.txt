@@ -20,6 +20,8 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - plot_all: new playback_rate (simulated seconds per second of video) sets movie speed. Defaults to 1, real time, changing existing movies.
 - Plotting after a failed time step shows the recorded history and leaves the incomplete step out.
 - Swarm.move now raises when the Environment holds more than one Swarm; use Environment.move_swarms. It previously warned and froze the others, misaligning their histories.
+- Bug fix: set_canopy_flow works with scalar u_star/U_h/beta, which raised TypeError, and a zero wind parameter now gives zero flow instead of nan.
+- Bug fix: set_canopy_flow checks the u_star = U_h*beta relation at every time point; with time-varying parameters it raised instead of checking.
 - Bug fix: vorticity is now differenced across the wrap on periodic dimensions. The outermost ring of every plot was previously one-sided and wrong.
 - The material derivative and the fluid-speed gradient do the same, so agent behavior in the outermost ring of a periodic domain changes slightly.
 - other minor bug fixes

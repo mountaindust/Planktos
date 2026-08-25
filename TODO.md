@@ -1263,7 +1263,7 @@ Add to this list whenever a fix made on `dyload` is not dyload-specific. The tes
 that is simple: does the code it touches look the same on `master`? Check with
 `git diff master -- <file>` before assuming.
 
-### Queued for a possible 1.0.4 — one entry
+### Queued for a possible 1.0.4 — two entries
 
 Everything below the next heading is history — it shipped, or was deliberately not
 ported — kept for the porting notes rather than because anything is pending. Per the
@@ -1271,6 +1271,7 @@ release plan there is no `1.0.4` in preparation; this is a holding pen.
 
 | What | Where | Applies cleanly to `master`? |
 |---|---|---|
+| **`set_canopy_flow` with scalar parameters** (2026-08-25). The divide-by-zero guards were written as `x[x == np.inf] = 0`, which assumes an array — so every scalar-parameter call raised `TypeError` — and as `x[x == np.nan] = 0`, which never matches anything, since nan compares equal to nothing including itself. Replaced by a `zero_nonfinite` helper nested inside `set_canopy_flow` and used at all three sites, with the two guarded ratios hoisted so both profile branches share them (the non-iterating branch had none), and a finiteness check so a zero mixing length raises instead of returning a field of nan. Also `assert np.isclose(U_h*beta, u_star)`, which truth-tests its result — an array for time-varying parameters — so that branch raised "truth value of an array is ambiguous" and was unreachable rather than checking the relation; now wrapped in `np.all`, which makes deriving `beta` from array parameters work at all. Eight tests in `test_flow_generation.py` | `planktos/_environment.py` (`set_canopy_flow` only), `tests/test_flow_generation.py` | **Yes.** All three sites are byte-identical on `master` (`git show master:planktos/_environment.py`, the four `== np.nan` hits). A behavior change only where the old code raised or produced nan |
 | **`Swarm.move` raises when the Environment holds more than one Swarm** (2026-08-21), replacing the warn-and-freeze block that appended to `pos_history` alone and left `vel_history` / `props_history` behind. Ships with the docstring rewrite of `update_time`, three tests in `test_swarm_lifecycle.py`, and the `test_agent_models.py` fix for a test that was accidentally stacking four Swarms into one Environment | `planktos/_swarm.py` (`Swarm.move`), `tests/test_swarm_lifecycle.py`, `tests/test_agent_models.py`, `docs/quickstart.rst` | **Yes, by hunk.** The freeze-append block is byte-identical on `master` (`git show master:planktos/_swarm.py`, the `len(s.pos_history) < len(self.pos_history)` guard). ⚠️ It is a **behavior break** — a warning becomes a raise — so it is semver-visible and belongs in a minor release, not a patch |
 
 ### Shipped in 1.0.3 — the 2026-08-10 `move()`/`_ibc` work

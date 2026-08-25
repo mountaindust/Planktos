@@ -193,6 +193,84 @@ def test_canopy_flow_3D_time_dependent_physics():
     assert np.all(envir.flow[0][0, 0, :, -1] == envir.flow[0][0, -1, :, -1]), "constant in x"
 
 
+# --- canopy flow with scalar parameters (regression) ------------------------ #
+# The zeroing of a divide-by-zero result was written as `x[x == np.inf] = 0`,
+# which assumes x is an array -- so every scalar-parameter call raised TypeError
+# -- and `x[x == np.nan] = 0`, which never matches anything at all, since nan
+# compares equal to nothing including itself.
+
+def _canopy(**kwargs):
+    envir = planktos.Environment(Lx=50, Ly=40, rho=1000, mu=1000)
+    envir.set_canopy_flow(h=15, a=1, res=21, **kwargs)
+    return envir
+
+
+@pytest.mark.parametrize('kwargs', [{'u_star': 1.0}, {'U_h': 3.3},
+                                    {'u_star': 2.0, 'beta': 0.5}])
+def test_canopy_flow_accepts_scalar_parameters(kwargs):
+    envir = _canopy(**kwargs)
+    u = np.asarray(envir.flow[0])
+    assert np.isfinite(u).all()
+    assert u[:, -1].max() > u[:, 0].max(), 'flow should increase with height'
+
+
+@pytest.mark.parametrize('kwargs', [{'u_star': 0.0}, {'U_h': 0.0}])
+def test_canopy_flow_with_no_wind_is_zero_everywhere(kwargs):
+    # The comments in the source have always said a zero parameter "implies no
+    # flow"; before the fix this path could not be reached at all with scalars.
+    u = np.asarray(_canopy(**kwargs).flow[0])
+    assert np.isfinite(u).all()
+    assert np.all(u == 0.0)
+
+
+def test_canopy_flow_refuses_a_zero_mixing_length():
+    # beta == 0 makes the canopy mixing length zero, which leaves the log
+    # profile above the canopy with no roughness length. That is undefined
+    # rather than "no flow", and it used to come back as a field of nan.
+    with pytest.raises(ValueError, match='non-finite'):
+        _canopy(u_star=1.0, beta=0.0)
+
+
+def test_canopy_flow_derives_beta_from_array_parameters():
+    # `assert np.isclose(U_h*beta, u_star)` truth-tests its result, which for
+    # time-varying parameters is an array -- so this path raised "the truth
+    # value of an array with more than one element is ambiguous" and was
+    # unreachable, rather than checking the relation it was written to check.
+    envir = planktos.Environment(Lx=50, Ly=40, rho=1000, mu=1000)
+    envir.set_canopy_flow(h=15, a=1, u_star=np.array([1., 2., 3.]),
+                          U_h=np.array([2., 4., 6.]), beta=None,
+                          tspan=[0, 20], res=21)
+    assert envir.flow[0].shape == (3, 21, 21)
+    assert np.isfinite(envir.flow[0][:, :, :]).all()
+
+
+@pytest.mark.parametrize('kwargs', [
+    dict(u_star=1.0, U_h=2.0, beta=0.9),                       # scalar
+    dict(u_star=np.array([1., 2.]), U_h=np.array([2., 4.]),    # array: index 1 only
+         beta=np.array([0.5, 0.9]), tspan=[0, 20]),
+])
+def test_canopy_flow_rejects_parameters_that_contradict_each_other(kwargs):
+    # u_star = U_h*beta has to hold, and for arrays at every time point -- not
+    # merely at whichever one a truth test happened to collapse to.
+    envir = planktos.Environment(Lx=50, Ly=40, rho=1000, mu=1000)
+    with pytest.raises(AssertionError, match=r'u_star = U_h\*beta'):
+        envir.set_canopy_flow(h=15, a=1, res=21, **kwargs)
+
+
+def test_canopy_flow_still_accepts_array_parameters_after_the_scalar_fix():
+    # The zeroing used to be array-only, so the array path is the one that
+    # worked; it must keep working now that the same code serves both.
+    U_h = np.arange(-0.5, 1.2, 0.1)
+    U_h[5] = 0
+    envir = planktos.Environment(Lx=50, Ly=40, rho=1000, mu=1000)
+    envir.set_canopy_flow(h=15, a=1, U_h=U_h, tspan=[0, 20], res=21)
+    # time-dependent flow, so flow[0] is a spline: index it rather than
+    # converting, as the tests above do
+    assert envir.flow[0].shape == (len(U_h), 21, 21)
+    assert np.isfinite(envir.flow[0][:, :, :]).all()
+    assert np.all(envir.flow[0][5, :, :] == 0.0),         'the zero-wind time point should have no flow'
+
+
 # --------------------------------------------------------------------------- #
 #                 flow periodicity at the domain edge (regression)             #
 # --------------------------------------------------------------------------- #
