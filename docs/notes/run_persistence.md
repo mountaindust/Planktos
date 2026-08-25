@@ -42,7 +42,7 @@ thing is too big to hold at once.
 
 | | What | Why | Status |
 |---|---|---|---|
-| **A** | **Run archive** — append-only, chunked, crash-valid on-the-fly capture of agent state, with a public reader and a capture schedule that also governs history retention | persistence: crash survival, later sessions, larger-than-RAM analysis, bounded history memory, run speed, and eventually restart | writing **[done]** (§6.1 A0–A3b); the reader and the public surface are §6.1 **A4–A5** |
+| **A** | **Run archive** — append-only, chunked, crash-valid on-the-fly capture of agent state, with a public reader and a capture schedule that also governs history retention | persistence: crash survival, later sessions, larger-than-RAM analysis, bounded history memory, run speed, and eventually restart | **[done]** — §6.1 A0–A5, 2026-08-21 to 2026-08-25 |
 | **B** | **Fluid-side streaming** — per-dump means, vorticity by regime, per-dump extrema | dyload: never re-stream the dataset to draw a picture of it | statistics **[done]**; rest specified (§3) |
 | **C** | **Rendering** — frame selection by time, archive-backed `plot_all`, global colour/arrow scales | consumes A and B | `fps`/`playback_rate` **[done]**; rest specified (§4) |
 | **D** | **Tiling and `extend`** — the real position-wrapping implementation | cleanup: tiling has raised `NotImplementedError` since the `FlowArray` removal | specified (§9), not built |
@@ -76,10 +76,10 @@ In order:
    the queue.** ~~A0 comes first and comes alone~~ **[done 2026-08-21]**: the movement
    start point now comes from `Swarm._prev_positions` rather than `pos_history[-1]`, so
    a capture schedule can no longer reach collision detection. **A1 and A2 are done
-   too** (provenance at load time in `planktos/_provenance.py`; the archive writer and
-   the on-disk format in `planktos/archive.py`), **and so are A3a and A3b** —
-   `Environment.record`, the capture hooks, and `capture_interval`. **Next up is A4**,
-   the reader (`RunArchive`, `planktos.load_run`).
+   too**, and so are A3a, A3b, A4 and A5. **Component A is complete**: agent state
+   streams to disk as a run proceeds (`Environment.record`), survives a hard kill, and
+   reads back through `planktos.load_run`. **Next up is §3 — component B**, the fluid
+   half.
 3. **§3 — fluid-side streaming** and **§4 — rendering**, which sit on top of it.
 4. **§9 — tiling**, afterwards, as cleanup. It has its own restoration checklist
    (§9.3) because gating it off left notices scattered across source, tests,
@@ -1065,11 +1065,28 @@ run = planktos.load_run('run_archive/')      # -> RunArchive
 
 run.times                 # (n_captures,) float64 -- the global capture time base
 run.swarms                # [('organism', 0), ('organism', 1)] -- name, index
-run.positions(0)          # (n_captures, N, D) masked, mmap-backed
+run.positions(0)          # -> CaptureSeries, shape (n_captures, N, D)
 run.velocities(0)
-run.capture_at(t=3.4)     # -> int: index of the nearest capture time
+run.capture_at(3.4)       # -> int: index of the nearest capture time
 run.meta                  # the schema dict, provenance included
+run.grid                  # the fingerprint arrays
+run.check_against(envir)  # refuse a foreign archive (section 2.8)
 ```
+
+⚠️ **`positions()` returns a `CaptureSeries`, not a masked array** *(as built, A4)*.
+The line above used to say "masked, mmap-backed", which cannot be both things at once:
+`np.load(mmap_mode='r')` gives a memmap per *chunk*, and concatenating chunks into one
+array materializes every one of them -- exactly what "never load every chunk to answer a
+question about one time" forbids. A `CaptureSeries` is a plain read-only sequence:
+`series[j]` is one capture and reads only the chunk it lives in, `series[a:b]` reads
+only the chunks that span touches, and `series.asarray()` materializes the lot when
+that is what you want and says so in its name.
+
+**It is a sequence, not an ndarray, and never claims otherwise.** That is the
+`FlowArray` lesson applied (Appendix A): something that pretends to be an array it is
+not gets `np.asarray`'d into the wrong buffer, silently. This hands back real masked
+arrays and holds no opinions about being one. It is the same shape `FluidData` already
+established here -- a container you index to get plain arrays.
 
 **Swarms are addressed by index, with names as a convenience.** `run.positions(0)` is
 always unambiguous; `run.positions('organism')` also works and **raises** when the name
@@ -1901,9 +1918,8 @@ so the archive loses nothing it wanted.
 settled a number the archive persists. See "As landed" in §5.1 and §5.2.
 
 **Step A — the run archive (§2).** Pure data capture: no rendering, no video
-parameters, no matplotlib. Seven sub-steps, each independently testable. **A0 through
-A3b are done (2026-08-21 to 2026-08-25); A4 and A5 remain** — so the archive is written
-but cannot yet be read back, which is why §7 files all three changelog lines at A4/A5:
+parameters, no matplotlib. Seven sub-steps, each independently testable. ✅ **All
+seven are done** (2026-08-21 to 2026-08-25):
 
   A0. ✅ **[done 2026-08-21] Decouple collision handling from `pos_history`.** `apply_boundary_conditions`
       takes each agent's movement start point from `pos_history[-1]`; publish `move()`'s
@@ -2214,11 +2230,41 @@ but cannot yet be read back, which is why §7 files all three changelog lines at
 
       *The obvious single geometry would have been the full-span wall, and it would have
       caught this only via a field most people would not think to assert on.*
-  A4. **The reader** (`RunArchive`, `planktos.load_run`), mmap-backed, resolving by
+  A4. ✅ **[done 2026-08-25] The reader** (`RunArchive`, `planktos.load_run`), mmap-backed, resolving by
       time and snapping — **not** interpolating — agent state (§2.7). Including it here
       makes A testable end to end without touching a line of rendering code, which is
       the natural place to cut.
-  A5. **Docs and export** — `docs/api/`, `__init__.py`, quickstart mention.
+  A5. ✅ **[done 2026-08-25] Docs and export** — `docs/api/RunArchive.rst` (recording,
+      reading, validation, and the on-disk layout), `load_run` and `RunArchive`
+      exported from `planktos/__init__.py`, and the API index updated. Sphinx builds
+      clean. ⚠️ **The one warning worth knowing about:** documenting
+      `Environment.record` on the archive page as well as on `Environment`'s is a
+      duplicate object description, so the archive page cross-references it instead.
+
+      **The changelog lines land here**, all of them together, per §7 — until the
+      reader existed the archive was write-only, and a changelog entry announcing it
+      would have described something a user could not yet use. Six lines: `record`,
+      crash validity, `load_run`, `capture_interval`, the non-empty-directory redirect,
+      and loader provenance.
+
+      **As landed (A4).** `RunArchive` scans the roster from the per-swarm sidecars
+      rather than from `meta.json` — which is written once at the start and so cannot
+      know about a swarm that joined an hour into the run — and validates on open:
+      format version, chunk contiguity, and each chunk's row count against what the
+      capture count implies. A gap is a **refusal**, because chunks are written in
+      order, so a hard kill costs the last buffer and never a middle one; a gap
+      therefore means a lost or corrupt file, and reading around it would hand back a
+      run with a hole nobody was told about.
+
+      `check_against(envir)` is the §2.8 validation, and keeps the two questions apart
+      as §2.3 settled: a **grid** mismatch refuses, naming the field that differs and
+      the provenance of both sides; a **provenance** difference on a matching grid only
+      warns, so replotting a run whose script moved directories is not refused.
+
+      Open chunk files are kept in a small FIFO cache (`CACHE_SIZE = 8`), because a
+      memmap holds a file descriptor and caching every chunk of a long run would
+      exhaust them. FIFO rather than LRU because the access pattern that matters is a
+      monotone sweep — a render walking frames in order.
 
 **Step B — fluid-side streaming (§3).** Independent of A except that it writes into the
 same directory.
@@ -2378,16 +2424,28 @@ drive real runs.
   recording began at rather than from step zero;
 - ✅ `capture_interval` below 1 refused, leaving nothing gated.
 
-**A4 — the reader:**
+**Landed with A4 — the reader** (`tests/test_run_reader.py`)**:**
 
-- **reading an archive larger than one chunk without materializing it** — assert the
-  reader returns mmapped arrays, which is what makes §2.10 possible;
-- a deliberately removed middle chunk refusing rather than short-reading (§2.3);
-- two swarms with the same default name: index access works, name access raises (§2.7);
-- a swarm added mid-run coming back front-padded with masked rows, aligned to
+- ✅ **reading one capture reads one chunk** — `np.load` is watched, and asking for a
+  capture out of a ten-chunk archive must open exactly two files, the positions chunk
+  and its mask. This is what makes §2.10 possible, and asserting on the count is what
+  makes it a test rather than a hope;
+- ✅ chunks are memmapped rather than read, and the open-file cache stays bounded;
+- ✅ a `CaptureSeries` is **not** an ndarray, and hands back real masked arrays;
+- ✅ a deliberately removed middle chunk refusing rather than short-reading, for both
+  the time base and a swarm's own chunks, plus a chunk whose row count contradicts the
+  capture count (§2.3);
+- ✅ two swarms with the same default name: index access works, name access raises;
+  a unique name resolves (§2.7);
+- ✅ a swarm added mid-run coming back front-padded with masked rows, aligned to
   `run.times` (§2.3, §2.7);
-- a fingerprint refusal against a differently-gridded environment, with the message
-  naming the provenance of both sides (§2.8).
+- ✅ a fingerprint refusal against a differently-gridded environment naming the field
+  that differs and the provenance of both sides, and a provenance-only difference
+  warning rather than refusing (§2.8);
+- ✅ an array that was not stored refused by name; a future format version refused; a
+  directory that is not an archive refused;
+- ✅ **reading never writes** — every file's mtime is unchanged across a full read,
+  since a reader that mutates what it reads is the wrong shape (§2.7).
 
 **B — the fluid half:**
 

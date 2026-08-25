@@ -2273,19 +2273,21 @@ class Environment:
         '''Raise if a recording is active.
 
         Called by the operations that would invalidate an archive already being
-        written: reset(), which rewinds the clock, and every fluid setter, which
-        replaces the grid and timeline the archive fixed when it started. One
-        message covers all of them deliberately -- the traceback already names
-        the call that raised, and a per-site variant would be one more thing to
-        keep in step with the guard list.
+        written: reset(), which rewinds the clock; every fluid setter, which
+        replaces the grid and timeline the archive fixed when it started; and
+        moving a recorded swarm out of the environment, which the format has no
+        way to express. One message covers all of them deliberately -- the
+        traceback already names the call that raised, and a per-site variant
+        would be one more thing to keep in step with the guard list.
         '''
 
         if self._recorder is not None:
             raise RuntimeError(
                 "This is not allowed while recording to {}. An archive fixes "
                 "the domain, the fluid grid, and the timeline when recording "
-                "starts; resetting the clock or loading new fluid partway "
-                "through would leave it describing a run that no longer exists.\n"
+                "starts; resetting the clock, loading new fluid, or moving a "
+                "swarm out partway through would leave it describing a run "
+                "that no longer exists.\n"
                 "Call envir.stop_recording() first to proceed.".format(self._recorder.path))
 
 

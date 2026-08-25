@@ -46,10 +46,11 @@ touched again -- including when a swarm joins an hour into the run.
 count, so a swarm added mid-run needs no second indexing scheme: its first chunk
 is simply short at the front.
 
-Public surface: ``RunArchive`` and ``load_run`` for reading (not built yet), and
-the three ``*fingerprint*`` functions, which are what a refusal message is
-assembled from and are therefore worth having to hand when diagnosing one.
-Everything else is underscored and is format machinery.
+Public surface: ``RunArchive`` and ``load_run`` for reading, ``CaptureSeries``
+(what a read hands back), ``RunRecorder`` (what ``Environment.record`` hands
+back), and the three ``*fingerprint*`` functions, which are what a refusal
+message is assembled from and are therefore worth having to hand when
+diagnosing one. Everything else is underscored and is format machinery.
 
 Author: Christopher Strickland
 Email: cstric12@utk.edu
@@ -388,6 +389,25 @@ def _describe(array):
 #                                                                           #
 #############################################################################
 
+def _describe_source(provenance):
+    """A short phrase naming what produced a fluid, for a refusal message.
+
+    Takes a provenance record (planktos/_provenance.py) directly, so that both
+    sides of a comparison -- one out of an archive's metadata, one off a live
+    Environment -- describe themselves the same way.
+    """
+
+    if not provenance:
+        return 'an unrecorded source'
+    if provenance.get('loader') is None:
+        return provenance.get('note', 'arrays supplied directly')
+    kwargs = provenance.get('kwargs') or {}
+    path = kwargs.get('path') or kwargs.get('filename')
+    if path is None:
+        return '{}(...)'.format(provenance['loader'])
+    return "{}(path={!r}, ...)".format(provenance['loader'], path)
+
+
 def _resolve_archive_path(path):
     '''Choose the directory to record into, and create it.
 
@@ -505,7 +525,6 @@ class _ArchiveWriter:
                       store=list(self.store),
                       grid=fingerprint_summary(self._fingerprint))
         _save_json(self.path / 'meta.json', record)
-        self.meta = record
 
         # index -> {'name', 'N', 'D', 'first_capture'}
         self._swarms = {}
@@ -603,14 +622,26 @@ class _ArchiveWriter:
                 raise ValueError(
                     'swarm {} supplied {}, but this archive stores {}'.format(
                         idx, sorted(named), sorted(self.store)))
-            for name in self.store:
+
+            # Positions first: one mask is stored per capture, and it is theirs.
+            #   A masked row means the agent is not in the domain, which is a
+            #   fact about the agent rather than about any one array, so every
+            #   other array must agree -- and a disagreement is refused rather
+            #   than silently dropped, since the format has nowhere to put it.
+            reference = None
+            for name in ['positions'] + [n for n in self.store
+                                         if n != 'positions']:
                 data, row_mask = self._split(named[name], entry, name)
-                self._buffers[idx][name].append(data)
-                if name == 'positions':
-                    # The mask is per row and comes from positions: a masked row
-                    #   means the agent left the domain, and every other array
-                    #   for that agent is masked identically.
+                if reference is None:
+                    reference = row_mask
                     self._buffers[idx]['mask'].append(row_mask)
+                elif not np.array_equal(row_mask, reference):
+                    raise ValueError(
+                        'swarm {} has {} masked differently from its positions. '
+                        'One mask is stored per capture, so a disagreement '
+                        'cannot be represented and would be lost.'.format(
+                            idx, name))
+                self._buffers[idx][name].append(data)
 
         self._next_capture += 1
 
@@ -728,10 +759,7 @@ class RunRecorder:
     swarm.
 
     Recording is **live as soon as this exists**. That is the ``open()`` model:
-    the call does the work and ``with`` only adds the guaranteed close. If the
-    work happened in ``__enter__`` instead, a bare ``envir.record(path)`` would
-    silently record nothing, which is a very expensive thing to discover after
-    a twelve-hour run.
+    the call does the work and ``with`` only adds the guaranteed close.
 
     ::
 
@@ -739,16 +767,15 @@ class RunRecorder:
             for _ in range(steps):
                 swrm.move(dt)
 
-    Both spellings work, because a ``with`` block cannot span notebook cells and
-    interactive exploration -- run 200 steps, plot, run 800 more -- is a normal
-    Planktos workflow. ``envir.flush_recording()`` and ``envir.stop_recording()``
-    live on the Environment for the same reason: no variable has to survive
-    across cells.
+    Works without a ``with`` block too, since a ``with`` cannot span notebook 
+    cells and interactive exploration -- run 200 steps, plot, run 800 more -- is 
+    a supported Planktos workflow. ``envir.flush_recording()`` and 
+    ``envir.stop_recording()`` live on the Environment for the same reason.
 
     Attributes
     ----------
     path : Path
-        the directory being written to. **Not necessarily the one asked for** --
+        the directory being written to. **Not necessarily the one asked for**: 
         recording into a non-empty directory redirects to a timestamped sibling
         (with a warning), and this is what says where the data actually went.
     '''
@@ -898,3 +925,510 @@ def fingerprint_of(envir):
                              flow_points=envir.flow.flow_points,
                              flow_times=envir.flow.flow_times,
                              periodic_dim=envir.flow.periodic_dim)
+
+
+#############################################################################
+#                                                                           #
+#                                READER                                     #
+#                                                                           #
+#############################################################################
+
+class CaptureSeries:
+    '''One per agent-array of one swarm, across a whole run, read on demand.
+
+    Returned by :meth:`RunArchive.positions` and :meth:`RunArchive.velocities`.
+    Indexing it gives an ordinary masked array -- ``series[j]`` is one capture,
+    ``series[a:b]`` a span of them -- and **only the chunks an index touches are
+    read**. That is what lets an archive larger than memory stay usable, which
+    is half the reason the format is chunked at all.
+
+    It is a sequence, not an ndarray, and deliberately so. This branch has
+    already learned what happens to something that pretends to be an array it is
+    not: ``FlowArray`` overrode ``.shape`` and ``__getitem__`` so that scipy and
+    matplotlib would treat one tile as a whole tiled grid, and modern scipy
+    defeated it by calling ``np.asarray`` on anything array-like, silently
+    getting the wrong buffer. So this hands back real arrays and never claims to
+    be one; :meth:`asarray` materializes the lot when that is what you want, and
+    says so in its name.
+
+    A swarm that joined partway through a recording is **front-padded with
+    fully-masked rows** up to its first capture, so every series is
+    ``len(archive.times)`` long and lines up with ``archive.times`` index for
+    index. A masked row already means "this agent is not in the domain"
+    everywhere in Planktos; "not yet in the run" is the same statement.
+
+    Attributes
+    ----------
+    shape : tuple
+        ``(n_captures, N, D)``, without reading anything
+    '''
+
+    def __init__(self, archive, swarm_index, name):
+        self._archive = archive
+        self._index = swarm_index
+        self._name = name
+        entry = archive._by_index[swarm_index]
+        self._first = entry['first_capture']
+        self._N, self._D = entry['N'], entry['D']
+        self.shape = (len(archive.times), self._N, self._D)
+
+
+    def __len__(self):
+        return self.shape[0]
+
+
+    def __repr__(self):
+        return '<CaptureSeries {} of swarm {}, shape {}>'.format(
+            self._name, self._index, self.shape)
+
+
+    def __iter__(self):
+        for j in range(len(self)):
+            yield self[j]
+
+
+    def __getitem__(self, key):
+        '''A capture, or a span of them, as a masked array.'''
+
+        if isinstance(key, slice):
+            rows = range(*key.indices(len(self)))
+            if not rows:
+                return ma.masked_array(np.empty((0, self._N, self._D), DTYPE),
+                                       mask=np.empty((0, self._N, self._D), bool))
+            return ma.stack([self._read_capture(j) for j in rows])
+
+        if key < 0:
+            key += len(self)
+        if not 0 <= key < len(self):
+            raise IndexError('capture {} out of range for {} captures'.format(
+                key, len(self)))
+        return self._read_capture(key)
+
+
+    def _read_capture(self, j):
+        '''One capture, reading only the chunk it falls in.
+
+        Named apart from ``RunRecorder._capture``, which is the opposite
+        direction: that one writes a capture, this one reads one back.
+        '''
+
+        if j < self._first:
+            # Before this swarm joined the run. Fully masked, which is already
+            #   what a masked row means everywhere else in Planktos.
+            return ma.masked_array(np.zeros((self._N, self._D), DTYPE),
+                                   mask=np.ones((self._N, self._D), bool))
+
+        chunk, offset = self._archive._locate(j, self._first)
+        data = self._archive._chunk(self._index, self._name, chunk)[offset]
+        mask = self._archive._chunk(self._index, 'mask', chunk)[offset]
+        # The stored mask is per row -- agents leave whole rows -- so broadcast
+        #   it back across the coordinates on the way out.
+        return ma.masked_array(np.array(data, dtype=DTYPE),
+                               mask=np.repeat(mask[:, None], self._D, axis=1))
+
+
+    def asarray(self):
+        '''Materialize the whole series as one masked array.
+
+        ⚠️ Reads every chunk and holds the result in memory: this is the call
+        that an archive larger than RAM cannot afford. Index or iterate instead
+        when that matters.
+        '''
+
+        return self[:]
+
+
+
+class RunArchive:
+    '''A finished (or still-running) archive of agent state, opened for reading.
+
+    Get one from :func:`planktos.load_run`. The archive is **read-only**: it
+    never writes, and never flushes a recording on the writer's behalf, because
+    a reader that mutates the thing it is reading is the wrong shape.
+
+    ::
+
+        run = planktos.load_run('run_archive/')
+        run.times                  # capture times, the archive's own time base
+        run.swarms                 # [('organism', 0), ('organism', 1)]
+        run.positions(0)[run.capture_at(3.4)]     # where they were at t=3.4
+
+    **Address swarms by index; names are a convenience.** The default ``Swarm``
+    name is ``'organism'`` for every swarm, so two swarms in one environment
+    collide by name by default -- ``run.positions('organism')`` therefore raises
+    when the name is not unique, rather than picking one. ``run.swarms`` lists
+    both name and index so a caller can see the collision instead of guessing.
+
+    **Resolve by time, not by index into someone else's list.** A swarm added
+    mid-run starts at a nonzero capture, and a recording started after t=0 has
+    its capture 0 partway into the run; matching on :attr:`times` is right in
+    every one of those cases, where assuming archive index *j* equals history
+    index *j* is right only in the common one, and fails silently when it is
+    not.
+
+    **Agent state is snapped, never interpolated.** :meth:`capture_at` returns
+    the index of the nearest capture and nothing blends between them.
+    Interpolating positions across a domain wrap or an immersed-boundary slide
+    would invent trajectories that never happened. Temporal interpolation
+    belongs to the fluid, where the field is smooth.
+
+    Attributes
+    ----------
+    path : Path
+        the archive directory
+    meta : dict
+        everything ``meta.json`` holds, provenance included
+    times : ndarray
+        ``(n_captures,)`` capture times -- the archive's time base
+    swarms : list of (str, int)
+        ``(name, index)`` for every recorded swarm, in index order
+    grid : dict of ndarray
+        the fingerprint: dimension, L, flow_points, flow_times, periodic_dim
+    store : tuple of str
+        which per-agent arrays this archive holds
+    '''
+
+    # How many chunk files to keep open at once. A memmap holds a file
+    #   descriptor, so caching every chunk of a long run would exhaust them;
+    #   a handful is enough for the access pattern that matters, which is a
+    #   monotone sweep (a render walking frames in order).
+    CACHE_SIZE = 8
+
+    def __init__(self, path):
+        self.path = Path(path)
+        if not self.path.is_dir():
+            raise FileNotFoundError('no archive directory at {}'.format(self.path))
+
+        meta_file = self.path / 'meta.json'
+        if not meta_file.is_file():
+            raise FileNotFoundError(
+                '{} is not a Planktos run archive: no meta.json'.format(self.path))
+        self.meta = json.loads(meta_file.read_text())
+
+        version = self.meta.get('version')
+        if version is None or version > FORMAT_VERSION:
+            raise ValueError(
+                'this archive is format version {}, and this Planktos reads up '
+                'to version {}. Upgrade Planktos to read it.'.format(
+                    version, FORMAT_VERSION))
+
+        self.store = tuple(self.meta.get('store', ('positions', 'velocities')))
+        self._chunk_size = int(self.meta['chunk_size'])
+        self.grid = dict(np.load(self.path / 'grid.npz', allow_pickle=False))
+
+        self._agent_dir = self.path / 'agents'
+        self._entries = self._read_roster()
+        self._by_index = {e['index']: e for e in self._entries}
+        self.swarms = [(e['name'], e['index']) for e in self._entries]
+        self._time_chunks = self._chunk_indices('times')
+        self.times = self._read_times()
+        self._cache = {}
+        self._validate_chunks()
+
+
+    def __repr__(self):
+        span = '' if not len(self.times) else ', t={:g} to {:g}'.format(
+            self.times[0], self.times[-1])
+        return '<RunArchive {}: {} captures, {} swarm(s){}>'.format(
+            self.path.name, len(self.times), len(self.swarms), span)
+
+
+    def close(self):
+        '''Release the memory-mapped chunk files this archive holds open.
+
+        Reading leaves up to ``CACHE_SIZE`` chunks mapped, and a memory map
+        holds its file open. On Windows that **locks the file**, so an archive
+        that has been read cannot be deleted or moved until it is closed. Not
+        needed to read correctly, and not needed at all on POSIX; needed to
+        tidy up afterwards.
+
+        Idempotent, and the archive stays usable -- a later read simply maps
+        what it needs again.
+        '''
+
+        # A memmap closes its file when the last reference to it goes, so
+        #   dropping the cache is the whole of it. (`del` on a loop variable
+        #   would not be: it rebinds a name, it does not release the entry.)
+        self._cache.clear()
+
+
+    def __enter__(self):
+        return self
+
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+        return False
+
+
+    ####################   the time base   ####################
+
+    def capture_at(self, t):
+        '''Index of the capture nearest in time to ``t``.
+
+        Snapped, never interpolated -- see the class docstring. Ties go to the
+        earlier capture.
+
+        Parameters
+        ----------
+        t : float
+
+        Returns
+        -------
+        int
+        '''
+
+        if not len(self.times):
+            raise ValueError('this archive holds no captures')
+        if not np.isfinite(t):
+            # |times - t| is uniform for a non-finite t, so argmin would return
+            #   capture 0 -- an answer that looks like a real one. Infinity in
+            #   particular reads as "the end" and would silently give the
+            #   beginning.
+            raise ValueError(
+                'cannot find the capture nearest t={}: a non-finite time is '
+                'not nearer to one capture than another'.format(t))
+        return int(np.argmin(np.abs(self.times - t)))
+
+
+    ####################   agent state   ####################
+
+    def positions(self, swarm=0):
+        '''The position series of one swarm. See :class:`CaptureSeries`.'''
+
+        return self.array('positions', swarm)
+
+
+    def velocities(self, swarm=0):
+        '''The velocity series of one swarm. See :class:`CaptureSeries`.'''
+
+        return self.array('velocities', swarm)
+
+
+    def array(self, name, swarm=0):
+        '''One named per-agent series of one swarm.
+
+        Parameters
+        ----------
+        name : str
+            'positions', 'velocities', or whatever else this archive stored
+        swarm : int or str, default=0
+            swarm index, or name if it is unique
+
+        Returns
+        -------
+        CaptureSeries
+        '''
+
+        if name not in self.store:
+            raise ValueError(
+                "this archive does not hold '{}': it was recorded with "
+                "store={}. Re-record with that array included, or work from "
+                "what is here.".format(name, list(self.store)))
+        return CaptureSeries(self, self._resolve_swarm(swarm), name)
+
+
+    ####################   validation against an Environment   ####################
+
+    def check_against(self, envir):
+        '''Raise unless this archive describes the same domain and fluid.
+
+        The stored positions are bare numbers; nothing in them says what
+        coordinate system they are in. Reading them against a different grid
+        gives a plausible picture that is silently wrong, so a mismatch is a 
+        hard refusal rather than a warning.
+
+        A **provenance** difference is not a mismatch and only warns: replotting
+        a run whose script moved directories is not be refused, while a
+        different simulation that happens to share a mesh and a cadence is loud.
+
+        Parameters
+        ----------
+        envir : Environment
+        '''
+
+        problems = compare_fingerprints(self.grid, fingerprint_of(envir))
+        recorded = (self.meta.get('provenance') or {}).get('fluid')
+        current = envir._fluid_provenance
+
+        if problems:
+            raise ValueError(
+                'this archive does not match this Environment:\n  {}\n'
+                'The archive was recorded against {}; this environment\'s fluid '
+                'is {}.'.format('\n  '.join(problems),
+                                _describe_source(recorded),
+                                _describe_source(current)))
+
+        if recorded != current:
+            warnings.warn(
+                'this archive matches this Environment grid for grid, but was '
+                'recorded against {} where this environment\'s fluid is {}. '
+                'Two runs on the same mesh at the same cadence are '
+                'indistinguishable by grid alone.'.format(
+                    _describe_source(recorded), _describe_source(current)),
+                UserWarning)
+
+
+    ####################   internals   ####################
+
+    def _read_roster(self):
+        '''The recorded swarms, from their sidecars.
+
+        Scanned rather than read out of meta.json, which is written once at the
+        start and so cannot know about a swarm that joined an hour into the run.
+        '''
+
+        entries = []
+        for sidecar in self._agent_dir.glob('swarm*.json'):
+            entries.append(json.loads(sidecar.read_text()))
+        entries.sort(key=lambda e: e['index'])
+        if not entries:
+            raise ValueError(
+                '{} holds no swarms; nothing was recorded'.format(self.path))
+        return entries
+
+
+    def _resolve_swarm(self, swarm):
+        '''Turn an index or a name into an index, refusing an ambiguous name.'''
+
+        if isinstance(swarm, (int, np.integer)):
+            if swarm not in self._by_index:
+                raise KeyError('no swarm {} in this archive; it holds {}'.format(
+                    swarm, self.swarms))
+            return int(swarm)
+
+        matches = [e['index'] for e in self._entries if e['name'] == swarm]
+        if not matches:
+            raise KeyError("no swarm named '{}' in this archive; it holds "
+                           "{}".format(swarm, self.swarms))
+        if len(matches) > 1:
+            raise KeyError(
+                "'{}' names {} swarms in this archive (indices {}), so it does "
+                "not identify one. The default Swarm name is 'organism' for "
+                "every swarm, which is why files are keyed by index -- address "
+                "it by index.".format(swarm, len(matches), matches))
+        return matches[0]
+
+
+    def _chunk_indices(self, prefix):
+        '''Chunk indices present for a file prefix, in numeric order.
+
+        Parsed and sorted as integers rather than sorted as names: zero-padding
+        agrees with numeric order only up to chunk 9999, past which a lexical
+        sort would silently assemble the run out of order.
+        '''
+
+        found = []
+        for f in self._agent_dir.glob(prefix + '_*.npy'):
+            index = _chunk_index_of(f)
+            if index is not None:
+                found.append(index)
+        return sorted(found)
+
+
+    def _read_times(self):
+        '''The capture time base, assembled from the times chunks.
+
+        Small -- one float per capture -- so this is the one thing read whole.
+        '''
+
+        if not self._time_chunks:
+            return np.empty(0, dtype=DTYPE)
+        return np.concatenate([
+            np.load(self._agent_dir / _chunk_name('times', i), allow_pickle=False)
+            for i in self._time_chunks])
+
+
+    def _validate_chunks(self):
+        '''Refuse an archive whose chunks do not add up.
+
+        Chunks are written in order, so a hard kill costs the *last* buffer and
+        never a middle one -- a gap therefore means a lost or corrupt file, not
+        an interrupted run, and is refused rather than silently short-read.
+        '''
+
+        time_chunks = self._time_chunks
+        expected = list(range(len(time_chunks)))
+        if time_chunks != expected:
+            missing = sorted(set(expected) - set(time_chunks)) or ['(out of order)']
+            raise ValueError(
+                'this archive is missing time chunk(s) {}. Chunks are written '
+                'in order, so a gap is a lost or corrupt file rather than an '
+                'interrupted run.'.format(missing))
+
+        n = len(self.times)
+        # Every stored array AND the mask, not just the first: a missing
+        #   velocity or mask chunk is exactly as fatal as a missing position
+        #   one, and checking only positions let it through to surface later as
+        #   a bare FileNotFoundError from the middle of a read.
+        for entry in self._entries:
+            first_chunk = entry['first_capture'] // self._chunk_size
+            want = [i for i in range(len(time_chunks)) if i >= first_chunk]
+            for short in [STORABLE[name] for name in self.store] + ['mask']:
+                prefix = '{}_{}'.format(_swarm_prefix(entry['index']), short)
+                got = self._chunk_indices(prefix)
+                if got != want:
+                    raise ValueError(
+                        'swarm {} is missing chunk(s) {} of {}'.format(
+                            entry['index'], sorted(set(want) - set(got)), prefix))
+                for i in got:
+                    rows = len(np.load(self._agent_dir / _chunk_name(prefix, i),
+                                       mmap_mode='r'))
+                    lo = max(entry['first_capture'], i * self._chunk_size)
+                    hi = min(n, (i + 1) * self._chunk_size)
+                    if rows != hi - lo:
+                        raise ValueError(
+                            'swarm {} chunk {} of {} holds {} rows where the '
+                            'capture count implies {}; this archive is '
+                            'inconsistent'.format(entry['index'], i, prefix,
+                                                  rows, hi - lo))
+
+
+    def _locate(self, capture, first_capture):
+        '''Which chunk a global capture index falls in, and where inside it.
+
+        Chunks are keyed on the *global* index, so a swarm that joined mid-run
+        needs no second indexing scheme: its first chunk is simply short at the
+        front, and its own first capture resolves the offset.
+        '''
+
+        chunk = capture // self._chunk_size
+        start = max(first_capture, chunk * self._chunk_size)
+        return chunk, capture - start
+
+
+    def _chunk(self, swarm_index, name, chunk):
+        '''A memmapped chunk file, from a small cache of open ones.'''
+
+        key = (swarm_index, name, chunk)
+        if key not in self._cache:
+            short = 'mask' if name == 'mask' else STORABLE[name]
+            path = self._agent_dir / _chunk_name(
+                '{}_{}'.format(_swarm_prefix(swarm_index), short), chunk)
+            if len(self._cache) >= self.CACHE_SIZE:
+                # Oldest out. Dicts keep insertion order, so this is FIFO --
+                #   which is what a monotone sweep wants.
+                del self._cache[next(iter(self._cache))]
+            self._cache[key] = np.load(path, mmap_mode='r', allow_pickle=False)
+        return self._cache[key]
+
+
+
+def load_run(path):
+    '''Open a Planktos run archive for reading.
+
+    Parameters
+    ----------
+    path : str or Path
+        an archive directory written by :meth:`planktos.Environment.record`
+
+    Returns
+    -------
+    RunArchive
+
+    See Also
+    --------
+    planktos.Environment.record : write one
+    '''
+
+    return RunArchive(path)

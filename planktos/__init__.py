@@ -17,5 +17,6 @@ __version__ = '1.1.0'
 from ._environment import Environment
 from ._swarm import Swarm
 from .fluid import FluidData
+from .archive import load_run, RunArchive
 
 __all__ = [s for s in dir() if not s.startswith('_')]

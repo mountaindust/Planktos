@@ -599,3 +599,16 @@ def test_numeric_ordering_is_not_lexical_ordering_past_four_digits():
     names = [archive._chunk_name('times', i) for i in (9999, 10_000, 10_001)]
     assert sorted(names) != names, 'the hazard this guards against is gone'
     assert sorted(names, key=archive._chunk_index_of) == names
+
+
+def test_an_array_masked_differently_from_positions_is_refused(tmp_path):
+    # One mask is stored per capture, and it is the positions mask: a masked row
+    # means the agent is not in the domain, which is a fact about the agent and
+    # not about any one array. A disagreement has nowhere to go in the format,
+    # so it is refused rather than silently dropped.
+    w = _writer(tmp_path)
+    w.add_swarm(0, 'organism', 3, 2, 0)
+    named = _capture(3, 2)
+    named['velocities'][1, :] = ma.masked        # positions left unmasked
+    with pytest.raises(ValueError, match='masked differently from its positions'):
+        w.add_capture(0, 0.0, {0: named})

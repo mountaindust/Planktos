@@ -553,3 +553,97 @@ def test_ftle_sets_the_start_point_in_its_own_move_loops():
     swrm.shared_props['cov'] = np.zeros((2, 2))
     envir2.calculate_FTLE(grid_dim=(8, 8), T=0.5, dt=0.05, swrm=swrm)  # discrete loop
     assert np.isfinite(np.ma.filled(envir2.FTLE_largest, np.nan)).any()
+
+
+# --------------------------------------------------------------------------- #
+#                  moving a Swarm from one Environment to another             #
+# --------------------------------------------------------------------------- #
+# Environment.add_swarm accepts a Swarm object as well as a size, which is how
+# a Swarm built on its own is put into the Environment it belongs in, and how
+# calculate_FTLE adds its working copy. It used to append to the new
+# Environment without removing the swarm from the old one, leaving it in both.
+
+def test_a_swarm_built_on_its_own_can_be_added_to_an_environment_after_the_fact():
+    # The documented way round: create the two separately, then join them. A
+    # Swarm with no Environment gets a default one, which it must then leave.
+    envir = planktos.Environment(Lx=20, Ly=20)
+    swrm = planktos.Swarm(swarm_size=5, init=np.full((5, 2), 3.0))
+    default = swrm.envir
+    assert default is not envir
+    assert len(default.swarms) == 1
+
+    envir.add_swarm(swrm)
+
+    assert swrm.envir is envir
+    assert envir.swarms == [swrm]
+    assert default.swarms == [], 'the swarm is still in its default Environment'
+
+
+def test_moving_a_swarm_between_environments_leaves_the_first_one():
+    a = planktos.Environment()
+    b = planktos.Environment()
+    swrm = planktos.Swarm(swarm_size=3, envir=a, seed=1)
+
+    b.add_swarm(swrm)
+
+    assert swrm.envir is b
+    assert [s is swrm for s in b.swarms] == [True]
+    assert a.swarms == []
+
+
+def test_the_old_environment_stops_moving_a_swarm_that_left():
+    # The visible consequence of being in both lists: move_swarms on the old
+    # Environment went on moving a swarm that had left it.
+    a = planktos.Environment()
+    b = planktos.Environment()
+    swrm = planktos.Swarm(swarm_size=3, envir=a, seed=1)
+    swrm.shared_props['cov'] = np.zeros((2, 2))
+    b.add_swarm(swrm)
+
+    a.move_swarms(0.1, silent=True)
+    assert len(swrm.pos_history) == 0, 'the old Environment still moved it'
+    assert a.time == pytest.approx(0.1), 'but its own clock still advances'
+
+    b.move_swarms(0.1, silent=True)
+    assert len(swrm.pos_history) == 1
+
+
+def test_ftle_with_a_user_swarm_still_works_during_a_recording(tmp_path):
+    # calculate_FTLE adds a shallow copy of the caller's Swarm to this same
+    # Environment and pops it again. The copy is not in envir.swarms to begin
+    # with, so nothing is removed and the recording is untouched -- computing an
+    # FTLE field partway through a recording must not be refused.
+    L, a, n = 10.0, 0.4, 21
+    x = np.linspace(0, L, n)
+    X, Y = np.meshgrid(x, x, indexing='ij')
+    envir = planktos.Environment(Lx=L, Ly=L,
+                                 flow=[a * (X - L / 2), -a * (Y - L / 2)])
+    swrm = planktos.Swarm(swarm_size=4, envir=envir, seed=3)
+    swrm.shared_props['cov'] = np.zeros((2, 2))
+
+    with envir.record(tmp_path / 'run'):
+        swrm.move(0.1, silent=True)
+        envir.calculate_FTLE(grid_dim=(6, 6), T=0.3, dt=0.05, swrm=swrm)
+        swrm.move(0.1, silent=True)
+
+    assert envir.swarms == [swrm], 'the FTLE working copy was not cleaned up'
+
+
+def test_moving_a_recorded_swarm_out_while_recording_raises(tmp_path):
+    # A swarm leaving mid-recording cannot be expressed in the archive: rows
+    # are padded at the front for a late arrival, and there is no counterpart
+    # for a departure.
+    a = planktos.Environment(Lx=10, Ly=10,
+                             flow=[np.zeros((3, 3)), np.zeros((3, 3))])
+    b = planktos.Environment(Lx=10, Ly=10)
+    swrm = planktos.Swarm(swarm_size=3, envir=a, seed=1)
+    swrm.shared_props['cov'] = np.zeros((2, 2))
+
+    with a.record(tmp_path / 'run'):
+        swrm.move(0.1, silent=True)
+        with pytest.raises(RuntimeError, match='not allowed while recording'):
+            b.add_swarm(swrm)
+        assert [s is swrm for s in a.swarms] == [True], \
+            'the swarm must not have been half-moved'
+    b.add_swarm(swrm)                     # fine once the recording has stopped
+    assert a.swarms == []

@@ -965,7 +965,13 @@ class Swarm:
 
 
     def _change_envir(self, envir):
-        '''Manages a change from one Environment to another'''
+        '''Manages a change from one Environment to another.
+
+        Reached through Environment.add_swarm when it is handed a Swarm object
+        rather than a size -- which is how a Swarm built on its own (and so
+        given a default Environment) is moved into the one it belongs in, and
+        how Environment.calculate_FTLE adds its working copy.
+        '''
 
         if self.positions.shape[1] != len(envir.L):
             if self.positions.shape[1] > len(envir.L):
@@ -996,6 +1002,27 @@ class Swarm:
             else:
                 raise RuntimeError("Swarm dimension smaller than new Environment dimension!"+
                     " Cannot scale up!")
+
+        # Leave the old Environment before joining the new one. Without this a
+        #   moved swarm stays in both lists: the old environment's move_swarms
+        #   would go on moving it, and a recording there would go on capturing
+        #   it. Identity, not equality -- Swarm defines no __eq__, and two
+        #   swarms are never interchangeable anyway.
+        # Nothing is removed when the swarm is not in that list to begin with,
+        #   which is the case for calculate_FTLE's working copy: it is a shallow
+        #   copy, so it already points at this Environment without being one of
+        #   its swarms. That is also why the recording check sits inside the
+        #   branch -- an FTLE field computed during a recording adds and drops a
+        #   copy without changing which swarms are in the run, and must not be
+        #   refused.
+        old = self.envir
+        if old is not None and any(s is self for s in old.swarms):
+            old._refuse_while_recording()
+            for n, s in enumerate(old.swarms):
+                if s is self:
+                    del old.swarms[n]
+                    break
+
         self.envir = envir
         envir.swarms.append(self)
 
