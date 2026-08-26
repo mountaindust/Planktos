@@ -12,7 +12,7 @@ Temporal interpolation of dynamically-loaded data is **linear in time**
 (`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
 story.
 
-**Suite is green: 866 passed / 22 skipped (`pytest`), 886 passed / 2 skipped
+**Suite is green: 955 passed / 22 skipped (`pytest`), 975 passed / 2 skipped
 (`pytest --runslow`).** No failures, no xfails.
 
 **What is done:**
@@ -36,7 +36,10 @@ story.
   `Environment.record` with the capture hooks, which cost zero extra fluid loads; and
   `capture_interval`, which decimates history and archive alike from one predicate; and
   the reader, `planktos.load_run`, with its docs page and exports). **Component A is
-  done.** The rest is the plan below, starting at component **B**.
+  done**, and so is **component B** (2026-08-25): the fluid half streams out beside the
+  agents — per-dump statistics always, vorticity sourced by regime, quiver on request,
+  and the scalar vtk I/O the write-back needed. The rest is the plan below, starting at
+  component **C**, rendering.
 - **`_ibc.py` collision passes** — done on `master` and merged here; coverage 91% → 99%.
 
 **Phase 2 is complete (2026-08-11).** The loader reads the real OpenFOAM dataset, the
@@ -45,19 +48,19 @@ asserted. That was the branch's stated remaining reason to exist.
 
 **Where the work goes next, in priority order:**
 
-Item 2 is the active work; item 1 has one sub-item left and can run beside it.
+Item 1 is the active work. Item 2 is closed.
 
-1. 🔴 **The robustness pass on the OpenFOAM loader** — making the Phase 2 loader usable
-   on the next dataset. The list is under Phase 2, "Robustness follow-ups". **One item
-   is left** — surfacing a stored `vorticity` — and it was folded into
-   `run_persistence.md` §3.3, so it is really component B of item 2 rather than a
-   competing thread.
-2. 🔴 **The run archive and the plotting work it feeds** — `docs/notes/run_persistence.md`,
-   components A–C. **This is the work in hand.** §5.3 and §6.1 steps **A0–A2** are
-   done, and so are **A3a**, **A3b**, **A4** and **A5** (2026-08-25). **Component A is
-   complete** — `Environment.record` writes, `planktos.load_run` reads, and the feature
-   is in the changelog and the API docs. **Next is component B**, the fluid half
-   (§3 of the note). Detail below.
+1. 🔴 **The run archive and the plotting work it feeds** — `docs/notes/run_persistence.md`,
+   components A–C. **This is the work in hand.** §5.3 and §6.1 steps **A0–A5** are
+   done, and so are **B1, B2 and B3** (2026-08-25). **Components A and B are both
+   complete** — `Environment.record` writes agent state *and* the fluid half,
+   `planktos.load_run` reads both, and the features are in the changelog and the API
+   docs. **Next is component C**, rendering (§4 of the note): `plot_all` reading an
+   archive, and the global colour and arrow scales. Detail below.
+2. ✅ **The robustness pass on the OpenFOAM loader — closed (2026-08-25).** The list is
+   under Phase 2, "Robustness follow-ups". Its last open item — surfacing a stored
+   `vorticity` — was folded into `run_persistence.md` §3.3 and landed as part of
+   component B, so finishing B finished this too. Nothing is left here.
 3. 🟡 **Note §9** (real position-wrapping tiling, 2D and 3D; whether `Environment.extend`
    returns) — the design pass is now written up in `run_persistence.md` §9; §9.3 is the
    restoration checklist. This also **unblocks the prose-docs sweep**, which is
@@ -82,8 +85,16 @@ or restarting a run at all, none of which Planktos can do today. The note was re
 around that framing and split into four components: **A** the archive, **B** fluid-side
 streaming, **C** rendering, **D** tiling. A and B are independently shippable.
 `run_persistence.md` §0 is the orientation; §2.1–§2.3 and §4.2 carry the interface
-reasoning; §6.1 has the build order and §6.3 the entry points. **Start with §5**, two
-prerequisite bug fixes found during the reframe (see the cherry-pick queue).
+reasoning; §6.1 has the build order and §6.3 the entry points. **A and B are both
+done**; §4 (rendering) is what is left, plus §9 (tiling) as cleanup.
+
+⚠️ **One thing component B settled that the specification had left ambiguous**, worth
+knowing before reading §3: the per-dump statistics sidecar `fluid/dump_stats.npz` is
+written for **any** fluid, in 2D and 3D alike and under every `INUM`. §3's opening
+sentence read as though the whole component were conditional on `INUM`; what is
+conditional is the *field* data (vorticity, quiver), which is where the gigabytes are.
+The sidecar is a handful of floats per dump and every plot needs it. §3's head has the
+full reasoning.
 
 **Also merged since:** `master`'s 1.0.1 documentation release and its 1.0.2 bug
 fixes. No dyload-specific behavior changed by either. **`v1.0.3` is released and
@@ -674,13 +685,14 @@ arrays / parse the `U` `DataArray` directly / one-time `.npy` preprocess).
     dumps that exist**, not the set the index declares. Pinned by
     `test_openfoam_flow_times_span_the_surviving_series`.
 
-### Robustness follow-ups — 🟡 ONE LEFT
+### Robustness follow-ups — ✅ COMPLETE (2026-08-25)
 
 **Done (2026-08-11): the time-source fallback chain — items 1, 2, 3 and 7.**
 **Done (2026-08-12): mesh verification (5), `require_boundary=False` (4), and the
 boundary-condition corner policy (8).**
-Still open: **surfacing a stored `vorticity` (6)**, which is the last item in the
-Phase 2 block that is not explicitly deferred.
+**Done (2026-08-25): surfacing a stored `vorticity` (6)**, as part of
+`run_persistence.md` component B — see that item below for where it landed. Nothing
+in this block is left open.
 
 **Decision (2026-08-11), superseded the same day.** The original call was to write
 fallbacks only against a delivery that actually exhibits the problem, since fallbacks
@@ -778,9 +790,20 @@ were written as independent functions precisely so this could be a chain.
     stopped running under streaming would be missing in the configuration this branch
     exists for. A separate test asserts no other dump ever loads cell coordinates,
     across a slide to the end of the series and back.
-- [ ] **Surface the stored `vorticity`** instead of regenerating it. Exports usually
-  ship it; `_dataio.read_vtkxml_cell_data(arrays=...)` already reads it on request. The
-  work is on the `FluidData`/`get_vorticity` side, not on the reader.
+- [x] ✅ **(2026-08-25) Surface the stored `vorticity`** instead of regenerating it.
+  Exports usually ship it; `_dataio.read_vtkxml_cell_data(arrays=...)` already reads it
+  on request. The work is on the `FluidData`/`get_vorticity` side, not on the reader.
+  - **As landed, and narrower than this item reads.** Built as `run_persistence.md`
+    §3.3: `FluidData.probe_stored_vorticity` / `read_dump_vorticity` /
+    `write_dump_vorticity` / `get_stored_vorticity`, implemented for `IB2dData` and for
+    the generic array-backed case, driven by the recorder.
+  - ⚠️ **`OpenFOAMData`'s own `vorticity` array is deliberately *not* read.** It is
+    3D, and `fluid=` is forced to `None` in 3D because Planktos draws no fluid backdrop
+    there — so nothing would consume it. Reading it means the cell-order permutation
+    and the boundary splice all over again for a scalar, and every line of that is
+    written off at the vtk plotting rewrite, when a 3D backdrop is what would make it
+    matter. The hook is in place and `fluid.py` says so in a comment at the top of the
+    per-dump vorticity block; that is the whole investment 3D should get today.
   - **Decided (2026-08-12): load on demand, do not carry it in the window.** A stored
     field is the same shape as the velocity, so holding one would roughly double the
     resident fluid (the measured +106 MB streaming window at `INUM=4` becomes ~212 MB,
@@ -941,6 +964,24 @@ self-documenting and reproducible; run it with no arguments, or with part number
   library: the withheld set included dumps past the last build point, where `FluidData`
   clamps and neither scheme interpolates. Corrected in both scripts; it moved the 3D
   ratio from 1.9× to 8.4× and the 2D convergence orders slightly (see Phase 1 (C)).
+
+### Found later, by component B ✅ (2026-08-25)
+
+- [x] **A slide that loads exactly one dump killed the run** (`fluid.py`).
+  `load_dumpfiles` is contracted to return arrays with a **leading time axis**; two of
+  the readers behind it drop it for a single dump — `_read_IB2d_dumpfiles` branches on
+  `d_start != d_finish`, `_read_vtkfiles` calls `squeeze()` — which is right for the
+  constructor's one-shot read and wrong on the streaming path. `_record_dump_means` then
+  raised a broadcast error, ahead of a concatenate that would also have failed. Fixed at
+  the contract boundary with `fluid._as_dump_series`; pinned for both loaders in
+  `test_dynamic_loading.py`.
+  - ⚠️ **Not a corner case.** A forward slide takes `INUM-1` dumps until it reaches the
+    end of the series and then takes the remainder, which is one dump whenever the dump
+    count is `k*(INUM-1)+3` — with `INUM=4`, **any of 6, 9, 12, 15, … time points.** The
+    committed fixtures are 8 and the real OpenFOAM series is 17, neither of that form,
+    and `OpenFOAMData` builds its return with `np.array(list)` and so never had the bug.
+    That is why nothing had hit it: it needs an IB2d or VTK3d series of the right length.
+  - It **raised** rather than corrupting anything, so no published result is affected.
 
 ### A second pass over what else exercises the slider ✅ (2026-08-11)
 
@@ -1266,7 +1307,7 @@ Add to this list whenever a fix made on `dyload` is not dyload-specific. The tes
 that is simple: does the code it touches look the same on `master`? Check with
 `git diff master -- <file>` before assuming.
 
-### Queued for a possible 1.0.4 — two entries
+### Queued for a possible 1.0.4 — three entries
 
 Everything below the next heading is history — it shipped, or was deliberately not
 ported — kept for the porting notes rather than because anything is pending. Per the
@@ -1276,6 +1317,7 @@ release plan there is no `1.0.4` in preparation; this is a holding pen.
 |---|---|---|
 | **`Swarm._change_envir` left a moved swarm in both Environments** (2026-08-25). It set `self.envir` and appended to the new environment's `swarms`, but never removed the swarm from the old one — so the old `move_swarms` went on moving it. Reached through `Environment.add_swarm` when handed a Swarm object, which is both the build-them-separately workflow and how `calculate_FTLE` adds its working copy. Removal is skipped when the swarm is not in the old list, which is what keeps FTLE's shallow copy working. Five tests in `test_swarm_lifecycle.py` | `planktos/_swarm.py` (`_change_envir`), `tests/test_swarm_lifecycle.py` | **Yes.** `_change_envir` is byte-identical on `master`. ⚠️ The `_refuse_while_recording()` call in the new block is dyload-only — drop that line when porting |
 | **`set_canopy_flow` with scalar parameters** (2026-08-25). The divide-by-zero guards were written as `x[x == np.inf] = 0`, which assumes an array — so every scalar-parameter call raised `TypeError` — and as `x[x == np.nan] = 0`, which never matches anything, since nan compares equal to nothing including itself. Replaced by a `zero_nonfinite` helper nested inside `set_canopy_flow` and used at all three sites, with the two guarded ratios hoisted so both profile branches share them (the non-iterating branch had none), and a finiteness check so a zero mixing length raises instead of returning a field of nan. Also `assert np.isclose(U_h*beta, u_star)`, which truth-tests its result — an array for time-varying parameters — so that branch raised "truth value of an array is ambiguous" and was unreachable rather than checking the relation; now wrapped in `np.all`, which makes deriving `beta` from array parameters work at all. Eight tests in `test_flow_generation.py` | `planktos/_environment.py` (`set_canopy_flow` only), `tests/test_flow_generation.py` | **Yes.** All three sites are byte-identical on `master` (`git show master:planktos/_environment.py`, the four `== np.nan` hits). A behavior change only where the old code raised or produced nan |
+| **Spline indexing rejected numpy integers and mishandled negative slice bounds** (2026-08-26). `fCubicSpline.__getitem__` tested `type(pos) == int`, so an `np.int64` — what a caller looping over `np.arange` or unpacking `np.searchsorted` supplies — raised `IndexError`. Worse, the hand-rolled start/stop arithmetic ran a negative start up to `len-1`, so `envir.flow[0][-3:]` silently returned `len+3` wrapped entries instead of the last three. Both bodies now delegate to one `fluid._spline_index`, which uses `isinstance(..., (int, np.integer))` and `slice.indices()`. Ten tests in `test_temporal_interp.py`, parametrized over both spline classes | `planktos/fluid.py` (`_spline_index` and the two `__getitem__` bodies), `tests/test_temporal_interp.py` | **Partly.** `fCubicSpline.__getitem__` on `master` has both defects and is close enough to port by hand, but it is not byte-identical — `master`'s version does not handle a negative *step* at all (no `stop = -1` branch), so `[::-1]` there returns an empty stack rather than wrapped data. ⚠️ `LinearSpline` does not exist on `master`; port the `fCubicSpline` half only, and the tests lose their parametrization |
 | **`Swarm.move` raises when the Environment holds more than one Swarm** (2026-08-21), replacing the warn-and-freeze block that appended to `pos_history` alone and left `vel_history` / `props_history` behind. Ships with the docstring rewrite of `update_time`, three tests in `test_swarm_lifecycle.py`, and the `test_agent_models.py` fix for a test that was accidentally stacking four Swarms into one Environment | `planktos/_swarm.py` (`Swarm.move`), `tests/test_swarm_lifecycle.py`, `tests/test_agent_models.py`, `docs/quickstart.rst` | **Yes, by hunk.** The freeze-append block is byte-identical on `master` (`git show master:planktos/_swarm.py`, the `len(s.pos_history) < len(self.pos_history)` guard). ⚠️ It is a **behavior break** — a warning becomes a raise — so it is semver-visible and belongs in a minor release, not a patch |
 
 ### Shipped in 1.0.3 — the 2026-08-10 `move()`/`_ibc` work

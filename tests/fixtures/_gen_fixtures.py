@@ -102,18 +102,22 @@ def _ib2d_image():
                         origin=(0., 0., 0.))
 
 
+def _write_ib2d_velocity_dump(outdir, k, u, v):
+    '''One u.####.vtk, as IB2d writes them.'''
+    grid = _ib2d_image()
+    # set_vectors, not grid['vel']: read_vtk_Structured_Points prefers scalars
+    # when both are present, and would take the wrong branch.
+    grid.point_data.set_vectors(
+        np.stack([u.ravel(order='F'), v.ravel(order='F'),
+                  np.zeros(u.size)], axis=1), 'vel')
+    grid.save(str(outdir / f'u.{k:04d}.vtk'), binary=False)
+
+
 def write_ib2d_fluid(outdir=HERE / 'ib2d_fluid_min'):
     '''Vector form: one u.####.vtk per dump.'''
     outdir.mkdir(parents=True, exist_ok=True)
     for k in range(IB2D_NT):
-        u, v = _ib2d_fields(float(k))
-        grid = _ib2d_image()
-        # set_vectors, not grid['vel']: read_vtk_Structured_Points prefers scalars
-        # when both are present, and would take the wrong branch.
-        grid.point_data.set_vectors(
-            np.stack([u.ravel(order='F'), v.ravel(order='F'),
-                      np.zeros(u.size)], axis=1), 'vel')
-        grid.save(str(outdir / f'u.{k:04d}.vtk'), binary=False)
+        _write_ib2d_velocity_dump(outdir, k, *_ib2d_fields(float(k)))
     return outdir
 
 
@@ -126,6 +130,77 @@ def write_ib2d_fluid_scalar(outdir=HERE / 'ib2d_fluid_scalar_min'):
             grid[name] = field.ravel(order='F')
             grid.set_active_scalars(name)
             grid.save(str(outdir / f'{name}.{k:04d}.vtk'), binary=False)
+    return outdir
+
+
+# 2D IB2d fluid series that also ships VORTICITY -- Omega.####.vtk beside the
+# u dumps, which is what IB2d writes when input2d asks for it. This is the fixture
+# for run_persistence.md section 3.3: per-dump vorticity, sourced from disk under
+# a sliding window instead of recomputed from a velocity field that is no longer
+# resident.
+#
+# The velocity is chosen so vorticity VARIES IN TIME and is nonlinear in it:
+#
+#     u = sin(t) * sin(2*pi*y/Ly)
+#     v = t**2   * sin(2*pi*x/Lx)
+#
+# so vort = dv/dx - du/dy carries a t**2 term and a sin(t) term. A reader that
+# took the nearest dump instead of blending the two bracketing ones would pass
+# against a steady field and fails against this one, which is the whole point.
+# Both components are genuinely periodic on this grid (sin(2*pi) == sin(0)), so
+# the wrap IB2d omits and Planktos restores is exact.
+#
+# Omega holds the CENTRAL-DIFFERENCE curl of the wrapped field, not the analytic
+# one, and is written here by pyvista rather than through Planktos' own writer --
+# deliberately, on both counts. What the tests using it assert is that blending
+# per-dump fields with the interpolator's own weights reproduces the curl of the
+# interpolated velocity (exact, by linearity); comparing a finite difference
+# against an analytic derivative would instead measure the discretization, which
+# is a different question with a nonzero answer. Section 3.3 records the separate
+# empirical finding that for real IB2d data the solver's own Omega and Planktos'
+# curl agree to 0.00%.
+IB2D_VORT_NT = 8
+
+
+def _ib2d_vort_fields(t):
+    nx, ny = IB2D_SHAPE
+    X, Y = np.meshgrid(np.arange(nx) * 1.0, np.arange(ny) * 1.0, indexing='ij')
+    u = np.sin(t) * np.sin(2 * np.pi * Y / ny)
+    v = t ** 2 * np.sin(2 * np.pi * X / nx)
+    return u, v
+
+
+def _ib2d_vorticity(t):
+    """The curl IB2dData will compute, stripped back to IB2d's own grid.
+
+    Built by wrapping the field exactly as the loader does, differencing on the
+    wrapped grid (which is where the periodic wrap is what makes the outermost
+    ring right), and then dropping the duplicated end lines again -- so what
+    lands on disk is in the source's convention, one cell short in each
+    direction, the same as u.
+    """
+    from planktos import fluid as _fluid
+    nx, ny = IB2D_SHAPE
+    u, v = _ib2d_vort_fields(t)
+    grid = (np.arange(nx) * 1.0, np.arange(ny) * 1.0)
+    flow, fpts, _ = _fluid._wrap_flow([u, v], grid, periodic_dim=(True, True))
+    vort = _fluid._vorticity_from_field(flow, fpts, (True, True))
+    return _fluid._unwrap_scalar(vort, (True, True))
+
+
+def write_ib2d_fluid_with_vorticity(outdir=HERE / 'ib2d_fluid_vort_min'):
+    """u.####.vtk plus Omega.####.vtk, as IB2d writes both: ascii structured
+    points, the scalar array named for the quantity."""
+    outdir.mkdir(parents=True, exist_ok=True)
+    for k in range(IB2D_VORT_NT):
+        t = float(k)
+        _write_ib2d_velocity_dump(outdir, k, *_ib2d_vort_fields(t))
+
+        omega = _ib2d_vorticity(t)
+        ogrid = _ib2d_image()
+        ogrid['Omega'] = omega.ravel(order='F')
+        ogrid.set_active_scalars('Omega')
+        ogrid.save(str(outdir / f'Omega.{k:04d}.vtk'), binary=False)
     return outdir
 
 
@@ -376,6 +451,9 @@ if __name__ == '__main__':
     print("wrote IB2d fluid (vector) ->", f, sorted(p.name for p in f.iterdir()))
     s = write_ib2d_fluid_scalar()
     print("wrote IB2d fluid (scalar) ->", s, sorted(p.name for p in s.iterdir()))
+    w = write_ib2d_fluid_with_vorticity()
+    print("wrote IB2d fluid + vorticity ->", w,
+          sorted(p.name for p in w.iterdir()))
     o = write_openfoam_series()
     print("wrote OpenFOAM-style series ->", o,
           sorted(p.name for p in o.iterdir()))

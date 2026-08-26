@@ -2076,8 +2076,9 @@ class Environment:
     #####                      RUN RECORDING                          #####
     #######################################################################
 
-    def record(self, path, *, swarms=None, store=('positions', 'velocities'),
-               capture_interval=1, chunk_size=100):
+    def record(self, path, *, fluid='vort', swarms=None,
+               store=('positions', 'velocities'), capture_interval=1,
+               chunk_size=100, quiver_shape=archive.QUIVER_SHAPE):
         '''Begin recording agent state to a run archive, and return the handle.
 
         Planktos otherwise holds an entire run in memory and can only write it
@@ -2102,6 +2103,19 @@ class Environment:
             a warning naming it -- overwriting a previous run is never the right
             default, and refusing outright would strand a job that was ready to
             start. The handle's ``.path`` says where the data actually went.
+        fluid : {'vort', 'quiver', tuple of both, None}, default='vort'
+            which fluid quantity **the render will need**. Note this is not 
+            "which quantity to write": asking for ``'vort'`` frequently
+            writes nothing at all because the field is either already on disk
+            beside the velocity dumps or cheap enough to recompute from a velocity
+            field that is still in memory. What the keyword guarantees is that a
+            render will have it without re-streaming the fluid.
+
+            The same keyword on ``Swarm.plot_all`` selects the backdrop to draw;
+            this is the capture side of that line.
+
+            **Forced to None, silently, in two cases**: in 3D, where no fluid 
+            backdrop is drawn, and when the environment has no fluid.
         swarms : list of Swarm, optional
             which swarms to capture. Defaults to every swarm in the environment,
             plus any added later. Agent data runs a few hundred MB per large
@@ -2128,6 +2142,13 @@ class Environment:
         chunk_size : int, default=100
             captures buffered before a chunk is written. Bounds recording memory
             and the amount a hard kill can cost.
+        quiver_shape : tuple of 2 int, default=(60, 60)
+            target arrow grid for a stored quiver; ignored unless ``fluid`` asks
+            for one. Resolved against the fluid grid into integer strides and 
+            fixed for the run. ``plot_all`` normally derives its arrow
+            density from the figure size and axis extent, which do not exist
+            while a simulation is running, so an archive-backed render uses the
+            stored grid and warns if the figure would have used a denser one.
 
         Returns
         -------
@@ -2150,6 +2171,16 @@ class Environment:
         dumps would be a second streaming pass over exactly the data this design
         exists to avoid re-streaming, so this refuses early instead. Start
         before the loop, or load with ``INUM=None``.
+
+        **Where a derived fluid field goes.** Vorticity, when it has to be
+        written, goes into the *source's own* fluid directory in the
+        source's own naming, e.g. ``Omega.0042.vtk`` beside ``u.0042.vtk``, so
+        that a later run, ParaView, or the solver's own tooling reads it with no
+        knowledge of Planktos. An existing file is never overwritten. If that
+        directory cannot be written, the archive's own ``fluid/`` directory is 
+        used instead; ``meta.json`` records which happened. The per-dump 
+        statistics every plot needs, component means and extrema, always are in 
+        the archive, in 2D and 3D alike.
 
         See Also
         --------
@@ -2200,7 +2231,8 @@ class Environment:
         self._capture_phase = self._step_count
         try:
             self._recorder = archive.RunRecorder(
-                self, path, swarms=swarms, store=store, chunk_size=chunk_size)
+                self, path, swarms=swarms, store=store, chunk_size=chunk_size,
+                fluid=fluid, quiver_shape=quiver_shape)
         except BaseException:
             # Nothing is recording, so nothing may be gated.
             self._capture_interval = 1

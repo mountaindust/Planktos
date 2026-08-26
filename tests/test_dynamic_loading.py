@@ -39,6 +39,7 @@ because what those sections are about is the timeline a loader builds from files
 '''
 
 import os
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -1056,3 +1057,134 @@ def test_ib2d_periodic_wrap_and_domain():
     assert np.allclose(v, np.sin(2 * np.pi * x / 6.0))
     assert np.allclose(v[-1, :], v[0, :])      # wrapped edge duplicates the first
     assert np.allclose(u[:, -1], u[:, 0])
+
+
+# --------------------------------------------------------------------------- #
+#        the leading time axis a load_dumpfiles is contracted to return       #
+# --------------------------------------------------------------------------- #
+# update_spline concatenates what load_dumpfiles hands back against the window,
+# and _record_dump_means reduces over its leading axis, so the axis has to be
+# there even when only one dump is being loaded. Two of the readers behind
+# load_dumpfiles drop it for a single dump -- _read_IB2d_dumpfiles branches on
+# d_start != d_finish, _read_vtkfiles calls squeeze() -- which is right for the
+# constructor's one-shot read and wrong on the streaming path.
+#
+# A single-dump load is not exotic: a forward slide takes INUM-1 dumps until it
+# reaches the end of the series and then takes whatever is left, and that
+# remainder is one dump whenever the dump count is k*(INUM-1)+3 -- with INUM=4,
+# any of 6, 9, 12, 15, ... time points. It failed loudly rather than silently (a
+# broadcast error out of _record_dump_means, ahead of a concatenate that would
+# also have failed), so no result was ever wrong because of it.
+
+def test_as_dump_series_adds_the_axis_only_when_it_is_missing():
+    single = np.zeros((7, 6))
+    series = np.zeros((3, 7, 6))
+    assert fluid._as_dump_series([single], 2)[0].shape == (1, 7, 6)
+    assert fluid._as_dump_series([series], 2)[0].shape == (3, 7, 6)
+    # 3D: a single dump is 3 axes, a series is 4.
+    assert fluid._as_dump_series([np.zeros((4, 4, 4))], 3)[0].shape == (1, 4, 4, 4)
+    assert fluid._as_dump_series([np.zeros((2, 4, 4, 4))], 3)[0].shape == (2, 4, 4, 4)
+
+
+def _ib2d_subset(tmp_path, ndumps, INUM):
+    '''The IB2d fixture truncated to ndumps dumps, so the slide arithmetic lands
+    on a single-dump load at the end of the series.'''
+    d = tmp_path / 'ib2d_{}'.format(ndumps)
+    d.mkdir()
+    for k in range(ndumps):
+        shutil.copy(FIXTURES / 'ib2d_fluid_min' / 'u.{:04d}.vtk'.format(k), d)
+    return fluid.IB2dData(str(d), dt=0.1, print_dump=10, INUM=INUM)
+
+
+def test_ib2d_slide_that_loads_a_single_dump(tmp_path, monkeypatch):
+    # 6 time points with INUM=4: the opening window is 0-4, and the one forward
+    # slide has exactly dump 5 left to load.
+    fd = _ib2d_subset(tmp_path, 6, 4)
+    assert len(fd.flow_times) == 6
+    calls = []
+    original = type(fd).load_dumpfiles
+
+    def counted(self, a, b):
+        calls.append((a, b))
+        return original(self, a, b)
+
+    monkeypatch.setattr(type(fd), 'load_dumpfiles', counted)
+    u, v = fd(4.5)
+    assert (5, 5) in calls                      # a genuine single-dump load
+    assert u.shape == fd.fshape[1:]
+    assert np.allclose(u, 4.5)                  # u = t in this fixture
+    # The mean sidecar is the thing a mis-shaped return corrupts first.
+    assert np.allclose(fd._dump_means[:, 0], np.arange(6.0))
+
+
+def test_vtk3d_slide_that_loads_a_single_dump(tmp_path):
+    # The 3D counterpart, where the axis was dropped by squeeze() instead. The
+    # committed series is 8 dumps and 8 = k*3+3 has no integer solution, so the
+    # series is truncated to 6 -- which does, with INUM=4.
+    fd = fluid.VTK3dData(VTK3D, title='IBAMR_db_', d_start=0, d_finish=5, INUM=4)
+    assert len(fd.flow_times) == 6
+    u, v, w = fd(4.5)
+    assert u.shape == fd.fshape[1:]
+    assert np.allclose(u, 4.5)                  # u = t in this fixture
+    assert np.allclose(fd._dump_means[:, 0], np.arange(6.0))
+
+
+# --------------------------------------------------------------------------- #
+#          is_windowed -- the regime discriminator component B keys on        #
+# --------------------------------------------------------------------------- #
+
+def test_is_windowed_is_true_only_when_a_window_can_slide():
+    t, fpoints, comps = _field_2d(nt=21)
+    assert _InMemorySource([c.copy() for c in comps], fpoints, t.copy(), 4) \
+        .is_windowed
+    # Everything resident, either spline class:
+    assert not fluid.FluidData([c.copy() for c in comps], fpoints, t.copy(),
+                               INUM=None).is_windowed
+    assert not fluid.FluidData([c.copy() for c in comps], fpoints, t.copy(),
+                               INUM=True).is_windowed
+    # An int INUM spanning the dataset holds everything and never slides, so it
+    # belongs with the resident cases and not with its own spelling.
+    with pytest.warns(UserWarning, match='spans the entire dataset'):
+        wide = fluid.FluidData([c.copy() for c in comps], fpoints, t.copy(),
+                               INUM=len(t) - 1)
+    assert not wide.is_windowed
+    # Time-invariant flow has no dumps at all.
+    x = np.linspace(0, 1, 4)
+    assert not fluid.FluidData([np.zeros((4, 4))] * 2, (x, x)).is_windowed
+
+
+# --------------------------------------------------------------------------- #
+#              the dump-arrival observer component B rides on                 #
+# --------------------------------------------------------------------------- #
+
+def test_the_observer_fires_wherever_data_lands_in_memory():
+    t, fpoints, comps = _field_2d(nt=21)
+    src = _InMemorySource([c.copy() for c in comps], fpoints, t.copy(), 4)
+    seen = []
+    src.add_dump_observer(lambda i, f: seen.append((i, len(f[0]))))
+    src(5.0)                            # forward slide
+    src(0.0)                            # jump back to the start
+    src(2.0)                            # forward again
+    # Every report must line up with a load, and the forward slides skip the two
+    # holdover dumps carried over from the outgoing window.
+    assert len(seen) == len(src.load_calls) - 1     # the opening load predates it
+    for (idx, n), (d_start, d_finish) in zip(seen, src.load_calls[1:]):
+        assert n == d_finish - d_start + 1
+
+
+def test_an_observer_can_be_removed_and_double_registration_is_a_no_op():
+    t, fpoints, comps = _field_2d(nt=21)
+    src = _InMemorySource([c.copy() for c in comps], fpoints, t.copy(), 4)
+    hits = []
+    observer = lambda i, f: hits.append(i)
+    src.add_dump_observer(observer)
+    src.add_dump_observer(observer)      # registering twice must not double-fire
+    src(1.0)
+    fired = len(hits)
+    assert fired == len(src.load_calls) - 1
+    assert fired > 0                     # otherwise the rest proves nothing
+    src.remove_dump_observer(observer)
+    src.remove_dump_observer(observer)   # idempotent
+    src(4.0)
+    assert len(src.load_calls) - 1 > fired    # more data really did land
+    assert len(hits) == fired

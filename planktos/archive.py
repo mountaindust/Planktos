@@ -1,16 +1,12 @@
 '''
-Run archives: append-only, crash-valid capture of agent state during a run.
+Run archives: append-only, crash-valid capture of a run as it proceeds.
 
-Planktos holds an entire run in memory and can only write it out at the end.
-An archive streams it to disk instead, as the run proceeds -- the mirror image
-of what dynamic fluid loading does for the velocity field. Same architecture,
-opposite direction, same reason: the thing is too big to hold at once.
+Planktos otherwise holds an entire run in memory and can only write it out at
+the end. An archive streams agent state to disk instead, along with what a later
+plot needs from the fluid -- the mirror image of what dynamic fluid loading does
+for the velocity field.
 
-This module owns the on-disk format. The design note is
-``docs/notes/run_persistence.md``; section 2 is the archive and section 2.3 the
-schema. What follows is what a reader of *this file* needs.
-
-The layout::
+This module owns the on-disk format::
 
     run_archive/
       meta.json                 written once, never rewritten
@@ -22,35 +18,71 @@ The layout::
         swarm00_vel_0000.npy    (rows, N, D)
         swarm00_mask_0000.npy   (rows, N) bool
         times_0000.npy          (rows,) shared across swarms
-      fluid/                    component B; nothing here writes it
+      fluid/
+        dump_stats.npz          per-dump component means and extrema
+        quiver_00042.npy        downsampled velocity, if requested
+        Omega.0042.vtk          vorticity, only if written and the source
+                                directory could not take it
 
-Three properties hold the format together, and every design choice below serves
-one of them:
+Three properties hold the format together:
 
-**It is valid with nothing having run at the end.** A hard kill -- HPC walltime,
-OOM, node failure -- is a ``SIGKILL``, which defeats ``__exit__``, ``close()``,
-``atexit`` and ``__del__`` alike. So metadata is written when recording starts,
-every file appears atomically, and the reader reconstructs the timeline by
-scanning what is on disk rather than trusting a recorded count. No finalizer is
-load-bearing: the most any of them can save is one unflushed chunk. This is what
-makes an archive worth having for cluster work at all, since the runs most
-likely to be killed are exactly the ones most expensive to repeat.
+- **An archive is valid with no finalizer having run.** Metadata is written when
+  recording starts, every file appears atomically, and a reader reconstructs the
+  timeline by scanning what is on disk rather than trusting a recorded count.
+  A hard kill costs at most one unflushed chunk.
+- **What accumulates lives in files that accumulate.** ``meta.json`` holds only
+  what is known when recording starts and never changes.
+- **Chunks are keyed on a global capture index**, not on each swarm's own row
+  count, so a swarm added mid-run needs no second indexing scheme: its first
+  chunk is simply short at the front.
 
-**What accumulates lives in files that accumulate.** ``meta.json`` holds only
-what is known when recording starts and never changes; the capture times, the
-agent arrays and the per-swarm roster live in their own files and are discovered
-by scanning. That is what lets ``meta.json`` be a single write that is never
-touched again -- including when a swarm joins an hour into the run.
+**How it fits together.** Writing is reached only through
+``Environment.record``, which builds a ``RunRecorder``. The two writers under it
+are separate because their cadences differ: agent state is captured per time
+step, fluid quantities per fluid dump.
 
-**Chunks are keyed on a global capture index**, not on each swarm's own row
-count, so a swarm added mid-run needs no second indexing scheme: its first chunk
-is simply short at the front.
+``RunRecorder``
+    the handle ``record`` returns, and the only public writing surface. Hooks the
+    environment's time advance, discovers swarms at capture time, and owns the
+    two writers below. There is one per Environment.
+``_ArchiveWriter``
+    the agent half, and the format itself. Writes ``meta.json``, ``grid.npz``
+    and the per-swarm sidecars up front, then buffers ``chunk_size`` captures at
+    a time and writes a chunk. It is handed arrays and knows nothing about
+    Environments, Swarms or time steps, so the format can be exercised without
+    running a simulation. The directory it writes into comes from
+    ``_resolve_archive_path``, which redirects a non-empty target to a
+    timestamped sibling rather than overwriting it.
+``_plan_fluid``
+    decides what the fluid half will hold -- which quantities, and where
+    vorticity will come from -- *before* the archive directory is resolved, since
+    that answer goes into the write-once ``meta.json``.
+``_FluidWriter``
+    carries that plan out. Driven by an observer registered on the ``FluidData``
+    rather than by the step hook, so it sees each dump as it lands and never
+    causes a fluid load of its own.
 
-Public surface: ``RunArchive`` and ``load_run`` for reading, ``CaptureSeries``
-(what a read hands back), ``RunRecorder`` (what ``Environment.record`` hands
-back), and the three ``*fingerprint*`` functions, which are what a refusal
-message is assembled from and are therefore worth having to hand when
-diagnosing one. Everything else is underscored and is format machinery.
+Reading:
+
+``load_run`` / ``RunArchive``
+    open an archive, validate it (format version, chunk contiguity, row counts
+    against the capture count) and serve it. ``RunArchive.check_against``
+    compares it against a live Environment; ``dump_stats`` and ``quiver`` are
+    the fluid half.
+``CaptureSeries``
+    what a request for an agent array hands back. Lazy and memory-mapped:
+    indexing one capture opens only the chunk it lives in, so an archive larger
+    than RAM stays readable.
+
+Under both: ``_atomic_write``, which every file in an archive goes through
+except a per-dump fluid field, whose per-source vtk writer is staged and renamed
+instead; and the ``*fingerprint*`` functions, which decide whether an archive and
+an Environment describe the same domain and timeline, and which a refusal message
+is assembled from.
+
+Public surface is ``RunRecorder``, ``load_run``, ``RunArchive``,
+``CaptureSeries`` and those three fingerprint functions. Everything else is
+underscored.
 
 Author: Christopher Strickland
 Email: cstric12@utk.edu
@@ -59,6 +91,7 @@ Email: cstric12@utk.edu
 import json
 import os
 import warnings
+from collections import namedtuple
 from datetime import datetime
 from pathlib import Path
 
@@ -67,6 +100,9 @@ import numpy.ma as ma
 
 import planktos
 from . import _provenance
+# Aliased so that the module is not shadowed by the `fluid=` parameter that
+#   _plan_fluid and _normalize_fluid take -- same word, two different things.
+from . import fluid as _fluid
 
 __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
@@ -84,6 +120,13 @@ DTYPE = np.dtype('float64')
 # Suffix for a file being written. A kill during the write leaves one of these
 #   behind rather than a truncated real file; readers must ignore them.
 TMP_SUFFIX = '.partial'
+
+# Directory a per-dump fluid field is written into before being moved into place.
+#   Needed because the per-source vtk writers build their own filenames and so
+#   cannot be handed a temporary one; a temporary directory on the same
+#   filesystem gets the same guarantee. Readers must ignore it, as they must
+#   TMP_SUFFIX.
+TMP_DIRNAME = '.planktos_partial'
 
 # Filename index width. Four digits at the default chunk size covers a million
 #   captures. It is presentation only -- indices are parsed as integers and
@@ -201,6 +244,16 @@ def _swarm_prefix(index):
     '''e.g. 3 -> "swarm03". Two digits by convention, more if ever needed.'''
 
     return 'swarm{:02d}'.format(index)
+
+
+def _quiver_name(t_idx):
+    '''e.g. 42 -> "quiver_00042.npy", keyed on the fluid dump index.
+
+    One definition, so the writer and the reader cannot disagree about it -- the
+    same reason _chunk_name exists.
+    '''
+
+    return 'quiver_{:05d}.npy'.format(int(t_idx))
 
 
 
@@ -460,16 +513,13 @@ def _resolve_archive_path(path):
 class _ArchiveWriter:
     '''Writes agent captures to an archive directory as a run proceeds.
 
-    This is the low-level half of recording: it is handed data and writes it,
-    and knows nothing about Environments, Swarms, time steps or hooks. What
-    drives it is ``Environment.record``. Keeping the split means the format can
-    be tested without running a simulation, and a change to the capture schedule
-    cannot reach into the format.
+    The low-level half of recording: it is handed data and writes it, and knows
+    nothing about Environments, Swarms, time steps or hooks. ``RunRecorder``
+    drives it.
 
-    Metadata is written by ``__init__`` -- when recording *starts*, per the
-    crash-validity rule -- so constructing one of these creates the directory
-    and commits the archive's identity. Nothing after that point is required for
-    what is already on disk to be readable.
+    Metadata is written by ``__init__``, so constructing one of these creates the
+    directory and commits the archive's identity. Nothing after that point is
+    required for what is already on disk to be readable.
 
     Parameters
     ----------
@@ -542,19 +592,17 @@ class _ArchiveWriter:
     def add_swarm(self, index, name, N, D, first_capture):
         '''Register a swarm, writing its sidecar immediately.
 
-        The roster lives in per-swarm files rather than in ``meta.json`` so that
-        a swarm joining mid-run is an ordinary case: nothing already written is
-        touched, and early and late swarms are discovered by the same scan. The
-        only thing that distinguishes them is ``first_capture``.
+        The roster lives in per-swarm files rather than in ``meta.json``, so a
+        swarm joining mid-run is an ordinary case: nothing already written is
+        touched, and ``first_capture`` is all that distinguishes it.
 
         Parameters
         ----------
         index : int
             position in the recorder's swarm list; fixed for the run
         name : str
-            the Swarm's name. Not used in filenames -- the default name is
-            'organism' for every Swarm, so two swarms in one environment collide
-            by name and a file built from it would silently overwrite.
+            the Swarm's name. Not used in filenames, since the default name is
+            'organism' for every Swarm and two swarms would collide.
         N, D : int
             agent count and spatial dimension
         first_capture : int
@@ -745,6 +793,399 @@ class _ArchiveWriter:
 
 #############################################################################
 #                                                                           #
+#                            FLUID WRITER                                   #
+#                                                                           #
+#############################################################################
+
+# The fluid half of an archive (docs/notes/run_persistence.md section 3). What
+#   it exists for: never re-stream a 100 GB dataset to draw a picture of it. A
+#   render needs three things from the fluid, and each is handled by its own rule
+#   rather than by one mechanism, because the regimes genuinely differ:
+#
+#   frame statistics  the spatial mean of each velocity component, per dump.
+#                     A few floats. Always written, in 2D and 3D alike -- this
+#                     is the only part of component B a 3D run gets, and it is
+#                     what lets the statistics box be drawn from an archive.
+#   vorticity         sourced by regime (section 3.3): recomputed when the whole
+#                     field is resident, read from the source when it ships one,
+#                     written per dump only when neither holds. 2D only.
+#   quiver            a downsampled subsample of the velocity, opt-in, written
+#                     per dump when asked for. 2D only.
+#
+# Nothing here holds field data between dumps. A dump arrives, what is wanted
+#   from it is derived and written, and it goes out of scope again -- the same
+#   discipline the velocity window itself keeps.
+
+# Target arrow grid for a stored quiver, if the caller does not say. Resolved
+#   against the fluid grid into integer strides at record() time, because the
+#   figure size that plot_all normally derives them from does not exist while a
+#   simulation is running.
+QUIVER_SHAPE = (60, 60)
+
+# Which quantities `fluid=` may ask for.
+FLUID_QUANTITIES = ('vort', 'quiver')
+
+
+def _normalize_fluid(fluid, envir):
+    '''Resolve the ``fluid=`` argument to a tuple of quantities.
+
+    Empty in 3D, where no fluid backdrop is drawn. A flow-free environment is
+    handled by :func:`_plan_fluid`, which records nothing fluid at all.
+    '''
+
+    if fluid is None:
+        return ()
+    if isinstance(fluid, str):
+        fluid = (fluid,)
+    fluid = tuple(fluid)
+    unknown = [q for q in fluid if q not in FLUID_QUANTITIES]
+    if unknown:
+        raise ValueError(
+            'cannot record fluid quantity {}; known quantities are {}, a tuple '
+            'of them, or None'.format(unknown, list(FLUID_QUANTITIES)))
+    # Silent rather than a warning: there is nothing else the caller could have
+    #   meant, and 'vort' is the default, so it would fire on every 3D run.
+    if len(envir.L) == 3:
+        return ()
+    return fluid
+
+
+def _quiver_strides(flow_points, quiver_shape):
+    '''Integer strides that subsample a fluid grid to about ``quiver_shape``.
+
+    At least 1 in each direction, since more arrows than grid points cannot be
+    honoured.
+    '''
+
+    # max(1, ...) on both: a stride of 0 would raise deep inside a slice.
+    return tuple(max(1, int(round(len(flow_points[d]) / max(1, quiver_shape[d]))))
+                 for d in range(len(flow_points)))
+
+
+# What _plan_fluid decides and _FluidWriter carries out. A named structure
+#   rather than a dict, so absence-means-something is not knowledge the writer
+#   has to hold, and `vorticity_dir` means one thing: where per-dump vorticity
+#   lives, or None for the archive's own fluid/.
+_FluidPlan = namedtuple('_FluidPlan', 'quantities quiver_strides '
+                                      'write_vorticity vorticity_dir meta')
+
+
+class _FluidWriter:
+    '''Derives and writes per-dump fluid quantities as dumps arrive.
+
+    Driven by an observer registered on the ``FluidData``, so every derivation
+    happens on data that is already resident and no dump is ever loaded on this
+    class's behalf.
+
+    Parameters
+    ----------
+    envir : Environment
+    fluid_dir : Path
+        the archive's ``fluid/`` directory
+    plan : _FluidPlan
+        from :func:`_plan_fluid`
+    '''
+
+    # Dumps recorded before the statistics sidecar is rewritten. It is rewritten
+    #   whole each time -- it is a few floats per dump, and one atomic replace is
+    #   what keeps it always readable -- so doing that per arrival would cost
+    #   O(n^2) bytes over a long series. Throttling leaves the same exposure to a
+    #   kill that the agent chunks already have.
+    STATS_INTERVAL = 100
+
+    def __init__(self, envir, fluid_dir, plan):
+        self.dir = Path(fluid_dir)
+        self.plan = plan
+        self.quantities = plan.quantities
+        self.flow = envir.flow
+        self._written = set()
+
+        # Per-dump reductions. NaN marks a dump that never arrived, which under a
+        #   sliding window is an honest answer and not a gap to be filled. Means
+        #   are not among them: FluidData caches those already, and duplicating
+        #   the array would only create two things to keep in step.
+        n = len(self.flow.dump_means)
+        ncomp = len(self.flow)
+        self._vmin = np.full((n, ncomp), np.nan)
+        self._vmax = np.full((n, ncomp), np.nan)
+        self._vort_absmax = np.full(n, np.nan)
+        self._unwritten = 0
+
+        # flow_times is fixed for the object's life, so convert it once rather
+        #   than on every sidecar rewrite.
+        self._flow_times = (None if self.flow.flow_times is None
+                            else np.asarray(self.flow.flow_times, dtype=DTYPE))
+
+        # Only one of the three regimes writes: a source that already ships the
+        #   field is read, and a resident field is recomputed at render. This is
+        #   the single place the fluid is told where its per-dump vorticity is,
+        #   whichever regime applies.
+        self._writes_vorticity = plan.write_vorticity
+        self._vort_dir = Path(plan.vorticity_dir or self.dir)
+        if 'vort' in self.quantities and self.flow.is_windowed:
+            self.flow.vorticity_path = self._vort_dir
+
+        # Sweep first, register second: nothing is hooked while anything can
+        #   fail, so a construction that raises leaves no observer behind.
+        for t_idx, field in self.flow.iter_resident_dumps():
+            self._record_dump(t_idx, field)
+        if self.flow.flow_times is not None:
+            # A time-invariant field has no dumps to arrive, and the sweep above
+            #   already took all of it.
+            self.flow.add_dump_observer(self._observe)
+        self.flush()
+
+
+    ####################   lifecycle   ####################
+
+    def stop(self):
+        '''Unhook from the fluid and write the sidecar a last time.'''
+
+        self.flow.remove_dump_observer(self._observe)
+        self.flush()
+        self._clear_staging()
+
+
+    def flush(self):
+        '''Rewrite the per-dump statistics sidecar.'''
+
+        if not self._unwritten:
+            return
+        arrays = {'means': self.flow.dump_means,
+                  'vmin': self._vmin, 'vmax': self._vmax}
+        if 'vort' in self.quantities:
+            arrays['vort_absmax'] = self._vort_absmax
+        if self._flow_times is not None:
+            arrays['flow_times'] = self._flow_times
+        _atomic_write(self.dir / 'dump_stats.npz',
+                      lambda fobj: np.savez(fobj, **arrays))
+        self._unwritten = 0
+
+
+    ####################   the observer   ####################
+
+    def _observe(self, idx_start, flow):
+        '''One or more dumps just landed in memory, starting at ``idx_start``.'''
+
+        for i in range(len(flow[0])):
+            self._record_dump(idx_start + i, [f[i] for f in flow])
+        if self._unwritten >= self.STATS_INTERVAL:
+            self.flush()
+
+
+    def _record_dump(self, t_idx, field):
+        '''Derive and write everything wanted from one dump.
+
+        Parameters
+        ----------
+        t_idx : int
+            index into ``flow_times``
+        field : list of ndarrays
+            one velocity component, single-time, indexed [x,y(,z)]
+        '''
+
+        if t_idx in self._written:
+            # A re-report, which the jump-to-start slide does by design.
+            return
+        self._written.add(t_idx)
+        self._unwritten += 1
+
+        for n, f in enumerate(field):
+            self._vmin[t_idx, n] = np.min(f)
+            self._vmax[t_idx, n] = np.max(f)
+
+        if 'vort' in self.quantities:
+            # From the raw arrays, never through get_vorticity(time=), which calls
+            #   the FluidData and can therefore trigger a load.
+            vort = _fluid._vorticity_from_field(field, self.flow.flow_points,
+                                                self.flow.periodic_dim)
+            self._vort_absmax[t_idx] = np.max(np.abs(vort))
+            if self._writes_vorticity:
+                self._write_vorticity(t_idx, vort)
+
+        if 'quiver' in self.quantities:
+            self._write_quiver(t_idx, field)
+
+
+    ####################   the two writes   ####################
+
+    def _write_vorticity(self, t_idx, vort):
+        '''Write one dump's vorticity, unless something is already there.
+
+        The file appears complete or not at all, like every other file in an
+        archive: a kill partway through would otherwise leave a truncated vtk,
+        which raises on read and is worse than a missing one.
+        '''
+
+        name = self.flow.vorticity_filename(t_idx)
+        # Never clobber. An existing file is the solver's own field, which is at
+        #   least as good as a recomputation and better at the domain edge.
+        if (self._vort_dir / name).exists():
+            return
+
+        # The per-source writer names its own file, so it cannot be given a
+        #   temporary name -- it gets a temporary directory on the same
+        #   filesystem instead, and the result is moved into place.
+        staging = self._staging_dir()
+        staging.mkdir(exist_ok=True)
+        self.flow.write_dump_vorticity(t_idx, vort, staging)
+        # fsync before the rename, for the same reason _atomic_write does it:
+        #   os.replace survives process death on its own, but not the loss of
+        #   the page cache to a node failure.
+        with open(staging / name, 'rb+') as fobj:
+            os.fsync(fobj.fileno())
+        os.replace(staging / name, self._vort_dir / name)
+
+
+    def _write_quiver(self, t_idx, field):
+        '''Write one dump's downsampled velocity, as .npy in the archive.'''
+
+        # .npy rather than vtk: a subsample chosen at record time is not a
+        #   quantity any solver writes or any other tool would want.
+        M, N = self.plan.quiver_strides
+        arrows = np.stack([np.asarray(f)[::M, ::N] for f in field])
+        _save_npy(self.dir / _quiver_name(t_idx), arrows)
+
+
+    def _staging_dir(self):
+        '''Where a per-dump field is written before being moved into place.'''
+
+        return self._vort_dir / TMP_DIRNAME
+
+
+    def _clear_staging(self):
+        '''Remove the staging directory, and anything a failed write left in it.
+
+        Best-effort: an archive is not made invalid by a leftover, and raising
+        here would mask whatever went wrong upstream.
+        '''
+
+        staging = self._staging_dir()
+        try:
+            for leftover in staging.iterdir():
+                leftover.unlink()
+            staging.rmdir()
+        except OSError:
+            pass
+
+
+
+def _plan_vorticity(flow):
+    """Which of the three vorticity regimes applies, flat: one return each.
+
+    Returns
+    -------
+    state : {'recomputed', 'source', 'archive'}
+        what a reader should do, and where it should look
+    directory : Path or None
+        where the per-dump field lives; None means the archive's own ``fluid/``
+    write : bool
+        whether Planktos has to produce the field itself
+    """
+
+    if not flow.is_windowed:
+        # The whole field is in memory, so a render recomputes the curl -- which
+        #   is cheaper than reading one back, and writes nothing.
+        return 'recomputed', None, False
+
+    state, directory = flow.probe_stored_vorticity()
+    if state == 'complete':
+        return 'source', Path(directory).resolve(), False
+
+    if state == 'partial':
+        # Write elsewhere rather than filling the gaps in place, so that what a
+        #   render reads is all from one source.
+        warnings.warn(
+            "{} carries a '{}' field for only part of the dump range, so it "
+            "cannot be used -- serving one dump's field for another's would be "
+            "a plausible-looking wrong answer. Planktos will write a complete "
+            "series into the archive instead.".format(
+                directory, flow.VORTICITY_TITLE), UserWarning, stacklevel=5)
+        return 'archive', None, True
+
+    target = _writable_source_dir(flow)
+    if target is None:
+        return 'archive', None, True
+    return 'source', target, True
+
+
+def _plan_fluid(envir, fluid, quiver_shape):
+    """Decide what the fluid half of an archive will contain, before it exists.
+
+    Parameters
+    ----------
+    envir : Environment
+    fluid : str, tuple of str, or None
+    quiver_shape : tuple of 2 int
+
+    Returns
+    -------
+    _FluidPlan, or None if the environment has no fluid at all. Its ``meta``
+    field is the block that goes into meta.json.
+    """
+
+    # Separate from _FluidWriter because the answer goes into meta.json, which is
+    #   written before the archive directory is resolved and never rewritten.
+    flow = envir.flow
+    if flow is None:
+        return None
+    # A plan is returned for any fluid at all, including in 3D where quantities
+    #   is empty: the statistics sidecar is what lets the plot statistics box be
+    #   served from an archive, and it is a few floats per dump either way.
+    quantities = _normalize_fluid(fluid, envir)
+    meta = {'quantities': list(quantities)}
+
+    strides = None
+    if 'quiver' in quantities:
+        # Normalized here rather than left to jsonable, which would record an
+        #   ndarray's shape instead of its values -- right for a data array, and
+        #   useless for a two-element parameter.
+        quiver_shape = tuple(int(v) for v in quiver_shape)
+        strides = _quiver_strides(flow.flow_points, quiver_shape)
+        meta['quiver_shape'] = quiver_shape
+        meta['quiver_strides'] = strides
+        meta['quiver_grid'] = [len(flow.flow_points[d][::strides[d]])
+                               for d in range(len(strides))]
+
+    state, directory, write = 'recomputed', None, False
+    if 'vort' in quantities:
+        state, directory, write = _plan_vorticity(flow)
+        meta['vorticity'] = state
+        # The archive case records no path: it is the archive's own fluid/
+        #   directory, which a reader already knows.
+        meta['vorticity_dir'] = directory
+
+    return _FluidPlan(quantities=quantities, quiver_strides=strides,
+                      write_vorticity=write, vorticity_dir=directory,
+                      meta=meta)
+
+
+def _writable_source_dir(flow):
+    '''The source's own fluid directory, if a file can actually be created there.
+
+    Returns None for a read-only mount or a source that came from arrays.
+    '''
+
+    directory = flow.source_dir()
+    if directory is None or not directory.is_dir():
+        return None
+    # Probed rather than assumed, and probed now: discovering it at the first
+    #   dump would mean discovering it after the run has started.
+    probe = directory / '.planktos_write_probe'
+    try:
+        with open(probe, 'wb'):
+            pass
+        probe.unlink()
+    except OSError:
+        return None
+    # Resolved: this goes into meta.json for a reader that may open it from a
+    #   different working directory.
+    return directory.resolve()
+
+
+
+#############################################################################
+#                                                                           #
 #                              RECORDER                                     #
 #                                                                           #
 #############################################################################
@@ -753,13 +1194,11 @@ class RunRecorder:
     '''Captures agent state to an archive as a run proceeds.
 
     Returned by :meth:`planktos.Environment.record`, which is the only way to
-    make one -- a recorder is environment-scoped by construction. It hooks the
-    environment's time advance, its metadata is environment state, and the
-    fluid half of the output belongs to the environment rather than to any
-    swarm.
+    make one: a recorder is environment-scoped, hooking the environment's time
+    advance, and there is one per Environment.
 
-    Recording is **live as soon as this exists**. That is the ``open()`` model:
-    the call does the work and ``with`` only adds the guaranteed close.
+    Recording is **live as soon as this exists** -- the call does the work, and
+    ``with`` only adds the guaranteed close.
 
     ::
 
@@ -768,9 +1207,8 @@ class RunRecorder:
                 swrm.move(dt)
 
     Works without a ``with`` block too, since a ``with`` cannot span notebook 
-    cells and interactive exploration -- run 200 steps, plot, run 800 more -- is 
-    a supported Planktos workflow. ``envir.flush_recording()`` and 
-    ``envir.stop_recording()`` live on the Environment for the same reason.
+    cells: ``envir.flush_recording()`` and ``envir.stop_recording()`` reach the 
+    active recorder without a variable having to survive across cells.
 
     Attributes
     ----------
@@ -781,7 +1219,8 @@ class RunRecorder:
     '''
 
     def __init__(self, envir, path, swarms=None, store=('positions', 'velocities'),
-                 chunk_size=100, meta=None):
+                 chunk_size=100, fluid='vort', quiver_shape=QUIVER_SHAPE,
+                 meta=None):
         self.envir = envir
         # Given an explicit list, capture exactly those. Given none, capture
         #   whatever the environment holds -- including swarms that join later.
@@ -805,10 +1244,26 @@ class RunRecorder:
             'fluid': envir._fluid_provenance,
             'ibmesh': envir._ibmesh_provenance}
 
+        # Decided before the archive exists, because it goes into meta.json --
+        #   written once when recording starts and never rewritten.
+        plan = _plan_fluid(envir, fluid, quiver_shape)
+        # Through jsonable rather than converting each field by hand: it handles
+        #   Path, numpy scalars and containers, so a quiver_shape given as an
+        #   ndarray cannot reach _save_json unconverted.
+        record_meta['fluid'] = (None if plan is None
+                                else _provenance.jsonable(plan.meta))
+
         self._writer = _ArchiveWriter(path, fingerprint_of(envir),
                                       meta=record_meta, chunk_size=chunk_size,
                                       store=self._store)
         self.path = self._writer.path
+
+        # Now that the directory is settled, hook the fluid. This also sweeps
+        #   whatever is already resident, so a run whose fluid never slides is
+        #   fully recorded by the time record() returns.
+        self._fluid = None
+        if plan is not None:
+            self._fluid = _FluidWriter(envir, self.path / 'fluid', plan)
 
         self._n_captures = 0
         for index, swarm in enumerate(self._swarms):
@@ -832,6 +1287,8 @@ class RunRecorder:
         '''Write buffered captures to disk. Keeps recording.'''
 
         self._writer.flush()
+        if self._fluid is not None:
+            self._fluid.flush()
 
 
     def stop(self):
@@ -840,6 +1297,11 @@ class RunRecorder:
         if self._stopped:
             return
         self._stopped = True
+        if self._fluid is not None:
+            # Unhook from the fluid first: were the agent writer to raise while
+            #   closing, the observer would otherwise outlive the recording and
+            #   keep writing into the source's own directory.
+            self._fluid.stop()
         self._writer.close()
         if self.envir._recorder is self:
             self.envir._recorder = None
@@ -912,10 +1374,9 @@ class RunRecorder:
 
 
 def fingerprint_of(envir):
-    '''Build an Environment's fingerprint (§2.3).
+    '''Build an Environment's fingerprint.
 
-    A flow-free environment fingerprints on dimension and domain alone --
-    nothing becomes optional, it just gets smaller.
+    A flow-free environment fingerprints on dimension and domain alone.
     '''
 
     dimension = len(envir.L)
@@ -1040,11 +1501,10 @@ class CaptureSeries:
 
 
 class RunArchive:
-    '''A finished (or still-running) archive of agent state, opened for reading.
+    '''A finished (or still-running) archive of a run, opened for reading.
 
     Get one from :func:`planktos.load_run`. The archive is **read-only**: it
-    never writes, and never flushes a recording on the writer's behalf, because
-    a reader that mutates the thing it is reading is the wrong shape.
+    never writes, and never flushes a recording on the writer's behalf.
 
     ::
 
@@ -1053,24 +1513,21 @@ class RunArchive:
         run.swarms                 # [('organism', 0), ('organism', 1)]
         run.positions(0)[run.capture_at(3.4)]     # where they were at t=3.4
 
-    **Address swarms by index; names are a convenience.** The default ``Swarm``
-    name is ``'organism'`` for every swarm, so two swarms in one environment
-    collide by name by default -- ``run.positions('organism')`` therefore raises
-    when the name is not unique, rather than picking one. ``run.swarms`` lists
-    both name and index so a caller can see the collision instead of guessing.
+    Three rules for using it:
 
-    **Resolve by time, not by index into someone else's list.** A swarm added
-    mid-run starts at a nonzero capture, and a recording started after t=0 has
-    its capture 0 partway into the run; matching on :attr:`times` is right in
-    every one of those cases, where assuming archive index *j* equals history
-    index *j* is right only in the common one, and fails silently when it is
-    not.
-
-    **Agent state is snapped, never interpolated.** :meth:`capture_at` returns
-    the index of the nearest capture and nothing blends between them.
-    Interpolating positions across a domain wrap or an immersed-boundary slide
-    would invent trajectories that never happened. Temporal interpolation
-    belongs to the fluid, where the field is smooth.
+    - **Address swarms by index; names are a convenience.** The default ``Swarm``
+      name is ``'organism'`` for every swarm, so ``run.positions('organism')``
+      raises when the name is not unique rather than picking one.
+      :attr:`swarms` lists name and index together.
+    - **Resolve by time, not by index into someone else's list.** A swarm added
+      mid-run starts at a nonzero capture, and a recording started after t=0 has
+      its capture 0 partway into the run. Matching on :attr:`times` is right in
+      all of those cases; assuming archive index *j* is history index *j* is
+      right only in the common one.
+    - **Agent state is snapped, never interpolated.** :meth:`capture_at` gives
+      the nearest capture and nothing blends between them, since interpolating
+      across a domain wrap or a boundary slide would invent trajectories that
+      never happened. Temporal interpolation belongs to the fluid.
 
     Attributes
     ----------
@@ -1086,6 +1543,11 @@ class RunArchive:
         the fingerprint: dimension, L, flow_points, flow_times, periodic_dim
     store : tuple of str
         which per-agent arrays this archive holds
+
+    See Also
+    --------
+    dump_stats : the per-dump fluid statistics, if any fluid was recorded
+    quiver : one dump's stored quiver arrows
     '''
 
     # How many chunk files to keep open at once. A memmap holds a file
@@ -1123,6 +1585,7 @@ class RunArchive:
         self._time_chunks = self._chunk_indices('times')
         self.times = self._read_times()
         self._cache = {}
+        self._dump_stats = None
         self._validate_chunks()
 
 
@@ -1226,6 +1689,67 @@ class RunArchive:
                 "store={}. Re-record with that array included, or work from "
                 "what is here.".format(name, list(self.store)))
         return CaptureSeries(self, self._resolve_swarm(swarm), name)
+
+
+    ####################   the fluid half   ####################
+
+    def dump_stats(self):
+        """The per-dump fluid statistics, or None if no fluid was recorded.
+
+        The spatial mean of each velocity component per dump, the per-component
+        extrema, and -- in 2D, when vorticity was recorded -- the largest absolute
+        vorticity in each dump. Unlike ``FluidData.fmin``/``fmax``, which grow
+        during a run under dynamic loading, these are per dump and so give a scale
+        that two renders of the same run agree on.
+
+        **NaN means that dump never loaded**, so reduce over these with
+        ``np.nanmax`` rather than ``np.max``.
+
+        Returns
+        -------
+        dict of ndarray, keyed 'means', 'vmin', 'vmax', and where present
+        'vort_absmax' and 'flow_times'. None when the recording had no fluid.
+        """
+
+        stats_file = self.path / 'fluid' / 'dump_stats.npz'
+        if not stats_file.is_file():
+            return None
+        if self._dump_stats is None:
+            with np.load(stats_file, allow_pickle=False) as data:
+                self._dump_stats = {k: data[k] for k in data.files}
+        return self._dump_stats
+
+
+    def quiver(self, t_idx):
+        """One dump's stored quiver arrows, as ``(ncomp, nx_sub, ny_sub)``.
+
+        The downsampled velocity, on the grid fixed when recording started;
+        ``meta['fluid']['quiver_strides']`` are the strides it was taken with.
+
+        Parameters
+        ----------
+        t_idx : int
+            index into the fluid's own ``flow_times``, not into :attr:`times`
+
+        Returns
+        -------
+        ndarray
+        """
+
+        fluid_meta = self.meta.get('fluid') or {}
+        if 'quiver' not in (fluid_meta.get('quantities') or []):
+            raise ValueError(
+                "this archive holds no quiver data: it was recorded with "
+                "fluid={}. Quiver is opt-in -- re-record with fluid='quiver' or "
+                "fluid=('vort','quiver'), or plot without an "
+                "archive.".format(fluid_meta.get('quantities')))
+        f = self.path / 'fluid' / _quiver_name(t_idx)
+        if not f.is_file():
+            raise ValueError(
+                'this archive has no quiver for fluid dump {}. Under dynamic '
+                'loading only dumps the run actually reached have one.'.format(
+                    t_idx))
+        return np.load(f, allow_pickle=False)
 
 
     ####################   validation against an Environment   ####################

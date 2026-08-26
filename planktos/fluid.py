@@ -95,6 +95,149 @@ def _wrap_flow(flow, flow_points, periodic_dim=(True, True, False)):
 
 
 
+def _wrap_scalar(f, periodic_dim):
+    '''Restore the duplicated end line on each periodic axis of a *scalar* field.
+
+    The scalar counterpart of ``_wrap_flow``: loops over 
+    ``range(len(flow_points))`` and so assumes one array per spatial
+    dimension. Handing it a single field raises ``IndexError``. Derived
+    scalar fields read back from a source that omits the periodic endpoint --
+    IB2d's ``Omega.####.vtk``, for instance -- need exactly this.
+
+    Parameters
+    ----------
+    f : ndarray, indexed [x,y(,z)]
+    periodic_dim : sequence of bool, one per axis of f
+
+    Returns
+    -------
+    ndarray with one extra entry along each periodic axis
+    '''
+
+    for d, periodic in enumerate(periodic_dim):
+        if periodic:
+            f = np.concatenate((f, np.take(f, [0], axis=d)), axis=d)
+    return f
+
+
+
+def _unwrap_scalar(f, periodic_dim):
+    '''Drop the duplicated end line on each periodic axis. Inverse of
+    ``_wrap_scalar``, for writing a derived field back in the source's own
+    convention.'''
+
+    return f[tuple(slice(0, -1) if periodic else slice(None)
+                   for periodic in periodic_dim)]
+
+
+
+def _as_dump_series(flow, ndim):
+    """Guarantee a leading time axis on data a ``load_dumpfiles`` is returning.
+
+    ``load_dumpfiles`` hands back one array per component, ``([t],i,j,[k])``,
+    with the time axis always present -- that is what ``update_spline``
+    concatenates against the window and what ``_record_dump_means`` reduces over.
+    A slide reaching the end of a series can ask for a single dump, which some of
+    the readers behind ``load_dumpfiles`` return without the axis.
+
+    Parameters
+    ----------
+    flow : list of ndarrays
+    ndim : int
+        number of spatial dimensions, i.e. how many axes a single dump has
+
+    Returns
+    -------
+    list of ndarrays, each with a leading time axis
+    """
+
+    # _read_IB2d_dumpfiles branches on d_start != d_finish and _read_vtkfiles
+    #   calls squeeze(), both of which are right for the constructor's one-shot
+    #   read and drop the axis here.
+    return [f if f.ndim > ndim else f[np.newaxis, ...] for f in flow]
+
+
+
+def _spline_index(spline, pos):
+    """Index a spline at its own knots, as though it were an ``([t],i,j,[k])`` array.
+
+    Shared by both spline classes: they differ in how they interpolate between
+    knots, not in what an index means. ``spline.x`` is the knot sequence and
+    ``spline(t)`` the field there.
+
+    Parameters
+    ----------
+    spline : LinearSpline or fCubicSpline
+    pos : int, slice, or tuple
+        The leading entry indexes time; anything after it indexes into the field
+        at that time. Integers may be numpy integers, which is what a caller
+        looping over ``np.arange`` or unpacking ``np.searchsorted`` will supply.
+
+    Returns
+    -------
+    ndarray -- one time point for an integer index, a stack of them for a slice
+    """
+
+    knots = spline.x
+    lead, rest = (pos[0], pos[1:]) if isinstance(pos, tuple) else (pos, ())
+
+    def at(i):
+        field = spline(knots[i])
+        return field[rest] if rest else field
+
+    if isinstance(lead, (int, np.integer)):
+        return at(lead)
+    if isinstance(lead, slice):
+        # slice.indices resolves None, negative bounds and negative steps against
+        #   the length, which hand-rolled start/stop arithmetic gets wrong: a
+        #   negative start such as [-3:] otherwise runs from -3 up to len-1 and
+        #   returns len+3 wrapped entries instead of the last three.
+        return np.stack([at(i) for i in range(*lead.indices(len(knots)))])
+    raise IndexError('Only integers or slices are supported in {}.'.format(
+        type(spline).__name__))
+
+
+
+def _linear_bracket(times, t):
+    """Index and weight for linear interpolation at ``t``, clamped to the ends.
+
+    Returns ``(idx, w)`` such that the interpolated value is
+    ``f[idx] + (f[idx+1] - f[idx])*w``, with ``w == 0`` or ``w == 1`` where ``t``
+    lands on a knot or outside the data (constant extrapolation).
+    """
+
+    if len(times) < 2 or t <= times[0]:
+        return 0, 0.0
+    if t >= times[-1]:
+        return len(times) - 2, 1.0
+    idx = int(np.searchsorted(times, t)) - 1
+    return idx, (t - times[idx]) / (times[idx+1] - times[idx])
+
+
+
+def _linear_blend(times, t, get):
+    """Linearly interpolate at ``t`` between the two entries bracketing it.
+
+    ``get(i)`` supplies entry ``i``. It is called **once** where ``t`` lands on a
+    knot or outside the data and twice otherwise, so a caller whose entries are
+    expensive to produce -- a file read, a spline evaluation -- pays only for
+    what the interpolation needs. Entries may be arrays of any shape.
+
+    This is the one place the weights of a linear interpolation in time are
+    computed, so anything derived per dump and blended here is guaranteed to be
+    consistent with the velocity field itself.
+    """
+
+    idx, w = _linear_bracket(times, t)
+    if w == 0.0:
+        return get(idx)
+    if w == 1.0:
+        return get(idx+1)
+    lo = get(idx)
+    return lo + (get(idx+1) - lo)*w
+
+
+
 def _spatial_gradient(f, coords, axis, periodic=False, edge_order=1):
     '''Differentiate along one spatial axis, wrapping if that axis is periodic.
 
@@ -141,6 +284,50 @@ def _spatial_gradient(f, coords, axis, periodic=False, edge_order=1):
     trim = [slice(None)]*f.ndim
     trim[axis] = slice(1, -1)
     return grad[tuple(trim)]
+
+
+
+def _vorticity_from_field(flow, flow_points, periodic_dim):
+    '''Curl of a single-time velocity field held as raw ndarrays.
+
+    What ``FluidData.get_vorticity`` computes with, exposed separately for
+    callers that already hold the raw arrays -- ``get_vorticity(time=)`` goes
+    through the interpolant and can therefore trigger a load.
+
+    Parameters
+    ----------
+    flow : sequence of ndarrays
+        one velocity component per spatial dimension, each indexed [x,y(,z)]
+        with **no** leading time axis
+    flow_points : tuple of 1D ndarrays
+        the spatial grid, one coordinate array per dimension
+    periodic_dim : sequence of bool
+        whether each spatial axis is periodic. A periodic axis carries a
+        duplicated end line, so the field continues past either end and is
+        differenced across the wrap; getting this wrong leaves the interior
+        right and the outermost ring several percent off.
+
+    Returns
+    -------
+    ndarray in 2D (the scalar out-of-plane component), or a tuple of three
+    ndarrays in 3D (the vector curl)
+    '''
+
+    ndim = len(flow_points)
+
+    def d(f, axis):
+        return _spatial_gradient(f, flow_points[axis], axis, periodic_dim[axis])
+
+    if ndim == 2:
+        return d(flow[1][:], 0) - d(flow[0][:], 1)
+
+    dvxdy = d(flow[0][:], 1)
+    dvxdz = d(flow[0][:], 2)
+    dvydx = d(flow[1][:], 0)
+    dvydz = d(flow[1][:], 2)
+    dvzdx = d(flow[2][:], 0)
+    dvzdy = d(flow[2][:], 1)
+    return (dvzdy - dvydz, dvxdz - dvzdx, dvydx - dvxdy)
 
 
 
@@ -329,55 +516,14 @@ class LinearSpline:
         if (val < self.flow_times[0] and not self.extrapolate[0]) \
               or (val > self.flow_times[-1] and not self.extrapolate[1]):
             raise SplineRangeError('Out of range without extrapolation.')
-        if val <= self.flow_times[0]:
-            return self.flow[0]
-        if val >= self.flow_times[-1]:
-            return self.flow[-1]
-        idx = np.searchsorted(self.flow_times, val) - 1
-        t0 = self.flow_times[idx]
-        t1 = self.flow_times[idx+1]
-        f0 = self.flow[idx]
-        f1 = self.flow[idx+1]
-        return f0 + (f1 - f0) * (val - t0) / (t1 - t0)
+        return _linear_blend(self.flow_times, val, self.flow.__getitem__)
 
 
     def __getitem__(self, pos):
         '''
         Allows indexing into the interpolator at original time mesh points.
         '''
-        if type(pos) == int:
-            farray = self.__call__(self.flow_times[pos])
-        elif type(pos) == slice:
-            start = pos.start; stop = pos.stop; step = pos.step
-            if step is None: step = 1
-            if step >= 0:
-                if start is None: start = 0
-                if stop is None: stop = len(self.flow_times)
-            else:
-                if start is None: start = len(self.flow_times)-1
-                if stop is None: stop = -1
-            farray = np.stack([self.__call__(self.flow_times[n]) for 
-                               n in range(start,stop,step)])
-        elif type(pos) == tuple:
-            if type(pos[0]) == int:
-                farray = self.__call__(self.flow_times[pos[0]])[pos[1:]]
-            elif type(pos[0]) == slice:
-                start = pos[0].start; stop = pos[0].stop; step = pos[0].step
-                if step is None: step = 1
-                if step >= 0:
-                    if start is None: start = 0
-                    if stop is None: stop = len(self.flow_times)
-                else:
-                    if start is None: start = len(self.flow_times)-1
-                    if stop is None: stop = -1
-                farray = np.stack([self.__call__(self.flow_times[n])[pos[1:]] for
-                                   n in range(start,stop,step)])
-            else:
-                raise IndexError('Only integers or slices supported in LinearSpline.')
-        else:
-            raise IndexError('Only integers or slices supported in LinearSpline.')
-        
-        return farray
+        return _spline_index(self, pos)
 
     def __setitem__(self, pos, val):
         self.flow[pos] = val
@@ -438,10 +584,8 @@ class fCubicSpline(interpolate.CubicSpline):
 
         bc_type is passed through to scipy.interpolate.CubicSpline.
 
-        Note that this class splines a whole dataset at once. Window-extensible
-        cubic splining was attempted for dynamic loading and abandoned as
-        numerically unstable; LinearSpline is what dynamic loading uses instead.
-        See the design-history section of TODO.md for what was tried.
+        Note that this class splines a whole dataset at once; dynamic loading
+        uses LinearSpline, which is extensible one window at a time.
         '''
         super().__init__(flow_times, flow, axis=0, extrapolate=True,
                          bc_type=bc_type)
@@ -474,39 +618,7 @@ class fCubicSpline(interpolate.CubicSpline):
         '''
         Allows indexing into the interpolator at original time mesh points.
         '''
-        if type(pos) == int:
-            farray = self.__call__(self.x[pos])
-        elif type(pos) == slice:
-            start = pos.start; stop = pos.stop; step = pos.step
-            if step is None: step = 1
-            if step >= 0:
-                if start is None: start = 0
-                if stop is None: stop = len(self.x)
-            else:
-                if start is None: start = len(self.x)-1
-                if stop is None: stop = -1
-            farray = np.stack([self.__call__(self.x[n]) for 
-                               n in range(start,stop,step)])
-        elif type(pos) == tuple:
-            if type(pos[0]) == int:
-                farray = self.__call__(self.x[pos[0]])[pos[1:]]
-            elif type(pos[0]) == slice:
-                start = pos[0].start; stop = pos[0].stop; step = pos[0].step
-                if step is None: step = 1
-                if step >= 0:
-                    if start is None: start = 0
-                    if stop is None: stop = len(self.x)
-                else:
-                    if start is None: start = len(self.x)-1
-                    if stop is None: stop = -1
-                farray = np.stack([self.__call__(self.x[n])[pos[1:]] for
-                                   n in range(start,stop,step)])
-            else:
-                raise IndexError('Only integers or slices supported in fCubicSpline.')
-        else:
-            raise IndexError('Only integers or slices supported in fCubicSpline.')
-        
-        return farray
+        return _spline_index(self, pos)
 
     def __setitem__(self, pos, val):
         raise RuntimeError("Cannot assign to spline object. "+
@@ -626,11 +738,9 @@ class FluidData:
 
         This object must be called with a time (float). It will then provide a 
         list of fluid ndarrays corresponding to the fluid velocity field at grid 
-        points at that time. This interface is purposefully different from the 
-        others so that the FluidData object can catch times that are outside of 
-        the currently loaded times and dynamically load/spline the data needed. 
-        It will hopefully also raise errors where only the old format is 
-        supported to aid in debugging.
+        points at that time. Calling rather than indexing is what lets the object 
+        catch times outside the currently loaded window and dynamically 
+        load/spline the data needed.
 
         Parameters
         ----------
@@ -666,6 +776,17 @@ class FluidData:
         self.INUM = INUM # This is how many intervals to use when initiating 
                          #  the spline object.
         self.fluid_domain_LLC = fluid_domain_LLC
+        # Callbacks fired whenever fluid data lands in memory; see
+        #   add_dump_observer. Set before the first _record_dump_means call
+        #   below, which is the first thing that would fan out.
+        self._dump_observers = []
+        # Where per-dump vorticity files live, once that is known. None means
+        #   nothing has established a location -- see probe_stored_vorticity.
+        self.vorticity_path = None
+        # The two most recently read per-dump vorticity fields, keyed on the
+        #   GLOBAL dump index so the cache stays correct across a window slide
+        #   it knows nothing about.
+        self._vort_cache = {}
 
         if INUM is not None and len(flow_times) <= INUM:
             raise RuntimeError("Not enough data files for dynamic splining.")
@@ -708,7 +829,7 @@ class FluidData:
             # resident. NaN marks a dump that has never been loaded, which is
             # possible only when a window is being slid.
             self._dump_means = np.full((len(self.flow_times), len(flow)), np.nan)
-            self._record_dump_means(0, flow)
+            self._dumps_arrived(0, flow)
             # Set below for cubic splining, where the whole dataset is resident.
             self._mean_interp = None
 
@@ -838,6 +959,68 @@ class FluidData:
 
 
 
+    @property
+    def is_windowed(self):
+        '''True when only a sliding window of the dataset is held in memory.
+
+        With the whole field resident, recomputing a derived field is cheaper 
+        than any I/O, so nothing is written; with a window sliding, the velocity 
+        a later render would need is gone, so the derived field has to come off 
+        disk.
+
+        False for time-invariant flow, for ``INUM=None`` (cubic, all resident)
+        and for ``INUM=True`` (linear, all resident) -- and also for an int
+        ``INUM`` that spans the whole dataset, which holds everything and never
+        slides.
+        '''
+
+        if self.flow_times is None:
+            return False
+        # False is normalized to None by __init__ when there are flow_times, so
+        #   an int is all that is left to test.
+        if self.INUM is None or self.INUM is True:
+            return False
+        return self.INUM < len(self.flow_times) - 1
+
+
+    def add_dump_observer(self, observer):
+        '''Call ``observer(idx_start, flow)`` whenever fluid data lands in memory.
+
+        How anything deriving a per-dump quantity is told that a dump has
+        arrived, without having to know which load path delivered it. Two things
+        to know when writing one:
+
+        - **The same dump can be reported more than once.** A window sliding
+          back to the start of a series reloads the opening dumps, which have
+          usually been reported already. So an observer that acts on each report
+          -- writing a file, appending to a list -- has to remember which dumps
+          it has handled and ignore a repeat.
+        - **Time-invariant flow never fires it**, because no dumps arrive over
+          time: the whole field is present from construction. An observer that
+          needs to see every dump has to handle that case itself, at the point
+          where it registers.
+
+        Parameters
+        ----------
+        observer : callable
+            called with ``(idx_start, flow)``, where ``idx_start`` is the index
+            into ``flow_times`` of the first time point supplied and ``flow`` is
+            a list of per-component ndarrays with a leading time axis -- raw
+            data, not splines.
+        '''
+
+        if observer not in self._dump_observers:
+            self._dump_observers.append(observer)
+
+
+    def remove_dump_observer(self, observer):
+        '''Stop calling an observer registered by :meth:`add_dump_observer`.
+        A no-op if it is not registered.'''
+
+        if observer in self._dump_observers:
+            self._dump_observers.remove(observer)
+
+
     def _record_dump_means(self, idx_start, flow):
         '''Cache the spatial mean of each velocity component for loaded dumps.
 
@@ -858,6 +1041,66 @@ class FluidData:
             means = np.mean(f, axis=tuple(range(1, f.ndim)))
             self._dump_means[idx_start:idx_start+len(means), n] = means
 
+
+
+    @property
+    def dump_means(self):
+        """Spatial mean of each velocity component, per dump, as (n_dumps, ncomp).
+
+        NaN for a dump that has never been in memory, which is possible only
+        while a window is being slid. Time-invariant flow has a single row.
+        """
+
+        return np.atleast_2d(self._dump_means)
+
+
+    def iter_resident_dumps(self):
+        """Yield ``(t_idx, [single-time component arrays])`` for what is in memory.
+
+        One dump at a time, and never a stack of them: a caller that reduces
+        each dump as it arrives would otherwise pay a second full copy of the
+        dataset, which under ``INUM=None`` is the whole thing. Covers the
+        time-invariant, all-resident and windowed cases identically, so a
+        consumer needs no branch of its own.
+        """
+
+        if self.flow_times is None:
+            yield 0, list(self._flow)
+            return
+        if self.INUM is None:
+            # Cubic, everything resident. Indexing a component's spline by time
+            #   index reconstructs one dump; regenerate_data would rebuild the
+            #   entire series at once.
+            for i in range(len(self.flow_times)):
+                yield i, [f[i] for f in self._flow]
+            return
+        # Linear. regenerate_data hands back the resident window by reference,
+        #   so slicing a dump out of it copies nothing.
+        idx0 = getattr(self, 'loaded_idx_bnds', (0, None))[0]
+        window = [f.regenerate_data() for f in self._flow]
+        for i in range(len(window[0])):
+            yield idx0 + i, [w[i] for w in window]
+
+
+    def _dumps_arrived(self, idx_start, flow):
+        '''Fluid data just landed in memory: cache what is cheap, tell observers.
+
+        Called from every point where that happens, and nowhere else, so an
+        observer inherits the correctness of the call sites -- including the
+        forward slide's deliberate skip of the two holdover dumps it carried
+        over from the outgoing window.
+
+        Parameters
+        ----------
+        idx_start : int
+            index into flow_times of the first time point supplied
+        flow : list of ndarrays
+            per-component data with a leading time axis
+        '''
+
+        self._record_dump_means(idx_start, flow)
+        for observer in self._dump_observers:
+            observer(idx_start, flow)
 
 
     def _interp_dump_means(self, time):
@@ -886,16 +1129,7 @@ class FluidData:
         # Linear. Done off flow_times and the sidecar rather than off the
         # resident spline, so it stays correct for any dump whose mean has been
         # recorded -- including one the sliding window has since moved past.
-        if time <= self.flow_times[0]:
-            means = self._dump_means[0]
-        elif time >= self.flow_times[-1]:
-            means = self._dump_means[-1]
-        else:
-            idx = np.searchsorted(self.flow_times, time) - 1
-            m0 = self._dump_means[idx]
-            m1 = self._dump_means[idx+1]
-            means = m0 + (m1 - m0) * (time - self.flow_times[idx]) / (
-                    self.flow_times[idx+1] - self.flow_times[idx])
+        means = _linear_blend(self.flow_times, time, self._dump_means.__getitem__)
 
         if np.isnan(means).any():
             return None
@@ -906,14 +1140,12 @@ class FluidData:
     def get_mean_velocity(self, time=None, t_idx=None):
         '''Spatial mean of each fluid velocity component.
 
-        This is served from a per-dump cache of means built as data loads, so it
-        does not touch the velocity field and does not trigger a load for any
-        time whose bracketing dumps have already been seen. That matters for
-        plotting, which asks for these once per frame: under dynamic loading,
-        computing them from the field would re-stream the entire dataset.
-
-        The value is exact, not approximate -- see the note on linearity in
-        docs/notes/run_persistence.md §3.2.
+        Served from a per-dump cache of means built as data loads, so this does
+        not touch the velocity field and does not trigger a load for any time
+        whose bracketing dumps have already been seen. The value is exact rather
+        than approximate: both spline classes evaluate as a weighted sum of the
+        nodal fields, and the spatial mean is linear, so the mean of the splined
+        field is the splined mean.
 
         Parameters
         ----------
@@ -953,9 +1185,24 @@ class FluidData:
 
 
     def load_dumpfiles(self, d_start, d_finish):
-        '''Subclasses should implement this method to load additional data.'''
+        '''Subclasses should implement this method to load additional data.
+
+        Return one array per velocity component. A leading time axis is optional:
+        :meth:`_load_dumps`, which is what the slider calls, adds one where a
+        single-dump read left it off.
+        '''
         raise NotImplementedError('The subclass for this type of data must '+
                                   'implement its own data loaders.')
+
+
+    def _load_dumps(self, d_start, d_finish):
+        '''load_dumpfiles, with the leading time axis guaranteed.
+
+        Every load on the streaming path goes through here, so a subclass cannot
+        forget the axis and no consumer has to test for it.
+        '''
+        return _as_dump_series(self.load_dumpfiles(d_start, d_finish),
+                               len(self.flow_points))
 
 
 
@@ -1013,14 +1260,14 @@ class FluidData:
                 self._flow[n] = None
                 
             # load new data
-            flow = self.load_dumpfiles(d_start, d_finish)
+            flow = self._load_dumps(d_start, d_finish)
 
             # Record means for the freshly loaded dumps, which start two time
             # points into the new window. The two holdovers prepended below are
             # already in the sidecar from when they were first loaded, and those
             # entries came from raw data rather than from a spline evaluation
             # carried across a window boundary.
-            self._record_dump_means(idx_start+2, flow)
+            self._dumps_arrived(idx_start+2, flow)
 
             # add old spline data
             for n,f in enumerate(flow):
@@ -1043,10 +1290,10 @@ class FluidData:
             ####### if the beginning is requested, jump there #######
             if time <= self.flow_times[self.INUM]:
                 self._flow = None
-                self._flow = self.load_dumpfiles(self.d_start, self.d_start + self.INUM)
+                self._flow = self._load_dumps(self.d_start, self.d_start + self.INUM)
                 self.loaded_dump_bnds = (self.d_start, self.d_start + self.INUM)
                 self.loaded_idx_bnds = (0, self.INUM)
-                self._record_dump_means(0, self._flow)
+                self._dumps_arrived(0, self._flow)
                 for n in range(len(self._flow)):
                     self._flow[n] = LinearSpline(
                         self.flow_times[0:self.INUM+1], self._flow[n],
@@ -1073,12 +1320,12 @@ class FluidData:
                     self._flow[n] = None
                     
                 # load new data
-                flow = self.load_dumpfiles(d_start, d_finish)
+                flow = self._load_dumps(d_start, d_finish)
 
                 # Record means for the freshly loaded dumps. Sliding backward,
                 # these occupy the front of the new window; the two holdovers
                 # appended below already have their means recorded.
-                self._record_dump_means(idx_start, flow)
+                self._dumps_arrived(idx_start, flow)
 
                 # add old spline data
                 for n,f in enumerate(flow):
@@ -1101,24 +1348,10 @@ class FluidData:
         '''Tile the fluid flow a number of times in the x and/or y directions.
 
         .. note::
-           **Temporarily unavailable.** Tiling was previously implemented as a
-           virtual view (the ``FlowArray`` ndarray subclass) that reported a
-           tiled ``shape`` while storing a single tile. That approach is
-           defeated by modern scipy: ``RegularGridInterpolator`` calls
-           ``np.asarray`` on any array-API object, which discards the virtual
-           shape and hands the interpolator the untiled buffer. ``FlowArray``
-           has therefore been removed, and tiling with it.
-
-           It will return as a position-wrapping implementation that works in
-           both 2D and 3D without materializing the tiled field, after the
-           plotting work. See ``docs/notes/run_persistence.md`` for the
-           design and the reasoning -- and §9.3 there for the checklist of every
-           notice and replaced test to undo when it lands.
-
-           The previous body is preserved commented-out below. Its
-           ``flow_points`` extension in particular carries over unchanged: the
-           reported coordinate arrays still have to grow with the tiling even
-           though the velocity data will not.
+           **Temporarily unavailable.** Tiling will return as a
+           position-wrapping implementation that works in both 2D and 3D without
+           materializing the tiled field. The previous body is preserved
+           commented-out below.
 
         Parameters
         ----------
@@ -1207,30 +1440,205 @@ class FluidData:
                 warnings.warn("Flow is time-invariant; ignoring time and t_idx.")
             flow = self
 
-        # Periodic axes are differenced across the wrap. Without this the edge
-        # ring of every plot is a one-sided difference of a field that actually
-        # continues past it -- on IB2d data, which is periodic in both
-        # directions, that ring was 5-8% wrong against the solver's own vorticity
-        # while the interior matched it exactly.
-        def d(f, axis):
-            return _spatial_gradient(f, self.flow_points[axis], axis,
-                                     self.periodic_dim[axis])
-
-        if self.ndim == 2:
-            vort = d(flow[1][:], 0) - d(flow[0][:], 1)
-        else:
-            # Handle 3D case
-            dvxdy = d(flow[0][:], 1)
-            dvxdz = d(flow[0][:], 2)
-            dvydx = d(flow[1][:], 0)
-            dvydz = d(flow[1][:], 2)
-            dvzdx = d(flow[2][:], 0)
-            dvzdy = d(flow[2][:], 1)
-
-            vort = (dvzdy - dvydz, dvxdz - dvzdx, dvydx - dvxdy)
-
-        return vort
+        # Periodic axes are differenced across the wrap; see
+        # _vorticity_from_field, which is shared with the dump-arrival observer
+        # so that the two cannot compute different fields.
+        return _vorticity_from_field(flow, self.flow_points, self.periodic_dim)
     
+
+
+    #####################   per-dump vorticity   #####################
+    #
+    # Vorticity is not cached -- it is sourced. Which of three things happens is
+    # decided by is_windowed and by whether the source already ships the field:
+    #
+    #   whole field resident     -> nothing on disk; recompute from the velocity
+    #   windowed, source has     -> read the source's own per-dump field
+    #   windowed, source has not -> write one per dump as it lands, in the
+    #                               source's own format, and read it back
+    #                               through the same path
+    #
+    # A subclass that ships the field overrides probe_stored_vorticity and
+    # read_dump_vorticity; one whose format differs from the generic rectilinear
+    # default also overrides write_dump_vorticity. The blended read
+    # (get_stored_vorticity) is generic.
+    #
+    # 2D only, since a fluid backdrop is only drawn in 2D. OpenFOAMData ships a
+    # `vorticity` cell array on every dump and would be the first beneficiary if
+    # a 3D backdrop arrives with the vtk plotting rewrite; it is deliberately not
+    # read until then, since reading it means the cell-order permutation and
+    # boundary splice again for a field nothing would draw.
+
+    VORTICITY_TITLE = 'Omega'
+
+
+    def dump_number(self, t_idx):
+        """The source's own dump number for index ``t_idx`` into ``flow_times``.
+
+        A time resolves to dumps as ``d_start + i``, uniformly: IB2d's
+        ``d_start`` is the first dump number on disk, and a source with no dump
+        numbering of its own is indexed from zero.
+        """
+
+        return int(getattr(self, 'd_start', 0)) + int(t_idx)
+
+
+    def source_dir(self):
+        """The directory this fluid was read from, or None if it came from arrays.
+
+        Where a derived field is written by preference, so that a later run,
+        ParaView, or the solver's own tooling finds it beside the velocity dumps
+        with no knowledge of Planktos.
+        """
+
+        path = getattr(self, 'path', None)
+        return None if path is None else Path(path)
+
+
+    def probe_stored_vorticity(self):
+        """Does this source already carry a per-dump vorticity field?
+
+        ``'partial'`` is reported as such rather than rounded to either of the
+        others, since a caller must not serve one dump's field for another's.
+
+        Returns
+        -------
+        state : {'complete', 'partial', 'absent'}
+        directory : Path or None
+            where the field is, when the state is not 'absent'
+        """
+
+        return 'absent', None
+
+
+    def vorticity_filename(self, t_idx):
+        """Name of the per-dump vorticity file for ``t_idx``.
+
+        The reader, the writer and anything moving the file into place all take
+        the name from here, so a subclass that changes its solver's convention
+        changes it once.
+        """
+
+        return '{}.{:04d}.vtk'.format(self.VORTICITY_TITLE,
+                                      self.dump_number(t_idx))
+
+
+    def read_dump_vorticity(self, t_idx):
+        """Read one dump's vorticity field off disk, on the velocity's grid.
+
+        Reads what :meth:`write_dump_vorticity` writes: a rectilinear-grid scalar
+        vtk on the same grid as ``flow_points``. A subclass whose solver uses
+        another format overrides both halves together.
+
+        Parameters
+        ----------
+        t_idx : int
+            index into ``flow_times``
+
+        Returns
+        -------
+        ndarray indexed [x,y], on ``flow_points``
+        """
+
+        vort, _, _ = _dataio.read_vtk_Rectilinear_Grid_Scalars(
+            self._vorticity_dir() / self.vorticity_filename(t_idx))
+        return vort
+
+
+    def write_dump_vorticity(self, t_idx, vort, path):
+        """Write one dump's vorticity field, in this source's own format.
+
+        Writes a rectilinear-grid scalar vtk, which can express any grid
+        ``FluidData`` supports. A subclass on a uniform grid overrides this to
+        write structured points instead, matching what its solver prints.
+
+        Parameters
+        ----------
+        t_idx : int
+            index into ``flow_times``
+        vort : ndarray
+            the field, indexed [x,y], on ``flow_points``
+        path : str or Path
+            directory to write into
+        """
+
+        _dataio.write_vtk_2D_rectilinear_grid_scalars(
+            path, self.VORTICITY_TITLE, vort, self.flow_points,
+            cycle=self.dump_number(t_idx),
+            time=None if self.flow_times is None else float(self.flow_times[t_idx]),
+            sep='.')
+
+
+    def _vorticity_dir(self):
+        """Where per-dump vorticity lives, raising if nothing has said."""
+
+        if self.vorticity_path is None:
+            raise RuntimeError(
+                'no per-dump vorticity location is known for this fluid. One is '
+                'established when recording starts (Environment.record), or by '
+                'a source that ships the field.')
+        return Path(self.vorticity_path)
+
+
+    def get_stored_vorticity(self, time):
+        """Vorticity at ``time``, blended from per-dump files on disk.
+
+        The dynamic-loading counterpart of :meth:`get_vorticity`: the velocity
+        that time falls between is no longer resident, so the curl is assembled
+        from per-dump fields instead. The result is exactly the curl of the
+        velocity in use -- ``LinearSpline`` evaluates as a weighted sum of two
+        adjacent nodal fields and the curl is linear, so blending per-dump
+        vorticity with the same two weights gives the curl of the blend.
+
+        **Linear splining only**, and it raises otherwise. Cubic weights come
+        from a global solve, so reconstructing from per-dump files would mean
+        holding the whole series; that regime has the field resident and should
+        call :meth:`get_vorticity` instead.
+
+        Reads are served from a two-slot cache, which is one read per dump
+        interval for a monotone sweep in either direction.
+
+        Parameters
+        ----------
+        time : float
+
+        Returns
+        -------
+        ndarray indexed [x,y]
+        """
+
+        if self.flow_times is None:
+            return self._dump_vorticity(0)
+
+        if self.INUM is None:
+            raise RuntimeError(
+                'this fluid is splined cubically in time, so per-dump vorticity '
+                'cannot reproduce the field in use: not-a-knot weights are '
+                'global, and applying them would mean holding the whole series. '
+                'The whole field is resident in this regime -- call '
+                'get_vorticity(time=) instead, which differentiates the '
+                'interpolated velocity and is the same field by construction.')
+
+        # Through the same weights the velocity itself is blended with, so the
+        #   result is the curl of the field in use rather than an approximation
+        #   of it. Reads only the dumps the interpolation needs.
+        return _linear_blend(self.flow_times, time, self._dump_vorticity)
+
+
+    def _dump_vorticity(self, t_idx):
+        """One dump's vorticity, from the two-slot read cache."""
+
+        t_idx = int(t_idx)
+        if t_idx not in self._vort_cache:
+            self._vort_cache[t_idx] = self.read_dump_vorticity(t_idx)
+        vort = self._vort_cache[t_idx]
+        # Evict whatever is furthest from what was just asked for. On a monotone
+        #   sweep that is the trailing dump, which is what makes one read per
+        #   dump interval enough in either direction.
+        while len(self._vort_cache) > 2:
+            drop = max(self._vort_cache, key=lambda k: abs(k - t_idx))
+            del self._vort_cache[drop]
+        return vort
 
 
     def get_dudt(self, time=None, t_idx=None):
@@ -1478,6 +1886,69 @@ class IB2dData(FluidData):
                                           periodic_dim=(True, True))
         return flow
 
+
+
+    def probe_stored_vorticity(self):
+        """Look for IB2d's own Omega.####.vtk beside the velocity dumps.
+
+        IB2d writes vorticity only if the run's ``input2d`` asked for it, so it
+        is genuinely optional.
+        """
+
+        # Checked against the whole dump range rather than by existence of any
+        #   file, so that a series covering part of the run reads as partial.
+        directory = Path(self.path)
+        present = set()
+        for f in directory.glob('{}.*.vtk'.format(self.VORTICITY_TITLE)):
+            stem = f.name[len(self.VORTICITY_TITLE)+1:-4]
+            try:
+                present.add(int(stem))
+            except ValueError:
+                continue
+        needed = set(range(self.d_start, self.d_finish+1))
+        if not present & needed:
+            return 'absent', None
+        if needed <= present:
+            return 'complete', directory
+        return 'partial', directory
+
+
+    def read_dump_vorticity(self, t_idx):
+        """Read one dump's Omega.####.vtk, on the same grid as the velocity.
+
+        Goes through the same reader the velocity does, and needs the same two
+        adjustments after it: the read returns ``[y,x]``, and IB2d omits the
+        periodic endpoint in each direction, so a 6x5 dump becomes a 7x6 field
+        matching ``flow_points``.
+        """
+
+        # No LLC shift here -- flow_points is already in quadrant 1, and the
+        #   field carries no coordinates of its own.
+        vort = _dataio.read_2DEulerian_Data_From_vtk(
+            self._vorticity_dir(), '{:04d}'.format(self.dump_number(t_idx)),
+            self.VORTICITY_TITLE)
+        return _wrap_scalar(vort.T, self.periodic_dim)
+
+
+    def write_dump_vorticity(self, t_idx, vort, path):
+        """Write one dump's vorticity in the form IB2d prints its own.
+
+        Structured points rather than the generic rectilinear form: the IB2d
+        Eulerian grid is always regular, and structured points is what the solver
+        writes. The wrap is stripped and the field transposed, both inverses of
+        what :meth:`read_dump_vorticity` does.
+        """
+
+        stripped = _unwrap_scalar(vort, self.periodic_dim)
+        # The source's own coordinates, not the quadrant-1 shift Planktos works
+        #   in, so the file sits on exactly the grid the solver's own dumps do.
+        grid = tuple(self._orig_flow_points[d] + self.fluid_domain_LLC[d]
+                     for d in range(2))
+        _dataio.write_vtk_structured_points_scalars(
+            path, self.VORTICITY_TITLE, stripped, grid,
+            cycle=self.dump_number(t_idx),
+            time=None if self.flow_times is None else float(self.flow_times[t_idx]),
+            sep='.')
 
 
     def _read_IB2d_dumpfiles(self, path, d_start, d_finish, vector_data, xy=True):
@@ -2185,8 +2656,7 @@ class OpenFOAMData(FluidData):
         the ``.vtm.series`` index, the ``.vtm`` manifests, and the dump
         directories themselves. Which one answered is recorded in
         ``dump_source`` / ``time_source``, and warned about whenever it is not
-        the first -- a degraded timeline accepted in silence is the shape of the
-        VTK3dData frozen-fluid bug.
+        the first: a degraded timeline must never be accepted in silence.
 
         Returns
         -------
@@ -2486,21 +2956,17 @@ class OpenFOAMData(FluidData):
 
         Grouping, not averaging, is the point. The coordinates are exact -- what
         is not available is the knowledge of which cells share a level. Sorting
-        and splitting at gaps supplies it. A level's coordinate is then taken as
-        the mean of its members, but any member would do: measured on a real
-        775k-cell export, a level held at most 8 distinct float64 values spanning
-        7.6e-19, which is 5e-16 of a cell width, and mean/first/min all reproduce
-        the lattice of an independently-written boundary patch bit-for-bit.
-
-        That tiny spread is why np.unique cannot be used for this. It reported 79
-        levels where 66 existed on that same data -- the values are right, but
-        cells that share a level do not always land on the same float64.
+        and splitting at gaps supplies it.
 
         rel_tol is a fraction of the axis' full span, and is not delicate: it
         needs only to sit between the roundoff spread and the true grid spacing.
-        On the real data any value from 1e-3 to 1e-8 gave identical results.
+        Any value from 1e-3 to 1e-8 gives identical results on real export data.
         '''
 
+        # np.unique will not do here: cells that share a level do not always land
+        #   on the same float64. On a 775k-cell export a level held up to 8
+        #   distinct values spanning 5e-16 of a cell width, and np.unique
+        #   reported 79 levels where 66 existed.
         order = np.argsort(v, kind='stable')
         s = v[order]
         tol = (s[-1] - s[0])*rel_tol
@@ -2508,6 +2974,8 @@ class OpenFOAMData(FluidData):
         starts = np.concatenate(([0], brk+1))
         ends = np.concatenate((brk+1, [len(s)]))
 
+        # Any member of a level would serve as its coordinate -- the spread is
+        #   pure roundoff -- but the mean is the obvious choice.
         vals = np.array([s[a:b].mean() for a, b in zip(starts, ends)])
         lvl = np.empty(len(v), dtype=np.int64)
         for k, (a, b) in enumerate(zip(starts, ends)):
@@ -2581,9 +3049,9 @@ class OpenFOAMData(FluidData):
         dump; a reordering at the same count is the dangerous one, since the
         reshape succeeds and every value lands in the wrong place.
 
-        Only the second dump is checked -- see TODO.md item 5 for why, and for
-        what that leaves uncovered. `_read_dump` takes the flag per call, so
-        widening it is a one-line change at the caller.
+        Only the second dump is checked, since cell ordering is a property of the
+        writer. `_read_dump` takes the flag per call, so widening it to every
+        dump is a one-line change at the caller.
 
         Parameters
         ----------
@@ -2612,9 +3080,9 @@ class OpenFOAMData(FluidData):
         # _grid[d] is [boundary plane, *interior cell centers, boundary plane],
         # so the interior lattice -- which is what the permutation indexes, and
         # what a patch shares in its two tangential directions -- is the middle.
-        # NB this assumes the boundary splice happened. If require_boundary=False
-        # is ever implemented (TODO.md item 4), whatever it does to _grid has to
-        # keep this slice meaning "the cell centers" or update it here.
+        # NB this assumes the boundary splice happened. _build_grid always puts
+        # an edge coordinate at each end, inferred or from a patch, so the slice
+        # still means "the cell centers" under require_boundary=False.
         def along(k):
             '''grid vector of the k'th axis of shape, shaped to broadcast'''
             return self._grid[axes[k]][1:-1].reshape(

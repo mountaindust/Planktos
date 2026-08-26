@@ -158,7 +158,7 @@ behind since the dynamic-loading work.)
 | `planktos/_geom.py` | internal | Pure geometry workhorses: segment/line/triangle intersections, closest distances, multilinear-polynomial intersection (for moving meshes). Formerly static methods of `Swarm`. |
 | `planktos/_ibc.py` | internal | Immersed-boundary collision handling: `apply_internal_static_BC`, `apply_internal_moving_BC`, and the project-and-slide routines for static and moving meshes. |
 | `planktos/_dataio.py` | internal | Low-level read/write of vtk, vtu, .vertex, stl, NetCDF. Use `Environment` loader methods instead of calling these directly. |
-| `planktos/archive.py` | `RunArchive` / `load_run` will be public (A4); the writer and format machinery are internal | The run-archive on-disk format: chunked, append-only, crash-valid capture of agent state written as a run proceeds. Streams agents *out* the way `fluid.py` streams the field *in*. See `docs/notes/run_persistence.md` §2. |
+| `planktos/archive.py` | `RunArchive` and `load_run` are public; the writer, the recorder and the format machinery are internal | The run-archive on-disk format: chunked, append-only, crash-valid capture of agent state written as a run proceeds, plus the per-dump fluid quantities a later plot needs. Streams agents *out* the way `fluid.py` streams the field *in*. See `docs/notes/run_persistence.md` §2 and §3. |
 | `planktos/_provenance.py` | internal | Records what produced an `Environment`'s fluid and ibmesh: every loader and analytic flow generator is decorated so it logs its own call into `_fluid_provenance` / `_ibmesh_provenance`. `jsonable()` is the JSON-safety guarantee the run archive's metadata relies on. |
 
 ## Core mental model
@@ -200,6 +200,29 @@ against `master`.
 - `FluidData.get_raw_loaded_data()` is the nearest thing to the old
   `Environment.regenerate_flow_data()`. Note *loaded*: under dynamic loading only
   the current window exists.
+- **`FluidData.is_windowed` is the regime discriminator**, not `INUM` itself. It is
+  True only when a sliding window is actually in use — False for time-invariant
+  flow, for `INUM=None`, for `INUM=True`, and for an int `INUM` that spans the
+  dataset (which holds everything and never slides). Anything deciding "is the
+  whole field resident?" must ask this rather than testing `INUM is None`.
+- **`add_dump_observer(fn)` fires `fn(idx_start, flow)` wherever fluid data lands in
+  memory**, dispatched from `_dumps_arrived` — the one method called at all four load
+  sites, which caches the per-dump means and then fans out. An observer must be
+  **idempotent** (the jump-to-start slide re-reports dumps already seen) and must not
+  expect to fire for time-invariant flow, which has no dumps to arrive; use
+  `iter_resident_dumps()` to take whatever is already in memory, which covers that
+  case and never materializes more than one dump at a time.
+- **Per-dump vorticity is sourced, not cached**, by regime: `probe_stored_vorticity`,
+  `read_dump_vorticity`, `write_dump_vorticity` (a per-source pair) and the generic
+  `get_stored_vorticity(time)`, which blends the two bracketing dumps with
+  `LinearSpline`'s own weights through a two-slot cache. It **raises** under cubic
+  splining, where the weights are global — that regime recomputes from the resident
+  field. `docs/notes/run_persistence.md` §3.3 has the reasoning.
+- ⚠️ **A single-dump load is ordinary**, and two of the readers behind
+  `load_dumpfiles` drop the leading time axis for one. `FluidData._load_dumps` is what
+  the slider calls and restores it, so a subclass implements `load_dumpfiles` without
+  having to think about it. A single-dump slide happens whenever the dump count is
+  `k*(INUM-1)+3` — with `INUM=4`, any of 6, 9, 12, 15, … time points.
 - `periodic_dim` is a property of the fluid data and is **independent of the
   agent boundary conditions** in `Environment.bndry`. It defaults to `False`.
 
@@ -461,6 +484,33 @@ parallelization tests and the plotting smokes — which brings it to roughly 20s
     `test_temporal_interp.py` covers only `fCubicSpline`), and 3D vorticity. All
     closed-form. See `docs/notes/run_persistence.md` Appendix A — **this is the
     safety net for that refactor; keep it green as the work lands.**
+  - `test_run_archive.py` — the **on-disk archive format**, driven directly with
+    synthetic arrays and no simulation: chunk boundaries, the fingerprint, atomic
+    file replacement, and crash validity demonstrated by actually `SIGKILL`ing a
+    subprocess mid-recording. Reads the bytes back with raw `np.load`/`json.load`
+    rather than through a reader of our own, since a round-trip through our own
+    code can be self-consistently wrong.
+  - `test_recording.py` — `Environment.record` and the capture hooks against **real
+    runs**: the round-trip versus `pos_history`/`vel_history`/`time_history`, a
+    swarm added mid-run, `capture_interval` (including that a coarse schedule gives
+    **bit-identical** trajectories, over two mesh geometries — see the note in
+    `run_persistence.md` §6.1 A3b for why one is not enough), the five refusals, and
+    the headline: recording a windowed run costs *identically* many loader calls as
+    the same run without it.
+  - `test_run_reader.py` — `planktos.load_run` / `RunArchive`: that reading one
+    capture opens exactly two files, that chunks are memmapped and the open-file
+    cache stays bounded, that a missing middle chunk refuses rather than
+    short-reads, and that reading never writes.
+  - `test_provenance.py` — that every fluid and mesh entry point is wrapped by
+    `_provenance.records_provenance`, asserted **structurally**: a loader nobody
+    decorated produces no error, just an environment that cannot say what it is.
+  - `test_fluid_recording.py` — the **fluid half of a run archive** (component B of
+    `run_persistence.md`): which of §3.3's three vorticity regimes gets chosen, that a
+    blended per-dump field equals the live curl for the sourced *and* the written case
+    and that the two agree, the two-slot read cache reading each dump once on a
+    monotone sweep in either direction, the per-dump statistics sidecar (including
+    that it is written in 3D, which is the whole 3D deliverable), quiver, and the B
+    counterpart of the headline: recording the fluid costs **no extra loader calls**.
   - `test_dynamic_loading.py` — the **windowed** (`INUM=int`) path, i.e. this
     branch's headline feature: `FluidData.update_spline`. Covers TODO Phase 1
     (A) windowed-linear == full-linear to round-off, (B) slide behavior (forward,

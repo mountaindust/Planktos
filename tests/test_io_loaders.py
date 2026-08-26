@@ -9,8 +9,8 @@ Two tiers:
     COMSOL vtu (@vtu). These assert the loaded-flow contract and that domain
     boundary conditions are respected by a moving swarm.
 
-The fluid *save* path (save_fluid) is currently broken on modern pyvista and is
-pinned as a strict xfail.
+Also here: the scalar rectilinear / structured-points VTK round-trips
+(run_persistence.md section 3.6), which are the I/O half of per-dump vorticity.
 '''
 
 import json
@@ -1464,13 +1464,7 @@ def test_vtu_load():
 
 def _read_scalar_vtk(filename):
     '''Read a 2D scalar RectilinearGrid vtk back as an (nx, ny) array.'''
-    import vtk
-    from vtk.util import numpy_support
-    reader = vtk.vtkRectilinearGridReader()
-    reader.SetFileName(str(filename)); reader.ReadAllScalarsOn(); reader.Update()
-    vd = reader.GetOutput()
-    arr = numpy_support.vtk_to_numpy(vd.GetPointData().GetScalars())
-    return arr.reshape(vd.GetDimensions()[::-1]).T.squeeze()
+    return _dataio.read_vtk_Rectilinear_Grid_Scalars(filename)[0]
 
 
 def test_save_fluid_static_2D_roundtrips(tmp_path):
@@ -1520,3 +1514,126 @@ def test_save_2D_vorticity_static_roundtrips(tmp_path):
     vort = _read_scalar_vtk(tmp_path / 'vort.vtk')
     assert vort.shape == (n, n)
     assert np.allclose(vort, 2.0, atol=1e-9)
+
+
+# --------------------------------------------------------------------------- #
+#      scalar rectilinear / structured-points VTK I/O (run_persistence 3.6)   #
+# --------------------------------------------------------------------------- #
+# The write half of the rectilinear pair existed alone for years, because
+# nothing read a Planktos scalar field back. Per-dump vorticity does (section
+# 3.3), and it needs both a rectilinear reader and a structured-points writer.
+# Round-trips are the whole test: what goes out must come back, and what comes
+# back must be readable by the reader the *solver's* files go through, or the
+# interoperability claim behind writing vtk at all is empty.
+
+def _wavy(x, y):
+    X, Y = np.meshgrid(x, y, indexing='ij')
+    return np.sin(X) * np.cos(2 * Y)
+
+
+def test_rectilinear_scalar_roundtrip_on_an_uneven_grid(tmp_path):
+    # Deliberately uneven: rectilinear is the format that can express this, and
+    # a reader that assumed uniform spacing would still get the data right and
+    # the coordinates wrong.
+    x = np.array([0., 0.5, 1.5, 3.0, 3.25])
+    y = np.array([0., 1.0, 3.0])
+    f = _wavy(x, y)
+    _dataio.write_vtk_2D_rectilinear_grid_scalars(tmp_path, 'vort', f, (x, y),
+                                                  cycle=3, time=2.5)
+    data, grid, t = _dataio.read_vtk_Rectilinear_Grid_Scalars(
+        tmp_path / 'vort_0003.vtk')
+    assert data.shape == f.shape                     # squeezed back to 2D
+    assert np.array_equal(data, f)                   # binary: exact, not close
+    assert np.allclose(grid[0], x) and np.allclose(grid[1], y)
+    assert t == 2.5
+
+
+def test_rectilinear_scalar_read_keeps_the_singleton_axis_when_asked(tmp_path):
+    x = np.linspace(0, 3, 4); y = np.linspace(0, 2, 3)
+    f = _wavy(x, y)
+    _dataio.write_vtk_2D_rectilinear_grid_scalars(tmp_path, 'vort', f, (x, y))
+    data, grid, _ = _dataio.read_vtk_Rectilinear_Grid_Scalars(
+        tmp_path / 'vort.vtk', squeeze=False)
+    assert data.shape == (4, 3, 1)
+    assert len(grid) == 3 and len(grid[2]) == 1
+    assert np.array_equal(data[:, :, 0], f)
+
+
+def test_rectilinear_scalar_read_refuses_a_vector_file(tmp_path):
+    x = np.linspace(0, 3, 4); y = np.linspace(0, 2, 3)
+    _dataio.write_vtk_rectilinear_grid_vectors(
+        tmp_path, 'flow', [_wavy(x, y), _wavy(x, y)], (x, y))
+    with pytest.raises(ValueError, match='no scalar point data'):
+        _dataio.read_vtk_Rectilinear_Grid_Scalars(tmp_path / 'flow.vtk')
+
+
+def test_structured_points_scalar_roundtrips_through_the_ib2d_reader(tmp_path):
+    # The point of this writer: a field Planktos derives must come back through
+    # the same reader the solver's own dumps go through, with IB2d's filename
+    # convention, so that nothing downstream can tell who wrote it.
+    x = np.linspace(0, 3, 7); y = np.linspace(0, 2, 5)
+    f = _wavy(x, y)
+    _dataio.write_vtk_structured_points_scalars(tmp_path, 'Omega', f, (x, y),
+                                                cycle=42, time=1.25, sep='.')
+    assert (tmp_path / 'Omega.0042.vtk').is_file()
+    back, bx, by = _dataio.read_2DEulerian_Data_From_vtk(tmp_path, '0042',
+                                                        'Omega', xy=True)
+    # read_2DEulerian_Data_From_vtk hands back [y,x]; the velocity path
+    # transposes, and so must anything reading a derived field.
+    assert np.array_equal(back.T, f)
+    assert np.allclose(bx, x) and np.allclose(by, y)
+
+
+def test_structured_points_scalar_roundtrips_in_ascii_too(tmp_path):
+    # Binary is the default because it is far cheaper for identical disk, but
+    # vtkStructuredPointsReader takes either and IB2d itself writes ascii.
+    x = np.linspace(0, 3, 7); y = np.linspace(0, 2, 5)
+    f = _wavy(x, y)
+    _dataio.write_vtk_structured_points_scalars(tmp_path, 'Omega', f, (x, y),
+                                                cycle=1, binary=False, sep='.')
+    text = (tmp_path / 'Omega.0001.vtk').read_text()
+    assert 'ASCII' in text and 'DATASET STRUCTURED_POINTS' in text
+    back = _dataio.read_2DEulerian_Data_From_vtk(tmp_path, '0001', 'Omega')
+    assert np.allclose(back.T, f, atol=1e-10)
+
+
+def test_structured_points_scalar_default_separator_matches_the_siblings(tmp_path):
+    x = np.linspace(0, 1, 3); y = np.linspace(0, 1, 3)
+    _dataio.write_vtk_structured_points_scalars(tmp_path, 'Omega',
+                                                _wavy(x, y), (x, y), cycle=5)
+    assert (tmp_path / 'Omega_0005.vtk').is_file()
+
+
+def test_structured_points_scalar_refuses_an_uneven_axis(tmp_path):
+    # STRUCTURED_POINTS carries only an origin and a spacing, so it cannot
+    # express this grid. Writing the mean spacing would move every interior
+    # point, which is worse than refusing.
+    x = np.array([0., 0.5, 1.5, 3.0])
+    y = np.linspace(0, 2, 4)
+    with pytest.raises(ValueError, match='not evenly spaced'):
+        _dataio.write_vtk_structured_points_scalars(tmp_path, 'Omega',
+                                                    _wavy(x, y), (x, y))
+
+
+def test_structured_points_scalar_checks_the_grid_against_the_data(tmp_path):
+    x = np.linspace(0, 3, 7); y = np.linspace(0, 2, 5)
+    f = _wavy(x, y)
+    with pytest.raises(ValueError, match='coordinate arrays'):
+        _dataio.write_vtk_structured_points_scalars(tmp_path, 'Omega', f, (x,))
+    with pytest.raises(ValueError, match='coordinates but data has'):
+        _dataio.write_vtk_structured_points_scalars(tmp_path, 'Omega', f,
+                                                    (x, np.linspace(0, 2, 6)))
+
+
+def test_structured_points_scalar_roundtrips_in_3d(tmp_path):
+    # 2D is what component B writes today, but the writer is not 2D-only and a
+    # 3D grid must not be silently mangled into a plane.
+    x = np.linspace(0, 3, 4); y = np.linspace(0, 2, 3); z = np.linspace(0, 1, 2)
+    X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
+    f = X + 10 * Y + 100 * Z
+    _dataio.write_vtk_structured_points_scalars(tmp_path, 'Omega', f, (x, y, z))
+    data, origin, spacing = _dataio.read_vtk_Structured_Points(
+        str(tmp_path / 'Omega.vtk'))
+    assert np.array_equal(data.T, f)                 # [z,y,x] -> [x,y,z]
+    assert np.allclose(origin, (0., 0., 0.))
+    assert np.allclose(spacing, (1., 1., 1.))

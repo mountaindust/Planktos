@@ -54,11 +54,47 @@ def test_spline_interpolates_nodes_exactly(cubic_flow):
         assert np.allclose(sp(t[n]), flow[n])
 
 
-def test_spline_indexing(cubic_flow):
+# Both spline classes index the same way -- they differ in how they interpolate
+# between knots, not in what an index means -- so the contract is pinned for both.
+@pytest.mark.parametrize('cls', [fluid.fCubicSpline, fluid.LinearSpline])
+def test_spline_indexing(cubic_flow, cls):
     t, flow, _ = cubic_flow
-    sp = fluid.fCubicSpline(t, flow)
+    sp = cls(t.copy(), flow.copy())
     assert np.allclose(sp[2], flow[2])                # int index -> node value
     assert np.allclose(sp[1:4], flow[1:4])            # slice -> stacked nodes
+    assert np.allclose(sp[-1], flow[-1])              # negative int
+    assert np.allclose(sp[3, 0], flow[3, 0])          # tuple: time, then field
+    assert np.allclose(sp[1:3, 0], flow[1:3, 0])
+
+
+@pytest.mark.parametrize('cls', [fluid.fCubicSpline, fluid.LinearSpline])
+def test_spline_indexing_accepts_a_numpy_integer(cubic_flow, cls):
+    # A caller looping over np.arange, or unpacking np.searchsorted, hands over an
+    # np.int64. Testing `type(pos) == int` rejected it outright.
+    t, flow, _ = cubic_flow
+    sp = cls(t.copy(), flow.copy())
+    assert np.allclose(sp[np.int64(2)], flow[2])
+    assert np.allclose(sp[np.int64(2), 0], flow[2, 0])
+
+
+@pytest.mark.parametrize('cls', [fluid.fCubicSpline, fluid.LinearSpline])
+def test_spline_slices_resolve_negative_bounds(cubic_flow, cls):
+    # The worse half of the same defect: hand-rolled start/stop arithmetic ran a
+    # negative start up to len-1, so sp[-3:] returned len+3 wrapped entries
+    # rather than the last three -- silently, and with plausible-looking values.
+    t, flow, _ = cubic_flow
+    sp = cls(t.copy(), flow.copy())
+    for key in (slice(-3, None), slice(None, -2), slice(-4, -1),
+                slice(None, None, -1), slice(None, None, 2)):
+        assert np.allclose(sp[key], flow[key]), key
+
+
+@pytest.mark.parametrize('cls', [fluid.fCubicSpline, fluid.LinearSpline])
+def test_spline_refuses_an_index_it_cannot_honour(cubic_flow, cls):
+    t, flow, _ = cubic_flow
+    sp = cls(t.copy(), flow.copy())
+    with pytest.raises(IndexError, match=cls.__name__):
+        sp['nope']
 
 
 def test_spline_regenerates_original_data(cubic_flow):

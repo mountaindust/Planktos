@@ -25,12 +25,17 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - New Environment.record(capture_interval=k) keeps state every k-th step, in the archive and in time_history/pos_history/vel_history alike.
 - Recording into a non-empty directory writes to a timestamped sibling instead of overwriting it, and warns naming the path used.
 - Fluid and mesh loaders now record what produced the data, which an archive stores so a run can say what it was months later.
+- New Environment.record(fluid=) stores what a plot needs from the fluid, so replaying a dynamically-loaded run no longer streams the dataset a second time.
+- Vorticity is written per fluid dump, in the source's own format beside its own dumps, only when the solver printed none and the field is not held in memory.
+- New Environment.record(fluid='quiver', quiver_shape=) stores a downsampled velocity field per dump, for quiver backdrops. Opt-in; vorticity is the default.
+- New RunArchive.dump_stats and RunArchive.quiver read the fluid half of an archive back.
 - Swarm.move now raises when the Environment holds more than one Swarm; use Environment.move_swarms. It previously warned and froze the others, misaligning their histories.
 - Bug fix: adding a Swarm to a different Environment now removes it from its previous one, which kept moving it and left it in both.
 - Bug fix: set_canopy_flow works with scalar u_star/U_h/beta, which raised TypeError, and a zero wind parameter now gives zero flow instead of nan.
 - Bug fix: set_canopy_flow checks the u_star = U_h*beta relation at every time point; with time-varying parameters it raised instead of checking.
 - Bug fix: vorticity is now differenced across the wrap on periodic dimensions. The outermost ring of every plot was previously one-sided and wrong.
 - The material derivative and the fluid-speed gradient do the same, so agent behavior in the outermost ring of a periodic domain changes slightly.
+- Bug fix: indexing a flow component accepts numpy integers, and resolves negative slice bounds; [-3:] previously returned wrapped, wrong data rather than the last entries.
 - other minor bug fixes
 
 

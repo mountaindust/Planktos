@@ -19,7 +19,9 @@ Start one with ``Environment.record`` and read it back with ``planktos.load_run`
             swrm.move(0.001)
 
 The loop is an ordinary Planktos loop, unchanged: captures fire automatically on
-every environmental time step.
+every environmental time step. The ``fluid`` argument says what a later *plot*
+will need from the velocity field, so that replaying the run never streams the
+dataset a second time -- see `The fluid half`_.
 
 Author: Christopher Strickland
 
@@ -92,6 +94,79 @@ its fluid series. ``record()`` refuses at that point rather than at render time
 -- before the run instead of after it. Either start before the loop, or load
 with ``INUM=None``.
 
+The fluid half
+--------------
+
+An archive stores what a later plot needs to know about the **fluid**, so that
+replaying a run never re-streams the dataset a second time. Under dynamic
+loading, redrawing a finished run used to cost a full second pass over ~100 GB;
+it now costs nothing.
+
+Three things are stored, each on its own terms.
+
+**Per-dump statistics, always.** The spatial mean of each velocity component,
+the per-component extrema, and (in 2D, when vorticity was asked for) the largest
+absolute vorticity in each dump. A handful of floats per dump, written in 2D and
+3D alike, since the statistics box on a plot shows the component means in every
+case. Read them with ``RunArchive.dump_stats()``. ``NaN`` marks a dump the run
+never loaded, which under a sliding window is an honest answer and not a gap to
+be filled -- reduce over them with ``np.nanmax``, not ``np.max``.
+
+**Vorticity is not cached -- it is sourced.** Which of three things happens is
+decided by whether the fluid is being dynamically loaded and by whether the
+source already ships the field:
+
+============================  ===================================  ==============
+Regime                        During the run                       At render
+============================  ===================================  ==============
+whole field in memory         nothing is written                   recomputed from
+                                                                   the velocity
+windowed, source has it       nothing is written                   read from the
+                                                                   source
+windowed, source has not      one file per dump, as it lands       read back
+============================  ===================================  ==============
+
+With the whole field resident, recomputing the curl is *cheaper* than reading it
+back, so writing would cost about a gigabyte per five hundred dumps for negative
+performance. With a window sliding, the velocity a render would need is no longer
+in memory, so recomputing drags a full reload behind it -- and reads twice the
+bytes to do it, since velocity is a vector and 2D vorticity a scalar.
+
+Either way the answer is **exactly** the curl of the velocity actually in use,
+not a second approximation stacked on the first. Under linear splining a field
+evaluates as a weighted sum of two adjacent dumps and the curl is linear, so
+blending per-dump vorticity with the same two weights gives the curl of the
+blend.
+
+**Where written vorticity goes.** Into the source's *own* fluid directory, in
+the source's own naming -- ``Omega.0042.vtk`` beside ``u.0042.vtk`` -- so a later
+run, ParaView, or the solver's own tooling reads it with no knowledge of
+Planktos, and the source becomes indistinguishable from one whose solver had
+printed vorticity all along. An existing file is never overwritten. If that
+directory cannot be written, which for a read-only mount or a shared dataset is
+normal, the archive's own ``fluid/`` is used instead, and ``meta.json`` records
+which happened.
+
+A source carrying the field for only *part* of the dump range is not used at all.
+Serving one dump's field for another's is a plausible-looking wrong answer, so
+Planktos warns and writes a complete series of its own rather than mixing the
+two.
+
+**Quiver is opt-in.** ``fluid='quiver'``, or ``fluid=('vort', 'quiver')``.
+Vorticity is what almost every plot draws, and a quiver is a second
+full-cadence array on disk for a backdrop most runs never use. What is stored is
+the downsampled velocity, on a grid fixed by ``quiver_shape`` at record time --
+``plot_all`` normally derives its arrow density from the figure size and axis
+extent, neither of which exists while a simulation is running. Read one dump's
+arrows with ``RunArchive.quiver(t_idx)``.
+
+.. note::
+   All of this beyond the statistics is **2D only**. ``fluid=`` is forced to
+   ``None`` in 3D, where Planktos draws no fluid backdrop at all, and on a
+   flow-free environment, which has no field to derive anything from. Neither is
+   an error and neither warns, because in neither is there anything else the
+   argument could have meant.
+
 Reading
 -------
 
@@ -160,8 +235,10 @@ Planktos::
 
     run_archive/
       meta.json                 written once at record(): format version, the
-                                grid summary, dtype, chunk size, and the
-                                provenance of the fluid and the mesh
+                                grid summary, dtype, chunk size, which fluid
+                                quantities were recorded and where vorticity
+                                lives, and the provenance of the fluid and the
+                                mesh
       grid.npz                  flow_points, L, flow_times, periodic_dim
       agents/
         swarm00.json            name, N, D, first_capture
@@ -169,7 +246,11 @@ Planktos::
         swarm00_vel_0000.npy    (rows, N, D)
         swarm00_mask_0000.npy   (rows, N) bool
         times_0000.npy          (rows,) shared across swarms
-      fluid/                    per-dump fluid quantities
+      fluid/
+        dump_stats.npz          per-dump component means and extrema
+        quiver_00042.npy        downsampled velocity, only if asked for
+        Omega.0042.vtk          vorticity, ONLY when it had to be written and
+                                the source directory could not take it
 
 ``meta.json`` holds only what is known when recording starts and never changes.
 Anything that accumulates during the run lives in the files that accumulate with

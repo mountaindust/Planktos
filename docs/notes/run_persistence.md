@@ -43,7 +43,7 @@ thing is too big to hold at once.
 | | What | Why | Status |
 |---|---|---|---|
 | **A** | **Run archive** — append-only, chunked, crash-valid on-the-fly capture of agent state, with a public reader and a capture schedule that also governs history retention | persistence: crash survival, later sessions, larger-than-RAM analysis, bounded history memory, run speed, and eventually restart | **[done]** — §6.1 A0–A5, 2026-08-21 to 2026-08-25 |
-| **B** | **Fluid-side streaming** — per-dump means, vorticity by regime, per-dump extrema | dyload: never re-stream the dataset to draw a picture of it | statistics **[done]**; rest specified (§3) |
+| **B** | **Fluid-side streaming** — per-dump means, vorticity by regime, per-dump extrema | dyload: never re-stream the dataset to draw a picture of it | **[done]** — §6.1 B1–B3, 2026-08-25 |
 | **C** | **Rendering** — frame selection by time, archive-backed `plot_all`, global colour/arrow scales | consumes A and B | `fps`/`playback_rate` **[done]**; rest specified (§4) |
 | **D** | **Tiling and `extend`** — the real position-wrapping implementation | cleanup: tiling has raised `NotImplementedError` since the `FlowArray` removal | specified (§9), not built |
 
@@ -78,9 +78,13 @@ In order:
    a capture schedule can no longer reach collision detection. **A1 and A2 are done
    too**, and so are A3a, A3b, A4 and A5. **Component A is complete**: agent state
    streams to disk as a run proceeds (`Environment.record`), survives a hard kill, and
-   reads back through `planktos.load_run`. **Next up is §3 — component B**, the fluid
-   half.
-3. **§3 — fluid-side streaming** and **§4 — rendering**, which sit on top of it.
+   reads back through `planktos.load_run`. **Component B is complete too**
+   (2026-08-25): the fluid half streams out beside it. **Next up is §4 —
+   component C**, rendering.
+3. ~~**§3 — fluid-side streaming.**~~ **[done 2026-08-25]** The archive now carries
+   the fluid half: per-dump statistics always, vorticity by regime, quiver on
+   request. **Next is §4 — rendering**, which is the first step that consumes any
+   of it.
 4. **§9 — tiling**, afterwards, as cleanup. It has its own restoration checklist
    (§9.3) because gating it off left notices scattered across source, tests,
    examples, docs and prose.
@@ -620,7 +624,8 @@ run_archive/
                             directory could not be written -- see §3.3; normally it
                             goes beside the source's own dumps instead, and under
                             INUM=None it is not written at all
-    dump_stats.npz          per-dump extrema and component means; rewritten per dump
+    dump_stats.npz          per-dump extrema and component means; rewritten
+                            whole, every STATS_INTERVAL dumps
   agents/
     swarm00.json            name, N, D, first_capture -- written when that swarm
                             joins the recording, which is record() for most and
@@ -966,7 +971,18 @@ recommends `.mkv`. So:
   way that is worse than a missing chunk: a kill *during* `np.save` leaves a **truncated
   `.npy`** that raises on read, so one unlucky moment costs the whole archive rather
   than one buffer. The same applies to `meta.json` and to `dump_stats.npz`, which is
-  rewritten on every dump and would otherwise be the likeliest file to catch a kill.
+  rewritten periodically and would otherwise be the likeliest file to catch a kill.
+  - ⚠️ **A per-dump fluid field needs a temporary *directory*, not a temporary name**
+    *(found at B3, 2026-08-26)*. §3.3's write-back goes through a per-source vtk
+    writer, which builds its own filename from the quantity and the dump number and so
+    cannot be handed one — `_atomic_write` does not reach it. Staging into
+    `.planktos_partial/` beside the destination and renaming out of it gets the same
+    guarantee on the same filesystem. Without it a killed run leaves a truncated
+    `Omega.####.vtk` **in the source's own dump directory**, where it outlives the
+    archive entirely and breaks a dataset other runs share. That is a worse failure
+    than the `.npy` case this bullet was written for, since the damage escapes the
+    archive; it is the one place the crash-validity argument reaches outside
+    `run_archive/`.
 
 Once that holds, **no finalizer is load-bearing for correctness**: the most any of them
 can save is one unflushed chunk. This is the property the interface rests on, not the
@@ -1240,11 +1256,28 @@ Scope it separately; design the metadata for it now.
 
 ---
 
-## 3. Component B — fluid-side streaming
+## 3. Component B — fluid-side streaming — **[done]**
 
-The dyload half. Note what it does *not* do: **under `INUM=None` this component writes
-nothing at all**, because the whole field is resident and recomputation is cheaper than
-I/O (§3.3). The fluid half of an archive is empty for the common in-memory case.
+The dyload half. **[done 2026-08-25]** — §6.1 B1, B2 and B3; see the "As built"
+notes in §3.3, §3.4, §3.5 and §3.6.
+
+Note what it does *not* do: **under `INUM=None` no fluid *field* is written at all**,
+because the whole field is resident and recomputation is cheaper than I/O (§3.3).
+
+⚠️ **One thing is always written, and the specification did not originally say so
+plainly** *(settled at B3)*: the per-dump statistics sidecar,
+`fluid/dump_stats.npz` — component means (§3.1), per-component extrema and the
+per-dump vorticity scale (§3.5). §2.3's table listed it unconditionally and §2.1's
+lifecycle table has `record()` sweeping "component means, plus extrema" at B, but
+§3's opening sentence read as though the whole component were conditional on `INUM`.
+It is not, and the resolution is not a compromise: **the sidecar is a handful of
+floats per dump, while the thing "writes nothing" is protecting against is ~1 GB of
+field data per 500 dumps.** They are six orders of magnitude apart and there is no
+regime in which the sidecar is not wanted — the statistics box shows the component
+means on every plot, in 2D and in 3D, so without it an archive cannot be rendered
+at all. So: `dump_stats.npz` is written for any fluid whatever, and `INUM` decides
+only whether *fields* land on disk. `fluid=` is likewise about fields, and a
+`fluid=None` archive still carries the sidecar.
 
 ### 3.1 Frame statistics — **[done]**
 
@@ -1320,7 +1353,10 @@ F(u(t)) = Σᵢ wᵢ(t)·F(uᵢ)          for linear F
 ```
 
 `mean`, the curl (hence vorticity), and subsampling (hence quiver arrays) are all
-linear. This is what makes the per-dump mean sidecar exact (§3.1) and dump-cadence
+linear. **The weights are computed in one place** — `fluid._linear_blend`, which
+`LinearSpline.__call__`, the mean sidecar and the per-dump vorticity read all go
+through — so "the same weights the velocity uses" is structural rather than a property
+three copies happen to share. This is what makes the per-dump mean sidecar exact (§3.1) and dump-cadence
 caching exact (§2.4), using weights the interpolator already computes. The periodic
 wrap added to the curl in 2026-08 does not disturb this: differencing across the wrap
 is still a fixed linear combination of nodal values, just a different one.
@@ -1343,9 +1379,9 @@ design exists to avoid. Two consequences, both already taken:
   vorticity from the interpolated velocity instead of reconstructing it from dumps.
   That is why the rule is written by regime rather than as one mechanism.
 
-### 3.3 Vorticity is not cached — it is sourced, by regime
+### 3.3 Vorticity is not cached — it is sourced, by regime — **[done]**
 
-*(Decided 2026-08-13.)* Unlike quiver, vorticity is a quantity solvers already write
+*(Decided 2026-08-13; built 2026-08-25.)* Unlike quiver, vorticity is a quantity solvers already write
 and Planktos can write back in the same format. **Which of three things happens is
 decided by `INUM` and by whether the source has vorticity already:**
 
@@ -1454,6 +1490,79 @@ nothing about.
 **Probe availability once, and check it covers the range.** Glob for the field at
 construction; a *partial* series gets §2.8's treatment.
 
+**As built.** The per-source half is three methods on `FluidData`, and the generic
+half is one:
+
+- `probe_stored_vorticity()` → `('complete'|'partial'|'absent', directory)`, called
+  once when recording starts. `IB2dData` globs `Omega.*.vtk` and compares against
+  `range(d_start, d_finish+1)` — **against the range, not for any file at all**,
+  which is what makes the partial case visible.
+- `read_dump_vorticity(t_idx)` / `write_dump_vorticity(t_idx, vort, path)`, a pair
+  overridden together. The base pair is rectilinear-grid scalar vtk, which can
+  express any grid `FluidData` supports; `IB2dData` overrides both to structured
+  points with the wrap stripped and the field transposed back to `[y,x]`, on the
+  solver's own unshifted coordinates — so a written series is byte-comparable to
+  one IB2d printed.
+- `get_stored_vorticity(time)` is generic: it blends the two bracketing dumps with
+  the same weights `LinearSpline` uses, through a two-slot cache keyed on the
+  global dump index. It **raises** under cubic splining rather than blending
+  linearly, since a linear blend of dumps would not be the curl of a cubically
+  interpolated velocity — that regime has the field resident and calls
+  `get_vorticity` instead.
+
+Two decisions the specification left open, taken here:
+
+- **A partial stored series is warned about and written past, into the archive's
+  own `fluid/`** — not into the source directory beside the solver's own files.
+  §2.8 offers "refuse, or warn and fall back to writing"; writing is the more
+  useful of the two, but writing *beside* a partial series would leave a mixed
+  series, some dumps the solver's and some ours, which is the "never serve one
+  dump's field for another's" trap wearing a different hat. A separate directory
+  keeps what a render reads homogeneous, and leaves the solver's files untouched.
+- **Never-clobber is now unreachable through `record()`, and is kept anyway.** The
+  probe covers every case that could reach it: a complete series is read, a partial
+  one is written past, and an absent one cannot collide. The guard survives because
+  it makes `_write_vorticity` correct standing alone rather than by a policy
+  decided elsewhere, and it costs one `exists()` per dump.
+  `test_the_writer_refuses_to_overwrite_a_dump_it_finds` calls it directly and says
+  so.
+
+**Measured as built, on the real datasets** — `tests/data/leaf_data` (149 dumps,
+129×193, no `Omega`) and `tests/data/Rubberband_with_Damped_Springs` (76 dumps,
+33×33, with one). Both refine what §3.3 estimated:
+
+| per dump, 129×193 | cost |
+|---|---|
+| derive the curl | 0.15 ms |
+| write it (binary vtk) | **5.1 ms** |
+| read it back | 0.61 ms |
+| disk | 197 kB |
+
+- **The write is ~5× the ~1 ms this section estimated**, and the reason is the
+  caveat already written here: pyvista's per-save overhead dominates at small
+  grids, and 129×193 is small. The shape of the conclusion is unchanged — the
+  compute is free (0.15 ms), the write is what costs — but the constant is
+  bigger than the specification assumed, so quote 5 ms and not 1 at this size.
+- **On a 60-step, 50-agent run over 25 dumps** — deliberately dump-dense, a dump
+  arriving every ~2.4 steps — recording cost **+8.2% for the agent half alone**
+  (component A), **+22.7% with `fluid='vort'`** and **+35.0% with quiver as well**.
+  Those percentages are an artifact of an unusually cheap simulation, not a
+  general figure: the absolute costs above are what scale, and a run doing real
+  physics per step amortizes them away. Quote the milliseconds.
+- **Sourced vorticity agrees with Planktos' own curl to 3e-11 relative** through
+  the blend, over a full window sweep of the 76-dump IB2d series at 15 times off
+  the dump cadence. That is this section's "0.00% difference" claim reproduced
+  end to end through the blending path, on real solver output rather than a
+  fixture. The written case is exact to 9e-16, since binary vtk round-trips
+  losslessly and the only arithmetic left is the blend.
+
+⚠️ **The regime is decided by what is *resident*, not by which spline class is in
+use.** `FluidData.is_windowed` is the discriminator: false for time-invariant flow,
+for `INUM=None`, for `INUM=True` — and for an int `INUM` that spans the dataset,
+which holds everything and never slides. Keying on `INUM is None` would have put
+`INUM=True` in the wrong row and written ~1 GB for a field that was in memory the
+whole time.
+
 Two points that are easy to get wrong:
 
 - **3D writes no vorticity at all** — `fluid=` is forced to `None` in 3D, where no
@@ -1467,7 +1576,16 @@ Two points that are easy to get wrong:
   boundary-condition plane instead, no wrap can fix it, and the stored field remains the
   better one (`TODO.md` item 6 has the measured depth profile).
 
-### 3.4 Quiver
+### 3.4 Quiver — **[done]**
+
+**As built.** `quiver_shape` resolves to integer strides at `record()`
+(`_quiver_strides`, floored at 1 so asking for more arrows than grid points cannot
+produce a zero stride), and `meta['fluid']` records the target, the strides *and*
+the grid they resolved to. What is stored per dump is exactly the strided slice
+`plot_all` draws, `flow[c][::M, ::N]`, stacked over components — so nothing is
+resampled at render time. Written under **both** `INUM` regimes, since no solver
+ships a quiver and the "already available" reasoning that keeps vorticity off disk
+does not apply to it.
 
 **Quiver is opt-in** — `fluid='quiver'` or `fluid=('vort','quiver')` — because
 vorticity is what gets plotted in almost every case, and quiver is a second
@@ -1490,7 +1608,36 @@ downsampling at render time, which costs 2–3× a per-dump scalar and gives bac
 saving that motivates downsampling at all. So `quiver_shape` joins the recorded quantity
 as the second thing fixed when recording starts.
 
-### 3.5 Per-dump extrema and the global colour and arrow scales
+### 3.5 Per-dump extrema and the global colour and arrow scales — **extrema [done]**
+
+**As built (the storage half; the render half is C2).** `fluid/dump_stats.npz`
+carries `vmin`, `vmax` — `(n_dumps, n_components)` each — plus `means`, which is
+`FluidData`'s own per-dump mean cache serialized rather than a second copy of it, and,
+in 2D when vorticity was requested, `vort_absmax` `(n_dumps,)`. Read back with
+`RunArchive.dump_stats()`.
+
+⚠️ **Rewritten whole, but not on every dump** *(settled 2026-08-26)*. `.npz` cannot be
+appended to, so the file is rewritten entire — which keeps it a single atomic replace
+and therefore always readable. Doing that per dump arrival costs **O(n²) bytes** over a
+series: the file is `n` rows, and a forward sweep at `INUM=4` arrives `n/3` times, so a
+900-dump sweep wrote 8.6 MB to persist 29 kB and a 10 000-dump one would write ~2 GB.
+Throttled to every `_FluidWriter.STATS_INTERVAL` dumps (100), a 900-dump sweep writes
+0.3 MB — 30× less — and `flush()`/`stop()` still write unconditionally, so a completed
+or explicitly flushed run is always current. **The tradeoff is exposure, and it is the
+one the agent chunks already carry:** a hard kill costs at most the last interval's
+rows, whose dumps a re-run would have to reload anyway.
+
+⚠️ **A dump the run never loaded is `NaN`, not zero, and a consumer must reduce with
+`np.nanmax`.** Under a sliding window a run that stops partway genuinely never sees
+the later dumps, and NaN is the honest record; a zero would be indistinguishable
+from a still fluid and would drag the global scale it is supposed to fix. C2 is the
+consumer that has to get this right.
+
+**`vort_absmax` is computed even under `INUM=None`**, where §3.3 writes no field.
+The per-dump curl is 0.34 ms at 129×193, so this is ~50 ms across a 149-dump series,
+and it makes the global scale available in every regime rather than only the
+streaming one — otherwise two renders of a resident run would still disagree with
+each other, which is the whole defect §3.5 exists to fix.
 
 **Colour normalization — half done (2026-08-13).** The per-frame `fld.autoscale()` this
 was written against **is gone**; `Swarm._vorticity_norm` replaced it. That call rescaled
@@ -1520,9 +1667,9 @@ linear interpolation and very tight under cubic. A live one-pass render mode, if
 offered, has no global scale available and must take an explicit `clip`/`vmin`/`vmax`,
 or disclose the drift on the colorbar.
 
-### 3.6 Scalar rectilinear VTK I/O — the missing half
+### 3.6 Scalar rectilinear VTK I/O — **[done]**, and it was the missing half
 
-⚠️ **§3.3's write-back requires scalar rectilinear-grid I/O that does not exist yet.**
+⚠️ **§3.3's write-back required scalar rectilinear-grid I/O that did not exist.**
 `STRUCTURED_POINTS` carries only an origin and a spacing, so it can express IB2d's
 uniform grid but not a rectilinear one — and the OpenFOAM grid is deliberately
 non-uniform at its two outermost intervals. `_dataio` has
@@ -1536,6 +1683,33 @@ Both halves are needed:
   indistinguishable from the solver's own.
 
 Independent of everything else, and testable on its own with a round-trip.
+
+**As built (2026-08-25), and it was indeed the cheapest thing to land first.**
+`_dataio.read_vtk_Rectilinear_Grid_Scalars` and
+`_dataio.write_vtk_structured_points_scalars`, with the round-trips in
+`test_io_loaders.py`. Four things worth carrying forward:
+
+- **The reader squeezes by default.** VTK datasets are always 3D, so a 2D field is
+  written with a singleton z; `squeeze=True` drops any axis whose coordinate array
+  has length 1, from the data *and* the grid points together so the two cannot
+  disagree. `squeeze=False` returns the raw 3D form.
+- **The structured-points writer refuses uneven spacing** rather than writing the
+  mean, which would move every interior grid point. That is the whole reason both
+  formats exist: `STRUCTURED_POINTS` carries an origin and a spacing and nothing
+  else.
+- **A `sep` argument** on both scalar writers picks `Omega_0042.vtk` (the
+  convention of the other writers here) or `Omega.0042.vtk` (IB2d's, and what a
+  field written beside a solver's own dumps needs).
+- The hand-rolled `_read_scalar_vtk` helper in `test_io_loaders.py` — which existed
+  precisely because `_dataio` had no scalar reader — now delegates to the real one.
+
+**Also landed here, because the write-back needs it: the three legacy vtk readers
+raise `FileNotFoundError` on a missing file.** vtk reports one only on stderr and
+then hands back an empty dataset, which surfaced much later as
+`AttributeError: 'NoneType' object has no attribute 'GetDataType'` out of
+`numpy_support` — naming neither the file nor the cause. A per-dump series is
+exactly where a missing file is a normal outcome (a run under a sliding window
+writes only the dumps it loaded), so this had to be legible.
 
 ---
 
@@ -2266,10 +2440,14 @@ seven are done** (2026-08-21 to 2026-08-25):
       exhaust them. FIFO rather than LRU because the access pattern that matters is a
       monotone sweep — a render walking frames in order.
 
-**Step B — fluid-side streaming (§3).** Independent of A except that it writes into the
-same directory.
+**Step B — fluid-side streaming (§3). ✅ All three are done (2026-08-25).**
+Independent of A except that it writes into the same directory.
 
-  B1. **`fluid.py` groundwork.** Extract the gradient math from `FluidData.get_vorticity`
+⚠️ **The order was B2 → B1 → B3, not B1 → B2 → B3.** B2 is independent of
+everything and testable on its own with a round-trip, and B3 needs it, so it was
+the cheapest thing to land first. The list below keeps its original numbering.
+
+  B1. ✅ **[done 2026-08-25] `fluid.py` groundwork.** Extract the gradient math from `FluidData.get_vorticity`
       into a module-level `_vorticity_from_field(flow, flow_points, periodic_dim)` —
       note the third argument, which the periodic edge fix made load-bearing — and add a
       dump-arrival observer dispatched from `_record_dump_means`. That method is already
@@ -2286,9 +2464,89 @@ same directory.
       Also here: a **per-source probe** for whether the fluid already carries vorticity,
       and a **per-dump reader** for it, since two of the three regimes in §3.3 need one
       and neither needs the observer to fire at all.
-  B2. **Scalar rectilinear VTK I/O in `_dataio`** (§3.6). Independent of everything else
-      and testable on its own with a round-trip.
-  B3. **The per-dump fluid writer** and the extrema/means sidecars.
+
+      **As landed.** `_vorticity_from_field(flow, flow_points, periodic_dim)` at module
+      level, called by `get_vorticity` as well as by the observer, so the two cannot
+      compute different fields. `add_dump_observer` / `remove_dump_observer` fan out
+      from the end of `_record_dump_means`; both hazards the plan named are handled
+      where it said they would be — the writer keeps a set of dump indices it has
+      written, so the jump-to-start re-report is a no-op, and static flow is swept once
+      at construction because the observer never fires for it. Registering the same
+      observer twice is a no-op rather than a double fire. Also `FluidData.is_windowed`,
+      `dump_number`, `source_dir`, `probe_stored_vorticity`, `read_dump_vorticity`,
+      `write_dump_vorticity`, `get_stored_vorticity`, and `_wrap_scalar` /
+      `_unwrap_scalar` — the four-line scalar wrap §3.3 said to write rather than trying
+      to generalize `_wrap_flow`.
+
+      ⚠️ **A real bug on the windowed path was found here and fixed, and it was not in
+      the new code.** `load_dumpfiles` is contracted to return arrays with a leading
+      time axis; two of the readers behind it drop it for a **single dump**
+      (`_read_IB2d_dumpfiles` branches on `d_start != d_finish`, `_read_vtkfiles` calls
+      `squeeze()`), which is right for the constructor's one-shot read and wrong on the
+      streaming path. A single-dump load is not exotic: a forward slide takes `INUM-1`
+      dumps until it reaches the end of the series and then takes the remainder, which
+      is one dump whenever the dump count is `k*(INUM-1)+3` — with `INUM=4`, any of 6,
+      9, 12, 15, … time points. It raised (a broadcast error out of
+      `_record_dump_means`, ahead of a concatenate that would also have failed), so no
+      result was ever silently wrong; but the run died. Fixed at the contract boundary
+      with `fluid._as_dump_series`, pinned in `test_dynamic_loading.py` for both
+      loaders. **The observer would have hit it too**, which is how it surfaced — the
+      committed fixtures are 8 dumps, and 8 is not of that form.
+  B2. ✅ **[done 2026-08-25] Scalar rectilinear VTK I/O in `_dataio`** (§3.6). Independent of everything else
+      and testable on its own with a round-trip. **Landed first**, see the note above.
+  B3. ✅ **[done 2026-08-25] The per-dump fluid writer** and the extrema/means sidecars.
+
+      **As landed.** `archive._FluidWriter` derives and writes; `archive.plan_fluid`
+      decides. The split is not cosmetic: the decision has to be made **before** the
+      archive directory is resolved, because it goes into `meta.json`, which is written
+      once and never rewritten. So `plan_fluid` runs on the environment alone, its
+      `['meta']` block goes into the metadata, and `_FluidWriter` is constructed against
+      the resolved path afterwards and carries the plan out.
+
+      `_normalize_fluid` is where `fluid=` is forced to `None` in 3D and on a flow-free
+      environment — silently, and verified silent, since in neither case is there
+      anything else the caller could have meant. An unknown quantity raises, and leaves
+      nothing recording.
+
+      ⚠️ **The vtk write-back is the one place `_atomic_write` could not reach**, and
+      it went unnoticed until the module docstring was written and the claim checked.
+      The per-source writers name their own files, so `_write_vorticity` stages into a
+      `.planktos_partial/` directory beside the destination and renames out of it. §2.5
+      carries why this matters more than the `.npy` case: the truncated file would land
+      in the *source's* dump directory, outliving the archive and damaging a dataset
+      other runs share. Pinned by three tests, two of which fail against the direct
+      write.
+
+      **Cleanup pass, 2026-08-26.** A four-angle review (reuse, simplification,
+      efficiency, altitude) over the whole of B found one thing that mattered and a
+      pile of small duplication. The one that mattered: **`record()` transiently
+      doubled peak memory under `INUM=None`**, the default and the regime whose whole
+      premise is "the dataset fits, but only just". The opening sweep called
+      `get_raw_loaded_data()`, whose cubic branch is
+      `np.stack([self(t) for t in self.x])` — a full second copy of the series, with
+      every component's copy alive at once. Measured at 71.8 MB extra peak against a
+      47.8 MB dataset. Replaced by `FluidData.iter_resident_dumps()`, which yields one
+      dump at a time (0.80 MB peak, a 90× reduction) and covers the time-invariant,
+      all-resident and windowed cases identically — which also deleted the separate
+      static-flow branch in `_FluidWriter.__init__` and the `try/except BaseException`
+      that guarded observer registration, since the sweep now happens before the hook
+      goes on.
+
+      Also from that pass: the plan dict became `_FluidPlan`, a namedtuple, so
+      `vorticity_dir` means one thing and `_FluidWriter` is the single place that tells
+      the fluid where its vorticity is; the three regimes moved into a flat
+      `_plan_vorticity` with one `return` per row of §3.3's table; `_record_dump_means`
+      grew a `_dumps_arrived` wrapper so the name matches what it does; `_as_dump_series`
+      moved behind `FluidData._load_dumps` so the time-axis contract is structural
+      rather than remembered per subclass; the archive stopped rebuilding the vorticity
+      filename that `FluidData.vorticity_filename` owns; and the writer's duplicate
+      means array went away in favour of the fluid's own.
+
+      Also here: **a read surface for the fluid half**, `RunArchive.dump_stats()` and
+      `RunArchive.quiver(t_idx)`. Strictly this is the reader's territory (A4) and the
+      consumer is C1, but A5's lesson was that a write-only feature is not finished —
+      without these, nothing but a test with raw `np.load` could read what B writes.
+      Kept deliberately thin: §2.8's *render-time* refusals stay with the rendering.
 
       ⚠️ **`fluid=` and `quiver_shape=` join `Environment.record`'s signature here, not
       at A3** *(moved 2026-08-24)*. §2.1 shows them because it documents the *final*
@@ -2336,7 +2594,7 @@ single assertion is the property the whole design exists for.
 `test_recording.py::test_recording_costs_no_extra_fluid_loads`, with a guard that the
 window actually slid — otherwise it would pass against a dataset that never streamed.
 
-**The second one makes §3.2 executable:** under `INUM=int`, per-dump vorticity blended
+**The second one makes §3.2 executable** ✅ **[B3]**: under `INUM=int`, per-dump vorticity blended
 to a time between dumps equals `envir.get_vorticity(time=t)` computed live, to
 round-off — for both the sourced and the written case, which must agree with each other
 as well. Under `INUM=None` there is nothing to compare, since the render calls
@@ -2447,10 +2705,47 @@ drive real runs.
 - ✅ **reading never writes** — every file's mtime is unchanged across a full read,
   since a reader that mutates what it reads is the wrong shape (§2.7).
 
-**B — the fluid half:**
+**Landed with B — the fluid half** (`tests/test_fluid_recording.py`, 47 tests;
+plus the `_dataio` round-trips in `test_io_loaders.py` and the slider additions in
+`test_dynamic_loading.py`)**:**
 
-- the jump-to-start re-report leaving no duplicate fluid files;
-- `fluid=` forced to `None` on a flow-free environment rather than failing (§2.1).
+- ✅ the jump-to-start re-report leaving no duplicate fluid files — asserted by
+  watching `write_dump_vorticity` itself, since a duplicate write would produce
+  identical bytes and be invisible on disk;
+- ✅ `fluid=` forced to `None` on a flow-free environment rather than failing, and
+  in 3D, and **silently** in both (checked under `simplefilter('error')`);
+- ✅ each of §3.3's three regimes selecting correctly, including that `INUM=True`
+  lands with `INUM=None` and not with the streaming case;
+- ✅ **no vorticity file anywhere** under a resident field — the top row's whole
+  content, which would otherwise fail silently by costing disk nobody asked for;
+- ✅ a blended read equalling the live curl, sourced *and* written, and the two
+  agreeing with each other — plus a test that the blend is **not** the nearest
+  dump, without which the first two would pass against a reader that snapped;
+- ✅ a blended read refused under cubic splining, and clamped rather than
+  extrapolated outside the data's bounds (matching `FluidData.__call__`);
+- ✅ a partial source series warned about, left untouched, and written past;
+- ✅ the fallback to `run_archive/fluid/` when the source cannot be written, with
+  `meta.json` naming which happened;
+- ✅ the two-slot read cache staying at two, and a monotone sweep in **either**
+  direction reading each dump exactly once — which is what eviction-by-distance
+  buys over eviction-by-age;
+- ✅ the sidecar's rows being the reduction of their own dump and not a
+  neighbour's, agreeing with `FluidData._dump_means`, and `NaN` for a dump that
+  never loaded;
+- ✅ the sidecar written in 3D, carrying no `vort_absmax` there — §0.2's 3D
+  deliverable, and the only part of B a 3D run gets;
+- ✅ quiver opt-in, storing exactly the strided slice `plot_all` draws, with the
+  strides resolving the requested grid and never falling below 1;
+- ✅ **recording the fluid costs no extra loads** — the loader-call sequence with
+  `fluid='vort'` is identical to the same run with nothing recording. The B
+  counterpart of A3a's headline, with the same guard that the window really slid;
+- ✅ the observer unhooked when the recording stops, so it cannot outlive the
+  archive it was writing for, and its staging directory removed with it;
+- ✅ **a written vorticity file appears whole or not at all** — a write that fails
+  partway leaves nothing in the source's dump directory and nothing the probe's
+  own glob can see. Checked against the direct write, where the truncated file
+  lands in the series;
+- ✅ time-invariant flow captured once, since the observer never fires for it.
 
 **Verification:** `pytest` (fast) plus `pytest --runslow` for the plotting smokes, which
 exercise `plot_*` on the Agg backend and will catch signature breakage. The movie test
