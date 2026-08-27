@@ -65,6 +65,51 @@ number and the changelog** — these are easy to forget. Be proactive about it:
   running a test get collapsed into a single line: `- other minor bug fixes`.
   Do not give them individual entries.
 
+## Docstring and comment style (strict)
+
+**A docstring is a user-facing overview.** It says what the thing does and how to
+use it, briefly. Design reasoning, revision history and implementation detail are
+not user-facing and do not belong there — unless a user genuinely needs them to
+understand what is in front of them (an ODE solver naming the methods it supports;
+`FluidData.get_stored_vorticity` saying it is linear-splining only).
+
+- **Be brief.** Summary line, then parameters and returns.
+- **Never cite `docs/notes/` or `TODO.md`.** Those are working plans and are
+  deletable once their work is done and vetted, so a docstring pointing at one
+  rots. *Exception:* notes written to hold mathematics (e.g.
+  `project_and_slide_moving.md`) may be cited for a derivation.
+- **No bug-fix narrative, no "this used to…"**, and no catalogue of approaches
+  tried and discarded.
+- **No implementation considerations** — cost measurements, why a branch is
+  ordered as it is, what a guard protects against.
+- **No philosophy.** Value judgments about the design belong nowhere in the
+  source; state the behavior and stop. `Environment.record`'s `path` entry is the
+  standing example: *"overwriting a previous run is never the right default, and
+  refusing outright would strand a job that was ready to start"* is two sentences
+  arguing for a decision the caller cannot change. The caller needs one fact —
+  a non-empty directory redirects to a timestamped sibling, and `.path` says
+  where the data went.
+
+**The code under the docstring is where design reasoning goes**, as ordinary `#`
+comments, and it is meant to be read. Still no history there either.
+
+**Comments say what the code does and how it works — not what it does not do, or
+what would not have worked.** Point a code-level reader at the answer, not at the
+non-answers.
+
+> ✅ `# NaN marks a dump the run never loaded, so reduce with nanmax.`
+> ❌ `# A zero would be indistinguishable from a still fluid and would drag the
+>    scale down.`
+
+If the worry behind a long explanation is regression, that is what the tests are
+for. Test files are a partial exception to all of this: a regression test may state
+the defect it pins, since that is the test's purpose.
+
+⚠️ **Much of the existing tree does not follow this yet** — many methods were
+written by past sessions and run long. A sweep is queued as item 3 in `TODO.md`;
+`Swarm._calc_basic_stats` is the worked example and is deliberately left unfixed
+until then. Do not add more.
+
 ## What Planktos is
 
 Planktos is an **agent-based modeling framework** for simulating the movement and
@@ -159,6 +204,7 @@ behind since the dynamic-loading work.)
 | `planktos/_ibc.py` | internal | Immersed-boundary collision handling: `apply_internal_static_BC`, `apply_internal_moving_BC`, and the project-and-slide routines for static and moving meshes. |
 | `planktos/_dataio.py` | internal | Low-level read/write of vtk, vtu, .vertex, stl, NetCDF. Use `Environment` loader methods instead of calling these directly. |
 | `planktos/archive.py` | `RunArchive` and `load_run` are public; the writer, the recorder and the format machinery are internal | The run-archive on-disk format: chunked, append-only, crash-valid capture of agent state written as a run proceeds, plus the per-dump fluid quantities a later plot needs. Streams agents *out* the way `fluid.py` streams the field *in*. See `docs/notes/run_persistence.md` §2 and §3. |
+| `planktos/_frames.py` | internal | Where a plot frame's data comes from. `FrameSource` settles "what states exist, and where does the fluid backdrop come from" once, so `Swarm.plot`/`plot_all` index it rather than branching on it. Agent state is always live history; the backdrop comes from the Environment's run archive when it has one. |
 | `planktos/_provenance.py` | internal | Records what produced an `Environment`'s fluid and ibmesh: every loader and analytic flow generator is decorated so it logs its own call into `_fluid_provenance` / `_ibmesh_provenance`. `jsonable()` is the JSON-safety guarantee the run archive's metadata relies on. |
 
 ## Core mental model
@@ -316,8 +362,40 @@ entirely** from the 2D path. Two working consequences:
   the intended direction, not a wart.
 
 Already visible in the code: `Swarm.plot_all`'s `fluid='vort'|'quiver'` backdrops
-are 2D-only, so a 3D frame draws nothing about the fluid. See
+are 2D-only, so a 3D frame draws nothing about the fluid — and `fluid=` is forced to
+`None` in 3D at record time *and* ignored there at render time. See
 `docs/notes/run_persistence.md` §0.2.
+
+### Plotting goes through `_frames.FrameSource`
+
+**`plot` and `plot_all` build a `_frames.FrameSource` and index it.** Agent state is
+always the Swarm's own history. The *fluid backdrop* comes from the run archive the
+Environment recorded — `Environment._archive_path`, set by `record()` and kept after
+recording stops, so the ordinary workflow needs no argument:
+
+```python
+with envir.record('run/', fluid='vort'):
+    ...
+swrm.plot_all(movie_filename='out.mkv', fluid='vort')   # reads no fluid data
+```
+
+Two rules it enforces:
+
+- **No render may read the fluid dataset without saying so.** With a recording, a
+  backdrop that was not recorded is a **refusal** — the only fallback is re-reading the
+  whole dataset to draw a picture of it. Without one, a windowed replay warns with an
+  estimate.
+- **What is available is decided by what is *resident*, not by what was recorded.** With
+  the whole field in memory the curl is derived from it and the arrows subsampled from
+  it: free, exact, never missing.
+
+⚠️ **`animate(n)` has no final-frame branch.** The last state *is* the present, so
+`source.positions(n)` returns `self.positions` at `n == len(pos_history)`. The old
+`n >= len(pos_history)` duplicate is deleted; do not reintroduce one.
+
+**Plotting a run in a later session is not a plotting problem.** It needs the
+Environment and Swarm restored to where the run left off, which Planktos does not do
+yet — see `run_persistence.md` §2.11. Do not solve it inside `plot`/`plot_all`.
 
 ## Customizing agent behavior — the one rule that matters
 
@@ -429,9 +507,11 @@ Algorithm/derivation notes are in `docs/notes/` (Markdown with LaTeX):
 ## Tests
 
 The suite is organized into focused, deterministic, fast modules (overhauled
-2026-06). Run `pytest` from the repository root. The default run is a couple of
-seconds; add `--runslow` for the slower checks — the full-simulation
-parallelization tests and the plotting smokes — which brings it to roughly 20s.
+2026-06). Run `pytest` from the repository root. The default run is about 30 s
+(1098 passed / 50 skipped / 6 xfailed); add `--runslow` for the slower checks —
+the full-simulation parallelization tests, the plotting smokes, the end-to-end
+movie renders and most of `test_data_streaming/` — which brings it to about four
+and a half minutes (1146 / 2 / 6).
 
 - **Run** the whole thing with `pytest`; a specific area with e.g.
   `pytest tests/test_collisions_static.py`.
@@ -511,6 +591,20 @@ parallelization tests and the plotting smokes — which brings it to roughly 20s
     monotone sweep in either direction, the per-dump statistics sidecar (including
     that it is written in 3D, which is the whole 3D deliverable), quiver, and the B
     counterpart of the headline: recording the fluid costs **no extra loader calls**.
+  - `test_data_streaming/` — an **adversarial suite** written from
+    `run_persistence.md`, covering the streaming story end to end (in-RAM,
+    windowed replay, recorded replay, restart). Its strict `xfail`s are the
+    pre-release list — see "What an `xfail` means here". Run it after any change
+    to the archive, the fluid streaming or the plotting paths.
+  - `test_archive_rendering.py` — **drawing a run whose fluid was recorded**
+    (component C of `run_persistence.md`). Its headline is the third of the series:
+    replaying a recorded windowed run costs **zero** loader calls, with the same
+    replay unrecorded costing a full second pass beside it so the zero means
+    something. Also the refusals, the global colour limit (including that `NaN` for a
+    dump the run never reached does not poison it), the quiver grid fixed at record
+    time, and `record(plot_all=)`. Mostly drives `_frames.FrameSource` rather than a
+    figure — it is what decides a frame, and it is exactly what `animate` calls; the
+    end-to-end movie renders are `@slow` and need ffmpeg.
   - `test_dynamic_loading.py` — the **windowed** (`INUM=int`) path, i.e. this
     branch's headline feature: `FluidData.update_spline`. Covers TODO Phase 1
     (A) windowed-linear == full-linear to round-off, (B) slide behavior (forward,
@@ -581,10 +675,23 @@ cycle for.** It is not a way to defer something inconvenient. The convention:
   catalogues it, with an executable reproduction — that is strictly better than
   prose. Duplicating it in the tracker just creates two things to keep in sync.
 - **Delete the marker in the same commit as the fix.**
-- The steady state is still zero `xfail`s. A non-empty list means work is in
-  flight right now.
+- Outside the carve-out below, the steady state is zero `xfail`s. One appearing
+  in ordinary work means drop everything and fix it.
 
 Check with `pytest -rX` (lists xfails) or `pytest -rxX` (xfails and xpasses).
+
+**The carve-out: `tests/test_data_streaming/`.** This is an adversarial suite
+written against `docs/notes/run_persistence.md`, covering the streaming story end
+to end — in-RAM, windowed replay, recorded replay, restart. Its strict `xfail`s
+are **the pre-release list for `dyload`**: known gaps to be worked before the
+branch ships, not stop-the-cycle defects. A non-empty list there is expected, so
+watch the **count** rather than the presence — it should only ever go down, and
+each one that goes down takes its marker with it.
+
+⚠️ **Run it after any change to the archive, the fluid streaming or the plotting
+paths.** It has already caught three defects the focused modules missed, all in
+component C. It is slow — the full `--runslow` run is about four minutes, most of
+it here.
 
 ### Resolved defects & FTLE notes
 

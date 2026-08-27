@@ -4,7 +4,7 @@
 (a sliding window of timesteps) instead of holding the whole dataset in memory, so
 that large 3D time-varying flows (~100 GB raw, larger once splined) can be used.
 
-**Current state (2026-08-11).** The architecture is built and the API has settled —
+**Current state (2026-08-27).** The architecture is built and the API has settled —
 all fluid data is a `FluidData` object (`planktos/fluid.py`). Dynamic windowed
 loading works and is tested in **both** 2D and 3D against committed fixtures.
 Temporal interpolation of dynamically-loaded data is **linear in time**
@@ -12,8 +12,15 @@ Temporal interpolation of dynamically-loaded data is **linear in time**
 (`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
 story.
 
-**Suite is green: 955 passed / 22 skipped (`pytest`), 975 passed / 2 skipped
-(`pytest --runslow`).** No failures, no xfails.
+**Suite: 1098 passed / 50 skipped / 6 xfailed (`pytest`, ~30 s), 1146 / 2 / 6
+(`pytest --runslow`, ~4.5 min).** No failures.
+
+**The six xfails are the pre-release list**, all in `tests/test_data_streaming/` —
+an adversarial suite written from `run_persistence.md` covering the streaming story
+end to end. They are known gaps to work before `dyload` ships, not stop-the-cycle
+defects; see the carve-out in `CLAUDE.md`. Five are checkpoint/restart (note §2.11);
+the sixth is `plot_all`'s vorticity placeholder over a time-invariant flow, which
+`fshape[1:]` collapses to one dimension.
 
 **What is done:**
 
@@ -38,8 +45,11 @@ story.
   the reader, `planktos.load_run`, with its docs page and exports). **Component A is
   done**, and so is **component B** (2026-08-25): the fluid half streams out beside the
   agents — per-dump statistics always, vorticity sourced by regime, quiver on request,
-  and the scalar vtk I/O the write-back needed. The rest is the plan below, starting at
-  component **C**, rendering.
+  and the scalar vtk I/O the write-back needed. **Component C is done too** (2026-08-27):
+  a plot reads the fluid from what the run recorded — no argument needed, the
+  Environment remembers — so replaying a windowed run costs **zero** loader calls;
+  vorticity colour limits are global; and `Environment.record(plot_all=)` renders when
+  the `with` block ends. The rest is the plan below — component **D**, tiling.
 - **`_ibc.py` collision passes** — done on `master` and merged here; coverage 91% → 99%.
 
 **Phase 2 is complete (2026-08-11).** The loader reads the real OpenFOAM dataset, the
@@ -48,24 +58,45 @@ asserted. That was the branch's stated remaining reason to exist.
 
 **Where the work goes next, in priority order:**
 
-Item 1 is the active work. Item 2 is closed.
+Items 1 and 2 are closed. **Items 3 and 4 are both open and next**: the docstring
+style sweep was asked for immediately after component C, and note §9 (tiling) was the
+standing next item. The §7 prose pass rides on §9.
 
-1. 🔴 **The run archive and the plotting work it feeds** — `docs/notes/run_persistence.md`,
-   components A–C. **This is the work in hand.** §5.3 and §6.1 steps **A0–A5** are
-   done, and so are **B1, B2 and B3** (2026-08-25). **Components A and B are both
-   complete** — `Environment.record` writes agent state *and* the fluid half,
-   `planktos.load_run` reads both, and the features are in the changelog and the API
-   docs. **Next is component C**, rendering (§4 of the note): `plot_all` reading an
-   archive, and the global colour and arrow scales. Detail below.
+1. ✅ **The run archive and the plotting work it feeds — components A, B and C are
+   complete** (`docs/notes/run_persistence.md`). §5.3 and §6.1 steps **A0–A5**,
+   **B1–B3** (2026-08-25) and **C1–C2** (2026-08-27) are all done: `Environment.record`
+   writes agent state *and* the fluid half, `planktos.load_run` reads both, and
+   `Swarm.plot`/`plot_all` draw a recorded run without touching the fluid. All of it is
+   in the changelog and the API docs. ⚠️ **Plotting a run in a *later session* is
+   deliberately not part of this** — it needs the Environment and Swarms restored to
+   where the run left off (§2.11), which is a state-recovery feature and not a plotting
+   one. **What is left of the note is §6.1 step D**, the examples-and-docs prose pass
+   (§7), which is held behind item 4 below because §9 decides what that prose would
+   describe.
 2. ✅ **The robustness pass on the OpenFOAM loader — closed (2026-08-25).** The list is
    under Phase 2, "Robustness follow-ups". Its last open item — surfacing a stored
    `vorticity` — was folded into `run_persistence.md` §3.3 and landed as part of
    component B, so finishing B finished this too. Nothing is left here.
-3. 🟡 **Note §9** (real position-wrapping tiling, 2D and 3D; whether `Environment.extend`
+3. 🔴 **Docstring style sweep** (asked for 2026-08-27, once component C settled). Go
+   through the git history, collect the docstrings that break the style rule in
+   `CLAUDE.md`, and propose fixes. Many methods were written by past sessions rather
+   than by the user and run long — design reasoning, measurements and history inside
+   the docstring instead of in comments beside the code. **Two worked examples the
+   user named, both deliberately left unfixed** so they can go in the sweep:
+   `Swarm._calc_basic_stats`, which opens by saying what the method does *not* do,
+   justifies that at length, then recounts the removal of `avg_spd`/`max_spd`; and
+   `Environment.record`'s `path` entry, which argues for the redirect decision
+   (*"overwriting a previous run is never the right default, and refusing outright
+   would strand a job that was ready to start"*) instead of just stating it.
+   Candidates are concentrated in what the archive work added — `archive.py`,
+   `fluid.py`, `_frames.py`, `_provenance.py`, and the plotting methods in
+   `_swarm.py`. `RunArchive.check_against` ("Silently plotting a foreign archive is
+   the worst available outcome") is another.
+4. 🔴 **Note §9** (real position-wrapping tiling, 2D and 3D; whether `Environment.extend`
    returns) — the design pass is now written up in `run_persistence.md` §9; §9.3 is the
    restoration checklist. This also **unblocks the prose-docs sweep**, which is
    deliberately held because §9 decides exactly what that prose would describe.
-4. ✅ **The 1.0.3 decision — settled (2026-08-19).** The patch release was cut from
+5. ✅ **The 1.0.3 decision — settled (2026-08-19).** The patch release was cut from
    `master` and tagged `v1.0.3`; the cherry-pick queue at the bottom of this file is the
    record of what moved and what deliberately did not. **The next release is meant to be
    `1.1.0`, with no `1.0.4`** — see that queue for the one thing that would change it.
@@ -85,8 +116,8 @@ or restarting a run at all, none of which Planktos can do today. The note was re
 around that framing and split into four components: **A** the archive, **B** fluid-side
 streaming, **C** rendering, **D** tiling. A and B are independently shippable.
 `run_persistence.md` §0 is the orientation; §2.1–§2.3 and §4.2 carry the interface
-reasoning; §6.1 has the build order and §6.3 the entry points. **A and B are both
-done**; §4 (rendering) is what is left, plus §9 (tiling) as cleanup.
+reasoning; §6.1 has the build order and §6.3 the entry points. **A, B and C are all
+done**; §9 (tiling) is what is left, plus the §7 prose pass.
 
 ⚠️ **One thing component B settled that the specification had left ambiguous**, worth
 knowing before reading §3: the per-dump statistics sidecar `fluid/dump_stats.npz` is
@@ -299,9 +330,9 @@ before the failure. What landed adds no attributes, no methods, and no per-step 
 - Two tests in `test_swarm_lifecycle.py` pin the closed-off histories, the marker, the
   block, and the documented recovery.
 
-- **Plotting works in the error state and leaves the failed step out.**
-  `_select_frames` builds its time axis with `envir.time` on the end, which was
-  arithmetic on `None`; it now branches on that, warns, and uses `time_history` alone.
+- **Plotting works in the error state and leaves the failed step out.** The time axis
+  puts `envir.time` on the end, which was arithmetic on `None`; `_frames._live_times`
+  now branches on that and returns `time_history` alone, and `_select_frames` warns.
   Frames are then exactly the recorded states, so the incomplete positions are never
   drawn. Pinned by a third test.
 
@@ -1169,21 +1200,28 @@ Inherited blockers from the overhaul's notes:
     `plot_all` at full step resolution, `save_data`, `save_pos_to_csv`,
     `save_pos_to_vtk`, and any post-hoc agent analysis (per-step
     displacement/dispersal statistics). Opt-in, off by default, loudly documented.
-  - ⚠️ **Revisit this once the run archive lands** (`docs/notes/run_persistence.md`
-    component A). The archive writes agent state to disk as the run proceeds, so disk
-    then holds what memory drops and every one of those consumers can read it back.
-    The feature changes character completely — from "lossy, opt-in, loudly documented"
-    to "cap memory, lose nothing, provided you are recording." `run_persistence.md`
-    §2.10 records the reasoning. It was left out of the original plotting redesign as
-    out of scope; the reframe brought it in.
+  - ✅ **The archive has landed (components A–C), and mostly subsumes this.**
+    `Environment.record(capture_interval=k)` already caps history — it decimates
+    `pos_history` / `vel_history` / `time_history` and the archive alike from one
+    predicate, and disk then holds what memory drops. So the feature has changed
+    character: from "lossy, opt-in, loudly documented" to "cap memory, lose nothing,
+    provided you are recording."
+  - **What is left is the residue**, `store_pos_history=None`: keep no history at all
+    and rely on the archive. A0 removed the collision-path obstacle (the movement start
+    point no longer comes from `pos_history`), so what remains is that live
+    `plot_all` and `_calc_basic_stats` read the histories directly and would have
+    nothing to read. That needs its own pass; `run_persistence.md` §8 files it under
+    Deferred.
 
 ---
 
 ## How to run the tests
 
-- Fast loop: `pytest` (≈4s; skips `slow` / `vtk`-absent / `vtu`-absent).
-- Full: `pytest --runslow` (adds the parallelization checks and the plotting
-  smokes; ≈15s).
+- Fast loop: `pytest` (≈30s; skips `slow` / `vtk`-absent / `vtu`-absent).
+- Full: `pytest --runslow` (adds the parallelization checks, the plotting smokes,
+  the end-to-end movie renders and most of `test_data_streaming/`; ≈4 min).
+- `tests/test_data_streaming/` is slow and worth running on its own after any
+  change to the archive, the fluid streaming or the plotting paths.
 - List any `xfail`s with `pytest -rX` — a non-empty list means work is in flight.
 - Regenerate IB2d fixtures after editing the generator:
   `python tests/fixtures/_gen_fixtures.py`.
@@ -1307,7 +1345,7 @@ Add to this list whenever a fix made on `dyload` is not dyload-specific. The tes
 that is simple: does the code it touches look the same on `master`? Check with
 `git diff master -- <file>` before assuming.
 
-### Queued for a possible 1.0.4 — four entries
+### Queued for a possible 1.0.4 — six entries
 
 Everything below the next heading is history — it shipped, or was deliberately not
 ported — kept for the porting notes rather than because anything is pending. Per the
@@ -1319,6 +1357,7 @@ release plan there is no `1.0.4` in preparation; this is a holding pen.
 | **`set_canopy_flow` with scalar parameters** (2026-08-25). The divide-by-zero guards were written as `x[x == np.inf] = 0`, which assumes an array — so every scalar-parameter call raised `TypeError` — and as `x[x == np.nan] = 0`, which never matches anything, since nan compares equal to nothing including itself. Replaced by a `zero_nonfinite` helper nested inside `set_canopy_flow` and used at all three sites, with the two guarded ratios hoisted so both profile branches share them (the non-iterating branch had none), and a finiteness check so a zero mixing length raises instead of returning a field of nan. Also `assert np.isclose(U_h*beta, u_star)`, which truth-tests its result — an array for time-varying parameters — so that branch raised "truth value of an array is ambiguous" and was unreachable rather than checking the relation; now wrapped in `np.all`, which makes deriving `beta` from array parameters work at all. Eight tests in `test_flow_generation.py` | `planktos/_environment.py` (`set_canopy_flow` only), `tests/test_flow_generation.py` | **Yes.** All three sites are byte-identical on `master` (`git show master:planktos/_environment.py`, the four `== np.nan` hits). A behavior change only where the old code raised or produced nan |
 | **A fluid grid one point thick in a dimension was read as broken 3D** (2026-08-26). A vtk dataset is always three-dimensional, so a solver exporting a plane writes `nz = 1` — which is what IB2d does for its genuinely 2D output, and the 2D reader already collapses it. The 3D loaders did not: the directory branch squeezed the *data* but built `flow_points` from all three mesh axes, giving an object that claimed `ndim == 3`, reported `L = [.., .., 0.0]`, and raised `"There are 3 point arrays, but values has 2 dimensions"` from inside `interpn` on the first move; the single-file branch did not squeeze and simply carried a zero-thickness domain. Now one `fluid._collapse_flat_axes` drops the flat axis, its coordinate array, its periodicity flag and the velocity component along it together, warning and naming the axis — and saying so louder when the discarded component is not everywhere zero, since that is a slab of a 3D flow rather than 2D data. Two flat axes raise. Also fixes 2D COMSOL vtu, whose reader returned a two-entry mesh that the constructor then indexed at `[2]`. Ten tests in `test_io_loaders.py`, which write their own planar series rather than adding a fixture | `planktos/fluid.py` (`_flat_axes`, `_drop_flat_axes`, `_collapse_flat_axes`, `VTK3dData.__init__` / `load_dumpfiles` / `_read_vtkfiles`, `ComsolVTUData.__init__` / `_read_vtufile`), `tests/test_io_loaders.py` | **By hand, not by hunk.** `master` has both defects but in different places: the blanket squeeze is in a module-level function in its `fluid.py` (~line 183), and the unconditional three-tuple grid is in `_environment.py` at ~1105 and ~1154, since the loaders had not moved onto `FluidData` yet. The helpers port as-is; their call sites do not |
 | **Spline indexing rejected numpy integers and mishandled negative slice bounds** (2026-08-26). `fCubicSpline.__getitem__` tested `type(pos) == int`, so an `np.int64` — what a caller looping over `np.arange` or unpacking `np.searchsorted` supplies — raised `IndexError`. Worse, the hand-rolled start/stop arithmetic ran a negative start up to `len-1`, so `envir.flow[0][-3:]` silently returned `len+3` wrapped entries instead of the last three. Both bodies now delegate to one `fluid._spline_index`, which uses `isinstance(..., (int, np.integer))` and `slice.indices()`. Ten tests in `test_temporal_interp.py`, parametrized over both spline classes | `planktos/fluid.py` (`_spline_index` and the two `__getitem__` bodies), `tests/test_temporal_interp.py` | **Partly.** `fCubicSpline.__getitem__` on `master` has both defects and is close enough to port by hand, but it is not byte-identical — `master`'s version does not handle a negative *step* at all (no `stop = -1` branch), so `[::-1]` there returns an empty stack rather than wrapped data. ⚠️ `LinearSpline` does not exist on `master`; port the `fCubicSpline` half only, and the tests lose their parametrization |
+| **Four latent defects in the plotting paths** (2026-08-27), found while merging `animate`'s two per-frame branches for component C. **(i)** `Swarm.plot` called `self.interpolate_temporal_mesh(time=t)` — a method on `Environment`, not `Swarm` — so plotting a *past* time with a moving 2D mesh raised `AttributeError` instead of drawing. It also passed the requested time rather than the snapped one. **(ii)** Planktos creates a scatter in four places and three of them branch on `'color' in props`, reading `shared_props['color']` only in the `else`. `plot_all`'s 2D setup did not: it built its empty placeholder scatter with `c=self.shared_props['color']` unconditionally, and that key is absent exactly when per-agent colours exist — so 2D `plot_all` raised `KeyError` for any swarm whose colours vary by agent. (`add_prop` removing the shared entry is correct and is not the defect; one of four sites was missing the branch the other three have.) Fixed by adding that branch rather than by defaulting the lookup, which would have duplicated the `Swarm.__init__` colour default in a second place. **(iii)** `plot_all`'s downsampled branch took heading angles from `self.props` where every other branch takes them from the frame's `props_history` entry, freezing headings at the present through the whole movie. **(iv)** the movie's *final* frame applied per-agent colours only when a props history had been kept (`if self.props_history is not None and 'color' in self.props`), so a run without one drew its last frame in the default colour. `test_swarm_plot_at_a_past_time_with_a_moving_mesh` covers (i) and `test_the_final_frame_draws_the_present_state` covers (ii) and (iv); (iii) has no dedicated test, the two-branch structure that produced it being gone | `planktos/_swarm.py` (`Swarm.plot`, `plot_all` and its `animate`), `tests/test_plotting_smoke.py`, `tests/test_archive_rendering.py` | **Partly, by hunk.** All four are on `master` — `git show master:planktos/_swarm.py`, its lines 2139 (in `plot`), 2573 (in `plot_all`'s 2D setup), and 2932 / 3192 / 3203 / 3207 (all inside `plot_all`'s `animate`). **(i) and (ii) port directly**: both anchors are byte-identical and sit outside `animate`, so they are one-hunk changes. **(iii) and (iv) do not**: those fixes fall out of `animate` reading through `_frames.FrameSource` and of its final-frame branch being deleted, neither of which exists on `master`, so each needs hand-editing into master's two-branch `animate` — note (iii) appears **twice** there, at 2932 and again at 3207 in the final-frame branch |
 | **`Swarm.move` raises when the Environment holds more than one Swarm** (2026-08-21), replacing the warn-and-freeze block that appended to `pos_history` alone and left `vel_history` / `props_history` behind. Ships with the docstring rewrite of `update_time`, three tests in `test_swarm_lifecycle.py`, and the `test_agent_models.py` fix for a test that was accidentally stacking four Swarms into one Environment | `planktos/_swarm.py` (`Swarm.move`), `tests/test_swarm_lifecycle.py`, `tests/test_agent_models.py`, `docs/quickstart.rst` | **Yes, by hunk.** The freeze-append block is byte-identical on `master` (`git show master:planktos/_swarm.py`, the `len(s.pos_history) < len(self.pos_history)` guard). ⚠️ It is a **behavior break** — a warning becomes a raise — so it is semver-visible and belongs in a minor release, not a patch |
 
 ### Shipped in 1.0.3 — the 2026-08-10 `move()`/`_ibc` work

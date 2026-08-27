@@ -29,6 +29,9 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - Vorticity is written per fluid dump, in the source's own format beside its own dumps, only when the solver printed none and the field is not held in memory.
 - New Environment.record(fluid='quiver', quiver_shape=) stores a downsampled velocity field per dump, for quiver backdrops. Opt-in; vorticity is the default.
 - New RunArchive.dump_stats and RunArchive.quiver read the fluid half of an archive back.
+- Plots and movies draw the fluid from what Environment.record wrote, so replaying a dynamically-loaded run costs no fluid reads and needs no extra argument.
+- Vorticity colour limits and quiver arrow scales now come from a recorded run's own extrema, so two plots of it agree instead of drifting with what has been drawn or loaded.
+- New Environment.record(plot_all=) renders a movie when the with block ends, including when the run raised.
 - Swarm.move now raises when the Environment holds more than one Swarm; use Environment.move_swarms. It previously warned and froze the others, misaligning their histories.
 - Bug fix: adding a Swarm to a different Environment now removes it from its previous one, which kept moving it and left it in both.
 - Bug fix: set_canopy_flow works with scalar u_star/U_h/beta, which raised TypeError, and a zero wind parameter now gives zero flow instead of nan.
@@ -38,6 +41,8 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - Bug fix: indexing a flow component accepts numpy integers, and resolves negative slice bounds; [-3:] previously returned wrapped, wrong data rather than the last entries.
 - Bug fix: a fluid grid one point thick in a dimension now reads as 2D on the remaining axes, with a warning. It gave a zero-thickness domain, or failed on first use.
 - Bug fix: 2D COMSOL vtu data now loads. The reader supported it but the constructor assumed three dimensions and raised.
+- Bug fix: Swarm.plot at a past time with a moving immersed boundary mesh raised AttributeError.
+- Bug fix: plot_all raised KeyError in 2D for a swarm with per-agent colors, which have no shared color entry to fall back on.
 - other minor bug fixes
 
 

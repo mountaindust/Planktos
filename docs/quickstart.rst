@@ -265,6 +265,12 @@ fill them is clamped to one frame per timestep, with a warning; smooth slow
 motion therefore calls for a smaller ``dt``, not a higher ``fps``. Passing an
 explicit list of timestep indices as ``frames`` overrides this selection.
 
+Where a run was recorded with ``Environment.record``, both ``Swarm.plot`` and
+``Swarm.plot_all`` draw the fluid from what that recording wrote, so plotting a
+dynamically loaded run does not stream the dataset a second time. This needs
+nothing added to the plotting call: the Environment remembers where it recorded.
+See :doc:`api/RunArchive`.
+
 .. [1] Haller, G. and Sapsis, T. (2008). Where do inertial particles go in
    fluid flows? Physica D: Nonlinear Phenomena, 237(5), 573-583.
 

@@ -461,6 +461,25 @@ def _describe_source(provenance):
     return "{}(path={!r}, ...)".format(provenance['loader'], path)
 
 
+def _same_source(recorded, current):
+    """Do these two provenance records describe the same fluid?
+
+    Every field except ``INUM``, which describes how much of the dataset is held
+    in memory at once rather than what the dataset is.
+    """
+
+    # Reloading a finished run's fluid at another INUM, or resident, is ordinary
+    #   and leaves the data it describes the same.
+    def comparable(record):
+        if not record:
+            return record
+        kwargs = {k: v for k, v in (record.get('kwargs') or {}).items()
+                  if k != 'INUM'}
+        return dict(record, kwargs=kwargs)
+
+    return comparable(recorded) == comparable(current)
+
+
 def _resolve_archive_path(path):
     '''Choose the directory to record into, and create it.
 
@@ -1220,7 +1239,7 @@ class RunRecorder:
 
     def __init__(self, envir, path, swarms=None, store=('positions', 'velocities'),
                  chunk_size=100, fluid='vort', quiver_shape=QUIVER_SHAPE,
-                 meta=None):
+                 plot_all=None, meta=None):
         self.envir = envir
         # Given an explicit list, capture exactly those. Given none, capture
         #   whatever the environment holds -- including swarms that join later.
@@ -1232,6 +1251,7 @@ class RunRecorder:
         self._swarms = list(swarms)
         self._store = tuple(store)
         self._stopped = False
+        self._plot_all = _check_plot_all(plot_all, self._swarms)
 
         record_meta = dict(meta) if meta else {}
         record_meta['provenance'] = {
@@ -1280,7 +1300,39 @@ class RunRecorder:
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.stop()
+        self._auto_plot(exc_type)
         return False
+
+
+    def _auto_plot(self, exc_type):
+        '''Render what ``plot_all=`` asked for, on a clean exit or an exception.'''
+
+        if self._plot_all is None:
+            return
+        # A crash leaves a diagnostic movie; a Ctrl-C asks for things to stop.
+        #   Both have already flushed, in stop().
+        if exc_type is not None and issubclass(exc_type, KeyboardInterrupt):
+            return
+        if len(self._swarms) != 1:
+            # A swarm joined after record() checked. Everything is on disk, so
+            #   say what happened and leave the render to the user.
+            warnings.warn(
+                'no movie was made: plot_all= renders one swarm and this '
+                'recording ended up covering {}. The archive at {} is '
+                'complete -- render by hand with '
+                'swrm.plot_all(...).'.format(len(self._swarms), self.path),
+                UserWarning)
+            return
+        try:
+            self._swarms[0].plot_all(**self._plot_all)
+        except Exception as err:
+            # Caught so a rendering failure cannot mask the run's own
+            #   exception, which may be on its way up right now.
+            warnings.warn(
+                'the automatic plot_all= render failed -- {}: {}. The archive '
+                'at {} is complete, so it can be rendered by hand with '
+                'swrm.plot_all(...).'.format(type(err).__name__, err,
+                                             self.path), UserWarning)
 
 
     def flush(self):
@@ -1371,6 +1423,25 @@ class RunRecorder:
         self._writer.add_capture(self._n_captures, self.envir.time, arrays)
         self._n_captures += 1
 
+
+
+def _check_plot_all(plot_all, swarms):
+    '''Validate ``plot_all=``, at ``record()`` rather than at the end of the run.'''
+
+    # plot_all is a Swarm method, and joint multi-swarm plotting is issue #49.
+    if plot_all is None:
+        return None
+    if not isinstance(plot_all, dict):
+        raise TypeError(
+            'plot_all= takes a dict of Swarm.plot_all keyword arguments, e.g. '
+            "dict(movie_filename='out.mkv', fluid='vort'), not {}.".format(
+                type(plot_all).__name__))
+    if len(swarms) != 1:
+        raise ValueError(
+            'plot_all= renders one swarm, and this recording covers {}. Name '
+            'the one to render with swarms=[...], or leave plot_all= out and '
+            'render afterwards with swrm.plot_all(...).'.format(len(swarms)))
+    return dict(plot_all)
 
 
 def fingerprint_of(envir):
@@ -1765,6 +1836,10 @@ class RunArchive:
         A **provenance** difference is not a mismatch and only warns: replotting
         a run whose script moved directories is not be refused, while a
         different simulation that happens to share a mesh and a cadence is loud.
+        ``INUM`` is left out of that comparison entirely -- it says how much of
+        the dataset is held in memory at once and nothing about what the dataset
+        is, and reloading a finished run at a different one, or resident, is an
+        ordinary thing to do.
 
         Parameters
         ----------
@@ -1783,7 +1858,7 @@ class RunArchive:
                                 _describe_source(recorded),
                                 _describe_source(current)))
 
-        if recorded != current:
+        if not _same_source(recorded, current):
             warnings.warn(
                 'this archive matches this Environment grid for grid, but was '
                 'recorded against {} where this environment\'s fluid is {}. '

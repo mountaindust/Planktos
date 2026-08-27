@@ -285,6 +285,10 @@ class Environment:
         # The active RunRecorder, or None. The time-advance hook finds it here,
         #   which is why there can only be one per Environment.
         self._recorder = None
+        # Where this environment last recorded to. Outlives the recorder, so
+        #   that a plot of a finished run reads what that run wrote about the
+        #   fluid rather than reading the fluid again.
+        self._archive_path = None
         # Which step is being taken. len(time_history) is no longer the step
         #   count once a capture schedule can skip steps, so the environment
         #   keeps its own, and both trigger sites ask it the same question.
@@ -2078,7 +2082,8 @@ class Environment:
 
     def record(self, path, *, fluid='vort', swarms=None,
                store=('positions', 'velocities'), capture_interval=1,
-               chunk_size=100, quiver_shape=archive.QUIVER_SHAPE):
+               chunk_size=100, quiver_shape=archive.QUIVER_SHAPE,
+               plot_all=None):
         '''Begin recording agent state to a run archive, and return the handle.
 
         Planktos otherwise holds an entire run in memory and can only write it
@@ -2149,6 +2154,19 @@ class Environment:
             density from the figure size and axis extent, which do not exist
             while a simulation is running, so an archive-backed render uses the
             stored grid and warns if the figure would have used a denser one.
+        plot_all : dict, optional
+            keyword arguments for ``Swarm.plot_all``, rendered automatically
+            when a ``with`` block ends::
+
+                with envir.record('run/', plot_all=dict(movie_filename='out.mkv',
+                                                        fluid='vort')):
+                    ...
+
+            Renders on a clean exit and when the run raises, but not on a
+            ``KeyboardInterrupt``. All three flush. A failure inside the render
+            is warned about and the run's own exception still propagates. Takes
+            a recording covering exactly one swarm, and is refused at this call
+            otherwise.
 
         Returns
         -------
@@ -2161,6 +2179,9 @@ class Environment:
             if this environment is already recording, or if the fluid is
             dynamically loaded and its window has already moved past the first
             dump (see below)
+        ValueError
+            if ``plot_all`` is given for a recording covering more than one
+            swarm
 
         Notes
         -----
@@ -2232,11 +2253,14 @@ class Environment:
         try:
             self._recorder = archive.RunRecorder(
                 self, path, swarms=swarms, store=store, chunk_size=chunk_size,
-                fluid=fluid, quiver_shape=quiver_shape)
+                fluid=fluid, quiver_shape=quiver_shape, plot_all=plot_all)
         except BaseException:
             # Nothing is recording, so nothing may be gated.
             self._capture_interval = 1
             raise
+        # The resolved path, not the one asked for: recording into a non-empty
+        #   directory redirects to a timestamped sibling.
+        self._archive_path = self._recorder.path
         return self._recorder
 
 

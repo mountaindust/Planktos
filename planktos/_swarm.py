@@ -22,7 +22,7 @@ from matplotlib import animation, colors
 from matplotlib.path import Path as mPath
 
 from ._environment import Environment
-from . import _dataio, _geom, _ibc, motion
+from . import _dataio, _frames, _geom, _ibc, motion
 
 __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
@@ -1992,7 +1992,9 @@ class Swarm:
         DIM3 : bool
             indicates the dimension of the domain (True for 3D)
         t_indx : int, optional
-            The time index for pos_history or None for current time
+            The time index for pos_history, or None for the current time. An
+            index at or past the end of the history is the current time too,
+            which is the state a final animation frame draws.
 
         Returns
         -------
@@ -2012,28 +2014,27 @@ class Swarm:
             standard deviation of the agent speeds
         '''
 
-        # get % of agents left in domain
-        if t_indx is None:
-            num_left = self.positions[:,0].compressed().size
-        else:
-            num_left = self.pos_history[t_indx][:,0].compressed().size
-        if len(self.pos_history) > 0:
-            num_orig = self.pos_history[0][:,0].compressed().size
-        else:
-            num_orig = num_left
-        perc_left = 100*num_left/num_orig
-
-        # get agent velocities. these are READ from the recorded history, not
+        # positions, velocities and the time of the state being summarized.
+        #   Agent velocities are READ from what was recorded, not
         #   finite-differenced from positions: move() sets velocities from
         #   pre-boundary-condition positions and then apply_boundary_conditions
         #   mutates positions, so the two differ for any agent that collided
         #   with an immersed boundary or the domain edge. On a periodic
         #   dimension a wrap makes the difference of positions a spurious
         #   near-domain-width velocity.
-        if t_indx is None:
-            vel_data = self.velocities
+        n_hist = len(self.pos_history)
+        if t_indx is None or t_indx >= n_hist:
+            positions, vel_data = self.positions, self.velocities
+            time = self.envir.time
         else:
-            vel_data = self.full_vel_history[t_indx]
+            positions, vel_data = self.pos_history[t_indx], self.vel_history[t_indx]
+            time = self.envir.time_history[t_indx]
+        first_positions = self.pos_history[0] if n_hist > 0 else positions
+
+        # get % of agents left in domain
+        num_left = positions[:,0].compressed().size
+        num_orig = first_positions[:,0].compressed().size
+        perc_left = 100*num_left/num_orig
 
         # only agents still in the domain contribute. agents leave whole rows at
         # a time, so dropping masked rows loses nothing from the survivors.
@@ -2059,10 +2060,6 @@ class Swarm:
             # temporally constant flow
             fluid_means = self.envir.flow.get_mean_velocity()
         else:
-            if t_indx is None:
-                time = self.envir.time
-            else:
-                time = self.envir.time_history[t_indx]
             fluid_means = self.envir.flow.get_mean_velocity(time=time)
 
         if not DIM3:
@@ -2126,28 +2123,30 @@ class Swarm:
             In 3D plots, the azimuthal viewing angle. Defaults to -60.
         elev : float, optional
             In 3D plots, the elevation viewing angle. Defaults to 30.
+
+        Notes
+        -----
+        Where the Environment has recorded a run archive, the fluid backdrop is
+        served from it rather than read from the velocity field, so drawing a
+        dynamically loaded run costs no fluid reads. See
+        :meth:`planktos.Environment.record`.
         '''
 
-        if t is not None and len(self.envir.time_history) != 0:
-            loc = np.searchsorted(self.envir.time_history, t)
-            if loc == len(self.envir.time_history):
-                if (t-self.envir.time_history[-1]) > (self.envir.time-t):
-                    loc = None
-                else:
-                    loc = -1
-            elif t < self.envir.time_history[loc]:
-                if (self.envir.time_history[loc]-t) > (t-self.envir.time_history[loc-1]):
-                    loc -= 1
-        else:
-            loc = None
+        source = _frames.FrameSource(self, fluid=fluid, clip=clip)
 
-        # get time and positions
-        if loc is None:
+        if t is None:
+            loc = None
             time = self.envir.time
             positions = self.positions
+            velocities = self.velocities
+            props = self.props
         else:
-            time = self.envir.time_history[loc]
-            positions = self.pos_history[loc]
+            loc = source.capture_at(t)
+            time = source.time(loc)
+            positions = source.positions(loc)
+            velocities = source.velocities(loc)
+            props = source.props(loc)
+        source.warn_if_restreaming((time,))
 
         if len(self.envir.L) == 2:
             # 2D plot
@@ -2187,36 +2186,25 @@ class Swarm:
 
             # fluid visualization
             if fluid == 'vort' and self.envir.flow is not None:
-                vort = self.envir.get_vorticity(t_indx=loc)
-                norm = _vorticity_norm(vort, clip)
+                vort = source.vorticity(time)
+                norm = _vorticity_norm(vort, source.vort_clip)
                 ax.pcolormesh(self.envir.flow.flow_points[0], self.envir.flow.flow_points[1],
                               vort.T, shading='gouraud', cmap='RdBu',
                               norm=norm, alpha=0.9, antialiased=True)
             elif fluid == 'quiver' and self.envir.flow is not None:
-                # get dimensions of axis to estimate a decent quiver density
-                ax_pos = ax.get_position().get_points()
-                fig_size = fig.get_size_inches()
-                wdth_inch = fig_size[0]*(ax_pos[1,0]-ax_pos[0,0])
-                height_inch = fig_size[1]*(ax_pos[1,1]-ax_pos[0,1])
-                # use about 4.15/inch density of arrows
-                x_num = round(4.15*wdth_inch)
-                y_num = round(4.15*height_inch)
-                M = int(round(len(self.envir.flow.flow_points[0])/x_num))
-                N = int(round(len(self.envir.flow.flow_points[1])/y_num))
-                # get worse case max velocity vector for scaling
-                max_u, max_v = self.envir.flow.fmax
-                max_mag = np.linalg.norm(np.array([max_u,max_v]))
-                if self.envir.flow.flow_times is not None:
-                    flow = self.envir.interpolate_temporal_flow(t_index=loc)
-                else:
-                    flow = self.envir.flow
+                M, N = source.resolve_strides(self._quiver_strides(fig, ax))
+                # worst-case velocity vector, for scaling. From the archive's
+                # per-dump extrema where there is one: fmax covers all the data
+                # seen so far, so under dynamic loading it depends on how far
+                # the run had got when plotting began.
+                max_mag = source.quiver_scale
+                u, v = source.quiver(time)
                 ax.quiver(self.envir.flow.flow_points[0][::M], self.envir.flow.flow_points[1][::N],
-                          flow[0][::M,::N].T, flow[1][::M,::N].T, 
-                          scale=max_mag*5, alpha=0.2)
+                          u.T, v.T, scale=max_mag*5, alpha=0.2)
 
             # ibmesh (if moving and not a current time - otherwise, done already)
             if mesh_col is not None and self.envir.ibmesh.ndim == 4 and t is not None:
-                ibmesh = self.interpolate_temporal_mesh(time=t)
+                ibmesh = self.envir.interpolate_temporal_mesh(time=time)
                 mesh_col.set_segments(ibmesh)
 
             # Create marker headings to add to scatter
@@ -2225,11 +2213,11 @@ class Swarm:
             if plot_heading:
                 line_codes = np.array([mPath.MOVETO, mPath.LINETO])
                 codes = np.concatenate([circle.codes, line_codes])
-                if 'angle' in self.props:
-                    angles = self.props['angle']
+                if 'angle' in props:
+                    angles = props['angle']
                 else:
                     # this is defined even for (0,0) by convention
-                    angles = np.arctan2(self.velocities[:,1], self.velocities[:,0])
+                    angles = np.arctan2(velocities[:,1], velocities[:,0])
                 for angle in angles:
                     if ma.is_masked(angle):
                         paths.append(circle)
@@ -2245,14 +2233,9 @@ class Swarm:
                 paths.append(circle)
 
             # scatter plot
-            if 'color' in self.props:
-                if self.props_history is not None and loc is not None:
-                    # Get color from history
-                    color = self.props_history[loc]['color']
-                else:
-                    color = self.props['color']
+            if 'color' in props:
                 sc = ax.scatter(positions[:,0], positions[:,1], 
-                           label=self.shared_props['name'], c=color)
+                           label=self.shared_props['name'], c=props['color'])
             else:
                 sc = ax.scatter(positions[:,0], positions[:,1], 
                            label=self.shared_props['name'], 
@@ -2351,14 +2334,9 @@ class Swarm:
                 ax.view_init(elev, azim)
 
             # scatter plot and time text
-            if 'color' in self.props:
-                if self.props_history is not None and loc is not None:
-                    # Get color from history
-                    color = self.props_history[loc]['color']
-                else:
-                    color = self.props['color']
+            if 'color' in props:
                 ax.scatter(positions[:,0], positions[:,1], positions[:,2],
-                           label=self.shared_props['name'], c=color)
+                           label=self.shared_props['name'], c=props['color'])
             else:
                 ax.scatter(positions[:,0], positions[:,1], positions[:,2],
                            label=self.shared_props['name'], 
@@ -2490,6 +2468,33 @@ class Swarm:
 
 
 
+    def _quiver_strides(self, fig, ax):
+        '''Grid downsampling factors giving a legible arrow density.
+
+        About 4.15 arrows per inch of axis, so it depends on the figure size and
+        the axis extent. Where a plot draws arrows stored by a recording, the
+        grid was fixed at record time instead and this is what it is compared
+        against (see ``_frames.FrameSource.resolve_strides``).
+
+        Returns
+        -------
+        tuple of int, at least 1 in each direction
+        '''
+
+        ax_pos = ax.get_position().get_points()
+        fig_size = fig.get_size_inches()
+        wdth_inch = fig_size[0]*(ax_pos[1,0]-ax_pos[0,0])
+        height_inch = fig_size[1]*(ax_pos[1,1]-ax_pos[0,1])
+        x_num = round(4.15*wdth_inch)
+        y_num = round(4.15*height_inch)
+        points = self.envir.flow.flow_points
+        # At least 1: more arrows than grid points cannot be drawn, and a
+        #   stride of zero raises inside the slice.
+        return (max(1, int(round(len(points[0])/x_num))),
+                max(1, int(round(len(points[1])/y_num))))
+
+
+
     def _select_frames(self, fps, playback_rate):
         '''Choose which recorded states of the simulation become frames.
 
@@ -2519,8 +2524,11 @@ class Swarm:
 
         # states available to draw: the position history, then the present.
         # frame index n means pos_history[n] at time_history[n], with index
-        # len(pos_history) meaning the present positions at envir.time.
-        n_hist = len(self.pos_history)
+        # len(pos_history) meaning the present positions at envir.time. Shared
+        # with _frames.FrameSource, so the two agree on what a state is.
+        times = _frames._live_times(self)
+        n_states = len(self.pos_history) + 1
+
         if self.envir.time is None:
             # A time step raised partway through, so the present positions hold
             # a step applied to only some agents (see move()). The histories are
@@ -2530,15 +2538,11 @@ class Swarm:
                           "through, so the current agent positions are "
                           "incomplete and are left out. Plotting the recorded "
                           "history only.", stacklevel=3)
-            times = np.asarray(self.envir.time_history[:n_hist], dtype=float)
-        elif len(self.envir.time_history) < n_hist:
+        if times is None:
             # histories out of step (e.g. move(update_time=False) without a
             # matching environmental time update). there are no reliable times
             # to select against, so fall back on a frame per recorded state.
-            return np.arange(n_hist+1)
-        else:
-            times = np.concatenate((self.envir.time_history[:n_hist],
-                                    (self.envir.time,)))
+            return np.arange(n_states)
         if len(times) < 2:
             return np.arange(len(times))
 
@@ -2663,11 +2667,23 @@ class Swarm:
             In 3D plots, the azimuthal viewing angle. Defaults to -60.
         elev : float, optional
             In 3D plots, the elevation viewing angle. Defaults to 30.
+
+        Notes
+        -----
+        Where the Environment has recorded a run archive, the fluid backdrop is
+        served from it rather than read from the velocity field, so replaying a
+        dynamically loaded run costs no fluid reads. A backdrop the archive does
+        not hold is refused; without an archive, replaying re-reads the dataset
+        and says so. See :meth:`planktos.Environment.record`.
         '''
+
+        source = _frames.FrameSource(self, fluid=fluid, clip=clip)
 
         if len(self.envir.time_history) == 0:
             print('No position history! Plotting current position...')
-            self.plot()
+            self.plot(dist=dist, fluid=fluid, clip=clip, figsize=figsize,
+                      circ_rad=circ_rad, plot_heading=plot_heading,
+                      azim=azim, elev=elev)
             return
 
         if movie_filename is not None:
@@ -2678,6 +2694,10 @@ class Swarm:
         if frames is None:
             frames = self._select_frames(fps, playback_rate)
         n0 = frames[0]
+        source.warn_if_restreaming([source.time(n) for n in frames])
+        # the first frame's state, which the figure is built around
+        pos_n0 = source.positions(n0)
+        props_n0 = source.props(n0)
 
         if isinstance(downsamp, int):
             downsamp = range(downsamp)
@@ -2720,36 +2740,29 @@ class Swarm:
 
             # fluid visualization
             if fluid == 'vort' and self.envir.flow is not None:
-                # Limits start symmetric and are grown by each frame; see
-                # _vorticity_norm. Without a clip the placeholder is (-1, 1),
-                # which the first frame drawn replaces.
-                norm = _vorticity_norm(np.zeros(1), clip)
+                # Limits are symmetric about zero; see _vorticity_norm. Without
+                # one fixed up front the placeholder is (-1, 1) and each frame
+                # grows it, so where the scale ends up depends on how much of
+                # the run was drawn. An archive supplies a global limit instead.
+                norm = _vorticity_norm(np.zeros(1), source.vort_clip)
                 fld = ax.pcolormesh(self.envir.flow.flow_points[0], self.envir.flow.flow_points[1],
                            np.zeros(self.envir.flow.fshape[1:]).T, shading='gouraud',
                            cmap='RdBu', norm=norm, alpha=0.9)
             elif fluid == 'quiver' and self.envir.flow is not None:
-                # get dimensions of axis to estimate a decent quiver density
-                ax_pos = ax.get_position().get_points()
-                fig_size = fig.get_size_inches()
-                wdth_inch = fig_size[0]*(ax_pos[1,0]-ax_pos[0,0])
-                height_inch = fig_size[1]*(ax_pos[1,1]-ax_pos[0,1])
-                # use about 4.15/inch density of arrows
-                x_num = round(4.15*wdth_inch)
-                y_num = round(4.15*height_inch)
-                M = round(len(self.envir.flow.flow_points[0])/x_num)
-                N = round(len(self.envir.flow.flow_points[1])/y_num)
-                # get worse case max velocity vector for scaling
-                max_u, max_v = self.envir.flow.fmax
-                max_mag = np.linalg.norm(np.array([max_u,max_v]))
+                M, N = source.resolve_strides(self._quiver_strides(fig, ax))
                 x_pts = self.envir.flow.flow_points[0][::M]
                 y_pts = self.envir.flow.flow_points[1][::N]
                 fld = ax.quiver(x_pts, y_pts, np.zeros((len(y_pts),len(x_pts))),
                                 np.zeros((len(y_pts),len(x_pts))), 
-                                scale=max_mag*5, alpha=0.2)
+                                scale=source.quiver_scale*5, alpha=0.2)
 
-            # scatter plot
-            scat = ax.scatter([], [], label=self.shared_props['name'], 
-                              c=self.shared_props['color'])
+            # scatter plot. Per-agent colors live in props and are set on every
+            # frame, including the first; a shared color is set once, here.
+            if 'color' in self.props:
+                scat = ax.scatter([], [], label=self.shared_props['name'])
+            else:
+                scat = ax.scatter([], [], label=self.shared_props['name'],
+                                  c=self.shared_props['color'])
             
             # set up marker headings to be added to the scatter plots
             circle = mPath.circle(radius=circ_rad)
@@ -2781,8 +2794,8 @@ class Swarm:
 
             if dist == 'hist':
                 # histograms
-                data_x = self.pos_history[n0][:,0].compressed()
-                data_y = self.pos_history[n0][:,1].compressed()
+                data_x = pos_n0[:,0].compressed()
+                data_y = pos_n0[:,1].compressed()
                 bins_x = np.linspace(0, self.envir.L[0], 26)
                 bins_y = np.linspace(0, self.envir.L[1], 26)
                 n_x, bins_x, patches_x = axHistx.hist(data_x, bins=bins_x)
@@ -2805,8 +2818,8 @@ class Swarm:
                 xmesh = np.linspace(0, self.envir.L[0], 1000)
                 ymesh = np.linspace(0, self.envir.L[1], 1000)
                 # deal with point sources
-                pos_x = self.pos_history[n0][:,0].compressed()
-                pos_y = self.pos_history[n0][:,1].compressed()
+                pos_x = pos_n0[:,0].compressed()
+                pos_y = pos_n0[:,1].compressed()
                 try:
                     if len(pos_x) > 1:
                         x_density = stats.gaussian_kde(pos_x, fac_x)
@@ -2857,59 +2870,43 @@ class Swarm:
             #   plotting, and not the length of the masked array in total. So, 
             #   we have to check for masking and adjust appropriately.
             if downsamp is None:
-                if 'color' in self.props:
-                    if self.props_history is not None:
-                        # Get color from history
-                        if ma.is_masked(self.pos_history[n0]):
-                            not_msk = ~self.pos_history[n0][:,0].mask
-                            color = self.props_history[n0].loc[not_msk, 'color']
-                        else:
-                            color = self.props_history[n0]['color']
+                if 'color' in props_n0:
+                    if ma.is_masked(pos_n0):
+                        not_msk = ~pos_n0[:,0].mask
+                        color = props_n0.loc[not_msk, 'color']
                     else:
-                        if ma.is_masked(self.pos_history[n0]):
-                            not_msk = ~self.pos_history[n0][:,0].mask
-                            color = self.props.loc[not_msk, 'color']
-                        else:
-                            color = self.props['color']
-                    scat = ax.scatter(self.pos_history[n0][:,0], self.pos_history[n0][:,1],
-                                    self.pos_history[n0][:,2], 
+                        color = props_n0['color']
+                    scat = ax.scatter(pos_n0[:,0], pos_n0[:,1],
+                                    pos_n0[:,2], 
                                     label=self.shared_props['name'],
                                     c=color, animated=True)
                 else:
-                    scat = ax.scatter(self.pos_history[n0][:,0], self.pos_history[n0][:,1],
-                                    self.pos_history[n0][:,2], 
+                    scat = ax.scatter(pos_n0[:,0], pos_n0[:,1],
+                                    pos_n0[:,2], 
                                     label=self.shared_props['name'],
                                     color=self.shared_props['color'], animated=True)
             else:
-                if 'color' in self.props:
-                    if self.props_history is not None:
-                        # Get color from history
-                        if ma.is_masked(self.pos_history[n0][downsamp,0]):
-                            not_msk = ~self.pos_history[n0][downsamp,0].mask
-                            color = self.props_history[n0].loc[downsamp,'color'][not_msk]
-                        else:
-                            color = self.props_history[n0].loc[downsamp,'color']
+                if 'color' in props_n0:
+                    if ma.is_masked(pos_n0[downsamp,0]):
+                        not_msk = ~pos_n0[downsamp,0].mask
+                        color = props_n0.loc[downsamp,'color'][not_msk]
                     else:
-                        if ma.is_masked(self.pos_history[n0][:,0]):
-                            not_msk = ~self.pos_history[n0][:,0].mask
-                            color = self.props.loc[downsamp,'color'][not_msk]
-                        else:
-                            color = self.props.loc[downsamp,'color']
-                    scat = ax.scatter(self.pos_history[n0][downsamp,0],
-                                    self.pos_history[n0][downsamp,1],
-                                    self.pos_history[n0][downsamp,2],
+                        color = props_n0.loc[downsamp,'color']
+                    scat = ax.scatter(pos_n0[downsamp,0],
+                                    pos_n0[downsamp,1],
+                                    pos_n0[downsamp,2],
                                     label=self.shared_props['name'], 
                                     color=color, animated=True)
                 else:
-                    scat = ax.scatter(self.pos_history[n0][downsamp,0],
-                                    self.pos_history[n0][downsamp,1],
-                                    self.pos_history[n0][downsamp,2],
+                    scat = ax.scatter(pos_n0[downsamp,0],
+                                    pos_n0[downsamp,1],
+                                    pos_n0[downsamp,2],
                                     label=self.shared_props['name'], 
                                     color=self.shared_props['color'], animated=True)
 
             # textual info
             time_text = ax.text2D(0.02, 1, 'time = {:.2f}'.format(
-                                  self.envir.time_history[n0]),
+                                  source.time(n0)),
                                   transform=ax.transAxes, animated=True,
                                   verticalalignment='top', fontsize=12)
             perc_left, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
@@ -2950,9 +2947,9 @@ class Swarm:
 
             if dist == 'hist':
                 # histograms
-                data_x = self.pos_history[n0][:,0].compressed()
-                data_y = self.pos_history[n0][:,1].compressed()
-                data_z = self.pos_history[n0][:,2].compressed()
+                data_x = pos_n0[:,0].compressed()
+                data_y = pos_n0[:,1].compressed()
+                data_z = pos_n0[:,2].compressed()
                 bins_x = np.linspace(0, self.envir.L[0], 26)
                 bins_y = np.linspace(0, self.envir.L[1], 26)
                 bins_z = np.linspace(0, self.envir.L[2], 26)
@@ -2981,9 +2978,9 @@ class Swarm:
                 ymesh = np.linspace(0, self.envir.L[1], 1000)
                 zmesh = np.linspace(0, self.envir.L[2], 1000)
                 # deal with point sources
-                pos_x = self.pos_history[n0][:,0].compressed()
-                pos_y = self.pos_history[n0][:,1].compressed()
-                pos_z = self.pos_history[n0][:,2].compressed()
+                pos_x = pos_n0[:,0].compressed()
+                pos_y = pos_n0[:,1].compressed()
+                pos_z = pos_n0[:,2].compressed()
                 try:
                     if len(pos_x) > 1:
                         x_density = stats.gaussian_kde(pos_x, fac_x)
@@ -3039,540 +3036,277 @@ class Swarm:
         # animation function. Called sequentially
         angle_props_warned = [False]
         def animate(n):
-            if n < len(self.pos_history):
-                time_text.set_text('time = {:.2f}'.format(self.envir.time_history[n]))
-                if not DIM3:
-                    # 2D
-                    perc_left, avg_spd_x, avg_spd_y, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
-                        self._calc_basic_stats(DIM3=False, t_indx=n)
-                    stats_text.set_text('{:.1f}% remain\n'.format(perc_left)+
-                         '\n  ------ Info ------\n'+
-                         r'Agent $|\overline{v}|$'+': {:.2g} {}/s\n'.format(np.linalg.norm(avg_swrm_vel), self.envir.units)+
-                         r'Agent $\overline{|v|}$'+': {:.2g} $\\pm$ {:.2g} {}/s\n'.format(avg_swrm_spd, std_swrm_spd, self.envir.units))
-                    x_text.set_text(r'Fluid $\overline{v}_x$'+': {:.2g} \n'.format(avg_spd_x)+
-                         r'Agent $\overline{v}_x$'+': {:.2g}'.format(avg_swrm_vel[0]))
-                    y_text.set_text(r'Fluid $\overline{v}_y$'+': {:.2g} \n'.format(avg_spd_y)+
-                         r'Agent $\overline{v}_y$'+': {:.2g}'.format(avg_swrm_vel[1]))
-                    if fluid == 'vort' and self.envir.flow is not None:
-                        vort = self.envir.get_vorticity(t_indx=n)
-                        fld.set_array(vort.T)
-                        # NOT autoscale(): it rescales to this frame's own
-                        # min/max, which discards any clip the caller asked for
-                        # and moves zero off the white centre of RdBu, differently
-                        # every frame. That was the background flashing.
-                        fld.norm = _vorticity_norm(vort, clip, fld.norm)
-                        fld.changed()
-                    elif fluid == 'quiver' and self.envir.flow is not None:
-                        if self.envir.flow.flow_times is not None:
-                            flow = self.envir.interpolate_temporal_flow(t_index=n)
-                            fld.set_UVC(flow[0][::M,::N].T, flow[1][::M,::N].T)
+            # Every frame reads its state from the source. That is why there is
+            # no separate final-frame branch: working live the last state IS
+            # the present, and working from an archive there is no present.
+            time = source.time(n)
+            positions = source.positions(n)
+            velocities = source.velocities(n)
+            frame_props = source.props(n)
+            time_text.set_text('time = {:.2f}'.format(time))
+            if not DIM3:
+                # 2D
+                perc_left, avg_spd_x, avg_spd_y, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
+                    self._calc_basic_stats(DIM3=False, t_indx=n)
+                stats_text.set_text('{:.1f}% remain\n'.format(perc_left)+
+                     '\n  ------ Info ------\n'+
+                     r'Agent $|\overline{v}|$'+': {:.2g} {}/s\n'.format(np.linalg.norm(avg_swrm_vel), self.envir.units)+
+                     r'Agent $\overline{|v|}$'+': {:.2g} $\\pm$ {:.2g} {}/s\n'.format(avg_swrm_spd, std_swrm_spd, self.envir.units))
+                x_text.set_text(r'Fluid $\overline{v}_x$'+': {:.2g} \n'.format(avg_spd_x)+
+                     r'Agent $\overline{v}_x$'+': {:.2g}'.format(avg_swrm_vel[0]))
+                y_text.set_text(r'Fluid $\overline{v}_y$'+': {:.2g} \n'.format(avg_spd_y)+
+                     r'Agent $\overline{v}_y$'+': {:.2g}'.format(avg_swrm_vel[1]))
+                if fluid == 'vort' and self.envir.flow is not None:
+                    vort = source.vorticity(time)
+                    fld.set_array(vort.T)
+                    # NOT autoscale(): it rescales to this frame's own
+                    # min/max, which discards any clip the caller asked for
+                    # and moves zero off the white centre of RdBu, differently
+                    # every frame. That was the background flashing.
+                    fld.norm = _vorticity_norm(vort, source.vort_clip, fld.norm)
+                    fld.changed()
+                elif fluid == 'quiver' and self.envir.flow is not None:
+                    u, v = source.quiver(time)
+                    fld.set_UVC(u.T, v.T)
+                warning_msg = "Using velocity for heading markers "+\
+                              "and not the 'angles' property because "+\
+                              "the property history was not recorded."
+                if mesh_col is not None and self.envir.ibmesh.ndim == 4:
+                    ibmesh = self.envir.interpolate_temporal_mesh(time=time)
+                    mesh_col.set_segments(ibmesh)
+                if downsamp is None:
+                    scat.set_offsets(positions)
+                    if 'color' in frame_props:
+                        scat.set_color(frame_props['color'])
+                    # Grab angles for heading markers
+                    if 'angle' in frame_props and plot_heading:
+                        if self.props_history is not None:
+                            angles = frame_props['angle']
                         else:
-                            fld.set_UVC(self.envir.flow[0][::M,::N].T, self.envir.flow[1][::M,::N].T)
-                    warning_msg = "Using velocity for heading markers "+\
-                                  "and not the 'angles' property because "+\
-                                  "the property history was not recorded."
-                    if mesh_col is not None and self.envir.ibmesh.ndim == 4:
-                        ibmesh = self.envir.interpolate_temporal_mesh(time=self.envir.time_history[n])
-                        mesh_col.set_segments(ibmesh)
-                    if downsamp is None:
-                        scat.set_offsets(self.pos_history[n])
-                        if 'color' in self.props:
-                            if self.props_history is not None:
-                                scat.set_color(self.props_history[n]['color'])
-                            else:
-                                scat.set_color(self.props['color'])
-                        # Grab angles for heading markers
-                        if 'angle' in self.props and plot_heading:
-                            if self.props_history is not None:
-                                angles = self.props_history[n]['angle']
-                            else:
-                                if not angle_props_warned[0]:
-                                    warnings.warn(warning_msg, stacklevel=9)
-                                angle_props_warned[0] = True
-                                angles = np.arctan2(self.vel_history[n][:,1], 
-                                                    self.vel_history[n][:,0])
-                        elif plot_heading:
-                            # this is defined even for (0,0) by convention
-                            angles = np.arctan2(self.vel_history[n][:,1], 
-                                                self.vel_history[n][:,0])
-                    else:
-                        scat.set_offsets(self.pos_history[n][downsamp,:])
-                        if 'color' in self.props:
-                            if self.props_history is not None:
-                                scat.set_color(self.props_history[n].loc[downsamp,'color'])
-                            else:
-                                scat.set_color(self.props.loc[downsamp,'color'])
-                        # Grab angles for heading markers
-                        if 'angle' in self.props and plot_heading:
-                            if self.props_history is not None:
-                                angles = self.props.loc[downsamp,'angle']
-                            else:
-                                if not angle_props_warned[0]:
-                                    warnings.warn(warning_msg, stacklevel=9)
-                                angle_props_warned[0] = True
-                                angles = np.arctan2(self.vel_history[n][downsamp,1], 
-                                                    self.vel_history[n][downsamp,0])
-                        elif plot_heading:
-                            # this is defined even for (0,0) by convention
-                            angles = np.arctan2(self.vel_history[n][downsamp,1], 
-                                                self.vel_history[n][downsamp,0])
-                    # set heading markers
-                    if plot_heading:
-                        paths = []
-                        for angle in angles:
-                            if ma.is_masked(angle):
-                                paths.append(circle)
-                            else:
-                                # make the heading marker stick out by one diameter
-                                line_verts = np.array([[0,0],[circ_rad*3*np.cos(angle),
-                                                            circ_rad*3*np.sin(angle)]])
-                                # combine the circle and line vertices
-                                verts = np.concatenate([circle.vertices, line_verts])
-                                # append to path list
-                                paths.append(mPath(verts, codes))
-                        scat.set_paths(paths)
-                    else:
-                        scat.set_paths([circle])
-                    
-                    if dist == 'hist':
-                        n_x, _ = np.histogram(self.pos_history[n][:,0].compressed(), bins_x)
-                        n_y, _ = np.histogram(self.pos_history[n][:,1].compressed(), bins_y)
-                        for rect, h in zip(patches_x, n_x):
-                            rect.set_height(h)
-                        for rect, h in zip(patches_y, n_y):
-                            rect.set_width(h)
-                        if fluid == 'vort' and self.envir.flow is not None:
-                            if mesh_col is not None and self.envir.ibmesh.ndim == 4:
-                                return [mesh_col, fld, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
-                            else:
-                                return [fld, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
-                        else:
-                            if mesh_col is not None and self.envir.ibmesh.ndim == 4:
-                                return [mesh_col, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
-                            else:
-                                return [scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
-                    else:
-                        pos_x = self.pos_history[n][:,0].compressed()
-                        pos_y = self.pos_history[n][:,1].compressed()
-                        try:
-                            if len(pos_x) > 1:
-                                x_density = stats.gaussian_kde(pos_x, fac_x)
-                                x_density = x_density(xmesh)
-                            elif len(pos_x) == 1:
-                                raise np.linalg.LinAlgError
-                            else:
-                                x_density = np.zeros_like(xmesh)
-                        except np.linalg.LinAlgError:
-                            idx = (np.abs(xmesh - pos_x[0])).argmin()
-                            x_density = np.zeros_like(xmesh); x_density[idx] = 1
-                        try:
-                            if len(pos_y) > 1:
-                                y_density = stats.gaussian_kde(pos_y, fac_y)
-                                y_density = y_density(ymesh)
-                            elif len(pos_y) == 1:
-                                raise np.linalg.LinAlgError
-                            else:
-                                y_density = np.zeros_like(ymesh)
-                        except np.linalg.LinAlgError:
-                            idy = (np.abs(ymesh - pos_y[0])).argmin()
-                            y_density = np.zeros_like(ymesh); y_density[idy] = 1
-                        xdens_plt.set_ydata(x_density)
-                        ydens_plt.set_xdata(y_density)
-                        if np.max(xdens_plt.get_ydata()) != 0:
-                            axHistx.set_ylim(bottom=0, top=np.max(xdens_plt.get_ydata()))
-                        else:
-                            axHistx.set_ylim(bottom=0)
-                        if np.max(ydens_plt.get_xdata()) != 0:
-                            axHisty.set_xlim(left=0, right=np.max(ydens_plt.get_xdata()))
-                        else:
-                            axHisty.set_xlim(left=0)
-                        if fluid == 'vort' and self.envir.flow is not None:
-                            if mesh_col is not None and self.envir.ibmesh.ndim == 4:
-                                return [mesh_col, fld, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
-                            else:
-                                return [fld, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
-                        else:
-                            if mesh_col is not None and self.envir.ibmesh.ndim == 4:
-                                return [mesh_col, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
-                            else:
-                                return [scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
-                    
+                            if not angle_props_warned[0]:
+                                warnings.warn(warning_msg, stacklevel=9)
+                            angle_props_warned[0] = True
+                            angles = np.arctan2(velocities[:,1], 
+                                                velocities[:,0])
+                    elif plot_heading:
+                        # this is defined even for (0,0) by convention
+                        angles = np.arctan2(velocities[:,1], 
+                                            velocities[:,0])
                 else:
-                    # 3D
-                    perc_left, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
-                        self._calc_basic_stats(DIM3=True, t_indx=n)
-                    # print(n)
-                    # print(self.pos_history[n].all() is ma.masked)
-                    flow_text.set_text(r'Agent $|\overline{v}|$'+': {:.2g} {}/s\n'.format(
-                                       np.linalg.norm(avg_swrm_vel), self.envir.units)+
-                                       r'Agent $\overline{|v|}$'+': {:.2g} $\\pm$ {:.2g} {}/s'.format(
-                                       avg_swrm_spd, std_swrm_spd, self.envir.units))
-                    perc_text.set_text('{:.1f}% remain\n'.format(perc_left))
-                    x_text.set_text(r'Fluid $\overline{v}_x$'+': {:.2g} {}/s\n'.format(
-                                    avg_spd_x, self.envir.units)+
-                                    r'Agent $\overline{v}_x$'+': {:.2g} {}/s'.format(
-                                    avg_swrm_vel[0], self.envir.units))
-                    y_text.set_text(r'Fluid $\overline{v}_y$'+': {:.2g} {}/s\n'.format(
-                                    avg_spd_y, self.envir.units)+
-                                    r'Agent $\overline{v}_y$'+': {:.2g} {}/s'.format(
-                                    avg_swrm_vel[1], self.envir.units))
-                    z_text.set_text(r'Fluid $\overline{v}_z$'+': {:.2g} {}/s\n'.format(
-                                    avg_spd_z, self.envir.units)+
-                                    r'Agent $\overline{v}_z$'+': {:.2g} {}/s'.format(
-                                    avg_swrm_vel[2], self.envir.units))
-                    # UNFORTUNATELY, 3D matplotlib plotting is very weird about masked 
-                    #   arrays. The implementation does not parallel 2D: it wants a color 
-                    #   list that is the same length as the number of points it will be 
-                    #   plotting, and not the length of the masked array in total. So, 
-                    #   we have to check for masking and adjust appropriately.
-                    if downsamp is None:
-                        scat._offsets3d = (np.ma.ravel(self.pos_history[n][:,0].compressed()),
-                                        np.ma.ravel(self.pos_history[n][:,1].compressed()),
-                                        np.ma.ravel(self.pos_history[n][:,2].compressed()))
-                        if 'color' in self.props:
-                            if self.props_history is not None:
-                                if ma.is_masked(self.pos_history[n]):
-                                    not_msk = ~self.pos_history[n][:,0].mask
-                                    scat.set_color(self.props_history[n].loc[not_msk,'color'])
-                                else:
-                                    scat.set_color(self.props_history[n]['color'])
-                            else:
-                                if ma.is_masked(self.pos_history[n]):
-                                    not_msk = ~self.pos_history[n][:,0].mask
-                                    scat.set_color(self.props.loc[not_msk,'color'])
-                                else:
-                                    scat.set_color(self.props['color'])
+                    scat.set_offsets(positions[downsamp,:])
+                    if 'color' in frame_props:
+                        scat.set_color(frame_props.loc[downsamp,'color'])
+                    # Grab angles for heading markers
+                    if 'angle' in frame_props and plot_heading:
+                        if self.props_history is not None:
+                            angles = frame_props.loc[downsamp,'angle']
+                        else:
+                            if not angle_props_warned[0]:
+                                warnings.warn(warning_msg, stacklevel=9)
+                            angle_props_warned[0] = True
+                            angles = np.arctan2(velocities[downsamp,1], 
+                                                velocities[downsamp,0])
+                    elif plot_heading:
+                        # this is defined even for (0,0) by convention
+                        angles = np.arctan2(velocities[downsamp,1], 
+                                            velocities[downsamp,0])
+                # set heading markers
+                if plot_heading:
+                    paths = []
+                    for angle in angles:
+                        if ma.is_masked(angle):
+                            paths.append(circle)
+                        else:
+                            # make the heading marker stick out by one diameter
+                            line_verts = np.array([[0,0],[circ_rad*3*np.cos(angle),
+                                                        circ_rad*3*np.sin(angle)]])
+                            # combine the circle and line vertices
+                            verts = np.concatenate([circle.vertices, line_verts])
+                            # append to path list
+                            paths.append(mPath(verts, codes))
+                    scat.set_paths(paths)
+                else:
+                    scat.set_paths([circle])
+                
+                if dist == 'hist':
+                    n_x, _ = np.histogram(positions[:,0].compressed(), bins_x)
+                    n_y, _ = np.histogram(positions[:,1].compressed(), bins_y)
+                    for rect, h in zip(patches_x, n_x):
+                        rect.set_height(h)
+                    for rect, h in zip(patches_y, n_y):
+                        rect.set_width(h)
+                    if fluid == 'vort' and self.envir.flow is not None:
+                        if mesh_col is not None and self.envir.ibmesh.ndim == 4:
+                            return [mesh_col, fld, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
+                        else:
+                            return [fld, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
                     else:
-                        scat._offsets3d = (np.ma.ravel(self.pos_history[n][downsamp,0].compressed()),
-                                        np.ma.ravel(self.pos_history[n][downsamp,1].compressed()),
-                                        np.ma.ravel(self.pos_history[n][downsamp,2].compressed()))
-                        if 'color' in self.props:
-                            if self.props_history is not None:
-                                if ma.is_masked(self.pos_history[n][downsamp,0]):
-                                    not_msk = ~self.pos_history[n][downsamp,0].mask
-                                    scat.set_color(self.props_history[n].loc[downsamp,'color'][not_msk])
-                                else:
-                                    scat.set_color(self.props_history[n].loc[downsamp,'color'])
-                            else:
-                                if ma.is_masked(self.pos_history[n][downsamp,0]):
-                                    not_msk = ~self.pos_history[n][downsamp,0].mask
-                                    scat.set_color(self.props.loc[downsamp,'color'][not_msk])
-                                else:
-                                    scat.set_color(self.props.loc[downsamp,'color'])
-                    if dist == 'hist':
-                        n_x, _ = np.histogram(self.pos_history[n][:,0].compressed(), bins_x)
-                        n_y, _ = np.histogram(self.pos_history[n][:,1].compressed(), bins_y)
-                        n_z, _ = np.histogram(self.pos_history[n][:,2].compressed(), bins_z)
-                        for rect, h in zip(patches_x, n_x):
-                            rect.set_height(h)
-                        for rect, h in zip(patches_y, n_y):
-                            rect.set_height(h)
-                        for rect, h in zip(patches_z, n_z):
-                            rect.set_height(h)
-                        fig.canvas.draw()
-                        return [scat, time_text, flow_text, perc_text, x_text, 
-                            y_text, z_text] + list(patches_x) + list(patches_y) + list(patches_z)
+                        if mesh_col is not None and self.envir.ibmesh.ndim == 4:
+                            return [mesh_col, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
+                        else:
+                            return [scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
+                else:
+                    pos_x = positions[:,0].compressed()
+                    pos_y = positions[:,1].compressed()
+                    try:
+                        if len(pos_x) > 1:
+                            x_density = stats.gaussian_kde(pos_x, fac_x)
+                            x_density = x_density(xmesh)
+                        elif len(pos_x) == 1:
+                            raise np.linalg.LinAlgError
+                        else:
+                            x_density = np.zeros_like(xmesh)
+                    except np.linalg.LinAlgError:
+                        idx = (np.abs(xmesh - pos_x[0])).argmin()
+                        x_density = np.zeros_like(xmesh); x_density[idx] = 1
+                    try:
+                        if len(pos_y) > 1:
+                            y_density = stats.gaussian_kde(pos_y, fac_y)
+                            y_density = y_density(ymesh)
+                        elif len(pos_y) == 1:
+                            raise np.linalg.LinAlgError
+                        else:
+                            y_density = np.zeros_like(ymesh)
+                    except np.linalg.LinAlgError:
+                        idy = (np.abs(ymesh - pos_y[0])).argmin()
+                        y_density = np.zeros_like(ymesh); y_density[idy] = 1
+                    xdens_plt.set_ydata(x_density)
+                    ydens_plt.set_xdata(y_density)
+                    if np.max(xdens_plt.get_ydata()) != 0:
+                        axHistx.set_ylim(bottom=0, top=np.max(xdens_plt.get_ydata()))
                     else:
-                        pos_x = self.pos_history[n][:,0].compressed()
-                        pos_y = self.pos_history[n][:,1].compressed()
-                        pos_z = self.pos_history[n][:,2].compressed()
-                        try:
-                            if len(pos_x) > 1:
-                                x_density = stats.gaussian_kde(pos_x, fac_x)
-                                x_density = x_density(xmesh)
-                            elif len(pos_x) == 1:
-                                raise np.linalg.LinAlgError
-                            else:
-                                x_density = np.zeros_like(xmesh)
-                        except np.linalg.LinAlgError:
-                            idx = (np.abs(xmesh - pos_x[0])).argmin()
-                            x_density = np.zeros_like(xmesh); x_density[idx] = 1
-                        try:
-                            if len(pos_y) > 1:
-                                y_density = stats.gaussian_kde(pos_y, fac_y)
-                                y_density = y_density(ymesh)
-                            elif len(pos_y) == 1:
-                                raise np.linalg.LinAlgError
-                            else:
-                                y_density = np.zeros_like(ymesh)
-                        except np.linalg.LinAlgError:
-                            idy = (np.abs(ymesh - pos_y[0])).argmin()
-                            y_density = np.zeros_like(ymesh); y_density[idy] = 1
-                        try:
-                            if len(pos_z) > 1:
-                                z_density = stats.gaussian_kde(pos_z, fac_z)
-                                z_density = z_density(zmesh)
-                            elif len(pos_z) == 1:
-                                raise np.linalg.LinAlgError
-                            else:
-                                z_density = np.zeros_like(zmesh)
-                        except np.linalg.LinAlgError:
-                            idz = (np.abs(zmesh - pos_z[0])).argmin()
-                            z_density = np.zeros_like(zmesh); z_density[idz] = 1
-                        xdens_plt.set_ydata(x_density)
-                        ydens_plt.set_ydata(y_density)
-                        zdens_plt.set_ydata(z_density)
-                        if np.max(xdens_plt.get_ydata()) != 0:
-                            axHistx.set_ylim(bottom=0, top=np.max(xdens_plt.get_ydata()))
+                        axHistx.set_ylim(bottom=0)
+                    if np.max(ydens_plt.get_xdata()) != 0:
+                        axHisty.set_xlim(left=0, right=np.max(ydens_plt.get_xdata()))
+                    else:
+                        axHisty.set_xlim(left=0)
+                    if fluid == 'vort' and self.envir.flow is not None:
+                        if mesh_col is not None and self.envir.ibmesh.ndim == 4:
+                            return [mesh_col, fld, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
                         else:
-                            axHistx.set_ylim(bottom=0)
-                        if np.max(ydens_plt.get_ydata()) != 0:
-                            axHisty.set_ylim(bottom=0, top=np.max(ydens_plt.get_ydata()))
+                            return [fld, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
+                    else:
+                        if mesh_col is not None and self.envir.ibmesh.ndim == 4:
+                            return [mesh_col, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
                         else:
-                            axHisty.set_ylim(bottom=0)
-                        if np.max(zdens_plt.get_ydata()) != 0:
-                            axHistz.set_ylim(bottom=0, top=np.max(zdens_plt.get_ydata()))
-                        else:
-                            axHistz.set_ylim(bottom=0)
-                        fig.canvas.draw()
-                        return [scat, time_text, flow_text, perc_text, x_text, 
-                                y_text, z_text, xdens_plt, ydens_plt, zdens_plt]
-                    
+                            return [scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
+                
             else:
-                time_text.set_text('time = {:.2f}'.format(self.envir.time))
-                if not DIM3:
-                    # 2D end
-                    perc_left, avg_spd_x, avg_spd_y, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
-                        self._calc_basic_stats(DIM3=False, t_indx=None)
-                    stats_text.set_text('{:.1f}% remain\n'.format(perc_left)+
-                         '\n  ------ Info ------\n'+
-                         r'Agent $|\overline{v}|$'+': {:.2g} {}/s\n'.format(np.linalg.norm(avg_swrm_vel), self.envir.units)+
-                         r'Agent $\overline{|v|}$'+': {:.2g} $\\pm$ {:.2g} {}/s\n'.format(avg_swrm_spd, std_swrm_spd, self.envir.units))
-                    x_text.set_text(r'Fluid $\overline{v}_x$'+': {:.2g} \n'.format(avg_spd_x)+
-                         r'Agent $\overline{v}_x$'+': {:.2g}'.format(avg_swrm_vel[0]))
-                    y_text.set_text(r'Fluid $\overline{v}_y$'+': {:.2g} \n'.format(avg_spd_y)+
-                         r'Agent $\overline{v}_y$'+': {:.2g}'.format(avg_swrm_vel[1]))
-                    if fluid == 'vort' and self.envir.flow is not None:
-                        vort = self.envir.get_vorticity()
-                        fld.set_array(vort.T)
-                        fld.norm = _vorticity_norm(vort, clip, fld.norm)
-                        fld.changed()
-                    elif fluid == 'quiver' and self.envir.flow is not None:
-                        if self.envir.flow.flow_times is not None:
-                            flow = self.envir.interpolate_temporal_flow()
-                            fld.set_UVC(flow[0][::M,::N].T, flow[1][::M,::N].T)
+                # 3D
+                perc_left, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
+                    self._calc_basic_stats(DIM3=True, t_indx=n)
+                # print(n)
+                # print(positions.all() is ma.masked)
+                flow_text.set_text(r'Agent $|\overline{v}|$'+': {:.2g} {}/s\n'.format(
+                                   np.linalg.norm(avg_swrm_vel), self.envir.units)+
+                                   r'Agent $\overline{|v|}$'+': {:.2g} $\\pm$ {:.2g} {}/s'.format(
+                                   avg_swrm_spd, std_swrm_spd, self.envir.units))
+                perc_text.set_text('{:.1f}% remain\n'.format(perc_left))
+                x_text.set_text(r'Fluid $\overline{v}_x$'+': {:.2g} {}/s\n'.format(
+                                avg_spd_x, self.envir.units)+
+                                r'Agent $\overline{v}_x$'+': {:.2g} {}/s'.format(
+                                avg_swrm_vel[0], self.envir.units))
+                y_text.set_text(r'Fluid $\overline{v}_y$'+': {:.2g} {}/s\n'.format(
+                                avg_spd_y, self.envir.units)+
+                                r'Agent $\overline{v}_y$'+': {:.2g} {}/s'.format(
+                                avg_swrm_vel[1], self.envir.units))
+                z_text.set_text(r'Fluid $\overline{v}_z$'+': {:.2g} {}/s\n'.format(
+                                avg_spd_z, self.envir.units)+
+                                r'Agent $\overline{v}_z$'+': {:.2g} {}/s'.format(
+                                avg_swrm_vel[2], self.envir.units))
+                # UNFORTUNATELY, 3D matplotlib plotting is very weird about masked 
+                #   arrays. The implementation does not parallel 2D: it wants a color 
+                #   list that is the same length as the number of points it will be 
+                #   plotting, and not the length of the masked array in total. So, 
+                #   we have to check for masking and adjust appropriately.
+                if downsamp is None:
+                    scat._offsets3d = (np.ma.ravel(positions[:,0].compressed()),
+                                    np.ma.ravel(positions[:,1].compressed()),
+                                    np.ma.ravel(positions[:,2].compressed()))
+                    if 'color' in frame_props:
+                        if ma.is_masked(positions):
+                            not_msk = ~positions[:,0].mask
+                            scat.set_color(frame_props.loc[not_msk,'color'])
                         else:
-                            fld.set_UVC(self.envir.flow[0][::M,::N].T, self.envir.flow[1][::M,::N].T)
-                    if mesh_col is not None and self.envir.ibmesh.ndim == 4:
-                        ibmesh = self.envir.interpolate_temporal_mesh()
-                        mesh_col.set_segments(ibmesh)
-                    if downsamp is None:
-                        scat.set_offsets(self.positions)
-                        if self.props_history is not None and 'color' in self.props:
-                            scat.set_color(self.props['color'])
-                        # Grab angles for heading markers
-                        if 'angle' in self.props and self.props_history is not None:
-                            angles = self.props['angle']
-                        else:
-                            # this is defined even for (0,0) by convention
-                            angles = np.arctan2(self.velocities[:,1], 
-                                                self.velocities[:,0])
-                    else:
-                        scat.set_offsets(self.positions[downsamp,:])
-                        if self.props_history is not None and 'color' in self.props:
-                            scat.set_color(self.props.loc[downsamp,'color'])
-                        # Grab angles for heading markers
-                        if 'angle' in self.props and self.props_history is not None:
-                            angles = self.props.loc[downsamp,'angle']
-                        else:
-                            # this is defined even for (0,0) by convention
-                            angles = np.arctan2(self.velocities[downsamp,1], 
-                                                self.velocities[downsamp,0])
-                    # set heading markers
-                    if plot_heading:
-                        paths = []
-                        for angle in angles:
-                            if ma.is_masked(angle):
-                                paths.append(circle)
-                            else:
-                                # make the heading marker stick out by one diameter
-                                line_verts = np.array([[0,0],[circ_rad*3*np.cos(angle),
-                                                            circ_rad*3*np.sin(angle)]])
-                                # combine the circle and line vertices
-                                verts = np.concatenate([circle.vertices, line_verts])
-                                # append to path list
-                                paths.append(mPath(verts, codes))
-                        scat.set_paths(paths)
-                    else:
-                        scat.set_paths([circle])
-                    if dist == 'hist':
-                        n_x, _ = np.histogram(self.positions[:,0].compressed(), bins_x)
-                        n_y, _ = np.histogram(self.positions[:,1].compressed(), bins_y)
-                        for rect, h in zip(patches_x, n_x):
-                            rect.set_height(h)
-                        for rect, h in zip(patches_y, n_y):
-                            rect.set_width(h)
-                        if fluid == 'vort' and self.envir.flow is not None:
-                            if mesh_col is not None and self.envir.ibmesh.ndim == 4:
-                                return [mesh_col, fld, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
-                            else:
-                                return [fld, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
-                        else:
-                            if mesh_col is not None and self.envir.ibmesh.ndim == 4:
-                                return [mesh_col, scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
-                            else:
-                                return [scat, time_text, stats_text, x_text, y_text] + list(patches_x) + list(patches_y)
-                    else:
-                        pos_x = self.positions[:,0].compressed()
-                        pos_y = self.positions[:,1].compressed()
-                        try:
-                            if len(pos_x) > 1:
-                                x_density = stats.gaussian_kde(pos_x, fac_x)
-                                x_density = x_density(xmesh)
-                            elif len(pos_x) == 1:
-                                raise np.linalg.LinAlgError
-                            else:
-                                x_density = np.zeros_like(xmesh)
-                        except np.linalg.LinAlgError:
-                            idx = (np.abs(xmesh - pos_x[0])).argmin()
-                            x_density = np.zeros_like(xmesh); x_density[idx] = 1
-                        try:
-                            if len(pos_y) > 1:
-                                y_density = stats.gaussian_kde(pos_y, fac_y)
-                                y_density = y_density(ymesh)
-                            elif len(pos_y) == 1:
-                                raise np.linalg.LinAlgError
-                            else:
-                                y_density = np.zeros_like(ymesh)
-                        except np.linalg.LinAlgError:
-                            idy = (np.abs(ymesh - pos_y[0])).argmin()
-                            y_density = np.zeros_like(ymesh); y_density[idy] = 1
-                        xdens_plt.set_ydata(x_density)
-                        ydens_plt.set_xdata(y_density)
-                        if np.max(xdens_plt.get_ydata()) != 0:
-                            axHistx.set_ylim(bottom=0, top=np.max(xdens_plt.get_ydata()))
-                        else:
-                            axHistx.set_ylim(bottom=0)
-                        if np.max(ydens_plt.get_xdata()) != 0:
-                            axHisty.set_xlim(left=0, right=np.max(ydens_plt.get_xdata()))
-                        else:
-                            axHisty.set_xlim(left=0)
-                        if fluid == 'vort' and self.envir.flow is not None:
-                            if mesh_col is not None and self.envir.ibmesh.ndim == 4:
-                                return [mesh_col, fld, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
-                            else:
-                                return [fld, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
-                        else:
-                            if mesh_col is not None and self.envir.ibmesh.ndim == 4:
-                                return [mesh_col, scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
-                            else:
-                                return [scat, time_text, stats_text, x_text, y_text, xdens_plt, ydens_plt]
-                    
+                            scat.set_color(frame_props['color'])
                 else:
-                    # 3D end
-                    perc_left, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
-                        self._calc_basic_stats(DIM3=True)
-                    flow_text.set_text(r'Agent $|\overline{v}|$'+': {:.2g} {}/s\n'.format(
-                                       np.linalg.norm(avg_swrm_vel), self.envir.units)+
-                                       r'Agent $\overline{|v|}$'+': {:.2g} $\\pm$ {:.2g} {}/s'.format(
-                                       avg_swrm_spd, std_swrm_spd, self.envir.units))
-                    perc_text.set_text('{:.1f}% remain\n'.format(perc_left))
-                    x_text.set_text(r'Fluid $\overline{v}_x$'+': {:.2g} {}/s\n'.format(
-                                    avg_spd_x, self.envir.units)+
-                                    r'Agent $\overline{v}_x$'+': {:.2g} {}/s'.format(
-                                    avg_swrm_vel[0], self.envir.units))
-                    y_text.set_text(r'Fluid $\overline{v}_y$'+': {:.2g} {}/s\n'.format(
-                                    avg_spd_y, self.envir.units)+
-                                    r'Agent $\overline{v}_y$'+': {:.2g} {}/s'.format(
-                                    avg_swrm_vel[1], self.envir.units))
-                    z_text.set_text(r'Fluid $\overline{v}_z$'+': {:.2g} {}/s\n'.format(
-                                    avg_spd_z, self.envir.units)+
-                                    r'Agent $\overline{v}_z$'+': {:.2g} {}/s'.format(
-                                    avg_swrm_vel[2], self.envir.units))
-                    # UNFORTUNATELY, 3D matplotlib plotting is very weird about masked 
-                    #   arrays. The implementation does not parallel 2D: it wants a color 
-                    #   list that is the same length as the number of points it will be 
-                    #   plotting, and not the length of the masked array in total. So, 
-                    #   we have to check for masking and adjust appropriately.
-                    if downsamp is None:
-                        scat._offsets3d = (np.ma.ravel(self.positions[:,0].compressed()),
-                                        np.ma.ravel(self.positions[:,1].compressed()),
-                                        np.ma.ravel(self.positions[:,2].compressed()))
-                        if 'color' in self.props:
-                            if ma.is_masked(self.positions):
-                                not_msk = ~self.positions[:,0].mask
-                                scat.set_color(self.props.loc[not_msk,'color'])
-                            else:
-                                scat.set_color(self.props['color'])
+                    scat._offsets3d = (np.ma.ravel(positions[downsamp,0].compressed()),
+                                    np.ma.ravel(positions[downsamp,1].compressed()),
+                                    np.ma.ravel(positions[downsamp,2].compressed()))
+                    if 'color' in frame_props:
+                        if ma.is_masked(positions[downsamp,0]):
+                            not_msk = ~positions[downsamp,0].mask
+                            scat.set_color(frame_props.loc[downsamp,'color'][not_msk])
+                        else:
+                            scat.set_color(frame_props.loc[downsamp,'color'])
+                if dist == 'hist':
+                    n_x, _ = np.histogram(positions[:,0].compressed(), bins_x)
+                    n_y, _ = np.histogram(positions[:,1].compressed(), bins_y)
+                    n_z, _ = np.histogram(positions[:,2].compressed(), bins_z)
+                    for rect, h in zip(patches_x, n_x):
+                        rect.set_height(h)
+                    for rect, h in zip(patches_y, n_y):
+                        rect.set_height(h)
+                    for rect, h in zip(patches_z, n_z):
+                        rect.set_height(h)
+                    fig.canvas.draw()
+                    return [scat, time_text, flow_text, perc_text, x_text, 
+                        y_text, z_text] + list(patches_x) + list(patches_y) + list(patches_z)
+                else:
+                    pos_x = positions[:,0].compressed()
+                    pos_y = positions[:,1].compressed()
+                    pos_z = positions[:,2].compressed()
+                    try:
+                        if len(pos_x) > 1:
+                            x_density = stats.gaussian_kde(pos_x, fac_x)
+                            x_density = x_density(xmesh)
+                        elif len(pos_x) == 1:
+                            raise np.linalg.LinAlgError
+                        else:
+                            x_density = np.zeros_like(xmesh)
+                    except np.linalg.LinAlgError:
+                        idx = (np.abs(xmesh - pos_x[0])).argmin()
+                        x_density = np.zeros_like(xmesh); x_density[idx] = 1
+                    try:
+                        if len(pos_y) > 1:
+                            y_density = stats.gaussian_kde(pos_y, fac_y)
+                            y_density = y_density(ymesh)
+                        elif len(pos_y) == 1:
+                            raise np.linalg.LinAlgError
+                        else:
+                            y_density = np.zeros_like(ymesh)
+                    except np.linalg.LinAlgError:
+                        idy = (np.abs(ymesh - pos_y[0])).argmin()
+                        y_density = np.zeros_like(ymesh); y_density[idy] = 1
+                    try:
+                        if len(pos_z) > 1:
+                            z_density = stats.gaussian_kde(pos_z, fac_z)
+                            z_density = z_density(zmesh)
+                        elif len(pos_z) == 1:
+                            raise np.linalg.LinAlgError
+                        else:
+                            z_density = np.zeros_like(zmesh)
+                    except np.linalg.LinAlgError:
+                        idz = (np.abs(zmesh - pos_z[0])).argmin()
+                        z_density = np.zeros_like(zmesh); z_density[idz] = 1
+                    xdens_plt.set_ydata(x_density)
+                    ydens_plt.set_ydata(y_density)
+                    zdens_plt.set_ydata(z_density)
+                    if np.max(xdens_plt.get_ydata()) != 0:
+                        axHistx.set_ylim(bottom=0, top=np.max(xdens_plt.get_ydata()))
                     else:
-                        scat._offsets3d = (np.ma.ravel(self.positions[downsamp,0].compressed()),
-                                        np.ma.ravel(self.positions[downsamp,1].compressed()),
-                                        np.ma.ravel(self.positions[downsamp,2].compressed()))
-                        if 'color' in self.props:
-                            if ma.is_masked(self.positions[downsamp,0]):
-                                not_msk = ~self.positions[downsamp,0].mask
-                                scat.set_color(self.props.loc[downsamp,'color'][not_msk])
-                            else:
-                                scat.set_color(self.props.loc[downsamp,'color'])
-                    if dist == 'hist':
-                        n_x, _ = np.histogram(self.positions[:,0].compressed(), bins_x)
-                        n_y, _ = np.histogram(self.positions[:,1].compressed(), bins_y)
-                        n_z, _ = np.histogram(self.positions[:,2].compressed(), bins_z)
-                        for rect, h in zip(patches_x, n_x):
-                            rect.set_height(h)
-                        for rect, h in zip(patches_y, n_y):
-                            rect.set_height(h)
-                        for rect, h in zip(patches_z, n_z):
-                            rect.set_height(h)
-                        fig.canvas.draw()
-                        return [scat, time_text, flow_text, perc_text, x_text, 
-                            y_text, z_text] + list(patches_x) + list(patches_y) + list(patches_z)
+                        axHistx.set_ylim(bottom=0)
+                    if np.max(ydens_plt.get_ydata()) != 0:
+                        axHisty.set_ylim(bottom=0, top=np.max(ydens_plt.get_ydata()))
                     else:
-                        pos_x = self.positions[:,0].compressed()
-                        pos_y = self.positions[:,1].compressed()
-                        pos_z = self.positions[:,2].compressed()
-                        try:
-                            if len(pos_x) > 1:
-                                x_density = stats.gaussian_kde(pos_x, fac_x)
-                                x_density = x_density(xmesh)
-                            elif len(pos_x) == 1:
-                                raise np.linalg.LinAlgError
-                            else:
-                                x_density = np.zeros_like(xmesh)
-                        except np.linalg.LinAlgError:
-                            idx = (np.abs(xmesh - pos_x[0])).argmin()
-                            x_density = np.zeros_like(xmesh); x_density[idx] = 1
-                        try:
-                            if len(pos_y) > 1:
-                                y_density = stats.gaussian_kde(pos_y, fac_y)
-                                y_density = y_density(ymesh)
-                            elif len(pos_y) == 1:
-                                raise np.linalg.LinAlgError
-                            else:
-                                y_density = np.zeros_like(ymesh)
-                        except np.linalg.LinAlgError:
-                            idy = (np.abs(ymesh - pos_y[0])).argmin()
-                            y_density = np.zeros_like(ymesh); y_density[idy] = 1
-                        try:
-                            if len(pos_z) > 1:
-                                z_density = stats.gaussian_kde(pos_z, fac_z)
-                                z_density = z_density(zmesh)
-                            elif len(pos_z) == 1:
-                                raise np.linalg.LinAlgError
-                            else:
-                                z_density = np.zeros_like(zmesh)
-                        except np.linalg.LinAlgError:
-                            idz = (np.abs(zmesh - pos_z[0])).argmin()
-                            z_density = np.zeros_like(zmesh); z_density[idz] = 1
-                        xdens_plt.set_ydata(x_density)
-                        ydens_plt.set_ydata(y_density)
-                        zdens_plt.set_ydata(z_density)
-                        if np.max(xdens_plt.get_ydata()) != 0:
-                            axHistx.set_ylim(bottom=0, top=np.max(xdens_plt.get_ydata()))
-                        else:
-                            axHistx.set_ylim(bottom=0)
-                        if np.max(ydens_plt.get_ydata()) != 0:
-                            axHisty.set_ylim(bottom=0, top=np.max(ydens_plt.get_ydata()))
-                        else:
-                            axHisty.set_ylim(bottom=0)
-                        if np.max(zdens_plt.get_ydata()) != 0:
-                            axHistz.set_ylim(bottom=0, top=np.max(zdens_plt.get_ydata()))
-                        else:
-                            axHistz.set_ylim(bottom=0)
-                        fig.canvas.draw()
-                        return [scat, time_text, flow_text, perc_text, x_text, 
-                                y_text, z_text, xdens_plt, ydens_plt, zdens_plt]
-
+                        axHisty.set_ylim(bottom=0)
+                    if np.max(zdens_plt.get_ydata()) != 0:
+                        axHistz.set_ylim(bottom=0, top=np.max(zdens_plt.get_ydata()))
+                    else:
+                        axHistz.set_ylim(bottom=0)
+                    fig.canvas.draw()
+                    return [scat, time_text, flow_text, perc_text, x_text, 
+                            y_text, z_text, xdens_plt, ydens_plt, zdens_plt]
         # on-screen playback: the frames were chosen to be fps apart in the
         # finished video, so display them that far apart too (in milliseconds).
         anim = animation.FuncAnimation(fig, animate, frames=frames,

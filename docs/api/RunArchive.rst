@@ -35,7 +35,12 @@ Metadata is written when recording starts, every file appears atomically, and
 the reader reconstructs the timeline by scanning what is on disk. The most a 
 kill can cost is the captures buffered since the last chunk.
 
-**Analysis of a finished run, without re-running it.** This includes plotting.
+**Analysis of a finished run, without re-running it**, in this session or a
+later one, through ``planktos.load_run``.
+
+**Plotting a dynamically loaded run for free.** What a plot needs to know about
+the fluid is written as the run proceeds, so drawing it afterwards reads none of
+the dataset again -- see `Plotting a recorded run`_.
 
 **Simulations larger than RAM.** Reading one capture touches only the chunk it 
 lives in, making simulations larger than RAM possible. Also, 
@@ -167,6 +172,68 @@ arrows with ``RunArchive.quiver(t_idx)``.
    an error and neither warns, because in neither is there anything else the
    argument could have meant.
 
+Plotting a recorded run
+-----------------------
+
+An Environment remembers the archive it recorded to, and keeps remembering after
+the recording stops. So the ordinary loop needs nothing added to it::
+
+    with envir.record('run_archive/', fluid='vort'):
+        for _ in range(steps):
+            swrm.move(dt)
+
+    swrm.plot_all(movie_filename='out.mkv', fluid='vort')
+
+**A whole movie of a dynamically loaded run then reads no fluid data at all.**
+Drawn without a recording it costs a second streaming pass over the entire
+dataset, which is the cost the archive exists to remove.
+
+Three consequences worth knowing:
+
+**A backdrop the archive does not hold is refused.** There is deliberately no
+fallback, because the only fallback is re-reading the whole dataset to draw a
+picture of it. Record with ``fluid=('vort','quiver')`` to keep the choice open.
+This applies only where it has to: with the whole field in memory the curl is
+derived from it and the arrows subsampled from it, which is free and exact.
+
+**Vorticity colour limits cover the whole run.** Without a limit fixed up front
+they grow with each frame drawn, so where they end up depends on how much of the
+run was drawn and two plots of one run do not agree. The archive's largest
+absolute vorticity fixes them before the first frame. An explicit ``clip`` is
+still used as given.
+
+**Plotting without a recording still works**, and warns once with an estimate of
+what it will re-read. Nothing about the old workflow breaks.
+
+.. note::
+   Plotting a run in a *later session* needs the Environment and Swarm restored
+   to where that run left off, which Planktos does not yet do. ``load_run``
+   reads the recorded arrays for analysis in the meantime.
+
+Rendering when the run ends
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``record(plot_all=...)`` takes a dict of ``Swarm.plot_all`` arguments and
+renders when a ``with`` block ends::
+
+    with envir.record('run_archive/',
+                      plot_all=dict(movie_filename='out.mkv', fluid='vort')):
+        for _ in range(steps):
+            swrm.move(dt)
+
+It renders when the run raises, since a crash is unexpected and the movie is
+diagnostic, but not on a ``KeyboardInterrupt``, which is a request to stop
+*now*. Both still flush. A failure inside the render is warned about rather than
+allowed to mask the run's own exception, and the archive is complete either way.
+Only for a recording covering one swarm, since ``plot_all`` is a ``Swarm``
+method; that is refused at ``record()`` rather than at the end of the run.
+
+.. note::
+   Use ``.mkv`` for long or unattended runs. A hard kill leaves an ``.mp4``
+   unplayable, since ffmpeg writes its index last; Matroska survives truncation
+   and is playable while still being written. Remuxing afterwards is lossless:
+   ``ffmpeg -i out.mkv -c copy out.mp4``.
+
 Reading
 -------
 
@@ -221,7 +288,10 @@ name and index together so the collision is visible.
 Validation
 ~~~~~~~~~~
 
-See ``RunArchive.check_against(envir)``.
+See ``RunArchive.check_against(envir)``. Reloading the fluid at a different
+``INUM`` -- or resident, which is the cheap thing to do now that a render does
+not stream it -- is not a difference: ``INUM`` says how much of the dataset is
+held at once and nothing about what the dataset is.
 
 To be plain about what it cannot catch: two runs on the same mesh at the same
 cadence fingerprint identically, and nothing cheap detects a dataset regenerated

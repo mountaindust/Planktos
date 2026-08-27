@@ -116,6 +116,18 @@ def test_swarm_plot_2d_variants_save_file(tmp_path, kw):
     assert out.is_file()
 
 
+def test_swarm_plot_at_a_past_time_with_a_moving_mesh(tmp_path):
+    # Regression: this reached for Swarm.interpolate_temporal_mesh, which is a
+    # method on Environment, so it raised AttributeError rather than drawing.
+    envir = _envir_2d()
+    envir.read_IB2d_mesh_data(str(Path(__file__).parent / 'fixtures' /
+                                  'lagspts_min'), dt=0.1, print_dump=1, d_start=0)
+    swrm = _spread_swarm(envir, n=10)
+    out = tmp_path / 'past.png'
+    swrm.plot(t=0.1, filename=str(out), blocking=False)
+    assert out.is_file()
+
+
 def test_swarm_plot_3d_saves_file(tmp_path):
     swrm = _spread_swarm(_envir_3d())
     out = tmp_path / 'plot3d.png'
