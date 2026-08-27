@@ -507,11 +507,20 @@ Algorithm/derivation notes are in `docs/notes/` (Markdown with LaTeX):
 ## Tests
 
 The suite is organized into focused, deterministic, fast modules (overhauled
-2026-06). Run `pytest` from the repository root. The default run is about 30 s
-(1098 passed / 50 skipped / 6 xfailed); add `--runslow` for the slower checks —
-the full-simulation parallelization tests, the plotting smokes, the end-to-end
-movie renders and most of `test_data_streaming/` — which brings it to about four
-and a half minutes (1146 / 2 / 6).
+2026-06). Run `pytest` from the repository root. **Two flags widen the run, and
+they are independent:**
+
+| Invocation | Covers | Time |
+|---|---|---|
+| `pytest` | the focused modules | ~20 s (1013 passed / 141 skipped) |
+| `pytest --runslow` | plus the parallelization tests, the plotting smokes and the movie renders | ~40 s (1046 / 108) |
+| `pytest --runstreaming` | plus the fast half of `tests/test_data_streaming/` | ~30 s (1098 / 50 / 6 xfailed) |
+| `pytest --runslow --runstreaming` | everything | ~4 min (1146 / 2 / 6) |
+
+**Before a commit that touches the archive, the fluid streaming or the plotting
+paths, run both flags.** `--runstreaming` is off by default because that suite is
+a goal line for work in progress rather than a regression net (see the carve-out
+below), and it roughly doubles the default run on its own.
 
 - **Run** the whole thing with `pytest`; a specific area with e.g.
   `pytest tests/test_collisions_static.py`.
@@ -593,7 +602,8 @@ and a half minutes (1146 / 2 / 6).
     counterpart of the headline: recording the fluid costs **no extra loader calls**.
   - `test_data_streaming/` — an **adversarial suite** written from
     `run_persistence.md`, covering the streaming story end to end (in-RAM,
-    windowed replay, recorded replay, restart). Its strict `xfail`s are the
+    windowed replay, recorded replay, restart). **Opt-in: `--runstreaming`**, and
+    its slow members additionally need `--runslow`. Its strict `xfail`s are the
     pre-release list — see "What an `xfail` means here". Run it after any change
     to the archive, the fluid streaming or the plotting paths.
   - `test_archive_rendering.py` — **drawing a run whose fluid was recorded**
@@ -655,7 +665,11 @@ and a half minutes (1146 / 2 / 6).
   - `vtk3d_min/` — 8 rectilinear 3D dumps carrying `TIME` field data, for
     `VTK3dData`. Field is `u = t`, `v = x`, `w = t·z`.
 - **Markers** (registered in `pytest.ini`): `slow` (only with `--runslow`),
+  `streaming` (only with `--runstreaming`; applied to the whole of
+  `tests/test_data_streaming/` by a module-level `pytestmark`),
   `vtk` (skipped if vtk data absent), `vtu` (skipped if COMSOL data absent).
+  The two `--run*` flags are independent, so a test carrying both markers needs
+  both flags.
 - **Non-automated** visual/exploratory scripts live in `tests/manual/` —
   excluded from collection via `collect_ignore` in `conftest.py` (at the
   repository root, not in `tests/`).
@@ -688,10 +702,18 @@ branch ships, not stop-the-cycle defects. A non-empty list there is expected, so
 watch the **count** rather than the presence — it should only ever go down, and
 each one that goes down takes its marker with it.
 
-⚠️ **Run it after any change to the archive, the fluid streaming or the plotting
-paths.** It has already caught three defects the focused modules missed, all in
-component C. It is slow — the full `--runslow` run is about four minutes, most of
-it here.
+**It is opt-in, behind `--runstreaming`** (its slow members want `--runslow`
+too). That is why: it is a statement of where the work is going, so it is read
+deliberately rather than swept past in every run, and it costs more than the rest
+of the suite put together. The flip side is that **it never runs unless someone
+asks**, CI included — so:
+
+⚠️ **Run `pytest --runslow --runstreaming` after any change to the archive, the
+fluid streaming or the plotting paths, and before a release.** It has already
+caught three defects the focused modules missed, all in component C.
+
+Its own `tests/test_data_streaming/README.md` is the standing record: the four
+claims, the verdict on each, and every finding with what fixed it.
 
 ### Resolved defects & FTLE notes
 

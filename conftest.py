@@ -15,9 +15,12 @@ VTK = getattr(_dataio, 'VTK', True)
 
 def pytest_addoption(parser):
     '''Adds parser options'''
-    parser.addoption('--runslow', action='store_true', default=False, 
+    parser.addoption('--runslow', action='store_true', default=False,
                      help='run slow tests')
-    
+    parser.addoption('--runstreaming', action='store_true', default=False,
+                     help='run the data-streaming acceptance tests '
+                          '(tests/test_data_streaming/)')
+
 def pytest_collection_modifyitems(config, items):
     '''If test is marked with the pytest.mark.slow decorator, mark it to be
     skipped, unless the --runslow option has been passed.'''
@@ -27,6 +30,17 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "slow" in item.keywords:
                 item.add_marker(skip_slow)
+    # The data-streaming acceptance tests are a goal line for work in progress,
+    # not a regression suite, and they run whole simulations -- so they are
+    # opt-in rather than part of the default run. --runstreaming and --runslow
+    # are independent: the slow members of that directory (the example scripts,
+    # the cross-version check, the movie renders) need both.
+    if not config.getoption("--runstreaming"):
+        skip_streaming = pytest.mark.skip(
+            reason="need --runstreaming option to run")
+        for item in items:
+            if "streaming" in item.keywords:
+                item.add_marker(skip_streaming)
     # skip vtk tests if unable to import vtk
     if not VTK:
         skip_vtk = pytest.mark.skip(reason="could not load VTK")
