@@ -2489,8 +2489,8 @@ the cheapest thing to land first. The list below keeps its original numbering.
       9, 12, 15, … time points. It raised (a broadcast error out of
       `_record_dump_means`, ahead of a concatenate that would also have failed), so no
       result was ever silently wrong; but the run died. Fixed at the contract boundary
-      with `fluid._as_dump_series`, pinned in `test_dynamic_loading.py` for both
-      loaders. **The observer would have hit it too**, which is how it surfaced — the
+      in `FluidData._load_dumps`, the one method every streaming load comes
+      through, and pinned in `test_dynamic_loading.py` for both loaders. **The observer would have hit it too**, which is how it surfaced — the
       committed fixtures are 8 dumps, and 8 is not of that form.
   B2. ✅ **[done 2026-08-25] Scalar rectilinear VTK I/O in `_dataio`** (§3.6). Independent of everything else
       and testable on its own with a round-trip. **Landed first**, see the note above.
@@ -2536,9 +2536,9 @@ the cheapest thing to land first. The list below keeps its original numbering.
       `vorticity_dir` means one thing and `_FluidWriter` is the single place that tells
       the fluid where its vorticity is; the three regimes moved into a flat
       `_plan_vorticity` with one `return` per row of §3.3's table; `_record_dump_means`
-      grew a `_dumps_arrived` wrapper so the name matches what it does; `_as_dump_series`
-      moved behind `FluidData._load_dumps` so the time-axis contract is structural
-      rather than remembered per subclass; the archive stopped rebuilding the vorticity
+      grew a `_dumps_arrived` wrapper so the name matches what it does; the time-axis
+      normalization moved into `FluidData._load_dumps` so that contract is
+      structural rather than remembered per subclass; the archive stopped rebuilding the vorticity
       filename that `FluidData.vorticity_filename` owns; and the writer's duplicate
       means array went away in favour of the fluid's own.
 

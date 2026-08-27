@@ -22,6 +22,7 @@ from pathlib import Path
 import numpy as np
 import numpy.ma as ma
 import pytest
+import pyvista as pv
 
 import planktos
 from planktos import _dataio
@@ -1637,3 +1638,130 @@ def test_structured_points_scalar_roundtrips_in_3d(tmp_path):
     assert np.array_equal(data.T, f)                 # [z,y,x] -> [x,y,z]
     assert np.allclose(origin, (0., 0., 0.))
     assert np.allclose(spacing, (1., 1., 1.))
+
+
+# --------------------------------------------------------------------------- #
+#            a plane exported as 3D vtk is 2D data within Planktos            #
+# --------------------------------------------------------------------------- #
+# A vtk dataset is always three-dimensional, so a solver exporting a single
+# plane writes it as a 3D grid one point thick -- which is exactly what IB2d
+# does for its genuinely 2D output. Planktos reads that as 2D: the flat axis,
+# its coordinate array and the velocity component along it all go together.
+#
+# Before this, VTK3dData squeezed the *data* but kept three coordinate arrays,
+# so the object claimed to be 3D, reported a zero-thickness domain, and raised
+# from inside scipy on the first move with a message naming neither the file nor
+# the cause.
+#
+# These write their own series rather than using a committed fixture: a planar
+# rectilinear grid has no structural quirk worth pinning byte-for-byte (unlike
+# openfoam_min's cell ordering, or lagspts_min's legacy vertex points), and what
+# the tests vary -- which axis is flat, whether the dropped component is zero --
+# wants to be an argument rather than three committed variants.
+
+
+def _write_slab(dirpath, flat_axis=2, w=0.0, ndumps=4):
+    '''A rectilinear 3D series one point thick along `flat_axis`.
+
+    The two surviving axes carry u = t and v = (the first surviving coordinate);
+    `w` is the value of the component along the flat axis, which is what decides
+    whether collapsing to 2D loses anything.
+    '''
+    dirpath.mkdir(parents=True, exist_ok=True)
+    axes = [np.linspace(0, 4, 5), np.linspace(0, 3, 4), np.linspace(0, 2, 3)]
+    axes[flat_axis] = np.array([0.0])
+    kept = [d for d in range(3) if d != flat_axis]
+    first = np.meshgrid(*axes, indexing='ij')[kept[0]]
+    for k in range(ndumps):
+        grid = pv.RectilinearGrid(*axes)
+        vec = [None, None, None]
+        vec[kept[0]] = np.full(first.size, float(k))          # u = t
+        vec[kept[1]] = first.ravel(order='F')                 # v = coordinate
+        vec[flat_axis] = np.full(first.size, w)               # the one dropped
+        grid['vel'] = np.stack(vec, axis=1)
+        grid.set_active_vectors('vel')
+        grid.field_data['TIME'] = np.array([float(k)])
+        grid.save(str(dirpath / 'slab_{:03d}.vtk'.format(k)), binary=False)
+    return dirpath
+
+
+def _load_slab(dirpath, match='single point thick', **kwargs):
+    envir = planktos.Environment()
+    with pytest.warns(UserWarning, match=match):
+        envir.read_IBAMR3d_vtk_data(str(dirpath), title='slab_', **kwargs)
+    return envir
+
+
+@pytest.mark.parametrize('INUM', [None, True])
+def test_a_planar_3d_series_loads_as_2d(tmp_path, INUM):
+    envir = _load_slab(_write_slab(tmp_path / 'slab'), INUM=INUM)
+    assert len(envir.flow.flow_points) == 2
+    assert envir.flow.ndim == 2
+    assert len(envir.flow) == 2                    # the w component went too
+    assert len(envir.L) == 2                       # and no zero-thickness axis
+    assert envir.flow.fshape == (4, 5, 4)
+    # The field is intact: u = t, v = x on the surviving axes.
+    u, v = envir.flow(2.0)
+    assert np.allclose(u, 2.0)
+    assert np.allclose(v, envir.flow.flow_points[0][:, None])
+
+
+def test_a_planar_3d_series_supports_a_2d_swarm(tmp_path):
+    # The end of the story: before, this raised
+    # "There are 3 point arrays, but values has 2 dimensions" from interpn.
+    envir = _load_slab(_write_slab(tmp_path / 'slab'))
+    swrm = planktos.Swarm(swarm_size=5, envir=envir, seed=1)
+    assert swrm.positions.shape[1] == 2
+    for _ in range(4):
+        swrm.move(0.5, silent=True)
+    assert np.isfinite(np.ma.getdata(swrm.positions)).all()
+
+
+@pytest.mark.parametrize('flat_axis, name', [(0, 'x'), (1, 'y'), (2, 'z')])
+def test_the_warning_names_the_flat_axis(tmp_path, flat_axis, name):
+    # Which axis went is not recoverable from the result -- a flat x leaves y
+    # and z, which become Planktos' x and y -- so the warning has to say.
+    envir = _load_slab(_write_slab(tmp_path / 'slab', flat_axis=flat_axis),
+                       match=r'single point thick in {}'.format(name))
+    assert len(envir.flow.flow_points) == 2
+    assert len(envir.flow) == 2
+    # The surviving components keep their order, whichever axis was dropped.
+    assert np.allclose(envir.flow(1.0)[0], 1.0)
+    assert np.allclose(envir.flow(1.0)[1],
+                       envir.flow.flow_points[0][:, None])
+
+
+def test_a_discarded_nonzero_component_is_called_out(tmp_path):
+    # w == 0 means nothing is lost. A nonzero w means this is a slab of a 3D
+    # flow rather than 2D data, and dropping it changes the physics -- so the
+    # warning has to say more than "read as 2D".
+    envir = _load_slab(_write_slab(tmp_path / 'slab', w=0.7),
+                       match='z-velocity is not everywhere zero')
+    assert len(envir.flow) == 2
+
+
+def test_two_flat_axes_are_refused(tmp_path):
+    # A line. Planktos is 2D or 3D, so there is nothing sensible to read this as.
+    src = tmp_path / 'line'
+    src.mkdir()
+    grid = pv.RectilinearGrid(np.linspace(0, 3, 5), np.array([0.0]),
+                              np.array([0.0]))
+    grid['vel'] = np.zeros((5, 3))
+    grid.set_active_vectors('vel')
+    grid.save(str(src / 'line.vtk'), binary=False)
+
+    with pytest.raises(ValueError, match='fewer than the two Planktos needs'):
+        planktos.Environment().read_IBAMR3d_vtk_data(str(src / 'line.vtk'))
+
+
+def test_a_fully_3d_series_is_untouched():
+    # The guard rail, against the committed 3D fixture: nothing about a genuine
+    # 3D series changes, and nothing warns.
+    envir = planktos.Environment()
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UserWarning)
+        envir.read_IBAMR3d_vtk_data(str(FIXTURES / 'vtk3d_min'),
+                                    title='IBAMR_db_')
+    assert len(envir.flow.flow_points) == 3
+    assert len(envir.flow) == 3
+    assert envir.flow.fshape == (8, 5, 4, 3)

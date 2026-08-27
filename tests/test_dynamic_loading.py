@@ -1076,14 +1076,22 @@ def test_ib2d_periodic_wrap_and_domain():
 # broadcast error out of _record_dump_means, ahead of a concatenate that would
 # also have failed), so no result was ever wrong because of it.
 
-def test_as_dump_series_adds_the_axis_only_when_it_is_missing():
-    single = np.zeros((7, 6))
-    series = np.zeros((3, 7, 6))
-    assert fluid._as_dump_series([single], 2)[0].shape == (1, 7, 6)
-    assert fluid._as_dump_series([series], 2)[0].shape == (3, 7, 6)
-    # 3D: a single dump is 3 axes, a series is 4.
-    assert fluid._as_dump_series([np.zeros((4, 4, 4))], 3)[0].shape == (1, 4, 4, 4)
-    assert fluid._as_dump_series([np.zeros((2, 4, 4, 4))], 3)[0].shape == (2, 4, 4, 4)
+@pytest.mark.parametrize('field, dumped', [(_field_2d, (6, 5)),
+                                           (_field_3d, (4, 4, 4))])
+def test_load_dumps_guarantees_the_leading_time_axis(field, dumped):
+    # _load_dumps is the contract boundary: whatever a subclass' load_dumpfiles
+    # hands back, what reaches update_spline carries a time axis.
+    t, fpoints, comps = field()
+    src = _InMemorySource([c.copy() for c in comps], fpoints, t.copy(), 4)
+
+    # a reader that drops the axis for a single dump, as two of the real ones do
+    src.load_dumpfiles = lambda a, b: [c[a] for c in src._full]
+    assert all(f.shape == (1,) + dumped for f in src._load_dumps(2, 2))
+
+    # and one that keeps it, for a single dump and for several
+    src.load_dumpfiles = lambda a, b: [c[a:b+1] for c in src._full]
+    assert all(f.shape == (1,) + dumped for f in src._load_dumps(2, 2))
+    assert all(f.shape == (3,) + dumped for f in src._load_dumps(2, 4))
 
 
 def _ib2d_subset(tmp_path, ndumps, INUM):

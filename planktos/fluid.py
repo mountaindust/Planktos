@@ -98,11 +98,10 @@ def _wrap_flow(flow, flow_points, periodic_dim=(True, True, False)):
 def _wrap_scalar(f, periodic_dim):
     '''Restore the duplicated end line on each periodic axis of a *scalar* field.
 
-    The scalar counterpart of ``_wrap_flow``: loops over 
-    ``range(len(flow_points))`` and so assumes one array per spatial
-    dimension. Handing it a single field raises ``IndexError``. Derived
-    scalar fields read back from a source that omits the periodic endpoint --
-    IB2d's ``Omega.####.vtk``, for instance -- need exactly this.
+    The scalar counterpart of ``_wrap_flow``, which cannot be used here: it takes
+    one array per spatial dimension. Derived scalar fields read back from a
+    source that omits the periodic endpoint -- IB2d's ``Omega.####.vtk``, for
+    instance -- need exactly this.
 
     Parameters
     ----------
@@ -131,30 +130,98 @@ def _unwrap_scalar(f, periodic_dim):
 
 
 
-def _as_dump_series(flow, ndim):
-    """Guarantee a leading time axis on data a ``load_dumpfiles`` is returning.
+def _drop_flat_axes(flow, axes, ndim):
+    """Remove flat spatial axes from a velocity field, components included.
 
-    ``load_dumpfiles`` hands back one array per component, ``([t],i,j,[k])``,
-    with the time axis always present -- that is what ``update_spline``
-    concatenates against the window and what ``_record_dump_means`` reduces over.
-    A slide reaching the end of a series can ask for a single dump, which some of
-    the readers behind ``load_dumpfiles`` return without the axis.
+    The component *along* a flat axis goes with it: Planktos carries one
+    velocity component per spatial dimension, so a 2D grid holds a 2D vector.
 
     Parameters
     ----------
     flow : list of ndarrays
+        one per velocity component, each ``([t],i,j,[k])``
+    axes : tuple of int
+        spatial axes to drop, as :func:`_collapse_flat_axes` identifies them
     ndim : int
-        number of spatial dimensions, i.e. how many axes a single dump has
+        spatial dimension of the data as read, before anything is dropped.
+        Used to tell whether the arrays carry a leading time axis.
 
     Returns
     -------
-    list of ndarrays, each with a leading time axis
+    list of ndarrays, one shorter and one axis flatter per entry in ``axes``
     """
 
-    # _read_IB2d_dumpfiles branches on d_start != d_finish and _read_vtkfiles
-    #   calls squeeze(), both of which are right for the constructor's one-shot
-    #   read and drop the axis here.
-    return [f if f.ndim > ndim else f[np.newaxis, ...] for f in flow]
+    if not axes:
+        return flow
+    # A leading time axis shifts every spatial axis along by one.
+    offset = 1 if flow[0].ndim > ndim else 0
+    kept = [f for d, f in enumerate(flow) if d not in axes]
+    return [np.squeeze(f, axis=tuple(d + offset for d in axes)) for f in kept]
+
+
+
+def _collapse_flat_axes(flow, mesh, periodic_dim=None, source=None):
+    """Reduce a field written on a one-point-thick grid to its real dimension.
+
+    Everything that describes the grid moves together -- the field, the
+    coordinate arrays, the velocity components and the periodicity flags -- so
+    that a plane exported as 3D vtk becomes an ordinary 2D Planktos fluid rather
+    than a 3D one of zero thickness. IB2d's reader has always done this; this is
+    the same rule for the 3D loaders.
+
+    Parameters
+    ----------
+    flow : list of ndarrays
+    mesh : sequence of 1D ndarrays
+        coordinates along each axis
+    periodic_dim : bool or sequence of bool, optional
+    source : str, optional
+        named in the warning
+
+    Returns
+    -------
+    flow, mesh, periodic_dim, axes -- the first three with flat axes removed,
+    and the axes that were dropped, for a loader to reapply to later reads
+
+    Raises
+    ------
+    ValueError
+        if fewer than two axes would be left; Planktos is 2D or 3D
+    """
+
+    axes = tuple(d for d, c in enumerate(mesh) if len(np.atleast_1d(c)) < 2)
+    if not axes:
+        return flow, list(mesh), periodic_dim, axes
+
+    names = 'xyz'
+    dropped = ', '.join(names[d] for d in axes)
+    if len(mesh) - len(axes) < 2:
+        raise ValueError(
+            "This grid is one point thick along {} of its {} axes, leaving "
+            "fewer than the two Planktos needs. {}".format(
+                dropped, len(mesh),
+                '' if source is None else 'Read from {}.'.format(source)))
+
+    # A component along an axis that is being dropped is discarded with it. That
+    #   is free for genuinely planar data, where it is identically zero, and is
+    #   a real loss otherwise -- so say which it was.
+    lost = [names[d] for d in axes if np.any(flow[d] != 0)]
+    warnings.warn(
+        "Fluid grid is a single point thick in {}, so it is being read as {}D "
+        "data on the remaining axes.{}{}".format(
+            dropped, len(mesh) - len(axes),
+            '' if source is None else ' Read from {}.'.format(source),
+            '' if not lost else
+            ' NOTE: the {}-velocity is not everywhere zero and is being '
+            'discarded with that axis -- this is a slab of a 3D flow rather '
+            'than 2D data.'.format(', '.join(lost))), UserWarning, stacklevel=3)
+
+    flow = _drop_flat_axes(flow, axes, len(mesh))
+    mesh = [c for d, c in enumerate(mesh) if d not in axes]
+    if periodic_dim is not None and not isinstance(periodic_dim, bool):
+        periodic_dim = tuple(v for d, v in enumerate(periodic_dim)
+                             if d not in axes)
+    return flow, mesh, periodic_dim, axes
 
 
 
@@ -198,23 +265,6 @@ def _spline_index(spline, pos):
 
 
 
-def _linear_bracket(times, t):
-    """Index and weight for linear interpolation at ``t``, clamped to the ends.
-
-    Returns ``(idx, w)`` such that the interpolated value is
-    ``f[idx] + (f[idx+1] - f[idx])*w``, with ``w == 0`` or ``w == 1`` where ``t``
-    lands on a knot or outside the data (constant extrapolation).
-    """
-
-    if len(times) < 2 or t <= times[0]:
-        return 0, 0.0
-    if t >= times[-1]:
-        return len(times) - 2, 1.0
-    idx = int(np.searchsorted(times, t)) - 1
-    return idx, (t - times[idx]) / (times[idx+1] - times[idx])
-
-
-
 def _linear_blend(times, t, get):
     """Linearly interpolate at ``t`` between the two entries bracketing it.
 
@@ -228,11 +278,17 @@ def _linear_blend(times, t, get):
     consistent with the velocity field itself.
     """
 
-    idx, w = _linear_bracket(times, t)
+    # Bracket t, clamping to the ends so that a time outside the data gets the
+    #   constant extrapolation the field itself uses.
+    if len(times) < 2 or t <= times[0]:
+        return get(0)
+    if t >= times[-1]:
+        return get(len(times) - 1)
+    idx = int(np.searchsorted(times, t)) - 1
+    w = (t - times[idx]) / (times[idx+1] - times[idx])
     if w == 0.0:
+        # t landed on a knot; one call, and no arithmetic on the nodal values.
         return get(idx)
-    if w == 1.0:
-        return get(idx+1)
     lo = get(idx)
     return lo + (get(idx+1) - lo)*w
 
@@ -1196,13 +1252,20 @@ class FluidData:
 
 
     def _load_dumps(self, d_start, d_finish):
-        '''load_dumpfiles, with the leading time axis guaranteed.
+        """load_dumpfiles, with the leading time axis guaranteed.
 
-        Every load on the streaming path goes through here, so a subclass cannot
-        forget the axis and no consumer has to test for it.
-        '''
-        return _as_dump_series(self.load_dumpfiles(d_start, d_finish),
-                               len(self.flow_points))
+        ``update_spline`` concatenates what a load returns against the resident
+        window and ``_record_dump_means`` reduces over its leading axis, so the
+        axis has to be there even for a single dump. Some of the readers behind
+        ``load_dumpfiles`` drop it in that case -- correctly, for the
+        constructor's one-shot read of a time-invariant field, and wrongly here.
+        Every load on the streaming path comes through this method, so a subclass
+        implementing ``load_dumpfiles`` does not have to think about it.
+        """
+
+        ndim = len(self.flow_points)
+        return [f if f.ndim > ndim else f[np.newaxis, ...]
+                for f in self.load_dumpfiles(d_start, d_finish)]
 
 
 
@@ -2165,13 +2228,19 @@ class VTK3dData(FluidData):
         else:
             raise FileNotFoundError("Directory {} not found!".format(str(path)))
     
+        # A plane exported as 3D vtk is 2D data. Drop any axis one point
+        #   thick, with its velocity component; the axes are remembered so that
+        #   later windowed reads are collapsed the same way.
+        self._read_ndim = len(mesh)
+        flow, mesh, periodic_dim, self._flat = _collapse_flat_axes(
+            flow, mesh, periodic_dim, source=str(path))
+
         # shift domain to quadrant 1
-        flow_points = (mesh[0]-mesh[0][0], mesh[1]-mesh[1][0],
-                        mesh[2]-mesh[2][0])
-        fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
+        flow_points = tuple(m - m[0] for m in mesh)
+        fluid_domain_LLC = tuple(m[0] for m in mesh)
         # It is assumed that the fluid spatial grid includes all 
         # domain boundaries.
-        self.L = [flow_points[0][-1], flow_points[1][-1], flow_points[2][-1]]
+        self.L = [fp[-1] for fp in flow_points]
         
         if self.vel_conv is not None:
             print("Converting vel units by a factor of {}.".format(self.vel_conv))
@@ -2192,7 +2261,7 @@ class VTK3dData(FluidData):
         if self.vel_conv is not None:
             for ii, d in enumerate(flow):
                 flow[ii] = d*self.vel_conv
-        return flow
+        return _drop_flat_axes(flow, self._flat, self._read_ndim)
 
 
 
@@ -2289,8 +2358,13 @@ class VTK3dData(FluidData):
             for dim in range(3):
                 flow[dim].append(data[dim])
 
-        flow = [np.array(flow[0]).squeeze(), np.array(flow[1]).squeeze(),
-                np.array(flow[2]).squeeze()]
+        # Only the time axis is dropped, and only for a single dump. A blanket
+        #   squeeze would also collapse a spatial axis one point thick -- which
+        #   is a plane, and is _collapse_flat_axes' business, since the
+        #   coordinate arrays have to go with it.
+        flow = [np.array(f) for f in flow]
+        if d_start == d_finish:
+            flow = [f[0] for f in flow]
 
         return flow, mesh
 
@@ -2335,13 +2409,17 @@ class ComsolVTUData(FluidData):
         flow, mesh, flow_times = self._read_vtufile(self.path, res=res)
         print('Done!')
 
+        # _read_vtufile hands back a two-entry mesh for 2D data, so the grid is
+        #   built over however many axes there are rather than always three.
+        flow, mesh, periodic_dim, _ = _collapse_flat_axes(
+            flow, mesh, periodic_dim, source=str(path))
+
         # shift domain to quadrant 1
-        flow_points = (mesh[0]-mesh[0][0], mesh[1]-mesh[1][0],
-                        mesh[2]-mesh[2][0])
-        fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
+        flow_points = tuple(m - m[0] for m in mesh)
+        fluid_domain_LLC = tuple(m[0] for m in mesh)
         # It is assumed that the fluid spatial grid includes all 
         # domain boundaries.
-        self.L = [flow_points[0][-1], flow_points[1][-1], flow_points[2][-1]]
+        self.L = [fp[-1] for fp in flow_points]
 
         if self.vel_conv is not None:
             print("Converting vel units by a factor of {}.".format(self.vel_conv))
@@ -2415,8 +2493,12 @@ class ComsolVTUData(FluidData):
             # get flow time
             flow_times.append(float(data_names[n][data_names[n].rfind('t=')+2:]))
 
-        flow = [np.array(flow[0]).squeeze(), np.array(flow[1]).squeeze(),
-                np.array(flow[2]).squeeze()]
+        # One component per axis of the mesh: the 2D branch above never fills
+        #   flow[2], so carrying it through would hand back an empty array as a
+        #   third velocity component.
+        flow = [np.array(f) for f in flow[:len(mesh)]]
+        if len(flow_times) == 1:
+            flow = [f[0] for f in flow]
 
         return flow, mesh, flow_times
 
