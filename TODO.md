@@ -58,9 +58,11 @@ asserted. That was the branch's stated remaining reason to exist.
 
 **Where the work goes next, in priority order:**
 
-Items 1 and 2 are closed. **Items 3 and 4 are both open and next**: the docstring
-style sweep was asked for immediately after component C, and note §9 (tiling) was the
-standing next item. The §7 prose pass rides on §9.
+Items 1 and 2 are closed. **Items 3 and 4 are both open, and 4 is the substantial
+one**: the docstring style sweep was asked for immediately after component C, and the
+**full-state reboot** (`run_persistence.md` §2.11, component R) was scheduled ahead of
+tiling on 2026-08-27. Tiling (item 5) and the §7 prose pass that rides on it both move
+back behind it.
 
 1. ✅ **The run archive and the plotting work it feeds — components A, B and C are
    complete** (`docs/notes/run_persistence.md`). §5.3 and §6.1 steps **A0–A5**,
@@ -92,11 +94,25 @@ standing next item. The §7 prose pass rides on §9.
    `fluid.py`, `_frames.py`, `_provenance.py`, and the plotting methods in
    `_swarm.py`. `RunArchive.check_against` ("Silently plotting a foreign archive is
    the worst available outcome") is another.
-4. 🔴 **Note §9** (real position-wrapping tiling, 2D and 3D; whether `Environment.extend`
-   returns) — the design pass is now written up in `run_persistence.md` §9; §9.3 is the
+4. 🔴 **Full-state reboot — `run_persistence.md` §2.11, build order §6.1 Step R.**
+   Record a simulation, delete the `Environment` and the `Swarm`, rebuild both from the
+   directory and carry on. §2.11 is the specification: an audit of every `Swarm`
+   attribute against "state versus history", the five gaps on the `Environment` side
+   (`char_L` and `U` are the ones that bite — `motion.inertial_particles` asserts them,
+   so an inertial run cannot be restarted at all), and R1–R4.
+
+   **Why this jumped ahead of tiling:** the on-disk format has to grow, and every
+   archive written before it does is one that cannot be rebooted. That is the only
+   one-way door on the queue. Tiling is orthogonal cleanup and will keep.
+
+   Finished against `tests/test_data_streaming/test_stream_d_restart.py` (run it with
+   `--runstreaming`): its five strict `xfail`s are the acceptance criteria, and each
+   comes off with the sub-step that earns it.
+5. 🟡 **Note §9** (real position-wrapping tiling, 2D and 3D; whether `Environment.extend`
+   returns) — the design pass is written up in `run_persistence.md` §9; §9.3 is the
    restoration checklist. This also **unblocks the prose-docs sweep**, which is
    deliberately held because §9 decides exactly what that prose would describe.
-5. ✅ **The 1.0.3 decision — settled (2026-08-19).** The patch release was cut from
+6. ✅ **The 1.0.3 decision — settled (2026-08-19).** The patch release was cut from
    `master` and tagged `v1.0.3`; the cherry-pick queue at the bottom of this file is the
    record of what moved and what deliberately did not. **The next release is meant to be
    `1.1.0`, with no `1.0.4`** — see that queue for the one thing that would change it.

@@ -38,14 +38,20 @@ The symmetry worth holding onto: **dynamic loading streams the fluid *in*; this
 streams the agents *out*.** Same architecture, opposite direction, same reason — the
 thing is too big to hold at once.
 
-### 0.2 The four components
+### 0.2 The components
 
 | | What | Why | Status |
 |---|---|---|---|
 | **A** | **Run archive** — append-only, chunked, crash-valid on-the-fly capture of agent state, with a public reader and a capture schedule that also governs history retention | persistence: crash survival, later sessions, larger-than-RAM analysis, bounded history memory, run speed, and eventually restart | **[done]** — §6.1 A0–A5, 2026-08-21 to 2026-08-25 |
 | **B** | **Fluid-side streaming** — per-dump means, vorticity by regime, per-dump extrema | dyload: never re-stream the dataset to draw a picture of it | **[done]** — §6.1 B1–B3, 2026-08-25 |
 | **C** | **Rendering** — frame selection by time, archive-backed `plot_all`, global colour/arrow scales | consumes A and B | **[done]** — §6.1 C1–C2, 2026-08-27 |
+| **R** | **Full-state reboot** — a checkpoint beside the archive, and a reader that turns a directory back into an `Environment` and its `Swarm`s | the third problem this architecture solves, and the one A was built for: a run that outlives the process that made it | specified (§2.11), **next** |
 | **D** | **Tiling and `extend`** — the real position-wrapping implementation | cleanup: tiling has raised `NotImplementedError` since the `FlowArray` removal | specified (§9), not built |
+
+⚠️ **Two lettering schemes overlap, and the letters do not agree.** The components here
+are A, B, C, R, D; the build steps in §6.1 are Step 0, A, B, C, R, D — and **Step D is
+the prose pass (§7), not component D (tiling, §9)**. That collision predates this note's
+current shape. When a sentence says "D", check which list it is counting.
 
 **A and B are independently shippable and should be shipped independently.** B is a
 dyload optimization that writes nothing at all under `INUM=None` — i.e. it does
@@ -85,9 +91,14 @@ In order:
    run costs zero loader calls; the colour and arrow scales are global;
    `Environment.record(plot_all=)` renders from the archive at the end of a `with`
    block. **This was the last step that consumes A and B.**
-5. **§9 — tiling** is what remains, as cleanup — **the front of the queue now.** It has
-   its own restoration checklist (§9.3) because gating it off left notices scattered
-   across source, tests, examples, docs and prose. The §7 prose pass rides on it.
+5. **§2.11 — the full-state reboot** is next *(scheduled 2026-08-27)*. It was filed as
+   a follow-on until the acceptance suite made the gap concrete; §6.1's Step R says why
+   it goes ahead of tiling rather than after it, and the one-line version is that the
+   on-disk format has to grow and every archive written before it does cannot be
+   rebooted.
+6. **§9 — tiling** is the cleanup after that. It has its own restoration checklist
+   (§9.3) because gating it off left notices scattered across source, tests, examples,
+   docs and prose. The §7 prose pass rides on it.
 
 ⚠️ **Branch-level priority this note cannot see:** check `TODO.md` before assuming
 "next section in this note" means "next work to do."
@@ -1223,11 +1234,19 @@ trajectory clustering — all of it currently requires either holding the run in
 or re-running it. An mmap-backed `RunArchive` makes a finished run an ordinary data
 object.
 
-### 2.11 Checkpoint and restart — the follow-on
+### 2.11 Component R — full-state reboot
 
-**A follow-on feature, not part of the first build.** Recorded here because the
-metadata designed in §2.6 is what makes it cheap, and retrofitting provenance later
-would not be.
+**Scheduled, and next** *(promoted from "the follow-on" 2026-08-27)*. Until then this
+section was a sketch filed under "not part of the first build": the metadata was
+designed for it (§2.6) but no step built it, and §0.2's four components did not
+include it. It is now component **R**, and §6.1 has a Step R ahead of Step D. The
+reason for the promotion is in §6.1; the short version is that the on-disk format has
+to grow, and every archive written before it does is one that cannot be rebooted.
+
+**The goal, stated as a user would:** run a simulation streaming to disk, delete the
+`Environment` and the `Swarm`, and rebuild both from the directory at the state the
+run left off — same positions, same properties, same random stream — and carry on as
+if nothing had happened.
 
 The distinction that keeps it simple:
 
@@ -1236,23 +1255,87 @@ The distinction that keeps it simple:
 - a **checkpoint** is one latest state plus everything history cannot give you.
 
 Same format, different file, written on request (and optionally every *k* captures).
-What a checkpoint needs beyond the archive's last capture:
 
-| | Where it lives now | Note |
+#### 2.11.1 The organizing rule
+
+Swarm state divides in two, and the division is not "big versus small" but **"does a
+history of this mean anything?"**
+
+> **Every variable that could have a history gets its current state stored
+> unconditionally. `positions` and `velocities` additionally get their history stored
+> unconditionally, because plotting needs it. Every other history is opt-in.**
+
+Two consequences worth stating, because they are what makes the rule cheap:
+
+- **A checkpoint is O(N) per swarm**, a handful of arrays and two small objects. It can
+  be written every *k* captures without thinking about it.
+- **The opt-in histories are the only thing that scales with run length**, so the one
+  decision a user makes at `record()` time is which of them to pay for.
+
+⚠️ **The time base is not on either list.** `times` is shared across every swarm in the
+environment and every consumer of the archive needs it, so it is neither per-swarm
+state nor an optional history — it is the spine the format is already built around
+(§2.3). It is called out here only because it is the one thing that looks like it
+belongs in the table below and does not.
+
+#### 2.11.2 What a Swarm is made of
+
+Every attribute a `Swarm` carries, audited against a live one rather than from memory.
+"State" is what a checkpoint must hold; "History" is what a series would mean.
+
+| Variable | Shape | State | History | Why |
+|---|---|---|---|---|
+| `positions` | N×D masked | **required** | **always** | the run itself, and what every frame draws |
+| `velocities` | N×D masked | **required** | **always** | the plot statistics and the heading markers read `vel_history[n]`; re-deriving them from positions is wrong for any agent that collided or wrapped (§5.1) |
+| `accelerations` | N×D masked | **required** | opt-in | `move` recomputes it by finite difference on the first resumed step, so only an agent model that *reads* it needs the state restored — but there is no `accel_history` in memory, so the archive is the only place a series can exist |
+| `props` | DataFrame, N rows | **required** | opt-in | per-agent variation. Already opt-in in memory via `store_prop_history`, and the archive flag should mean the same thing |
+| `ib_collision_idx` | int N | **required** | opt-in, **sparse** | `after_move` overrides read it. It is −1 for almost every agent on almost every step, so a dense N-per-capture series is the wrong shape — store collision *events* (see below) |
+| `shared_props` | dict | **required** | opt-in | ⚠️ **an addition to the list.** It is mutable and user code changes it mid-run — a ramping `mu`, a schedule on `cov` — so a series of it is meaningful. It also carries `name` and `color`, which therefore need no separate slot |
+| `rndState` | `Generator` | **required** | opt-in | ⚠️ **an addition.** The bit generator state advances on every draw. As state it is what makes a restart reproducible at all; as a *history* it buys something extra — a per-capture series lets a run be resumed from **any** capture, not only the last |
+| `ib_condition` | str | **required** | — | a plain attribute a user could change mid-run, but in practice fixed. If that ever stops being true it moves to opt-in |
+| the `Swarm` subclass | class | **required, as a name** | — | `apply_agent_model` *is* the behavior. Record it the way §2.6 records a fluid loader: a name and nothing more. It cannot be reconstructed without the class being importable, and the reader must say so plainly rather than silently rebuilding a plain `Swarm` |
+| `_prev_positions` | N×D masked | — | — | derived: `move` sets it from the previous positions at the top of every step, and `__init__` seeds it from `positions`. A history of it is `pos_history` shifted by one |
+| `pool` | worker pool | — | — | a runtime resource the caller supplies; not state |
+| `store_prop_history` | bool | derived | — | it is `props_history is not None` |
+| `envir` | backreference | — | — | the rebuilt Environment supplies it |
+
+**Nothing else exists.** That is the whole of `vars(swarm)`.
+
+**The sparse format for `ib_collision_idx`.** One list per agent of
+`(capture, element)` pairs, appended when the index is not −1 — so a run where nothing
+collides costs nothing, and the dense array is reconstructed by scanning forward. Not
+a new file format: it is small enough to sit in json beside the swarm sidecar until
+measurement says otherwise.
+
+#### 2.11.3 What the Environment is missing
+
+The Environment half is **nearly** complete already, which was not obvious and is worth
+recording. `provenance['environment']` is exactly `{L, units, bndry, rho, mu}`, and
+between that, the fluid and ibmesh provenance replay, and the archive's `times`, a
+rebuilt Environment matches the original attribute for attribute — audited, and
+`RunArchive.check_against` passes on the result.
+
+Five things it does not carry:
+
+| Missing | Consequence | Fix |
 |---|---|---|
-| `Swarm.rndState` | `np.random.Generator` | `gen.bit_generator.state` is a plain dict — JSON-able. **Without it a restart is not reproducible**, which is most of the point |
-| `Swarm.props` | pandas DataFrame | `save_data` already writes json |
-| `Swarm.shared_props` | dict of scalars/arrays | `save_data` already writes npz |
-| `accelerations`, `ib_collision_idx` | live arrays | already reserved schema slots (§2.4) |
-| `ib_condition`, `name`, `color`, `store_prop_history` | Swarm construction args | small |
-| `envir.time`, `time_history` | Environment | the archive has the time base already |
-| `L`, `units`, `bndry`, `rho`/`mu`/`nu`, `char_L`, `U`, `g`, `h_p` | Environment scalars | small |
-| `flow`, `ibmesh` | external datasets | **do not serialize** — §2.6's provenance record re-runs the loader |
+| **`char_L`, `U`** | `motion.inertial_particles` asserts both are set, so an **inertial-particle run cannot be restarted at all** — it raises before it moves. `Environment.calc_re` is dead for the same reason | two floats into `provenance['environment']` |
+| **`nu`**, in the `Environment(nu=…)`-only construction | `rho` and `mu` are both `None` there, and only those two are recorded, so `nu` is lost silently. Every other construction recovers it as `mu/rho` | record `nu` beside them |
+| `ibmesh_color` | cosmetic; the rebuilt mesh draws in the default colour | one string |
+| `plot_structs`, `plot_structs_args` | the extra structures a plot draws (e.g. `ex_poisson_search.py`'s target circle) are gone | **unfixable in principle** — they are functions. The reader should say so rather than appear to have restored them |
 
-Restart then reads as: rebuild the `Environment` from provenance, rebuild the `Swarm`
-from the checkpoint, restore the RNG, and continue. **Planktos has no simulation
-checkpointing today**, and adding it is the third problem this architecture solves.
-Scope it separately; design the metadata for it now.
+`g` is a constant, the FTLE fields and `mag_grad`/`mag_grad_time` are recomputable
+outputs, and `swarms` is rebuilt — none of those are gaps.
+
+#### 2.11.4 What a reboot then reads as
+
+Rebuild the `Environment` from provenance, rebuild each `Swarm` from its checkpoint,
+restore the RNG, and continue. The two halves fail differently and should say so
+differently: a missing fluid file is an error, an unimportable `Swarm` subclass is an
+error, and a lost `plot_structs` is a warning.
+
+**Do not serialize `flow` or `ibmesh`** — §2.6's provenance record re-runs the loader.
+That is the whole reason provenance was designed in at A2 rather than bolted on here.
 
 ---
 
@@ -2687,6 +2770,51 @@ rendering, and it changes where per-frame data comes from rather than how it is 
       `Swarm._vorticity_norm` already takes a `clip` it never rescales, so a global
       maximum passed there is the whole change on the rendering side. It was; see
       §3.5's "As built — the render half".
+
+**Step R — the full-state reboot (§2.11).** The specification is §2.11; this is the
+order to build it in and, first, why it goes here.
+
+**Why ahead of tiling.** The two are independent — tiling touches `FluidData` and the
+domain, reboot touches the archive format — so this is a scheduling call, not a
+dependency. Three things decide it:
+
+- **The format has to grow, and archives are being written now.** A checkpoint file, a
+  Swarm-class name, `char_L`/`U`/`nu` in the environment provenance: every one is a new
+  field, and every archive written before they exist is one that cannot be rebooted.
+  That is a one-way door for real runs, and it is the only item on the queue that has
+  one.
+- **The knowledge is in hand.** §2.6's provenance was designed for exactly this, A–C
+  are freshly built, and §2.11's audit is done. Tiling has been sitting behind a
+  `NotImplementedError` for weeks and will keep.
+- **Nothing is blocked by deferring D.** The §7 prose pass rides on tiling, so both
+  slip together, and neither is on any user's path today.
+
+The cost, stated plainly: tiling and the prose pass move back by however long this
+takes, and `Environment.tile_domain` keeps raising in the meantime.
+
+*Sub-steps, in dependency order:*
+
+- **R1 — the environment gaps (§2.11.3).** `char_L`, `U` and `nu` into
+  `provenance['environment']`, plus `ibmesh_color`. Small, self-contained, and it is
+  the one part that improves archives written from the moment it lands. Do it first for
+  that reason alone.
+- **R2 — the checkpoint file.** One latest state per swarm, per §2.11.2's "State"
+  column: `accelerations`, `props`, `shared_props`, `ib_collision_idx`, `rndState`,
+  `ib_condition`, and the Swarm subclass name. Written on request and optionally every
+  *k* captures. O(N) per swarm, so the cadence needs no cleverness.
+- **R3 — the reader.** `RunArchive` grows the entry point that turns a directory back
+  into an `Environment` and its `Swarm`s. It must distinguish its three failure modes:
+  a missing fluid file is an error, an unimportable `Swarm` subclass is an error, and a
+  lost `plot_structs` is a warning (§2.11.3).
+- **R4 — the opt-in histories.** `store=` extends past the three N×D arrays to
+  `props`, `shared_props`, `rndState` and the sparse `ib_collision_idx` events. Last
+  because R1–R3 deliver the whole user-visible claim without it, and because the sparse
+  format is the only piece here that wants measurement before it is fixed.
+
+*What it is finished against:* `tests/test_data_streaming/test_stream_d_restart.py`.
+Its five strict `xfail`s are the acceptance criteria, and the headline —
+`test_a_run_resumes_from_disk_as_if_nothing_had_happened` — is the whole of R stated as
+one assertion. Each marker comes off with the sub-step that earns it.
 
 **Step D — examples and docs prose pass (§7).**
 

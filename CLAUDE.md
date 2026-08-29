@@ -395,7 +395,9 @@ Two rules it enforces:
 
 **Plotting a run in a later session is not a plotting problem.** It needs the
 Environment and Swarm restored to where the run left off, which Planktos does not do
-yet — see `run_persistence.md` §2.11. Do not solve it inside `plot`/`plot_all`.
+yet. That is **component R, the full-state reboot** — `run_persistence.md` §2.11 for
+the specification and §6.1 Step R for the build order — and it is the next substantial
+item on this branch, ahead of tiling. Do not solve it inside `plot`/`plot_all`.
 
 ## Customizing agent behavior — the one rule that matters
 
