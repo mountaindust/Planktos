@@ -1260,7 +1260,21 @@ class RunRecorder:
                             'units': envir.units,
                             'bndry': [list(b) for b in envir.bndry],
                             'rho': _provenance.jsonable(envir.rho),
-                            'mu': _provenance.jsonable(envir.mu)},
+                            'mu': _provenance.jsonable(envir.mu),
+                            # nu is derivable as mu/rho from every construction
+                            #   but Environment(nu=...), where rho and mu are
+                            #   both None and it is the only one of the three
+                            #   there is.
+                            'nu': _provenance.jsonable(envir.nu),
+                            # motion.inertial_particles asserts both of these,
+                            #   so an inertial run that loses them cannot be
+                            #   restarted at all -- it raises before it moves.
+                            'char_L': _provenance.jsonable(envir.char_L),
+                            'U': _provenance.jsonable(envir.U),
+                            # Resolved rather than as given: 'k' in 2D and
+                            #   'dimgrey' in 3D when the caller named none.
+                            'ibmesh_color': _provenance.jsonable(
+                                envir.ibmesh_color)},
             'fluid': envir._fluid_provenance,
             'ibmesh': envir._ibmesh_provenance}
 

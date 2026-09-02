@@ -1034,7 +1034,9 @@ fingerprint already required for validation.
 ```json
 "provenance": {
   "planktos_version": "1.1.0",
-  "environment": {"L": [...], "units": "m", "bndry": [...], "rho": ..., "mu": ...},
+  "environment": {"L": [...], "units": "m", "bndry": [...],
+                  "rho": ..., "mu": ..., "nu": ...,
+                  "char_L": ..., "U": ..., "ibmesh_color": "k"},
   "fluid":  {"loader": "read_IB2d_fluid_data",
              "kwargs": {"path": "...", "dt": ..., "print_dump": ..., "d_start": ...,
                         "d_finish": ..., "INUM": 4}},
@@ -1342,13 +1344,14 @@ between that, the fluid and ibmesh provenance replay, and the archive's `times`,
 rebuilt Environment matches the original attribute for attribute — audited, and
 `RunArchive.check_against` passes on the result.
 
-Five things it does not carry:
+Five things it did not carry. **Four are closed as of R1** *(2026-09-02)*; the fifth
+cannot be:
 
 | Missing | Consequence | Fix |
 |---|---|---|
-| **`char_L`, `U`** | `motion.inertial_particles` asserts both are set, so an **inertial-particle run cannot be restarted at all** — it raises before it moves. `Environment.calc_re` is dead for the same reason | two floats into `provenance['environment']` |
-| **`nu`**, in the `Environment(nu=…)`-only construction | `rho` and `mu` are both `None` there, and only those two are recorded, so `nu` is lost silently. Every other construction recovers it as `mu/rho` | record `nu` beside them |
-| `ibmesh_color` | cosmetic; the rebuilt mesh draws in the default colour | one string |
+| ✅ **`char_L`, `U`** | `motion.inertial_particles` asserts both are set, so an **inertial-particle run cannot be restarted at all** — it raises before it moves. `Environment.calc_re` is dead for the same reason | two floats into `provenance['environment']` |
+| ✅ **`nu`**, in the `Environment(nu=…)`-only construction | `rho` and `mu` are both `None` there, and only those two were recorded, so `nu` was lost silently. Every other construction recovers it as `mu/rho` | record `nu` beside them |
+| ✅ `ibmesh_color` | cosmetic; the rebuilt mesh draws in the default colour | one string, recorded **as resolved** (`'k'` in 2D, `'dimgrey'` in 3D) so the reader never repeats the default |
 | `plot_structs`, `plot_structs_args` | the extra structures a plot draws (e.g. `ex_poisson_search.py`'s target circle) are gone | **unfixable in principle** — they are functions. The reader should say so rather than appear to have restored them |
 
 `g` is a constant, the FTLE fields and `mag_grad`/`mag_grad_time` are recomputable
@@ -2976,10 +2979,12 @@ and R3 below now assume it.*
   either is baked into a format. It found that §6.3's suggested `DataFrame.to_json`
   precedent silently truncates, that `_provenance.jsonable` cannot serialize
   `shared_props`, and that `_prev_positions` needs no restoring. §2.11.5.
-- **R1 — the environment gaps (§2.11.3).** `char_L`, `U` and `nu` into
-  `provenance['environment']`, plus `ibmesh_color`. Small, self-contained, and it is
-  the one part that improves archives written from the moment it lands. Do it first for
-  that reason alone. Additive, so no format-version bump and old archives still read.
+- **R1 — the environment gaps (§2.11.3). ✅ [done 2026-09-02].** `char_L`, `U` and `nu`
+  into `provenance['environment']`, plus `ibmesh_color`. Additive, so no format-version
+  bump and old archives still read; done first because it is the one part that improves
+  archives written from the moment it lands. Three tests in `test_recording.py` cover
+  the scalars, the `Environment(nu=…)`-only case where `nu` was the one being lost, and
+  the resolved colour in both dimensions.
 - **R2 — the checkpoint file.** One latest state per swarm, per §2.11.2's "State"
   column: `positions`, `velocities`, `accelerations`, `props`, `shared_props`,
   `ib_collision_idx`, `rndState`, `ib_condition`, and the Swarm subclass name. Written

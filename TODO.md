@@ -114,8 +114,14 @@ back behind it.
    velocities from the archive, `props_history` opt-in; a mid-run props schema change is
    allowed; and **`store=` now defaults to `('positions',)`**, velocities opt-in, paid
    for by a per-capture statistics sidecar and a stored `angle` column. That last one is
-   measured at **48% off the archive and 59% off the recording overhead**. R1 is the
-   next thing to write.
+   measured at **48% off the archive and 59% off the recording overhead**.
+
+   **R1 is done (2026-09-02).** `provenance['environment']` now carries `nu`,
+   `char_L`, `U` and `ibmesh_color` alongside `L`/`units`/`bndry`/`rho`/`mu`, so an
+   inertial-particle run can be restarted at all and a kinematic-only
+   `Environment(nu=...)` no longer loses its one viscosity. Additive: no
+   format-version bump, old archives still read. **R2, the checkpoint file, is
+   next.**
 
    Finished against `tests/test_data_streaming/test_stream_d_restart.py` (run it with
    `--runstreaming`): its five strict `xfail`s are the acceptance criteria, and each

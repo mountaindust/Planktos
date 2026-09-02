@@ -243,6 +243,45 @@ def test_the_provenance_of_the_run_is_recorded(tmp_path):
     assert prov['ibmesh'] is None
 
 
+def test_the_environment_scalars_a_restart_needs_are_recorded(tmp_path):
+    # A rebuilt Environment has to match the original attribute for attribute.
+    # char_L and U are the ones that bite: motion.inertial_particles asserts
+    # both, so an inertial run without them raises before it moves.
+    envir = planktos.Environment(rho=1000, mu=0.001, char_L=0.5, U=0.2,
+                                 ibmesh_color='firebrick')
+    _swarm(envir)
+    with envir.record(tmp_path / 'run') as rec:
+        pass
+    env = json.loads((rec.path / 'meta.json').read_text())['provenance']['environment']
+    for name in ('rho', 'mu', 'nu', 'char_L', 'U'):
+        assert env[name] == pytest.approx(getattr(envir, name)), name
+    assert env['ibmesh_color'] == 'firebrick'
+
+
+def test_a_kinematic_only_environment_still_records_nu(tmp_path):
+    # Environment(nu=...) alone leaves rho and mu None, so nu is the only one
+    # of the three there is: recording rho and mu alone would lose it silently.
+    envir = planktos.Environment(nu=1e-6)
+    _swarm(envir)
+    with envir.record(tmp_path / 'run') as rec:
+        pass
+    env = json.loads((rec.path / 'meta.json').read_text())['provenance']['environment']
+    assert env['rho'] is None and env['mu'] is None
+    assert env['nu'] == pytest.approx(1e-6)
+
+
+def test_the_default_ibmesh_color_is_recorded_as_resolved(tmp_path):
+    # Recorded as resolved rather than as given, so a rebuilt mesh draws the
+    # same in either dimension without the reader repeating the default.
+    for kwargs, expected in ((dict(), 'k'), (dict(Lz=10), 'dimgrey')):
+        envir = planktos.Environment(**kwargs)
+        with envir.record(tmp_path / ('run_' + expected)) as rec:
+            pass
+        env = json.loads(
+            (rec.path / 'meta.json').read_text())['provenance']['environment']
+        assert env['ibmesh_color'] == expected
+
+
 # --------------------------------------------------------------------------- #
 #                                  lifecycle                                   #
 # --------------------------------------------------------------------------- #
