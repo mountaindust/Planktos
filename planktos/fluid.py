@@ -766,6 +766,8 @@ class FluidData:
     fshape : tuple
         Shape of each component of the fluid velocity field as an ndarray of
         raw data, ``([t],i,j,[k])``.
+    spatial_shape : tuple
+        Shape of a single time slice of one velocity component, ``(i,j,[k])``.
     ndim : int
         Number of spatial dimensions of the fluid velocity field (2 or 3).
     INUM : None, True, or int
@@ -995,6 +997,16 @@ class FluidData:
     def ndim(self):
         '''Returns the number of dimensions of the fluid velocity field.'''
         return len(self.flow_points)
+
+
+    @property
+    def spatial_shape(self):
+        '''Returns the shape of one time slice of a velocity component.'''
+        # fshape leads with a time axis only when the flow is time-varying, so
+        # a time-invariant field is already its own spatial shape.
+        if self.flow_times is None:
+            return self.fshape
+        return self.fshape[1:]
     
 
 

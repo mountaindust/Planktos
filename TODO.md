@@ -12,15 +12,15 @@ Temporal interpolation of dynamically-loaded data is **linear in time**
 (`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
 story.
 
-**Suite: 1098 passed / 50 skipped / 6 xfailed (`pytest`, ~30 s), 1146 / 2 / 6
-(`pytest --runslow`, ~4.5 min).** No failures.
+**Suite: 1099 passed / 50 skipped / 5 xfailed (`pytest --runstreaming`, ~30 s),
+1147 / 2 / 5 (`pytest --runslow --runstreaming`, ~4.5 min).** No failures.
 
-**The six xfails are the pre-release list**, all in `tests/test_data_streaming/` —
+**The five xfails are the pre-release list**, all in `tests/test_data_streaming/` —
 an adversarial suite written from `run_persistence.md` covering the streaming story
 end to end. They are known gaps to work before `dyload` ships, not stop-the-cycle
-defects; see the carve-out in `CLAUDE.md`. Five are checkpoint/restart (note §2.11);
-the sixth is `plot_all`'s vorticity placeholder over a time-invariant flow, which
-`fshape[1:]` collapses to one dimension.
+defects; see the carve-out in `CLAUDE.md`. All five are checkpoint/restart (note
+§2.11). The sixth, `plot_all`'s vorticity placeholder over a time-invariant flow, was
+fixed 2026-08-31 and its marker is now a regression lock.
 
 **What is done:**
 
@@ -105,9 +105,24 @@ back behind it.
    archive written before it does is one that cannot be rebooted. That is the only
    one-way door on the queue. Tiling is orthogonal cleanup and will keep.
 
+   **R0, the pre-flight pass, is done (2026-08-31 to 2026-09-02)** —
+   `run_persistence.md` §2.11.5. It verified that §2.11.2's state list really does give
+   a bit-identical resume, and settled everything the build could not start without:
+   props go to **csv at pandas' default float format** (which already round-trips —
+   `to_json` does not, and readers must pass `float_precision='round_trip'`), with
+   ndarray-valued columns spilling to `.npy`; a reboot **materializes** positions and
+   velocities from the archive, `props_history` opt-in; a mid-run props schema change is
+   allowed; and **`store=` now defaults to `('positions',)`**, velocities opt-in, paid
+   for by a per-capture statistics sidecar and a stored `angle` column. That last one is
+   measured at **48% off the archive and 59% off the recording overhead**. R1 is the
+   next thing to write.
+
    Finished against `tests/test_data_streaming/test_stream_d_restart.py` (run it with
    `--runstreaming`): its five strict `xfail`s are the acceptance criteria, and each
-   comes off with the sub-step that earns it.
+   comes off with the sub-step that earns it. Three of them assert a file location
+   §2.11.5 has since decided differently, so they are **retargeted** at the checkpoint
+   rather than merely un-`xfail`ed, with behavioral round-trip tests beside them; the
+   retargeted checklist is deleted once R is confirmed done.
 5. 🟡 **Note §9** (real position-wrapping tiling, 2D and 3D; whether `Environment.extend`
    returns) — the design pass is written up in `run_persistence.md` §9; §9.3 is the
    restoration checklist. This also **unblocks the prose-docs sweep**, which is
@@ -1361,7 +1376,7 @@ Add to this list whenever a fix made on `dyload` is not dyload-specific. The tes
 that is simple: does the code it touches look the same on `master`? Check with
 `git diff master -- <file>` before assuming.
 
-### Queued for a possible 1.0.4 — six entries
+### Queued for a possible 1.0.4 — seven entries
 
 Everything below the next heading is history — it shipped, or was deliberately not
 ported — kept for the porting notes rather than because anything is pending. Per the
@@ -1375,6 +1390,7 @@ release plan there is no `1.0.4` in preparation; this is a holding pen.
 | **Spline indexing rejected numpy integers and mishandled negative slice bounds** (2026-08-26). `fCubicSpline.__getitem__` tested `type(pos) == int`, so an `np.int64` — what a caller looping over `np.arange` or unpacking `np.searchsorted` supplies — raised `IndexError`. Worse, the hand-rolled start/stop arithmetic ran a negative start up to `len-1`, so `envir.flow[0][-3:]` silently returned `len+3` wrapped entries instead of the last three. Both bodies now delegate to one `fluid._spline_index`, which uses `isinstance(..., (int, np.integer))` and `slice.indices()`. Ten tests in `test_temporal_interp.py`, parametrized over both spline classes | `planktos/fluid.py` (`_spline_index` and the two `__getitem__` bodies), `tests/test_temporal_interp.py` | **Partly.** `fCubicSpline.__getitem__` on `master` has both defects and is close enough to port by hand, but it is not byte-identical — `master`'s version does not handle a negative *step* at all (no `stop = -1` branch), so `[::-1]` there returns an empty stack rather than wrapped data. ⚠️ `LinearSpline` does not exist on `master`; port the `fCubicSpline` half only, and the tests lose their parametrization |
 | **Four latent defects in the plotting paths** (2026-08-27), found while merging `animate`'s two per-frame branches for component C. **(i)** `Swarm.plot` called `self.interpolate_temporal_mesh(time=t)` — a method on `Environment`, not `Swarm` — so plotting a *past* time with a moving 2D mesh raised `AttributeError` instead of drawing. It also passed the requested time rather than the snapped one. **(ii)** Planktos creates a scatter in four places and three of them branch on `'color' in props`, reading `shared_props['color']` only in the `else`. `plot_all`'s 2D setup did not: it built its empty placeholder scatter with `c=self.shared_props['color']` unconditionally, and that key is absent exactly when per-agent colours exist — so 2D `plot_all` raised `KeyError` for any swarm whose colours vary by agent. (`add_prop` removing the shared entry is correct and is not the defect; one of four sites was missing the branch the other three have.) Fixed by adding that branch rather than by defaulting the lookup, which would have duplicated the `Swarm.__init__` colour default in a second place. **(iii)** `plot_all`'s downsampled branch took heading angles from `self.props` where every other branch takes them from the frame's `props_history` entry, freezing headings at the present through the whole movie. **(iv)** the movie's *final* frame applied per-agent colours only when a props history had been kept (`if self.props_history is not None and 'color' in self.props`), so a run without one drew its last frame in the default colour. `test_swarm_plot_at_a_past_time_with_a_moving_mesh` covers (i) and `test_the_final_frame_draws_the_present_state` covers (ii) and (iv); (iii) has no dedicated test, the two-branch structure that produced it being gone | `planktos/_swarm.py` (`Swarm.plot`, `plot_all` and its `animate`), `tests/test_plotting_smoke.py`, `tests/test_archive_rendering.py` | **Partly, by hunk.** All four are on `master` — `git show master:planktos/_swarm.py`, its lines 2139 (in `plot`), 2573 (in `plot_all`'s 2D setup), and 2932 / 3192 / 3203 / 3207 (all inside `plot_all`'s `animate`). **(i) and (ii) port directly**: both anchors are byte-identical and sit outside `animate`, so they are one-hunk changes. **(iii) and (iv) do not**: those fixes fall out of `animate` reading through `_frames.FrameSource` and of its final-frame branch being deleted, neither of which exists on `master`, so each needs hand-editing into master's two-branch `animate` — note (iii) appears **twice** there, at 2932 and again at 3207 in the final-frame branch |
 | **`Swarm.move` raises when the Environment holds more than one Swarm** (2026-08-21), replacing the warn-and-freeze block that appended to `pos_history` alone and left `vel_history` / `props_history` behind. Ships with the docstring rewrite of `update_time`, three tests in `test_swarm_lifecycle.py`, and the `test_agent_models.py` fix for a test that was accidentally stacking four Swarms into one Environment | `planktos/_swarm.py` (`Swarm.move`), `tests/test_swarm_lifecycle.py`, `tests/test_agent_models.py`, `docs/quickstart.rst` | **Yes, by hunk.** The freeze-append block is byte-identical on `master` (`git show master:planktos/_swarm.py`, the `len(s.pos_history) < len(self.pos_history)` guard). ⚠️ It is a **behavior break** — a warning becomes a raise — so it is semver-visible and belongs in a minor release, not a patch |
+| **`plot_all(fluid='vort')` raised over any time-invariant flow** (2026-08-31). The vorticity placeholder was sized from `flow.fshape[1:]`; `fshape` leads with a time axis **only for time-varying data**, so a steady flow lost its *x* axis instead and `pcolormesh` got a 1-D array. Every analytic flow is time-invariant (`set_brinkman_flow` with scalar `U`, `set_channel_flow`, `set_canopy_flow`), as is any `Environment(flow=[...])` given no `flow_times`. `Swarm.plot` was unaffected — only `plot_all` builds a placeholder. Fixed by naming the concept once, as `FluidData.spatial_shape`, and reading it at both plotting sites. Found by the acceptance suite (F1); its `xfail` became a regression lock that also walks the frames, since figure setup alone renders nothing on Agg | `planktos/fluid.py` (`spatial_shape`), `planktos/_swarm.py` (`plot_all`), `planktos/_environment.py` (`plot_2D_vort`, already-correct site made consistent), `tests/test_data_streaming/test_stream_a_inram.py` | **By hand, not by hunk.** `master` has the same defect at `_swarm.py:2549`, but as `self.envir.flow[0].shape[1:]` — there `flow` is a list of ndarrays and there is no `FluidData` to hang `spatial_shape` on, so the port is a `flow_times is None` test at the call site |
 
 ### Shipped in 1.0.3 — the 2026-08-10 `move()`/`_ibc` work
 

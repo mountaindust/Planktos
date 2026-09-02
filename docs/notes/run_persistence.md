@@ -904,22 +904,38 @@ identity assumes the recording covers the run from t=0 and the swarm existed at 
 start; when either is false the archive carries the offset explicitly and consumers
 resolve by time instead (§2.3, §2.7, §4.2).
 
-Budget ≈ `(2·D·8 + 1)` bytes per agent per capture — 49 B in 3D. A 1000-agent,
-10 000-step 3D run is ~490 MB of agent data, separate from any fluid arrays. A `store=`
-option selects which arrays are kept, defaulting to positions and velocities;
-`accelerations` and `ib_collision_idx` are reserved schema slots. Velocities are not
-practically optional — `_calc_basic_stats` needs them (§5.1), and re-deriving them from
-positions is the trap described there.
+Budget ≈ `(2·D·8 + 1)` bytes per agent per capture with velocities — 49 B in 3D, so a
+1000-agent, 10 000-step 3D run is ~490 MB of agent data, separate from any fluid arrays.
+A `store=` option selects which arrays are kept; `accelerations` is a reserved schema
+slot.
 
-⚠️ **`store=` without velocities produces an analysis-only archive, and that is
-allowed — but say so at `record()` time, not at render time.** §2.8 makes a missing
-quantity a hard refusal, so `store=('positions',)` yields an archive `plot_all` will
-decline, twelve hours later, for a reason chosen twelve hours earlier. The two are
-consistent; what is missing is the notice. So: `record()` **warns** when `store` omits
-velocities, naming what will not be renderable, and the reader's refusal names `store=`
-as the cause. Dropping positions is different — there is no consumer at all without
-them, in or out of plotting — so `store` must include `'positions'` and **raises**
-otherwise. *(The `dtype` field §2.3 lists in `meta.json` records what was written; it is
+⚠️ **`store=` defaults to `('positions',)`, and velocities are opt-in** *(decided
+2026-09-02; §2.11.5 has the measurements)*. This paragraph previously said the opposite
+— that velocities were "not practically optional" because `_calc_basic_stats` needs
+them. Component R's derived quantities remove that dependency: the statistics box is
+served by a per-capture sidecar of `avg_swrm_vel`, `avg_swrm_spd` and `std_swrm_spd`
+(40–48 bytes per capture, **independent of N**), the 2D heading markers by a stored
+`angle` column, and `perc_left` by the mask, which is written regardless. In 3D nothing
+else is needed at all, because 3D draws no heading markers.
+
+Measured, that default takes **48% off the archive and 59% off the recording overhead**
+— the second being the better argument, since a smoke run pays the write cost on every
+step. What it gives up is per-agent velocity at a past time, which is **unrecoverable**:
+§5.1 established that differencing stored positions is wrong for any agent that collided
+or wrapped, and the sidecar is a swarm aggregate rather than per-agent data. That is the
+trade opt-in recording exists to let the user make.
+
+**Because it is a choice with a delayed cost, `record()` says so at the start** — a
+printed notice, not a warning, naming what is being dropped and how to keep it:
+
+    Recording to run_archive/. Storing positions; velocity history will not be
+    kept -- plots and statistics are served from the recorded summaries. To keep
+    per-agent velocities for later analysis, pass
+    store=('positions','velocities').
+
+§2.8 still makes the reader's refusal name `store=` as the cause, so the two ends agree.
+Dropping positions is different — there is no consumer at all without them, in or out of
+plotting — so `store` must include `'positions'` and **raises** otherwise. *(The `dtype` field §2.3 lists in `meta.json` records what was written; it is
 `float64` throughout and no parameter offers anything else. It is in the schema so a
 later single-precision option cannot silently change what an old archive means.)*
 
@@ -1256,6 +1272,10 @@ The distinction that keeps it simple:
 
 Same format, different file, written on request (and optionally every *k* captures).
 
+⚠️ **The pre-flight analysis has run** *(R0, 2026-08-31)*. It verified the state list
+below, measured what a restore costs, and settled the two questions the build could not
+start without. §2.11.5 carries the findings and the decisions; read it before R2.
+
 #### 2.11.1 The organizing rule
 
 Swarm state divides in two, and the division is not "big versus small" but **"does a
@@ -1299,7 +1319,14 @@ Every attribute a `Swarm` carries, audited against a live one rather than from m
 | `store_prop_history` | bool | derived | — | it is `props_history is not None` |
 | `envir` | backreference | — | — | the rebuilt Environment supplies it |
 
-**Nothing else exists.** That is the whole of `vars(swarm)`.
+⚠️ **"Nothing else exists" was not quite true**, and the R0 audit against a live
+`Swarm` (§2.11.5) found two corrections. `pos_history`, `vel_history` and
+`props_history` are attributes too — the table treats them as the *History* column
+rather than as rows, which is coherent, but a reader checking `vars(swarm)` against it
+will find three more names than the table has. And `store_prop_history` is a row here
+yet is **not an attribute at all**: it is a constructor argument, and the derived value
+the row describes is `props_history is not None`. Everything else in the table matches
+the object exactly.
 
 **The sparse format for `ib_collision_idx`.** One list per agent of
 `(capture, element)` pairs, appended when the index is not −1 — so a run where nothing
@@ -1336,6 +1363,155 @@ error, and a lost `plot_structs` is a warning.
 
 **Do not serialize `flow` or `ibmesh`** — §2.6's provenance record re-runs the loader.
 That is the whole reason provenance was designed in at A2 rather than bolted on here.
+
+**A reboot materializes `pos_history` and `vel_history` from the archive, and
+`props_history` only on request** *(decided 2026-08-31, R0)*. The physics does not need
+any of them — a resume from an empty history is bit-identical (§2.11.5) — but the
+*plot* does, and it degrades silently without them rather than failing: `perc_left`
+takes its original agent count from `pos_history[0]`, so a restored swarm reports 100%
+remaining when a quarter of it has already gone, and `plot_all` prints "No position
+history" and draws a single frame.
+
+Positions and velocities are the pair the plot actually reads, and neither is
+recoverable from the other: the statistics box and the 2D heading markers read
+velocities, which cannot be differenced back out of positions for any agent that
+collided or wrapped (§5.1) and which mean a different physical quantity under a coarse
+schedule (§2.4). `props_history` stays opt-in, matching what `store_prop_history`
+already means in memory.
+
+What bounds the cost is the recording, not the reboot: a materialized history is as
+coarse as `capture_interval` made it, so the knob already exists. Measured, as live
+masked arrays: 4.9 MB at N=100/2D/1000 captures, **529 MB** at the §2.4 budget case
+(N=1000, 3D, 10 000), 12.9 GB at N=5000/3D/50 000. RAM runs ~13% above the on-disk
+figures because numpy masks a full `N×D` bool array where the archive writes one byte
+per row.
+
+#### 2.11.5 R0 — what the pre-flight analysis settled
+
+*(2026-08-31. Run before R1 so that R2 and R3 could start from measurements rather than
+from the plan's assumptions. Baseline: 1147 passed / 2 skipped / 5 xfailed.)*
+
+**The state list in §2.11.2 is verified sufficient.** Restoring exactly its "State"
+column — and nothing else — into a fresh `Swarm` and running on gives a **bit-identical**
+continuation against an uninterrupted reference: max position error 0.0, mask identical,
+clock identical, through an immersed-boundary mesh over a windowed `INUM=4` fluid.
+Dropping one item at a time separates what is necessary from what is merely stored:
+
+| Dropped | Result |
+|---|---|
+| `rndState` | diverges (2.34) |
+| `shared_props` | diverges (5.03) |
+| `props`, `accelerations`, `ib_collision_idx` | identical — they reach the physics only through a user model that reads them, which is exactly why §2.11.1 stores them unconditionally |
+| `_prev_positions` | identical — `move` resets it from `positions` at the top of every step, so **R3 need not restore it** |
+
+**The checkpoint cannot use `DataFrame.to_json`.** That was §6.3's suggested precedent,
+inherited from `save_data`, and it silently truncates: pandas caps `double_precision` at
+15 digits and a float64 needs **17** to round-trip, so props come back wrong by 4.7e-11
+at the default and 2.9e-16 at the cap. The constraint is pandas' json *writer* specifically
+— stdlib `json` on `df[col].tolist()` is exact, and so is `to_csv(float_format='%.17g')`
+**provided the reader passes `float_precision='round_trip'`**, without which pandas' fast
+CSV parser loses a ulp. `_provenance.jsonable` is not an escape either: it renders an
+ndarray as a *description* of its shape and dtype, not its values, so `shared_props`
+(`mu`, `cov`) cannot round-trip through it.
+
+⚠️ Whether that precision matters at all is worth stating plainly, because it is easy to
+over-weight: for the science it does not — 4.7e-11 is far under any modeling error and is
+swamped by the Brownian noise — and it reaches the physics only through a user model that
+reads a float prop. It matters because the acceptance test asserts a resumed run lands
+*bit-identically* where an uninterrupted one did, and because exactness here costs one
+keyword. Take it and stop thinking about it.
+
+**The container, then.** Three categories, which is §2.3's what-goes-where rule restated
+by lifetime rather than by content, and the archive already has a working example of each:
+
+| Category | Rewritten? | Already in the archive |
+|---|---|---|
+| (1) fixed at `record()` | never | `meta.json`, `grid.npz`, `agents/swarmNN.json` |
+| (2) accumulating | appended in chunks | `agents/times_NNNN.npy`, `swarmNN_{pos,vel,mask}_NNNN.npy` |
+| (3) current state | whole, every hunk | `fluid/dump_stats.npz` — the precedent R2 copies, including its `_atomic_write` |
+
+The checkpoint is a category-(3) file per swarm, mirroring `save_data`'s existing split
+with the precision defect fixed:
+
+```
+agents/swarm00_state.csv     props, one row per agent, float_format='%.17g'
+agents/swarm00_state.json    shared_props scalars, rndState, ib_condition,
+                             the Swarm subclass name, and the capture index
+                             and time this checkpoint aligns to
+agents/swarm00_state.npz     positions, velocities, accelerations,
+                             ib_collision_idx, array-valued shared_props
+```
+
+**Positions and velocities are in the checkpoint even though the archive's last capture
+holds them.** §2.3 forbids redundant derivable state, and this is the exception: a hard
+kill costs the last unflushed chunk, so a checkpoint that merely *referenced* a capture
+index could point at a capture that is not on disk. Holding them makes the checkpoint
+self-sufficient and independent of the chunk buffer, which is the whole of §2.5's
+argument applied one level down.
+
+**A restore materializes history** — §2.11.4 carries that decision and its measurements.
+
+#### The derived quantities, and what props are stored in
+
+*(Decided 2026-09-02, after measuring the containers.)* Two things replace the velocity
+history that §2.4 no longer stores by default, and neither is `props_history`:
+
+- **A per-capture statistics sidecar** — `avg_swrm_vel` (D), `avg_swrm_spd`,
+  `std_swrm_spd`. 40 bytes (2D) / 48 (3D) per capture, **independent of N**;
+  391 kB over 10 000 captures. `perc_left` is not in it: it counts unmasked rows at
+  capture 0 and capture *n*, and the mask is stored regardless.
+- **A stored `angle` column**, float32, for the 2D heading markers. `plot_all` already
+  prefers `props['angle']` over `arctan2` on velocities, and already knows that column
+  is only valid per-frame when a props history exists — so this uses a hook that is
+  there rather than adding one. 3.9 kB per capture at N=1000; **38 MB** over 10 000
+  captures, against 248 MB for the cheapest full props history. It is the recorder's own
+  column, so it must be named distinctly (`angle_calc`) and **`restore()` must not inject
+  it into `swrm.props`** — a swarm coming back with a property it never had is a
+  behavior change a user model reading `'angle'` would silently pick up.
+
+**Props containers, by lifetime.** float32 as an in-memory dtype is ruled out — a value
+integrated over 100 000 steps at `dt=1e-3` drifts by 4.3e-2 — but as a *storage* dtype it
+is free, and the format already carries a `dtype` field for exactly this (§2.4).
+
+| | container | why |
+|---|---|---|
+| checkpoint props (O(N), once) | **csv**, pandas' default float format | human-readable and exact. `%.17g` is unnecessary: the default writer already emits shortest-round-trip repr, verified over 52 004 values including 1e±300. The lossy half was `read_csv`, so **readers must pass `float_precision='round_trip'`** |
+| `props_history` (O(N·T), opt-in) | **csv per chunk**, written atomically like every other file | one file per chunk rather than one per column, which the file-count argument in §2.3 demands. csv also beats naive binary on strings, since numpy's fixed-width unicode is 4 bytes per character |
+| any column whose stacked shape is > 1-D | **spills to its own `.npy`** | a props column may hold ndarrays — `ex_ind_var.py` gives every agent a 2×2 covariance, and `get_prop` is built on `np.stack(col.array)`. Such a column renders to csv as a **broken multi-line row**, so csv cannot be the only container. `np.stack` turns any column into a uniform `(N, …)` array, which is exactly a `.npy`. A typical run spills nothing |
+
+⚠️ **Not `np.savez` and not `to_pickle`**, both of which round-trip perfectly and are
+disqualified on the same ground: an object column requires `allow_pickle=True` on read,
+which is arbitrary code execution on a file the user may have been handed rather than
+produced. **Not a structured array** either — it is the one layout whose columns are
+genuinely strided, so reading one field touches every page; a plain 2-D array with
+columns as rows is contiguous per column and needs no separate files. **Not HDF5**:
+respectable at `format='table'` (85 kB fixed overhead, and its 1.06 MB was an artifact of
+the default `format='fixed'`), but `to_hdf` requires PyTables, which is not among
+Planktos's dependencies.
+
+**A props schema change mid-run is allowed** *(decided 2026-09-02)*. Chunked csv absorbs
+it with no bookkeeping — a later chunk carrying a new column concatenates cleanly and
+earlier rows fill with NaN — and a *spilled* column appearing mid-run reuses the
+`first_capture` and short-first-chunk machinery a mid-run swarm already has. The cost is
+that NaN then means both "the column did not exist yet" and "the value was NaN"; that
+ambiguity is accepted rather than carrying a presence marker, since nothing in the tree
+changes the schema mid-run today and a user wanting to signal absence has other markers
+available.
+
+**How R is finished against its tests** *(decided 2026-08-31)*. The five `xfail`s in
+`test_stream_d_restart.py` are the acceptance criteria, but three of them assert a
+*location* — `meta.json`, or the swarm sidecar — that this section has now settled
+differently, so they are retargeted at the checkpoint files rather than merely
+un-`xfail`ed. Alongside them go behavioral tests that assert a restore round-trips the
+RNG stream, the props values and `ib_condition`, rather than that a string appears in a
+named file.
+
+⚠️ **The retargeted checklist tests are temporary and are deleted when Step R is
+confirmed done.** The behavioral tests cover the same ground — full coverage of the
+checklist is what makes them pass — and are merely harder to read as a list. A
+one-item-per-line checklist is worth having *while building* and is dead weight
+afterwards, so it does not survive into maintenance. Record that here rather than in the
+test file, which is the thing being deleted.
 
 ---
 
@@ -2792,29 +2968,61 @@ dependency. Three things decide it:
 The cost, stated plainly: tiling and the prose pass move back by however long this
 takes, and `Environment.tile_domain` keeps raising in the meantime.
 
-*Sub-steps, in dependency order:*
+*Sub-steps, in dependency order. **R0 is done** — §2.11.5 has what it settled, and R2
+and R3 below now assume it.*
 
+- **R0 — pre-flight. ✅ [done 2026-08-31].** Baseline the suite, verify §2.11.2's state
+  list against a live `Swarm`, and settle the container and history questions before
+  either is baked into a format. It found that §6.3's suggested `DataFrame.to_json`
+  precedent silently truncates, that `_provenance.jsonable` cannot serialize
+  `shared_props`, and that `_prev_positions` needs no restoring. §2.11.5.
 - **R1 — the environment gaps (§2.11.3).** `char_L`, `U` and `nu` into
   `provenance['environment']`, plus `ibmesh_color`. Small, self-contained, and it is
   the one part that improves archives written from the moment it lands. Do it first for
-  that reason alone.
+  that reason alone. Additive, so no format-version bump and old archives still read.
 - **R2 — the checkpoint file.** One latest state per swarm, per §2.11.2's "State"
-  column: `accelerations`, `props`, `shared_props`, `ib_collision_idx`, `rndState`,
-  `ib_condition`, and the Swarm subclass name. Written on request and optionally every
-  *k* captures. O(N) per swarm, so the cadence needs no cleverness.
+  column: `positions`, `velocities`, `accelerations`, `props`, `shared_props`,
+  `ib_collision_idx`, `rndState`, `ib_condition`, and the Swarm subclass name. Written
+  on request and optionally every *k* captures. O(N) per swarm — 79 kB at N=1000 in 3D —
+  so the cadence needs no cleverness. **§2.11.5 fixes the containers and says why**;
+  copy `_FluidWriter.flush`'s rewrite-whole-atomically discipline rather than inventing
+  one.
 - **R3 — the reader.** `RunArchive` grows the entry point that turns a directory back
   into an `Environment` and its `Swarm`s. It must distinguish its three failure modes:
   a missing fluid file is an error, an unimportable `Swarm` subclass is an error, and a
-  lost `plot_structs` is a warning (§2.11.3).
-- **R4 — the opt-in histories.** `store=` extends past the three N×D arrays to
-  `props`, `shared_props`, `rndState` and the sparse `ib_collision_idx` events. Last
-  because R1–R3 deliver the whole user-visible claim without it, and because the sparse
-  format is the only piece here that wants measurement before it is fixed.
+  lost `plot_structs` is a warning (§2.11.3). It materializes `pos_history` and
+  `vel_history` from the archive (§2.11.4). Two things it must get right that the
+  hand-built reconstruction in the acceptance test does not: `envir.time_history` has
+  to stay the same length as the materialized history — a mismatch raises nothing at
+  all and silently misaligns every frame — and a restored run that keeps recording
+  meets §2.1's non-empty-directory redirect, so decide and document what a second
+  `record()` on a restored run does.
+- **R4 — the derived quantities and the opt-in histories.** Two halves, and the first
+  is not optional:
+
+  - **The derived quantities, always on**: the per-capture statistics sidecar and the
+    stored `angle` column (§2.11.5). These are what let `store=` drop velocities, so
+    they land *with* that default change, never after it — an archive minted in between
+    would claim a default it cannot serve.
+  - **`store=` becomes `('positions',)`** (§2.4), with the printed notice at
+    `record()`. Rewrite the existing warning, which says the opposite and becomes false
+    here. **No changelog line is owed for the reversal itself** — `Environment.record`
+    is new in the unreleased 1.1.0, so there is no shipped default to have changed; the
+    feature's own entry simply describes what it does.
+  - **The opt-in series**: `store=` extends to `props`, `shared_props`, `rndState` and
+    the sparse `ib_collision_idx` events, and `props_history` becomes the restore's
+    opt-in series (§2.11.4). The sparse format is the one piece here that wants
+    measurement before it is fixed.
+
+  Last because R1–R3 deliver the reboot claim without any of it.
 
 *What it is finished against:* `tests/test_data_streaming/test_stream_d_restart.py`.
 Its five strict `xfail`s are the acceptance criteria, and the headline —
 `test_a_run_resumes_from_disk_as_if_nothing_had_happened` — is the whole of R stated as
-one assertion. Each marker comes off with the sub-step that earns it.
+one assertion. Each marker comes off with the sub-step that earns it. **§2.11.5 settles
+how**: three of the five assert a file location this plan has since decided differently,
+so they are retargeted rather than merely un-`xfail`ed, behavioral round-trip tests land
+beside them, and the retargeted checklist is deleted once R is confirmed done.
 
 **Step D — examples and docs prose pass (§7).**
 

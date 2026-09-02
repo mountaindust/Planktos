@@ -2746,7 +2746,7 @@ class Swarm:
                 # the run was drawn. An archive supplies a global limit instead.
                 norm = _vorticity_norm(np.zeros(1), source.vort_clip)
                 fld = ax.pcolormesh(self.envir.flow.flow_points[0], self.envir.flow.flow_points[1],
-                           np.zeros(self.envir.flow.fshape[1:]).T, shading='gouraud',
+                           np.zeros(self.envir.flow.spatial_shape).T, shading='gouraud',
                            cmap='RdBu', norm=norm, alpha=0.9)
             elif fluid == 'quiver' and self.envir.flow is not None:
                 M, N = source.resolve_strides(self._quiver_strides(fig, ax))

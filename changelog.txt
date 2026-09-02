@@ -43,6 +43,7 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - Bug fix: 2D COMSOL vtu data now loads. The reader supported it but the constructor assumed three dimensions and raised.
 - Bug fix: Swarm.plot at a past time with a moving immersed boundary mesh raised AttributeError.
 - Bug fix: plot_all raised KeyError in 2D for a swarm with per-agent colors, which have no shared color entry to fall back on.
+- Bug fix: plot_all(fluid='vort') raised over a time-invariant flow, which is every analytic flow (brinkman, channel, canopy).
 - other minor bug fixes
 
 

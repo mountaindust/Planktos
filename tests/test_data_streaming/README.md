@@ -33,9 +33,9 @@ scripts, the cross-version comparison and the ffmpeg movie renders.
 
 ## Verdicts
 
-**Claim 1 — holds, with one pre-existing crash (F1).** All eleven runnable
-example scripts complete. Recording and plotting leave a run bit-identical, in
-2D and 3D, with and without an immersed boundary, and a run continues
+**Claim 1 — holds.** All eleven runnable example scripts complete.
+Recording and plotting leave a run bit-identical, in 2D and 3D, with and
+without an immersed boundary, and a run continues
 bit-identically after being plotted. Separately, three in-RAM scenarios were run
 under this working tree and under a `master` worktree and agree **bit for bit**
 (`test_an_in_ram_run_gives_the_numbers_the_released_line_gives`).
@@ -73,9 +73,10 @@ the cosmetic `ibmesh_color` and `plot_structs`. Not yet pinned by a test.
 
 Each was pinned by a `strict=True` xfail naming it, so the marker failed the
 suite the moment the defect was fixed. **F2, F3 and F4 have since been fixed and
-their markers cleared**; the tests stay as regression locks. F1 and F5 stand.
+their markers cleared**; the tests stay as regression locks. **F1 has since been
+fixed too** (2026-08-31). F5 stands.
 
-### F1 (open) — `plot_all(fluid='vort')` raises on any time-invariant flow
+### F1 (fixed) — `plot_all(fluid='vort')` raised on any time-invariant flow
 
 `_swarm.py`, `plot_all`: the vorticity placeholder is sized from
 `flow.fshape[1:]`. `fshape` carries a leading time axis **only for time-varying
@@ -88,9 +89,17 @@ given no `flow_times`.
 **Pre-existing, not a regression.** `master` v1.0.3 fails identically at
 `_swarm.py:2549` with `flow[0].shape[1:]`; verified by running it in a worktree.
 `Swarm.plot(fluid='vort')` is fine — only `plot_all` builds a placeholder. No
-example hits it, which is why it has survived.
+example hits it, which is why it survived so long.
 
-Pinned: `test_stream_a_inram.py::test_plot_all_draws_vorticity_over_a_time_invariant_flow`
+**Fixed** by `FluidData.spatial_shape`, which names the concept once —
+`fshape` when `flow_times is None`, `fshape[1:]` otherwise — and is read at
+both plotting sites that built a placeholder. Logged in `TODO.md`'s
+cherry-pick queue: the `master` port is a hand edit, since there is no
+`FluidData` there to hang the property on.
+
+Pinned: `test_stream_a_inram.py::test_plot_all_draws_vorticity_over_a_time_invariant_flow`,
+which now also walks the frames — `plot_all` renders none on Agg, so the
+original test would have exercised figure setup and stopped.
 
 ### F2 (fixed) — the re-streaming warning promised more dumps than exist
 

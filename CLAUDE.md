@@ -516,8 +516,8 @@ they are independent:**
 |---|---|---|
 | `pytest` | the focused modules | ~20 s (1013 passed / 141 skipped) |
 | `pytest --runslow` | plus the parallelization tests, the plotting smokes and the movie renders | ~40 s (1046 / 108) |
-| `pytest --runstreaming` | plus the fast half of `tests/test_data_streaming/` | ~30 s (1098 / 50 / 6 xfailed) |
-| `pytest --runslow --runstreaming` | everything | ~4 min (1146 / 2 / 6) |
+| `pytest --runstreaming` | plus the fast half of `tests/test_data_streaming/` | ~30 s (1099 / 50 / 5 xfailed) |
+| `pytest --runslow --runstreaming` | everything | ~4 min (1147 / 2 / 5) |
 
 **Before a commit that touches the archive, the fluid streaming or the plotting
 paths, run both flags.** `--runstreaming` is off by default because that suite is

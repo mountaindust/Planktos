@@ -145,15 +145,21 @@ def test_drawing_a_time_invariant_flow_does_not_disturb_it_either(call):
     assert_unchanged(swrm, before)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "plot_all builds its vorticity placeholder from flow.fshape[1:], which "
-    "drops the leading TIME axis. A time-invariant flow's fshape has no time "
-    "axis, so this drops the x axis instead and hands pcolormesh a 1-D array. "
-    "Every analytic flow (brinkman/channel/canopy) is time-invariant."))
 def test_plot_all_draws_vorticity_over_a_time_invariant_flow():
+    # Regression: the vorticity placeholder was sized with flow.fshape[1:],
+    # which drops the leading time axis. A time-invariant flow's fshape has no
+    # time axis, so that dropped the x axis instead and handed pcolormesh a 1-D
+    # array. Every analytic flow (brinkman/channel/canopy) is time-invariant.
     _, swrm = _brinkman_world()
     run(swrm, 6, dt=0.1)
     swrm.plot_all(fluid='vort')
+    # Figure setup alone would have caught the placeholder, but nothing else:
+    # plot_all renders no frames on Agg. Walk them, and check the fields drawn
+    # are the shape the placeholder claimed.
+    drawn = walk_frames(swrm, fluid='vort')
+    assert len(drawn) > 1
+    for field in drawn:
+        assert field.shape == swrm.envir.flow.spatial_shape
 
 
 def test_a_run_continues_identically_after_being_plotted(tmp_path):

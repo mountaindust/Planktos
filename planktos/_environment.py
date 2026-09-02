@@ -4215,8 +4215,8 @@ class Environment:
             # Animation plot
             # create pcolormesh object
             # vort = self.get_vorticity(t_n=0)
-            pc = ax.pcolormesh([self.flow.flow_points[0]], self.flow.flow_points[1], 
-                           np.zeros(self.flow.fshape[1:]).T, shading='gouraud',
+            pc = ax.pcolormesh([self.flow.flow_points[0]], self.flow.flow_points[1],
+                           np.zeros(self.flow.spatial_shape).T, shading='gouraud',
                            cmap='RdBu', norm=norm)
             axbbox = ax.get_position().get_points()
             cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])
