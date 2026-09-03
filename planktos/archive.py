@@ -97,6 +97,7 @@ from pathlib import Path
 
 import numpy as np
 import numpy.ma as ma
+import pandas as pd
 
 import planktos
 from . import _provenance
@@ -244,6 +245,74 @@ def _swarm_prefix(index):
     '''e.g. 3 -> "swarm03". Two digits by convention, more if ever needed.'''
 
     return 'swarm{:02d}'.format(index)
+
+
+def _checkpoint_names(index):
+    '''The three files one swarm's checkpoint is spread over.
+
+    Returns ``(npz, csv, json)`` names for ``agents/``.
+
+    Named for the role rather than with the ``swarmNN`` prefix, so that the
+    roster scan -- which globs ``swarm*.json`` -- cannot pick a checkpoint up
+    and try to read a swarm out of it.
+    '''
+
+    prefix = 'checkpoint{:02d}'.format(index)
+    return prefix + '.npz', prefix + '_props.csv', prefix + '_meta.json'
+
+
+def _split_props(props):
+    '''Sort a props DataFrame into what csv can carry and what it cannot.
+
+    Returns ``(frame, arrays)``: a DataFrame of the columns to write as text,
+    and a dict of column name to stacked ndarray for the rest.
+    '''
+
+    # A props column may hold one ndarray per agent -- that is how a per-agent
+    #   covariance is given, and Swarm.get_prop is built on np.stack for it.
+    #   Such a column renders to csv as a broken multi-line row, so it goes to
+    #   the npz. np.stack is what turns any column into a uniform (N, ...)
+    #   array, which is exactly what an npz entry wants.
+    frame, arrays = {}, {}
+    for name in props.columns:
+        column = props[name]
+        try:
+            stacked = np.stack(column.array, axis=0)
+        except (ValueError, TypeError):
+            # Ragged, or something np.stack cannot make an array of at all.
+            #   Neither container can hold it, so say so rather than write a
+            #   checkpoint that quietly lacks a property.
+            warnings.warn(
+                "props column '{}' holds values that cannot be stacked into "
+                'one array, so it is not being checkpointed. A restart will '
+                'come back without it.'.format(name), UserWarning)
+            continue
+        if stacked.dtype == object:
+            warnings.warn(
+                "props column '{}' has object dtype, which cannot be stored "
+                'without pickle, so it is not being checkpointed. A restart '
+                'will come back without it.'.format(name), UserWarning)
+        elif stacked.ndim == 1:
+            frame[name] = column.to_numpy()
+        else:
+            arrays[name] = stacked
+    return pd.DataFrame(frame, index=props.index), arrays
+
+
+def _unwrap(array):
+    '''Give back a scalar or str where npz stored one as a 0-d array.'''
+
+    return array.item() if array.ndim == 0 else array
+
+
+def _arrayable(value):
+    '''An ndarray for ``value``, or None if storing it would need pickle.'''
+
+    try:
+        array = np.asarray(value)
+    except (ValueError, TypeError):
+        return None
+    return None if array.dtype == object else array
 
 
 def _quiver_name(t_idx):
@@ -766,6 +835,87 @@ class _ArchiveWriter:
         if not self._closed:
             self.flush()
             self._closed = True
+
+
+    def write_checkpoint(self, index, capture, time, state):
+        '''Rewrite one swarm's checkpoint, whole.
+
+        Where the chunk files are append-only history, this is the one latest
+        state plus everything history cannot give you -- the random stream, the
+        properties, the class whose ``apply_agent_model`` is the behavior. Each
+        of the three files is replaced atomically.
+
+        Parameters
+        ----------
+        index : int
+            swarm index, as registered with :meth:`add_swarm`
+        capture : int
+            the capture index this state was taken at
+        time : float
+            the environment time at that capture
+        state : dict
+            ``positions``, ``velocities``, ``accelerations``,
+            ``ib_collision_idx``, ``props``, ``shared_props``, ``ib_condition``
+            and ``swarm_class``
+        '''
+
+        npz_name, csv_name, json_name = _checkpoint_names(index)
+        arrays, dropped = {}, []
+
+        # The mask is per row -- agents leave whole rows -- and is positions'.
+        positions = state['positions']
+        arrays['mask'] = np.asarray(
+            ma.getmaskarray(positions)[:, 0], dtype=bool)
+        for name in ('positions', 'velocities', 'accelerations'):
+            value = state.get(name)
+            if value is not None:
+                arrays[name] = np.asarray(ma.getdata(value), dtype=DTYPE)
+        if state.get('ib_collision_idx') is not None:
+            arrays['ib_collision_idx'] = np.asarray(
+                state['ib_collision_idx'], dtype=np.int64)
+
+        # shared_props follows Swarm.save_data's precedent of an npz: it is a
+        #   mixture of scalars and arrays, and npz takes both without pickle.
+        for name, value in (state.get('shared_props') or {}).items():
+            array = _arrayable(value)
+            if array is None:
+                dropped.append(name)
+            else:
+                arrays['shared__' + name] = array
+        if dropped:
+            warnings.warn(
+                'shared_props {} cannot be stored without pickle and are not '
+                'being checkpointed. A restart will come back without '
+                'them.'.format(sorted(dropped)), UserWarning)
+
+        frame, prop_arrays = _split_props(state['props'])
+        for name, array in prop_arrays.items():
+            arrays['prop__' + name] = array
+
+        _atomic_write(self.agent_dir / npz_name,
+                      lambda fobj: np.savez(fobj, **arrays))
+        # Default float format, not '%.17g': pandas already writes the shortest
+        #   representation that reads back exactly. Readers must pass
+        #   float_precision='round_trip', which is where the loss would be.
+        #   A swarm with no scalar props writes no file at all -- an empty one
+        #   has not even a header row, and pandas cannot parse that back.
+        if len(frame.columns):
+            _atomic_write(self.agent_dir / csv_name,
+                          lambda fobj: fobj.write(
+                              frame.to_csv(index=False).encode('utf-8')))
+        _save_json(self.agent_dir / json_name, {
+            'index': int(index),
+            'capture': int(capture),
+            'time': float(time),
+            'ib_condition': state.get('ib_condition'),
+            'swarm_class': state.get('swarm_class'),
+            'props_csv': list(frame.columns),
+            'props_npz': sorted(prop_arrays),
+            'shared_props': sorted(
+                name for name in (state.get('shared_props') or {})
+                if name not in dropped),
+            'shared_props_dropped': sorted(dropped),
+            'rndState': _provenance.jsonable(state.get('rndState'))})
 
 
     ####################   internals   ####################
@@ -1304,6 +1454,7 @@ class RunRecorder:
             self._register(index, swarm, first_capture=0)
         # Capture 0 covers t0, so that capture j is exactly full_pos_history[j].
         self._capture()
+        self._checkpoint()
 
 
     ####################   lifecycle   ####################
@@ -1353,8 +1504,41 @@ class RunRecorder:
         '''Write buffered captures to disk. Keeps recording.'''
 
         self._writer.flush()
+        self._checkpoint()
         if self._fluid is not None:
             self._fluid.flush()
+
+
+    def _checkpoint(self):
+        '''Rewrite every recorded swarm's checkpoint at the latest capture.
+
+        Written on the same cadence as a chunk flush, which is what bounds how
+        stale it can be: a hard kill costs the captures buffered since the last
+        chunk boundary, and the checkpoint is never older than that same
+        boundary. It holds positions and velocities itself rather than pointing
+        at a capture index, so it does not depend on the chunk that kill took.
+        '''
+
+        if self._n_captures == 0:
+            return
+        for index, swarm in enumerate(self._swarms):
+            klass = type(swarm)
+            self._writer.write_checkpoint(
+                index, self._n_captures - 1, self.envir.time,
+                {'positions': swarm.positions,
+                 'velocities': swarm.velocities,
+                 'accelerations': swarm.accelerations,
+                 'ib_collision_idx': swarm.ib_collision_idx,
+                 'props': swarm.props,
+                 'shared_props': swarm.shared_props,
+                 'ib_condition': swarm.ib_condition,
+                 # A name only, the way a fluid loader is recorded: the class
+                 #   cannot be rebuilt from here, and apply_agent_model IS the
+                 #   behavior, so a reader must say plainly when it cannot be
+                 #   imported rather than hand back a plain Swarm.
+                 'swarm_class': '{}.{}'.format(klass.__module__,
+                                               klass.__qualname__),
+                 'rndState': swarm.rndState.bit_generator.state})
 
 
     def stop(self):
@@ -1368,6 +1552,7 @@ class RunRecorder:
             #   closing, the observer would otherwise outlive the recording and
             #   keep writing into the source's own directory.
             self._fluid.stop()
+        self._checkpoint()
         self._writer.close()
         if self.envir._recorder is self:
             self.envir._recorder = None
@@ -1436,6 +1621,10 @@ class RunRecorder:
         #   state is recorded.
         self._writer.add_capture(self._n_captures, self.envir.time, arrays)
         self._n_captures += 1
+        # On the chunk boundary, so the checkpoint is never staler than the
+        #   captures a hard kill would cost anyway.
+        if self._n_captures % self._writer.chunk_size == 0:
+            self._checkpoint()
 
 
 
@@ -1777,6 +1966,70 @@ class RunArchive:
 
 
     ####################   the fluid half   ####################
+
+    def checkpoint(self, swarm=0):
+        """One swarm's latest state, as a dict, or None if none was written.
+
+        Where :meth:`positions` and :meth:`velocities` give append-only history,
+        this is the one state the recording ended at plus everything history
+        cannot supply: the random stream, the properties, the immersed-boundary
+        condition, and the name of the Swarm subclass whose ``apply_agent_model``
+        is the behavior.
+
+        Parameters
+        ----------
+        swarm : int or str, default=0
+            index, or name when unambiguous
+
+        Returns
+        -------
+        dict
+            ``capture`` and ``time`` say where in the run the state is from.
+            ``positions``, ``velocities`` and ``accelerations`` are masked
+            arrays; ``props`` is a DataFrame; ``shared_props`` a dict;
+            ``rndState`` the generator state dict; plus ``ib_collision_idx``,
+            ``ib_condition`` and ``swarm_class``. None when the archive holds no
+            checkpoint for this swarm.
+        """
+
+        entry = self._by_index[self._resolve_swarm(swarm)]
+        npz_name, csv_name, json_name = _checkpoint_names(entry['index'])
+        json_file = self._agent_dir / json_name
+        if not json_file.is_file():
+            return None
+        state = json.loads(json_file.read_text())
+
+        with np.load(self._agent_dir / npz_name, allow_pickle=False) as data:
+            arrays = {k: data[k] for k in data.files}
+        # One mask per state, and it is positions': a masked row means the agent
+        #   is out of the domain, which is a fact about the agent.
+        row_mask = arrays.pop('mask')
+        mask = np.broadcast_to(row_mask[:, None],
+                               arrays['positions'].shape).copy()
+        for name in ('positions', 'velocities', 'accelerations'):
+            if name in arrays:
+                state[name] = ma.masked_array(arrays.pop(name), mask=mask)
+        state['ib_collision_idx'] = arrays.pop('ib_collision_idx', None)
+
+        state['shared_props'] = {
+            name[len('shared__'):]: _unwrap(value)
+            for name, value in arrays.items() if name.startswith('shared__')}
+
+        # float_precision='round_trip' is not optional: pandas' default csv
+        #   parser is where a float64 loses its last bits, not the writer.
+        #   The manifest says whether there is a file at all, rather than the
+        #   read having to tell an absent one from an empty one.
+        if state['props_csv']:
+            frame = pd.read_csv(self._agent_dir / csv_name,
+                                float_precision='round_trip')
+        else:
+            frame = pd.DataFrame(index=range(len(row_mask)))
+        for name, value in arrays.items():
+            if name.startswith('prop__'):
+                frame[name[len('prop__'):]] = list(value)
+        state['props'] = frame
+        return state
+
 
     def dump_stats(self):
         """The per-dump fluid statistics, or None if no fluid was recorded.

@@ -12,15 +12,16 @@ Temporal interpolation of dynamically-loaded data is **linear in time**
 (`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
 story.
 
-**Suite: 1099 passed / 50 skipped / 5 xfailed (`pytest --runstreaming`, ~30 s),
-1147 / 2 / 5 (`pytest --runslow --runstreaming`, ~4.5 min).** No failures.
+**Suite: 1114 passed / 50 skipped / 2 xfailed (`pytest --runstreaming`, ~40 s),
+1162 / 2 / 2 (`pytest --runslow --runstreaming`, ~5 min).** No failures.
 
-**The five xfails are the pre-release list**, all in `tests/test_data_streaming/` —
+**The two xfails are the pre-release list**, all in `tests/test_data_streaming/` —
 an adversarial suite written from `run_persistence.md` covering the streaming story
 end to end. They are known gaps to work before `dyload` ships, not stop-the-cycle
-defects; see the carve-out in `CLAUDE.md`. All five are checkpoint/restart (note
-§2.11). The sixth, `plot_all`'s vorticity placeholder over a time-invariant flow, was
-fixed 2026-08-31 and its marker is now a regression lock.
+defects; see the carve-out in `CLAUDE.md`. Both are checkpoint/restart (note §2.11),
+and they are all that is left of six: `plot_all`'s vorticity placeholder over a
+time-invariant flow was fixed 2026-08-31, and R2 closed three of the five restart
+markers on 2026-09-02.
 
 **What is done:**
 
@@ -120,8 +121,17 @@ back behind it.
    `char_L`, `U` and `ibmesh_color` alongside `L`/`units`/`bndry`/`rho`/`mu`, so an
    inertial-particle run can be restarted at all and a kinematic-only
    `Environment(nu=...)` no longer loses its one viscosity. Additive: no
-   format-version bump, old archives still read. **R2, the checkpoint file, is
-   next.**
+   format-version bump, old archives still read.
+
+   **R2 is done (2026-09-02).** A checkpoint sits beside the archive —
+   `agents/checkpointNN.npz` plus `_props.csv` and `_meta.json` per swarm, rewritten whole and atomically
+   on the chunk boundary, so it is never staler than the captures a hard kill
+   would cost anyway. It carries §2.11.2's whole "State" column, including the
+   props columns holding one ndarray per agent that `ex_ind_var.py` relies on,
+   and reads back through `RunArchive.checkpoint()`. 80 B per agent. **Three of
+   the acceptance suite's five `xfail`s came off here**, retargeted at the
+   checkpoint and rewritten as round-trips rather than string-greps of
+   `meta.json`. **R3, the restore entry point, is next.**
 
    Finished against `tests/test_data_streaming/test_stream_d_restart.py` (run it with
    `--runstreaming`): its five strict `xfail`s are the acceptance criteria, and each

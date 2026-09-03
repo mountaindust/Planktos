@@ -1437,13 +1437,30 @@ The checkpoint is a category-(3) file per swarm, mirroring `save_data`'s existin
 with the precision defect fixed:
 
 ```
-agents/swarm00_state.csv     props, one row per agent, float_format='%.17g'
-agents/swarm00_state.json    shared_props scalars, rndState, ib_condition,
-                             the Swarm subclass name, and the capture index
-                             and time this checkpoint aligns to
-agents/swarm00_state.npz     positions, velocities, accelerations,
-                             ib_collision_idx, array-valued shared_props
+agents/checkpoint00_props.csv   props, one row per agent, pandas' default
+                                float format -- which already round-trips
+agents/checkpoint00_meta.json   ib_condition, the Swarm subclass name,
+                                rndState, the capture index and time this
+                                aligns to, and a manifest of which props
+                                column went where
+agents/checkpoint00.npz         positions, velocities, accelerations, the row
+                                mask, ib_collision_idx, shared_props, and any
+                                props column whose stacked shape is > 1-D
 ```
+
+⚠️ **Named for the role, not with the `swarmNN` prefix** *(as built, R2)*. The roster
+scan globs `agents/swarm*.json`, so a checkpoint called `swarm00_state.json` is read as
+a swarm sidecar and the archive fails to open at all. Renaming removes the coupling
+instead of teaching the scan to skip things. Each name then says what is in it: the csv
+holds nothing but `props`, and the json is the parameterization of that moment in the
+run.
+
+⚠️ **A checkpoint's spilled props columns go in its own npz, not in separate `.npy`
+files.** The spill rule below is written for `props_history`, where there is one chunk
+series per column; a checkpoint is a single state with an npz already open. Same reason,
+one fewer file. **`shared_props` goes there too**, following `Swarm.save_data`'s existing
+precedent of an npz — it is a mixture of scalars and arrays, and npz takes both without
+pickle, which sidesteps `_save_json`'s `allow_nan=False` for a non-finite scalar.
 
 **Positions and velocities are in the checkpoint even though the archive's last capture
 holds them.** §2.3 forbids redundant derivable state, and this is the exception: a hard
@@ -2985,13 +3002,20 @@ and R3 below now assume it.*
   archives written from the moment it lands. Three tests in `test_recording.py` cover
   the scalars, the `Environment(nu=…)`-only case where `nu` was the one being lost, and
   the resolved colour in both dimensions.
-- **R2 — the checkpoint file.** One latest state per swarm, per §2.11.2's "State"
-  column: `positions`, `velocities`, `accelerations`, `props`, `shared_props`,
-  `ib_collision_idx`, `rndState`, `ib_condition`, and the Swarm subclass name. Written
-  on request and optionally every *k* captures. O(N) per swarm — 79 kB at N=1000 in 3D —
-  so the cadence needs no cleverness. **§2.11.5 fixes the containers and says why**;
-  copy `_FluidWriter.flush`'s rewrite-whole-atomically discipline rather than inventing
-  one.
+- **R2 — the checkpoint file. ✅ [done 2026-09-02].** One latest state per swarm, per
+  §2.11.2's "State" column, in the three files §2.11.5 fixes, each replaced atomically
+  the way `_FluidWriter.flush` rewrites `dump_stats.npz`. Measured at **80 B per agent**
+  — 80 kB at N=1000 — so the cadence needed no cleverness: it rides the chunk boundary,
+  plus `record()` and `stop()`. That bound is the point rather than a convenience — a
+  hard kill costs the captures buffered since the last chunk, and the checkpoint is never
+  older than that same boundary. It holds positions and velocities itself rather than
+  naming a capture index, so it does not depend on the chunk the kill took.
+
+  `RunArchive.checkpoint(swarm)` reads one back, on A5's principle that a write-only
+  feature is not finished; R3 is what turns it into an `Environment` and `Swarm`s.
+  Ten tests in `test_recording.py`, and three of the acceptance suite's five `xfail`s
+  come off here — retargeted at the checkpoint and rewritten as round-trips, per the
+  decision recorded above.
 - **R3 — the reader.** `RunArchive` grows the entry point that turns a directory back
   into an `Environment` and its `Swarm`s. It must distinguish its three failure modes:
   a missing fluid file is an error, an unimportable `Swarm` subclass is an error, and a

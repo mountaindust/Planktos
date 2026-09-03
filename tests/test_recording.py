@@ -734,3 +734,172 @@ def test_a_capture_interval_below_one_is_refused(tmp_path):
         envir.record(tmp_path / 'run', capture_interval=0)
     assert envir._recorder is None
     assert envir._capture_interval == 1
+
+
+# --------------------------------------------------------------------------- #
+#                        the checkpoint (section 2.11, R2)                     #
+# --------------------------------------------------------------------------- #
+# Where the chunk files are append-only history, a checkpoint is the one latest
+# state plus everything history cannot give you. These drive real runs; the
+# containers and why each was chosen are in run_persistence.md 2.11.5.
+
+def _checkpointed_run(tmp_path, steps=5, chunk_size=3, n=6):
+    '''A recorded run whose swarm carries one prop of every awkward kind.'''
+
+    envir = _envir()
+    swrm = _swarm(envir, n=n)
+    swrm.add_prop('sensitivity', np.linspace(0.1, 0.9, n))
+    swrm.add_prop('tag', ['a', 'b', 'c'] * (n // 3))
+    # A column of matrices: ex_ind_var.py gives every agent its own covariance
+    # this way, and Swarm.get_prop is built on np.stack for it.
+    swrm.add_prop('percov', [np.eye(2) * 0.01 * (i + 1) for i in range(n)])
+    with envir.record(tmp_path / 'run', chunk_size=chunk_size) as rec:
+        for _ in range(steps):
+            swrm.move(0.1, silent=True)
+    return rec, envir, swrm
+
+
+def test_the_checkpoint_carries_every_piece_of_swarm_state(tmp_path):
+    # run_persistence.md 2.11.2's "State" column, made executable. R0 verified
+    # that restoring exactly this list gives a bit-identical resume, so what is
+    # pinned here is that all of it survives the round trip.
+    rec, envir, swrm = _checkpointed_run(tmp_path)
+    run = planktos.load_run(rec.path)
+    try:
+        cp = run.checkpoint(0)
+        assert cp['time'] == pytest.approx(envir.time)
+        assert cp['capture'] == len(envir.time_history)
+        assert cp['ib_condition'] == swrm.ib_condition
+        assert cp['swarm_class'] == 'planktos._swarm.Swarm'
+        for name in ('positions', 'velocities', 'accelerations'):
+            np.testing.assert_array_equal(ma.getdata(cp[name]),
+                                          ma.getdata(getattr(swrm, name)))
+        np.testing.assert_array_equal(cp['ib_collision_idx'],
+                                      swrm.ib_collision_idx)
+        # Exactly, not approximately: pandas' default csv writer emits the
+        # shortest representation that reads back bit for bit.
+        np.testing.assert_array_equal(cp['props']['sensitivity'].to_numpy(),
+                                      swrm.props['sensitivity'].to_numpy())
+        assert list(cp['props']['tag']) == list(swrm.props['tag'])
+        np.testing.assert_array_equal(cp['shared_props']['cov'],
+                                      swrm.shared_props['cov'])
+        assert cp['shared_props']['name'] == swrm.shared_props['name']
+        # The generator state is what makes a restart reproducible at all.
+        restored = np.random.default_rng()
+        restored.bit_generator.state = cp['rndState']
+        np.testing.assert_array_equal(restored.normal(size=5),
+                                      swrm.rndState.normal(size=5))
+    finally:
+        run.close()
+
+
+def test_a_props_column_of_arrays_survives_the_checkpoint(tmp_path):
+    # Such a column renders to csv as a broken multi-line row, so it goes to the
+    # npz instead. ex_ind_var.py's per-agent covariance is this case.
+    rec, envir, swrm = _checkpointed_run(tmp_path)
+    manifest = json.loads(
+        (rec.path / 'agents' / 'checkpoint00_meta.json').read_text())
+    assert manifest['props_npz'] == ['percov']
+    assert set(manifest['props_csv']) == {'sensitivity', 'tag'}
+    run = planktos.load_run(rec.path)
+    try:
+        np.testing.assert_array_equal(
+            np.stack(run.checkpoint(0)['props']['percov']),
+            np.stack(swrm.props['percov'].array))
+    finally:
+        run.close()
+
+
+def test_the_masked_rows_of_a_checkpoint_come_back_masked(tmp_path):
+    envir = _envir()
+    swrm = _swarm(envir)
+    for name in ('positions', 'velocities', 'accelerations'):
+        getattr(swrm, name)[1] = ma.masked
+    with envir.record(tmp_path / 'run') as rec:
+        pass
+    run = planktos.load_run(rec.path)
+    try:
+        cp = run.checkpoint(0)
+        assert ma.getmaskarray(cp['positions'])[1].all()
+        assert not ma.getmaskarray(cp['positions'])[0].any()
+    finally:
+        run.close()
+
+
+def test_a_checkpoint_exists_before_the_first_chunk_is_written(tmp_path):
+    # A run killed early is still rebootable: the checkpoint is written when
+    # recording starts, not only when a chunk fills.
+    envir = _envir()
+    swrm = _swarm(envir)
+    rec = envir.record(tmp_path / 'run', chunk_size=100)
+    try:
+        assert (rec.path / 'agents' / 'checkpoint00_meta.json').is_file()
+    finally:
+        envir.stop_recording()
+
+
+def test_the_checkpoint_is_never_staler_than_one_chunk(tmp_path):
+    # It rides the chunk cadence, so what a hard kill costs the checkpoint is
+    # what it costs the captures anyway -- no more.
+    envir = _envir()
+    swrm = _swarm(envir)
+    rec = envir.record(tmp_path / 'run', chunk_size=3)
+    seen = []
+    try:
+        for _ in range(7):
+            swrm.move(0.1, silent=True)
+            seen.append(json.loads(
+                (rec.path / 'agents' / 'checkpoint00_meta.json').read_text())['capture'])
+    finally:
+        envir.stop_recording()
+    # capture 0 at record(), then rewritten as each chunk of 3 fills.
+    assert seen == [0, 2, 2, 2, 5, 5, 5]
+    final = json.loads(
+        (rec.path / 'agents' / 'checkpoint00_meta.json').read_text())
+    assert final['capture'] == 7, 'stop() must checkpoint the last state'
+
+
+def test_every_recorded_swarm_gets_its_own_checkpoint(tmp_path):
+    envir = _envir()
+    a, b = _swarm(envir, seed=1), _swarm(envir, seed=2)
+    with envir.record(tmp_path / 'run') as rec:
+        envir.move_swarms(0.1, silent=True)
+    run = planktos.load_run(rec.path)
+    try:
+        assert run.checkpoint(0)['rndState'] != run.checkpoint(1)['rndState']
+    finally:
+        run.close()
+
+
+def test_checkpoint_files_are_not_mistaken_for_the_swarm_roster(tmp_path):
+    # Regression: the roster is assembled by globbing agents/swarm*.json, so a
+    # checkpoint named swarmNN_state.json was read as a swarm sidecar and the
+    # archive failed to open at all.
+    rec, envir, swrm = _checkpointed_run(tmp_path)
+    run = planktos.load_run(rec.path)
+    try:
+        assert run.swarms == [('organism', 0)]
+    finally:
+        run.close()
+
+
+def test_a_props_column_that_cannot_be_stored_warns_and_is_skipped(tmp_path):
+    # Object dtype cannot be written without pickle, and reading with pickle is
+    # arbitrary code execution on a file the user may not have produced.
+    envir = _envir()
+    swrm = _swarm(envir)
+    swrm.add_prop('ragged', [np.zeros(i + 1) for i in range(swrm.N)])
+    with pytest.warns(UserWarning, match='ragged'):
+        with envir.record(tmp_path / 'run') as rec:
+            pass
+    run = planktos.load_run(rec.path)
+    try:
+        assert 'ragged' not in run.checkpoint(0)['props'].columns
+    finally:
+        run.close()
+
+
+def test_writing_a_checkpoint_leaves_nothing_partial_behind(tmp_path):
+    rec, envir, swrm = _checkpointed_run(tmp_path)
+    partial = [p.name for p in rec.path.rglob('*' + archive.TMP_SUFFIX)]
+    assert partial == []

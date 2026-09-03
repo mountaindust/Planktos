@@ -52,13 +52,16 @@ the same simulation. The directory reads back in a fresh process, survives being
 moved, and can be deleted after being plotted. The two defects found here (F3,
 F4) were both fixed.
 
-**Claim 4 — does not hold. The feature is not built,** and
-`run_persistence.md` §2.11 says so: checkpoint and restart is scoped as a
-follow-on. What exists is the half the archive was designed for — the
-`Environment` can be rebuilt from the provenance record, and agent positions,
-velocities and the clock come back exactly. What is missing is everything that
-makes the *swarm* itself: `rndState`, `props`, `shared_props`, `ib_condition`,
-`color`. Five xfails in `test_stream_d_restart.py` enumerate it.
+**Claim 4 — half built, and being worked.** It is component **R** in
+`run_persistence.md` §2.11, scheduled ahead of tiling and built in four steps.
+R1 and R2 have landed: the `Environment` rebuilds from the provenance record,
+which now carries `char_L`, `U`, `nu` and `ibmesh_color` as well; agent
+positions, velocities and the clock come back exactly; and a **checkpoint**
+beside the archive carries everything that makes the *swarm* itself —
+`rndState`, `props`, `shared_props`, `ib_condition`, `color`, and the Swarm
+subclass name — read back through `RunArchive.checkpoint()`. What is left is
+R3, the entry point that turns all of that into a live `Environment` and its
+`Swarm`s. **Two xfails** in `test_stream_d_restart.py` mark it.
 
 ⚠️ The Environment side is *nearly* complete, not complete. An attribute-by-
 attribute audit of a rebuild found five things `provenance['environment']`
@@ -153,17 +156,27 @@ resident field.
 
 Pinned: `test_stream_c_recorded_replay.py::test_frames_outside_the_recorded_dumps_are_refused_before_any_are_drawn`
 
-### F5 (open) — claim 4 is unbuilt (five items)
+### F5 (being worked) — claim 4 was unbuilt (five items, three closed)
 
-`run_persistence.md` §2.11's table, made executable. The archive carries no
-`rndState` (so a restart cannot be reproducible), no `props` or `shared_props`
-(so a restarted swarm is a default swarm on recorded coordinates), no
-`ib_condition`/`color`, and there is no reader-side entry point that turns an
-archive back into an `Environment` and a `Swarm`. The end-to-end test attempts
-the most careful hand reconstruction today's public API allows and still
-diverges from step one.
+`run_persistence.md` §2.11's table, made executable. The archive carried no
+`rndState` (so a restart could not be reproducible), no `props` or
+`shared_props` (so a restarted swarm was a default swarm on recorded
+coordinates), no `ib_condition`/`color`, and there was no reader-side entry
+point that turns an archive back into an `Environment` and a `Swarm`.
 
-Pinned: the five xfails in `test_stream_d_restart.py`
+**R2 closed the first three** (2026-09-02) by writing a checkpoint beside the
+archive — `agents/checkpointNN.npz` plus `_props.csv` and `_meta.json` — and reading it back through
+`RunArchive.checkpoint()`. Those three tests were **retargeted rather than
+merely un-xfailed**: they asserted that a string appeared in `meta.json`, which
+is written once and never rewritten and so cannot hold state that changes. They
+now assert the round trip instead, and are marked as scaffolding to delete once
+Step R is done.
+
+What remains is R3, the entry point itself, and the end-to-end test — which
+attempts the most careful hand reconstruction today's public API allows and
+still diverges from step one.
+
+Pinned: the two remaining xfails in `test_stream_d_restart.py`
 
 ---
 
