@@ -182,13 +182,17 @@ class FrameSource:
         stats = None if self.run is None else self.run.dump_stats()
         if stats is None:
             return
-        # NaN marks a dump the run never loaded, so reduce with nanmax.
+        # Both are already reduced over the dumps the run saw. NaN means it saw
+        #   none, so the archive has nothing to say about the scale and the
+        #   fallback above stands.
         if self._quiver_from is not None:
-            per_component = _nanreduce(np.nanmax, stats['vmax'], axis=0)
-            if per_component is not None:
+            per_component = np.asarray(stats['vmax'], dtype=float)
+            if not np.all(np.isnan(per_component)):
                 self.quiver_scale = float(np.linalg.norm(per_component))
         if self._vorticity_from is not None and clip is None:
-            self.vort_clip = _nanreduce(np.nanmax, stats.get('vort_absmax'))
+            absmax = stats.get('vort_absmax')
+            if absmax is not None and np.isfinite(absmax).all():
+                self.vort_clip = float(absmax)
 
 
     ####################   the states   ####################
@@ -419,26 +423,6 @@ def _require_dumps(quantity, indices, path_of):
         "the fluid with INUM=None to keep all of it in memory, or plot with "
         "fluid=None.".format(list(indices)[0], list(indices)[-1], quantity,
                              span))
-
-
-def _nanreduce(reduction, array, **kwargs):
-    '''Reduce over per-dump statistics, or None where every dump is missing.
-
-    NaN marks a dump the run never loaded, so an all-NaN result means the
-    archive has nothing to say about the scale and the caller falls back.
-    '''
-
-    if array is None:
-        return None
-    array = np.asarray(array, dtype=float)
-    if array.size == 0 or np.all(np.isnan(array)):
-        return None
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore', RuntimeWarning)
-        reduced = reduction(array, **kwargs)
-    if np.ndim(reduced) == 0:
-        return None if np.isnan(reduced) else float(reduced)
-    return None if np.any(np.isnan(reduced)) else reduced
 
 
 def _missing(quantity, quantities):

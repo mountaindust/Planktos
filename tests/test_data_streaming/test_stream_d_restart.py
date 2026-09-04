@@ -6,24 +6,21 @@
      disk, recovering completely the state at which I left off the simulation so
      that I can resume it as if nothing happened."
 
-This is **checkpoint and restart**, and ``docs/notes/run_persistence.md`` 2.11
-names it as a follow-on that was deliberately not built: "Planktos has no
-simulation checkpointing today, and adding it is the third problem this
-architecture solves. Scope it separately; design the metadata for it now."
-``TODO.md`` says the same about plotting a run in a later session.
+This is **checkpoint and restart**, which ``docs/notes/run_persistence.md``
+2.11 specifies as component R and 6.1 builds in four steps. Written when none of
+it existed, as a statement of what the claim needs rather than a discovery that
+something is broken, in three parts:
 
-So the tests here are not a discovery that something is broken. They are a
-statement of what the claim needs, written as executable requirements, so that
-the gap is measured rather than described:
-
-* what the archive already carries, asserted positively -- the environment
+* what the archive already carried, asserted positively -- the environment
   really can be rebuilt from provenance, and the agent state really does come
   back exactly;
-* what it does not carry, one item per test, so the list is a checklist;
-* and the whole claim end to end, attempted with everything today's public API
-  offers, so that "as if nothing happened" is tested rather than assumed.
+* a checklist, one item per test, of what a checkpoint needs beyond the last
+  capture. **R2 built it, so these now pass; they are scaffolding and get
+  deleted when Step R is confirmed done** (2.11.5);
+* and the whole claim end to end, so that "as if nothing happened" is tested
+  rather than assumed.
 
-Every test marked xfail here is a piece of unbuilt work, not a defect in what
+Every test still marked xfail is a piece of unbuilt work, not a defect in what
 was built.
 '''
 
@@ -150,62 +147,81 @@ def test_a_hand_built_restart_gets_the_positions_and_the_clock_right(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+#                  the checklist -- TEMPORARY, delete when R is done           #
+# --------------------------------------------------------------------------- #
+# One item per test, from run_persistence.md 2.11's table of what a checkpoint
+# needs beyond the archive's last capture. Written as xfails when none of it
+# existed; retargeted at R2, which built the checkpoint and made them pass.
+#
+# These are build scaffolding and are DELETED once Step R is confirmed done.
+# The end-to-end test below covers the same ground -- full coverage of this list
+# is what makes it pass -- and is merely harder to read as a list. A checklist
+# earns its keep while the pieces are landing one at a time, and becomes two
+# things to keep in sync afterwards. run_persistence.md 2.11.5 records that.
+
+def test_the_archive_carries_the_random_number_generator_state(tmp_path):
+    # Without it a restart is not reproducible, which is most of the point.
+    rec, envir, swrm = _record_a_run(tmp_path)
+    archive = planktos.load_run(rec.path)
+    try:
+        state = archive.checkpoint(0)['rndState']
+        restored = np.random.default_rng()
+        restored.bit_generator.state = state
+        np.testing.assert_array_equal(restored.normal(size=5),
+                                      swrm.rndState.normal(size=5))
+    finally:
+        archive.close()
+
+
+def test_the_archive_carries_the_per_agent_properties(tmp_path):
+    # props and shared_props are what make one agent differ from another.
+    # Without them a restarted swarm is a default swarm standing on recorded
+    # coordinates.
+    rec, envir, swrm = _record_a_run(tmp_path)
+    archive = planktos.load_run(rec.path)
+    try:
+        cp = archive.checkpoint(0)
+        np.testing.assert_array_equal(cp['props']['sensitivity'].to_numpy(),
+                                      swrm.props['sensitivity'].to_numpy())
+        np.testing.assert_array_equal(cp['shared_props']['cov'],
+                                      swrm.shared_props['cov'])
+    finally:
+        archive.close()
+
+
+def test_the_archive_carries_the_swarm_construction_arguments(tmp_path):
+    # ib_condition, name and color are Swarm construction arguments a restart
+    # has to supply. name and color live in shared_props.
+    rec, envir, swrm = _record_a_run(tmp_path)
+    archive = planktos.load_run(rec.path)
+    try:
+        cp = archive.checkpoint(0)
+        assert cp['ib_condition'] == swrm.ib_condition
+        assert cp['swarm_class'] == 'planktos._swarm.Swarm'
+        for key in ('name', 'color'):
+            assert cp['shared_props'][key] == swrm.shared_props[key]
+    finally:
+        archive.close()
+
+
+# --------------------------------------------------------------------------- #
 #                     what the archive does not carry yet                     #
 # --------------------------------------------------------------------------- #
-# One item per test, from run_persistence.md 2.11's table of "what a checkpoint
-# needs beyond the archive's last capture". Each is a piece of unbuilt work.
 
-@pytest.mark.xfail(strict=True, reason=(
-    "run_persistence.md 2.11: without Swarm.rndState a restart is not "
-    "reproducible, 'which is most of the point'. The generator's state is a "
-    "plain json-able dict and nothing writes it."))
-def test_the_archive_carries_the_random_number_generator_state(tmp_path):
-    rec, envir, swrm = _record_a_run(tmp_path)
-    meta = json.loads((Path(rec.path) / 'meta.json').read_text())
-    blob = json.dumps(meta)
-    assert 'bit_generator' in blob or 'rndState' in blob
-
-
-@pytest.mark.xfail(strict=True, reason=(
-    "run_persistence.md 2.11: Swarm.props and shared_props are what make one "
-    "agent differ from another. Nothing writes them, so a restarted swarm is "
-    "a default swarm standing on recorded coordinates."))
-def test_the_archive_carries_the_per_agent_properties(tmp_path):
-    rec, envir, swrm = _record_a_run(tmp_path)
-    blob = (Path(rec.path) / 'meta.json').read_text()
-    assert 'sensitivity' in blob and 'cov' in blob
-
-
-@pytest.mark.xfail(strict=True, reason=(
-    "run_persistence.md 2.11: ib_condition, name and color are Swarm "
-    "construction arguments a restart has to supply, and only 'name' is "
-    "recorded (in the swarm sidecar)."))
-def test_the_archive_carries_the_swarm_construction_arguments(tmp_path):
-    rec, envir, swrm = _record_a_run(tmp_path)
-    sidecar = json.loads(
-        (Path(rec.path) / 'agents' / 'swarm00.json').read_text())
-    blob = json.dumps(sidecar) + (Path(rec.path) / 'meta.json').read_text()
-    for key in ('ib_condition', 'color'):
-        assert key in blob, '{} is not recorded'.format(key)
-
-
-@pytest.mark.xfail(strict=True, reason=(
-    "There is no reader-side entry point for restarting: RunArchive exposes "
-    "the numbers and the provenance, and nothing turns them back into an "
-    "Environment and a Swarm. run_persistence.md 2.11 scopes this as a "
-    "follow-on feature."))
 def test_planktos_offers_a_way_to_resume_a_recorded_run(tmp_path):
     rec, envir, swrm = _record_a_run(tmp_path)
     archive = planktos.load_run(rec.path)
     try:
-        entry_points = [name for name in
-                        ('to_environment', 'restore', 'resume', 'rebuild',
-                         'checkpoint')
-                        if hasattr(archive, name)]
-        entry_points += [name for name in
-                         ('resume_run', 'restore_run', 'load_checkpoint')
-                         if hasattr(planktos, name)]
-        assert entry_points, 'no restart entry point exists'
+        # Not hasattr: RunArchive.checkpoint exists and returns state, which an
+        # attribute-name check cannot tell from a rebuild. Ask for the thing
+        # itself -- an Environment, and Swarms attached to it.
+        entry = next((getattr(archive, name) for name in
+                      ('restore', 'to_environment', 'resume', 'rebuild')
+                      if hasattr(archive, name)), None)
+        assert entry is not None, 'no restart entry point exists'
+        rebuilt, swarms = entry()
+        assert isinstance(rebuilt, planktos.Environment)
+        assert swarms and all(s.envir is rebuilt for s in swarms)
     finally:
         archive.close()
 
@@ -214,13 +230,9 @@ def test_planktos_offers_a_way_to_resume_a_recorded_run(tmp_path):
 #                          the claim, end to end                              #
 # --------------------------------------------------------------------------- #
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Checkpoint and restart is not built (run_persistence.md 2.11). Even the "
-    "most careful hand reconstruction diverges immediately, because the "
-    "archive holds no RNG state, no props and no shared_props: the resumed "
-    "swarm draws different random numbers from step one, and does so with "
-    "default properties rather than the ones the run had."))
 def test_a_run_resumes_from_disk_as_if_nothing_had_happened(tmp_path):
+    # The whole claim, as one assertion. Everything else in this module is a
+    # piece of it.
     # The reference: one uninterrupted run of 2*STEPS steps.
     src = copy_ib2d(tmp_path, 'ref_src', with_vorticity=True)
     ref_envir = ib2d_envir(src, INUM=4)
@@ -235,20 +247,47 @@ def test_a_run_resumes_from_disk_as_if_nothing_had_happened(tmp_path):
 
     archive = planktos.load_run(rec.path)
     try:
-        rebuilt = _rebuild_environment(archive)
-        j = len(archive.times) - 1
-        positions = archive.positions(0)[j]
-        resumed = planktos.Swarm(envir=rebuilt,
-                                 init=np.ma.getdata(positions).copy())
-        resumed.positions = np.ma.copy(positions)
-        resumed.velocities = np.ma.copy(archive.velocities(0)[j])
-        rebuilt.time = float(archive.times[j])
-        rebuilt.time_history = [float(t) for t in archive.times[:j]]
+        rebuilt, swarms = archive.restore()
     finally:
         archive.close()
+    resumed, = swarms
 
     run(resumed, STEPS, dt=DT)
 
     assert rebuilt.time == pytest.approx(ref_envir.time)
     assert_same_state(resumed.positions, ref.positions,
                       'the resumed run ended somewhere else')
+
+
+def test_the_resumed_run_keeps_its_histories_aligned(tmp_path):
+    # A mismatch between time_history and pos_history raises nothing at all and
+    # silently misaligns every frame a plot draws, so it is worth its own check.
+    rec, envir, swrm = _record_a_run(tmp_path)
+    archive = planktos.load_run(rec.path)
+    try:
+        rebuilt, (resumed,) = archive.restore()
+    finally:
+        archive.close()
+    assert len(rebuilt.time_history) == len(resumed.pos_history)
+    assert len(resumed.vel_history) == len(resumed.pos_history)
+    assert len(resumed.full_pos_history) == len(swrm.full_pos_history)
+    run(resumed, 2, dt=DT)
+    assert len(rebuilt.time_history) == len(resumed.pos_history)
+
+
+def test_a_restore_without_history_still_resumes_the_physics(tmp_path):
+    # history=False leaves the three histories empty, which the plot notices and
+    # the physics does not: the trajectory has to be identical either way.
+    rec, envir, swrm = _record_a_run(tmp_path)
+    ends = []
+    for history in (True, False):
+        archive = planktos.load_run(rec.path)
+        try:
+            rebuilt, (resumed,) = archive.restore(history=history)
+        finally:
+            archive.close()
+        assert bool(resumed.pos_history) is history
+        assert len(rebuilt.time_history) == len(resumed.pos_history)
+        run(resumed, STEPS, dt=DT)
+        ends.append(resumed.positions)
+    assert_same_state(ends[0], ends[1], 'history= changed the physics')

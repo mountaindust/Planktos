@@ -19,7 +19,8 @@ This module owns the on-disk format::
         swarm00_mask_0000.npy   (rows, N) bool
         times_0000.npy          (rows,) shared across swarms
       fluid/
-        dump_stats.npz          per-dump component means and extrema
+        dump_stats.npz          per-dump component means, plus the run's
+                                velocity and vorticity extrema
         quiver_00042.npy        downsampled velocity, if requested
         Omega.0042.vtk          vorticity, only if written and the source
                                 directory could not take it
@@ -88,6 +89,7 @@ Author: Christopher Strickland
 Email: cstric12@utk.edu
 '''
 
+import importlib
 import json
 import os
 import warnings
@@ -97,6 +99,7 @@ from pathlib import Path
 
 import numpy as np
 import numpy.ma as ma
+import pandas as pd
 
 import planktos
 from . import _provenance
@@ -244,6 +247,103 @@ def _swarm_prefix(index):
     '''e.g. 3 -> "swarm03". Two digits by convention, more if ever needed.'''
 
     return 'swarm{:02d}'.format(index)
+
+
+def _checkpoint_names(index):
+    '''The three files one swarm's checkpoint is spread over.
+
+    Returns ``(npz, csv, json)`` names for ``agents/``.
+
+    Named for the role rather than with the ``swarmNN`` prefix, so that the
+    roster scan -- which globs ``swarm*.json`` -- cannot pick a checkpoint up
+    and try to read a swarm out of it.
+    '''
+
+    prefix = 'checkpoint{:02d}'.format(index)
+    return prefix + '.npz', prefix + '_props.csv', prefix + '_meta.json'
+
+
+def _split_props(props):
+    '''Sort a props DataFrame into what csv can carry and what it cannot.
+
+    Returns ``(frame, arrays)``: a DataFrame of the columns to write as text,
+    and a dict of column name to stacked ndarray for the rest.
+    '''
+
+    # A props column may hold one ndarray per agent -- that is how a per-agent
+    #   covariance is given, and Swarm.get_prop is built on np.stack for it.
+    #   Such a column renders to csv as a broken multi-line row, so it goes to
+    #   the npz. np.stack is what turns any column into a uniform (N, ...)
+    #   array, which is exactly what an npz entry wants.
+    frame, arrays = {}, {}
+    for name in props.columns:
+        column = props[name]
+        try:
+            stacked = np.stack(column.array, axis=0)
+        except (ValueError, TypeError):
+            # Ragged, or something np.stack cannot make an array of at all.
+            #   Neither container can hold it, so say so rather than write a
+            #   checkpoint that quietly lacks a property.
+            warnings.warn(
+                "props column '{}' holds values that cannot be stacked into "
+                'one array, so it is not being checkpointed. A restart will '
+                'come back without it.'.format(name), UserWarning)
+            continue
+        if stacked.dtype == object:
+            warnings.warn(
+                "props column '{}' has object dtype, which cannot be stored "
+                'without pickle, so it is not being checkpointed. A restart '
+                'will come back without it.'.format(name), UserWarning)
+        elif stacked.ndim == 1:
+            frame[name] = column.to_numpy()
+        else:
+            arrays[name] = stacked
+    return pd.DataFrame(frame, index=props.index), arrays
+
+
+def _import_swarm_class(dotted):
+    '''The Swarm class a checkpoint names, imported.
+
+    Recorded as a name only, the way a fluid loader is: ``apply_agent_model``
+    *is* the behavior, and it cannot be rebuilt from an archive.
+    '''
+
+    if not dotted:
+        raise ValueError(
+            'this checkpoint names no Swarm class, so there is no behavior to '
+            'restore. Rebuild the Swarm by hand.')
+    module_name, _, name = dotted.rpartition('.')
+    try:
+        module = importlib.import_module(module_name)
+        klass = getattr(module, name)
+    except (ImportError, AttributeError):
+        raise ValueError(
+            "the recorded run used the Swarm class '{}', which cannot be "
+            'imported here. Its apply_agent_model is the behavior of the run, '
+            'so restoring a plain Swarm in its place would silently be a '
+            'different simulation. Put that class on the import path and try '
+            'again.'.format(dotted))
+    if not issubclass(klass, planktos.Swarm):
+        raise ValueError(
+            "'{}' is not a Swarm subclass; this archive does not describe a "
+            'Planktos run.'.format(dotted))
+    return klass
+
+
+def _unwrap(array):
+    '''Give back a scalar or str where npz stored one as a 0-d array.'''
+
+    return array.item() if array.ndim == 0 else array
+
+
+def _arrayable(value):
+    '''An ndarray for ``value``, or None if storing it would need pickle.'''
+
+    try:
+        array = np.asarray(value)
+    except (ValueError, TypeError):
+        return None
+    return None if array.dtype == object else array
 
 
 def _quiver_name(t_idx):
@@ -768,6 +868,87 @@ class _ArchiveWriter:
             self._closed = True
 
 
+    def write_checkpoint(self, index, capture, time, state):
+        '''Rewrite one swarm's checkpoint, whole.
+
+        Where the chunk files are append-only history, this is the one latest
+        state plus everything history cannot give you -- the random stream, the
+        properties, the class whose ``apply_agent_model`` is the behavior. Each
+        of the three files is replaced atomically.
+
+        Parameters
+        ----------
+        index : int
+            swarm index, as registered with :meth:`add_swarm`
+        capture : int
+            the capture index this state was taken at
+        time : float
+            the environment time at that capture
+        state : dict
+            ``positions``, ``velocities``, ``accelerations``,
+            ``ib_collision_idx``, ``props``, ``shared_props``, ``ib_condition``
+            and ``swarm_class``
+        '''
+
+        npz_name, csv_name, json_name = _checkpoint_names(index)
+        arrays, dropped = {}, []
+
+        # The mask is per row -- agents leave whole rows -- and is positions'.
+        positions = state['positions']
+        arrays['mask'] = np.asarray(
+            ma.getmaskarray(positions)[:, 0], dtype=bool)
+        for name in ('positions', 'velocities', 'accelerations'):
+            value = state.get(name)
+            if value is not None:
+                arrays[name] = np.asarray(ma.getdata(value), dtype=DTYPE)
+        if state.get('ib_collision_idx') is not None:
+            arrays['ib_collision_idx'] = np.asarray(
+                state['ib_collision_idx'], dtype=np.int64)
+
+        # shared_props follows Swarm.save_data's precedent of an npz: it is a
+        #   mixture of scalars and arrays, and npz takes both without pickle.
+        for name, value in (state.get('shared_props') or {}).items():
+            array = _arrayable(value)
+            if array is None:
+                dropped.append(name)
+            else:
+                arrays['shared__' + name] = array
+        if dropped:
+            warnings.warn(
+                'shared_props {} cannot be stored without pickle and are not '
+                'being checkpointed. A restart will come back without '
+                'them.'.format(sorted(dropped)), UserWarning)
+
+        frame, prop_arrays = _split_props(state['props'])
+        for name, array in prop_arrays.items():
+            arrays['prop__' + name] = array
+
+        _atomic_write(self.agent_dir / npz_name,
+                      lambda fobj: np.savez(fobj, **arrays))
+        # Default float format, not '%.17g': pandas already writes the shortest
+        #   representation that reads back exactly. Readers must pass
+        #   float_precision='round_trip', which is where the loss would be.
+        #   A swarm with no scalar props writes no file at all -- an empty one
+        #   has not even a header row, and pandas cannot parse that back.
+        if len(frame.columns):
+            _atomic_write(self.agent_dir / csv_name,
+                          lambda fobj: fobj.write(
+                              frame.to_csv(index=False).encode('utf-8')))
+        _save_json(self.agent_dir / json_name, {
+            'index': int(index),
+            'capture': int(capture),
+            'time': float(time),
+            'ib_condition': state.get('ib_condition'),
+            'swarm_class': state.get('swarm_class'),
+            'props_csv': list(frame.columns),
+            'props_npz': sorted(prop_arrays),
+            'shared_props': sorted(
+                name for name in (state.get('shared_props') or {})
+                if name not in dropped),
+            'shared_props_dropped': sorted(dropped),
+            'rndState': _provenance.jsonable(state.get('rndState'))})
+
+
     ####################   internals   ####################
 
     def _write_chunk(self, keep=False):
@@ -919,15 +1100,16 @@ class _FluidWriter:
         self.flow = envir.flow
         self._written = set()
 
-        # Per-dump reductions. NaN marks a dump that never arrived, which under a
-        #   sliding window is an honest answer and not a gap to be filled. Means
-        #   are not among them: FluidData caches those already, and duplicating
-        #   the array would only create two things to keep in step.
-        n = len(self.flow.dump_means)
+        # Running extrema over the dumps seen, not one row per dump: both are
+        #   read once, reduced over the whole run, and never indexed by dump.
+        #   NaN is the starting value rather than zero so that "no dump has
+        #   arrived" stays distinguishable from "the field is genuinely still",
+        #   which _vorticity_norm draws differently. Means are not here at all:
+        #   they are interpolated per frame, so they have to stay per dump, and
+        #   FluidData caches them already.
         ncomp = len(self.flow)
-        self._vmin = np.full((n, ncomp), np.nan)
-        self._vmax = np.full((n, ncomp), np.nan)
-        self._vort_absmax = np.full(n, np.nan)
+        self._vmax = np.full(ncomp, np.nan)
+        self._vort_absmax = np.nan
         self._unwritten = 0
 
         # flow_times is fixed for the object's life, so convert it once rather
@@ -970,10 +1152,9 @@ class _FluidWriter:
 
         if not self._unwritten:
             return
-        arrays = {'means': self.flow.dump_means,
-                  'vmin': self._vmin, 'vmax': self._vmax}
+        arrays = {'means': self.flow.dump_means, 'vmax': self._vmax}
         if 'vort' in self.quantities:
-            arrays['vort_absmax'] = self._vort_absmax
+            arrays['vort_absmax'] = np.asarray(self._vort_absmax)
         if self._flow_times is not None:
             arrays['flow_times'] = self._flow_times
         _atomic_write(self.dir / 'dump_stats.npz',
@@ -1009,16 +1190,17 @@ class _FluidWriter:
         self._written.add(t_idx)
         self._unwritten += 1
 
-        for n, f in enumerate(field):
-            self._vmin[t_idx, n] = np.min(f)
-            self._vmax[t_idx, n] = np.max(f)
+        # np.fmax over np.maximum: it takes the number rather than propagating
+        #   the NaN that marks "nothing seen yet".
+        self._vmax = np.fmax(self._vmax, [np.max(f) for f in field])
 
         if 'vort' in self.quantities:
             # From the raw arrays, never through get_vorticity(time=), which calls
             #   the FluidData and can therefore trigger a load.
             vort = _fluid._vorticity_from_field(field, self.flow.flow_points,
                                                 self.flow.periodic_dim)
-            self._vort_absmax[t_idx] = np.max(np.abs(vort))
+            self._vort_absmax = float(
+                np.fmax(self._vort_absmax, np.max(np.abs(vort))))
             if self._writes_vorticity:
                 self._write_vorticity(t_idx, vort)
 
@@ -1260,7 +1442,25 @@ class RunRecorder:
                             'units': envir.units,
                             'bndry': [list(b) for b in envir.bndry],
                             'rho': _provenance.jsonable(envir.rho),
-                            'mu': _provenance.jsonable(envir.mu)},
+                            'mu': _provenance.jsonable(envir.mu),
+                            # nu is derivable as mu/rho from every construction
+                            #   but Environment(nu=...), where rho and mu are
+                            #   both None and it is the only one of the three
+                            #   there is.
+                            'nu': _provenance.jsonable(envir.nu),
+                            # motion.inertial_particles asserts both of these,
+                            #   so an inertial run that loses them cannot be
+                            #   restarted at all -- it raises before it moves.
+                            'char_L': _provenance.jsonable(envir.char_L),
+                            'U': _provenance.jsonable(envir.U),
+                            # Resolved rather than as given: 'k' in 2D and
+                            #   'dimgrey' in 3D when the caller named none.
+                            'ibmesh_color': _provenance.jsonable(
+                                envir.ibmesh_color),
+                            # They are functions, so they cannot be recorded.
+                            #   Whether there were any can, which is what lets a
+                            #   reboot say they are missing only when they are.
+                            'has_plot_structs': bool(envir.plot_structs)},
             'fluid': envir._fluid_provenance,
             'ibmesh': envir._ibmesh_provenance}
 
@@ -1290,6 +1490,7 @@ class RunRecorder:
             self._register(index, swarm, first_capture=0)
         # Capture 0 covers t0, so that capture j is exactly full_pos_history[j].
         self._capture()
+        self._checkpoint()
 
 
     ####################   lifecycle   ####################
@@ -1339,8 +1540,41 @@ class RunRecorder:
         '''Write buffered captures to disk. Keeps recording.'''
 
         self._writer.flush()
+        self._checkpoint()
         if self._fluid is not None:
             self._fluid.flush()
+
+
+    def _checkpoint(self):
+        '''Rewrite every recorded swarm's checkpoint at the latest capture.
+
+        Written on the same cadence as a chunk flush, which is what bounds how
+        stale it can be: a hard kill costs the captures buffered since the last
+        chunk boundary, and the checkpoint is never older than that same
+        boundary. It holds positions and velocities itself rather than pointing
+        at a capture index, so it does not depend on the chunk that kill took.
+        '''
+
+        if self._n_captures == 0:
+            return
+        for index, swarm in enumerate(self._swarms):
+            klass = type(swarm)
+            self._writer.write_checkpoint(
+                index, self._n_captures - 1, self.envir.time,
+                {'positions': swarm.positions,
+                 'velocities': swarm.velocities,
+                 'accelerations': swarm.accelerations,
+                 'ib_collision_idx': swarm.ib_collision_idx,
+                 'props': swarm.props,
+                 'shared_props': swarm.shared_props,
+                 'ib_condition': swarm.ib_condition,
+                 # A name only, the way a fluid loader is recorded: the class
+                 #   cannot be rebuilt from here, and apply_agent_model IS the
+                 #   behavior, so a reader must say plainly when it cannot be
+                 #   imported rather than hand back a plain Swarm.
+                 'swarm_class': '{}.{}'.format(klass.__module__,
+                                               klass.__qualname__),
+                 'rndState': swarm.rndState.bit_generator.state})
 
 
     def stop(self):
@@ -1354,6 +1588,7 @@ class RunRecorder:
             #   closing, the observer would otherwise outlive the recording and
             #   keep writing into the source's own directory.
             self._fluid.stop()
+        self._checkpoint()
         self._writer.close()
         if self.envir._recorder is self:
             self.envir._recorder = None
@@ -1422,6 +1657,10 @@ class RunRecorder:
         #   state is recorded.
         self._writer.add_capture(self._n_captures, self.envir.time, arrays)
         self._n_captures += 1
+        # On the chunk boundary, so the checkpoint is never staler than the
+        #   captures a hard kill would cost anyway.
+        if self._n_captures % self._writer.chunk_size == 0:
+            self._checkpoint()
 
 
 
@@ -1764,21 +2003,278 @@ class RunArchive:
 
     ####################   the fluid half   ####################
 
-    def dump_stats(self):
-        """The per-dump fluid statistics, or None if no fluid was recorded.
+    def restore(self, history=True):
+        """Rebuild the Environment and Swarms this archive recorded.
 
-        The spatial mean of each velocity component per dump, the per-component
-        extrema, and -- in 2D, when vorticity was recorded -- the largest absolute
-        vorticity in each dump. Unlike ``FluidData.fmin``/``fmax``, which grow
-        during a run under dynamic loading, these are per dump and so give a scale
-        that two renders of the same run agree on.
+        The run is picked up where it left off: same positions, same properties,
+        same random stream, same clock. Nothing about the fluid or the mesh is
+        deserialized -- the loader calls the archive recorded are replayed, so
+        the data is re-read from wherever it lives.
 
-        **NaN means that dump never loaded**, so reduce over these with
-        ``np.nanmax`` rather than ``np.max``.
+        Parameters
+        ----------
+        history : bool, default=True
+            fill each Swarm's ``pos_history`` and ``vel_history`` from the
+            archive, and the Environment's ``time_history`` with them. False
+            leaves all three empty, which costs nothing to memory but leaves
+            ``plot_all`` a single frame and agent statistics counting against
+            the restored state rather than the original swarm.
 
         Returns
         -------
-        dict of ndarray, keyed 'means', 'vmin', 'vmax', and where present
+        envir : Environment
+        swarms : list of Swarm
+            in archive index order, already attached to ``envir``
+
+        Raises
+        ------
+        ValueError
+            if the archive holds no checkpoint, if a fluid or mesh loader
+            cannot be replayed, or if a Swarm's class cannot be imported
+
+        Notes
+        -----
+        ``Environment.plot_structs`` are function handles and are not recorded;
+        a run that had them is restored without them, with a warning.
+
+        Recording a restored run writes a **new** archive: ``record()`` on the
+        directory it came from finds that directory non-empty and redirects to
+        a timestamped sibling. The resumed run is a second archive beside the
+        first rather than a continuation of it.
+        """
+
+        envir = self._restore_environment()
+        swarms = [self._restore_swarm(envir, entry['index'], history)
+                  for entry in self._entries]
+        # Capture j is full_pos_history[j], so the last capture is the present
+        #   and everything before it is history. Both lists must come out the
+        #   same length or every frame a plot draws is misaligned, silently.
+        envir.time = float(self.times[-1])
+        envir.time_history = ([float(t) for t in self.times[:-1]] if history
+                              else [])
+        # The same link record() leaves behind, so a plot of a restored run
+        #   draws its fluid backdrop from what that run wrote instead of reading
+        #   the dataset again. Frames past what the recording covers are refused
+        #   at the point they are asked for, as they are for any archive.
+        envir._archive_path = self.path
+        return envir, swarms
+
+
+    ####################   restoring   ####################
+
+    def _restore_environment(self):
+        '''The Environment half: scalars from provenance, data by replay.'''
+
+        prov = self.meta.get('provenance') or {}
+        env = dict(prov.get('environment') or {})
+        L = env.get('L')
+        if not L:
+            raise ValueError(
+                '{} records no domain size, so no Environment can be rebuilt '
+                'from it.'.format(self.path))
+        kwargs = {'Lx': L[0], 'Ly': L[1]}
+        if len(L) == 3:
+            kwargs['Lz'] = L[2]
+        for name in ('units', 'rho', 'mu', 'nu', 'char_L', 'U', 'ibmesh_color'):
+            if env.get(name) is not None:
+                kwargs[name] = env[name]
+        for axis, name in zip(env.get('bndry') or [],
+                              ('x_bndry', 'y_bndry', 'z_bndry')):
+            # The pair, not one end of it: a domain periodic on one side only
+            #   would otherwise come back wrong.
+            kwargs[name] = list(axis)
+
+        envir = planktos.Environment(**kwargs)
+        replayed = self._replay(envir, prov.get('fluid'), 'fluid')
+        self._replay(envir, prov.get('ibmesh'), 'ibmesh')
+        if replayed:
+            # The fingerprint is what says the rebuilt world is the same world.
+            #   Skipped where the fluid could not be replayed at all, since the
+            #   mismatch is then the thing the warning above already named and
+            #   an error would only restate it as a refusal.
+            self.check_against(envir)
+        if env.get('has_plot_structs'):
+            warnings.warn(
+                'the recorded run drew extra structures through '
+                'Environment.plot_structs. Those are function handles, so they '
+                'are not in the archive and this Environment does not have '
+                'them: add them again before plotting.', UserWarning)
+        return envir
+
+
+    def _replay(self, envir, record, what):
+        '''Re-run one recorded loader call, and any modifier that followed it.
+
+        True when the record was replayed or there was nothing to replay; False
+        when it named no loader and the data could not be rebuilt.
+        '''
+
+        if record is None:
+            return True
+        loader = record.get('loader')
+        if loader is None:
+            warnings.warn(
+                'the {} was supplied to Environment() as arrays in the process '
+                'that recorded this run, so there is no loader call to replay '
+                'and none has been made. Set it yourself before using this '
+                'Environment.'.format(what), UserWarning)
+            return False
+        for prior in record.get('preceded_by') or []:
+            self._replay(envir, prior, what)
+
+        kwargs = dict(record.get('kwargs') or {})
+        unrecordable = sorted(name for name, value in kwargs.items()
+                              if isinstance(value, dict))
+        if unrecordable:
+            raise ValueError(
+                '{} cannot be replayed: {} was called with {}, which the '
+                'provenance record could not store as {} -- an array or an '
+                'object has no text form to replay. Rebuild this Environment '
+                'by hand.'.format(what, loader, unrecordable,
+                                  'values' if len(unrecordable) > 1 else 'a value'))
+        try:
+            getattr(envir, loader)(**kwargs)
+        except AttributeError:
+            raise ValueError(
+                '{} cannot be replayed: this Planktos has no '
+                'Environment.{}. The archive was written by version {}.'.format(
+                    what, loader,
+                    (self.meta.get('provenance') or {}).get('planktos_version')))
+        except Exception as err:
+            raise ValueError(
+                '{} cannot be replayed: {}({}) raised {}: {}. The data it read '
+                'has to still be where it was.'.format(
+                    what, loader, ', '.join(sorted(kwargs)),
+                    type(err).__name__, err))
+        # Every modifier in Planktos is deterministic given the loaded data and
+        #   takes no arguments, so replaying by name reproduces the result.
+        for name in record.get('modified_by') or []:
+            getattr(envir, name)()
+        return True
+
+
+    def _restore_swarm(self, envir, index, history):
+        '''One Swarm, rebuilt from its checkpoint and reattached to ``envir``.'''
+
+        state = self.checkpoint(index)
+        if state is None:
+            raise ValueError(
+                'swarm {} has no checkpoint in {}, so its properties and '
+                'random stream were never written and it cannot be restored. '
+                'Archives recorded before checkpoints existed are readable but '
+                'not restartable.'.format(index, self.path))
+
+        klass = _import_swarm_class(state['swarm_class'])
+        positions = state['positions']
+        shared = dict(state['shared_props'])
+        swarm = klass(swarm_size=positions.shape[0], envir=envir,
+                      init=np.array(ma.getdata(positions)),
+                      ib_condition=state['ib_condition'],
+                      name=shared.get('name', 'organism'),
+                      color=shared.get('color', 'darkgreen'))
+        # Assigned after construction, so a subclass __init__ that sets its own
+        #   defaults does not win over what the run actually had.
+        swarm.positions = ma.copy(positions)
+        for name in ('velocities', 'accelerations'):
+            if state.get(name) is not None:
+                setattr(swarm, name, ma.copy(state[name]))
+        if state.get('ib_collision_idx') is not None:
+            swarm.ib_collision_idx = np.array(state['ib_collision_idx'])
+        swarm.props = state['props'].copy(deep=True)
+        swarm.shared_props = shared
+        swarm.rndState.bit_generator.state = state['rndState']
+
+        if history:
+            swarm.pos_history = [ma.copy(state_j) for state_j
+                                 in self.positions(index)[:-1]]
+            if 'velocities' in self.store:
+                swarm.vel_history = [ma.copy(state_j) for state_j
+                                     in self.velocities(index)[:-1]]
+            else:
+                # Length must match pos_history whatever is in it: every
+                #   consumer indexes the two together.
+                swarm.vel_history = [ma.masked_all(swarm.positions.shape)
+                                     for _ in swarm.pos_history]
+        return swarm
+
+
+    def checkpoint(self, swarm=0):
+        """One swarm's latest state, as a dict, or None if none was written.
+
+        Where :meth:`positions` and :meth:`velocities` give append-only history,
+        this is the one state the recording ended at plus everything history
+        cannot supply: the random stream, the properties, the immersed-boundary
+        condition, and the name of the Swarm subclass whose ``apply_agent_model``
+        is the behavior.
+
+        Parameters
+        ----------
+        swarm : int or str, default=0
+            index, or name when unambiguous
+
+        Returns
+        -------
+        dict
+            ``capture`` and ``time`` say where in the run the state is from.
+            ``positions``, ``velocities`` and ``accelerations`` are masked
+            arrays; ``props`` is a DataFrame; ``shared_props`` a dict;
+            ``rndState`` the generator state dict; plus ``ib_collision_idx``,
+            ``ib_condition`` and ``swarm_class``. None when the archive holds no
+            checkpoint for this swarm.
+        """
+
+        entry = self._by_index[self._resolve_swarm(swarm)]
+        npz_name, csv_name, json_name = _checkpoint_names(entry['index'])
+        json_file = self._agent_dir / json_name
+        if not json_file.is_file():
+            return None
+        state = json.loads(json_file.read_text())
+
+        with np.load(self._agent_dir / npz_name, allow_pickle=False) as data:
+            arrays = {k: data[k] for k in data.files}
+        # One mask per state, and it is positions': a masked row means the agent
+        #   is out of the domain, which is a fact about the agent.
+        row_mask = arrays.pop('mask')
+        mask = np.broadcast_to(row_mask[:, None],
+                               arrays['positions'].shape).copy()
+        for name in ('positions', 'velocities', 'accelerations'):
+            if name in arrays:
+                state[name] = ma.masked_array(arrays.pop(name), mask=mask)
+        state['ib_collision_idx'] = arrays.pop('ib_collision_idx', None)
+
+        state['shared_props'] = {
+            name[len('shared__'):]: _unwrap(value)
+            for name, value in arrays.items() if name.startswith('shared__')}
+
+        # float_precision='round_trip' is not optional: pandas' default csv
+        #   parser is where a float64 loses its last bits, not the writer.
+        #   The manifest says whether there is a file at all, rather than the
+        #   read having to tell an absent one from an empty one.
+        if state['props_csv']:
+            frame = pd.read_csv(self._agent_dir / csv_name,
+                                float_precision='round_trip')
+        else:
+            frame = pd.DataFrame(index=range(len(row_mask)))
+        for name, value in arrays.items():
+            if name.startswith('prop__'):
+                frame[name[len('prop__'):]] = list(value)
+        state['props'] = frame
+        return state
+
+
+    def dump_stats(self):
+        """The recorded fluid statistics, or None if no fluid was recorded.
+
+        ``means`` is the spatial mean of each velocity component **per dump**,
+        which the plot statistics interpolate between; NaN there marks a dump the
+        run never loaded. ``vmax`` (per component) and, in 2D when vorticity was
+        recorded, ``vort_absmax`` are single extrema **over the whole run**, which
+        is what fixes a colour limit and an arrow scale that two renders of the
+        same run agree on. NaN in those means no dump ever arrived.
+
+        Returns
+        -------
+        dict of ndarray, keyed 'means' and 'vmax', and where present
         'vort_absmax' and 'flow_times'. None when the recording had no fluid.
         """
 

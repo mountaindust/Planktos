@@ -499,21 +499,28 @@ def test_dump_stats_records_means_extrema_and_the_vorticity_scale(tmp_path):
     rec = _record_and_sweep(envir, tmp_path / 'archive')
     stats = np.load(rec.path / 'fluid' / 'dump_stats.npz')
 
-    assert sorted(stats.files) == ['flow_times', 'means', 'vmax', 'vmin',
-                                  'vort_absmax']
-    assert stats['means'].shape == (NDUMPS, 2)
+    assert sorted(stats.files) == ['flow_times', 'means', 'vmax', 'vort_absmax']
     assert np.array_equal(stats['flow_times'], envir.flow.flow_times)
-    assert not np.isnan(stats['means']).any()      # the sweep covered them all
 
-    # Every row must be the reduction of that dump, not of a neighbour.
+    # Means stay per dump: the statistics box interpolates between them, so a
+    # reduction over the run would not answer the question they are asked.
+    assert stats['means'].shape == (NDUMPS, 2)
+    assert not np.isnan(stats['means']).any()      # the sweep covered them all
     for t_idx in range(NDUMPS):
         field = envir.flow(float(envir.flow.flow_times[t_idx]))
         for n in range(2):
             assert np.isclose(stats['means'][t_idx, n], np.mean(field[n]))
-            assert np.isclose(stats['vmin'][t_idx, n], np.min(field[n]))
-            assert np.isclose(stats['vmax'][t_idx, n], np.max(field[n]))
-        vort = envir.get_vorticity(t_n=t_idx)
-        assert np.isclose(stats['vort_absmax'][t_idx], np.abs(vort).max())
+
+    # The extrema are reduced over the whole run, since a colour limit and an
+    # arrow scale are each one number and nothing reads them per dump.
+    fields = [envir.flow(float(t)) for t in envir.flow.flow_times]
+    assert stats['vmax'].shape == (2,)
+    for n in range(2):
+        assert np.isclose(stats['vmax'][n], max(np.max(f[n]) for f in fields))
+    assert stats['vort_absmax'].shape == ()
+    assert np.isclose(stats['vort_absmax'],
+                      max(np.abs(envir.get_vorticity(t_n=t)).max()
+                          for t in range(NDUMPS)))
 
 
 def test_a_dump_that_never_loaded_is_nan_rather_than_zero(tmp_path):
@@ -526,7 +533,35 @@ def test_a_dump_that_never_loaded_is_nan_rather_than_zero(tmp_path):
 
     assert not np.isnan(stats['means'][:5]).any()   # the opening window
     assert np.isnan(stats['means'][5:]).all()
-    assert np.isnan(stats['vort_absmax'][5:]).all()
+    # The extrema are one value each, so a dump that never arrived leaves them
+    # covering the dumps that did rather than leaving a hole.
+    assert np.isfinite(stats['vort_absmax'])
+    assert np.isclose(stats['vort_absmax'],
+                      max(np.abs(envir.get_vorticity(t_n=t)).max()
+                          for t in range(5)))
+
+
+def test_a_genuinely_still_fluid_records_zero_and_not_nan(tmp_path):
+    # NaN is the starting value rather than zero, so that "no dump has arrived"
+    # stays distinguishable from "the vorticity really is zero" -- which
+    # _vorticity_norm draws as a uniformly white field rather than falling back
+    # to a frame-by-frame scale.
+    x = np.linspace(0.0, 10.0, 6)
+    y = np.linspace(0.0, 8.0, 5)
+    t = np.linspace(0.0, 1.0, 4)
+    # Uniform flow: no shear anywhere, so the curl is identically zero.
+    u = np.ones((len(t), len(x), len(y)))
+    v = np.zeros((len(t), len(x), len(y)))
+    envir = planktos.Environment(Lx=10.0, Ly=8.0, flow=[u, v], flow_times=t)
+    swrm = planktos.Swarm(swarm_size=3, envir=envir, seed=1)
+    with envir.record(str(tmp_path / 'archive'), fluid='vort') as rec:
+        for _ in range(3):
+            swrm.move(0.1, silent=True)
+
+    stats = np.load(rec.path / 'fluid' / 'dump_stats.npz')
+    assert np.isfinite(stats['vort_absmax']), 'a still fluid is not "unseen"'
+    assert stats['vort_absmax'] == 0.0
+    assert np.allclose(stats['vmax'], [1.0, 0.0])
 
 
 def test_dump_stats_is_written_in_3d_where_no_backdrop_is_drawn(tmp_path):

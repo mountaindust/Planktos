@@ -207,8 +207,8 @@ what it will re-read. Nothing about the old workflow breaks.
 
 .. note::
    Plotting a run in a *later session* needs the Environment and Swarm restored
-   to where that run left off, which Planktos does not yet do. ``load_run``
-   reads the recorded arrays for analysis in the meantime.
+   to where that run left off. ``RunArchive.restore()`` does that -- see
+   `Restarting a run`_.
 
 Rendering when the run ends
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -284,6 +284,51 @@ field is smooth -- see :doc:`FluidData`.
 Environment collide by name by default. ``run.positions('organism')`` raises
 when the name is not unique rather than picking one, and ``run.swarms`` lists
 name and index together so the collision is visible.
+
+Restarting a run
+----------------
+
+``restore()`` turns an archive back into a live ``Environment`` and its
+``Swarm``\ s, at the state the run left off::
+
+    envir, swarms = planktos.load_run('run_archive/').restore()
+    swrm, = swarms
+
+    for _ in range(more_steps):     # carries on as if nothing had happened
+        swrm.move(dt)
+
+Same positions, same properties, same random stream, same clock. Nothing about
+the fluid or the mesh is deserialized: the loader calls the archive recorded are
+replayed, so the data is re-read from wherever it lives -- which means **the
+fluid files have to still be there**.
+
+``pos_history`` and ``vel_history`` are filled from the archive, and
+``Environment.time_history`` with them. Pass ``history=False`` to skip that on a
+long run; the physics is identical either way, but ``plot_all`` then has a
+single frame to draw and the agent statistics count against the restored state
+rather than the original swarm.
+
+Three things fail differently, on purpose:
+
+* **A fluid or mesh that cannot be replayed is an error.** Its files have moved,
+  or the call was made with an array argument, whose contents a provenance
+  record does not store.
+* **A** ``Swarm`` **subclass that cannot be imported is an error.**
+  ``apply_agent_model`` *is* the behavior of the run, so restoring a plain
+  ``Swarm`` in its place would silently be a different simulation. Put the class
+  on the import path and try again.
+* **A lost** ``plot_structs`` **is a warning.** Those are function handles and
+  cannot be recorded; a run that had them is restored without them, and said so.
+
+A fluid handed to ``Environment(flow=[...])`` as arrays has no loader call to
+replay. That warns rather than failing, and the Environment comes back without
+fluid for you to set yourself.
+
+.. note::
+   Recording a restored run writes a **new** archive. ``record()`` on the
+   directory it came from finds that directory non-empty and redirects to a
+   timestamped sibling, so a resumed run sits beside the first rather than
+   continuing it.
 
 Validation
 ~~~~~~~~~~

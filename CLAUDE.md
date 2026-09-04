@@ -514,10 +514,10 @@ they are independent:**
 
 | Invocation | Covers | Time |
 |---|---|---|
-| `pytest` | the focused modules | ~20 s (1013 passed / 141 skipped) |
-| `pytest --runslow` | plus the parallelization tests, the plotting smokes and the movie renders | ~40 s (1046 / 108) |
-| `pytest --runstreaming` | plus the fast half of `tests/test_data_streaming/` | ~30 s (1099 / 50 / 5 xfailed) |
-| `pytest --runslow --runstreaming` | everything | ~4 min (1147 / 2 / 5) |
+| `pytest` | the focused modules | ~30 s (1037 passed / 143 skipped) |
+| `pytest --runslow` | plus the parallelization tests, the plotting smokes and the movie renders | ~45 s (1070 / 110) |
+| `pytest --runstreaming` | plus the fast half of `tests/test_data_streaming/` | ~40 s (1130 / 50) |
+| `pytest --runslow --runstreaming` | everything | ~4 min (1178 / 2) |
 
 **Before a commit that touches the archive, the fluid streaming or the plotting
 paths, run both flags.** `--runstreaming` is off by default because that suite is

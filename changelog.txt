@@ -32,6 +32,7 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - Plots and movies draw the fluid from what Environment.record wrote, so replaying a dynamically-loaded run costs no fluid reads and needs no extra argument.
 - Vorticity colour limits and quiver arrow scales now come from a recorded run's own extrema, so two plots of it agree instead of drifting with what has been drawn or loaded.
 - New Environment.record(plot_all=) renders a movie when the with block ends, including when the run raised.
+- New RunArchive.restore rebuilds the Environment and Swarms from a recording and resumes the run, same random stream and all.
 - Swarm.move now raises when the Environment holds more than one Swarm; use Environment.move_swarms. It previously warned and froze the others, misaligning their histories.
 - Bug fix: adding a Swarm to a different Environment now removes it from its previous one, which kept moving it and left it in both.
 - Bug fix: set_canopy_flow works with scalar u_star/U_h/beta, which raised TypeError, and a zero wind parameter now gives zero flow instead of nan.

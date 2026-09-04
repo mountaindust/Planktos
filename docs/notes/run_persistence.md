@@ -43,9 +43,9 @@ thing is too big to hold at once.
 | | What | Why | Status |
 |---|---|---|---|
 | **A** | **Run archive** — append-only, chunked, crash-valid on-the-fly capture of agent state, with a public reader and a capture schedule that also governs history retention | persistence: crash survival, later sessions, larger-than-RAM analysis, bounded history memory, run speed, and eventually restart | **[done]** — §6.1 A0–A5, 2026-08-21 to 2026-08-25 |
-| **B** | **Fluid-side streaming** — per-dump means, vorticity by regime, per-dump extrema | dyload: never re-stream the dataset to draw a picture of it | **[done]** — §6.1 B1–B3, 2026-08-25 |
+| **B** | **Fluid-side streaming** — per-dump means, vorticity by regime, whole-run extrema | dyload: never re-stream the dataset to draw a picture of it | **[done]** — §6.1 B1–B3, 2026-08-25 |
 | **C** | **Rendering** — frame selection by time, archive-backed `plot_all`, global colour/arrow scales | consumes A and B | **[done]** — §6.1 C1–C2, 2026-08-27 |
-| **R** | **Full-state reboot** — a checkpoint beside the archive, and a reader that turns a directory back into an `Environment` and its `Swarm`s | the third problem this architecture solves, and the one A was built for: a run that outlives the process that made it | specified (§2.11), **next** |
+| **R** | **Full-state reboot** — a checkpoint beside the archive, a reader that turns a directory back into an `Environment` and its `Swarm`s, and appending to the archive a run resumed from | the third problem this architecture solves, and the one A was built for: a run that outlives the process that made it | **in progress** — §6.1 R0–R3 done 2026-08-31 to 2026-09-03; R4 and R5 ahead |
 | **D** | **Tiling and `extend`** — the real position-wrapping implementation | cleanup: tiling has raised `NotImplementedError` since the `FlowArray` removal | specified (§9), not built |
 
 ⚠️ **Two lettering schemes overlap, and the letters do not agree.** The components here
@@ -91,7 +91,8 @@ In order:
    run costs zero loader calls; the colour and arrow scales are global;
    `Environment.record(plot_all=)` renders from the archive at the end of a `with`
    block. **This was the last step that consumes A and B.**
-5. **§2.11 — the full-state reboot** is next *(scheduled 2026-08-27)*. It was filed as
+5. **§2.11 — the full-state reboot** is **in progress** *(scheduled 2026-08-27; R0–R3
+   done, R4 and R5 ahead — §6.1)*. It was filed as
    a follow-on until the acceptance suite made the gap concrete; §6.1's Step R says why
    it goes ahead of tiling rather than after it, and the one-line version is that the
    on-disk format has to grow and every archive written before it does cannot be
@@ -635,7 +636,8 @@ run_archive/
                             directory could not be written -- see §3.3; normally it
                             goes beside the source's own dumps instead, and under
                             INUM=None it is not written at all
-    dump_stats.npz          per-dump extrema and component means; rewritten
+    dump_stats.npz          per-dump component means and whole-run extrema;
+                            rewritten
                             whole, every STATS_INTERVAL dumps
   agents/
     swarm00.json            name, N, D, first_capture -- written when that swarm
@@ -1034,7 +1036,9 @@ fingerprint already required for validation.
 ```json
 "provenance": {
   "planktos_version": "1.1.0",
-  "environment": {"L": [...], "units": "m", "bndry": [...], "rho": ..., "mu": ...},
+  "environment": {"L": [...], "units": "m", "bndry": [...],
+                  "rho": ..., "mu": ..., "nu": ...,
+                  "char_L": ..., "U": ..., "ibmesh_color": "k"},
   "fluid":  {"loader": "read_IB2d_fluid_data",
              "kwargs": {"path": "...", "dt": ..., "print_dump": ..., "d_start": ...,
                         "d_finish": ..., "INUM": 4}},
@@ -1342,13 +1346,14 @@ between that, the fluid and ibmesh provenance replay, and the archive's `times`,
 rebuilt Environment matches the original attribute for attribute — audited, and
 `RunArchive.check_against` passes on the result.
 
-Five things it does not carry:
+Five things it did not carry. **Four are closed as of R1** *(2026-09-02)*; the fifth
+cannot be:
 
 | Missing | Consequence | Fix |
 |---|---|---|
-| **`char_L`, `U`** | `motion.inertial_particles` asserts both are set, so an **inertial-particle run cannot be restarted at all** — it raises before it moves. `Environment.calc_re` is dead for the same reason | two floats into `provenance['environment']` |
-| **`nu`**, in the `Environment(nu=…)`-only construction | `rho` and `mu` are both `None` there, and only those two are recorded, so `nu` is lost silently. Every other construction recovers it as `mu/rho` | record `nu` beside them |
-| `ibmesh_color` | cosmetic; the rebuilt mesh draws in the default colour | one string |
+| ✅ **`char_L`, `U`** | `motion.inertial_particles` asserts both are set, so an **inertial-particle run cannot be restarted at all** — it raises before it moves. `Environment.calc_re` is dead for the same reason | two floats into `provenance['environment']` |
+| ✅ **`nu`**, in the `Environment(nu=…)`-only construction | `rho` and `mu` are both `None` there, and only those two were recorded, so `nu` was lost silently. Every other construction recovers it as `mu/rho` | record `nu` beside them |
+| ✅ `ibmesh_color` | cosmetic; the rebuilt mesh draws in the default colour | one string, recorded **as resolved** (`'k'` in 2D, `'dimgrey'` in 3D) so the reader never repeats the default |
 | `plot_structs`, `plot_structs_args` | the extra structures a plot draws (e.g. `ex_poisson_search.py`'s target circle) are gone | **unfixable in principle** — they are functions. The reader should say so rather than appear to have restored them |
 
 `g` is a constant, the FTLE fields and `mag_grad`/`mag_grad_time` are recomputable
@@ -1434,13 +1439,30 @@ The checkpoint is a category-(3) file per swarm, mirroring `save_data`'s existin
 with the precision defect fixed:
 
 ```
-agents/swarm00_state.csv     props, one row per agent, float_format='%.17g'
-agents/swarm00_state.json    shared_props scalars, rndState, ib_condition,
-                             the Swarm subclass name, and the capture index
-                             and time this checkpoint aligns to
-agents/swarm00_state.npz     positions, velocities, accelerations,
-                             ib_collision_idx, array-valued shared_props
+agents/checkpoint00_props.csv   props, one row per agent, pandas' default
+                                float format -- which already round-trips
+agents/checkpoint00_meta.json   ib_condition, the Swarm subclass name,
+                                rndState, the capture index and time this
+                                aligns to, and a manifest of which props
+                                column went where
+agents/checkpoint00.npz         positions, velocities, accelerations, the row
+                                mask, ib_collision_idx, shared_props, and any
+                                props column whose stacked shape is > 1-D
 ```
+
+⚠️ **Named for the role, not with the `swarmNN` prefix** *(as built, R2)*. The roster
+scan globs `agents/swarm*.json`, so a checkpoint called `swarm00_state.json` is read as
+a swarm sidecar and the archive fails to open at all. Renaming removes the coupling
+instead of teaching the scan to skip things. Each name then says what is in it: the csv
+holds nothing but `props`, and the json is the parameterization of that moment in the
+run.
+
+⚠️ **A checkpoint's spilled props columns go in its own npz, not in separate `.npy`
+files.** The spill rule below is written for `props_history`, where there is one chunk
+series per column; a checkpoint is a single state with an npz already open. Same reason,
+one fewer file. **`shared_props` goes there too**, following `Swarm.save_data`'s existing
+precedent of an npz — it is a mixture of scalars and arrays, and npz takes both without
+pickle, which sidesteps `_save_json`'s `allow_nan=False` for a non-finite scalar.
 
 **Positions and velocities are in the checkpoint even though the archive's last capture
 holds them.** §2.3 forbids redundant derivable state, and this is the exception: a hard
@@ -1867,14 +1889,45 @@ downsampling at render time, which costs 2–3× a per-dump scalar and gives bac
 saving that motivates downsampling at all. So `quiver_shape` joins the recorded quantity
 as the second thing fixed when recording starts.
 
-### 3.5 Per-dump extrema and the global colour and arrow scales — **[done]**
+### 3.5 The global colour and arrow scales — **[done]**
 
 **As built (the storage half; the render half is C2, also done — see the end of this
-section).** `fluid/dump_stats.npz`
-carries `vmin`, `vmax` — `(n_dumps, n_components)` each — plus `means`, which is
-`FluidData`'s own per-dump mean cache serialized rather than a second copy of it, and,
-in 2D when vorticity was requested, `vort_absmax` `(n_dumps,)`. Read back with
+section).** `fluid/dump_stats.npz` carries `means`, which is `FluidData`'s own per-dump
+mean cache serialized rather than a second copy of it; `vmax`, `(n_components,)`; and,
+in 2D when vorticity was requested, the scalar `vort_absmax`. Read back with
 `RunArchive.dump_stats()`.
+
+⚠️ **The extrema were per dump until 2026-09-03, and are now single running values.**
+`vmin`, `vmax` and `vort_absmax` were all `(n_dumps, …)` arrays, NaN-marked for dumps a
+sliding window never loaded. But **nothing ever read one per dump**: the only consumers
+reduce over the whole run — `nanmax(vort_absmax)` for the colour limit and
+`norm(nanmax(vmax, axis=0))` for the arrow scale — so the arrays were built, indexed,
+NaN-marked and serialized per dump only to be collapsed to one number the moment anyone
+looked. They are now maintained as running maxima (`np.fmax`, which takes the number
+over the NaN), which:
+
+- deletes the NaN semantics from the extrema, and with them `_frames._nanreduce` and
+  the test pinning that each row is its own dump's reduction rather than a neighbour's
+  — a class of bug that no longer has anywhere to occur;
+- makes an append trivial, since combining two runs' extrema is one `max` rather than a
+  merge of two NaN-marked arrays. §6.1 Step R5 is what that is for;
+- costs the per-dump extrema as a diagnostic. Nothing asked for it, and vorticity peaks
+  per dump are of little interest with self-propelled agents in any case.
+
+⚠️ **They start at NaN, not zero.** `_vorticity_norm` draws a zero limit as a uniformly
+white field rather than collapsing the colormap, so a zero start would make "no dump has
+arrived" indistinguishable from "the vorticity really is zero". One NaN replaces *n*, and
+the "the archive has nothing to say about the scale, fall back" behaviour is unchanged.
+
+⚠️ **`vmin` was deleted outright.** It had no consumer anywhere in the package — written,
+documented and asserted on by tests, never read. It is also close to meaningless as a
+fluid statistic: with a no-slip condition anywhere in the domain it is pinned at zero by
+the geometry, so it measures the discretization rather than the flow.
+
+**`means` stays per dump**, and its NaN keeps meaning what it meant. It is not a
+reduction: `_interp_dump_means` blends the two bracketing dumps with the interpolator's
+own weights to serve the statistics box at an arbitrary time, and a dump that never
+loaded genuinely cannot be interpolated through.
 
 ⚠️ **Rewritten whole, but not on every dump** *(settled 2026-08-26)*. `.npz` cannot be
 appended to, so the file is rewritten entire — which keeps it a single atomic replace
@@ -1930,14 +1983,16 @@ or disclose the drift on the colorbar.
 **As built — the render half (C2, 2026-08-27).** Both scales are reduced once in
 `_frames.FrameSource._global_scales`, before the first frame:
 
-- the colour limit is `np.nanmax(dump_stats['vort_absmax'])`, handed to
-  `_vorticity_norm` as its `clip` — which that function already treats as fixed and
-  never rescales, so §3.5's "pass the global maximum as `clip` and it is already fixed"
-  was exactly right and the rendering side needed no other change;
-- the arrow scale is `norm(np.nanmax(dump_stats['vmax'], axis=0))`, which is what
-  `fmax` reaches after a full sweep and then **stops** at. `fmax` does not: it grows
-  with every later fluid access, so a scale taken from it moves between two renders
-  of one recorded run.
+- the colour limit is `dump_stats['vort_absmax']`, handed to `_vorticity_norm` as its
+  `clip` — which that function already treats as fixed and never rescales, so §3.5's
+  "pass the global maximum as `clip` and it is already fixed" was exactly right and the
+  rendering side needed no other change;
+- the arrow scale is `norm(dump_stats['vmax'])`, which is what `fmax` reaches after a
+  full sweep and then **stops** at. `fmax` does not: it grows with every later fluid
+  access, so a scale taken from it moves between two renders of one recorded run.
+
+*(Both were `nanmax` reductions over per-dump arrays until 2026-09-03; the values are
+identical, the reduction now happens as the dumps arrive rather than at render time.)*
 
 Three things the specification did not say and one it did:
 
@@ -2976,27 +3031,62 @@ and R3 below now assume it.*
   either is baked into a format. It found that §6.3's suggested `DataFrame.to_json`
   precedent silently truncates, that `_provenance.jsonable` cannot serialize
   `shared_props`, and that `_prev_positions` needs no restoring. §2.11.5.
-- **R1 — the environment gaps (§2.11.3).** `char_L`, `U` and `nu` into
-  `provenance['environment']`, plus `ibmesh_color`. Small, self-contained, and it is
-  the one part that improves archives written from the moment it lands. Do it first for
-  that reason alone. Additive, so no format-version bump and old archives still read.
-- **R2 — the checkpoint file.** One latest state per swarm, per §2.11.2's "State"
-  column: `positions`, `velocities`, `accelerations`, `props`, `shared_props`,
-  `ib_collision_idx`, `rndState`, `ib_condition`, and the Swarm subclass name. Written
-  on request and optionally every *k* captures. O(N) per swarm — 79 kB at N=1000 in 3D —
-  so the cadence needs no cleverness. **§2.11.5 fixes the containers and says why**;
-  copy `_FluidWriter.flush`'s rewrite-whole-atomically discipline rather than inventing
-  one.
-- **R3 — the reader.** `RunArchive` grows the entry point that turns a directory back
-  into an `Environment` and its `Swarm`s. It must distinguish its three failure modes:
-  a missing fluid file is an error, an unimportable `Swarm` subclass is an error, and a
-  lost `plot_structs` is a warning (§2.11.3). It materializes `pos_history` and
-  `vel_history` from the archive (§2.11.4). Two things it must get right that the
-  hand-built reconstruction in the acceptance test does not: `envir.time_history` has
-  to stay the same length as the materialized history — a mismatch raises nothing at
-  all and silently misaligns every frame — and a restored run that keeps recording
-  meets §2.1's non-empty-directory redirect, so decide and document what a second
-  `record()` on a restored run does.
+- **R1 — the environment gaps (§2.11.3). ✅ [done 2026-09-02].** `char_L`, `U` and `nu`
+  into `provenance['environment']`, plus `ibmesh_color`. Additive, so no format-version
+  bump and old archives still read; done first because it is the one part that improves
+  archives written from the moment it lands. Three tests in `test_recording.py` cover
+  the scalars, the `Environment(nu=…)`-only case where `nu` was the one being lost, and
+  the resolved colour in both dimensions.
+- **R2 — the checkpoint file. ✅ [done 2026-09-02].** One latest state per swarm, per
+  §2.11.2's "State" column, in the three files §2.11.5 fixes, each replaced atomically
+  the way `_FluidWriter.flush` rewrites `dump_stats.npz`. Measured at **80 B per agent**
+  — 80 kB at N=1000 — so the cadence needed no cleverness: it rides the chunk boundary,
+  plus `record()` and `stop()`. That bound is the point rather than a convenience — a
+  hard kill costs the captures buffered since the last chunk, and the checkpoint is never
+  older than that same boundary. It holds positions and velocities itself rather than
+  naming a capture index, so it does not depend on the chunk the kill took.
+
+  `RunArchive.checkpoint(swarm)` reads one back, on A5's principle that a write-only
+  feature is not finished; R3 is what turns it into an `Environment` and `Swarm`s.
+  Ten tests in `test_recording.py`, and three of the acceptance suite's five `xfail`s
+  come off here — retargeted at the checkpoint and rewritten as round-trips, per the
+  decision recorded above.
+- **R3 — the reader. ✅ [done 2026-09-03].** `RunArchive.restore(history=True)` returns
+  `(envir, swarms)`. It replays the recorded loader calls — including `preceded_by`
+  chains and `modified_by` modifiers, both of which take no arguments and so replay by
+  name — rather than deserializing anything, and distinguishes its three failure modes
+  as §2.11.3 requires. **This is where the acceptance suite's last two `xfail`s came
+  off, so claim 4 now holds.**
+
+  Four things it settled that the specification had left open:
+
+  - **The fingerprint check is skipped when the fluid could not be replayed.** A run
+    built with `Environment(flow=[...])` has no loader call, so the rebuilt environment
+    genuinely has no fluid — and `check_against` would then refuse with a mismatch that
+    is exactly what the warning has already said. Warn, hand back the environment, and
+    check the fingerprint only where a replay actually happened.
+  - **Boundary conditions replay as pairs**, not as one end of each. `bndry[axis][0]`
+    alone — which the acceptance test's hand reconstruction used — loses a domain that
+    is periodic on one side only.
+  - **`has_plot_structs` joins the environment provenance.** They are functions and
+    cannot be recorded, but *whether there were any* can, which is what makes the
+    warning truthful rather than boilerplate on every restore. Additive, like R1.
+  - **A restored run that keeps recording writes a second archive.** `record()` on the
+    directory it came from meets §2.1's non-empty-directory rule and redirects to a
+    timestamped sibling. Correct by that rule and documented rather than special-cased;
+    appending to an existing archive would need capture-index continuation and is a
+    feature, not a footnote.
+
+  `history=False` leaves the three histories empty, and a test pins that the physics is
+  identical either way — which is R0's finding made permanent.
+
+  ⚠️ **`restore()` sets `Environment._archive_path`** *(found and fixed 2026-09-03,
+  after the rest of R3 had landed)*. That attribute is how §4.2's `FrameSource` finds
+  the archive, and `record()` was the only thing setting it — so a restored run plotted
+  its fluid by **re-reading the dataset**, the one cost components B and C exist to
+  remove, and silently, since with no archive linked there is nothing to warn about.
+  Frames past what the recording covers are still refused where they are asked for, so
+  linking it is correct in both directions.
 - **R4 — the derived quantities and the opt-in histories.** Two halves, and the first
   is not optional:
 
@@ -3016,13 +3106,70 @@ and R3 below now assume it.*
 
   Last because R1–R3 deliver the reboot claim without any of it.
 
-*What it is finished against:* `tests/test_data_streaming/test_stream_d_restart.py`.
-Its five strict `xfail`s are the acceptance criteria, and the headline —
+- **R5 — appending to the archive a run was restored from.** *(Specified 2026-09-03,
+  after R3 shipped and the question "why does resuming write a second directory?" turned
+  out to have a good answer.)* Today `record()` on the directory a run came from meets
+  §2.1's non-empty rule and redirects to a timestamped sibling, so a resumed run sits
+  beside its own history rather than continuing it. Restoring already carries everything
+  needed to continue instead.
+
+  **The trigger is a checkable fact, not a remembered one: append when the archive's
+  last capture is exactly where the Environment now is** — `envir.time ==
+  archive.times[-1]` — and `store`, `chunk_size` and `capture_interval` all match
+  `meta.json`. That is better than "this Environment came from a restore" three ways: it
+  is verifiable from state; it fails safe, since restoring and then running before
+  recording would otherwise punch a hole in the series, and §2.8 already makes a partial
+  series a refusal rather than a silent fill; and it picks up the notebook workflow §2.1
+  already cares about, where `stop_recording()`, a look at the data, and a second
+  `record()` become one continuous archive. **Nothing already in the archive is ever
+  rewritten except the tail chunk**, which is the one piece that has to grow.
+
+  *What it needs:*
+
+  - **Refill the last chunk rather than starting a new one.** `_validate_chunks`
+    requires chunk *i* to hold exactly
+    `min(n, (i+1)·chunk_size) − max(first_capture, i·chunk_size)` rows, so a short chunk
+    in the middle of a series is refused. Read its rows back into the buffer and carry
+    on. Bounded by one chunk.
+  - **Do not take capture 0**, which `RunRecorder.__init__` otherwise always does — it
+    would duplicate the archive's last capture at the same timestamp.
+  - **Do not rewrite `meta.json`, and validate the roster instead of adding to it.**
+    `_ArchiveWriter.__init__` writes the metadata and `add_swarm` raises on a duplicate
+    index; both need an append path. A swarm joining *during* the appended stretch is an
+    ordinary mid-run swarm and needs nothing new.
+  - **Bypass `_resolve_archive_path`'s redirect**, which is the whole point.
+  - **Seed `means` from the existing sidecar**, which is the one fluid array that is
+    still per dump. The extrema are single running values as of 2026-09-03 (§3.5), so
+    combining them is one `max` — that simplification was made for this step and removes
+    what was otherwise the only silent-data-loss hazard here. Seed `_written` too, so
+    vorticity already on disk is not written again.
+  - **Refuse a mismatch** in `store`, `chunk_size` or `capture_interval` rather than
+    redirecting: silently starting a second archive when the user asked to append is the
+    confusing outcome, and a changed `capture_interval` makes the timeline unevenly
+    spaced halfway through.
+
+  *The headline test, and the reason to trust the feature:* **a run recorded, stopped,
+  restored and appended must produce an archive byte-identical to the same run recorded
+  in one go.** If that holds, every consumer is automatically correct and nothing else
+  needs arguing.
+
+  *Where it goes:* after R4, which changes the `store=` default and adds a sidecar the
+  append path has to know about. The §3.5 extrema simplification is a prerequisite and
+  landed first, on 2026-09-03.
+
+*What Step R is finished against:* `tests/test_data_streaming/test_stream_d_restart.py`.
+Its five strict `xfail`s were the acceptance criteria, and the headline —
 `test_a_run_resumes_from_disk_as_if_nothing_had_happened` — is the whole of R stated as
-one assertion. Each marker comes off with the sub-step that earns it. **§2.11.5 settles
-how**: three of the five assert a file location this plan has since decided differently,
-so they are retargeted rather than merely un-`xfail`ed, behavioral round-trip tests land
-beside them, and the retargeted checklist is deleted once R is confirmed done.
+one assertion. **All five are cleared as of R3 (2026-09-03)**, each with the sub-step
+that earned it. §2.11.5 records how: three asserted a file location this plan had since
+decided differently, so they were retargeted rather than merely un-`xfail`ed and
+rewritten as round-trips; a fourth was tightened, since it checked for an attribute name
+that handing back state satisfies without rebuilding anything. The retargeted checklist
+is **scaffolding and gets deleted once Step R is confirmed done**, R4 and R5 included.
+
+⚠️ **Those markers being gone does not mean Step R is finished.** R4 and R5 are still
+ahead of it; what the cleared list means is that the *claim* holds, not that the step is
+closed.
 
 **Step D — examples and docs prose pass (§7).**
 

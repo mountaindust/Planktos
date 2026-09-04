@@ -52,13 +52,16 @@ the same simulation. The directory reads back in a fresh process, survives being
 moved, and can be deleted after being plotted. The two defects found here (F3,
 F4) were both fixed.
 
-**Claim 4 — does not hold. The feature is not built,** and
-`run_persistence.md` §2.11 says so: checkpoint and restart is scoped as a
-follow-on. What exists is the half the archive was designed for — the
-`Environment` can be rebuilt from the provenance record, and agent positions,
-velocities and the clock come back exactly. What is missing is everything that
-makes the *swarm* itself: `rndState`, `props`, `shared_props`, `ib_condition`,
-`color`. Five xfails in `test_stream_d_restart.py` enumerate it.
+**Claim 4 — holds, as of R3 (2026-09-03).**
+`planktos.load_run(path).restore()` hands back a live `Environment` and its
+`Swarm`s at the state the run left off, and
+`test_a_run_resumes_from_disk_as_if_nothing_had_happened` — one uninterrupted
+run against a recorded half plus a restored half — passes. The loader calls are
+replayed rather than anything deserialized, so the fluid is re-read from where
+it lives; the checkpoint supplies what history cannot (`rndState`, `props`,
+`shared_props`, `ib_condition`, `color`, the Swarm subclass name); and the
+provenance record grew `char_L`, `U`, `nu` and `ibmesh_color` to make the
+`Environment` half complete. **No xfails remain in this suite.**
 
 ⚠️ The Environment side is *nearly* complete, not complete. An attribute-by-
 attribute audit of a rebuild found five things `provenance['environment']`
@@ -72,9 +75,9 @@ the cosmetic `ibmesh_color` and `plot_structs`. Not yet pinned by a test.
 ## Findings
 
 Each was pinned by a `strict=True` xfail naming it, so the marker failed the
-suite the moment the defect was fixed. **F2, F3 and F4 have since been fixed and
-their markers cleared**; the tests stay as regression locks. **F1 has since been
-fixed too** (2026-08-31). F5 stands.
+suite the moment the defect was fixed. **All five are now fixed and every marker
+is cleared**; the tests stay as regression locks. F2, F3 and F4 went with
+component C, F1 on 2026-08-31, and F5 with R1–R3 on 2026-09-02 and 2026-09-03.
 
 ### F1 (fixed) — `plot_all(fluid='vort')` raised on any time-invariant flow
 
@@ -153,17 +156,28 @@ resident field.
 
 Pinned: `test_stream_c_recorded_replay.py::test_frames_outside_the_recorded_dumps_are_refused_before_any_are_drawn`
 
-### F5 (open) — claim 4 is unbuilt (five items)
+### F5 (being worked) — claim 4 was unbuilt (five items, three closed)
 
-`run_persistence.md` §2.11's table, made executable. The archive carries no
-`rndState` (so a restart cannot be reproducible), no `props` or `shared_props`
-(so a restarted swarm is a default swarm on recorded coordinates), no
-`ib_condition`/`color`, and there is no reader-side entry point that turns an
-archive back into an `Environment` and a `Swarm`. The end-to-end test attempts
-the most careful hand reconstruction today's public API allows and still
-diverges from step one.
+`run_persistence.md` §2.11's table, made executable. The archive carried no
+`rndState` (so a restart could not be reproducible), no `props` or
+`shared_props` (so a restarted swarm was a default swarm on recorded
+coordinates), no `ib_condition`/`color`, and there was no reader-side entry
+point that turns an archive back into an `Environment` and a `Swarm`.
 
-Pinned: the five xfails in `test_stream_d_restart.py`
+**R2 closed the first three** (2026-09-02) by writing a checkpoint beside the
+archive — `agents/checkpointNN.npz` plus `_props.csv` and `_meta.json` — and reading it back through
+`RunArchive.checkpoint()`. Those three tests were **retargeted rather than
+merely un-xfailed**: they asserted that a string appeared in `meta.json`, which
+is written once and never rewritten and so cannot hold state that changes. They
+now assert the round trip instead, and are marked as scaffolding to delete once
+Step R is done.
+
+**R3 closed the last two** (2026-09-03) with `RunArchive.restore()`. The
+end-to-end test no longer hand-reconstructs anything: it records half a run,
+throws both objects away, restores, finishes, and lands bit for bit where an
+uninterrupted run of the same length landed.
+
+Pinned: `test_stream_d_restart.py`, which now has no xfails at all
 
 ---
 

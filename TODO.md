@@ -12,15 +12,19 @@ Temporal interpolation of dynamically-loaded data is **linear in time**
 (`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
 story.
 
-**Suite: 1099 passed / 50 skipped / 5 xfailed (`pytest --runstreaming`, ~30 s),
-1147 / 2 / 5 (`pytest --runslow --runstreaming`, ~4.5 min).** No failures.
+**Suite: 1130 passed / 50 skipped (`pytest --runstreaming`, ~40 s),
+1178 / 2 (`pytest --runslow --runstreaming`, ~4 min).** No failures, **and no
+xfails: the pre-release list is empty.**
 
-**The five xfails are the pre-release list**, all in `tests/test_data_streaming/` —
-an adversarial suite written from `run_persistence.md` covering the streaming story
-end to end. They are known gaps to work before `dyload` ships, not stop-the-cycle
-defects; see the carve-out in `CLAUDE.md`. All five are checkpoint/restart (note
-§2.11). The sixth, `plot_all`'s vorticity placeholder over a time-invariant flow, was
-fixed 2026-08-31 and its marker is now a regression lock.
+**The pre-release list is empty (2026-09-03).** `tests/test_data_streaming/` — the
+adversarial suite written from `run_persistence.md`, covering the streaming story end
+to end — carried six strict `xfail`s. All six are gone: `plot_all`'s vorticity
+placeholder over a time-invariant flow was fixed 2026-08-31, and the five
+checkpoint/restart markers came off with R1–R3 (2026-09-02 to 2026-09-03), the last of
+them being the headline `test_a_run_resumes_from_disk_as_if_nothing_had_happened`.
+**All four of the suite's claims now hold.** Per the carve-out in `CLAUDE.md` the
+steady state from here is zero: a new `xfail` anywhere means drop everything and fix
+it.
 
 **What is done:**
 
@@ -114,8 +118,32 @@ back behind it.
    velocities from the archive, `props_history` opt-in; a mid-run props schema change is
    allowed; and **`store=` now defaults to `('positions',)`**, velocities opt-in, paid
    for by a per-capture statistics sidecar and a stored `angle` column. That last one is
-   measured at **48% off the archive and 59% off the recording overhead**. R1 is the
-   next thing to write.
+   measured at **48% off the archive and 59% off the recording overhead**.
+
+   **R1 is done (2026-09-02).** `provenance['environment']` now carries `nu`,
+   `char_L`, `U` and `ibmesh_color` alongside `L`/`units`/`bndry`/`rho`/`mu`, so an
+   inertial-particle run can be restarted at all and a kinematic-only
+   `Environment(nu=...)` no longer loses its one viscosity. Additive: no
+   format-version bump, old archives still read.
+
+   **R2 is done (2026-09-02).** A checkpoint sits beside the archive —
+   `agents/checkpointNN.npz` plus `_props.csv` and `_meta.json` per swarm, rewritten whole and atomically
+   on the chunk boundary, so it is never staler than the captures a hard kill
+   would cost anyway. It carries §2.11.2's whole "State" column, including the
+   props columns holding one ndarray per agent that `ex_ind_var.py` relies on,
+   and reads back through `RunArchive.checkpoint()`. 80 B per agent. **Three of
+   the acceptance suite's five `xfail`s came off here**, retargeted at the
+   checkpoint and rewritten as round-trips rather than string-greps of
+   `meta.json`.
+
+   **R3 is done (2026-09-03), and with it the whole user-visible claim.**
+   `RunArchive.restore(history=True)` returns `(envir, swarms)` — the loader calls are
+   replayed rather than anything deserialized, the histories come back aligned, and the
+   three failure modes read differently (a fluid that cannot be replayed and an
+   unimportable `Swarm` class are errors; a lost `plot_structs` is a warning). **The
+   acceptance suite's last two `xfail`s came off here**, so claim 4 holds and the
+   pre-release list is empty. **R4 is next** — the derived quantities, the `store=`
+   default reversal, and the opt-in histories.
 
    Finished against `tests/test_data_streaming/test_stream_d_restart.py` (run it with
    `--runstreaming`): its five strict `xfail`s are the acceptance criteria, and each
