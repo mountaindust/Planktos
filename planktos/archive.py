@@ -695,6 +695,13 @@ class _ArchiveWriter:
                       grid=fingerprint_summary(self._fingerprint))
         _save_json(self.path / 'meta.json', record)
 
+        # What velocities were needed for, recorded exactly when velocities are
+        #   not: the agent-speed statistics a plot prints, and the heading angle
+        #   a 2D frame draws. Both are derived at capture time, when the
+        #   velocity is in hand; neither is recoverable from stored positions
+        #   (section 5.1), which is why they are stored rather than re-derived.
+        self.derive = 'velocities' not in self.store
+
         # index -> {'name', 'N', 'D', 'first_capture'}
         self._swarms = {}
         # buffers for the chunk currently being filled
@@ -703,6 +710,8 @@ class _ArchiveWriter:
         # swarm index -> {'positions': [...], 'velocities': [...], 'mask': [...]}
         self._buffers = {}
         self._next_capture = None       # the capture index expected next
+        # index -> {'avg_vel': [...], 'avg_spd': [...], 'std_spd': [...]}
+        self._stats = {}
         self._closed = False
 
 
@@ -738,9 +747,16 @@ class _ArchiveWriter:
         _save_json(self.agent_dir / (_swarm_prefix(index) + '.json'), entry)
         self._buffers[index] = {name: [] for name in self.store}
         self._buffers[index]['mask'] = []
+        if self.derive:
+            # Headings are 2D-only, since a 3D frame draws none.
+            if int(D) == 2:
+                self._buffers[index]['angle'] = []
+            # Three floats per capture whatever N is, so this accumulates in
+            #   memory and is rewritten whole rather than chunked.
+            self._stats[index] = {'avg_vel': [], 'avg_spd': [], 'std_spd': []}
 
 
-    def add_capture(self, capture_index, time, arrays):
+    def add_capture(self, capture_index, time, arrays, velocities=None):
         '''Buffer one capture, writing a chunk when one fills.
 
         Parameters
@@ -755,6 +771,10 @@ class _ArchiveWriter:
             swarm index -> {name: ``N x D`` masked array}, whose names must be
             exactly this writer's ``store``. Exactly the swarms whose
             ``first_capture`` has been reached must be present.
+        velocities : dict, optional
+            swarm index -> the ``N x D`` masked velocities of that capture, for
+            deriving what an archive without them still has to be able to draw.
+            Required when ``derive`` is set, ignored otherwise.
         '''
 
         if self._closed:
@@ -810,7 +830,33 @@ class _ArchiveWriter:
                             idx, name))
                 self._buffers[idx][name].append(data)
 
+            if self.derive:
+                self._derive(idx, entry, velocities[idx])
+
         self._next_capture += 1
+
+
+    def _derive(self, idx, entry, velocity):
+        '''Buffer the heading and the speed statistics of one capture.'''
+
+        data = np.asarray(ma.getdata(velocity), dtype=DTYPE)
+        if entry['D'] == 2:
+            # Defined even at (0,0) by convention, and float32 because the
+            #   error there is ~1e-7 rad against a heading marker whose
+            #   shortest visible increment is nearer 1e-2.
+            self._buffers[idx]['angle'].append(
+                np.arctan2(data[:, 1], data[:, 0]).astype(np.float32))
+
+        # Only agents still in the domain contribute, which is what
+        #   _calc_basic_stats does with the same numbers.
+        present = data[~ma.getmaskarray(velocity).any(axis=1)]
+        if present.size == 0:
+            present = np.zeros((1, entry['D']))
+        speed = np.linalg.norm(present, axis=1)
+        stats = self._stats[idx]
+        stats['avg_vel'].append(present.mean(axis=0))
+        stats['avg_spd'].append(float(speed.mean()))
+        stats['std_spd'].append(float(speed.std()))
 
 
     @staticmethod
@@ -852,6 +898,28 @@ class _ArchiveWriter:
 
         if self._chunk is not None and self._times:
             self._write_chunk(keep=True)
+        self._write_stats()
+
+
+    def _write_stats(self):
+        '''Rewrite each swarm's agent-statistics sidecar, whole.
+
+        Three floats per capture whatever the swarm size, so the whole series is
+        a few tens of kB over a long run -- small enough to rewrite atomically
+        rather than chunk, which is what ``dump_stats.npz`` does for the same
+        reason.
+        '''
+
+        for idx, stats in self._stats.items():
+            if not stats['avg_spd']:
+                continue
+            _atomic_write(
+                self.agent_dir / (_swarm_prefix(idx) + '_stats.npz'),
+                lambda fobj, s=stats: np.savez(
+                    fobj,
+                    avg_vel=np.stack(s['avg_vel']).astype(DTYPE),
+                    avg_spd=np.asarray(s['avg_spd'], dtype=DTYPE),
+                    std_spd=np.asarray(s['std_spd'], dtype=DTYPE)))
 
 
     def close(self):
@@ -982,6 +1050,9 @@ class _ArchiveWriter:
                     np.stack(buffers[name]))
             _save_npy(self.agent_dir / _chunk_name(prefix + '_mask', index),
                       np.stack(buffers['mask']))
+            if 'angle' in buffers:
+                _save_npy(self.agent_dir / _chunk_name(prefix + '_ang', index),
+                          np.stack(buffers['angle']))
 
         if not keep:
             self._times = []
@@ -1646,16 +1717,19 @@ class RunRecorder:
         if self._stopped:
             return
         self._sync_swarms()
-        arrays = {}
+        arrays, velocities = {}, {}
         for index, swarm in enumerate(self._swarms):
             named = {}
             for name in self._store:
                 named[name] = getattr(swarm, name)
             arrays[index] = named
+            if self._writer.derive:
+                velocities[index] = swarm.velocities
         # Live attributes are read, not the histories: the archive does not
         #   depend on history existing, only on the two agreeing about when a
         #   state is recorded.
-        self._writer.add_capture(self._n_captures, self.envir.time, arrays)
+        self._writer.add_capture(self._n_captures, self.envir.time, arrays,
+                                 velocities)
         self._n_captures += 1
         # On the chunk boundary, so the checkpoint is never staler than the
         #   captures a hard kill would cost anyway.
@@ -1741,7 +1815,11 @@ class CaptureSeries:
         entry = archive._by_index[swarm_index]
         self._first = entry['first_capture']
         self._N, self._D = entry['N'], entry['D']
-        self.shape = (len(archive.times), self._N, self._D)
+        # A heading is one number per agent, not a vector, so it is the one
+        #   series whose captures are 1-D.
+        self._per_agent = name == 'ang'
+        self.shape = ((len(archive.times), self._N) if self._per_agent
+                      else (len(archive.times), self._N, self._D))
 
 
     def __len__(self):
@@ -1783,19 +1861,22 @@ class CaptureSeries:
         direction: that one writes a capture, this one reads one back.
         '''
 
+        shape = self.shape[1:]
         if j < self._first:
             # Before this swarm joined the run. Fully masked, which is already
             #   what a masked row means everywhere else in Planktos.
-            return ma.masked_array(np.zeros((self._N, self._D), DTYPE),
-                                   mask=np.ones((self._N, self._D), bool))
+            return ma.masked_array(np.zeros(shape, DTYPE),
+                                   mask=np.ones(shape, bool))
 
         chunk, offset = self._archive._locate(j, self._first)
         data = self._archive._chunk(self._index, self._name, chunk)[offset]
         mask = self._archive._chunk(self._index, 'mask', chunk)[offset]
-        # The stored mask is per row -- agents leave whole rows -- so broadcast
-        #   it back across the coordinates on the way out.
-        return ma.masked_array(np.array(data, dtype=DTYPE),
-                               mask=np.repeat(mask[:, None], self._D, axis=1))
+        # The stored mask is per row -- agents leave whole rows -- so it applies
+        #   as it stands to a per-agent series, and broadcasts across the
+        #   coordinates of a vector one.
+        if not self._per_agent:
+            mask = np.repeat(mask[:, None], self._D, axis=1)
+        return ma.masked_array(np.array(data, dtype=DTYPE), mask=mask)
 
 
     def asarray(self):
@@ -2262,6 +2343,54 @@ class RunArchive:
         return state
 
 
+    def agent_stats(self, swarm=0):
+        """One swarm's per-capture speed statistics, or None if not recorded.
+
+        Written only when ``store`` omitted velocities, since that is the case
+        where a plot cannot work them out for itself. Three values per capture
+        whatever the swarm size, over the agents still in the domain.
+
+        Parameters
+        ----------
+        swarm : int or str, default=0
+            index, or name when unambiguous
+
+        Returns
+        -------
+        dict of ndarray keyed 'avg_vel' ``(n_captures, D)``, 'avg_spd' and
+        'std_spd' ``(n_captures,)``, or None when velocities were stored and
+        this was therefore not.
+        """
+
+        index = self._resolve_swarm(swarm)
+        path = self._agent_dir / (_swarm_prefix(index) + '_stats.npz')
+        if not path.is_file():
+            return None
+        key = ('stats', index)
+        if key not in self._cache:
+            with np.load(path, allow_pickle=False) as data:
+                self._cache[key] = {k: data[k] for k in data.files}
+        return self._cache[key]
+
+
+    def angles(self, swarm=0):
+        """One swarm's per-capture heading angles, or None if not recorded.
+
+        Radians, as ``arctan2(v_y, v_x)``. Written only in 2D and only when
+        ``store`` omitted velocities, since a 3D frame draws no heading markers
+        and a stored velocity gives the angle directly.
+
+        Returns
+        -------
+        CaptureSeries of ``(N,)`` masked arrays, or None.
+        """
+
+        index = self._resolve_swarm(swarm)
+        if not self._chunk_indices('{}_ang'.format(_swarm_prefix(index))):
+            return None
+        return CaptureSeries(self, index, 'ang')
+
+
     def dump_stats(self):
         """The recorded fluid statistics, or None if no fluid was recorded.
 
@@ -2459,7 +2588,13 @@ class RunArchive:
         for entry in self._entries:
             first_chunk = entry['first_capture'] // self._chunk_size
             want = [i for i in range(len(time_chunks)) if i >= first_chunk]
-            for short in [STORABLE[name] for name in self.store] + ['mask']:
+            shorts = [STORABLE[name] for name in self.store] + ['mask']
+            # Written only when velocities were not, so its absence is ordinary
+            #   and only its being partial is a fault.
+            if self._chunk_indices('{}_ang'.format(
+                    _swarm_prefix(entry['index']))):
+                shorts.append('ang')
+            for short in shorts:
                 prefix = '{}_{}'.format(_swarm_prefix(entry['index']), short)
                 got = self._chunk_indices(prefix)
                 if got != want:
@@ -2497,7 +2632,9 @@ class RunArchive:
 
         key = (swarm_index, name, chunk)
         if key not in self._cache:
-            short = 'mask' if name == 'mask' else STORABLE[name]
+            # 'mask' and 'ang' are already the on-disk shorthand; a stored
+            #   array's name has to be translated to it.
+            short = name if name in ('mask', 'ang') else STORABLE[name]
             path = self._agent_dir / _chunk_name(
                 '{}_{}'.format(_swarm_prefix(swarm_index), short), chunk)
             if len(self._cache) >= self.CACHE_SIZE:

@@ -1120,3 +1120,119 @@ def test_a_restored_run_plots_from_its_own_archive(tmp_path):
     finally:
         if source.run is not None:
             source.run.close()
+
+
+# --------------------------------------------------------------------------- #
+#              the derived quantities (section 2.4 / 3.1, R4)                  #
+# --------------------------------------------------------------------------- #
+# An archive that does not store velocities still has to be able to draw what
+# velocities were needed for: the agent-speed statistics a plot prints, and the
+# 2D heading markers. Both are derived at capture time, when the velocity is in
+# hand, and neither is recoverable from stored positions (section 5.1).
+
+def _derived_run(tmp_path, steps=6, chunk_size=3, n=5, D=2):
+    envir = _envir() if D == 2 else planktos.Environment(
+        Lz=10.0, flow=[np.zeros((3, 3, 3))] * 3)
+    if D == 2:
+        swrm = _swarm(envir, n=n)
+        swrm.shared_props['cov'] = np.eye(2) * 0.01
+    else:
+        swrm = planktos.Swarm(swarm_size=n, envir=envir, seed=1)
+        swrm.shared_props['cov'] = np.eye(3) * 0.01
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        with envir.record(tmp_path / 'run', store=('positions',),
+                          chunk_size=chunk_size) as rec:
+            for _ in range(steps):
+                swrm.move(0.1, silent=True)
+    return rec, envir, swrm
+
+
+def test_speed_statistics_are_recorded_when_velocities_are_not(tmp_path):
+    rec, envir, swrm = _derived_run(tmp_path)
+    run = planktos.load_run(rec.path)
+    try:
+        stats = run.agent_stats(0)
+        assert stats['avg_spd'].shape == (len(run.times),)
+        assert stats['avg_vel'].shape == (len(run.times), 2)
+        # The last capture is the present state, so it can be checked against
+        # the live computation the plot would otherwise have done.
+        live = swrm._calc_basic_stats(DIM3=False)
+        n = len(run.times) - 1
+        assert stats['avg_spd'][n] == pytest.approx(live[4])
+        assert stats['std_spd'][n] == pytest.approx(live[5])
+        np.testing.assert_allclose(stats['avg_vel'][n], live[3])
+    finally:
+        run.close()
+
+
+def test_heading_angles_are_recorded_when_velocities_are_not(tmp_path):
+    rec, envir, swrm = _derived_run(tmp_path)
+    run = planktos.load_run(rec.path)
+    try:
+        angles = run.angles(0)
+        assert angles.shape == (len(run.times), swrm.N)
+        v = ma.getdata(swrm.velocities)
+        np.testing.assert_allclose(ma.getdata(angles[len(run.times) - 1]),
+                                   np.arctan2(v[:, 1], v[:, 0]), atol=1e-6)
+    finally:
+        run.close()
+
+
+def test_neither_is_recorded_when_velocities_are(tmp_path):
+    # Storing velocities makes both derivable at render time, so writing them
+    # would be paying for what is already there.
+    envir = _envir()
+    swrm = _swarm(envir)
+    with envir.record(tmp_path / 'run',
+                      store=('positions', 'velocities')) as rec:
+        swrm.move(0.1, silent=True)
+    run = planktos.load_run(rec.path)
+    try:
+        assert run.agent_stats(0) is None
+        assert run.angles(0) is None
+    finally:
+        run.close()
+
+
+def test_no_heading_angles_in_3d(tmp_path):
+    # A 3D frame draws no heading markers, so there is no angle to record --
+    # but the speed statistics are still printed and still needed.
+    rec, envir, swrm = _derived_run(tmp_path, D=3)
+    run = planktos.load_run(rec.path)
+    try:
+        assert run.angles(0) is None
+        assert run.agent_stats(0) is not None
+    finally:
+        run.close()
+
+
+def test_the_statistics_ignore_agents_that_have_left(tmp_path):
+    # Only agents still in the domain contribute, which is what
+    # _calc_basic_stats does with the same numbers.
+    envir = _envir()
+    swrm = _swarm(envir, n=4)
+    swrm.shared_props['cov'] = np.eye(2) * 0.01
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        rec = envir.record(tmp_path / 'run', store=('positions',))
+        swrm.move(0.1, silent=True)
+        for name in ('positions', 'velocities', 'accelerations'):
+            getattr(swrm, name)[0] = ma.masked
+        swrm.move(0.1, silent=True)
+        envir.stop_recording()
+
+    run = planktos.load_run(rec.path)
+    try:
+        stats = run.agent_stats(0)
+        live = swrm._calc_basic_stats(DIM3=False)
+        assert stats['avg_spd'][-1] == pytest.approx(live[4])
+    finally:
+        run.close()
+
+
+def test_a_partial_angle_series_is_refused_like_any_other(tmp_path):
+    rec, envir, swrm = _derived_run(tmp_path)
+    (rec.path / 'agents' / 'swarm00_ang_0001.npy').unlink()
+    with pytest.raises(ValueError, match='missing chunk'):
+        planktos.load_run(rec.path)
