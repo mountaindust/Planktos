@@ -12,16 +12,19 @@ Temporal interpolation of dynamically-loaded data is **linear in time**
 (`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
 story.
 
-**Suite: 1114 passed / 50 skipped / 2 xfailed (`pytest --runstreaming`, ~40 s),
-1162 / 2 / 2 (`pytest --runslow --runstreaming`, ~5 min).** No failures.
+**Suite: 1128 passed / 50 skipped (`pytest --runstreaming`, ~40 s),
+1176 / 2 (`pytest --runslow --runstreaming`, ~5 min).** No failures, **and no
+xfails: the pre-release list is empty.**
 
-**The two xfails are the pre-release list**, all in `tests/test_data_streaming/` —
-an adversarial suite written from `run_persistence.md` covering the streaming story
-end to end. They are known gaps to work before `dyload` ships, not stop-the-cycle
-defects; see the carve-out in `CLAUDE.md`. Both are checkpoint/restart (note §2.11),
-and they are all that is left of six: `plot_all`'s vorticity placeholder over a
-time-invariant flow was fixed 2026-08-31, and R2 closed three of the five restart
-markers on 2026-09-02.
+**The pre-release list is empty (2026-09-03).** `tests/test_data_streaming/` — the
+adversarial suite written from `run_persistence.md`, covering the streaming story end
+to end — carried six strict `xfail`s. All six are gone: `plot_all`'s vorticity
+placeholder over a time-invariant flow was fixed 2026-08-31, and the five
+checkpoint/restart markers came off with R1–R3 (2026-09-02 to 2026-09-03), the last of
+them being the headline `test_a_run_resumes_from_disk_as_if_nothing_had_happened`.
+**All four of the suite's claims now hold.** Per the carve-out in `CLAUDE.md` the
+steady state from here is zero: a new `xfail` anywhere means drop everything and fix
+it.
 
 **What is done:**
 
@@ -131,7 +134,16 @@ back behind it.
    and reads back through `RunArchive.checkpoint()`. 80 B per agent. **Three of
    the acceptance suite's five `xfail`s came off here**, retargeted at the
    checkpoint and rewritten as round-trips rather than string-greps of
-   `meta.json`. **R3, the restore entry point, is next.**
+   `meta.json`.
+
+   **R3 is done (2026-09-03), and with it the whole user-visible claim.**
+   `RunArchive.restore(history=True)` returns `(envir, swarms)` — the loader calls are
+   replayed rather than anything deserialized, the histories come back aligned, and the
+   three failure modes read differently (a fluid that cannot be replayed and an
+   unimportable `Swarm` class are errors; a lost `plot_structs` is a warning). **The
+   acceptance suite's last two `xfail`s came off here**, so claim 4 holds and the
+   pre-release list is empty. **R4 is next** — the derived quantities, the `store=`
+   default reversal, and the opt-in histories.
 
    Finished against `tests/test_data_streaming/test_stream_d_restart.py` (run it with
    `--runstreaming`): its five strict `xfail`s are the acceptance criteria, and each

@@ -3016,16 +3016,34 @@ and R3 below now assume it.*
   Ten tests in `test_recording.py`, and three of the acceptance suite's five `xfail`s
   come off here — retargeted at the checkpoint and rewritten as round-trips, per the
   decision recorded above.
-- **R3 — the reader.** `RunArchive` grows the entry point that turns a directory back
-  into an `Environment` and its `Swarm`s. It must distinguish its three failure modes:
-  a missing fluid file is an error, an unimportable `Swarm` subclass is an error, and a
-  lost `plot_structs` is a warning (§2.11.3). It materializes `pos_history` and
-  `vel_history` from the archive (§2.11.4). Two things it must get right that the
-  hand-built reconstruction in the acceptance test does not: `envir.time_history` has
-  to stay the same length as the materialized history — a mismatch raises nothing at
-  all and silently misaligns every frame — and a restored run that keeps recording
-  meets §2.1's non-empty-directory redirect, so decide and document what a second
-  `record()` on a restored run does.
+- **R3 — the reader. ✅ [done 2026-09-03].** `RunArchive.restore(history=True)` returns
+  `(envir, swarms)`. It replays the recorded loader calls — including `preceded_by`
+  chains and `modified_by` modifiers, both of which take no arguments and so replay by
+  name — rather than deserializing anything, and distinguishes its three failure modes
+  as §2.11.3 requires. **This is where the acceptance suite's last two `xfail`s came
+  off, so claim 4 now holds.**
+
+  Four things it settled that the specification had left open:
+
+  - **The fingerprint check is skipped when the fluid could not be replayed.** A run
+    built with `Environment(flow=[...])` has no loader call, so the rebuilt environment
+    genuinely has no fluid — and `check_against` would then refuse with a mismatch that
+    is exactly what the warning has already said. Warn, hand back the environment, and
+    check the fingerprint only where a replay actually happened.
+  - **Boundary conditions replay as pairs**, not as one end of each. `bndry[axis][0]`
+    alone — which the acceptance test's hand reconstruction used — loses a domain that
+    is periodic on one side only.
+  - **`has_plot_structs` joins the environment provenance.** They are functions and
+    cannot be recorded, but *whether there were any* can, which is what makes the
+    warning truthful rather than boilerplate on every restore. Additive, like R1.
+  - **A restored run that keeps recording writes a second archive.** `record()` on the
+    directory it came from meets §2.1's non-empty-directory rule and redirects to a
+    timestamped sibling. Correct by that rule and documented rather than special-cased;
+    appending to an existing archive would need capture-index continuation and is a
+    feature, not a footnote.
+
+  `history=False` leaves the three histories empty, and a test pins that the physics is
+  identical either way — which is R0's finding made permanent.
 - **R4 — the derived quantities and the opt-in histories.** Two halves, and the first
   is not optional:
 

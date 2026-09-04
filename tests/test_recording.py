@@ -16,6 +16,7 @@ At this step every environmental time step is captured. The capture schedule
 '''
 
 import json
+import shutil
 import warnings
 from pathlib import Path
 
@@ -903,3 +904,191 @@ def test_writing_a_checkpoint_leaves_nothing_partial_behind(tmp_path):
     rec, envir, swrm = _checkpointed_run(tmp_path)
     partial = [p.name for p in rec.path.rglob('*' + archive.TMP_SUFFIX)]
     assert partial == []
+
+
+# --------------------------------------------------------------------------- #
+#                     restoring a run (section 2.11, R3)                       #
+# --------------------------------------------------------------------------- #
+# RunArchive.restore turns a directory back into an Environment and its Swarms.
+# The three failure modes are meant to read differently: a fluid that cannot be
+# replayed is an error, an unimportable Swarm class is an error, and a lost
+# plot_structs is a warning.
+
+def test_restore_rebuilds_the_environment_from_provenance(tmp_path):
+    envir = planktos.Environment(Lx=8.0, Ly=6.0, rho=1000, mu=0.001,
+                                 char_L=0.5, U=0.2, x_bndry=['periodic', 'periodic'],
+                                 y_bndry=['noflux', 'zero'])
+    envir.read_IB2d_fluid_data(str(FIXTURES / 'ib2d_fluid_min'), dt=0.01,
+                               print_dump=10)
+    _swarm(envir)
+    with envir.record(tmp_path / 'run') as rec:
+        pass
+    run = planktos.load_run(rec.path)
+    try:
+        rebuilt, swarms = run.restore()
+    finally:
+        run.close()
+    assert list(rebuilt.L) == list(envir.L)
+    # The pair, not one end: a domain periodic on one side only would come back
+    # wrong if only bndry[axis][0] were replayed.
+    assert [list(b) for b in rebuilt.bndry] == [list(b) for b in envir.bndry]
+    for name in ('rho', 'mu', 'nu', 'char_L', 'U'):
+        assert getattr(rebuilt, name) == pytest.approx(getattr(envir, name))
+    np.testing.assert_array_equal(rebuilt.flow.flow_times, envir.flow.flow_times)
+    assert len(swarms) == 1 and swarms[0].envir is rebuilt
+
+
+def test_restore_replays_the_mesh_loader_and_its_modifiers(tmp_path):
+    envir = _envir()
+    envir.read_IB2d_mesh_data(str(FIXTURES / 'mesh_min' / 'box.vertex'),
+                              method='adjacent')
+    _swarm(envir)
+    with envir.record(tmp_path / 'run') as rec:
+        pass
+    run = planktos.load_run(rec.path)
+    try:
+        rebuilt, _ = run.restore()
+    finally:
+        run.close()
+    np.testing.assert_array_equal(rebuilt.ibmesh, envir.ibmesh)
+
+
+def test_restore_refuses_a_swarm_class_it_cannot_import(tmp_path):
+    # apply_agent_model IS the behavior of the run, so quietly restoring a plain
+    # Swarm in its place would be a different simulation.
+    envir = _envir()
+    _swarm(envir)
+    with envir.record(tmp_path / 'run') as rec:
+        pass
+    meta_file = rec.path / 'agents' / 'checkpoint00_meta.json'
+    state = json.loads(meta_file.read_text())
+    state['swarm_class'] = 'nowhere.at.all.MySwarm'
+    meta_file.write_text(json.dumps(state))
+    run = planktos.load_run(rec.path)
+    try:
+        with pytest.raises(ValueError, match='cannot be imported'):
+            run.restore()
+    finally:
+        run.close()
+
+
+def test_restore_refuses_a_fluid_whose_files_have_moved(tmp_path):
+    # A missing fluid file is an error: the provenance record points at data
+    # that has to still be where it was.
+    src = tmp_path / 'fluid'
+    shutil.copytree(FIXTURES / 'ib2d_fluid_min', src)
+    envir = planktos.Environment()
+    envir.read_IB2d_fluid_data(str(src), dt=0.01, print_dump=10)
+    _swarm(envir)
+    with envir.record(tmp_path / 'run') as rec:
+        pass
+    shutil.rmtree(src)
+    run = planktos.load_run(rec.path)
+    try:
+        with pytest.raises(ValueError, match='cannot be replayed'):
+            run.restore()
+    finally:
+        run.close()
+
+
+def test_restore_refuses_a_loader_call_that_took_an_array(tmp_path):
+    # jsonable records an ndarray's shape and dtype, not its contents -- so the
+    # call cannot be replayed, and saying so beats replaying it with a default.
+    envir = planktos.Environment(rho=1000, mu=0.001)
+    envir.set_brinkman_flow(alpha=66, h_p=1.5, U=np.linspace(1.0, 2.0, 3),
+                            dpdx=np.ones(3) * 0.22, res=10, tspan=[0.0, 10.0])
+    _swarm(envir)
+    with envir.record(tmp_path / 'run') as rec:
+        pass
+    run = planktos.load_run(rec.path)
+    try:
+        with pytest.raises(ValueError, match='cannot be replayed'):
+            run.restore()
+    finally:
+        run.close()
+
+
+def test_restore_warns_when_the_fluid_was_handed_over_as_arrays(tmp_path):
+    # Environment(flow=[...]) has no loader call to replay. The record says so
+    # honestly rather than naming a loader that was never used.
+    envir = _envir()
+    _swarm(envir)
+    with envir.record(tmp_path / 'run') as rec:
+        pass
+    run = planktos.load_run(rec.path)
+    try:
+        with pytest.warns(UserWarning, match='no loader call to replay'):
+            rebuilt, _ = run.restore()
+    finally:
+        run.close()
+    assert rebuilt.flow is None
+
+
+def test_restore_warns_that_plot_structs_are_gone(tmp_path):
+    # They are function handles, so they cannot be recorded. Whether there were
+    # any is recorded, which is what makes this warning truthful rather than
+    # boilerplate on every restore.
+    envir = _envir()
+    envir.plot_structs.append(lambda ax: None)
+    envir.plot_structs_args.append(None)
+    _swarm(envir)
+    with envir.record(tmp_path / 'run') as rec:
+        pass
+    run = planktos.load_run(rec.path)
+    try:
+        with pytest.warns(UserWarning, match='plot_structs'):
+            run.restore()
+    finally:
+        run.close()
+
+
+def test_restore_does_not_mention_plot_structs_when_there_were_none(tmp_path):
+    envir = _envir()
+    _swarm(envir)
+    with envir.record(tmp_path / 'run') as rec:
+        pass
+    run = planktos.load_run(rec.path)
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            run.restore()
+        assert not any('plot_structs' in str(w.message) for w in caught)
+    finally:
+        run.close()
+
+
+def test_restore_refuses_an_archive_with_no_checkpoint(tmp_path):
+    # Archives written before checkpoints existed stay readable; they are just
+    # not restartable, and the message has to say which.
+    envir = _envir()
+    _swarm(envir)
+    with envir.record(tmp_path / 'run') as rec:
+        pass
+    for leftover in (rec.path / 'agents').glob('checkpoint00*'):
+        leftover.unlink()
+    run = planktos.load_run(rec.path)
+    try:
+        with pytest.raises(ValueError, match='no checkpoint'):
+            run.restore()
+    finally:
+        run.close()
+
+
+def test_a_restored_run_records_to_a_new_directory(tmp_path):
+    # Continuing to record after a restore meets the non-empty-directory rule
+    # and redirects, so a resumed run writes a second archive rather than
+    # appending to the one it came from. Pinned because it is a surprise worth
+    # having written down.
+    envir = _envir()
+    swrm = _swarm(envir)
+    with envir.record(tmp_path / 'run') as rec:
+        swrm.move(0.1, silent=True)
+    run = planktos.load_run(rec.path)
+    try:
+        rebuilt, (resumed,) = run.restore()
+    finally:
+        run.close()
+    with pytest.warns(UserWarning, match='already holds data'):
+        with rebuilt.record(rec.path) as second:
+            resumed.move(0.1, silent=True)
+    assert second.path != rec.path

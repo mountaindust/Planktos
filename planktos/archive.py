@@ -88,6 +88,7 @@ Author: Christopher Strickland
 Email: cstric12@utk.edu
 '''
 
+import importlib
 import json
 import os
 import warnings
@@ -297,6 +298,35 @@ def _split_props(props):
         else:
             arrays[name] = stacked
     return pd.DataFrame(frame, index=props.index), arrays
+
+
+def _import_swarm_class(dotted):
+    '''The Swarm class a checkpoint names, imported.
+
+    Recorded as a name only, the way a fluid loader is: ``apply_agent_model``
+    *is* the behavior, and it cannot be rebuilt from an archive.
+    '''
+
+    if not dotted:
+        raise ValueError(
+            'this checkpoint names no Swarm class, so there is no behavior to '
+            'restore. Rebuild the Swarm by hand.')
+    module_name, _, name = dotted.rpartition('.')
+    try:
+        module = importlib.import_module(module_name)
+        klass = getattr(module, name)
+    except (ImportError, AttributeError):
+        raise ValueError(
+            "the recorded run used the Swarm class '{}', which cannot be "
+            'imported here. Its apply_agent_model is the behavior of the run, '
+            'so restoring a plain Swarm in its place would silently be a '
+            'different simulation. Put that class on the import path and try '
+            'again.'.format(dotted))
+    if not issubclass(klass, planktos.Swarm):
+        raise ValueError(
+            "'{}' is not a Swarm subclass; this archive does not describe a "
+            'Planktos run.'.format(dotted))
+    return klass
 
 
 def _unwrap(array):
@@ -1424,7 +1454,11 @@ class RunRecorder:
                             # Resolved rather than as given: 'k' in 2D and
                             #   'dimgrey' in 3D when the caller named none.
                             'ibmesh_color': _provenance.jsonable(
-                                envir.ibmesh_color)},
+                                envir.ibmesh_color),
+                            # They are functions, so they cannot be recorded.
+                            #   Whether there were any can, which is what lets a
+                            #   reboot say they are missing only when they are.
+                            'has_plot_structs': bool(envir.plot_structs)},
             'fluid': envir._fluid_provenance,
             'ibmesh': envir._ibmesh_provenance}
 
@@ -1966,6 +2000,196 @@ class RunArchive:
 
 
     ####################   the fluid half   ####################
+
+    def restore(self, history=True):
+        """Rebuild the Environment and Swarms this archive recorded.
+
+        The run is picked up where it left off: same positions, same properties,
+        same random stream, same clock. Nothing about the fluid or the mesh is
+        deserialized -- the loader calls the archive recorded are replayed, so
+        the data is re-read from wherever it lives.
+
+        Parameters
+        ----------
+        history : bool, default=True
+            fill each Swarm's ``pos_history`` and ``vel_history`` from the
+            archive, and the Environment's ``time_history`` with them. False
+            leaves all three empty, which costs nothing to memory but leaves
+            ``plot_all`` a single frame and agent statistics counting against
+            the restored state rather than the original swarm.
+
+        Returns
+        -------
+        envir : Environment
+        swarms : list of Swarm
+            in archive index order, already attached to ``envir``
+
+        Raises
+        ------
+        ValueError
+            if the archive holds no checkpoint, if a fluid or mesh loader
+            cannot be replayed, or if a Swarm's class cannot be imported
+
+        Notes
+        -----
+        ``Environment.plot_structs`` are function handles and are not recorded;
+        a run that had them is restored without them, with a warning.
+
+        Recording a restored run writes a **new** archive: ``record()`` on the
+        directory it came from finds that directory non-empty and redirects to
+        a timestamped sibling. The resumed run is a second archive beside the
+        first rather than a continuation of it.
+        """
+
+        envir = self._restore_environment()
+        swarms = [self._restore_swarm(envir, entry['index'], history)
+                  for entry in self._entries]
+        # Capture j is full_pos_history[j], so the last capture is the present
+        #   and everything before it is history. Both lists must come out the
+        #   same length or every frame a plot draws is misaligned, silently.
+        envir.time = float(self.times[-1])
+        envir.time_history = ([float(t) for t in self.times[:-1]] if history
+                              else [])
+        return envir, swarms
+
+
+    ####################   restoring   ####################
+
+    def _restore_environment(self):
+        '''The Environment half: scalars from provenance, data by replay.'''
+
+        prov = self.meta.get('provenance') or {}
+        env = dict(prov.get('environment') or {})
+        L = env.get('L')
+        if not L:
+            raise ValueError(
+                '{} records no domain size, so no Environment can be rebuilt '
+                'from it.'.format(self.path))
+        kwargs = {'Lx': L[0], 'Ly': L[1]}
+        if len(L) == 3:
+            kwargs['Lz'] = L[2]
+        for name in ('units', 'rho', 'mu', 'nu', 'char_L', 'U', 'ibmesh_color'):
+            if env.get(name) is not None:
+                kwargs[name] = env[name]
+        for axis, name in zip(env.get('bndry') or [],
+                              ('x_bndry', 'y_bndry', 'z_bndry')):
+            # The pair, not one end of it: a domain periodic on one side only
+            #   would otherwise come back wrong.
+            kwargs[name] = list(axis)
+
+        envir = planktos.Environment(**kwargs)
+        replayed = self._replay(envir, prov.get('fluid'), 'fluid')
+        self._replay(envir, prov.get('ibmesh'), 'ibmesh')
+        if replayed:
+            # The fingerprint is what says the rebuilt world is the same world.
+            #   Skipped where the fluid could not be replayed at all, since the
+            #   mismatch is then the thing the warning above already named and
+            #   an error would only restate it as a refusal.
+            self.check_against(envir)
+        if env.get('has_plot_structs'):
+            warnings.warn(
+                'the recorded run drew extra structures through '
+                'Environment.plot_structs. Those are function handles, so they '
+                'are not in the archive and this Environment does not have '
+                'them: add them again before plotting.', UserWarning)
+        return envir
+
+
+    def _replay(self, envir, record, what):
+        '''Re-run one recorded loader call, and any modifier that followed it.
+
+        True when the record was replayed or there was nothing to replay; False
+        when it named no loader and the data could not be rebuilt.
+        '''
+
+        if record is None:
+            return True
+        loader = record.get('loader')
+        if loader is None:
+            warnings.warn(
+                'the {} was supplied to Environment() as arrays in the process '
+                'that recorded this run, so there is no loader call to replay '
+                'and none has been made. Set it yourself before using this '
+                'Environment.'.format(what), UserWarning)
+            return False
+        for prior in record.get('preceded_by') or []:
+            self._replay(envir, prior, what)
+
+        kwargs = dict(record.get('kwargs') or {})
+        unrecordable = sorted(name for name, value in kwargs.items()
+                              if isinstance(value, dict))
+        if unrecordable:
+            raise ValueError(
+                '{} cannot be replayed: {} was called with {}, which the '
+                'provenance record could not store as {} -- an array or an '
+                'object has no text form to replay. Rebuild this Environment '
+                'by hand.'.format(what, loader, unrecordable,
+                                  'values' if len(unrecordable) > 1 else 'a value'))
+        try:
+            getattr(envir, loader)(**kwargs)
+        except AttributeError:
+            raise ValueError(
+                '{} cannot be replayed: this Planktos has no '
+                'Environment.{}. The archive was written by version {}.'.format(
+                    what, loader,
+                    (self.meta.get('provenance') or {}).get('planktos_version')))
+        except Exception as err:
+            raise ValueError(
+                '{} cannot be replayed: {}({}) raised {}: {}. The data it read '
+                'has to still be where it was.'.format(
+                    what, loader, ', '.join(sorted(kwargs)),
+                    type(err).__name__, err))
+        # Every modifier in Planktos is deterministic given the loaded data and
+        #   takes no arguments, so replaying by name reproduces the result.
+        for name in record.get('modified_by') or []:
+            getattr(envir, name)()
+        return True
+
+
+    def _restore_swarm(self, envir, index, history):
+        '''One Swarm, rebuilt from its checkpoint and reattached to ``envir``.'''
+
+        state = self.checkpoint(index)
+        if state is None:
+            raise ValueError(
+                'swarm {} has no checkpoint in {}, so its properties and '
+                'random stream were never written and it cannot be restored. '
+                'Archives recorded before checkpoints existed are readable but '
+                'not restartable.'.format(index, self.path))
+
+        klass = _import_swarm_class(state['swarm_class'])
+        positions = state['positions']
+        shared = dict(state['shared_props'])
+        swarm = klass(swarm_size=positions.shape[0], envir=envir,
+                      init=np.array(ma.getdata(positions)),
+                      ib_condition=state['ib_condition'],
+                      name=shared.get('name', 'organism'),
+                      color=shared.get('color', 'darkgreen'))
+        # Assigned after construction, so a subclass __init__ that sets its own
+        #   defaults does not win over what the run actually had.
+        swarm.positions = ma.copy(positions)
+        for name in ('velocities', 'accelerations'):
+            if state.get(name) is not None:
+                setattr(swarm, name, ma.copy(state[name]))
+        if state.get('ib_collision_idx') is not None:
+            swarm.ib_collision_idx = np.array(state['ib_collision_idx'])
+        swarm.props = state['props'].copy(deep=True)
+        swarm.shared_props = shared
+        swarm.rndState.bit_generator.state = state['rndState']
+
+        if history:
+            swarm.pos_history = [ma.copy(state_j) for state_j
+                                 in self.positions(index)[:-1]]
+            if 'velocities' in self.store:
+                swarm.vel_history = [ma.copy(state_j) for state_j
+                                     in self.velocities(index)[:-1]]
+            else:
+                # Length must match pos_history whatever is in it: every
+                #   consumer indexes the two together.
+                swarm.vel_history = [ma.masked_all(swarm.positions.shape)
+                                     for _ in swarm.pos_history]
+        return swarm
+
 
     def checkpoint(self, swarm=0):
         """One swarm's latest state, as a dict, or None if none was written.

@@ -208,9 +208,6 @@ def test_the_archive_carries_the_swarm_construction_arguments(tmp_path):
 #                     what the archive does not carry yet                     #
 # --------------------------------------------------------------------------- #
 
-@pytest.mark.xfail(strict=True, reason=(
-    "R2 built the checkpoint, so RunArchive.checkpoint() hands back the state; "
-    "nothing yet turns it into an Environment and a Swarm. That is R3."))
 def test_planktos_offers_a_way_to_resume_a_recorded_run(tmp_path):
     rec, envir, swrm = _record_a_run(tmp_path)
     archive = planktos.load_run(rec.path)
@@ -233,13 +230,9 @@ def test_planktos_offers_a_way_to_resume_a_recorded_run(tmp_path):
 #                          the claim, end to end                              #
 # --------------------------------------------------------------------------- #
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Checkpoint and restart is not built (run_persistence.md 2.11). Even the "
-    "most careful hand reconstruction diverges immediately, because the "
-    "archive holds no RNG state, no props and no shared_props: the resumed "
-    "swarm draws different random numbers from step one, and does so with "
-    "default properties rather than the ones the run had."))
 def test_a_run_resumes_from_disk_as_if_nothing_had_happened(tmp_path):
+    # The whole claim, as one assertion. Everything else in this module is a
+    # piece of it.
     # The reference: one uninterrupted run of 2*STEPS steps.
     src = copy_ib2d(tmp_path, 'ref_src', with_vorticity=True)
     ref_envir = ib2d_envir(src, INUM=4)
@@ -254,20 +247,47 @@ def test_a_run_resumes_from_disk_as_if_nothing_had_happened(tmp_path):
 
     archive = planktos.load_run(rec.path)
     try:
-        rebuilt = _rebuild_environment(archive)
-        j = len(archive.times) - 1
-        positions = archive.positions(0)[j]
-        resumed = planktos.Swarm(envir=rebuilt,
-                                 init=np.ma.getdata(positions).copy())
-        resumed.positions = np.ma.copy(positions)
-        resumed.velocities = np.ma.copy(archive.velocities(0)[j])
-        rebuilt.time = float(archive.times[j])
-        rebuilt.time_history = [float(t) for t in archive.times[:j]]
+        rebuilt, swarms = archive.restore()
     finally:
         archive.close()
+    resumed, = swarms
 
     run(resumed, STEPS, dt=DT)
 
     assert rebuilt.time == pytest.approx(ref_envir.time)
     assert_same_state(resumed.positions, ref.positions,
                       'the resumed run ended somewhere else')
+
+
+def test_the_resumed_run_keeps_its_histories_aligned(tmp_path):
+    # A mismatch between time_history and pos_history raises nothing at all and
+    # silently misaligns every frame a plot draws, so it is worth its own check.
+    rec, envir, swrm = _record_a_run(tmp_path)
+    archive = planktos.load_run(rec.path)
+    try:
+        rebuilt, (resumed,) = archive.restore()
+    finally:
+        archive.close()
+    assert len(rebuilt.time_history) == len(resumed.pos_history)
+    assert len(resumed.vel_history) == len(resumed.pos_history)
+    assert len(resumed.full_pos_history) == len(swrm.full_pos_history)
+    run(resumed, 2, dt=DT)
+    assert len(rebuilt.time_history) == len(resumed.pos_history)
+
+
+def test_a_restore_without_history_still_resumes_the_physics(tmp_path):
+    # history=False leaves the three histories empty, which the plot notices and
+    # the physics does not: the trajectory has to be identical either way.
+    rec, envir, swrm = _record_a_run(tmp_path)
+    ends = []
+    for history in (True, False):
+        archive = planktos.load_run(rec.path)
+        try:
+            rebuilt, (resumed,) = archive.restore(history=history)
+        finally:
+            archive.close()
+        assert bool(resumed.pos_history) is history
+        assert len(rebuilt.time_history) == len(resumed.pos_history)
+        run(resumed, STEPS, dt=DT)
+        ends.append(resumed.positions)
+    assert_same_state(ends[0], ends[1], 'history= changed the physics')
