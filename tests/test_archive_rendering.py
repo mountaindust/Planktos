@@ -209,9 +209,13 @@ def test_an_archive_describing_another_fluid_is_passed_over(tmp_path):
                                print_dump=IB2D_PRINT_DUMP, INUM=None)
     envir.L = [envir.L[0]*2, envir.L[1]]            # a different domain
 
-    with pytest.warns(UserWarning, match='cannot be used for this plot'):
+    with pytest.warns(UserWarning, match='does not describe the fluid'):
         source = _frames.FrameSource(swrm, fluid='vort')
-    assert source.run is None
+    # The fluid half is refused; the agent half is not, since what the archive
+    # recorded about the swarm came from the swarm and says nothing about which
+    # dataset is loaded now.
+    assert source._fluid_run is None
+    assert source.run is not None
 
 
 def test_a_render_with_no_archive_warns_that_it_will_re_read(tmp_path):

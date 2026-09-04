@@ -2081,7 +2081,7 @@ class Environment:
     #######################################################################
 
     def record(self, path, *, fluid='vort', swarms=None,
-               store=('positions', 'velocities'), capture_interval=1,
+               store=('positions',), capture_interval=1,
                chunk_size=100, quiver_shape=archive.QUIVER_SHAPE,
                plot_all=None):
         '''Begin recording agent state to a run archive, and return the handle.
@@ -2125,11 +2125,18 @@ class Environment:
             which swarms to capture. Defaults to every swarm in the environment,
             plus any added later. Agent data runs a few hundred MB per large
             swarm, so restricting it is sometimes worth doing.
-        store : tuple of str, default=('positions', 'velocities')
-            which per-agent arrays to keep. ``'positions'`` is required.
-            Dropping ``'velocities'`` halves the archive but leaves it
-            analysis-only: plotting needs them, and re-deriving them from
-            positions is wrong for any agent that collided or wrapped.
+        store : tuple of str, default=('positions',)
+            which per-agent arrays to keep. The three that can be stored are
+            ``'positions'``, ``'velocities'`` and ``'accelerations'``, and
+            anything else raises. ``'positions'`` is required.
+            **Velocities are opt-in**, and leaving them out is 48% less disk
+            and 59% less recording overhead. What they are needed for is
+            recorded instead -- the agent-speed statistics a plot prints and
+            the 2D heading markers, both derived as each capture is taken. What
+            is given up is per-agent velocity at a past time, which cannot be
+            recovered afterwards: differencing stored positions is wrong for
+            any agent that collided or wrapped. Add ``'velocities'`` when a
+            later analysis will want them.
         capture_interval : int, default=1
             capture -- and retain history -- every *k*-th step. The framing is
             **"as if dt were larger"**: the archive then looks exactly like a
@@ -2236,12 +2243,15 @@ class Environment:
                     "memory.".format(*bnds))
 
         if 'velocities' not in store:
-            warnings.warn(
-                "Recording without velocities: this archive will be usable for "
-                "analysis but not for plotting, since the plot statistics need "
-                "them and re-deriving them from positions is wrong for any "
-                "agent that collided or wrapped. Pass "
-                "store=('positions','velocities') to keep them.", UserWarning)
+            # Printed rather than warned: it is the default, so it is a notice
+            #   about what this run will and will not be able to answer later,
+            #   not a suspicion that something is wrong. Said at the start,
+            #   because the cost of not having them arrives much later.
+            print("Recording to {}. Storing {}; velocity history will not be "
+                  "kept -- plots and statistics are served from the recorded "
+                  "summaries. To keep per-agent velocities for later analysis, "
+                  "pass store=('positions','velocities').".format(
+                      path, ', '.join(store)))
 
         if int(capture_interval) < 1:
             raise ValueError('capture_interval must be at least 1')

@@ -41,9 +41,14 @@ def _swarm(envir, n=4, mu=(1.0, 0.0), seed=1, init=2.0):
 
 
 def _recorded(tmp_path, steps=7, chunk_size=3, **kwargs):
-    '''A finished archive plus the environment and swarm that made it.'''
+    '''A finished archive plus the environment and swarm that made it.
+
+    Velocities are asked for explicitly: they are not the default any more, and
+    most of this module is about reading a series of them back.
+    '''
     envir = _envir()
     swrm = _swarm(envir)
+    kwargs.setdefault('store', ('positions', 'velocities'))
     with envir.record(tmp_path / 'run', chunk_size=chunk_size, **kwargs) as rec:
         for _ in range(steps):
             swrm.move(0.5, silent=True)
@@ -305,8 +310,7 @@ def test_a_chunk_with_the_wrong_number_of_rows_is_refused(tmp_path):
 def test_an_array_that_was_not_stored_is_refused_by_name(tmp_path):
     envir = _envir()
     swrm = _swarm(envir)
-    with pytest.warns(UserWarning):
-        rec = envir.record(tmp_path / 'run', store=('positions',))
+    rec = envir.record(tmp_path / 'run', store=('positions',))
     swrm.move(0.5, silent=True)
     envir.stop_recording()
     run = archive.load_run(rec.path)

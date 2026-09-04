@@ -29,6 +29,20 @@ __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
 
+def _headings(source, n, velocities, sel=slice(None)):
+    '''Heading angles for one frame, from what was recorded or from velocity.
+
+    A recording that omitted velocities stored the angle instead, since it is
+    what the marker needed them for. Everything else derives it here.
+    '''
+
+    stored = source.angles(n)
+    if stored is not None:
+        return stored[sel]
+    # Defined even at (0,0) by convention.
+    return np.arctan2(velocities[sel, 1], velocities[sel, 0])
+
+
 def _vorticity_norm(vort, clip=None, norm=None):
     '''Colour limits for the RdBu vorticity backdrop, symmetric about zero.
 
@@ -1959,7 +1973,7 @@ class Swarm:
     #######################################################################
 
 
-    def _calc_basic_stats(self, DIM3, t_indx=None):
+    def _calc_basic_stats(self, DIM3, t_indx=None, speeds=None):
         ''' Return basic stats about % agents remaining, fluid velocity, and
         agent velocity for plot printing.
 
@@ -1995,6 +2009,11 @@ class Swarm:
             The time index for pos_history, or None for the current time. An
             index at or past the end of the history is the current time too,
             which is the state a final animation frame draws.
+        speeds : tuple, optional
+            (avg_swrm_vel, avg_swrm_spd, std_swrm_spd) to report in place of
+            computing them, for a run whose velocities were not kept but whose
+            recording derived these as each capture was taken. Everything else
+            returned is still read off the positions and the fluid.
 
         Returns
         -------
@@ -2023,11 +2042,19 @@ class Swarm:
         #   dimension a wrap makes the difference of positions a spurious
         #   near-domain-width velocity.
         n_hist = len(self.pos_history)
+        have_vel = len(self.vel_history) >= n_hist
         if t_indx is None or t_indx >= n_hist:
             positions, vel_data = self.positions, self.velocities
             time = self.envir.time
         else:
-            positions, vel_data = self.pos_history[t_indx], self.vel_history[t_indx]
+            positions = self.pos_history[t_indx]
+            # With no velocity history and no recorded speeds to stand in for
+            #   it, there is nothing to say about this state: masked reads as
+            #   "no agent contributes" and reports zeros, where the present
+            #   velocities would report a plausible wrong number for every
+            #   frame alike.
+            vel_data = (self.vel_history[t_indx] if have_vel
+                        else ma.masked_all(self.velocities.shape))
             time = self.envir.time_history[t_indx]
         first_positions = self.pos_history[0] if n_hist > 0 else positions
 
@@ -2045,10 +2072,16 @@ class Swarm:
             # which the plot text cannot format.
             vel_data = np.zeros((1,len(self.envir.L)))
 
-        avg_swrm_vel = vel_data.mean(axis=0)
-        swrm_spd = np.linalg.norm(vel_data, axis=1)
-        avg_swrm_spd = swrm_spd.mean()
-        std_swrm_spd = swrm_spd.std()
+        if speeds is None:
+            avg_swrm_vel = vel_data.mean(axis=0)
+            swrm_spd = np.linalg.norm(vel_data, axis=1)
+            avg_swrm_spd = swrm_spd.mean()
+            std_swrm_spd = swrm_spd.std()
+        else:
+            # Derived at capture time from velocities this archive did not
+            #   store. Everything else here is read off the positions and the
+            #   fluid, which are still in hand.
+            avg_swrm_vel, avg_swrm_spd, std_swrm_spd = speeds
 
         if self.envir.flow is None and not DIM3:
             return perc_left, 0, 0, avg_swrm_vel, avg_swrm_spd, std_swrm_spd
@@ -2216,8 +2249,7 @@ class Swarm:
                 if 'angle' in props:
                     angles = props['angle']
                 else:
-                    # this is defined even for (0,0) by convention
-                    angles = np.arctan2(velocities[:,1], velocities[:,0])
+                    angles = _headings(source, loc, velocities)
                 for angle in angles:
                     if ma.is_masked(angle):
                         paths.append(circle)
@@ -2248,7 +2280,7 @@ class Swarm:
 
             # textual info
             perc_left, avg_spd_x, avg_spd_y, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
-                self._calc_basic_stats(DIM3=False, t_indx=loc)
+                source.stats(loc, DIM3=False)
             plt.figtext(0.77, 0.77,
                         '{:.1f}% remain\n'.format(perc_left)+
                         '\n  ------ Info ------\n'+
@@ -2347,7 +2379,7 @@ class Swarm:
 
             # textual info
             perc_left, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
-                self._calc_basic_stats(DIM3=True, t_indx=loc)
+                source.stats(loc, DIM3=True)
             # anchored a little further left than the old fluid stats box: the
             # "mean +/- spread" line is wider than the lines it replaced.
             ax.text2D(0.65, 0.9, r'Agent $|\overline{v}|$'+': {:.2g} {}/s\n'.format(np.linalg.norm(avg_swrm_vel), self.envir.units)+
@@ -2773,7 +2805,7 @@ class Swarm:
             time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
                                 fontsize=12)
             perc_left, avg_spd_x, avg_spd_y, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
-                self._calc_basic_stats(DIM3=False, t_indx=n0)
+                source.stats(n0, DIM3=False)
             axStats = plt.axes([0.77, 0.77, 0.25, 0.2], frameon=False)
             axStats.set_axis_off()
             stats_text = axStats.text(0,1,
@@ -2910,7 +2942,7 @@ class Swarm:
                                   transform=ax.transAxes, animated=True,
                                   verticalalignment='top', fontsize=12)
             perc_left, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
-                self._calc_basic_stats(DIM3=True, t_indx=n0)
+                source.stats(n0, DIM3=True)
             # see the note on the matching anchor in Swarm.plot
             flow_text = ax.text2D(0.65, 0.9,
                                   r'Agent $|\overline{v}|$'+': {:.2g} {}/s\n'.format(
@@ -3047,7 +3079,7 @@ class Swarm:
             if not DIM3:
                 # 2D
                 perc_left, avg_spd_x, avg_spd_y, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
-                    self._calc_basic_stats(DIM3=False, t_indx=n)
+                    source.stats(n, DIM3=False)
                 stats_text.set_text('{:.1f}% remain\n'.format(perc_left)+
                      '\n  ------ Info ------\n'+
                      r'Agent $|\overline{v}|$'+': {:.2g} {}/s\n'.format(np.linalg.norm(avg_swrm_vel), self.envir.units)+
@@ -3086,12 +3118,9 @@ class Swarm:
                             if not angle_props_warned[0]:
                                 warnings.warn(warning_msg, stacklevel=9)
                             angle_props_warned[0] = True
-                            angles = np.arctan2(velocities[:,1], 
-                                                velocities[:,0])
+                            angles = _headings(source, n, velocities)
                     elif plot_heading:
-                        # this is defined even for (0,0) by convention
-                        angles = np.arctan2(velocities[:,1], 
-                                            velocities[:,0])
+                        angles = _headings(source, n, velocities)
                 else:
                     scat.set_offsets(positions[downsamp,:])
                     if 'color' in frame_props:
@@ -3104,12 +3133,9 @@ class Swarm:
                             if not angle_props_warned[0]:
                                 warnings.warn(warning_msg, stacklevel=9)
                             angle_props_warned[0] = True
-                            angles = np.arctan2(velocities[downsamp,1], 
-                                                velocities[downsamp,0])
+                            angles = _headings(source, n, velocities, downsamp)
                     elif plot_heading:
-                        # this is defined even for (0,0) by convention
-                        angles = np.arctan2(velocities[downsamp,1], 
-                                            velocities[downsamp,0])
+                        angles = _headings(source, n, velocities, downsamp)
                 # set heading markers
                 if plot_heading:
                     paths = []
@@ -3194,7 +3220,7 @@ class Swarm:
             else:
                 # 3D
                 perc_left, avg_spd_x, avg_spd_y, avg_spd_z, avg_swrm_vel, avg_swrm_spd, std_swrm_spd = \
-                    self._calc_basic_stats(DIM3=True, t_indx=n)
+                    source.stats(n, DIM3=True)
                 # print(n)
                 # print(positions.all() is ma.masked)
                 flow_text.set_text(r'Agent $|\overline{v}|$'+': {:.2g} {}/s\n'.format(

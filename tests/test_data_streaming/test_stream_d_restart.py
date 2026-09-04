@@ -45,7 +45,7 @@ DT = 0.5
 STEPS = 8
 
 
-def _record_a_run(tmp_path, steps=STEPS, seed=17, n=6):
+def _record_a_run(tmp_path, steps=STEPS, seed=17, n=6, **kwargs):
     '''A recorded run, plus everything about it a restart would have to match.'''
 
     src = copy_ib2d(tmp_path, 'src', with_vorticity=True)
@@ -53,7 +53,7 @@ def _record_a_run(tmp_path, steps=STEPS, seed=17, n=6):
     swrm = planktos.Swarm(swarm_size=n, envir=envir, seed=seed)
     swrm.shared_props['cov'] = swrm.shared_props['cov'] * 0.05
     swrm.add_prop('sensitivity', np.linspace(0.1, 0.9, n))
-    with envir.record(str(tmp_path / 'run')) as rec:
+    with envir.record(str(tmp_path / 'run'), **kwargs) as rec:
         run(swrm, steps, dt=DT)
     return rec, envir, swrm
 
@@ -106,7 +106,9 @@ def test_the_environment_can_be_rebuilt_from_the_provenance_record(tmp_path):
 def test_the_agent_state_comes_back_exactly(tmp_path):
     # Positions, velocities and the clock survive the round trip bit for bit,
     # which is the part of a restart that the archive was actually built for.
-    rec, envir, swrm = _record_a_run(tmp_path)
+    # Velocities are asked for: they are opt-in, and this is the test of them.
+    rec, envir, swrm = _record_a_run(
+        tmp_path, store=('positions', 'velocities'))
     last_pos = np.ma.copy(swrm.positions)
     last_vel = np.ma.copy(swrm.velocities)
     last_time = envir.time
@@ -269,8 +271,12 @@ def test_the_resumed_run_keeps_its_histories_aligned(tmp_path):
     finally:
         archive.close()
     assert len(rebuilt.time_history) == len(resumed.pos_history)
-    assert len(resumed.vel_history) == len(resumed.pos_history)
     assert len(resumed.full_pos_history) == len(swrm.full_pos_history)
+    # Velocities were not stored, so there is no series to restore. Empty is
+    # what routes the statistics to what the recording derived instead;
+    # masked-filling it to match pos_history would read as "every agent has
+    # left" and print zero speeds.
+    assert resumed.vel_history == []
     run(resumed, 2, dt=DT)
     assert len(rebuilt.time_history) == len(resumed.pos_history)
 

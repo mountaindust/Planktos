@@ -76,7 +76,17 @@ class FrameSource:
         self.envir = swarm.envir
         self.flow = self.envir.flow
 
-        self.run = _open_archive(self.envir)
+        # Two references, because they answer to different checks. The fluid
+        #   backdrop is only usable if the archive describes the fluid in hand,
+        #   which check_against decides; the agent statistics and headings were
+        #   recorded from the swarm and are valid whatever the fluid is doing.
+        self.run, self._fluid_run = _open_archive(self.envir)
+        try:
+            self.swarm_index = self.envir.swarms.index(swarm)
+        except ValueError:
+            # A swarm the Environment does not hold cannot be matched to a
+            #   recorded one, so nothing about it is read from the archive.
+            self.swarm_index = None
         self.times = _live_times(swarm)
         self.n_states = (len(swarm.pos_history) + 1 if self.times is None
                          else len(self.times))
@@ -103,7 +113,8 @@ class FrameSource:
         if self.flow is None or fluid is None or len(self.envir.L) == 3:
             return
 
-        meta = (self.run.meta.get('fluid') or {}) if self.run is not None else {}
+        meta = ((self._fluid_run.meta.get('fluid') or {})
+                if self._fluid_run is not None else {})
         quantities = tuple(meta.get('quantities') or ())
         # A field held whole gives the backdrop directly, exactly and with no
         #   I/O; a windowed one supplies it from disk.
@@ -116,8 +127,8 @@ class FrameSource:
                                                                     'archive'):
                 self._vorticity_from = 'dumps'
                 self.flow.vorticity_path = (meta.get('vorticity_dir')
-                                            or self.run.path / 'fluid')
-            elif self.run is not None:
+                                            or self._fluid_run.path / 'fluid')
+            elif self._fluid_run is not None:
                 raise ValueError(_missing('vort', quantities))
             else:
                 self._vorticity_from = 'field'
@@ -131,7 +142,7 @@ class FrameSource:
                 # Fixed when recording started, since plot_all derives arrow
                 #   density from a figure size that did not exist then.
                 self.strides = tuple(int(s) for s in meta['quiver_strides'])
-            elif self.run is not None:
+            elif self._fluid_run is not None:
                 raise ValueError(_missing('quiver', quantities))
             else:
                 self._quiver_from = 'field'
@@ -160,7 +171,7 @@ class FrameSource:
             _require_dumps('vort', range(first, last + 1),
                            lambda i: directory / self.flow.vorticity_filename(i))
         if self._quiver_from == 'dumps':
-            directory = self.run.path / 'fluid'
+            directory = self._fluid_run.path / 'fluid'
             _require_dumps('quiver', range(first, last + 1),
                            lambda i: directory / _quiver_name(i))
 
@@ -179,7 +190,8 @@ class FrameSource:
         if self._quiver_from is not None:
             self.quiver_scale = float(np.linalg.norm(np.array(self.flow.fmax)))
 
-        stats = None if self.run is None else self.run.dump_stats()
+        stats = (None if self._fluid_run is None
+                 else self._fluid_run.dump_stats())
         if stats is None:
             return
         # Both are already reduced over the dumps the run saw. NaN means it saw
@@ -228,6 +240,59 @@ class FrameSource:
 
         hist = self.swarm.vel_history
         return self.swarm.velocities if n >= len(hist) else hist[n]
+
+
+    def stats(self, n, DIM3):
+        '''The statistics a frame prints, live or from what was recorded.
+
+        Live velocities are preferred wherever there are any: they are always
+        current, where the archive is only as fresh as the last flush. A
+        recording that omitted velocities has none to prefer, and then the
+        speeds come from what was derived at capture time instead.
+        '''
+
+        stored = self._stored_stats()
+        # None means the present, which Swarm.plot passes when given no time.
+        j = self.n_states - 1 if n is None else n
+        if stored is None or j >= len(stored['avg_spd']):
+            return self.swarm._calc_basic_stats(DIM3=DIM3, t_indx=n)
+        n = j
+        return self.swarm._calc_basic_stats(
+            DIM3=DIM3, t_indx=n,
+            speeds=(stored['avg_vel'][n], float(stored['avg_spd'][n]),
+                    float(stored['std_spd'][n])))
+
+
+    def angles(self, n):
+        '''Heading angles recorded for state ``n``, or None if none were.
+
+        Only a recording that omitted velocities stores these, since otherwise
+        the angle follows from the velocity the caller already has.
+        '''
+
+        if self._has_live_velocities() or self.run is None:
+            return None
+        if self.swarm_index is None:
+            return None
+        series = self.run.angles(self.swarm_index)
+        j = self.n_states - 1 if n is None else n
+        return None if series is None or j >= len(series) else series[j]
+
+
+    def _has_live_velocities(self):
+        '''True where ``vel_history`` covers the states being drawn.'''
+
+        return len(self.swarm.vel_history) >= len(self.swarm.pos_history)
+
+
+    def _stored_stats(self):
+        '''The recorded speed statistics, where live ones are not to be had.'''
+
+        if self._has_live_velocities() or self.run is None:
+            return None
+        if self.swarm_index is None:
+            return None
+        return self.run.agent_stats(self.swarm_index)
 
 
     def props(self, n):
@@ -287,7 +352,7 @@ class FrameSource:
 
         t_idx = int(t_idx)
         if t_idx not in self._quiver_cache:
-            self._quiver_cache[t_idx] = self.run.quiver(t_idx)
+            self._quiver_cache[t_idx] = self._fluid_run.quiver(t_idx)
         arrows = self._quiver_cache[t_idx]
         # Evict whatever is furthest from what was just asked for, which on a
         #   monotone sweep is the trailing dump.
@@ -352,26 +417,36 @@ class FrameSource:
 ####################   module helpers   ####################
 
 def _open_archive(envir):
-    '''The archive this Environment recorded to, opened for reading, or None.
+    '''The archive this Environment recorded to, as ``(run, fluid_run)``.
 
     Set by ``Environment.record`` and kept after recording stops, so a plot of a
-    finished run reads what that run wrote. An archive describing a fluid that
-    has since been replaced is reported and passed over.
+    finished run reads what that run wrote. ``fluid_run`` is the same object
+    where the archive describes the fluid now loaded, and None where it does
+    not -- which is reported and then affects only the backdrop.
     '''
 
     path = getattr(envir, '_archive_path', None)
     if path is None:
-        return None
+        return None, None
     try:
         run = RunArchive(path)
-        run.check_against(envir)
     except (OSError, ValueError) as err:
         warnings.warn(
-            'the run archive at {} cannot be used for this plot ({}), so the '
-            'fluid will be read from the field instead.'.format(path, err),
-            UserWarning)
-        return None
-    return run
+            'the run archive at {} cannot be opened ({}), so this plot reads '
+            'nothing from it.'.format(path, err), UserWarning)
+        return None, None
+    try:
+        run.check_against(envir)
+    except ValueError as err:
+        # Only the fluid half is in doubt. What the archive recorded about the
+        #   agents came from the swarm and does not depend on which dataset is
+        #   loaded now.
+        warnings.warn(
+            'the run archive at {} does not describe the fluid now loaded '
+            '({}), so the fluid will be read from the field instead.'.format(
+                path, err), UserWarning)
+        return run, None
+    return run, run
 
 
 def _live_times(swarm):

@@ -156,7 +156,8 @@ def test_the_archive_reproduces_the_histories_exactly(tmp_path):
     # translated at render time.
     envir = _envir()
     swrm = _swarm(envir)
-    with envir.record(tmp_path / 'run', chunk_size=3) as rec:
+    with envir.record(tmp_path / 'run', chunk_size=3,
+                      store=('positions', 'velocities')) as rec:
         for _ in range(7):
             swrm.move(0.05, silent=True)
 
@@ -470,19 +471,47 @@ def test_move_swarms_does_not_trip_the_hand_rolled_warning(tmp_path):
             envir.move_swarms(0.1, silent=True)
 
 
-def test_recording_without_velocities_warns_and_stores_only_positions(tmp_path):
-    # Allowed -- the archive is analysis-only -- but said out loud at record()
-    # time rather than discovered at render time, twelve hours later.
+def test_the_default_stores_positions_only(tmp_path):
+    # Velocities are opt-in as of R4.
     envir = _envir()
     swrm = _swarm(envir)
-    with pytest.warns(UserWarning, match='usable for analysis but not for plotting'):
-        rec = envir.record(tmp_path / 'run', store=('positions',))
+    rec = envir.record(tmp_path / 'run')
     swrm.move(0.1, silent=True)
     envir.stop_recording()
     agents = rec.path / 'agents'
     assert list(agents.glob('swarm00_vel_*.npy')) == []
     assert len(_chunks(agents, 'swarm00_pos_*.npy')) == 2
     assert json.loads((rec.path / 'meta.json').read_text())['store'] == ['positions']
+
+
+
+def test_accelerations_can_be_stored_too(tmp_path):
+    # The third and last of the storable arrays. It was labelled a reserved
+    # slot long after record() began accepting it, and nothing exercised it.
+    envir = _envir()
+    swrm = _swarm(envir)
+    with envir.record(tmp_path / 'run',
+                      store=('positions', 'velocities', 'accelerations')) as rec:
+        for _ in range(3):
+            swrm.move(0.1, silent=True)
+
+    run = planktos.load_run(rec.path)
+    try:
+        assert run.store == ('positions', 'velocities', 'accelerations')
+        series = run.array('accelerations', 0)
+        np.testing.assert_array_equal(
+            ma.getdata(series[len(run.times) - 1]),
+            ma.getdata(swrm.accelerations))
+    finally:
+        run.close()
+
+
+def test_an_unknown_array_name_is_refused_naming_the_valid_ones(tmp_path):
+    envir = _envir()
+    _swarm(envir)
+    with pytest.raises(ValueError, match='known arrays are'):
+        envir.record(tmp_path / 'run', store=('positions', 'props'))
+    assert envir._recorder is None
 
 
 def test_recording_without_positions_raises(tmp_path):

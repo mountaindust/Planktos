@@ -142,8 +142,7 @@ INDEX_WIDTH = 4
 # Per-agent arrays the archive can store, mapped to the short name used in
 #   filenames -- the same shorthand Swarm already uses for its histories. The
 #   mask is not in here: it is derived from positions and always written, since
-#   it is how a reader knows an agent left the domain. 'accelerations' is a
-#   reserved slot, wired through but not yet offered by Environment.record.
+#   it is how a reader knows an agent left the domain.
 STORABLE = {'positions': 'pos', 'velocities': 'vel', 'accelerations': 'acc'}
 
 
@@ -2271,11 +2270,10 @@ class RunArchive:
             if 'velocities' in self.store:
                 swarm.vel_history = [ma.copy(state_j) for state_j
                                      in self.velocities(index)[:-1]]
-            else:
-                # Length must match pos_history whatever is in it: every
-                #   consumer indexes the two together.
-                swarm.vel_history = [ma.masked_all(swarm.positions.shape)
-                                     for _ in swarm.pos_history]
+            # Left empty otherwise, which is what tells a plot to read the
+            #   statistics and headings the recording derived instead. Filling
+            #   it with masked rows to keep the two lists the same length would
+            #   read as "every agent has left" and print zero speeds.
         return swarm
 
 

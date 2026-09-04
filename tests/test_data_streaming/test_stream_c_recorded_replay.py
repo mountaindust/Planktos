@@ -61,6 +61,9 @@ def _recorded(tmp_path, name='run', INUM=WINDOW, steps=STEPS, seed=3, n=5,
     src = copy_ib2d(tmp_path, name + '_src', with_vorticity=with_vorticity)
     envir = ib2d_envir(src, INUM=INUM)
     swrm = planktos.Swarm(swarm_size=n, envir=envir, seed=seed)
+    # Velocities are no longer the default, and much of this module reads a
+    # series of them back.
+    kwargs.setdefault('store', ('positions', 'velocities'))
     with envir.record(str(tmp_path / name), **kwargs) as rec:
         run(swrm, steps, dt=DT)
     return rec, envir, swrm
@@ -337,14 +340,11 @@ def test_a_single_past_frame_can_be_drawn_from_the_archive(tmp_path):
     assert len(loads) == 0
 
 
-def test_an_analysis_only_archive_still_draws_from_live_history(tmp_path):
-    # store=('positions',) warns that the archive cannot be plotted from. The
-    # backdrop still can be, because agent state comes from the Swarm and only
-    # the fluid comes from disk.
-    with warnings.catch_warnings(record=True) as log:
-        warnings.simplefilter('always')
-        rec, envir, swrm = _recorded(tmp_path, store=('positions',), steps=6)
-    assert any('velocities' in str(w.message) for w in log)
+def test_the_default_archive_still_draws_from_live_history(tmp_path):
+    # store=('positions',) is the default now, and it plots: agent state comes
+    # from the Swarm, the backdrop from disk, and what velocities were needed
+    # for was derived at capture time.
+    rec, envir, swrm = _recorded(tmp_path, store=('positions',), steps=6)
     assert len(walk_frames(swrm, fluid='vort')) > 1
 
 
@@ -475,7 +475,7 @@ def test_an_archive_that_has_gone_missing_falls_back_with_a_warning(tmp_path):
     with warnings.catch_warnings(record=True) as log:
         warnings.simplefilter('always')
         _frames.FrameSource(swrm, fluid='vort')
-    said = [str(w.message) for w in log if 'cannot be used' in str(w.message)]
+    said = [str(w.message) for w in log if 'cannot be opened' in str(w.message)]
     assert said, 'a vanished archive was passed over in silence'
 
 
