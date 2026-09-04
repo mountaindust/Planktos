@@ -448,7 +448,7 @@ def test_the_arrow_scale_is_the_one_the_archive_recorded(tmp_path):
     # above says which of the two numbers is wanted.
     rec, envir, swrm = _recorded(tmp_path, fluid='quiver', steps=6)
     stats = planktos.load_run(rec.path).dump_stats()
-    want = float(np.linalg.norm(np.nanmax(stats['vmax'], axis=0)))
+    want = float(np.linalg.norm(np.asarray(stats['vmax'])))
     got = _frames.FrameSource(swrm, fluid='quiver').quiver_scale
     assert got == pytest.approx(want)
 

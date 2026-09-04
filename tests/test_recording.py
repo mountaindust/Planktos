@@ -25,7 +25,7 @@ import numpy.ma as ma
 import pytest
 
 import planktos
-from planktos import archive, fluid
+from planktos import _frames, archive, fluid
 
 FIXTURES = Path(__file__).parent / 'fixtures'
 
@@ -1092,3 +1092,31 @@ def test_a_restored_run_records_to_a_new_directory(tmp_path):
         with rebuilt.record(rec.path) as second:
             resumed.move(0.1, silent=True)
     assert second.path != rec.path
+
+
+def test_a_restored_run_plots_from_its_own_archive(tmp_path):
+    # Without this a restored run re-reads the fluid dataset to draw a picture
+    # of it -- the exact cost the archive exists to remove -- and does it
+    # silently, since with no archive linked there is nothing to warn about.
+    envir = planktos.Environment()
+    envir.read_IB2d_fluid_data(str(FIXTURES / 'ib2d_fluid_min'), dt=0.01,
+                               print_dump=10)
+    swrm = _swarm(envir)
+    with envir.record(tmp_path / 'run', fluid='vort') as rec:
+        for _ in range(3):
+            swrm.move(0.01, silent=True)
+
+    run = planktos.load_run(rec.path)
+    try:
+        rebuilt, (resumed,) = run.restore()
+    finally:
+        run.close()
+
+    assert Path(rebuilt._archive_path) == Path(rec.path)
+    source = _frames.FrameSource(resumed, fluid='vort')
+    try:
+        assert source.run is not None, (
+            'the restored run is not reading its own archive')
+    finally:
+        if source.run is not None:
+            source.run.close()

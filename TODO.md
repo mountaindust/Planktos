@@ -12,8 +12,8 @@ Temporal interpolation of dynamically-loaded data is **linear in time**
 (`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
 story.
 
-**Suite: 1128 passed / 50 skipped (`pytest --runstreaming`, ~40 s),
-1176 / 2 (`pytest --runslow --runstreaming`, ~5 min).** No failures, **and no
+**Suite: 1130 passed / 50 skipped (`pytest --runstreaming`, ~40 s),
+1178 / 2 (`pytest --runslow --runstreaming`, ~4 min).** No failures, **and no
 xfails: the pre-release list is empty.**
 
 **The pre-release list is empty (2026-09-03).** `tests/test_data_streaming/` — the

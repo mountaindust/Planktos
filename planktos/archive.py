@@ -19,7 +19,8 @@ This module owns the on-disk format::
         swarm00_mask_0000.npy   (rows, N) bool
         times_0000.npy          (rows,) shared across swarms
       fluid/
-        dump_stats.npz          per-dump component means and extrema
+        dump_stats.npz          per-dump component means, plus the run's
+                                velocity and vorticity extrema
         quiver_00042.npy        downsampled velocity, if requested
         Omega.0042.vtk          vorticity, only if written and the source
                                 directory could not take it
@@ -1099,15 +1100,16 @@ class _FluidWriter:
         self.flow = envir.flow
         self._written = set()
 
-        # Per-dump reductions. NaN marks a dump that never arrived, which under a
-        #   sliding window is an honest answer and not a gap to be filled. Means
-        #   are not among them: FluidData caches those already, and duplicating
-        #   the array would only create two things to keep in step.
-        n = len(self.flow.dump_means)
+        # Running extrema over the dumps seen, not one row per dump: both are
+        #   read once, reduced over the whole run, and never indexed by dump.
+        #   NaN is the starting value rather than zero so that "no dump has
+        #   arrived" stays distinguishable from "the field is genuinely still",
+        #   which _vorticity_norm draws differently. Means are not here at all:
+        #   they are interpolated per frame, so they have to stay per dump, and
+        #   FluidData caches them already.
         ncomp = len(self.flow)
-        self._vmin = np.full((n, ncomp), np.nan)
-        self._vmax = np.full((n, ncomp), np.nan)
-        self._vort_absmax = np.full(n, np.nan)
+        self._vmax = np.full(ncomp, np.nan)
+        self._vort_absmax = np.nan
         self._unwritten = 0
 
         # flow_times is fixed for the object's life, so convert it once rather
@@ -1150,10 +1152,9 @@ class _FluidWriter:
 
         if not self._unwritten:
             return
-        arrays = {'means': self.flow.dump_means,
-                  'vmin': self._vmin, 'vmax': self._vmax}
+        arrays = {'means': self.flow.dump_means, 'vmax': self._vmax}
         if 'vort' in self.quantities:
-            arrays['vort_absmax'] = self._vort_absmax
+            arrays['vort_absmax'] = np.asarray(self._vort_absmax)
         if self._flow_times is not None:
             arrays['flow_times'] = self._flow_times
         _atomic_write(self.dir / 'dump_stats.npz',
@@ -1189,16 +1190,17 @@ class _FluidWriter:
         self._written.add(t_idx)
         self._unwritten += 1
 
-        for n, f in enumerate(field):
-            self._vmin[t_idx, n] = np.min(f)
-            self._vmax[t_idx, n] = np.max(f)
+        # np.fmax over np.maximum: it takes the number rather than propagating
+        #   the NaN that marks "nothing seen yet".
+        self._vmax = np.fmax(self._vmax, [np.max(f) for f in field])
 
         if 'vort' in self.quantities:
             # From the raw arrays, never through get_vorticity(time=), which calls
             #   the FluidData and can therefore trigger a load.
             vort = _fluid._vorticity_from_field(field, self.flow.flow_points,
                                                 self.flow.periodic_dim)
-            self._vort_absmax[t_idx] = np.max(np.abs(vort))
+            self._vort_absmax = float(
+                np.fmax(self._vort_absmax, np.max(np.abs(vort))))
             if self._writes_vorticity:
                 self._write_vorticity(t_idx, vort)
 
@@ -2050,6 +2052,11 @@ class RunArchive:
         envir.time = float(self.times[-1])
         envir.time_history = ([float(t) for t in self.times[:-1]] if history
                               else [])
+        # The same link record() leaves behind, so a plot of a restored run
+        #   draws its fluid backdrop from what that run wrote instead of reading
+        #   the dataset again. Frames past what the recording covers are refused
+        #   at the point they are asked for, as they are for any archive.
+        envir._archive_path = self.path
         return envir, swarms
 
 
@@ -2256,20 +2263,18 @@ class RunArchive:
 
 
     def dump_stats(self):
-        """The per-dump fluid statistics, or None if no fluid was recorded.
+        """The recorded fluid statistics, or None if no fluid was recorded.
 
-        The spatial mean of each velocity component per dump, the per-component
-        extrema, and -- in 2D, when vorticity was recorded -- the largest absolute
-        vorticity in each dump. Unlike ``FluidData.fmin``/``fmax``, which grow
-        during a run under dynamic loading, these are per dump and so give a scale
-        that two renders of the same run agree on.
-
-        **NaN means that dump never loaded**, so reduce over these with
-        ``np.nanmax`` rather than ``np.max``.
+        ``means`` is the spatial mean of each velocity component **per dump**,
+        which the plot statistics interpolate between; NaN there marks a dump the
+        run never loaded. ``vmax`` (per component) and, in 2D when vorticity was
+        recorded, ``vort_absmax`` are single extrema **over the whole run**, which
+        is what fixes a colour limit and an arrow scale that two renders of the
+        same run agree on. NaN in those means no dump ever arrived.
 
         Returns
         -------
-        dict of ndarray, keyed 'means', 'vmin', 'vmax', and where present
+        dict of ndarray, keyed 'means' and 'vmax', and where present
         'vort_absmax' and 'flow_times'. None when the recording had no fluid.
         """
 

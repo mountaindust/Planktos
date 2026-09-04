@@ -371,7 +371,7 @@ def test_the_colour_limit_covers_the_whole_run(tmp_path):
     rec, envir, swrm = _recorded_run(tmp_path)
 
     with planktos.load_run(rec.path) as run:
-        expected = np.nanmax(run.dump_stats()['vort_absmax'])
+        expected = float(run.dump_stats()['vort_absmax'])
     source = _frames.FrameSource(swrm, fluid='vort')
     assert np.isclose(source.vort_clip, expected)
 
@@ -410,15 +410,16 @@ def test_two_renders_of_different_stretches_share_a_colour_scale(tmp_path):
 
 
 def test_a_dump_the_run_never_reached_does_not_poison_the_scale(tmp_path):
-    # NaN records a dump a sliding window never loaded. Reducing with max rather
-    # than nanmax would give NaN, and every frame would then draw with no scale.
+    # A sliding window simply never loads the later dumps. The recorded extremum
+    # runs over the dumps that did arrive, so a short run still has a scale --
+    # where a per-dump array left holes that had to be reduced around.
     rec, envir, swrm = _recorded_run(tmp_path, steps=2)
 
     with planktos.load_run(rec.path) as run:
         stats = run.dump_stats()
-        assert np.isnan(stats['vort_absmax']).any()
-        assert not np.isnan(stats['vort_absmax']).all()
-        expected = np.nanmax(stats['vort_absmax'])
+        # The means still carry the hole, since they are read per dump.
+        assert np.isnan(stats['means']).any()
+        expected = float(stats['vort_absmax'])
 
     source = _frames.FrameSource(swrm, fluid='vort')
     assert np.isfinite(source.vort_clip)
@@ -436,7 +437,7 @@ def test_the_arrow_scale_comes_from_the_recorded_extrema(tmp_path):
     rec, envir, swrm = _recorded_run(tmp_path, steps=4, fluid='quiver')
 
     with planktos.load_run(rec.path) as run:
-        recorded = np.nanmax(run.dump_stats()['vmax'], axis=0)
+        recorded = np.asarray(run.dump_stats()['vmax'])
     source = _frames.FrameSource(swrm, fluid='quiver')
     assert np.isclose(source.quiver_scale, np.linalg.norm(recorded))
 
