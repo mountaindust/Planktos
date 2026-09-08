@@ -145,6 +145,11 @@ INDEX_WIDTH = 4
 #   it is how a reader knows an agent left the domain.
 STORABLE = {'positions': 'pos', 'velocities': 'vel', 'accelerations': 'acc'}
 
+# Series ``store`` can also name, which are not N x D arrays and so are written
+#   by their own machinery rather than as chunked .npy. Each is opt-in and each
+#   scales with run length, which is why none is on by default.
+SERIES = ('props',)
+
 
 
 def _atomic_write(path, write_fn):
@@ -666,10 +671,15 @@ class _ArchiveWriter:
         if int(chunk_size) < 1:
             raise ValueError('chunk_size must be at least 1')
         self.store = tuple(store)
-        unknown = [name for name in self.store if name not in STORABLE]
+        unknown = [name for name in self.store
+                   if name not in STORABLE and name not in SERIES]
         if unknown:
-            raise ValueError('cannot store {}; known arrays are {}'.format(
-                unknown, sorted(STORABLE)))
+            raise ValueError('cannot store {}; what can be stored is {}'.format(
+                unknown, sorted(set(STORABLE) | set(SERIES))))
+        # The N x D arrays, which are chunked together, apart from the series
+        #   that are not arrays at all.
+        self.arrays = tuple(n for n in self.store if n in STORABLE)
+        self.series = tuple(n for n in self.store if n in SERIES)
         if 'positions' not in self.store:
             raise ValueError(
                 'positions must be stored: nothing consumes an archive without '
@@ -744,8 +754,10 @@ class _ArchiveWriter:
                  'first_capture': int(first_capture)}
         self._swarms[index] = entry
         _save_json(self.agent_dir / (_swarm_prefix(index) + '.json'), entry)
-        self._buffers[index] = {name: [] for name in self.store}
+        self._buffers[index] = {name: [] for name in self.arrays}
         self._buffers[index]['mask'] = []
+        if 'props' in self.series:
+            self._buffers[index]['props'] = []
         if self.derive:
             # Headings are 2D-only, since a 3D frame draws none.
             if int(D) == 2:
@@ -755,7 +767,8 @@ class _ArchiveWriter:
             self._stats[index] = {'avg_vel': [], 'avg_spd': [], 'std_spd': []}
 
 
-    def add_capture(self, capture_index, time, arrays, velocities=None):
+    def add_capture(self, capture_index, time, arrays, velocities=None,
+                    props=None):
         '''Buffer one capture, writing a chunk when one fills.
 
         Parameters
@@ -804,10 +817,10 @@ class _ArchiveWriter:
         self._times.append(float(time))
         for idx, named in arrays.items():
             entry = self._swarms[idx]
-            if set(named) != set(self.store):
+            if set(named) != set(self.arrays):
                 raise ValueError(
                     'swarm {} supplied {}, but this archive stores {}'.format(
-                        idx, sorted(named), sorted(self.store)))
+                        idx, sorted(named), sorted(self.arrays)))
 
             # Positions first: one mask is stored per capture, and it is theirs.
             #   A masked row means the agent is not in the domain, which is a
@@ -815,7 +828,7 @@ class _ArchiveWriter:
             #   other array must agree -- and a disagreement is refused rather
             #   than silently dropped, since the format has nowhere to put it.
             reference = None
-            for name in ['positions'] + [n for n in self.store
+            for name in ['positions'] + [n for n in self.arrays
                                          if n != 'positions']:
                 data, row_mask = self._split(named[name], entry, name)
                 if reference is None:
@@ -831,6 +844,8 @@ class _ArchiveWriter:
 
             if self.derive:
                 self._derive(idx, entry, velocities[idx])
+            if 'props' in self.series:
+                self._buffers[idx]['props'].append(props[idx])
 
         self._next_capture += 1
 
@@ -856,6 +871,42 @@ class _ArchiveWriter:
         stats['avg_vel'].append(present.mean(axis=0))
         stats['avg_spd'].append(float(speed.mean()))
         stats['std_spd'].append(float(speed.std()))
+
+
+    def _first_capture_of(self, idx, chunk):
+        """The global capture index the given chunk starts at, for a swarm."""
+
+        return max(self._swarms[idx]['first_capture'], chunk * self.chunk_size)
+
+
+    def _write_props(self, prefix, index, frames, first_capture):
+        """Write one chunk's props, long format: a row per agent per capture.
+
+        Readable and exact, at pandas' default float format, which already
+        writes the shortest text that reads back bit for bit. A column holding
+        one ndarray per agent cannot go in text at all -- it renders as a broken
+        multi-line row -- so those spill to their own .npy beside it, as the
+        checkpoint does.
+        """
+
+        rows, spills = [], {}
+        for offset, props in enumerate(frames):
+            frame, arrays = _split_props(props)
+            frame = frame.copy()
+            frame.insert(0, 'agent', np.arange(len(frame)))
+            frame.insert(0, 'capture', first_capture + offset)
+            rows.append(frame)
+            for name, array in arrays.items():
+                spills.setdefault(name, []).append(array)
+
+        table = pd.concat(rows, ignore_index=True)
+        _atomic_write(
+            self.agent_dir / '{}_props_{:0{}d}.csv'.format(
+                prefix, index, INDEX_WIDTH),
+            lambda fobj: fobj.write(table.to_csv(index=False).encode('utf-8')))
+        for name, stacked in spills.items():
+            _save_npy(self.agent_dir / _chunk_name(
+                '{}_prop-{}'.format(prefix, name), index), np.stack(stacked))
 
 
     @staticmethod
@@ -1042,11 +1093,14 @@ class _ArchiveWriter:
                 #   reader resolves the offset from the sidecar.
                 continue
             prefix = _swarm_prefix(idx)
-            for name in self.store:
+            for name in self.arrays:
                 _save_npy(
                     self.agent_dir / _chunk_name(
                         '{}_{}'.format(prefix, STORABLE[name]), index),
                     np.stack(buffers[name]))
+            if 'props' in buffers:
+                self._write_props(prefix, index, buffers['props'],
+                                  self._first_capture_of(idx, index))
             _save_npy(self.agent_dir / _chunk_name(prefix + '_mask', index),
                       np.stack(buffers['mask']))
             if 'angle' in buffers:
@@ -1716,19 +1770,25 @@ class RunRecorder:
         if self._stopped:
             return
         self._sync_swarms()
-        arrays, velocities = {}, {}
+        arrays, velocities, props = {}, {}, {}
         for index, swarm in enumerate(self._swarms):
             named = {}
-            for name in self._store:
+            for name in self._writer.arrays:
                 named[name] = getattr(swarm, name)
             arrays[index] = named
             if self._writer.derive:
                 velocities[index] = swarm.velocities
+            if 'props' in self._writer.series:
+                # Copied, not referenced: the buffer outlives the capture, and
+                #   an agent model that edits props in place would otherwise
+                #   rewrite every capture still waiting to be flushed. This is
+                #   the same copy move() makes for props_history.
+                props[index] = swarm.props.copy()
         # Live attributes are read, not the histories: the archive does not
         #   depend on history existing, only on the two agreeing about when a
         #   state is recorded.
         self._writer.add_capture(self._n_captures, self.envir.time, arrays,
-                                 velocities)
+                                 velocities, props)
         self._n_captures += 1
         # On the chunk boundary, so the checkpoint is never staler than the
         #   captures a hard kill would cost anyway.
@@ -1965,6 +2025,9 @@ class RunArchive:
                     version, FORMAT_VERSION))
 
         self.store = tuple(self.meta.get('store', ('positions', 'velocities')))
+        # The N x D arrays, which are chunked and validated as such; the rest of
+        #   store names series with their own containers.
+        self.arrays = tuple(n for n in self.store if n in STORABLE)
         self._chunk_size = int(self.meta['chunk_size'])
         self.grid = dict(np.load(self.path / 'grid.npz', allow_pickle=False))
 
@@ -2270,6 +2333,11 @@ class RunArchive:
             if 'velocities' in self.store:
                 swarm.vel_history = [ma.copy(state_j) for state_j
                                      in self.velocities(index)[:-1]]
+            if 'props' in self.store:
+                # A list rather than None is what store_prop_history means, so
+                #   the restored swarm goes on keeping one as the original did.
+                frames = self.props(index)
+                swarm.props_history = [] if frames is None else frames[:-1]
             # Left empty otherwise, which is what tells a plot to read the
             #   statistics and headings the recording derived instead. Filling
             #   it with masked rows to keep the two lists the same length would
@@ -2339,6 +2407,54 @@ class RunArchive:
                 frame[name[len('prop__'):]] = list(value)
         state['props'] = frame
         return state
+
+
+    def props(self, swarm=0):
+        """One swarm's props at every capture, or None if they were not stored.
+
+        Written only for a recording that asked for them with
+        ``store=(..., 'props')``, since a series of a DataFrame scales with run
+        length where the checkpoint's single copy does not.
+
+        Parameters
+        ----------
+        swarm : int or str, default=0
+            index, or name when unambiguous
+
+        Returns
+        -------
+        list of DataFrame, one per capture and aligned to ``times``, or None.
+        A column that appeared partway through the run is NaN before it existed.
+        """
+
+        index = self._resolve_swarm(swarm)
+        prefix = _swarm_prefix(index)
+        files = sorted(self._agent_dir.glob(prefix + '_props_*.csv'),
+                       key=_chunk_index_of)
+        if not files:
+            return None
+        # float_precision='round_trip' is not optional: pandas' default parser
+        #   is where a float64 loses its last bits, not the writer.
+        table = pd.concat([pd.read_csv(f, float_precision='round_trip')
+                           for f in files], ignore_index=True)
+
+        spilled = {}
+        for path in self._agent_dir.glob(prefix + '_prop-*_*.npy'):
+            name = path.name[len(prefix) + len('_prop-'):].rsplit('_', 1)[0]
+            spilled.setdefault(name, []).append(path)
+        for name, paths in spilled.items():
+            spilled[name] = np.concatenate(
+                [np.load(p, allow_pickle=False)
+                 for p in sorted(paths, key=_chunk_index_of)])
+
+        frames = []
+        for j, (_, block) in enumerate(table.groupby('capture', sort=True)):
+            frame = block.drop(columns=['capture', 'agent']).reset_index(
+                drop=True)
+            for name, stacked in spilled.items():
+                frame[name] = list(stacked[j])
+            frames.append(frame)
+        return frames
 
 
     def agent_stats(self, swarm=0):
@@ -2586,7 +2702,8 @@ class RunArchive:
         for entry in self._entries:
             first_chunk = entry['first_capture'] // self._chunk_size
             want = [i for i in range(len(time_chunks)) if i >= first_chunk]
-            shorts = [STORABLE[name] for name in self.store] + ['mask']
+            shorts = [STORABLE[name] for name in self.store
+                      if name in STORABLE] + ['mask']
             # Written only when velocities were not, so its absence is ordinary
             #   and only its being partial is a fault.
             if self._chunk_indices('{}_ang'.format(

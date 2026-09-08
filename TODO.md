@@ -142,8 +142,33 @@ back behind it.
    three failure modes read differently (a fluid that cannot be replayed and an
    unimportable `Swarm` class are errors; a lost `plot_structs` is a warning). **The
    acceptance suite's last two `xfail`s came off here**, so claim 4 holds and the
-   pre-release list is empty. **R4 is next** — the derived quantities, the `store=`
-   default reversal, and the opt-in histories.
+   pre-release list is empty.
+
+   **R4 is done (2026-09-04)**, in three parts. *R4a*: what velocities were needed for
+   is recorded when velocities are not — a per-capture speed-statistics sidecar and a
+   stored 2D heading angle. *R4b*: `store=` now defaults to `('positions',)`, with
+   `FrameSource.stats`/`.angles` serving both live and from the archive; measured at 48%
+   off the archive and 59% off the recording overhead. *R4c*: `store=(…, 'props')` keeps
+   the whole props DataFrame per capture, and `restore()` fills `props_history` from it.
+
+   **Where to pick up: `run_persistence.md` §6.1 has Steps R5 and R6, both specified and
+   neither built.** They are independent of each other.
+
+   - **R5 — appending to the archive a restored run came from.** Today a resumed run
+     writes a second archive beside the first. Trigger is `envir.time ==
+     archive.times[-1]`; nothing already written is rewritten but the tail chunk.
+   - **R6 — resuming from an arbitrary capture** (`restore(capture=j)`), plus the two
+     series that make it honest: a `shared_props` history and a sparse
+     `ib_collision_idx` one. **R6a already works by hand** — the note has the recipe,
+     verified — so it is packaging plus a printed notice of what came from the end of
+     the run instead of from capture *j*. **R6b must not add an unconditional write**
+     (decided 2026-09-04): it folds into `swarmNN_stats.npz`, which is already written
+     on the same cadence and is already O(1) per capture. **R6c is settled as sparse**,
+     with the measurements in the note; break-even is a 50% collision rate and the
+     measured cases run 6–9%.
+
+   A per-capture `rndState` series was **dropped**: its only gain over the above is a
+   bit-exact resume from an arbitrary capture, and stochastic difference is acceptable.
 
    Finished against `tests/test_data_streaming/test_stream_d_restart.py` (run it with
    `--runstreaming`): its five strict `xfail`s are the acceptance criteria, and each

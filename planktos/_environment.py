@@ -2126,9 +2126,14 @@ class Environment:
             plus any added later. Agent data runs a few hundred MB per large
             swarm, so restricting it is sometimes worth doing.
         store : tuple of str, default=('positions',)
-            which per-agent arrays to keep. The three that can be stored are
-            ``'positions'``, ``'velocities'`` and ``'accelerations'``, and
-            anything else raises. ``'positions'`` is required.
+            what to keep for every capture. ``'positions'`` is required;
+            anything not named below raises.
+
+            The per-agent arrays are ``'positions'``, ``'velocities'`` and
+            ``'accelerations'``. ``'props'`` keeps the whole props DataFrame
+            per capture instead of only the latest, written as readable csv
+            with any column holding one ndarray per agent spilled beside it.
+
             **Velocities are opt-in**, and leaving them out is 48% less disk
             and 59% less recording overhead. What they are needed for is
             recorded instead -- the agent-speed statistics a plot prints and

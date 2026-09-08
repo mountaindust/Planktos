@@ -3099,10 +3099,24 @@ and R3 below now assume it.*
     here. **No changelog line is owed for the reversal itself** — `Environment.record`
     is new in the unreleased 1.1.0, so there is no shipped default to have changed; the
     feature's own entry simply describes what it does.
-  - **The opt-in series**: `store=` extends to `props`, `shared_props`, `rndState` and
-    the sparse `ib_collision_idx` events, and `props_history` becomes the restore's
-    opt-in series (§2.11.4). The sparse format is the one piece here that wants
-    measurement before it is fixed.
+  - **The opt-in series.** `store=` grows past the three N×D arrays. **`props` is
+    built** *(2026-09-04)*: `store=(…, 'props')` keeps the whole DataFrame per capture,
+    long-format csv per chunk with array-valued columns spilling to their own `.npy`,
+    which is the checkpoint's split applied to a series. `restore()` fills
+    `props_history` from it, and a list rather than None is what makes the resumed run
+    go on keeping one. Capture *j* is `full_props_history[j]`, the same convention
+    positions use — pinned by a test that mutates a prop **inside** `move`, which is
+    where an agent model does it.
+
+    ⚠️ **The buffer must copy the frame, not reference it.** Captures are buffered until
+    a chunk fills, so holding the live DataFrame lets an in-place edit rewrite every
+    capture still waiting to flush — every one of them showing the final value. Found by
+    a probe reporting `stage=2` at capture 0. Same copy `move` already makes for
+    `props_history`, and pinned.
+
+    **Three items remain, and §6.1's Step R6 specifies them.** `rndState` per capture is
+    **dropped** — its only benefit over what exists is a *bit-exact* resume from an
+    arbitrary capture, and a stochastically-different one is enough (decided 2026-09-04).
 
   Last because R1–R3 deliver the reboot claim without any of it.
 
@@ -3170,6 +3184,85 @@ is **scaffolding and gets deleted once Step R is confirmed done**, R4 and R5 inc
 ⚠️ **Those markers being gone does not mean Step R is finished.** R4 and R5 are still
 ahead of it; what the cleared list means is that the *claim* holds, not that the step is
 closed.
+
+**Step R6 — resuming from an arbitrary capture, and the two series it needs.**
+*(Specified 2026-09-04, after R4c landed the props series and measurement settled the
+open questions. Independent of R5; either order.)*
+
+**The goal:** `RunArchive.restore(capture=j)` rebuilds at any capture, not only the last.
+A *stochastically different* continuation is the target — **not** a bit-exact one, which
+is why a per-capture `rndState` series is not being built.
+
+⚠️ **It already works by hand**, which is what bounds the work: `restore()`, then wind
+`positions`, `envir.time`, `time_history` and `pos_history` back to capture *j*. Verified
+2026-09-04 on a windowed IB2d run — five further steps ran clean, finite, in-domain, and
+`plot_all` drew it. What is missing is the packaging and the honesty about what is not
+from capture *j*.
+
+*Everything except the positions comes from the checkpoint, i.e. the run's **final**
+state.* Two of those are wrong at *j* if they varied:
+
+| | at capture *j*? | |
+|---|---|---|
+| `positions` | yes | from the archive, always |
+| `props` | yes **when `store` had `'props'`** | R4c built the series |
+| `velocities` | yes **when `store` had `'velocities'`** | irrelevant to the default Brownian model, which never reads the agent's own velocity; **`motion.inertial_particles` does** |
+| `shared_props` | **no** — see R6b | a ramping `mu` resumes at its end-of-run value |
+| everything else | end state | `accelerations` is recomputed on the first step; `ib_condition` and the class do not vary |
+
+**R6a — `restore(capture=j)`.** Wind the state back; take `props` and `velocities` from
+capture *j* where they were stored. **Print what was and was not recorded**, in the shape
+of the `store=` notice, so the caller can judge whether anything time-varying is among the
+substitutions:
+
+    Restoring at capture 340 of 1200 (t=17.0). Recorded per capture: positions,
+    props. Taken from the end of the run instead: velocities, shared_props --
+    if either varied during the run, this resumes with their final values.
+
+**R6b — the `shared_props` series, in the file already being written.** It is the item
+that makes R6a honest, and it is **O(T), not O(N·T)**: ~1.2 MB over 10 000 captures
+against 248 MB for the props series at N=1000.
+
+⚠️ **Do not add an unconditional write for it.** *(Decided 2026-09-04.)* Cheap on disk is
+not cheap in file-tree complexity or in write time, and both are paid by every run
+whether or not anyone wants the series. Two designs were rejected on the way:
+
+- *Its own always-on sidecar* — free on disk, but another file every run pays for.
+- *Sentinel rows in the props csv* (`agent = -1`, one row per capture). It reuses the
+  file, but every **agent** row then carries an empty cell for each shared column:
+  6 columns × 1000 agents × 10 000 captures is **57 MB of commas** to store something
+  that is O(T). Reusing the file is not the same as reusing the row.
+
+**Instead, generalize `agents/swarmNN_stats.npz` into the per-swarm per-capture
+sidecar.** It is already accumulated in memory and rewritten whole on the chunk cadence,
+and it already holds exactly this shape — a few values per capture, independent of N.
+It gains `shared__<key>` entries alongside `avg_vel`/`avg_spd`/`std_spd`, written when
+`store` names `'props'`. No new file, no new write, and when neither the derived
+statistics nor the props series is wanted there is still no file at all. Rename it
+`swarmNN_series.npz` when this lands, since it stops being only statistics — cheap now,
+as nothing has shipped.
+
+*Three wrinkles it must handle*, all from `shared_props` being a mutable dict: a key that
+**appears** mid-run (pad the earlier captures), a key that **vanishes** (pad the later
+ones), and a key whose value **changes shape** mid-run, which cannot be stacked at all —
+refuse that one by name rather than write something that will not read back.
+
+**R6c — the sparse `ib_collision_idx` series.** ⚠️ **The "measure before fixing the
+format" caveat is discharged** *(2026-09-04)*. Measured collision rates, as the fraction
+of agent-captures holding an element index:
+
+| scenario, 200 agents × 60 steps | rate |
+|---|---|
+| drift into a box, mesh-heavy | **8.9%** |
+| strong drift along a wall — the channel case | **6.4%** |
+| no immersed boundary | 0% |
+
+Store `(agent, element)` int32 pairs with a per-capture offset array: `8·E + 4·T` against
+a dense int32 array's `4·N·T`. **Break-even is a 50% rate**, so at N=1000 over 10 000
+captures the measured 8.9% is 6.8 MB against 38.1 MB — 0.18×. Its **worst case is bounded
+at 2× dense** and needs every agent colliding on every capture, which cannot happen. Go
+sparse. *(An earlier note here put break-even at "one collision per agent per eight
+captures"; that was wrong by an order of magnitude.)*
 
 **Step D — examples and docs prose pass (§7).**
 

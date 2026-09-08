@@ -509,8 +509,8 @@ def test_accelerations_can_be_stored_too(tmp_path):
 def test_an_unknown_array_name_is_refused_naming_the_valid_ones(tmp_path):
     envir = _envir()
     _swarm(envir)
-    with pytest.raises(ValueError, match='known arrays are'):
-        envir.record(tmp_path / 'run', store=('positions', 'props'))
+    with pytest.raises(ValueError, match='what can be stored is'):
+        envir.record(tmp_path / 'run', store=('positions', 'nonsense'))
     assert envir._recorder is None
 
 
@@ -1265,3 +1265,112 @@ def test_a_partial_angle_series_is_refused_like_any_other(tmp_path):
     (rec.path / 'agents' / 'swarm00_ang_0001.npy').unlink()
     with pytest.raises(ValueError, match='missing chunk'):
         planktos.load_run(rec.path)
+
+
+# --------------------------------------------------------------------------- #
+#                  the opt-in props series (section 2.11.4, R4c)               #
+# --------------------------------------------------------------------------- #
+# store=(..., 'props') keeps the whole DataFrame per capture rather than only
+# the checkpoint's latest copy. Opt-in because it is the one thing here that
+# scales with run length as well as with swarm size.
+
+class _Ageing(planktos.Swarm):
+    '''Increments a prop inside the move, which is where a model does it.'''
+
+    def after_move(self, dt):
+        self.props['stage'] = self.props['stage'] + 1
+
+
+def _props_run(tmp_path, steps=5, chunk_size=2, n=4, cls=None):
+    envir = _envir()
+    swrm = (cls or planktos.Swarm)(swarm_size=n, envir=envir, seed=1,
+                                   init=np.full((n, 2), 2.0),
+                                   store_prop_history=True)
+    swrm.shared_props['cov'] = np.eye(2) * 0.01
+    swrm.add_prop('stage', np.arange(n))
+    swrm.add_prop('tag', ['a', 'b', 'c', 'd'][:n])
+    swrm.add_prop('percov', [np.eye(2) * 0.01 * (i + 1) for i in range(n)])
+    with envir.record(tmp_path / 'run', store=('positions', 'props'),
+                      chunk_size=chunk_size) as rec:
+        for _ in range(steps):
+            swrm.move(0.1, silent=True)
+    return rec, envir, swrm
+
+
+def test_the_props_series_matches_the_history_it_mirrors(tmp_path):
+    # Capture j is full_props_history[j], the same convention positions use.
+    rec, envir, swrm = _props_run(tmp_path, cls=_Ageing)
+    run = planktos.load_run(rec.path)
+    try:
+        frames = run.props(0)
+        live = list(swrm.props_history) + [swrm.props]
+        assert len(frames) == len(run.times) == len(live)
+        for got, want in zip(frames, live):
+            assert got['stage'].tolist() == want['stage'].tolist()
+            assert list(got['tag']) == list(want['tag'])
+            np.testing.assert_array_equal(np.stack(got['percov']),
+                                          np.stack(want['percov'].array))
+    finally:
+        run.close()
+
+
+def test_a_props_column_of_arrays_spills_out_of_the_csv(tmp_path):
+    # Such a column renders to csv as a broken multi-line row, so it goes to a
+    # .npy beside it -- the same split the checkpoint makes.
+    rec, envir, swrm = _props_run(tmp_path)
+    agents = rec.path / 'agents'
+    header = (agents / 'swarm00_props_0000.csv').read_text().splitlines()[0]
+    assert header == 'capture,agent,stage,tag'
+    assert sorted(p.name for p in agents.glob('swarm00_prop-*.npy')) == [
+        'swarm00_prop-percov_0000.npy', 'swarm00_prop-percov_0001.npy',
+        'swarm00_prop-percov_0002.npy']
+
+
+def test_the_props_csv_is_readable_and_indexed_by_capture_and_agent(tmp_path):
+    rec, envir, swrm = _props_run(tmp_path, cls=_Ageing)
+    lines = (rec.path / 'agents' /
+             'swarm00_props_0000.csv').read_text().splitlines()
+    # chunk 0 holds chunk_size captures, one row per agent in each
+    assert len(lines) - 1 == 2 * swrm.N
+    assert lines[1].startswith('0,0,')
+    assert lines[1 + swrm.N].startswith('1,0,')
+
+
+def test_a_props_series_edited_in_place_is_not_rewritten_by_later_captures(
+        tmp_path):
+    # The buffer outlives the capture, so holding a reference to the live frame
+    # would let an in-place edit rewrite every capture still waiting to flush.
+    rec, envir, swrm = _props_run(tmp_path, cls=_Ageing, chunk_size=100)
+    run = planktos.load_run(rec.path)
+    try:
+        stages = [f['stage'].tolist() for f in run.props(0)]
+        assert stages[0] != stages[-1], 'every capture holds the same frame'
+        assert stages[0] == list(range(swrm.N))
+    finally:
+        run.close()
+
+
+def test_props_are_not_stored_unless_asked_for(tmp_path):
+    rec, envir, swrm = _derived_run(tmp_path)
+    run = planktos.load_run(rec.path)
+    try:
+        assert run.props(0) is None
+    finally:
+        run.close()
+
+
+def test_a_restored_run_gets_its_props_history_back(tmp_path):
+    rec, envir, swrm = _props_run(tmp_path, cls=_Ageing)
+    run = planktos.load_run(rec.path)
+    try:
+        rebuilt, (resumed,) = run.restore()
+    finally:
+        run.close()
+    assert len(resumed.props_history) == len(swrm.props_history)
+    for got, want in zip(resumed.props_history, swrm.props_history):
+        assert got['stage'].tolist() == want['stage'].tolist()
+    # A list rather than None is what store_prop_history means, so the resumed
+    # run goes on keeping a history as the original did.
+    resumed.props['stage'] = resumed.props['stage']
+    resumed.move(0.1, silent=True)
+    assert len(resumed.props_history) == len(swrm.props_history) + 1
