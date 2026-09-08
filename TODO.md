@@ -151,17 +151,21 @@ back behind it.
    off the archive and 59% off the recording overhead. *R4c*: `store=(…, 'props')` keeps
    the whole props DataFrame per capture, and `restore()` fills `props_history` from it.
 
-   **Where to pick up: `run_persistence.md` §6.1 has Steps R5 and R6, both specified and
-   neither built.** ⚠️ **They were swapped on 2026-09-08** — what was specified as R6 is
-   now R5 and goes first. They are not independent after all: R6 is the one step that
-   reconciles *every* file the archive writes, so each series added after it lands is a
-   second pass through the append path. R6's list was written 2026-09-03, before R4
+   **Where to pick up: `run_persistence.md` §6.1 has Steps R5 and R6.** R5a is
+   done; R5b and R6 are specified and not built. ⚠️ **R5 and R6 were swapped on
+   2026-09-08** — what was specified as R6 is now R5 and goes first. They are not
+   independent after all: R6 is the one step that reconciles *every* file the archive
+   writes, so each series added after it lands is a second pass through the append path. R6's list was written 2026-09-03, before R4
    landed, and already missed two files because of it (below).
 
    - **R5 — resuming from an arbitrary capture** (`restore(capture=j)`), plus the
-     `shared_props` history that makes it honest. **R5a already works by hand** — the
-     note has the recipe, verified — so it is packaging plus a printed notice of what
-     came from the end of the run instead of from capture *j*. **R5b must not add an unconditional write**
+     `shared_props` history that makes it honest. **R5a is done (2026-09-08):**
+     `RunArchive.restore(capture=j)` winds the state back, takes `props` and
+     `velocities` from capture *j* where they were stored, prints what came from the
+     end of the run instead, and leaves out a swarm that had not joined by then. It
+     also turned up a pre-existing offset in `RunArchive.props()` for a mid-run swarm,
+     recorded in the note under R5a and left for R5b to settle.
+     **R5b must not add an unconditional write**
      (decided 2026-09-04): it folds into the per-swarm per-capture sidecar, which is
      already written on the same cadence and is already O(1) per capture — renamed
      `swarmNN_series.npz`, since it stops being only statistics. ⚠️ **Gate it on a

@@ -2160,13 +2160,20 @@ class RunArchive:
 
     ####################   the fluid half   ####################
 
-    def restore(self, history=True):
+    def restore(self, history=True, capture=None):
         """Rebuild the Environment and Swarms this archive recorded.
 
         The run is picked up where it left off: same positions, same properties,
         same random stream, same clock. Nothing about the fluid or the mesh is
         deserialized -- the loader calls the archive recorded are replayed, so
         the data is re-read from wherever it lives.
+
+        ``capture=j`` rebuilds at capture *j* rather than at the end of the run.
+        Only what the recording stored per capture comes from *j*; the rest --
+        ``shared_props`` and the random stream among them -- is the run's final
+        state, and a notice printed at the call says which is which. The
+        continuation past *j* is therefore stochastically different from the
+        original run, not bit-identical to it.
 
         Parameters
         ----------
@@ -2176,18 +2183,25 @@ class RunArchive:
             leaves all three empty, which costs nothing to memory but leaves
             ``plot_all`` a single frame and agent statistics counting against
             the restored state rather than the original swarm.
+        capture : int, optional
+            the capture to rebuild at; the last one by default. Negative
+            indexes from the end, and :meth:`capture_at` turns a time into an
+            index.
 
         Returns
         -------
         envir : Environment
         swarms : list of Swarm
-            in archive index order, already attached to ``envir``
+            in archive index order, already attached to ``envir``. A swarm that
+            had not joined the run by ``capture`` is left out, with a warning.
 
         Raises
         ------
         ValueError
             if the archive holds no checkpoint, if a fluid or mesh loader
             cannot be replayed, or if a Swarm's class cannot be imported
+        IndexError
+            if ``capture`` is outside the archive
 
         Notes
         -----
@@ -2200,14 +2214,33 @@ class RunArchive:
         first rather than a continuation of it.
         """
 
+        at_capture = capture is not None
+        j = self._resolve_capture(capture)
+        if at_capture:
+            # Printed rather than warned, in the shape of record()'s store=
+            #   notice: it is a statement of what this rebuild could and could
+            #   not take from capture j, not a suspicion that anything is wrong.
+            print(self._restore_notice(j))
+
         envir = self._restore_environment()
-        swarms = [self._restore_swarm(envir, entry['index'], history)
-                  for entry in self._entries]
-        # Capture j is full_pos_history[j], so the last capture is the present
-        #   and everything before it is history. Both lists must come out the
-        #   same length or every frame a plot draws is misaligned, silently.
-        envir.time = float(self.times[-1])
-        envir.time_history = ([float(t) for t in self.times[:-1]] if history
+        swarms = []
+        for entry in self._entries:
+            if entry['first_capture'] > j:
+                warnings.warn(
+                    'swarm {} joined the run at capture {}, so at capture {} '
+                    'it did not exist yet and has not been restored. The '
+                    'swarms handed back are the ones the run held at that '
+                    'point.'.format(entry['index'], entry['first_capture'], j),
+                    UserWarning)
+                continue
+            swarms.append(self._restore_swarm(envir, entry['index'], history,
+                                              j, at_capture))
+        # Capture j is full_pos_history[j], so the capture rebuilt at is the
+        #   present and everything before it is history. Both lists must come
+        #   out the same length or every frame a plot draws is misaligned,
+        #   silently.
+        envir.time = float(self.times[j])
+        envir.time_history = ([float(t) for t in self.times[:j]] if history
                               else [])
         # The same link record() leaves behind, so a plot of a restored run
         #   draws its fluid backdrop from what that run wrote instead of reading
@@ -2218,6 +2251,55 @@ class RunArchive:
 
 
     ####################   restoring   ####################
+
+    def _resolve_capture(self, capture):
+        '''The capture index a restore should rebuild at. None is the last.'''
+
+        n = len(self.times)
+        if not n:
+            raise ValueError(
+                '{} holds no captures, so there is nothing to restore '
+                'to.'.format(self.path))
+        if capture is None:
+            return n - 1
+        j = int(capture)
+        if j < 0:
+            j += n
+        if not 0 <= j < n:
+            raise IndexError(
+                'capture {} is outside the {} captures in {}'.format(
+                    capture, n, self.path))
+        return j
+
+
+    def _restore_notice(self, capture):
+        '''What a rebuild at ``capture`` takes from there, and what it cannot.
+
+        The per-capture series are the whole of what capture j can supply; the
+        rest of a swarm's state lives in the checkpoint, which is the end of the
+        run.
+        '''
+
+        recorded = [name for name in ('positions', 'velocities',
+                                      'accelerations', 'props')
+                    if name in self.store]
+        head = ('Restoring at capture {} of {} (t={:g}). Recorded per capture: '
+                '{}.'.format(capture, len(self.times), self.times[capture],
+                             ', '.join(recorded)))
+        if capture == len(self.times) - 1:
+            return (head + ' That is the end of the run, so nothing else is'
+                    ' being substituted for it.')
+        substituted = [name for name in ('velocities', 'props')
+                       if name not in self.store]
+        # No series of it exists yet, so it always comes from the end state.
+        substituted.append('shared_props')
+        tail = ('if it varied during the run, this resumes with its final value'
+                if len(substituted) == 1 else
+                'if any of them varied during the run, this resumes with their '
+                'final values')
+        return '{} Taken from the end of the run instead: {} -- {}.'.format(
+            head, ', '.join(substituted), tail)
+
 
     def _restore_environment(self):
         '''The Environment half: scalars from provenance, data by replay.'''
@@ -2310,8 +2392,12 @@ class RunArchive:
         return True
 
 
-    def _restore_swarm(self, envir, index, history):
-        '''One Swarm, rebuilt from its checkpoint and reattached to ``envir``.'''
+    def _restore_swarm(self, envir, index, history, capture, at_capture):
+        '''One Swarm, rebuilt at capture ``capture`` and reattached to ``envir``.
+
+        ``at_capture`` says the caller named that capture, which is what decides
+        whether a stored series or the checkpoint supplies each piece of state.
+        '''
 
         state = self.checkpoint(index)
         if state is None:
@@ -2322,7 +2408,14 @@ class RunArchive:
                 'not restartable.'.format(index, self.path))
 
         klass = _import_swarm_class(state['swarm_class'])
-        positions = state['positions']
+        # The checkpoint is the end of the run, and is the whole answer unless
+        #   the caller named a capture -- then everything the recording kept per
+        #   capture comes from there instead, and the rest still comes here.
+        first = self._by_index[index]['first_capture']
+        frames = (self.props(index) if 'props' in self.store
+                  and (history or at_capture) else None)
+        positions = (self.positions(index)[capture] if at_capture
+                     else state['positions'])
         shared = dict(state['shared_props'])
         swarm = klass(swarm_size=positions.shape[0], envir=envir,
                       init=np.array(ma.getdata(positions)),
@@ -2333,25 +2426,30 @@ class RunArchive:
         #   defaults does not win over what the run actually had.
         swarm.positions = ma.copy(positions)
         for name in ('velocities', 'accelerations'):
-            if state.get(name) is not None:
+            if at_capture and name in self.store:
+                setattr(swarm, name, ma.copy(self.array(name, index)[capture]))
+            elif state.get(name) is not None:
                 setattr(swarm, name, ma.copy(state[name]))
         if state.get('ib_collision_idx') is not None:
             swarm.ib_collision_idx = np.array(state['ib_collision_idx'])
-        swarm.props = state['props'].copy(deep=True)
+        if at_capture and frames is not None:
+            swarm.props = frames[capture - first].copy(deep=True)
+        else:
+            swarm.props = state['props'].copy(deep=True)
         swarm.shared_props = shared
         swarm.rndState.bit_generator.state = state['rndState']
 
         if history:
             swarm.pos_history = [ma.copy(state_j) for state_j
-                                 in self.positions(index)[:-1]]
+                                 in self.positions(index)[:capture]]
             if 'velocities' in self.store:
                 swarm.vel_history = [ma.copy(state_j) for state_j
-                                     in self.velocities(index)[:-1]]
+                                     in self.velocities(index)[:capture]]
             if 'props' in self.store:
                 # A list rather than None is what store_prop_history means, so
                 #   the restored swarm goes on keeping one as the original did.
-                frames = self.props(index)
-                swarm.props_history = [] if frames is None else frames[:-1]
+                swarm.props_history = ([] if frames is None
+                                       else frames[:capture - first])
             # Left empty otherwise, which is what tells a plot to read the
             #   statistics and headings the recording derived instead. Filling
             #   it with masked rows to keep the two lists the same length would

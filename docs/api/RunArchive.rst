@@ -324,6 +324,35 @@ A fluid handed to ``Environment(flow=[...])`` as arrays has no loader call to
 replay. That warns rather than failing, and the Environment comes back without
 fluid for you to set yourself.
 
+Restarting partway through
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``restore(capture=j)`` rebuilds at capture *j* rather than at the end of the
+run. ``capture_at(t)`` turns a time into an index, and a negative index counts
+back from the end::
+
+    run = planktos.load_run('run_archive/')
+    envir, (swrm,) = run.restore(capture=run.capture_at(17.0))
+
+Only what the recording stored per capture comes from *j*. Everything else is
+the run's **final** state -- ``shared_props`` and the random stream among them
+-- so the continuation is stochastically different from the original run past
+*j*, not a bit-identical rerun of it. A notice printed at the call says which is
+which::
+
+    Restoring at capture 340 of 1200 (t=17). Recorded per capture: positions.
+    Taken from the end of the run instead: velocities, shared_props -- if any
+    of them varied during the run, this resumes with their final values.
+
+``store=('positions', 'velocities')`` and ``store=(..., 'props')`` are what move
+those two out of the substituted list. Neither reaches the default Brownian
+model, which never reads an agent's own velocity, but
+``motion.inertial_particles`` does.
+
+A swarm that had not joined the run by capture *j* did not exist then, and is
+left out of the returned list with a warning rather than handed back with every
+agent masked.
+
 .. note::
    Recording a restored run writes a **new** archive. ``record()`` on the
    directory it came from finds that directory non-empty and redirects to a

@@ -45,7 +45,7 @@ thing is too big to hold at once.
 | **A** | **Run archive** — append-only, chunked, crash-valid on-the-fly capture of agent state, with a public reader and a capture schedule that also governs history retention | persistence: crash survival, later sessions, larger-than-RAM analysis, bounded history memory, run speed, and eventually restart | **[done]** — §6.1 A0–A5, 2026-08-21 to 2026-08-25 |
 | **B** | **Fluid-side streaming** — per-dump means, vorticity by regime, whole-run extrema | dyload: never re-stream the dataset to draw a picture of it | **[done]** — §6.1 B1–B3, 2026-08-25 |
 | **C** | **Rendering** — frame selection by time, archive-backed `plot_all`, global colour/arrow scales | consumes A and B | **[done]** — §6.1 C1–C2, 2026-08-27 |
-| **R** | **Full-state reboot** — a checkpoint beside the archive, a reader that turns a directory back into an `Environment` and its `Swarm`s, and appending to the archive a run resumed from | the third problem this architecture solves, and the one A was built for: a run that outlives the process that made it | **in progress** — §6.1 R0–R4 done 2026-08-31 to 2026-09-04; R5 and R6 ahead |
+| **R** | **Full-state reboot** — a checkpoint beside the archive, a reader that turns a directory back into an `Environment` and its `Swarm`s, and appending to the archive a run resumed from | the third problem this architecture solves, and the one A was built for: a run that outlives the process that made it | **in progress** — §6.1 R0–R4 done 2026-08-31 to 2026-09-04, R5a 2026-09-08; R5b and R6 ahead |
 | **D** | **Tiling and `extend`** — the real position-wrapping implementation | cleanup: tiling has raised `NotImplementedError` since the `FlowArray` removal | specified (§9), not built |
 
 ⚠️ **Two lettering schemes overlap, and the letters do not agree.** The components here
@@ -92,7 +92,7 @@ In order:
    `Environment.record(plot_all=)` renders from the archive at the end of a `with`
    block. **This was the last step that consumes A and B.**
 5. **§2.11 — the full-state reboot** is **in progress** *(scheduled 2026-08-27; R0–R4
-   done, R5 and R6 ahead — §6.1)*. It was filed as
+   done, R5a done, R5b and R6 ahead — §6.1)*. It was filed as
    a follow-on until the acceptance suite made the gap concrete; §6.1's Step R says why
    it goes ahead of tiling rather than after it, and the one-line version is that the
    on-disk format has to grow and every archive written before it does cannot be
@@ -3144,10 +3144,10 @@ under R6, which is where the cost of the other order shows up.)*
 A *stochastically different* continuation is the target — **not** a bit-exact one, which
 is why a per-capture `rndState` series is not being built.
 
-⚠️ **It already works by hand**, which is what bounds the work: `restore()`, then wind
+⚠️ **It already worked by hand**, which is what bounded the work: `restore()`, then wind
 `positions`, `envir.time`, `time_history` and `pos_history` back to capture *j*. Verified
 2026-09-04 on a windowed IB2d run — five further steps ran clean, finite, in-domain, and
-`plot_all` drew it. What is missing is the packaging and the honesty about what is not
+`plot_all` drew it. What was missing was the packaging and the honesty about what is not
 from capture *j*.
 
 *Everything except the positions comes from the checkpoint, i.e. the run's **final**
@@ -3161,14 +3161,32 @@ state.* Two of those are wrong at *j* if they varied:
 | `shared_props` | **no** — see R5b | a ramping `mu` resumes at its end-of-run value |
 | everything else | end state | `accelerations` is recomputed on the first step; `ib_condition` and the class do not vary |
 
-**R5a — `restore(capture=j)`.** Wind the state back; take `props` and `velocities` from
-capture *j* where they were stored. **Print what was and was not recorded**, in the shape
-of the `store=` notice, so the caller can judge whether anything time-varying is among the
-substitutions:
+**R5a — `restore(capture=j)`. ✅ [done 2026-09-08].** Winds the state back; takes
+`props` and `velocities` from capture *j* where they were stored, everything else from the
+checkpoint. **Prints what was and was not recorded**, in the shape of the `store=` notice,
+so the caller can judge whether anything time-varying is among the substitutions:
 
-    Restoring at capture 340 of 1200 (t=17.0). Recorded per capture: positions,
-    props. Taken from the end of the run instead: velocities, shared_props --
-    if either varied during the run, this resumes with their final values.
+    Restoring at capture 340 of 1200 (t=17). Recorded per capture: positions.
+    Taken from the end of the run instead: velocities, shared_props -- if any
+    of them varied during the run, this resumes with their final values.
+
+`capture=None` is unchanged and stays silent: the checkpoint supplies every array, so the
+end-of-run resume is bit-identical as before. The notice's substitution sentence is
+dropped at the last capture, where the checkpoint *is* capture *j* and nothing is being
+stood in for.
+
+⚠️ **A swarm that had not joined the run by capture *j* is left out of the returned list,
+with a warning.** Its series is front-padded with fully masked rows, so restoring it would
+hand back a swarm reading "every agent has left the domain" rather than one that was not
+there. The list is the roster the run held at capture *j*.
+
+**One pre-existing misalignment turned up and is deliberately not fixed here.**
+`RunArchive.props()` returns one frame per capture *of that swarm*, so for a swarm that
+joined at capture *f* the list is offset by *f* against `times` and against the position
+series, which is front-padded to global indices. `_restore_swarm` now indexes it as
+`frames[j - f]`, which is correct; `props()`'s own docstring still claims alignment to
+`times` and is wrong for that swarm. Fixing it means deciding what a props frame *is*
+before the swarm exists, which R5b's padding wrinkles have to settle anyway — do it there.
 
 **R5b — the `shared_props` series, folded into the per-capture sidecar.** It is the item
 that makes R5a honest, and it is **O(T), not O(N·T)**: ~1.2 MB over 10 000 captures

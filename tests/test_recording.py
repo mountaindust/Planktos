@@ -1374,3 +1374,167 @@ def test_a_restored_run_gets_its_props_history_back(tmp_path):
     resumed.props['stage'] = resumed.props['stage']
     resumed.move(0.1, silent=True)
     assert len(resumed.props_history) == len(swrm.props_history) + 1
+# --------------------------------------------------------------------------- #
+#            resuming from an arbitrary capture (section 6.1, R5a)             #
+# --------------------------------------------------------------------------- #
+# restore(capture=j) rebuilds at capture j rather than at the end of the run.
+# Only the per-capture series can come from j; everything else is the run's
+# final state, and the printed notice is what says which is which.
+
+def test_restore_at_a_capture_winds_the_state_back_to_it(tmp_path):
+    envir = _envir()
+    swrm = _swarm(envir)
+    with envir.record(tmp_path / 'run') as rec:
+        for _ in range(5):
+            swrm.move(0.1, silent=True)
+    full = _stack([*swrm.pos_history, swrm.positions])
+
+    run = planktos.load_run(rec.path)
+    try:
+        rebuilt, (resumed,) = run.restore(capture=2)
+    finally:
+        run.close()
+    np.testing.assert_allclose(ma.getdata(resumed.positions), full[2])
+    assert rebuilt.time == pytest.approx(0.2)
+    assert len(rebuilt.time_history) == 2
+    # pos_history and time_history must come out the same length or every frame
+    # a plot draws is misaligned.
+    assert len(resumed.pos_history) == len(rebuilt.time_history)
+    np.testing.assert_allclose(_stack(resumed.pos_history), full[:2])
+
+
+def test_restore_at_the_last_capture_is_the_default_restore(tmp_path):
+    envir = _envir()
+    swrm = _swarm(envir)
+    with envir.record(tmp_path / 'run') as rec:
+        for _ in range(4):
+            swrm.move(0.1, silent=True)
+    run = planktos.load_run(rec.path)
+    try:
+        plain, (a,) = run.restore()
+        at_end, (b,) = run.restore(capture=-1)
+    finally:
+        run.close()
+    assert plain.time == at_end.time
+    np.testing.assert_array_equal(ma.getdata(a.positions),
+                                  ma.getdata(b.positions))
+    assert len(a.pos_history) == len(b.pos_history)
+
+
+def test_a_capture_outside_the_archive_is_refused(tmp_path):
+    envir = _envir()
+    _swarm(envir)
+    with envir.record(tmp_path / 'run') as rec:
+        pass
+    run = planktos.load_run(rec.path)
+    try:
+        with pytest.raises(IndexError, match='outside'):
+            run.restore(capture=7)
+    finally:
+        run.close()
+
+
+def test_a_resumed_run_carries_on_from_the_capture_it_was_given(tmp_path):
+    # The point of the feature: five more steps from capture j, finite and in
+    # the domain, with the history joining up rather than jumping.
+    envir = _envir()
+    swrm = _swarm(envir)
+    swrm.shared_props['cov'] = np.eye(2) * 0.01
+    with envir.record(tmp_path / 'run') as rec:
+        for _ in range(6):
+            swrm.move(0.1, silent=True)
+    run = planktos.load_run(rec.path)
+    try:
+        rebuilt, (resumed,) = run.restore(capture=3)
+    finally:
+        run.close()
+    for _ in range(5):
+        resumed.move(0.1, silent=True)
+    assert rebuilt.time == pytest.approx(0.8)
+    assert len(resumed.pos_history) == len(rebuilt.time_history) == 8
+    assert np.all(np.isfinite(ma.getdata(resumed.positions)))
+
+
+def test_restore_at_a_capture_says_what_it_could_not_take_from_there(capsys,
+                                                                     tmp_path):
+    envir = _envir()
+    swrm = _swarm(envir)
+    with envir.record(tmp_path / 'run') as rec:
+        for _ in range(3):
+            swrm.move(0.1, silent=True)
+    run = planktos.load_run(rec.path)
+    capsys.readouterr()      # record()'s own store= notice
+    try:
+        run.restore()
+        assert capsys.readouterr().out == '', 'the default restore is quiet'
+        run.restore(capture=1)
+        out = capsys.readouterr().out
+        run.restore(capture=3)
+        at_end = capsys.readouterr().out
+    finally:
+        run.close()
+    assert 'Restoring at capture 1 of 4 (t=0.1)' in out
+    assert 'Recorded per capture: positions' in out
+    # The default store keeps neither, so both come from the end state.
+    assert 'velocities' in out and 'shared_props' in out
+    # Nothing is substituted at the last capture: the checkpoint is that state.
+    assert 'velocities' not in at_end and 'shared_props' not in at_end
+
+
+def test_a_stored_series_is_taken_from_the_capture_not_the_end(tmp_path):
+    envir = _envir()
+    swrm = planktos.Swarm(swarm_size=4, envir=envir, seed=1,
+                          init=np.full((4, 2), 2.0))
+    swrm.shared_props['cov'] = np.eye(2) * 0.01
+    with envir.record(tmp_path / 'run',
+                      store=('positions', 'velocities')) as rec:
+        for _ in range(5):
+            swrm.move(0.1, silent=True)
+    full_vel = _stack([*swrm.vel_history, swrm.velocities])
+
+    run = planktos.load_run(rec.path)
+    try:
+        _, (resumed,) = run.restore(capture=2)
+    finally:
+        run.close()
+    np.testing.assert_allclose(ma.getdata(resumed.velocities), full_vel[2])
+    assert not np.allclose(full_vel[2], full_vel[-1]), (
+        'the velocities never varied, so this proves nothing')
+
+
+def test_the_props_series_is_taken_from_the_capture_too(tmp_path):
+    rec, envir, swrm = _props_run(tmp_path, cls=_Ageing, steps=5)
+    live = [*swrm.props_history, swrm.props]
+    run = planktos.load_run(rec.path)
+    try:
+        _, (resumed,) = run.restore(capture=2)
+    finally:
+        run.close()
+    assert resumed.props['stage'].tolist() == live[2]['stage'].tolist()
+    assert resumed.props['stage'].tolist() != live[-1]['stage'].tolist()
+    assert len(resumed.props_history) == 2
+    assert resumed.props_history[0]['stage'].tolist() ==         live[0]['stage'].tolist()
+
+
+def test_a_swarm_that_had_not_joined_yet_is_not_restored(tmp_path):
+    # Restoring it would hand back a swarm whose every agent is masked, which
+    # reads as "they all left the domain" rather than "they were not there".
+    envir = _envir()
+    first = _swarm(envir, seed=1)
+    with envir.record(tmp_path / 'run') as rec:
+        for _ in range(4):
+            first.move(0.1, silent=True)
+        late = envir.add_swarm(swarm_size=2, seed=9, init=np.full((2, 2), 3.0))
+        late.shared_props['cov'] = np.zeros((2, 2))
+        for _ in range(3):
+            envir.move_swarms(0.1, silent=True)
+
+    run = planktos.load_run(rec.path)
+    try:
+        with pytest.warns(UserWarning, match='did not exist yet'):
+            rebuilt, swarms = run.restore(capture=2)
+        _, both = run.restore(capture=6)
+    finally:
+        run.close()
+    assert len(swarms) == 1 and rebuilt.swarms == swarms
+    assert len(both) == 2
