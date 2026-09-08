@@ -12,9 +12,9 @@ Temporal interpolation of dynamically-loaded data is **linear in time**
 (`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
 story.
 
-**Suite: 1130 passed / 50 skipped (`pytest --runstreaming`, ~40 s),
-1178 / 2 (`pytest --runslow --runstreaming`, ~4 min).** No failures, **and no
-xfails: the pre-release list is empty.**
+**Suite: 1144 passed / 50 skipped (`pytest --runstreaming`, ~40 s),
+1192 / 2 (`pytest --runslow --runstreaming`, ~4 min).** No failures, **and no
+xfails: the pre-release list is empty.** *(Re-measured 2026-09-08.)*
 
 **The pre-release list is empty (2026-09-03).** `tests/test_data_streaming/` — the
 adversarial suite written from `run_persistence.md`, covering the streaming story end
@@ -152,20 +152,32 @@ back behind it.
    the whole props DataFrame per capture, and `restore()` fills `props_history` from it.
 
    **Where to pick up: `run_persistence.md` §6.1 has Steps R5 and R6, both specified and
-   neither built.** They are independent of each other.
+   neither built.** ⚠️ **They were swapped on 2026-09-08** — what was specified as R6 is
+   now R5 and goes first. They are not independent after all: R6 is the one step that
+   reconciles *every* file the archive writes, so each series added after it lands is a
+   second pass through the append path. R6's list was written 2026-09-03, before R4
+   landed, and already missed two files because of it (below).
 
-   - **R5 — appending to the archive a restored run came from.** Today a resumed run
+   - **R5 — resuming from an arbitrary capture** (`restore(capture=j)`), plus the
+     `shared_props` history that makes it honest. **R5a already works by hand** — the
+     note has the recipe, verified — so it is packaging plus a printed notice of what
+     came from the end of the run instead of from capture *j*. **R5b must not add an unconditional write**
+     (decided 2026-09-04): it folds into the per-swarm per-capture sidecar, which is
+     already written on the same cadence and is already O(1) per capture — renamed
+     `swarmNN_series.npz`, since it stops being only statistics. ⚠️ **Gate it on a
+     `'shared_props'` token of its own, not on `'props'`** (corrected 2026-09-08): that
+     file is written only when velocities are *absent*, so the specified gating left
+     `store=('positions', 'velocities', 'props')` with nowhere to put the series.
+     **R5c is cut** (2026-09-08): no `ib_collision_idx` history is built. Nothing reads
+     one, a resume takes the value from the end state, and the collision statistic is
+     already reachable by copying it into props in `after_move`. The checkpoint keeps
+     the latest value, as it always has.
+   - **R6 — appending to the archive a restored run came from.** Today a resumed run
      writes a second archive beside the first. Trigger is `envir.time ==
-     archive.times[-1]`; nothing already written is rewritten but the tail chunk.
-   - **R6 — resuming from an arbitrary capture** (`restore(capture=j)`), plus the two
-     series that make it honest: a `shared_props` history and a sparse
-     `ib_collision_idx` one. **R6a already works by hand** — the note has the recipe,
-     verified — so it is packaging plus a printed notice of what came from the end of
-     the run instead of from capture *j*. **R6b must not add an unconditional write**
-     (decided 2026-09-04): it folds into `swarmNN_stats.npz`, which is already written
-     on the same cadence and is already O(1) per capture. **R6c is settled as sparse**,
-     with the measurements in the note; break-even is a 50% collision rate and the
-     measured cases run 6–9%.
+     archive.times[-1]`; nothing already written is rewritten but the tail chunk. Its
+     two additions of 2026-09-08: the props chunks are refilled like the position ones,
+     and the per-swarm series file must be **seeded** from disk — it is rewritten whole
+     from memory, so an append that skips that silently keeps only the appended stretch.
 
    A per-capture `rndState` series was **dropped**: its only gain over the above is a
    bit-exact resume from an arbitrary capture, and stochastic difference is acceptable.

@@ -45,7 +45,7 @@ thing is too big to hold at once.
 | **A** | **Run archive** — append-only, chunked, crash-valid on-the-fly capture of agent state, with a public reader and a capture schedule that also governs history retention | persistence: crash survival, later sessions, larger-than-RAM analysis, bounded history memory, run speed, and eventually restart | **[done]** — §6.1 A0–A5, 2026-08-21 to 2026-08-25 |
 | **B** | **Fluid-side streaming** — per-dump means, vorticity by regime, whole-run extrema | dyload: never re-stream the dataset to draw a picture of it | **[done]** — §6.1 B1–B3, 2026-08-25 |
 | **C** | **Rendering** — frame selection by time, archive-backed `plot_all`, global colour/arrow scales | consumes A and B | **[done]** — §6.1 C1–C2, 2026-08-27 |
-| **R** | **Full-state reboot** — a checkpoint beside the archive, a reader that turns a directory back into an `Environment` and its `Swarm`s, and appending to the archive a run resumed from | the third problem this architecture solves, and the one A was built for: a run that outlives the process that made it | **in progress** — §6.1 R0–R3 done 2026-08-31 to 2026-09-03; R4 and R5 ahead |
+| **R** | **Full-state reboot** — a checkpoint beside the archive, a reader that turns a directory back into an `Environment` and its `Swarm`s, and appending to the archive a run resumed from | the third problem this architecture solves, and the one A was built for: a run that outlives the process that made it | **in progress** — §6.1 R0–R4 done 2026-08-31 to 2026-09-04; R5 and R6 ahead |
 | **D** | **Tiling and `extend`** — the real position-wrapping implementation | cleanup: tiling has raised `NotImplementedError` since the `FlowArray` removal | specified (§9), not built |
 
 ⚠️ **Two lettering schemes overlap, and the letters do not agree.** The components here
@@ -91,8 +91,8 @@ In order:
    run costs zero loader calls; the colour and arrow scales are global;
    `Environment.record(plot_all=)` renders from the archive at the end of a `with`
    block. **This was the last step that consumes A and B.**
-5. **§2.11 — the full-state reboot** is **in progress** *(scheduled 2026-08-27; R0–R3
-   done, R4 and R5 ahead — §6.1)*. It was filed as
+5. **§2.11 — the full-state reboot** is **in progress** *(scheduled 2026-08-27; R0–R4
+   done, R5 and R6 ahead — §6.1)*. It was filed as
    a follow-on until the acceptance suite made the gap concrete; §6.1's Step R says why
    it goes ahead of tiling rather than after it, and the one-line version is that the
    on-disk format has to grow and every archive written before it does cannot be
@@ -254,7 +254,7 @@ sections, which is how a specification drifts from its implementation:
 
 ```python
 Environment.record(path, *, fluid='vort', swarms=None,
-                   store=('positions', 'velocities'), capture_interval=1,
+                   store=('positions',), capture_interval=1,
                    chunk_size=100, quiver_shape=(60, 60), plot_all=None)
 ```
 
@@ -269,7 +269,7 @@ to plot (§2.8). Nothing ships between the steps, so deferring costs no compatib
 |---|---|---|---|---|
 | `path` | — | archive directory; created if missing (below) | §2.1 | **A3a** |
 | `swarms` | all of them | which swarms to capture | §2.1 | **A3a** |
-| `store` | positions + velocities | which per-agent arrays to keep | §2.4 | **A3a** |
+| `store` | positions | which per-agent arrays to keep; velocities and the opt-in series are named here | §2.4 | **A3a**, default changed at **R4b** |
 | `chunk_size` | `100` | captures buffered before a chunk is written | §2.3 | **A3a** |
 | `capture_interval` | `1` | capture — and retain history — every *k*-th step | §2.2 | **A3b** |
 | `fluid` | `'vort'` (2D) | which fluid quantity the render will need: `'vort'`, `'quiver'`, a tuple of both, or `None` | §3.3, §3.4 | **B3** |
@@ -1313,7 +1313,7 @@ Every attribute a `Swarm` carries, audited against a live one rather than from m
 | `velocities` | N×D masked | **required** | **always** | the plot statistics and the heading markers read `vel_history[n]`; re-deriving them from positions is wrong for any agent that collided or wrapped (§5.1) |
 | `accelerations` | N×D masked | **required** | opt-in | `move` recomputes it by finite difference on the first resumed step, so only an agent model that *reads* it needs the state restored — but there is no `accel_history` in memory, so the archive is the only place a series can exist |
 | `props` | DataFrame, N rows | **required** | opt-in | per-agent variation. Already opt-in in memory via `store_prop_history`, and the archive flag should mean the same thing |
-| `ib_collision_idx` | int N | **required** | opt-in, **sparse** | `after_move` overrides read it. It is −1 for almost every agent on almost every step, so a dense N-per-capture series is the wrong shape — store collision *events* (see below) |
+| `ib_collision_idx` | int N | **required** | **none** | `after_move` overrides read it, within the step that set it. The state goes in the checkpoint; **no history is built** — see below |
 | `shared_props` | dict | **required** | opt-in | ⚠️ **an addition to the list.** It is mutable and user code changes it mid-run — a ramping `mu`, a schedule on `cov` — so a series of it is meaningful. It also carries `name` and `color`, which therefore need no separate slot |
 | `rndState` | `Generator` | **required** | opt-in | ⚠️ **an addition.** The bit generator state advances on every draw. As state it is what makes a restart reproducible at all; as a *history* it buys something extra — a per-capture series lets a run be resumed from **any** capture, not only the last |
 | `ib_condition` | str | **required** | — | a plain attribute a user could change mid-run, but in practice fixed. If that ever stops being true it moves to opt-in |
@@ -1332,11 +1332,26 @@ yet is **not an attribute at all**: it is a constructor argument, and the derive
 the row describes is `props_history is not None`. Everything else in the table matches
 the object exactly.
 
-**The sparse format for `ib_collision_idx`.** One list per agent of
-`(capture, element)` pairs, appended when the index is not −1 — so a run where nothing
-collides costs nothing, and the dense array is reconstructed by scanning forward. Not
-a new file format: it is small enough to sit in json beside the swarm sidecar until
-measurement says otherwise.
+**No history of `ib_collision_idx` is built** *(decided 2026-09-08, cutting what had been
+specified as R5c)*. It is the one deliberate exception to §2.11.1's rule, and the reason is
+that nothing needs it:
+
+- **Planktos never reads one.** Every consumer — the `after_move` overrides in
+  `ex_ib2d_sticky.py`, `ex_ib2d_mvbnd_sticky.py`, `ex_sticky_seafan_3d.py` — reads it
+  inside the step that produced it, and `Swarm._apply_ib_result` rewrites every processed
+  agent's entry each step, so nothing carries over.
+- **A resume does not need it.** The first `move()` overwrites it before any `after_move`
+  can look, which is why it sits under "everything else — end state" in §6.1 R5's table.
+  The checkpoint keeps the latest value regardless: one int per agent, in a file that is
+  O(N) by design.
+- **The user-facing use is already reachable.** Collision statistics over a run come from
+  `self.props['hit'] = self.ib_collision_idx` in `after_move`, recorded by the R4c props
+  series. Both routes need the decision at `record()` time, so a dedicated series would
+  buy only a cheaper channel for someone wanting collisions and nothing else from props.
+
+If that last case ever turns up, the shape to build is `(capture, agent, element)` int32
+triples in an ordinary chunk file — `12·E` against a dense `4·N·T`, break-even at a 33%
+collision rate against measured rates of 6–9%.
 
 #### 2.11.3 What the Environment is missing
 
@@ -1910,7 +1925,7 @@ over the NaN), which:
   the test pinning that each row is its own dump's reduction rather than a neighbour's
   — a class of bug that no longer has anywhere to occur;
 - makes an append trivial, since combining two runs' extrema is one `max` rather than a
-  merge of two NaN-marked arrays. §6.1 Step R5 is what that is for;
+  merge of two NaN-marked arrays. §6.1 Step R6 is what that is for;
 - costs the per-dump extrema as a diagnostic. Nothing asked for it, and vorticity peaks
   per dump are of little interest with self-propelled agents in any case.
 
@@ -3114,80 +3129,16 @@ and R3 below now assume it.*
     a probe reporting `stage=2` at capture 0. Same copy `move` already makes for
     `props_history`, and pinned.
 
-    **Three items remain, and §6.1's Step R6 specifies them.** `rndState` per capture is
+    **Two items remain, and §6.1's Step R5 specifies them.** `rndState` per capture is
     **dropped** — its only benefit over what exists is a *bit-exact* resume from an
     arbitrary capture, and a stochastically-different one is enough (decided 2026-09-04).
 
   Last because R1–R3 deliver the reboot claim without any of it.
 
-- **R5 — appending to the archive a run was restored from.** *(Specified 2026-09-03,
-  after R3 shipped and the question "why does resuming write a second directory?" turned
-  out to have a good answer.)* Today `record()` on the directory a run came from meets
-  §2.1's non-empty rule and redirects to a timestamped sibling, so a resumed run sits
-  beside its own history rather than continuing it. Restoring already carries everything
-  needed to continue instead.
-
-  **The trigger is a checkable fact, not a remembered one: append when the archive's
-  last capture is exactly where the Environment now is** — `envir.time ==
-  archive.times[-1]` — and `store`, `chunk_size` and `capture_interval` all match
-  `meta.json`. That is better than "this Environment came from a restore" three ways: it
-  is verifiable from state; it fails safe, since restoring and then running before
-  recording would otherwise punch a hole in the series, and §2.8 already makes a partial
-  series a refusal rather than a silent fill; and it picks up the notebook workflow §2.1
-  already cares about, where `stop_recording()`, a look at the data, and a second
-  `record()` become one continuous archive. **Nothing already in the archive is ever
-  rewritten except the tail chunk**, which is the one piece that has to grow.
-
-  *What it needs:*
-
-  - **Refill the last chunk rather than starting a new one.** `_validate_chunks`
-    requires chunk *i* to hold exactly
-    `min(n, (i+1)·chunk_size) − max(first_capture, i·chunk_size)` rows, so a short chunk
-    in the middle of a series is refused. Read its rows back into the buffer and carry
-    on. Bounded by one chunk.
-  - **Do not take capture 0**, which `RunRecorder.__init__` otherwise always does — it
-    would duplicate the archive's last capture at the same timestamp.
-  - **Do not rewrite `meta.json`, and validate the roster instead of adding to it.**
-    `_ArchiveWriter.__init__` writes the metadata and `add_swarm` raises on a duplicate
-    index; both need an append path. A swarm joining *during* the appended stretch is an
-    ordinary mid-run swarm and needs nothing new.
-  - **Bypass `_resolve_archive_path`'s redirect**, which is the whole point.
-  - **Seed `means` from the existing sidecar**, which is the one fluid array that is
-    still per dump. The extrema are single running values as of 2026-09-03 (§3.5), so
-    combining them is one `max` — that simplification was made for this step and removes
-    what was otherwise the only silent-data-loss hazard here. Seed `_written` too, so
-    vorticity already on disk is not written again.
-  - **Refuse a mismatch** in `store`, `chunk_size` or `capture_interval` rather than
-    redirecting: silently starting a second archive when the user asked to append is the
-    confusing outcome, and a changed `capture_interval` makes the timeline unevenly
-    spaced halfway through.
-
-  *The headline test, and the reason to trust the feature:* **a run recorded, stopped,
-  restored and appended must produce an archive byte-identical to the same run recorded
-  in one go.** If that holds, every consumer is automatically correct and nothing else
-  needs arguing.
-
-  *Where it goes:* after R4, which changes the `store=` default and adds a sidecar the
-  append path has to know about. The §3.5 extrema simplification is a prerequisite and
-  landed first, on 2026-09-03.
-
-*What Step R is finished against:* `tests/test_data_streaming/test_stream_d_restart.py`.
-Its five strict `xfail`s were the acceptance criteria, and the headline —
-`test_a_run_resumes_from_disk_as_if_nothing_had_happened` — is the whole of R stated as
-one assertion. **All five are cleared as of R3 (2026-09-03)**, each with the sub-step
-that earned it. §2.11.5 records how: three asserted a file location this plan had since
-decided differently, so they were retargeted rather than merely un-`xfail`ed and
-rewritten as round-trips; a fourth was tightened, since it checked for an attribute name
-that handing back state satisfies without rebuilding anything. The retargeted checklist
-is **scaffolding and gets deleted once Step R is confirmed done**, R4 and R5 included.
-
-⚠️ **Those markers being gone does not mean Step R is finished.** R4 and R5 are still
-ahead of it; what the cleared list means is that the *claim* holds, not that the step is
-closed.
-
-**Step R6 — resuming from an arbitrary capture, and the two series it needs.**
-*(Specified 2026-09-04, after R4c landed the props series and measurement settled the
-open questions. Independent of R5; either order.)*
+**Step R5 — resuming from an arbitrary capture, and the series it needs.**
+*(Specified 2026-09-04 as R6, after R4c landed the props series and measurement settled
+the open questions. Renumbered ahead of the append step on 2026-09-08 — the reasoning is
+under R6, which is where the cost of the other order shows up.)*
 
 **The goal:** `RunArchive.restore(capture=j)` rebuilds at any capture, not only the last.
 A *stochastically different* continuation is the target — **not** a bit-exact one, which
@@ -3207,10 +3158,10 @@ state.* Two of those are wrong at *j* if they varied:
 | `positions` | yes | from the archive, always |
 | `props` | yes **when `store` had `'props'`** | R4c built the series |
 | `velocities` | yes **when `store` had `'velocities'`** | irrelevant to the default Brownian model, which never reads the agent's own velocity; **`motion.inertial_particles` does** |
-| `shared_props` | **no** — see R6b | a ramping `mu` resumes at its end-of-run value |
+| `shared_props` | **no** — see R5b | a ramping `mu` resumes at its end-of-run value |
 | everything else | end state | `accelerations` is recomputed on the first step; `ib_condition` and the class do not vary |
 
-**R6a — `restore(capture=j)`.** Wind the state back; take `props` and `velocities` from
+**R5a — `restore(capture=j)`.** Wind the state back; take `props` and `velocities` from
 capture *j* where they were stored. **Print what was and was not recorded**, in the shape
 of the `store=` notice, so the caller can judge whether anything time-varying is among the
 substitutions:
@@ -3219,8 +3170,8 @@ substitutions:
     props. Taken from the end of the run instead: velocities, shared_props --
     if either varied during the run, this resumes with their final values.
 
-**R6b — the `shared_props` series, in the file already being written.** It is the item
-that makes R6a honest, and it is **O(T), not O(N·T)**: ~1.2 MB over 10 000 captures
+**R5b — the `shared_props` series, folded into the per-capture sidecar.** It is the item
+that makes R5a honest, and it is **O(T), not O(N·T)**: ~1.2 MB over 10 000 captures
 against 248 MB for the props series at N=1000.
 
 ⚠️ **Do not add an unconditional write for it.** *(Decided 2026-09-04.)* Cheap on disk is
@@ -3234,35 +3185,113 @@ whether or not anyone wants the series. Two designs were rejected on the way:
   that is O(T). Reusing the file is not the same as reusing the row.
 
 **Instead, generalize `agents/swarmNN_stats.npz` into the per-swarm per-capture
-sidecar.** It is already accumulated in memory and rewritten whole on the chunk cadence,
-and it already holds exactly this shape — a few values per capture, independent of N.
-It gains `shared__<key>` entries alongside `avg_vel`/`avg_spd`/`std_spd`, written when
-`store` names `'props'`. No new file, no new write, and when neither the derived
-statistics nor the props series is wanted there is still no file at all. Rename it
-`swarmNN_series.npz` when this lands, since it stops being only statistics — cheap now,
-as nothing has shipped.
+sidecar**, and **rename it `swarmNN_series.npz`** — it stops being only statistics, and
+nothing has shipped, so the rename is free. It is already accumulated in memory and
+rewritten whole on the chunk cadence, and it already holds exactly this shape: a few
+values per capture, independent of N. It gains `shared__<key>` entries alongside
+`avg_vel`/`avg_spd`/`std_spd`. No new file and no new write.
+
+⚠️ **Gate it on its own `store` token, not on `'props'`** *(corrected 2026-09-08; the
+2026-09-04 specification said `'props'` and could not have worked).* That file exists
+today only when velocities are **absent** — `_ArchiveWriter.derive` is `'velocities' not
+in store`, and the `_stats` accumulator is created under that flag — so
+`store=('positions', 'velocities', 'props')` has no sidecar to write into at all.
+A `'shared_props'` token of its own fixes that, and is the more honest knob regardless:
+a ramping `mu` is O(T) and has nothing to do with whether the O(N·T) per-agent DataFrame
+was wanted. The file's existence condition becomes `derive or 'shared_props' in store`,
+so there is still no file when neither is asked for.
 
 *Three wrinkles it must handle*, all from `shared_props` being a mutable dict: a key that
 **appears** mid-run (pad the earlier captures), a key that **vanishes** (pad the later
 ones), and a key whose value **changes shape** mid-run, which cannot be stacked at all —
 refuse that one by name rather than write something that will not read back.
 
-**R6c — the sparse `ib_collision_idx` series.** ⚠️ **The "measure before fixing the
-format" caveat is discharged** *(2026-09-04)*. Measured collision rates, as the fraction
-of agent-captures holding an element index:
+**R5c — the `ib_collision_idx` series — ✂️ cut** *(2026-09-08)*. §2.11.2 carries the
+reasoning: nothing in Planktos reads such a history, a resume takes the value from the end
+state because the first `move()` overwrites it anyway, and the user-facing statistic is
+already reachable through the props series. The measured collision rates (6–9%) and the
+shape to build if the narrow case ever turns up are recorded there.
 
-| scenario, 200 agents × 60 steps | rate |
-|---|---|
-| drift into a box, mesh-heavy | **8.9%** |
-| strong drift along a wall — the channel case | **6.4%** |
-| no immersed boundary | 0% |
+**Step R6 — appending to the archive a run was restored from.** *(Specified 2026-09-03,
+after R3 shipped and the question "why does resuming write a second directory?" turned
+out to have a good answer.)* Today `record()` on the directory a run came from meets
+§2.1's non-empty rule and redirects to a timestamped sibling, so a resumed run sits
+beside its own history rather than continuing it. Restoring already carries everything
+needed to continue instead.
 
-Store `(agent, element)` int32 pairs with a per-capture offset array: `8·E + 4·T` against
-a dense int32 array's `4·N·T`. **Break-even is a 50% rate**, so at N=1000 over 10 000
-captures the measured 8.9% is 6.8 MB against 38.1 MB — 0.18×. Its **worst case is bounded
-at 2× dense** and needs every agent colliding on every capture, which cannot happen. Go
-sparse. *(An earlier note here put break-even at "one collision per agent per eight
-captures"; that was wrong by an order of magnitude.)*
+**The trigger is a checkable fact, not a remembered one: append when the archive's
+last capture is exactly where the Environment now is** — `envir.time ==
+archive.times[-1]` — and `store`, `chunk_size` and `capture_interval` all match
+`meta.json`. That is better than "this Environment came from a restore" three ways: it
+is verifiable from state; it fails safe, since restoring and then running before
+recording would otherwise punch a hole in the series, and §2.8 already makes a partial
+series a refusal rather than a silent fill; and it picks up the notebook workflow §2.1
+already cares about, where `stop_recording()`, a look at the data, and a second
+`record()` become one continuous archive. **Nothing already in the archive is ever
+rewritten except the tail chunk**, which is the one piece that has to grow.
+
+*What it needs:*
+
+- **Refill the last chunk rather than starting a new one.** `_validate_chunks`
+  requires chunk *i* to hold exactly
+  `min(n, (i+1)·chunk_size) − max(first_capture, i·chunk_size)` rows, so a short chunk
+  in the middle of a series is refused. Read its rows back into the buffer and carry
+  on. Bounded by one chunk. **The props series is chunked on the same boundary** (R4c),
+  so `swarmNN_props_NNNN.csv` and the `.npy` files its array-valued columns spill to
+  are refilled the same way — this is not only the position `.npz`.
+- **Do not take capture 0**, which `RunRecorder.__init__` otherwise always does — it
+  would duplicate the archive's last capture at the same timestamp.
+- **Do not rewrite `meta.json`, and validate the roster instead of adding to it.**
+  `_ArchiveWriter.__init__` writes the metadata and `add_swarm` raises on a duplicate
+  index; both need an append path. A swarm joining *during* the appended stretch is an
+  ordinary mid-run swarm and needs nothing new.
+- **Bypass `_resolve_archive_path`'s redirect**, which is the whole point.
+- **Seed the per-swarm series file**, `agents/swarmNN_series.npz` (R5b; `_stats.npz`
+  until that rename). Unlike the chunks it is rewritten **whole** from an in-memory
+  accumulator, so an append that does not read it back first leaves an archive whose
+  statistics cover the appended stretch only — and silently, since the file is
+  well-formed either way. Same silent-loss shape the §3.5 simplification removed on the
+  fluid side.
+- **Seed `means` from the existing sidecar**, which is the one fluid array that is
+  still per dump. The extrema are single running values as of 2026-09-03 (§3.5), so
+  combining them is one `max` — that simplification was made for this step and removes
+  the same hazard on the fluid side. Seed `_written` too, so vorticity already on disk
+  is not written again.
+- **Refuse a mismatch** in `store`, `chunk_size` or `capture_interval` rather than
+  redirecting: silently starting a second archive when the user asked to append is the
+  confusing outcome, and a changed `capture_interval` makes the timeline unevenly
+  spaced halfway through.
+
+*The headline test, and the reason to trust the feature:* **a run recorded, stopped,
+restored and appended must produce an archive byte-identical to the same run recorded
+in one go.** If that holds, every consumer is automatically correct and nothing else
+needs arguing.
+
+*Where it goes: last.* **This step reconciles every file the archive writes**, so each
+series added after it lands is a second pass through the append path. Two of the items
+above are what that already cost: this list was written on 2026-09-03 and R4 landed on
+2026-09-04, so the per-swarm series file and the props chunks did not exist to be named.
+R5 would have cost a third — and its `shared__<key>` entries go into the very file this
+step has to seed, under wrinkles (a key appearing, vanishing, changing shape) that are
+strictly harder across an append boundary, where "pad the earlier captures" means padding
+ones read back from disk. Hence the swap on 2026-09-08. Build it once, against the final
+file set, and the byte-identical headline test covers every series for free.
+
+The §3.5 extrema simplification is a prerequisite and landed first, on 2026-09-03.
+
+*What Step R is finished against:* `tests/test_data_streaming/test_stream_d_restart.py`.
+Its five strict `xfail`s were the acceptance criteria, and the headline —
+`test_a_run_resumes_from_disk_as_if_nothing_had_happened` — is the whole of R stated as
+one assertion. **All five are cleared as of R3 (2026-09-03)**, each with the sub-step
+that earned it. §2.11.5 records how: three asserted a file location this plan had since
+decided differently, so they were retargeted rather than merely un-`xfail`ed and
+rewritten as round-trips; a fourth was tightened, since it checked for an attribute name
+that handing back state satisfies without rebuilding anything. The retargeted checklist
+is **scaffolding and gets deleted once Step R is confirmed done**, R5 and R6 included.
+
+⚠️ **Those markers being gone does not mean Step R is finished.** R5 and R6 are still
+ahead of it; what the cleared list means is that the *claim* holds, not that the step is
+closed.
 
 **Step D — examples and docs prose pass (§7).**
 

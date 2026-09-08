@@ -328,6 +328,17 @@ def test_a_future_format_version_is_refused(tmp_path):
         archive.load_run(run.path)
 
 
+def test_an_archive_that_does_not_say_what_it_stores_is_refused(tmp_path):
+    # Guessing it wrong reports an intact archive as missing chunks, or hides a
+    # series that is on disk; every archive records the key.
+    run, _, _ = _recorded(tmp_path)
+    meta = json.loads((run.path / 'meta.json').read_text())
+    del meta['store']
+    (run.path / 'meta.json').write_text(json.dumps(meta))
+    with pytest.raises(ValueError, match="no 'store' in its meta.json"):
+        archive.load_run(run.path)
+
+
 def test_a_directory_that_is_not_an_archive_is_refused(tmp_path):
     (tmp_path / 'empty').mkdir()
     with pytest.raises(FileNotFoundError, match='no meta.json'):

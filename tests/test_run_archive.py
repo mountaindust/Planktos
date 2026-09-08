@@ -38,9 +38,11 @@ def _fingerprint(dimension=2, L=(10.0, 5.0), n_dumps=4, npts=(5, 3)):
                                      periodic_dim=False)
 
 
-def _writer(tmp_path, chunk_size=100, meta=None, name='run', **kwargs):
+def _writer(tmp_path, chunk_size=100, meta=None, name='run',
+            store=('positions', 'velocities'), **kwargs):
+    '''A writer holding both N x D arrays, which is what _capture supplies.'''
     return archive._ArchiveWriter(tmp_path / name, _fingerprint(), meta=meta,
-                                  chunk_size=chunk_size, **kwargs)
+                                  chunk_size=chunk_size, store=store, **kwargs)
 
 
 def _capture(N=3, D=2, value=0.0, masked=()):

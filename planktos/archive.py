@@ -14,10 +14,18 @@ This module owns the on-disk format::
                                 flow_times, periodic_dim
       agents/
         swarm00.json            name, N, D, first_capture
-        swarm00_pos_0000.npy    (rows, N, D)
-        swarm00_vel_0000.npy    (rows, N, D)
-        swarm00_mask_0000.npy   (rows, N) bool
         times_0000.npy          (rows,) shared across swarms
+        swarm00_pos_0000.npy    (rows, N, D); _vel and _acc likewise, when
+                                ``store`` names them
+        swarm00_mask_0000.npy   (rows, N) bool
+        swarm00_ang_0000.npy    (rows, N) 2D heading, and swarm00_stats.npz
+                                the per-capture speed statistics -- both
+                                written exactly when velocities are not
+        swarm00_props_0000.csv  the props series, when ``store`` names it; a
+                                column holding one array per agent spills to
+                                swarm00_prop-<name>_0000.npy
+        checkpoint00.npz        the latest state, with _props.csv and
+                                _meta.json beside it
       fluid/
         dump_stats.npz          per-dump component means, plus the run's
                                 velocity and vorticity extrema
@@ -667,7 +675,7 @@ class _ArchiveWriter:
     '''
 
     def __init__(self, path, fingerprint, meta=None, chunk_size=100,
-                 store=('positions', 'velocities')):
+                 store=('positions',)):
         if int(chunk_size) < 1:
             raise ValueError('chunk_size must be at least 1')
         self.store = tuple(store)
@@ -1543,7 +1551,7 @@ class RunRecorder:
         (with a warning), and this is what says where the data actually went.
     '''
 
-    def __init__(self, envir, path, swarms=None, store=('positions', 'velocities'),
+    def __init__(self, envir, path, swarms=None, store=('positions',),
                  chunk_size=100, fluid='vort', quiver_shape=QUIVER_SHAPE,
                  plot_all=None, meta=None):
         self.envir = envir
@@ -1992,7 +2000,7 @@ class RunArchive:
     grid : dict of ndarray
         the fingerprint: dimension, L, flow_points, flow_times, periodic_dim
     store : tuple of str
-        which per-agent arrays this archive holds
+        what this archive holds: the per-agent arrays, and any opt-in series
 
     See Also
     --------
@@ -2024,7 +2032,13 @@ class RunArchive:
                 'to version {}. Upgrade Planktos to read it.'.format(
                     version, FORMAT_VERSION))
 
-        self.store = tuple(self.meta.get('store', ('positions', 'velocities')))
+        # Recorded by every archive, beside version and chunk_size, and what
+        #   the chunk scan turns into the list of files that must be present.
+        if 'store' not in self.meta:
+            raise ValueError(
+                "{} has no 'store' in its meta.json, so what its chunk files "
+                "hold cannot be known.".format(self.path))
+        self.store = tuple(self.meta['store'])
         # The N x D arrays, which are chunked and validated as such; the rest of
         #   store names series with their own containers.
         self.arrays = tuple(n for n in self.store if n in STORABLE)
