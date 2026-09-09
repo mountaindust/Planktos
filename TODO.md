@@ -98,7 +98,8 @@ back behind it.
    `fluid.py`, `_frames.py`, `_provenance.py`, and the plotting methods in
    `_swarm.py`. `RunArchive.check_against` ("Silently plotting a foreign archive is
    the worst available outcome") is another.
-4. 🔴 **Full-state reboot — `run_persistence.md` §2.11, build order §6.1 Step R.**
+4. ✅ **Full-state reboot — done 2026-09-08** (`run_persistence.md` §2.11, build
+   order §6.1 Step R, R0–R6).
    Record a simulation, delete the `Environment` and the `Swarm`, rebuild both from the
    directory and carry on. §2.11 is the specification: an audit of every `Swarm`
    attribute against "state versus history", the five gaps on the `Environment` side
@@ -151,13 +152,12 @@ back behind it.
    off the archive and 59% off the recording overhead. *R4c*: `store=(…, 'props')` keeps
    the whole props DataFrame per capture, and `restore()` fills `props_history` from it.
 
-   **R5 is done (2026-09-08). Where to pick up: `run_persistence.md` §6.1 Step R6**,
-   the append path — specified, not built. ⚠️ **R5 and R6 were swapped on
-   2026-09-08** — what was specified as R6 is now R5 and went first. They are not
-   independent after all: R6 is the one step that reconciles *every* file the archive
-   writes, so each series added after it lands is a second pass through the append
-   path. R6's list was written 2026-09-03, before R4 landed, and already missed two
-   files because of it (below).
+   **All six sub-steps are built.** ⚠️ **R5 and R6 were swapped on 2026-09-08** —
+   what was specified as R6 became R5 and went first. They were not independent after
+   all: R6 is the one step that reconciles *every* file the archive writes, so each
+   series added after it lands would have been a second pass through the append path.
+   R6's list was written 2026-09-03, before R4 landed, and had already missed two files
+   because of it.
 
    - **✅ R5 — resuming from an arbitrary capture. Done 2026-09-08.**
      *R5a*: `RunArchive.restore(capture=j)` winds the state back, takes `props` and
@@ -186,12 +186,21 @@ back behind it.
      §8.1, with a `Swarm.release`/`retire` pair to wrap the one non-obvious step — the
      mask is hardened, so a row comes back only by assigning a freshly built array.
      Filed as an example in §7 and as deferred API in §8.
-   - **R6 — appending to the archive a restored run came from.** Today a resumed run
-     writes a second archive beside the first. Trigger is `envir.time ==
-     archive.times[-1]`; nothing already written is rewritten but the tail chunk. Its
-     two additions of 2026-09-08: the props chunks are refilled like the position ones,
-     and the per-swarm series file must be **seeded** from disk — it is rewritten whole
-     from memory, so an append that skips that silently keeps only the appended stretch.
+   - **✅ R6 — appending to the archive a restored run came from. Done 2026-09-08.**
+     `record()` on the directory a run came from continues that archive instead of
+     writing a second one beside it. The trigger is a checkable fact rather than a
+     remembered restore — `envir.time == archive.times[-1]`, with `store`,
+     `chunk_size`, `capture_interval` and the fluid quantities all matching — so it
+     also picks up the notebook workflow of `stop_recording()`, a look at the data, and
+     a second `record()`. Nothing already written is rewritten but the tail chunk.
+     **The headline holds: a run recorded, stopped, restored and appended gives an
+     archive byte-identical to the same run recorded in one go**, over eight
+     parametrized shapes plus a windowed fluid. Three things the specification did not
+     name are in the note under R6: the fingerprint is checked *before* the
+     configuration (a different world redirects, a different configuration refuses),
+     `capture_interval` had to start being recorded in `meta.json`, and the checkpoint
+     was not byte-reproducible — `.npy` stores the memory order, so a restored swarm's
+     arrays wrote different bytes for the same values.
 
    A per-capture `rndState` series was **dropped**: its only gain over the above is a
    bit-exact resume from an arbitrary capture, and stochastic difference is acceptable.

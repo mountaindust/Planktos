@@ -35,6 +35,7 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - New Environment.record(plot_all=) renders a movie when the with block ends, including when the run raised.
 - New RunArchive.restore rebuilds the Environment and Swarms from a recording and resumes the run, same random stream and all.
 - New RunArchive.restore(capture=) resumes from any capture, not only the last, saying what came from the end instead.
+- Recording into the archive a run was restored from now continues it, rather than writing a second archive beside it.
 - Bug fix: plots raised ZeroDivisionError when a swarm's first recorded state held no agents; % remaining now counts from the first state that does.
 - Swarm.move now raises when the Environment holds more than one Swarm; use Environment.move_swarms. It previously warned and froze the others, misaligning their histories.
 - Bug fix: adding a Swarm to a different Environment now removes it from its previous one, which kept moving it and left it in both.

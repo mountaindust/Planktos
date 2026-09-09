@@ -2108,6 +2108,14 @@ class Environment:
             a warning naming it -- overwriting a previous run is never the right
             default, and refusing outright would strand a job that was ready to
             start. The handle's ``.path`` says where the data actually went.
+
+            **The exception is an archive this run continues**: where its last
+            capture is exactly where this Environment now is -- which is where
+            restoring leaves the clock -- the recording is appended to it and
+            the directory is used as it stands. ``store``, ``chunk_size``,
+            ``capture_interval`` and the recorded fluid quantities have to
+            match, and every swarm the archive holds has to go on being
+            recorded; any of those differing raises rather than redirecting.
         fluid : {'vort', 'quiver', tuple of both, None}, default='vort'
             which fluid quantity **the render will need**. Note this is not 
             "which quantity to write": asking for ``'vort'`` frequently
@@ -2198,7 +2206,8 @@ class Environment:
             dump (see below)
         ValueError
             if ``plot_all`` is given for a recording covering more than one
-            swarm
+            swarm, or if this would continue an existing archive (see ``path``)
+            but is configured differently from it
 
         Notes
         -----
@@ -2273,7 +2282,8 @@ class Environment:
         try:
             self._recorder = archive.RunRecorder(
                 self, path, swarms=swarms, store=store, chunk_size=chunk_size,
-                fluid=fluid, quiver_shape=quiver_shape, plot_all=plot_all)
+                fluid=fluid, quiver_shape=quiver_shape, plot_all=plot_all,
+                capture_interval=self._capture_interval)
         except BaseException:
             # Nothing is recording, so nothing may be gated.
             self._capture_interval = 1

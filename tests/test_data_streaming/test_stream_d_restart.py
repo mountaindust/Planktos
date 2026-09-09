@@ -14,11 +14,15 @@ something is broken, in three parts:
 * what the archive already carried, asserted positively -- the environment
   really can be rebuilt from provenance, and the agent state really does come
   back exactly;
-* a checklist, one item per test, of what a checkpoint needs beyond the last
-  capture. **R2 built it, so these now pass; they are scaffolding and get
-  deleted when Step R is confirmed done** (2.11.5);
 * and the whole claim end to end, so that "as if nothing happened" is tested
   rather than assumed.
+
+**Step R is complete as of R6 (2026-09-08)**, so the per-item checklist that sat
+in the middle of this file is gone: it was scaffolding for pieces landing one at
+a time, the end-to-end test covers the same ground, and a list kept past that is
+two things to keep in sync (2.11.5). What a resumed run does with the archive it
+came from -- it continues it, byte for byte -- is pinned in
+tests/test_recording.py, beside the rest of what record() decides.
 
 Every test still marked xfail is a piece of unbuilt work, not a defect in what
 was built.
@@ -149,65 +153,7 @@ def test_a_hand_built_restart_gets_the_positions_and_the_clock_right(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-#                  the checklist -- TEMPORARY, delete when R is done           #
-# --------------------------------------------------------------------------- #
-# One item per test, from run_persistence.md 2.11's table of what a checkpoint
-# needs beyond the archive's last capture. Written as xfails when none of it
-# existed; retargeted at R2, which built the checkpoint and made them pass.
-#
-# These are build scaffolding and are DELETED once Step R is confirmed done.
-# The end-to-end test below covers the same ground -- full coverage of this list
-# is what makes it pass -- and is merely harder to read as a list. A checklist
-# earns its keep while the pieces are landing one at a time, and becomes two
-# things to keep in sync afterwards. run_persistence.md 2.11.5 records that.
-
-def test_the_archive_carries_the_random_number_generator_state(tmp_path):
-    # Without it a restart is not reproducible, which is most of the point.
-    rec, envir, swrm = _record_a_run(tmp_path)
-    archive = planktos.load_run(rec.path)
-    try:
-        state = archive.checkpoint(0)['rndState']
-        restored = np.random.default_rng()
-        restored.bit_generator.state = state
-        np.testing.assert_array_equal(restored.normal(size=5),
-                                      swrm.rndState.normal(size=5))
-    finally:
-        archive.close()
-
-
-def test_the_archive_carries_the_per_agent_properties(tmp_path):
-    # props and shared_props are what make one agent differ from another.
-    # Without them a restarted swarm is a default swarm standing on recorded
-    # coordinates.
-    rec, envir, swrm = _record_a_run(tmp_path)
-    archive = planktos.load_run(rec.path)
-    try:
-        cp = archive.checkpoint(0)
-        np.testing.assert_array_equal(cp['props']['sensitivity'].to_numpy(),
-                                      swrm.props['sensitivity'].to_numpy())
-        np.testing.assert_array_equal(cp['shared_props']['cov'],
-                                      swrm.shared_props['cov'])
-    finally:
-        archive.close()
-
-
-def test_the_archive_carries_the_swarm_construction_arguments(tmp_path):
-    # ib_condition, name and color are Swarm construction arguments a restart
-    # has to supply. name and color live in shared_props.
-    rec, envir, swrm = _record_a_run(tmp_path)
-    archive = planktos.load_run(rec.path)
-    try:
-        cp = archive.checkpoint(0)
-        assert cp['ib_condition'] == swrm.ib_condition
-        assert cp['swarm_class'] == 'planktos._swarm.Swarm'
-        for key in ('name', 'color'):
-            assert cp['shared_props'][key] == swrm.shared_props[key]
-    finally:
-        archive.close()
-
-
-# --------------------------------------------------------------------------- #
-#                     what the archive does not carry yet                     #
+#                        the restart entry point                              #
 # --------------------------------------------------------------------------- #
 
 def test_planktos_offers_a_way_to_resume_a_recorded_run(tmp_path):

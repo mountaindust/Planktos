@@ -52,7 +52,7 @@ the same simulation. The directory reads back in a fresh process, survives being
 moved, and can be deleted after being plotted. The two defects found here (F3,
 F4) were both fixed.
 
-**Claim 4 — holds, as of R3 (2026-09-03).**
+**Claim 4 — holds, as of R3 (2026-09-03); Step R complete at R6 (2026-09-08).**
 `planktos.load_run(path).restore()` hands back a live `Environment` and its
 `Swarm`s at the state the run left off, and
 `test_a_run_resumes_from_disk_as_if_nothing_had_happened` — one uninterrupted
@@ -62,6 +62,16 @@ it lives; the checkpoint supplies what history cannot (`rndState`, `props`,
 `shared_props`, `ib_condition`, `color`, the Swarm subclass name); and the
 provenance record grew `char_L`, `U`, `nu` and `ibmesh_color` to make the
 `Environment` half complete. **No xfails remain in this suite.**
+
+**R4–R6 finished the step** (2026-09-04 to 2026-09-08), past what this claim
+needed: `store=` became opt-in with the derived statistics that let velocities
+drop, `restore(capture=j)` rebuilds at any capture rather than only the last,
+`store=(…, 'props'|'shared_props')` keep those per capture, and a resumed run
+**continues the archive it came from** instead of writing a second one beside
+it. That last is pinned where it belongs, in `tests/test_recording.py`: a run
+recorded, stopped, restored and appended gives an archive byte-identical to the
+same run recorded in one go. The per-item checklist that sat in
+`test_stream_d_restart.py` is deleted, as it always said it would be.
 
 ⚠️ The Environment side is *nearly* complete, not complete. An attribute-by-
 attribute audit of a rebuild found five things `provenance['environment']`
@@ -176,6 +186,10 @@ Step R is done.
 end-to-end test no longer hand-reconstructs anything: it records half a run,
 throws both objects away, restores, finishes, and lands bit for bit where an
 uninterrupted run of the same length landed.
+
+**The scaffolding checklist is gone as of R6** (2026-09-08), which is when Step
+R was confirmed done — the condition it was marked with from the day it was
+retargeted.
 
 Pinned: `test_stream_d_restart.py`, which now has no xfails at all
 

@@ -64,7 +64,9 @@ step, fluid quantities per fluid dump.
     Environments, Swarms or time steps, so the format can be exercised without
     running a simulation. The directory it writes into comes from
     ``_resolve_archive_path``, which redirects a non-empty target to a
-    timestamped sibling rather than overwriting it.
+    timestamped sibling rather than overwriting it -- unless ``_appendable``
+    says the target is an archive this run continues, in which case it is
+    written into as it stands.
 ``_plan_fluid``
     decides what the fluid half will hold -- which quantities, and where
     vorticity will come from -- *before* the archive directory is resolved, since
@@ -646,6 +648,120 @@ def _resolve_archive_path(path):
 #                                                                           #
 #############################################################################
 
+def _as_json(obj):
+    '''A canonical JSON string, for comparing what a round trip may have changed.'''
+
+    return json.dumps(obj, sort_keys=True, default=str)
+
+
+# Where vorticity lives is settled once per archive and then followed, so it is
+#   not part of what an append has to match.
+_FLUID_DERIVED = ('vorticity', 'vorticity_dir')
+
+
+def _fluid_request(meta):
+    '''The part of a fluid plan that says what was *asked for*, not what follows.'''
+
+    if not meta:
+        return meta
+    return {k: v for k, v in meta.items() if k not in _FLUID_DERIVED}
+
+
+def _appendable(path, envir, store, chunk_size, capture_interval, fluid_meta):
+    """The archive at ``path`` if this recording continues it, else None.
+
+    Appending is decided from a checkable fact rather than a remembered one:
+    **the archive's last capture is exactly where the Environment now is**, and
+    the recording is being made the same way. That is better than "this
+    Environment came from a restore" three ways -- it is verifiable from state;
+    it fails safe, since restoring and then running before recording leaves the
+    clock past the last capture, so a separate archive is written rather than a
+    series with a hole in it; and it picks up the notebook workflow of
+    ``stop_recording()``, a look at the data, and a second ``record()``.
+
+    Returns
+    -------
+    RunArchive or None
+        open, and the writer's to close
+
+    Raises
+    ------
+    ValueError
+        where the archive lines up in time but was recorded with a different
+        ``store``, ``chunk_size``, ``capture_interval`` or set of fluid
+        quantities. Quietly starting a second archive is the confusing outcome
+        there; a changed ``capture_interval`` makes the timeline unevenly spaced
+        half way through; and since ``meta.json`` is not rewritten, a changed
+        fluid plan would leave the archive describing one thing and holding
+        another.
+    """
+
+    path = Path(path)
+    if not (path / 'meta.json').is_file():
+        # Not an archive at all. A non-empty directory still redirects.
+        return None
+    try:
+        archive = RunArchive(path)
+    except (ValueError, FileNotFoundError):
+        # Unreadable or inconsistent, so not something to continue -- and not
+        #   this call's business to complain about.
+        return None
+
+    if not len(archive.times) or envir.time != archive.times[-1]:
+        archive.close()
+        return None
+
+    try:
+        archive.check_against(envir)
+    except ValueError as err:
+        # A different world -- a moved fluid, or one that could not be replayed
+        #   at all -- so this is not a continuation of that run and the
+        #   configuration of the recording is beside the point. Said out loud,
+        #   then handled the way any non-empty directory is.
+        warnings.warn(
+            '{} ends where this run now is, but does not describe this '
+            'Environment, so it is being left alone rather than continued: '
+            '{}'.format(path, err), UserWarning)
+        archive.close()
+        return None
+
+    recorded = archive.meta.get('capture_interval')
+    problems = []
+    # meta.json is not rewritten, so what this call asks of the fluid has to be
+    #   what the archive already records -- new dumps written on a different
+    #   quiver grid beside old ones, say. Compared over the *request* only:
+    #   where vorticity lives is a derived fact, and a windowed recording that
+    #   wrote a partial series into its source changed it, so recomputing the
+    #   plan here would refuse the very append that recording was leading to.
+    if _as_json(_fluid_request(archive.meta.get('fluid'))) !=             _as_json(_fluid_request(fluid_meta)):
+        problems.append('fluid: archive recorded {}, this call {}'.format(
+            _fluid_request(archive.meta.get('fluid')),
+            _fluid_request(fluid_meta)))
+    if tuple(store) != tuple(archive.store):
+        problems.append('store: archive has {}, this call {}'.format(
+            list(archive.store), list(store)))
+    if int(chunk_size) != int(archive.meta['chunk_size']):
+        problems.append('chunk_size: archive has {}, this call {}'.format(
+            archive.meta['chunk_size'], chunk_size))
+    if recorded is not None and int(capture_interval) != int(recorded):
+        problems.append('capture_interval: archive has {}, this call {}'.format(
+            recorded, capture_interval))
+    if problems:
+        archive.close()
+        raise ValueError(
+            '{} ends exactly where this run now is, so this recording would '
+            'continue it -- but it was recorded differently: {}. Match those, '
+            'or record to a different directory.'.format(
+                path, '; '.join(problems)))
+    if recorded is None:
+        # Written before the interval was recorded, so nothing says the
+        #   timeline would stay evenly spaced. Redirect, as it did then.
+        archive.close()
+        return None
+
+    return archive
+
+
 class _ArchiveWriter:
     '''Writes agent captures to an archive directory as a run proceeds.
 
@@ -672,6 +788,11 @@ class _ArchiveWriter:
         accumulates belongs in a file that accumulates.
     chunk_size : int, default=100
         captures buffered before a chunk is written
+    append : RunArchive, optional
+        an archive this recording continues rather than replaces, from
+        :func:`_appendable`. Given one, ``path`` is used as it stands, nothing
+        already written is rewritten but the tail chunk, and the metadata and
+        the grid are left alone. Closed here once it has been read back.
 
     Attributes
     ----------
@@ -680,7 +801,7 @@ class _ArchiveWriter:
     '''
 
     def __init__(self, path, fingerprint, meta=None, chunk_size=100,
-                 store=('positions',)):
+                 store=('positions',), append=None):
         if int(chunk_size) < 1:
             raise ValueError('chunk_size must be at least 1')
         self.store = tuple(store)
@@ -698,7 +819,13 @@ class _ArchiveWriter:
                 'positions must be stored: nothing consumes an archive without '
                 'them, in or out of plotting')
         self.chunk_size = int(chunk_size)
-        self.path = _resolve_archive_path(path)
+        self.appending = append is not None
+        # The whole point of appending is not to redirect, and the metadata and
+        #   the grid are written once at the start of an archive and never
+        #   rewritten -- which is as true of the second recording into one as of
+        #   the first.
+        self.path = (Path(append.path) if self.appending
+                     else _resolve_archive_path(path))
         self.agent_dir = self.path / 'agents'
         self.agent_dir.mkdir(exist_ok=True)
         # Component B writes here. Created now so that the layout is complete
@@ -706,16 +833,17 @@ class _ArchiveWriter:
         (self.path / 'fluid').mkdir(exist_ok=True)
 
         self._fingerprint = dict(fingerprint)
-        _atomic_write(self.path / 'grid.npz',
-                      lambda fobj: np.savez(fobj, **self._fingerprint))
+        if not self.appending:
+            _atomic_write(self.path / 'grid.npz',
+                          lambda fobj: np.savez(fobj, **self._fingerprint))
 
-        record = dict(meta) if meta else {}
-        record.update(version=FORMAT_VERSION,
-                      dtype=str(DTYPE),
-                      chunk_size=self.chunk_size,
-                      store=list(self.store),
-                      grid=fingerprint_summary(self._fingerprint))
-        _save_json(self.path / 'meta.json', record)
+            record = dict(meta) if meta else {}
+            record.update(version=FORMAT_VERSION,
+                          dtype=str(DTYPE),
+                          chunk_size=self.chunk_size,
+                          store=list(self.store),
+                          grid=fingerprint_summary(self._fingerprint))
+            _save_json(self.path / 'meta.json', record)
 
         # What velocities were needed for, recorded exactly when velocities are
         #   not: the agent-speed statistics a plot prints, and the heading angle
@@ -742,9 +870,149 @@ class _ArchiveWriter:
         #           'n': int, 'dropped': set}
         self._shared = {}
         self._closed = False
+        if self.appending:
+            self._seed_from(append)
+            append.close()
+
+
+    @property
+    def next_capture(self):
+        '''The capture index this writer expects next. 0 for a new archive.'''
+
+        return 0 if self._next_capture is None else self._next_capture
 
 
     ####################   recording   ####################
+
+    def _seed_from(self, archive):
+        '''Pick up an existing archive so this recording continues it.
+
+        Everything the writer would otherwise build from capture 0: the roster,
+        the capture counter, the tail chunk's buffers, and the whole of each
+        per-swarm series. Nothing already on disk is rewritten except the tail
+        chunk, which is the one piece that has to grow -- and the series files,
+        which are rewritten whole by design and so must be read back first or
+        an append silently keeps only the appended stretch.
+        '''
+
+        n = len(archive.times)
+        self._next_capture = n
+        # Uniformly the chunk the next capture falls in: when the tail chunk is
+        #   full this is a new one and there is nothing to read back.
+        self._chunk = n // self.chunk_size
+        partial = n % self.chunk_size
+
+        for entry in archive._entries:
+            index = entry['index']
+            self._swarms[index] = dict(entry)
+            self._buffers[index] = {name: [] for name in self.arrays}
+            self._buffers[index]['mask'] = []
+            if 'props' in self.series:
+                self._buffers[index]['props'] = []
+            if self.derive and entry['D'] == 2:
+                self._buffers[index]['angle'] = []
+            if self.derive:
+                self._stats[index] = {'avg_vel': [], 'avg_spd': [],
+                                      'std_spd': []}
+            if self.shared:
+                self._shared[index] = {'columns': {}, 'shapes': {}, 'n': 0,
+                                       'dropped': set()}
+            self._seed_series(archive, index)
+
+        if not partial:
+            return
+        self._times = [float(t) for t in archive.times[n - partial:]]
+        for entry in archive._entries:
+            self._seed_chunk(archive, entry, self._chunk)
+
+
+    def _seed_chunk(self, archive, entry, chunk):
+        '''Read one swarm's tail chunk back into the buffers it was written from.
+
+        _validate_chunks requires chunk i to hold exactly the rows the capture
+        count implies, so a short chunk left in the middle of a series is a
+        refusal. Bounded by one chunk.
+        '''
+
+        index = entry['index']
+        buffers = self._buffers[index]
+        rows = [j for j in range(max(entry['first_capture'], chunk*self.chunk_size),
+                                len(archive.times))]
+        if not rows:
+            # The swarm joined after this chunk started and has not been
+            #   captured in it, which is the case _write_chunk skips writing.
+            return
+        for name in self.arrays:
+            series = archive.array(name, index)
+            for j in rows:
+                buffers[name].append(np.asarray(ma.getdata(series[j]), DTYPE))
+        mask = archive.positions(index)
+        for j in rows:
+            buffers['mask'].append(ma.getmaskarray(mask[j])[:, 0].copy())
+        if 'angle' in buffers:
+            angles = archive.angles(index)
+            for j in rows:
+                buffers['angle'].append(
+                    np.asarray(ma.getdata(angles[j]), np.float32))
+        if 'props' in buffers:
+            frames = archive.props(index) or []
+            first = entry['first_capture']
+            for j in rows:
+                buffers['props'].append(frames[j - first])
+
+
+    def _seed_series(self, archive, index):
+        '''Read one swarm's whole per-capture sidecar back into its accumulators.
+
+        Whole, not the tail: the file is rewritten entire on every flush, so an
+        append that starts these empty leaves an archive covering the appended
+        stretch only -- and silently, since the file is well formed either way.
+        '''
+
+        if self.derive:
+            stats = archive.agent_stats(index)
+            if stats is None:
+                self._missing_series(archive, index, 'speed statistics')
+            else:
+                acc = self._stats[index]
+                acc['avg_vel'] = [np.asarray(v) for v in stats['avg_vel']]
+                acc['avg_spd'] = [float(v) for v in stats['avg_spd']]
+                acc['std_spd'] = [float(v) for v in stats['std_spd']]
+        if not self.shared:
+            return
+        columns = archive.shared_props(index)
+        if columns is None:
+            self._missing_series(archive, index, 'shared_props series')
+            return
+        acc = self._shared[index]
+        for name, column in columns.items():
+            absent = ma.getmaskarray(column)
+            values = ma.getdata(column)
+            # None back in the padded slots, which is what _stack_shared reads;
+            #   a fill value would come back as a real one.
+            acc['columns'][name] = [
+                None if np.all(absent[j]) else np.array(values[j])
+                for j in range(len(column))]
+            present = [v for v in acc['columns'][name] if v is not None]
+            if present:
+                acc['shapes'][name] = present[0].shape
+        acc['n'] = len(archive.times) - archive.first_capture(index)
+
+
+    @staticmethod
+    def _missing_series(archive, index, what):
+        '''Say so when a series this archive should hold is not there to seed.
+
+        It is rewritten whole, so what cannot be read back cannot be carried
+        forward: the file will end up covering the appended stretch only. That
+        is well formed either way, which is exactly why it has to be said.
+        '''
+
+        warnings.warn(
+            'swarm {} has no {} in {}, so it cannot be carried forward and the '
+            'file will cover only the stretch being appended now.'.format(
+                index, what, archive.path), UserWarning)
+
 
     def add_swarm(self, index, name, N, D, first_capture):
         '''Register a swarm, writing its sidecar immediately.
@@ -769,7 +1037,21 @@ class _ArchiveWriter:
 
         index = int(index)
         if index in self._swarms:
-            raise ValueError('swarm index {} is already recorded'.format(index))
+            if not self.appending:
+                raise ValueError(
+                    'swarm index {} is already recorded'.format(index))
+            # Continuing an archive, so the roster is validated rather than
+            #   added to. The shape is what the chunk files are written at and
+            #   the one thing that cannot differ; the name lives in
+            #   shared_props and is free to have changed.
+            entry = self._swarms[index]
+            if (int(N), int(D)) != (entry['N'], entry['D']):
+                raise ValueError(
+                    'swarm {} is {} agents in {}D, where {} recorded it as {} '
+                    'in {}D. An archive is chunked at a fixed shape, so it '
+                    'cannot be continued at another one.'.format(
+                        index, N, D, self.path, entry['N'], entry['D']))
+            return
         entry = {'index': index, 'name': str(name), 'N': int(N), 'D': int(D),
                  'first_capture': int(first_capture)}
         self._swarms[index] = entry
@@ -1133,14 +1415,22 @@ class _ArchiveWriter:
         # The mask is per row -- agents leave whole rows -- and is positions'.
         positions = state['positions']
         arrays['mask'] = np.asarray(
-            ma.getmaskarray(positions)[:, 0], dtype=bool)
+            ma.getmaskarray(positions)[:, 0], dtype=bool, order='C')
+        # order='C' throughout: .npy records the memory order in its header, so
+        #   the same values in a Fortran-ordered array write different bytes,
+        #   and a Swarm's arrays are C-ordered fresh but can come back either
+        #   way from a restore. One recording of a run should not differ from
+        #   another for that. Not ascontiguousarray, which promotes a 0-d array
+        #   to shape (1,) and so would turn a scalar shared prop into a
+        #   one-element array on the way back.
         for name in ('positions', 'velocities', 'accelerations'):
             value = state.get(name)
             if value is not None:
-                arrays[name] = np.asarray(ma.getdata(value), dtype=DTYPE)
+                arrays[name] = np.asarray(ma.getdata(value), dtype=DTYPE,
+                                          order='C')
         if state.get('ib_collision_idx') is not None:
             arrays['ib_collision_idx'] = np.asarray(
-                state['ib_collision_idx'], dtype=np.int64)
+                state['ib_collision_idx'], dtype=np.int64, order='C')
 
         # shared_props follows Swarm.save_data's precedent of an npz: it is a
         #   mixture of scalars and arrays, and npz takes both without pickle.
@@ -1149,7 +1439,7 @@ class _ArchiveWriter:
             if array is None:
                 dropped.append(name)
             else:
-                arrays['shared__' + name] = array
+                arrays['shared__' + name] = np.asarray(array, order='C')
         if dropped:
             warnings.warn(
                 'shared_props {} cannot be stored without pickle and are not '
@@ -1158,7 +1448,7 @@ class _ArchiveWriter:
 
         frame, prop_arrays = _split_props(state['props'])
         for name, array in prop_arrays.items():
-            arrays['prop__' + name] = array
+            arrays['prop__' + name] = np.asarray(array, order='C')
 
         _atomic_write(self.agent_dir / npz_name,
                       lambda fobj: np.savez(fobj, **arrays))
@@ -1329,6 +1619,12 @@ class _FluidWriter:
         the archive's ``fluid/`` directory
     plan : _FluidPlan
         from :func:`_plan_fluid`
+    seed : dict, optional
+        an existing ``dump_stats.npz``, when this recording continues an
+        archive. The extrema combine by one ``max``; the per-dump means are
+        filled in wherever this process has not loaded that dump; and the dumps
+        it names are taken as already recorded, so their vorticity and quiver
+        are not written a second time.
     '''
 
     # Dumps recorded before the statistics sidecar is rewritten. It is rewritten
@@ -1338,7 +1634,7 @@ class _FluidWriter:
     #   kill that the agent chunks already have.
     STATS_INTERVAL = 100
 
-    def __init__(self, envir, fluid_dir, plan):
+    def __init__(self, envir, fluid_dir, plan, seed=None):
         self.dir = Path(fluid_dir)
         self.plan = plan
         self.quantities = plan.quantities
@@ -1362,6 +1658,13 @@ class _FluidWriter:
         self._flow_times = (None if self.flow.flow_times is None
                             else np.asarray(self.flow.flow_times, dtype=DTYPE))
 
+        # Continuing an archive: everything the earlier recording derived, so
+        #   that what it wrote is neither lost nor written again. Before the
+        #   resident sweep below, which must see the seeded _written.
+        self._seed_means = None
+        if seed is not None:
+            self._seed(seed)
+
         # Only one of the three regimes writes: a source that already ships the
         #   field is read, and a resident field is recomputed at render. This is
         #   the single place the fluid is told where its per-dump vorticity is,
@@ -1382,6 +1685,24 @@ class _FluidWriter:
         self.flush()
 
 
+    def _seed(self, stats):
+        '''Pick up what an earlier recording into this archive derived.'''
+
+        stored = stats.get('means')
+        if stored is not None and stored.shape == self.flow.dump_means.shape:
+            self._seed_means = np.asarray(stored, dtype=DTYPE)
+            # A row that is not NaN is a dump the earlier recording had in
+            #   memory, which is exactly what _written means.
+            self._written = {int(i) for i in
+                             np.flatnonzero(~np.isnan(stored).any(axis=1))}
+        vmax = stats.get('vmax')
+        if vmax is not None and np.shape(vmax) == np.shape(self._vmax):
+            self._vmax = np.fmax(self._vmax, vmax)
+        absmax = stats.get('vort_absmax')
+        if absmax is not None:
+            self._vort_absmax = float(np.fmax(self._vort_absmax, absmax))
+
+
     ####################   lifecycle   ####################
 
     def stop(self):
@@ -1397,7 +1718,12 @@ class _FluidWriter:
 
         if not self._unwritten:
             return
-        arrays = {'means': self.flow.dump_means, 'vmax': self._vmax}
+        means = self.flow.dump_means
+        if self._seed_means is not None:
+            # A dump this process never loaded keeps the mean the earlier
+            #   recording took of it; both are the mean of the same dump.
+            means = np.where(np.isnan(means), self._seed_means, means)
+        arrays = {'means': means, 'vmax': self._vmax}
         if 'vort' in self.quantities:
             arrays['vort_absmax'] = np.asarray(self._vort_absmax)
         if self._flow_times is not None:
@@ -1606,6 +1932,27 @@ def _plan_fluid(envir, fluid, quiver_shape):
                       meta=meta)
 
 
+def _replan_as_recorded(plan, recorded):
+    '''``plan`` with the archive's settled vorticity placement put back.
+
+    Everything else in a plan is the caller's request, which :func:`_appendable`
+    has already checked matches.
+    '''
+
+    if not recorded or 'vorticity' not in recorded:
+        return plan
+    directory = recorded.get('vorticity_dir')
+    directory = None if directory is None else Path(directory)
+    meta = dict(plan.meta)
+    meta['vorticity'] = recorded['vorticity']
+    meta['vorticity_dir'] = recorded.get('vorticity_dir')
+    # Any regime but 'recomputed' means the series lives on disk, so this
+    #   stretch goes on filling it in. Writing is per dump and never clobbers,
+    #   so a series the source already shipped whole simply skips every one.
+    return plan._replace(write_vorticity=recorded['vorticity'] != 'recomputed',
+                         vorticity_dir=directory, meta=meta)
+
+
 def _writable_source_dir(flow):
     '''The source's own fluid directory, if a file can actually be created there.
 
@@ -1662,11 +2009,14 @@ class RunRecorder:
         the directory being written to. **Not necessarily the one asked for**: 
         recording into a non-empty directory redirects to a timestamped sibling
         (with a warning), and this is what says where the data actually went.
+    appending : bool
+        whether this recording is continuing the archive already at ``path``
+        rather than starting one
     '''
 
     def __init__(self, envir, path, swarms=None, store=('positions',),
                  chunk_size=100, fluid='vort', quiver_shape=QUIVER_SHAPE,
-                 plot_all=None, meta=None):
+                 plot_all=None, meta=None, capture_interval=1):
         self.envir = envir
         # Given an explicit list, capture exactly those. Given none, capture
         #   whatever the environment holds -- including swarms that join later.
@@ -1681,6 +2031,9 @@ class RunRecorder:
         self._plot_all = _check_plot_all(plot_all, self._swarms)
 
         record_meta = dict(meta) if meta else {}
+        # Recorded because a later recording has to be able to tell whether
+        #   continuing this archive would leave its timeline evenly spaced.
+        record_meta['capture_interval'] = int(capture_interval)
         record_meta['provenance'] = {
             'planktos_version': planktos.__version__,
             'environment': {'L': [float(v) for v in envir.L],
@@ -1718,9 +2071,24 @@ class RunRecorder:
         record_meta['fluid'] = (None if plan is None
                                 else _provenance.jsonable(plan.meta))
 
+        # Decided from state rather than from a remembered restore, and
+        #   before the writer exists, since it is what settles where the writer
+        #   writes at all.
+        append = _appendable(path, envir, self._store, chunk_size,
+                             capture_interval, record_meta['fluid'])
+        self.appending = append is not None
+        seed_fluid = None if append is None else append.dump_stats()
+        if self.appending and plan is not None:
+            # meta.json is not rewritten, so the archive's own answer to where
+            #   vorticity lives is the one on disk and the one this has to keep
+            #   using -- including when this recording would have chosen
+            #   differently, which is what a partial series written by the
+            #   earlier stretch makes it do.
+            plan = _replan_as_recorded(plan, append.meta.get('fluid'))
+            record_meta['fluid'] = _provenance.jsonable(plan.meta)
         self._writer = _ArchiveWriter(path, fingerprint_of(envir),
                                       meta=record_meta, chunk_size=chunk_size,
-                                      store=self._store)
+                                      store=self._store, append=append)
         self.path = self._writer.path
 
         # Now that the directory is settled, hook the fluid. This also sweeps
@@ -1728,11 +2096,30 @@ class RunRecorder:
         #   fully recorded by the time record() returns.
         self._fluid = None
         if plan is not None:
-            self._fluid = _FluidWriter(envir, self.path / 'fluid', plan)
+            self._fluid = _FluidWriter(envir, self.path / 'fluid', plan,
+                                       seed=seed_fluid)
 
-        self._n_captures = 0
+        self._n_captures = self._writer.next_capture
         for index, swarm in enumerate(self._swarms):
-            self._register(index, swarm, first_capture=0)
+            self._register(index, swarm, first_capture=self._n_captures)
+        if self.appending:
+            # Every swarm the archive holds has to go on being captured: a
+            #   series that stops half way is a refusal rather than a silent
+            #   gap (section 2.8), and the writer would otherwise raise about
+            #   mismatched swarm sets at the first step instead of here.
+            absent = sorted(set(self._writer._swarms) - set(
+                range(len(self._swarms))))
+            if absent:
+                raise ValueError(
+                    'swarm(s) {} are in {} but are not being recorded now, so '
+                    'continuing it would leave their series stopping part way '
+                    'through. Record every swarm the archive holds, or record '
+                    'to a different directory.'.format(absent, self.path))
+            # The archive's last capture is this state -- that is what decided
+            #   the append -- so taking one now would duplicate it at the same
+            #   timestamp. The next one lands a capture interval from here,
+            #   which is the spacing the series already has.
+            return
         # Capture 0 covers t0, so that capture j is exactly full_pos_history[j].
         self._capture()
         self._checkpoint()
@@ -2325,10 +2712,12 @@ class RunArchive:
         ``Environment.plot_structs`` are function handles and are not recorded;
         a run that had them is restored without them, with a warning.
 
-        Recording a restored run writes a **new** archive: ``record()`` on the
-        directory it came from finds that directory non-empty and redirects to
-        a timestamped sibling. The resumed run is a second archive beside the
-        first rather than a continuation of it.
+        Recording a restored run **continues the archive it came from**, since
+        restoring leaves the clock exactly at that archive's last capture and
+        that is what ``record()`` checks. The resumed stretch is appended to the
+        same directory rather than written beside it, provided ``store``,
+        ``chunk_size`` and ``capture_interval`` match what the archive records
+        and the fingerprint still describes this Environment.
         """
 
         at_capture = capture is not None

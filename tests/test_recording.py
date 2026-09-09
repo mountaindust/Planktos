@@ -15,6 +15,7 @@ At this step every environmental time step is captured. The capture schedule
 (capture_interval) is A3b.
 '''
 
+import hashlib
 import json
 import shutil
 import warnings
@@ -329,16 +330,31 @@ def test_stop_recording_is_idempotent_and_safe_when_nothing_is_recording(tmp_pat
 
 
 def test_a_non_empty_directory_redirects_and_the_handle_says_where(tmp_path):
+    # The run has moved on since the archive's last capture, so a second
+    # recording is a second run rather than a continuation of the first.
     envir = _envir()
     swrm = _swarm(envir)
     target = tmp_path / 'run'
     with envir.record(target) as first:
         swrm.move(0.1, silent=True)
+    swrm.move(0.1, silent=True)
     with pytest.warns(UserWarning, match='already holds data'):
         second = envir.record(target)
     envir.stop_recording()
     assert second.path != first.path
     assert first.path == target
+
+
+def test_a_directory_that_is_not_an_archive_still_redirects(tmp_path):
+    envir = _envir()
+    _swarm(envir)
+    target = tmp_path / 'run'
+    target.mkdir()
+    (target / 'notes.txt').write_text('not an archive')
+    with pytest.warns(UserWarning, match='already holds data'):
+        rec = envir.record(target)
+    envir.stop_recording()
+    assert rec.path != target
 
 
 def test_a_raise_mid_run_leaves_a_readable_archive(tmp_path):
@@ -1103,24 +1119,37 @@ def test_restore_refuses_an_archive_with_no_checkpoint(tmp_path):
         run.close()
 
 
-def test_a_restored_run_records_to_a_new_directory(tmp_path):
-    # Continuing to record after a restore meets the non-empty-directory rule
-    # and redirects, so a resumed run writes a second archive rather than
-    # appending to the one it came from. Pinned because it is a surprise worth
-    # having written down.
-    envir = _envir()
+def test_a_restored_run_appends_to_the_archive_it_came_from(tmp_path):
+    # Restoring leaves the clock exactly at the archive's last capture, which
+    # is what says this recording continues that one rather than starting a
+    # second archive beside it.
+    envir = planktos.Environment()
+    envir.read_IB2d_fluid_data(str(FIXTURES / 'ib2d_fluid_min'), dt=0.01,
+                               print_dump=10)
     swrm = _swarm(envir)
     with envir.record(tmp_path / 'run') as rec:
-        swrm.move(0.1, silent=True)
+        for _ in range(2):
+            swrm.move(0.1, silent=True)
     run = planktos.load_run(rec.path)
     try:
+        assert len(run.times) == 3
         rebuilt, (resumed,) = run.restore()
     finally:
         run.close()
-    with pytest.warns(UserWarning, match='already holds data'):
-        with rebuilt.record(rec.path) as second:
+
+    with rebuilt.record(rec.path) as second:
+        for _ in range(2):
             resumed.move(0.1, silent=True)
-    assert second.path != rec.path
+    assert second.path == rec.path
+    assert second.appending
+
+    run = planktos.load_run(rec.path)
+    try:
+        # One continuous series, not two archives and not a hole.
+        assert len(run.times) == 5
+        np.testing.assert_allclose(run.times, [0.0, 0.1, 0.2, 0.3, 0.4])
+    finally:
+        run.close()
 
 
 def test_a_restored_run_plots_from_its_own_archive(tmp_path):
@@ -1766,3 +1795,420 @@ def test_restore_says_so_when_a_promised_series_is_missing(tmp_path):
         run.close()
     np.testing.assert_allclose(resumed.shared_props['mu'],
                                swrm.shared_props['mu'])
+# --------------------------------------------------------------------------- #
+#      appending to the archive a run was restored from (section 6.1, R6)      #
+# --------------------------------------------------------------------------- #
+# A resumed run used to write a second archive beside the first, since record()
+# met the non-empty-directory rule and redirected. It continues the first now,
+# and the trigger is a checkable fact rather than a remembered one: the
+# archive's last capture is exactly where the Environment is, and the recording
+# is being made the same way.
+#
+# The headline is test_an_appended_run_is_byte_identical_to_one_recorded_whole.
+# If that holds, every consumer is automatically correct and nothing else about
+# the feature needs arguing.
+
+class _Ageing2(planktos.Swarm):
+    '''Moves a prop and a shared prop every step, so every series varies.'''
+
+    def after_move(self, dt):
+        self.props['stage'] = self.props['stage'] + 1
+        self.shared_props['mu'] = self.shared_props['mu'] + np.array([0.01, 0.])
+
+
+def _fluid_source(tmp_path, with_vorticity=False):
+    '''A writable copy of the fluid fixture, shared by the runs of one test.
+
+    Never the committed fixture directory itself: under ``INUM`` the field is
+    windowed, and section 3.3 then writes per-dump vorticity **beside the
+    source's own dumps**, which would both dirty the repository and make the
+    regime depend on whether an earlier test had already written there.
+
+    ``with_vorticity`` picks the fixture that already ships an ``Omega`` series.
+    Two runs compared byte for byte have to see the same source in the same
+    state, and a windowed run that writes vorticity changes that state for
+    whoever records next -- correctly, since a source that ships the field is
+    read rather than written.
+    '''
+
+    name = 'ib2d_fluid_vort_min' if with_vorticity else 'ib2d_fluid_min'
+    dest = tmp_path / 'fluid_src'
+    dest.mkdir(parents=True, exist_ok=True)
+    for f in sorted((FIXTURES / name).glob('*.vtk')):
+        shutil.copy(f, dest)
+    return dest
+
+
+def _fluid_envir(tmp_path, INUM=None, src=None):
+    envir = planktos.Environment()
+    envir.read_IB2d_fluid_data(str(src or _fluid_source(tmp_path)), dt=0.01,
+                               print_dump=10, INUM=INUM)
+    return envir
+
+
+def _seeded_swarm(envir):
+    swrm = _Ageing2(swarm_size=5, envir=envir, seed=7, store_prop_history=True)
+    swrm.shared_props['cov'] = np.eye(2) * 1e-4
+    swrm.shared_props['mu'] = np.array([0.1, 0.0])
+    swrm.add_prop('stage', np.arange(5))
+    swrm.add_prop('percov', [np.eye(2) * 0.01 * (i + 1) for i in range(5)])
+    return swrm
+
+
+def _record_run(path, steps, split=None, INUM=None, src=None, **kwargs):
+    '''One run of ``steps`` steps, optionally stopped and resumed at ``split``.
+
+    ``src`` is the fluid directory, which two runs being compared must share --
+    the loader call is recorded in the provenance, path and all.
+    '''
+
+    envir = _fluid_envir(path.parent, INUM=INUM, src=src)
+    swrm = _seeded_swarm(envir)
+    if split is None:
+        with envir.record(path, **kwargs) as rec:
+            for _ in range(steps):
+                swrm.move(0.01, silent=True)
+        return rec.path
+    with envir.record(path, **kwargs) as rec:
+        for _ in range(split):
+            swrm.move(0.01, silent=True)
+    run = planktos.load_run(rec.path)
+    try:
+        rebuilt, (resumed,) = run.restore()
+    finally:
+        run.close()
+    with rebuilt.record(path, **kwargs) as second:
+        for _ in range(steps - split):
+            resumed.move(0.01, silent=True)
+    return second.path
+
+
+def _tree(root):
+    '''Every file under ``root``, by relative path, with its bytes hashed.'''
+
+    return {str(f.relative_to(root)): hashlib.sha256(f.read_bytes()).hexdigest()
+            for f in sorted(root.rglob('*')) if f.is_file()}
+
+
+ALL_SERIES = ('positions', 'velocities', 'props', 'shared_props')
+
+
+@pytest.mark.parametrize('label,split,kwargs', [
+    ('mid-chunk', 4, dict(chunk_size=3)),
+    ('on a chunk boundary', 5, dict(chunk_size=3)),
+    ('a chunk per capture', 3, dict(chunk_size=1)),
+    ('every series stored', 4, dict(chunk_size=3, store=ALL_SERIES)),
+    ('every series, on a boundary', 5, dict(chunk_size=3, store=ALL_SERIES)),
+    ('a coarse capture schedule', 4, dict(chunk_size=3, capture_interval=2)),
+    ('a quiver backdrop', 4, dict(chunk_size=3, fluid='quiver')),
+    ('no fluid recorded', 4, dict(chunk_size=3, fluid=None)),
+])
+def test_an_appended_run_is_byte_identical_to_one_recorded_whole(
+        label, split, kwargs, tmp_path):
+    steps = 8 if kwargs.get('chunk_size', 100) > 1 else 6
+    src = _fluid_source(tmp_path)
+    whole = _tree(_record_run(tmp_path / 'whole', steps, src=src, **kwargs))
+    joined = _tree(_record_run(tmp_path / 'joined', steps, split=split, src=src,
+                               **kwargs))
+    assert sorted(whole) == sorted(joined), 'the two archives hold different files'
+    differ = [name for name in sorted(whole) if whole[name] != joined[name]]
+    assert not differ, 'these differ between the two archives: {}'.format(differ)
+
+
+@pytest.mark.parametrize('INUM', [4, None])
+def test_a_windowed_run_appends_byte_identically_too(INUM, tmp_path):
+    # The fluid half: per-dump vorticity already on disk must not be written
+    # again, and the per-dump means must be seeded rather than left NaN for
+    # every dump the appended stretch did not itself load.
+    src = _fluid_source(tmp_path, with_vorticity=INUM is not None)
+    whole = _tree(_record_run(tmp_path / 'whole', 8, INUM=INUM, src=src,
+                              chunk_size=3))
+    joined = _tree(_record_run(tmp_path / 'joined', 8, split=4, INUM=INUM,
+                               src=src, chunk_size=3))
+    assert sorted(whole) == sorted(joined)
+    assert not [n for n in sorted(whole) if whole[n] != joined[n]]
+
+
+def test_an_append_does_not_rewrite_vorticity_already_on_disk(tmp_path):
+    # The byte-identical tests hold the source fixed by starting from a fixture
+    # that already ships an Omega series, so they never exercise the regime that
+    # WRITES one. This does: a windowed run over a source with no vorticity,
+    # split across a restore. _written is seeded from the non-NaN rows of the
+    # stored means, so the appended stretch re-derives nothing the first wrote.
+    src = _fluid_source(tmp_path)
+    assert not list(src.glob('Omega.*.vtk')), 'the fixture already ships one'
+
+    path = _record_run(tmp_path / 'run', 8, split=4, INUM=4, src=src,
+                       chunk_size=3)
+    written = sorted(f.name for f in src.glob('Omega.*.vtk'))
+    assert written, 'the windowed regime wrote no vorticity at all'
+    # One per dump reached, none duplicated, and none left half-written.
+    assert len(written) == len(set(written))
+    assert not list(src.glob('*' + archive.TMP_SUFFIX))
+    assert not list(src.glob(archive.TMP_DIRNAME))
+
+    run = planktos.load_run(path)
+    try:
+        assert len(run.times) == 9
+        means = run.dump_stats()['means']
+        # Every dump whose vorticity is on disk was seen by the recording, so
+        # its mean is there too -- the two halves of the fluid sidecar cannot
+        # disagree about which dumps the run reached.
+        covered = ~np.isnan(means).all(axis=1)
+        assert covered.sum() >= len(written)
+    finally:
+        run.close()
+
+
+def test_the_seam_holds_no_duplicate_capture(tmp_path):
+    # RunRecorder takes capture 0 on construction, which on an append would
+    # repeat the archive's last capture at the same timestamp.
+    path = _record_run(tmp_path / 'run', 6, split=3, chunk_size=100)
+    run = planktos.load_run(path)
+    try:
+        assert len(run.times) == 7
+        assert np.all(np.diff(run.times) > 0), 'the seam repeated a capture'
+    finally:
+        run.close()
+
+
+def test_the_tail_chunk_is_refilled_rather_than_restarted(tmp_path):
+    # _validate_chunks refuses a short chunk in the middle of a series, so the
+    # existing rows have to be read back into the buffer and carried on from.
+    path = _record_run(tmp_path / 'run', 8, split=4, chunk_size=3)
+    agents = path / 'agents'
+    rows = [len(np.load(f, mmap_mode='r'))
+            for f in sorted(agents.glob('swarm00_pos_*.npy'),
+                            key=archive._chunk_index_of)]
+    assert rows == [3, 3, 3]
+    # And load_run validates it rather than taking our word for it.
+    planktos.load_run(path).close()
+
+
+def test_the_metadata_is_not_rewritten_by_an_append(tmp_path):
+    envir = _fluid_envir(tmp_path)
+    swrm = _seeded_swarm(envir)
+    with envir.record(tmp_path / 'run', chunk_size=3) as rec:
+        for _ in range(4):
+            swrm.move(0.01, silent=True)
+    before = (rec.path / 'meta.json').read_bytes()
+    grid_before = (rec.path / 'grid.npz').read_bytes()
+
+    run = planktos.load_run(rec.path)
+    try:
+        rebuilt, (resumed,) = run.restore()
+    finally:
+        run.close()
+    with rebuilt.record(rec.path, chunk_size=3):
+        for _ in range(4):
+            resumed.move(0.01, silent=True)
+    assert (rec.path / 'meta.json').read_bytes() == before
+    assert (rec.path / 'grid.npz').read_bytes() == grid_before
+
+
+def test_the_capture_schedule_is_recorded_so_an_append_can_check_it(tmp_path):
+    envir = _envir()
+    _swarm(envir)
+    with envir.record(tmp_path / 'run', capture_interval=3) as rec:
+        pass
+    meta = json.loads((rec.path / 'meta.json').read_text())
+    assert meta['capture_interval'] == 3
+
+
+def test_the_series_sidecar_is_seeded_rather_than_restarted(tmp_path):
+    # It is rewritten whole from an in-memory accumulator, so an append that
+    # does not read it back first leaves an archive whose statistics cover the
+    # appended stretch only -- silently, since the file is well formed either
+    # way. The same shape of silent loss on the fluid side is below.
+    path = _record_run(tmp_path / 'run', 8, split=4, chunk_size=3,
+                       store=('positions', 'shared_props'))
+    run = planktos.load_run(path)
+    try:
+        assert len(run.times) == 9
+        assert len(run.agent_stats(0)['avg_spd']) == 9
+        mu = run.shared_props(0)['mu']
+        assert len(mu) == 9
+        # It ramps by 0.01 a step across the seam, with no flat stretch where
+        # the earlier recording values would have been dropped.
+        np.testing.assert_allclose(ma.getdata(mu)[:, 0],
+                                   0.1 + 0.01 * np.arange(9))
+    finally:
+        run.close()
+
+
+def test_the_fluid_statistics_are_seeded_rather_than_restarted(tmp_path):
+    # The means are the one fluid array still kept per dump, so a dump the
+    # appended stretch never loaded has to keep the mean taken of it the first
+    # time round. NaN there means the dump was never reached, which is a fact
+    # about the run rather than about the append -- so the check is that the
+    # two archives agree, not that nothing is NaN.
+    src = _fluid_source(tmp_path, with_vorticity=True)
+    whole = _record_run(tmp_path / 'whole', 8, INUM=4, src=src, chunk_size=3)
+    joined = _record_run(tmp_path / 'joined', 8, split=4, INUM=4, src=src,
+                         chunk_size=3)
+    a, b = planktos.load_run(whole), planktos.load_run(joined)
+    try:
+        means = a.dump_stats()['means']
+        assert not np.isnan(means).all(), 'no dump was recorded at all'
+        np.testing.assert_array_equal(means, b.dump_stats()['means'])
+        for name in ('vmax', 'vort_absmax'):
+            np.testing.assert_array_equal(a.dump_stats()[name],
+                                          b.dump_stats()[name])
+    finally:
+        a.close()
+        b.close()
+
+
+def test_the_notebook_workflow_makes_one_continuous_archive(tmp_path):
+    # stop_recording(), a look at the data, and a second record() -- with no
+    # restore anywhere. The trigger is the clock, not a remembered restore.
+    envir = _fluid_envir(tmp_path)
+    swrm = _seeded_swarm(envir)
+    rec = envir.record(tmp_path / 'run', chunk_size=3)
+    for _ in range(3):
+        swrm.move(0.01, silent=True)
+    envir.stop_recording()
+    planktos.load_run(rec.path).close()          # the look at the data
+    second = envir.record(tmp_path / 'run', chunk_size=3)
+    for _ in range(3):
+        swrm.move(0.01, silent=True)
+    envir.stop_recording()
+
+    assert second.path == rec.path
+    run = planktos.load_run(rec.path)
+    try:
+        assert len(run.times) == 7
+        np.testing.assert_allclose(run.times, 0.01 * np.arange(7))
+    finally:
+        run.close()
+
+
+@pytest.mark.parametrize('kwargs,expected', [
+    (dict(store=('positions', 'velocities')), 'store'),
+    (dict(chunk_size=7), 'chunk_size'),
+    (dict(capture_interval=2), 'capture_interval'),
+    (dict(fluid='quiver'), 'fluid'),
+])
+def test_a_recording_made_differently_is_refused_not_redirected(
+        kwargs, expected, tmp_path):
+    # Quietly starting a second archive when the clock says the user is
+    # continuing this one is the confusing outcome.
+    envir = _fluid_envir(tmp_path)
+    swrm = _seeded_swarm(envir)
+    with envir.record(tmp_path / 'run', chunk_size=3) as rec:
+        for _ in range(3):
+            swrm.move(0.01, silent=True)
+    with pytest.raises(ValueError, match=expected):
+        envir.record(rec.path, **kwargs)
+
+
+def test_an_archive_of_a_different_world_is_left_alone_not_continued(tmp_path):
+    # The clock lines up, but the archive does not describe this Environment --
+    # so it is not a continuation of that run at all, and the non-empty
+    # directory rule applies as it always did.
+    envir = _fluid_envir(tmp_path)
+    swrm = _seeded_swarm(envir)
+    with envir.record(tmp_path / 'run', chunk_size=3) as rec:
+        for _ in range(3):
+            swrm.move(0.01, silent=True)
+    grid = dict(np.load(rec.path / 'grid.npz'))
+    grid['L'] = grid['L'] * 2
+    np.savez(rec.path / 'grid.npz', **grid)
+
+    with pytest.warns(UserWarning, match='does not describe this Environment'):
+        second = envir.record(rec.path, chunk_size=3)
+    envir.stop_recording()
+    assert second.path != rec.path
+
+
+def test_a_swarm_of_a_different_size_cannot_continue_an_archive(tmp_path):
+    # The chunk files are written at a fixed shape.
+    envir = _fluid_envir(tmp_path)
+    swrm = _seeded_swarm(envir)
+    with envir.record(tmp_path / 'run', chunk_size=3) as rec:
+        for _ in range(3):
+            swrm.move(0.01, silent=True)
+    run = planktos.load_run(rec.path)
+    try:
+        rebuilt, (resumed,) = run.restore()
+    finally:
+        run.close()
+    resumed.positions = ma.masked_array(np.full((4, 2), 1.0))
+    with pytest.raises(ValueError, match='cannot be continued'):
+        rebuilt.record(rec.path, chunk_size=3)
+
+
+def test_a_second_append_continues_the_first(tmp_path):
+    # Nothing about the step is once-only: each stretch seeds from whatever the
+    # archive holds by then, including a tail chunk an earlier append grew.
+    src = _fluid_source(tmp_path)
+    envir = _fluid_envir(tmp_path, src=src)
+    swrm = _seeded_swarm(envir)
+    path = tmp_path / 'run'
+    with envir.record(path, chunk_size=3):
+        for _ in range(3):
+            swrm.move(0.01, silent=True)
+    for _ in range(2):
+        run = planktos.load_run(path)
+        try:
+            envir, (swrm,) = run.restore()
+        finally:
+            run.close()
+        with envir.record(path, chunk_size=3):
+            for _ in range(3):
+                swrm.move(0.01, silent=True)
+
+    whole = _tree(_record_run(tmp_path / 'whole', 9, src=src, chunk_size=3))
+    joined = _tree(path)
+    assert sorted(whole) == sorted(joined)
+    assert not [n for n in sorted(whole) if whole[n] != joined[n]]
+
+
+def test_a_swarm_the_archive_holds_cannot_be_dropped_from_an_append(tmp_path):
+    # A series that stops part way is a refusal rather than a silent gap, and
+    # saying so at record() beats the writer complaining about mismatched swarm
+    # sets at the first step after it.
+    envir = _fluid_envir(tmp_path)
+    first = _seeded_swarm(envir)
+    second = planktos.Swarm(swarm_size=2, envir=envir, seed=6,
+                            init=np.full((2, 2), 1.0))
+    second.shared_props['cov'] = np.zeros((2, 2))
+    with envir.record(tmp_path / 'run', chunk_size=100) as rec:
+        for _ in range(2):
+            envir.move_swarms(0.01, silent=True)
+    run = planktos.load_run(rec.path)
+    try:
+        rebuilt, swarms = run.restore()
+    finally:
+        run.close()
+    rebuilt.swarms = [swarms[0]]
+    with pytest.raises(ValueError, match='not being recorded now'):
+        rebuilt.record(rec.path, chunk_size=100)
+
+
+def test_a_swarm_joining_the_appended_stretch_is_an_ordinary_late_swarm(
+        tmp_path):
+    envir = _fluid_envir(tmp_path)
+    swrm = _seeded_swarm(envir)
+    with envir.record(tmp_path / 'run', chunk_size=100) as rec:
+        for _ in range(3):
+            envir.move_swarms(0.01, silent=True)
+    run = planktos.load_run(rec.path)
+    try:
+        rebuilt, (resumed,) = run.restore()
+    finally:
+        run.close()
+    with rebuilt.record(rec.path, chunk_size=100):
+        late = rebuilt.add_swarm(swarm_size=2, seed=9,
+                                 init=np.full((2, 2), 1.0))
+        late.shared_props['cov'] = np.zeros((2, 2))
+        for _ in range(3):
+            rebuilt.move_swarms(0.01, silent=True)
+
+    run = planktos.load_run(rec.path)
+    try:
+        assert len(run.swarms) == 2
+        assert run.first_capture(1) == 4
+        assert len(run.times) == 7
+    finally:
+        run.close()

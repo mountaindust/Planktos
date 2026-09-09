@@ -82,6 +82,9 @@ chosen. Read it back from the handle's ``.path`` rather than from the path you
 asked for, or a later ``load_run('run_archive/')`` will quietly open the
 *previous* run.
 
+**Unless the run continues that archive**, which is the one case where the
+directory is written into as it stands -- see `Continuing an archive`_.
+
 What is refused
 ~~~~~~~~~~~~~~~
 
@@ -363,11 +366,35 @@ A swarm that had not joined the run by capture *j* did not exist then, and is
 left out of the returned list with a warning rather than handed back with every
 agent masked.
 
-.. note::
-   Recording a restored run writes a **new** archive. ``record()`` on the
-   directory it came from finds that directory non-empty and redirects to a
-   timestamped sibling, so a resumed run sits beside the first rather than
-   continuing it.
+Continuing an archive
+~~~~~~~~~~~~~~~~~~~~~
+
+``record()`` on the directory a run came from **continues that archive** rather
+than starting a second one beside it::
+
+    envir, (swrm,) = planktos.load_run('run_archive/').restore()
+    with envir.record('run_archive/'):        # the same directory
+        for _ in range(more_steps):
+            swrm.move(dt)
+
+The trigger is a checkable fact, not a remembered one: **the archive's last
+capture is exactly where the Environment now is.** Restoring leaves the clock
+there, which is why the ordinary resume works with no extra argument -- and so
+does the notebook shape of the same thing, where ``stop_recording()``, a look at
+the data, and a second ``record()`` become one continuous archive.
+
+It fails safe in both directions. Running a few steps between restoring and
+recording moves the clock off the last capture, so a separate archive is written
+rather than a series with a hole in it. And ``store``, ``chunk_size``,
+``capture_interval`` and the ``fluid`` quantities must match what the archive
+records: a mismatch is **refused**, since quietly starting a second archive when
+the clock says you are continuing this one is the confusing outcome. An archive
+that lines up in time but describes a different domain or fluid is not a
+continuation at all, and is left alone with a warning.
+
+Nothing already written is rewritten except the tail chunk, which is the one
+piece that has to grow. A run recorded, stopped, restored and appended gives an
+archive **byte-identical** to the same run recorded in one go.
 
 Validation
 ~~~~~~~~~~
