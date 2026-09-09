@@ -18,9 +18,12 @@ This module owns the on-disk format::
         swarm00_pos_0000.npy    (rows, N, D); _vel and _acc likewise, when
                                 ``store`` names them
         swarm00_mask_0000.npy   (rows, N) bool
-        swarm00_ang_0000.npy    (rows, N) 2D heading, and swarm00_stats.npz
-                                the per-capture speed statistics -- both
-                                written exactly when velocities are not
+        swarm00_ang_0000.npy    (rows, N) 2D heading, written exactly when
+                                velocities are not
+        swarm00_series.npz      the per-swarm per-capture sidecar: the speed
+                                statistics when velocities are not stored,
+                                shared__<key> when ``store`` names
+                                'shared_props', or both
         swarm00_props_0000.csv  the props series, when ``store`` names it; a
                                 column holding one array per agent spills to
                                 swarm00_prop-<name>_0000.npy
@@ -155,8 +158,10 @@ STORABLE = {'positions': 'pos', 'velocities': 'vel', 'accelerations': 'acc'}
 
 # Series ``store`` can also name, which are not N x D arrays and so are written
 #   by their own machinery rather than as chunked .npy. Each is opt-in and each
-#   scales with run length, which is why none is on by default.
-SERIES = ('props',)
+#   scales with run length, which is why none is on by default. 'props' is
+#   O(N.T); 'shared_props' is O(T) -- a few values per capture whatever the
+#   swarm size -- and rides in the per-swarm sidecar rather than adding a file.
+SERIES = ('props', 'shared_props')
 
 
 
@@ -718,6 +723,10 @@ class _ArchiveWriter:
         #   velocity is in hand; neither is recoverable from stored positions
         #   (section 5.1), which is why they are stored rather than re-derived.
         self.derive = 'velocities' not in self.store
+        # shared_props is O(T) and has nothing to do with whether the O(N.T)
+        #   per-agent DataFrame was wanted, so it is its own token. It shares
+        #   the sidecar the statistics already write on the same cadence.
+        self.shared = 'shared_props' in self.series
 
         # index -> {'name', 'N', 'D', 'first_capture'}
         self._swarms = {}
@@ -729,6 +738,9 @@ class _ArchiveWriter:
         self._next_capture = None       # the capture index expected next
         # index -> {'avg_vel': [...], 'avg_spd': [...], 'std_spd': [...]}
         self._stats = {}
+        # index -> {'columns': {key: [...]}, 'shapes': {key: shape},
+        #           'n': int, 'dropped': set}
+        self._shared = {}
         self._closed = False
 
 
@@ -773,10 +785,13 @@ class _ArchiveWriter:
             # Three floats per capture whatever N is, so this accumulates in
             #   memory and is rewritten whole rather than chunked.
             self._stats[index] = {'avg_vel': [], 'avg_spd': [], 'std_spd': []}
+        if self.shared:
+            self._shared[index] = {'columns': {}, 'shapes': {}, 'n': 0,
+                                   'dropped': set()}
 
 
     def add_capture(self, capture_index, time, arrays, velocities=None,
-                    props=None):
+                    props=None, shared=None):
         '''Buffer one capture, writing a chunk when one fills.
 
         Parameters
@@ -795,6 +810,12 @@ class _ArchiveWriter:
             swarm index -> the ``N x D`` masked velocities of that capture, for
             deriving what an archive without them still has to be able to draw.
             Required when ``derive`` is set, ignored otherwise.
+        props : dict, optional
+            swarm index -> that capture's props DataFrame. Required when
+            ``store`` names 'props', ignored otherwise.
+        shared : dict, optional
+            swarm index -> that capture's ``shared_props`` dict. Required when
+            ``store`` names 'shared_props', ignored otherwise.
         '''
 
         if self._closed:
@@ -854,6 +875,8 @@ class _ArchiveWriter:
                 self._derive(idx, entry, velocities[idx])
             if 'props' in self.series:
                 self._buffers[idx]['props'].append(props[idx])
+            if self.shared:
+                self._record_shared(idx, shared[idx])
 
         self._next_capture += 1
 
@@ -879,6 +902,84 @@ class _ArchiveWriter:
         stats['avg_vel'].append(present.mean(axis=0))
         stats['avg_spd'].append(float(speed.mean()))
         stats['std_spd'].append(float(speed.std()))
+
+
+    def _record_shared(self, idx, shared):
+        '''Buffer one capture of a swarm's ``shared_props``.
+
+        A column per key, so the accumulator is O(T) whatever the swarm size.
+        ``shared_props`` is an ordinary mutable dict, which gives three cases:
+        a key that appears mid-run gets a padded slot for the captures before
+        it, a key that vanishes gets one for the captures after, and a key
+        whose value changes shape cannot be stacked at all and is refused by
+        name.
+        '''
+
+        acc = self._shared[idx]
+        columns, shapes, n = acc['columns'], acc['shapes'], acc['n']
+        for name, value in shared.items():
+            array = _arrayable(value)
+            if array is None:
+                # Warned and dropped, as the checkpoint drops the same value,
+                #   and once per key rather than once per capture.
+                if name not in acc['dropped']:
+                    acc['dropped'].add(name)
+                    warnings.warn(
+                        "swarm {} shared_props '{}' cannot be stored without "
+                        "pickle, so no series of it is being kept. Carry that "
+                        "value in props instead if a restart needs "
+                        "it.".format(idx, name), UserWarning)
+                continue
+            # Copied, not referenced: the columns outlive the capture, and
+            #   np.asarray hands back the caller's own buffer for an ndarray,
+            #   so a shared_props value edited in place would rewrite every
+            #   capture already recorded. Same copy the props series makes.
+            array = np.array(array)
+            if name not in columns:
+                columns[name] = [None] * n
+                shapes[name] = array.shape
+            elif array.shape != shapes[name]:
+                raise ValueError(
+                    "swarm {} shared_props '{}' changed shape from {} to {} "
+                    "during the run. A series of it cannot be stacked, so it "
+                    "is refused rather than written in a form that will not "
+                    "read back.".format(idx, name, shapes[name], array.shape))
+            columns[name].append(array)
+        for column in columns.values():
+            if len(column) == n:
+                column.append(None)
+        acc['n'] = n + 1
+
+
+    def _stack_shared(self, idx, acc):
+        '''One swarm's ``shared_props`` columns, stacked with their padding.
+
+        ``present__<key>`` rides beside ``shared__<key>`` only for a key that
+        was not there at every capture, so a ``shared_props`` whose membership
+        never changes writes nothing extra.
+        '''
+
+        arrays = {}
+        for name, column in acc['columns'].items():
+            present = np.array([value is not None for value in column])
+            try:
+                stacked = np.stack([v for v in column if v is not None])
+            except (ValueError, TypeError) as err:
+                raise ValueError(
+                    "swarm {} shared_props '{}' cannot be stacked into a "
+                    "series: {}".format(idx, name, err))
+            if present.all():
+                arrays['shared__' + name] = stacked
+                continue
+            whole = np.zeros((len(column),) + stacked.shape[1:], stacked.dtype)
+            if whole.dtype.kind == 'f':
+                # NaN in a padded slot, so raw np.load of the file reads it as
+                #   absent rather than as a real zero.
+                whole.fill(np.nan)
+            whole[present] = stacked
+            arrays['shared__' + name] = whole
+            arrays['present__' + name] = present
+        return arrays
 
 
     def _first_capture_of(self, idx, chunk):
@@ -956,28 +1057,38 @@ class _ArchiveWriter:
 
         if self._chunk is not None and self._times:
             self._write_chunk(keep=True)
-        self._write_stats()
 
 
-    def _write_stats(self):
-        '''Rewrite each swarm's agent-statistics sidecar, whole.
+    def _write_series(self):
+        '''Rewrite each swarm's per-capture sidecar, whole.
 
-        Three floats per capture whatever the swarm size, so the whole series is
-        a few tens of kB over a long run -- small enough to rewrite atomically
-        rather than chunk, which is what ``dump_stats.npz`` does for the same
-        reason.
+        Holds the speed statistics and any ``shared_props`` series: a few
+        values per capture whatever the swarm size, so the whole file is a few
+        tens of kB over a long run -- small enough to rewrite atomically rather
+        than chunk, which is what ``dump_stats.npz`` does for the same reason.
+
+        Called from :meth:`_write_chunk`, so it lands on the same boundary as
+        everything else and covers exactly the captures the chunks do: the
+        accumulators grow per capture, and a chunk closes before the capture
+        that rolled it over is buffered.
         '''
 
-        for idx, stats in self._stats.items():
-            if not stats['avg_spd']:
+        for idx in sorted(set(self._stats) | set(self._shared)):
+            arrays = {}
+            stats = self._stats.get(idx)
+            if stats and stats['avg_spd']:
+                arrays.update(
+                    avg_vel=np.stack(stats['avg_vel']).astype(DTYPE),
+                    avg_spd=np.asarray(stats['avg_spd'], dtype=DTYPE),
+                    std_spd=np.asarray(stats['std_spd'], dtype=DTYPE))
+            acc = self._shared.get(idx)
+            if acc and acc['n']:
+                arrays.update(self._stack_shared(idx, acc))
+            if not arrays:
                 continue
             _atomic_write(
-                self.agent_dir / (_swarm_prefix(idx) + '_stats.npz'),
-                lambda fobj, s=stats: np.savez(
-                    fobj,
-                    avg_vel=np.stack(s['avg_vel']).astype(DTYPE),
-                    avg_spd=np.asarray(s['avg_spd'], dtype=DTYPE),
-                    std_spd=np.asarray(s['std_spd'], dtype=DTYPE)))
+                self.agent_dir / (_swarm_prefix(idx) + '_series.npz'),
+                lambda fobj, a=arrays: np.savez(fobj, **a))
 
 
     def close(self):
@@ -1114,6 +1225,8 @@ class _ArchiveWriter:
             if 'angle' in buffers:
                 _save_npy(self.agent_dir / _chunk_name(prefix + '_ang', index),
                           np.stack(buffers['angle']))
+
+        self._write_series()
 
         if not keep:
             self._times = []
@@ -1778,7 +1891,7 @@ class RunRecorder:
         if self._stopped:
             return
         self._sync_swarms()
-        arrays, velocities, props = {}, {}, {}
+        arrays, velocities, props, shared = {}, {}, {}, {}
         for index, swarm in enumerate(self._swarms):
             named = {}
             for name in self._writer.arrays:
@@ -1792,11 +1905,15 @@ class RunRecorder:
                 #   rewrite every capture still waiting to be flushed. This is
                 #   the same copy move() makes for props_history.
                 props[index] = swarm.props.copy()
+            if self._writer.shared:
+                # The dict is copied here and each value where it is buffered,
+                #   for the same reason props are.
+                shared[index] = dict(swarm.shared_props)
         # Live attributes are read, not the histories: the archive does not
         #   depend on history existing, only on the two agreeing about when a
         #   state is recorded.
         self._writer.add_capture(self._n_captures, self.envir.time, arrays,
-                                 velocities, props)
+                                 velocities, props, shared)
         self._n_captures += 1
         # On the chunk boundary, so the checkpoint is never staler than the
         #   captures a hard kill would cost anyway.
@@ -2281,7 +2398,7 @@ class RunArchive:
         '''
 
         recorded = [name for name in ('positions', 'velocities',
-                                      'accelerations', 'props')
+                                      'accelerations', 'props', 'shared_props')
                     if name in self.store]
         head = ('Restoring at capture {} of {} (t={:g}). Recorded per capture: '
                 '{}.'.format(capture, len(self.times), self.times[capture],
@@ -2289,10 +2406,9 @@ class RunArchive:
         if capture == len(self.times) - 1:
             return (head + ' That is the end of the run, so nothing else is'
                     ' being substituted for it.')
-        substituted = [name for name in ('velocities', 'props')
+        substituted = [name for name in ('velocities', 'props',
+                                         'shared_props')
                        if name not in self.store]
-        # No series of it exists yet, so it always comes from the end state.
-        substituted.append('shared_props')
         tail = ('if it varied during the run, this resumes with its final value'
                 if len(substituted) == 1 else
                 'if any of them varied during the run, this resumes with their '
@@ -2416,7 +2532,23 @@ class RunArchive:
                   and (history or at_capture) else None)
         positions = (self.positions(index)[capture] if at_capture
                      else state['positions'])
-        shared = dict(state['shared_props'])
+        shared = None
+        if at_capture and 'shared_props' in self.store:
+            # Replaced wholesale rather than merged: a key the run deleted
+            #   before capture j is absent there, and must not come back from
+            #   the checkpoint's copy of the final dict.
+            shared = self._shared_at(index, capture - first)
+            if shared is None:
+                # store= says there should be one, so its absence contradicts
+                #   the notice already printed and has to be said out loud.
+                warnings.warn(
+                    'swarm {} has no shared_props series in {}, though it was '
+                    'recorded with store={}. Its shared_props are coming from '
+                    'the end of the run instead of from capture {}.'.format(
+                        index, self.path, list(self.store), capture),
+                    UserWarning)
+        if shared is None:
+            shared = dict(state['shared_props'])
         swarm = klass(swarm_size=positions.shape[0], envir=envir,
                       init=np.array(ma.getdata(positions)),
                       ib_condition=state['ib_condition'],
@@ -2448,8 +2580,29 @@ class RunArchive:
             if 'props' in self.store:
                 # A list rather than None is what store_prop_history means, so
                 #   the restored swarm goes on keeping one as the original did.
-                swarm.props_history = ([] if frames is None
-                                       else frames[:capture - first])
+                if frames is None:
+                    warnings.warn(
+                        'swarm {} has no props series in {}, though it was '
+                        'recorded with store={}. It is being restored without '
+                        'a props history.'.format(index, self.path,
+                                                  list(self.store)),
+                        UserWarning)
+                    frames = []
+                # Padded at the front to the same length as pos_history, which
+                #   is itself padded to the archive's index. move() appends to
+                #   both, so two lists of different lengths would stay
+                #   misaligned for the rest of the run. Two cases need it: a
+                #   swarm that joined part-way, whose series starts at its own
+                #   first capture, and a swarm with no props at all, whose
+                #   DataFrame has no rows and so writes no frames.
+                recorded = frames[:capture - first]
+                pad = (frames[0] if frames else swarm.props).copy(deep=True)
+                # One shared frame rather than a copy per state: no plot can
+                #   read it -- every agent is masked out of the positions for
+                #   exactly those states -- and copying costs O(N) apiece to
+                #   describe a swarm that was not there.
+                swarm.props_history = ([pad] * (capture - len(recorded))
+                                       + recorded)
             # Left empty otherwise, which is what tells a plot to read the
             #   statistics and headings the recording derived instead. Filling
             #   it with masked rows to keep the two lists the same length would
@@ -2586,17 +2739,117 @@ class RunArchive:
         dict of ndarray keyed 'avg_vel' ``(n_captures, D)``, 'avg_spd' and
         'std_spd' ``(n_captures,)``, or None when velocities were stored and
         this was therefore not.
+
+        Notes
+        -----
+        Indexed from the swarm's own first capture, not from the archive's --
+        see :meth:`shared_props`.
+        """
+
+        series = self._series(self._resolve_swarm(swarm))
+        stats = {name: series[name] for name in
+                 ('avg_vel', 'avg_spd', 'std_spd') if name in series}
+        return stats or None
+
+
+    def shared_props(self, swarm=0):
+        """One swarm's ``shared_props`` at every capture, or None if not kept.
+
+        Written only for a recording that asked with
+        ``store=(..., 'shared_props')``. O(T) whatever the swarm size, which is
+        why it is a separate opt-in from the per-agent ``'props'`` series.
+
+        Parameters
+        ----------
+        swarm : int or str, default=0
+            index, or name when unambiguous
+
+        Returns
+        -------
+        dict of masked array, keyed by property name, each ``(n_captures, ...)``
+        with a capture masked where the key was not in ``shared_props`` then --
+        it may appear or vanish mid-run. None when no series was written.
+
+        Notes
+        -----
+        ⚠️ Indexed from the swarm's own first capture, not from the archive's.
+        For a swarm that joined mid-run these are offset against
+        :attr:`times` and against :meth:`positions`, which is front-padded to
+        the archive's index. So are :meth:`props` and :meth:`agent_stats`.
         """
 
         index = self._resolve_swarm(swarm)
-        path = self._agent_dir / (_swarm_prefix(index) + '_stats.npz')
-        if not path.is_file():
-            return None
-        key = ('stats', index)
+        series = self._series(index)
+        columns = {}
+        for name, value in series.items():
+            if not name.startswith('shared__'):
+                continue
+            name = name[len('shared__'):]
+            present = series.get('present__' + name)
+            if present is None:
+                # Written only for a key that was ever absent, so no entry
+                #   means it was there at every capture.
+                mask = False
+            else:
+                mask = np.broadcast_to(
+                    ~present.reshape((-1,) + (1,) * (value.ndim - 1)),
+                    value.shape)
+            columns[name] = ma.masked_array(value, mask=mask)
+        return columns or None
+
+
+    def first_capture(self, swarm=0):
+        """The capture index at which one swarm joined the recording.
+
+        0 for every swarm the environment already held when recording started.
+        It is the offset between the archive's index and a per-swarm series':
+        :meth:`positions` and :meth:`angles` are front-padded to the archive's,
+        where :meth:`props`, :meth:`agent_stats` and :meth:`shared_props` start
+        at this capture.
+
+        Parameters
+        ----------
+        swarm : int or str, default=0
+            index, or name when unambiguous
+
+        Returns
+        -------
+        int
+        """
+
+        return int(self._by_index[self._resolve_swarm(swarm)]['first_capture'])
+
+
+    def _series(self, index):
+        """The per-swarm per-capture sidecar, as a dict of ndarray. May be {}."""
+
+        key = ('series', index)
         if key not in self._cache:
-            with np.load(path, allow_pickle=False) as data:
-                self._cache[key] = {k: data[k] for k in data.files}
+            path = self._agent_dir / (_swarm_prefix(index) + '_series.npz')
+            if not path.is_file():
+                self._cache[key] = {}
+            else:
+                with np.load(path, allow_pickle=False) as data:
+                    self._cache[key] = {k: data[k] for k in data.files}
         return self._cache[key]
+
+
+    def _shared_at(self, index, offset):
+        """One swarm's ``shared_props`` as a dict, at its own capture ``offset``.
+
+        None where no series was written; otherwise the keys that were in the
+        dict at that capture, with the values they held.
+        """
+
+        columns = self.shared_props(index)
+        if columns is None:
+            return None
+        at = {}
+        for name, column in columns.items():
+            if np.all(ma.getmaskarray(column)[offset]):
+                continue
+            at[name] = _unwrap(np.array(ma.getdata(column)[offset]))
+        return at
 
 
     def angles(self, swarm=0):
@@ -2839,6 +3092,19 @@ class RunArchive:
                             'capture count implies {}; this archive is '
                             'inconsistent'.format(entry['index'], i, prefix,
                                                   rows, hi - lo))
+
+            # The sidecar is not chunked -- it is rewritten whole on the same
+            #   boundary -- so it has no gaps to find, only a length to check.
+            #   Absence is ordinary; a short one is the same fault a short
+            #   chunk is, and would read back as a series that quietly stops.
+            want_rows = n - entry['first_capture']
+            for name, value in self._series(entry['index']).items():
+                if len(value) != want_rows:
+                    raise ValueError(
+                        "swarm {} series '{}' holds {} captures where the "
+                        'capture count implies {}; this archive is '
+                        'inconsistent'.format(entry['index'], name, len(value),
+                                              want_rows))
 
 
     def _locate(self, capture, first_capture):

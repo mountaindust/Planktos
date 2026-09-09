@@ -821,3 +821,137 @@ def test_the_auto_render_writes_a_movie(tmp_path):
         for _ in range(14):
             swrm.move(0.5, silent=True)
     assert out.is_file()
+# --------------------------------------------------------------------------- #
+#      what a frame reads for a swarm that joined a run part-way through       #
+# --------------------------------------------------------------------------- #
+# Two index conventions meet in FrameSource and neither is the other. A Swarm's
+# own history begins when the swarm did; the archive counts from its own
+# capture 0, and restore() front-pads pos_history to that. The per-swarm series
+# (the speed statistics, props, shared_props) start at the swarm's first
+# capture, where positions and headings are front-padded to the archive's.
+# FrameSource resolves through the time base, which is right in every case and
+# is the rule the archive states for anyone reading it.
+
+def _late_swarm_run(tmp_path, store=('positions',), steps=4):
+    # A recording where a second swarm joins halfway, moving at a known speed.
+    envir = planktos.Environment(Lx=10., Ly=10.,
+                                 flow=[np.zeros((3, 3)), np.zeros((3, 3))])
+    first = planktos.Swarm(swarm_size=3, envir=envir, seed=1,
+                           init=np.full((3, 2), 2.0))
+    first.shared_props['cov'] = np.zeros((2, 2))
+    first.shared_props['mu'] = np.array([1.0, 0.0])
+    rec = envir.record(str(tmp_path / 'run'), store=store)
+    for _ in range(steps):
+        envir.move_swarms(0.1, silent=True)
+    late = envir.add_swarm(swarm_size=2, seed=9, init=np.full((2, 2), 3.0))
+    late.shared_props['cov'] = np.zeros((2, 2))
+    late.shared_props['mu'] = np.array([5.0, 0.0])
+    for _ in range(steps):
+        envir.move_swarms(0.1, silent=True)
+    rec.stop()
+    return rec, envir, first, late
+
+
+def test_a_late_swarms_frame_times_are_the_steps_it_existed_for(tmp_path):
+    # Its history is shorter than the environment's and covers the LAST that
+    # many steps; taking the first that many labelled every frame with a time
+    # from before the swarm existed.
+    rec, envir, first, late = _late_swarm_run(tmp_path)
+    np.testing.assert_allclose(_frames._live_times(late),
+                               [0.4, 0.5, 0.6, 0.7, 0.8])
+
+
+def test_a_restored_late_swarm_reads_its_own_statistics(tmp_path):
+    # The headline of the pair: state n is an archive capture, and the sidecar
+    # series starts at the swarm's first capture, so reading row n is off by
+    # that offset. The late swarm moves at 5 and the early one at 1, so a
+    # misread is a different number rather than a coincidence.
+    rec, envir, first, late = _late_swarm_run(tmp_path)
+    run = planktos.load_run(rec.path)
+    try:
+        assert run.first_capture(1) == 5
+        recorded = run.agent_stats(1)['avg_spd']
+        assert len(recorded) == 4 < len(run.times)
+        rebuilt, (_, resumed) = run.restore()
+    finally:
+        run.close()
+
+    source = _frames.FrameSource(resumed)
+    try:
+        # Captures 5-8 are the swarm's own rows 0-3.
+        for n in range(5, 9):
+            assert source._series_row(n) == n - 5
+            assert source.stats(n, DIM3=False)[4] == pytest.approx(
+                recorded[n - 5])
+        # Before it joined there is no row, and nothing is read from one.
+        for n in range(5):
+            assert source._series_row(n) is None
+    finally:
+        if source.run is not None:
+            source.run.close()
+
+
+def test_a_live_late_swarm_reads_its_own_statistics_too(tmp_path):
+    # The mirror image: mid-run, the swarm's history is its own, so state 0 is
+    # its first state -- which is one step BEFORE its first recorded capture,
+    # since the capture at that time was taken before it joined.
+    rec, envir, first, late = _late_swarm_run(tmp_path)
+    source = _frames.FrameSource(late)
+    try:
+        assert [source._series_row(n) for n in range(source.n_states)] ==             [None, 0, 1, 2, 3]
+    finally:
+        if source.run is not None:
+            source.run.close()
+
+
+def test_a_restored_late_swarm_can_be_plotted_at_all(tmp_path):
+    # perc_left divided by the population of pos_history[0], which for a
+    # restored late swarm is the fully masked front-pad: a ZeroDivisionError
+    # out of every frame, including the one plot(t=) draws.
+    rec, envir, first, late = _late_swarm_run(tmp_path)
+    run = planktos.load_run(rec.path)
+    try:
+        rebuilt, (_, resumed) = run.restore()
+    finally:
+        run.close()
+    resumed.plot(t=0.0)
+    resumed.plot_all(fps=1)
+    # Before it joined, none of its agents are in the domain and no population
+    # has been established, so nothing is reported as remaining.
+    assert resumed._calc_basic_stats(DIM3=False, t_indx=0)[0] ==         pytest.approx(0.0)
+    assert resumed._calc_basic_stats(DIM3=False, t_indx=6)[0] ==         pytest.approx(100.0)
+
+
+def test_a_restored_late_swarms_props_history_lines_up_with_its_positions(
+        tmp_path):
+    # move() appends to both, so two lists of different lengths would stay
+    # misaligned for the rest of the run.
+    envir = planktos.Environment(Lx=10., Ly=10.,
+                                 flow=[np.zeros((3, 3)), np.zeros((3, 3))])
+    first = planktos.Swarm(swarm_size=3, envir=envir, seed=1,
+                           init=np.full((3, 2), 2.0), store_prop_history=True)
+    first.shared_props['cov'] = np.zeros((2, 2))
+    with envir.record(str(tmp_path / 'run'),
+                      store=('positions', 'props')) as rec:
+        for _ in range(3):
+            envir.move_swarms(0.1, silent=True)
+        late = envir.add_swarm(swarm_size=2, seed=9,
+                               init=np.full((2, 2), 3.0),
+                               store_prop_history=True)
+        late.shared_props['cov'] = np.zeros((2, 2))
+        late.add_prop('stage', np.arange(2))
+        for _ in range(3):
+            envir.move_swarms(0.1, silent=True)
+
+    run = planktos.load_run(rec.path)
+    try:
+        rebuilt, swarms = run.restore()
+    finally:
+        run.close()
+    for resumed in swarms:
+        # The first swarm has no props at all, so its DataFrame has no rows and
+        # its series no frames -- the same padding covers both cases.
+        assert len(resumed.props_history) == len(resumed.pos_history)
+    rebuilt.move_swarms(0.1, silent=True)
+    for resumed in swarms:
+        assert len(resumed.props_history) == len(resumed.pos_history)

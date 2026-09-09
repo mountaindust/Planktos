@@ -45,7 +45,7 @@ thing is too big to hold at once.
 | **A** | **Run archive** — append-only, chunked, crash-valid on-the-fly capture of agent state, with a public reader and a capture schedule that also governs history retention | persistence: crash survival, later sessions, larger-than-RAM analysis, bounded history memory, run speed, and eventually restart | **[done]** — §6.1 A0–A5, 2026-08-21 to 2026-08-25 |
 | **B** | **Fluid-side streaming** — per-dump means, vorticity by regime, whole-run extrema | dyload: never re-stream the dataset to draw a picture of it | **[done]** — §6.1 B1–B3, 2026-08-25 |
 | **C** | **Rendering** — frame selection by time, archive-backed `plot_all`, global colour/arrow scales | consumes A and B | **[done]** — §6.1 C1–C2, 2026-08-27 |
-| **R** | **Full-state reboot** — a checkpoint beside the archive, a reader that turns a directory back into an `Environment` and its `Swarm`s, and appending to the archive a run resumed from | the third problem this architecture solves, and the one A was built for: a run that outlives the process that made it | **in progress** — §6.1 R0–R4 done 2026-08-31 to 2026-09-04, R5a 2026-09-08; R5b and R6 ahead |
+| **R** | **Full-state reboot** — a checkpoint beside the archive, a reader that turns a directory back into an `Environment` and its `Swarm`s, and appending to the archive a run resumed from | the third problem this architecture solves, and the one A was built for: a run that outlives the process that made it | **in progress** — §6.1 R0–R5 done 2026-08-31 to 2026-09-08; R6 ahead |
 | **D** | **Tiling and `extend`** — the real position-wrapping implementation | cleanup: tiling has raised `NotImplementedError` since the `FlowArray` removal | specified (§9), not built |
 
 ⚠️ **Two lettering schemes overlap, and the letters do not agree.** The components here
@@ -91,8 +91,8 @@ In order:
    run costs zero loader calls; the colour and arrow scales are global;
    `Environment.record(plot_all=)` renders from the archive at the end of a `with`
    block. **This was the last step that consumes A and B.**
-5. **§2.11 — the full-state reboot** is **in progress** *(scheduled 2026-08-27; R0–R4
-   done, R5a done, R5b and R6 ahead — §6.1)*. It was filed as
+5. **§2.11 — the full-state reboot** is **in progress** *(scheduled 2026-08-27; R0–R5
+   done, R6 ahead — §6.1)*. It was filed as
    a follow-on until the acceptance suite made the gap concrete; §6.1's Step R says why
    it goes ahead of tiling rather than after it, and the one-line version is that the
    on-disk format has to grow and every archive written before it does cannot be
@@ -3180,17 +3180,13 @@ with a warning.** Its series is front-padded with fully masked rows, so restorin
 hand back a swarm reading "every agent has left the domain" rather than one that was not
 there. The list is the roster the run held at capture *j*.
 
-**One pre-existing misalignment turned up and is deliberately not fixed here.**
-`RunArchive.props()` returns one frame per capture *of that swarm*, so for a swarm that
-joined at capture *f* the list is offset by *f* against `times` and against the position
-series, which is front-padded to global indices. `_restore_swarm` now indexes it as
-`frames[j - f]`, which is correct; `props()`'s own docstring still claims alignment to
-`times` and is wrong for that swarm. Fixing it means deciding what a props frame *is*
-before the swarm exists, which R5b's padding wrinkles have to settle anyway — do it there.
+**One pre-existing misalignment turned up here and is settled under R5b below**, as a
+known gap rather than a fix. `_restore_swarm` indexes the props series as `frames[j - f]`,
+which is correct for a swarm that joined at capture *f*.
 
-**R5b — the `shared_props` series, folded into the per-capture sidecar.** It is the item
-that makes R5a honest, and it is **O(T), not O(N·T)**: ~1.2 MB over 10 000 captures
-against 248 MB for the props series at N=1000.
+**R5b — the `shared_props` series, folded into the per-capture sidecar. ✅ [done
+2026-09-08].** It is the item that makes R5a honest, and it is **O(T), not O(N·T)**:
+~1.2 MB over 10 000 captures against 248 MB for the props series at N=1000.
 
 ⚠️ **Do not add an unconditional write for it.** *(Decided 2026-09-04.)* Cheap on disk is
 not cheap in file-tree complexity or in write time, and both are paid by every run
@@ -3223,6 +3219,93 @@ so there is still no file when neither is asked for.
 **appears** mid-run (pad the earlier captures), a key that **vanishes** (pad the later
 ones), and a key whose value **changes shape** mid-run, which cannot be stacked at all —
 refuse that one by name rather than write something that will not read back.
+
+**How the padding is carried.** A padded slot is a hole, and a fill value cannot say so
+on its own — a NaN or an empty string is a value a run could legitimately have held. So
+`present__<key>` rides beside `shared__<key>`, and **only for a key that was not there at
+every capture**, which is why a `shared_props` of fixed membership writes nothing extra.
+`RunArchive.shared_props()` turns the pair into a masked array per key — the same
+statement a masked position row makes — and `restore(capture=j)` **replaces**
+`shared_props` wholesale from it rather than merging, so a key the run had deleted before
+*j* cannot come back from the checkpoint's copy of the final dict. The fill under the mask
+is NaN for a float column, for the benefit of anyone reading the npz raw.
+
+⚠️ **Each value is copied as it is buffered.** `np.asarray` hands back the caller's own
+buffer for an ndarray, so a `shared_props['cov'][0,0] += 1` would otherwise rewrite every
+capture already recorded — the R4c props bug in a second costume, and pinned by its own
+test.
+
+**A value that cannot be stored without pickle is warned about and dropped**, once per key
+rather than once per capture, which is what the checkpoint and `_split_props` already do
+with the same value. Refusing outright was tried and reverted: it cannot be stored either
+way, so ending the run buys nothing the warning does not.
+
+**The sidecar's existence condition is now `derive or 'shared_props' in store`**, and
+`agents/swarmNN_stats.npz` is renamed `agents/swarmNN_series.npz`. `RunArchive.agent_stats`
+and `RunArchive.shared_props` both read it and each returns None when its own half is
+absent, so `store=('positions', 'velocities', 'shared_props')` writes a file holding only
+the shared series and `store=('positions',)` one holding only the statistics.
+
+**Three defects turned up in the R5 review** *(2026-09-08)*, all in the sidecar and all
+fixed with the step:
+
+1. 🔴 **The sidecar was written only by `flush()` and `close()`.** Every chunk file, the
+   heading series and the checkpoint land on the chunk boundary; this one did not, so a
+   hard kill lost the *whole* of it — the speed statistics since R4a, and now the
+   `shared_props` series — while everything around it survived. That contradicts §2.6's
+   "valid with no finalizer having run" for the one file the claim was never tested
+   against. `_write_series` is now called from `_write_chunk`, which puts it on the same
+   boundary and, better, makes it cover *exactly* the captures the chunks do: the
+   accumulators grow per capture, and a chunk closes before the capture that rolled it
+   over is buffered. Bounded staleness, same as the checkpoint's.
+2. **A short sidecar was not refused**, where a short chunk and a partial `ang` series
+   both are. `_validate_chunks` now checks its length against the capture count —
+   absence stays ordinary, since the file is opt-in twice over.
+3. **`restore(capture=j)` fell back silently** to the checkpoint's `shared_props` when
+   `store` claimed a series that was not on disk, contradicting the notice it had just
+   printed. It warns now.
+
+**Two index conventions, and the swarm that joined mid-run — ✅ [fixed 2026-09-08].**
+R5a opened this and R5b's review closed it. `positions` and `angles` come through
+`CaptureSeries`, whose contract is that a series is `len(archive.times)` long and
+front-padded with masked rows for a swarm that joined mid-run. `props()`,
+`agent_stats()` and `shared_props()` all start at that swarm's own first capture instead.
+For the ordinary swarm, present from capture 0, the two agree and nothing is wrong.
+
+**It cannot be fixed in the accessor**, and that is the whole of why it took a design
+pass. `_frames.FrameSource` indexes by state index *n*, and *n* means two different
+things: for a **live** swarm created at capture 5, `pos_history` starts empty, so `n=0`
+is its own first state; for a **restored** one, `pos_history` is front-padded to the
+archive's index, so `n=5` is archive capture 5. Front-padding the accessor fixes the
+second and breaks the first.
+
+**Resolved through the time base instead**, which is right in both and is the rule the
+archive already states for anyone reading it — *"resolve by time, not by index into
+someone else's list."* `FrameSource._archive_capture(n)` maps a state to a capture by
+matching `times`, and `_series_row(n)` subtracts `RunArchive.first_capture(swarm)` (new,
+public, and the one place the offset is named). It also settles a ragged edge no index
+arithmetic could: a live mid-run swarm's **first state is one step before its first
+recorded capture**, because the capture at that time was taken before it joined. Time
+says so and returns no row; index arithmetic would have read someone else's.
+
+**Three further defects fell out of the same neighbourhood**, all fixed with it:
+
+- 🔴 **`Swarm._calc_basic_stats` raised `ZeroDivisionError` for any restored mid-run
+  swarm**, from every frame including the one `plot(t=)` draws, so drawing such a run was
+  impossible. `num_orig` divided by the population of `pos_history[0]`, which for that
+  swarm is the fully masked front-pad. It now takes the first history frame holding
+  anybody. §8.1 records the `perc_left` decision this settles.
+- 🔴 **`_frames._live_times` gave a mid-run swarm the *first* n of the environment's
+  times rather than the last n**, so a live one's frames were labelled with times from
+  before it existed — and the time-based resolution above depends on that being right.
+- **`restore()` left `props_history` shorter than `pos_history`** for a mid-run swarm and
+  for a swarm with no props at all (whose DataFrame has no rows, so its series has no
+  frames). `move()` appends to both, so the misalignment was permanent. Both are now
+  front-padded with one shared placeholder frame — unreadable by any plot, since every
+  agent is masked out of the positions for exactly those states.
+
+**`restore(capture=j)` was already correct**, since `_restore_swarm` subtracts
+`first_capture` itself.
 
 **R5c — the `ib_collision_idx` series — ✂️ cut** *(2026-09-08)*. §2.11.2 carries the
 reasoning: nothing in Planktos reads such a history, a resume takes the value from the end
@@ -3264,8 +3347,9 @@ rewritten except the tail chunk**, which is the one piece that has to grow.
   index; both need an append path. A swarm joining *during* the appended stretch is an
   ordinary mid-run swarm and needs nothing new.
 - **Bypass `_resolve_archive_path`'s redirect**, which is the whole point.
-- **Seed the per-swarm series file**, `agents/swarmNN_series.npz` (R5b; `_stats.npz`
-  until that rename). Unlike the chunks it is rewritten **whole** from an in-memory
+- **Seed the per-swarm series file**, `agents/swarmNN_series.npz` (renamed from
+  `_stats.npz` by R5b, which also put the `shared__<key>` and `present__<key>` entries in
+  it). Unlike the chunks it is rewritten **whole** from an in-memory
   accumulator, so an append that does not read it back first leaves an archive whose
   statistics cover the appended stretch only — and silently, since the file is
   well-formed either way. Same silent-loss shape the §3.5 simplification removed on the
@@ -3641,7 +3725,17 @@ seconds assumption, in `docs/quickstart.rst`. Still owed: `.mkv` guidance for lo
 what the archive stores and when it is refused; and an API page for `RunArchive` /
 `load_run` (§2.7) — a public class needs one, unlike everything else in this plan.
 
-**Examples.** The call sites are done (§4.1 "As built") — each example names its
+**Examples.** ⚠️ **One new example is owed: agents arriving mid-run** — the fixed-*N*
+pool with masked-until-released agents, specified in §8.1. It is the answer to a question
+that has actually been asked (a predator's capture rate against a continuous influx),
+the mechanism is not discoverable from the docstrings, and the one line that makes it
+work — rebuild the masked array rather than assign into `.mask`, because the mask is
+hardened — is exactly the kind of thing an example exists to show. Write it against a
+2D immersed boundary so the capture count is the point, and record it, since the archive
+handles the pool with no format change. Build it with §8.1's `release`/`retire` if those
+land first; otherwise the example carries the recipe and §8.1 cites it.
+
+The call sites are done (§4.1 "As built") — each example names its
 playback rate explicitly, chosen to be the old `dt × fps` product, and the stale "one
 frame per time step" prose in `ex_ib2d_ibmesh.py` and its docs page is rewritten. What
 remains is the wider prose pass. Current effective playback rates show the footgun's
@@ -3684,6 +3778,64 @@ residue (§8).
   only this residue — which needs its own pass, because live `plot_all` and
   `_calc_basic_stats` would then have nothing to read without an archive.
 - **`save_*` re-expressed as archive exports** (§2.10) — deliberately not first-pass.
+- **`Swarm.release` / `Swarm.retire`** — the open-system idiom, specified in §8.1 below
+  and not built.
+
+---
+
+### 8.1 Agents arriving mid-run: fixed *N*, dynamic membership
+
+*(Specified 2026-09-08, from the question "what if someone adds agents to a swarm
+mid-run?" — asked for a predator whose capture rate is measured against a continuous
+influx of prey past an immersed boundary.)*
+
+**There is no API for growing a swarm, and there should not be one.** `Swarm.N` is a
+read-only property over `positions.shape[0]`; growing it by hand means resizing
+`positions`, `velocities`, `accelerations`, `props` and `ib_collision_idx` together.
+Measured, that half-works in a way worse than failing: `move()` and `plot_all` carry on
+(the histories are lists, so ragged frames are fine), `save_pos_to_csv` and `save_data`
+fail with an opaque numpy concatenate error, and **recording refuses** — `swarm 0
+positions has shape (5, 2), expected (3, 2)`, since a chunk is `(rows, N, D)` and `N` is
+fixed at `add_swarm`.
+
+**The idiom that works today is a fixed-*N* pool whose membership changes.** A masked row
+already means "not in the domain" everywhere in Planktos, and `CaptureSeries` already
+uses a fully masked row for "not yet in the run", so an arrival maps onto the archive
+with **no format change at all** — verified end to end, recording included, agents
+released one per step and read back correctly.
+
+Two things make it worth wrapping in an API rather than leaving as a recipe:
+
+- ⚠️ **The mask is hardened** (`Swarm.__setattr__`), so `arr.mask[i] = False` silently
+  does nothing. Bringing a row back into the domain means building a fresh masked array
+  and assigning it through `setattr`, which re-hardens it. That is the whole trick, and
+  it is documented nowhere.
+- The three arrays must be released together, or `move()`'s finite differences read a
+  masked velocity against an unmasked position.
+
+*The shape:*
+
+    Swarm.release(idx, positions, velocities=None)
+        Bring held-back agents into the domain at the given positions. Their
+        velocities default to the local fluid drift, as Swarm.__init__ does.
+    Swarm.retire(idx)
+        Mask agents out of the domain, as leaving through a boundary does.
+
+`props` needs nothing: a pool allocates the whole run's agents up front, so a per-agent
+release time is an ordinary column, and a capture count is an ordinary counter an
+`after_move` increments.
+
+**What this does *not* fix, and is the honest limit:** the pool's size caps the run. An
+influx experiment has to know its budget in advance, or recycle retired agents — which
+is the cheaper answer anyway, and is how a steady-state capture rate is usually measured.
+Recycling means `retire` then `release`, and the agent's `pos_history` then holds a
+teleport that `plot_all` will draw as a straight line across the domain; a run that cares
+should retire into a masked stretch of at least one capture, which draws nothing.
+
+**`perc_left` reads above 100% under a releasing pool** — 250% for five present against
+the two the run started with — and that is intended: the statistic is "how many are
+present against how many you started with", which stays meaningful for an open system
+(decided 2026-09-08). It is pinned by a test rather than left to be rediscovered.
 
 ---
 

@@ -344,10 +344,20 @@ which::
     Taken from the end of the run instead: velocities, shared_props -- if any
     of them varied during the run, this resumes with their final values.
 
-``store=('positions', 'velocities')`` and ``store=(..., 'props')`` are what move
-those two out of the substituted list. Neither reaches the default Brownian
-model, which never reads an agent's own velocity, but
-``motion.inertial_particles`` does.
+``store=`` is what moves each of them out of the substituted list:
+``'velocities'``, ``'props'`` and ``'shared_props'`` are each kept per capture
+when named. Velocities never reach the default Brownian model, which does not
+read an agent's own velocity, but ``motion.inertial_particles`` does; a ramping
+``shared_props['mu']`` reaches every model there is, and is the case
+``'shared_props'`` exists for -- it is O(run length) whatever the swarm size,
+where the per-agent ``'props'`` series is O(agents x run length).
+
+``shared_props`` is an ordinary mutable dict, so a key may appear or vanish
+mid-run. The series masks the captures a key was not there for, and
+``restore(capture=j)`` hands back exactly the keys the dict held at *j* --
+never one the run had already deleted. A key whose value **changes shape**
+mid-run cannot be stacked into a series at all, and is refused by name when it
+happens rather than written in a form that will not read back.
 
 A swarm that had not joined the run by capture *j* did not exist then, and is
 left out of the returned list with a warning rather than handed back with every
@@ -389,6 +399,10 @@ Planktos::
         swarm00_pos_0000.npy    (rows, N, D)
         swarm00_vel_0000.npy    (rows, N, D)
         swarm00_mask_0000.npy   (rows, N) bool
+        swarm00_series.npz      per-capture values that do not scale with the
+                                swarm: speed statistics when velocities were
+                                not stored, shared__<key> when 'shared_props'
+                                was, or both
         times_0000.npy          (rows,) shared across swarms
       fluid/
         dump_stats.npz          per-dump component means and extrema

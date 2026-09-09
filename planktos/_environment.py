@@ -2133,6 +2133,11 @@ class Environment:
             ``'accelerations'``. ``'props'`` keeps the whole props DataFrame
             per capture instead of only the latest, written as readable csv
             with any column holding one ndarray per agent spilled beside it.
+            ``'shared_props'`` keeps the shared_props dict per capture. It is
+            a separate opt-in because it is O(run length) whatever the swarm
+            size, where ``'props'`` is O(agents x run length); a ramping
+            ``mu`` or similar is the case it exists for. Without it, restoring 
+            at an earlier capture resumes with the run's final shared_props.
 
             **Velocities are opt-in**, and leaving them out is 48% less disk
             and 59% less recording overhead. What they are needed for is

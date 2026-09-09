@@ -254,13 +254,13 @@ class FrameSource:
         stored = self._stored_stats()
         # None means the present, which Swarm.plot passes when given no time.
         j = self.n_states - 1 if n is None else n
-        if stored is None or j >= len(stored['avg_spd']):
+        row = None if stored is None else self._series_row(j)
+        if row is None or row >= len(stored['avg_spd']):
             return self.swarm._calc_basic_stats(DIM3=DIM3, t_indx=n)
-        n = j
         return self.swarm._calc_basic_stats(
             DIM3=DIM3, t_indx=n,
-            speeds=(stored['avg_vel'][n], float(stored['avg_spd'][n]),
-                    float(stored['std_spd'][n])))
+            speeds=(stored['avg_vel'][row], float(stored['avg_spd'][row]),
+                    float(stored['std_spd'][row])))
 
 
     def angles(self, n):
@@ -275,8 +275,57 @@ class FrameSource:
         if self.swarm_index is None:
             return None
         series = self.run.angles(self.swarm_index)
-        j = self.n_states - 1 if n is None else n
-        return None if series is None or j >= len(series) else series[j]
+        if series is None:
+            return None
+        # A CaptureSeries is front-padded to the archive's own index, where the
+        #   sidecar series of stats() are not -- hence the capture rather than
+        #   the row.
+        capture = self._archive_capture(self.n_states - 1 if n is None else n)
+        if capture is None or capture >= len(series):
+            return None
+        return series[capture]
+
+
+    def _archive_capture(self, n):
+        '''Which of the archive's captures state ``n`` is, or None if it is not.
+
+        Resolved through the time base rather than by index, which is the rule
+        the archive states for anyone reading it. Two conventions meet here and
+        neither is the other: a Swarm's own history begins when the swarm did,
+        where the archive counts from its own capture 0. A state need not be a
+        capture at all -- a recording may have started part-way into a run, or
+        stopped before the end of one -- and time is what says so.
+        '''
+
+        if self.run is None or self.times is None or not len(self.run.times):
+            return None
+        if not 0 <= n < len(self.times):
+            return None
+        t = self.times[n]
+        if not np.isfinite(t):
+            return None
+        capture = self.run.capture_at(t)
+        # capture_at snaps to the nearest, so it always answers; whether the
+        #   answer is this state is a separate question.
+        if not np.isclose(self.run.times[capture], t, rtol=1e-12, atol=1e-12):
+            return None
+        return capture
+
+
+    def _series_row(self, n):
+        '''Which row of this swarm's per-capture series holds state ``n``.
+
+        The per-swarm series -- the speed statistics, and the props and
+        shared_props series beside them -- are indexed from the swarm's own
+        first capture, where positions and headings are front-padded to the
+        archive's. This is the one place that offset is applied.
+        '''
+
+        capture = self._archive_capture(n)
+        if capture is None or self.swarm_index is None:
+            return None
+        row = capture - self.run.first_capture(self.swarm_index)
+        return row if row >= 0 else None
 
 
     def _has_live_velocities(self):
@@ -459,15 +508,20 @@ def _live_times(swarm):
 
     envir = swarm.envir
     n_hist = len(swarm.pos_history)
+    if len(envir.time_history) < n_hist:
+        return None
+    # The LAST n_hist environment times, not the first: a swarm added part-way
+    #   through a run has a shorter history than the environment does, and it
+    #   covers the steps since it joined. Sliced from the front rather than
+    #   with [-n_hist:], which is the whole list when n_hist is 0.
+    start = len(envir.time_history) - n_hist
+    history = np.asarray(envir.time_history[start:], dtype=float)
     if envir.time is None:
         # A step raised partway through, so the present positions hold a step
         #   applied to only some agents. The histories are a consistent record
         #   up to that point.
-        return np.asarray(envir.time_history[:n_hist], dtype=float)
-    if len(envir.time_history) < n_hist:
-        return None
-    return np.concatenate((np.asarray(envir.time_history[:n_hist], dtype=float),
-                           (float(envir.time),)))
+        return history
+    return np.concatenate((history, (float(envir.time),)))
 
 
 def _dump_span(times, lo, hi):

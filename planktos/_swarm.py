@@ -2056,12 +2056,23 @@ class Swarm:
             vel_data = (self.vel_history[t_indx] if have_vel
                         else ma.masked_all(self.velocities.shape))
             time = self.envir.time_history[t_indx]
-        first_positions = self.pos_history[0] if n_hist > 0 else positions
-
-        # get % of agents left in domain
+        # get % of agents left in domain, against the population the swarm
+        #   started with. That is the first history frame holding anybody
+        #   rather than the first frame outright: a swarm restored from an
+        #   archive after joining a run part-way has its history front-padded
+        #   with fully masked frames, which is how the archive says "not in the
+        #   run yet", and dividing by that population is a division by zero.
         num_left = positions[:,0].compressed().size
-        num_orig = first_positions[:,0].compressed().size
-        perc_left = 100*num_left/num_orig
+        num_orig = 0
+        for frame in self.pos_history:
+            num_orig = frame[:,0].compressed().size
+            if num_orig:
+                break
+        if not num_orig:
+            num_orig = positions[:,0].compressed().size
+        # No agent has ever been in the domain, so there is no population for
+        #   this to be a percentage of.
+        perc_left = 100*num_left/num_orig if num_orig else 0.
 
         # only agents still in the domain contribute. agents leave whole rows at
         # a time, so dropping masked rows loses nothing from the survivors.

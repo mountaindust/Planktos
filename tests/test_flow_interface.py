@@ -26,6 +26,7 @@ rather than tolerance-tuned. No RNG, no external data, no file I/O.
 '''
 
 import numpy as np
+import numpy.ma as ma
 import pytest
 
 import planktos
@@ -305,6 +306,48 @@ def test_calc_basic_stats_2d_known_answers():
     spd = np.linalg.norm(np.asarray(swrm.velocities), axis=1)
     assert np.isclose(avg_swrm_spd, spd.mean())
     assert np.isclose(std_swrm_spd, spd.std())
+
+
+def test_calc_basic_stats_counts_against_the_population_it_started_with():
+    # perc_left is "how many are present against how many you started with",
+    # and the population it counts against is the first history frame holding
+    # anybody. A pool of agents released into the domain over time therefore
+    # reads above 100%, which is the honest answer for an open system: the
+    # alternative would be to redefine the statistic per model.
+    envir, _, _ = _linear_2d()
+    swrm = planktos.Swarm(swarm_size=6, envir=envir, seed=1)
+    held = ma.getmaskarray(swrm.positions).copy()
+    held[2:] = True
+    # Two agents in the domain, four held back. The mask is hardened, so a
+    # fresh array is how a row is held out and later brought back in.
+    for name in ('positions', 'velocities', 'accelerations'):
+        setattr(swrm, name, ma.masked_array(
+            ma.getdata(getattr(swrm, name)), mask=held))
+    assert swrm._calc_basic_stats(DIM3=False)[0] == pytest.approx(100.0)
+
+    swrm.pos_history = [ma.copy(swrm.positions)]
+    envir.time_history = [0.0]
+    envir.time = 0.1
+    released = held.copy()
+    released[2:4] = False
+    for name in ('positions', 'velocities', 'accelerations'):
+        setattr(swrm, name, ma.masked_array(
+            ma.getdata(getattr(swrm, name)), mask=released))
+    assert swrm._calc_basic_stats(DIM3=False)[0] == pytest.approx(200.0)
+
+
+def test_calc_basic_stats_survives_a_history_that_starts_fully_masked():
+    # restore() front-pads a swarm that joined a run part-way with fully masked
+    # frames, so the first frame holds nobody. Dividing by that population was
+    # a ZeroDivisionError out of every frame drawn.
+    envir, _, _ = _linear_2d()
+    swrm = planktos.Swarm(swarm_size=4, envir=envir, seed=1)
+    swrm.pos_history = [ma.masked_all(swrm.positions.shape),
+                        ma.copy(swrm.positions)]
+    envir.time_history = [0.0, 0.1]
+    envir.time = 0.2
+    assert swrm._calc_basic_stats(DIM3=False, t_indx=0)[0] == pytest.approx(0.0)
+    assert swrm._calc_basic_stats(DIM3=False, t_indx=1)[0] == pytest.approx(100.0)
 
 
 def test_calc_basic_stats_3d_known_answers():

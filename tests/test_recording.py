@@ -1538,3 +1538,231 @@ def test_a_swarm_that_had_not_joined_yet_is_not_restored(tmp_path):
         run.close()
     assert len(swarms) == 1 and rebuilt.swarms == swarms
     assert len(both) == 2
+# --------------------------------------------------------------------------- #
+#           the opt-in shared_props series (section 6.1, R5b)                  #
+# --------------------------------------------------------------------------- #
+# store=(..., 'shared_props') keeps the shared_props dict per capture, folded
+# into the per-swarm sidecar the speed statistics already write on the same
+# cadence. O(T) whatever the swarm size, and its own token because that has
+# nothing to do with whether the O(N.T) per-agent DataFrame was wanted.
+
+class _Ramping(planktos.Swarm):
+    '''Ramps a shared prop, and adds then drops another partway through.'''
+
+    def after_move(self, dt):
+        self.shared_props['mu'] = self.shared_props['mu'] + np.array([0.5, 0.0])
+        step = len(self.envir.time_history)
+        if step == 2:
+            self.shared_props['late'] = 3.0
+        elif step == 4:
+            del self.shared_props['late']
+
+
+def _shared_run(tmp_path, steps=6, store=('positions', 'shared_props'),
+                cls=_Ramping, chunk_size=100):
+    envir = _envir()
+    swrm = cls(swarm_size=3, envir=envir, seed=1, init=np.full((3, 2), 2.0))
+    swrm.shared_props['cov'] = np.zeros((2, 2))
+    swrm.shared_props['mu'] = np.array([1.0, 0.0])
+    with envir.record(tmp_path / 'run', store=store,
+                      chunk_size=chunk_size) as rec:
+        for _ in range(steps):
+            swrm.move(0.1, silent=True)
+    return rec, envir, swrm
+
+
+def test_the_shared_props_series_follows_a_ramping_value(tmp_path):
+    rec, envir, swrm = _shared_run(tmp_path)
+    run = planktos.load_run(rec.path)
+    try:
+        mu = run.shared_props(0)['mu']
+        assert len(mu) == len(run.times)
+        np.testing.assert_allclose(
+            ma.getdata(mu)[:, 0], 1.0 + 0.5 * np.arange(len(run.times)))
+    finally:
+        run.close()
+
+
+def test_a_shared_prop_edited_in_place_is_not_rewritten_by_later_captures(
+        tmp_path):
+    # np.asarray hands back the caller's own buffer for an ndarray, so without
+    # a copy an in-place edit rewrites every capture already recorded.
+    class _InPlace(planktos.Swarm):
+        def after_move(self, dt):
+            self.shared_props['cov'][0, 0] += 1.0
+
+    rec, envir, swrm = _shared_run(tmp_path, cls=_InPlace)
+    run = planktos.load_run(rec.path)
+    try:
+        cov = ma.getdata(run.shared_props(0)['cov'])
+        np.testing.assert_allclose(cov[:, 0, 0], np.arange(len(run.times)))
+    finally:
+        run.close()
+
+
+def test_a_key_that_appears_and_vanishes_is_masked_where_it_was_not_there(
+        tmp_path):
+    rec, envir, swrm = _shared_run(tmp_path)
+    run = planktos.load_run(rec.path)
+    try:
+        late = run.shared_props(0)['late']
+        assert list(ma.getmaskarray(late)) == [True, True, True, False, False,
+                                               True, True]
+        assert late[3] == pytest.approx(3.0)
+        # A key that was there at every capture carries no mask at all.
+        assert not ma.getmaskarray(run.shared_props(0)['mu']).any()
+    finally:
+        run.close()
+
+
+def test_a_shared_prop_that_changes_shape_is_refused_by_name(tmp_path):
+    # It cannot be stacked into a series at all, so it is refused rather than
+    # written in a form that will not read back.
+    class _Reshaping(planktos.Swarm):
+        def after_move(self, dt):
+            if len(self.envir.time_history) == 2:
+                self.shared_props['cov'] = np.zeros((3, 3))
+
+    with pytest.raises(ValueError, match="'cov' changed shape"):
+        _shared_run(tmp_path, cls=_Reshaping)
+
+
+def test_a_shared_prop_that_needs_pickle_is_dropped_by_name(tmp_path):
+    # Dropped rather than fatal, as the checkpoint drops the same value, and
+    # warned once per key rather than once per capture.
+    class _Opaque(planktos.Swarm):
+        def after_move(self, dt):
+            self.shared_props['thing'] = object()
+
+    with pytest.warns(UserWarning) as caught:
+        rec, envir, swrm = _shared_run(tmp_path, cls=_Opaque)
+    series = [w for w in caught
+              if "shared_props 'thing'" in str(w.message)
+              and 'series' in str(w.message)]
+    assert len(series) == 1, 'warned once per capture rather than once per key'
+    run = planktos.load_run(rec.path)
+    try:
+        assert 'thing' not in run.shared_props(0)
+        assert 'mu' in run.shared_props(0)
+    finally:
+        run.close()
+
+
+def test_shared_props_are_not_stored_unless_asked_for(tmp_path):
+    rec, envir, swrm = _shared_run(tmp_path, store=('positions',))
+    run = planktos.load_run(rec.path)
+    try:
+        assert run.shared_props(0) is None
+        # The sidecar still holds the statistics; it is one file for both.
+        assert run.agent_stats(0) is not None
+    finally:
+        run.close()
+
+
+def test_the_series_rides_beside_velocities_rather_than_needing_their_absence(
+        tmp_path):
+    # The sidecar was written only when velocities were absent, so gating the
+    # series on 'props' would have left this combination nowhere to write.
+    rec, envir, swrm = _shared_run(
+        tmp_path, store=('positions', 'velocities', 'shared_props'))
+    run = planktos.load_run(rec.path)
+    try:
+        assert run.agent_stats(0) is None, 'velocities were stored'
+        assert run.shared_props(0) is not None
+    finally:
+        run.close()
+
+
+def test_restore_at_a_capture_takes_shared_props_from_there(tmp_path):
+    rec, envir, swrm = _shared_run(tmp_path)
+    run = planktos.load_run(rec.path)
+    try:
+        _, (resumed,) = run.restore(capture=3)
+    finally:
+        run.close()
+    np.testing.assert_allclose(resumed.shared_props['mu'], [2.5, 0.0])
+    assert resumed.shared_props['late'] == pytest.approx(3.0)
+    assert not np.allclose(swrm.shared_props['mu'], [2.5, 0.0]), (
+        'mu never ramped, so this proves nothing')
+
+
+def test_a_key_gone_by_the_capture_does_not_come_back_from_the_checkpoint(
+        tmp_path):
+    # The checkpoint holds the run's final dict, so a merge rather than a
+    # replacement would resurrect a key the run had deleted.
+    rec, envir, swrm = _shared_run(tmp_path)
+    assert 'late' not in swrm.shared_props
+    run = planktos.load_run(rec.path)
+    try:
+        _, (before,) = run.restore(capture=1)
+        _, (after,) = run.restore(capture=5)
+    finally:
+        run.close()
+    assert 'late' not in before.shared_props
+    assert 'late' not in after.shared_props
+
+
+def test_the_notice_stops_substituting_what_the_series_now_records(capsys,
+                                                                   tmp_path):
+    rec, envir, swrm = _shared_run(tmp_path)
+    run = planktos.load_run(rec.path)
+    capsys.readouterr()      # record()'s own store= notice
+    try:
+        run.restore(capture=2)
+    finally:
+        run.close()
+    out = capsys.readouterr().out
+    assert 'Recorded per capture: positions, shared_props' in out
+    assert 'Taken from the end of the run instead: velocities, props' in out
+def test_the_series_sidecar_lands_on_the_chunk_boundary(tmp_path):
+    # A regression lock: the sidecar was written only by flush() and close(),
+    # so a hard kill lost the whole of it while every chunk file survived --
+    # and restore(capture=j) then fell back to the end-of-run shared_props
+    # while the notice said it had taken them from j.
+    envir = _envir()
+    swrm = _Ramping(swarm_size=3, envir=envir, seed=1,
+                    init=np.full((3, 2), 2.0))
+    swrm.shared_props['cov'] = np.zeros((2, 2))
+    swrm.shared_props['mu'] = np.array([1.0, 0.0])
+    rec = envir.record(tmp_path / 'run', store=('positions', 'shared_props'),
+                       chunk_size=2)
+    for _ in range(5):
+        swrm.move(0.1, silent=True)
+    # No stop(): this is what a hard kill leaves on disk.
+    sidecar = rec.path / 'agents' / 'swarm00_series.npz'
+    assert sidecar.is_file(), 'the sidecar did not survive the chunk boundary'
+
+    # And it covers exactly the captures the chunks do, so the two cannot
+    # disagree about how long the run was.
+    run = planktos.load_run(rec.path)
+    try:
+        assert len(run.shared_props(0)['mu']) == len(run.times)
+        assert len(run.agent_stats(0)['avg_spd']) == len(run.times)
+    finally:
+        run.close()
+    rec.stop()
+
+
+def test_a_short_series_sidecar_is_refused_like_a_short_chunk(tmp_path):
+    rec, envir, swrm = _shared_run(tmp_path)
+    path = rec.path / 'agents' / 'swarm00_series.npz'
+    with np.load(path, allow_pickle=False) as data:
+        truncated = {k: data[k][:-1] for k in data.files}
+    np.savez(path, **truncated)
+    with pytest.raises(ValueError, match='series'):
+        planktos.load_run(rec.path)
+
+
+def test_restore_says_so_when_a_promised_series_is_missing(tmp_path):
+    # store= claims one, so its absence contradicts the notice already printed
+    # and cannot be a silent fallback to the end of the run.
+    rec, envir, swrm = _shared_run(tmp_path)
+    (rec.path / 'agents' / 'swarm00_series.npz').unlink()
+    run = planktos.load_run(rec.path)
+    try:
+        with pytest.warns(UserWarning, match='no shared_props series'):
+            _, (resumed,) = run.restore(capture=2)
+    finally:
+        run.close()
+    np.testing.assert_allclose(resumed.shared_props['mu'],
+                               swrm.shared_props['mu'])

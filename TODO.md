@@ -151,31 +151,41 @@ back behind it.
    off the archive and 59% off the recording overhead. *R4c*: `store=(…, 'props')` keeps
    the whole props DataFrame per capture, and `restore()` fills `props_history` from it.
 
-   **Where to pick up: `run_persistence.md` §6.1 has Steps R5 and R6.** R5a is
-   done; R5b and R6 are specified and not built. ⚠️ **R5 and R6 were swapped on
-   2026-09-08** — what was specified as R6 is now R5 and goes first. They are not
+   **R5 is done (2026-09-08). Where to pick up: `run_persistence.md` §6.1 Step R6**,
+   the append path — specified, not built. ⚠️ **R5 and R6 were swapped on
+   2026-09-08** — what was specified as R6 is now R5 and went first. They are not
    independent after all: R6 is the one step that reconciles *every* file the archive
-   writes, so each series added after it lands is a second pass through the append path. R6's list was written 2026-09-03, before R4
-   landed, and already missed two files because of it (below).
+   writes, so each series added after it lands is a second pass through the append
+   path. R6's list was written 2026-09-03, before R4 landed, and already missed two
+   files because of it (below).
 
-   - **R5 — resuming from an arbitrary capture** (`restore(capture=j)`), plus the
-     `shared_props` history that makes it honest. **R5a is done (2026-09-08):**
-     `RunArchive.restore(capture=j)` winds the state back, takes `props` and
+   - **✅ R5 — resuming from an arbitrary capture. Done 2026-09-08.**
+     *R5a*: `RunArchive.restore(capture=j)` winds the state back, takes `props` and
      `velocities` from capture *j* where they were stored, prints what came from the
-     end of the run instead, and leaves out a swarm that had not joined by then. It
-     also turned up a pre-existing offset in `RunArchive.props()` for a mid-run swarm,
-     recorded in the note under R5a and left for R5b to settle.
-     **R5b must not add an unconditional write**
-     (decided 2026-09-04): it folds into the per-swarm per-capture sidecar, which is
-     already written on the same cadence and is already O(1) per capture — renamed
-     `swarmNN_series.npz`, since it stops being only statistics. ⚠️ **Gate it on a
-     `'shared_props'` token of its own, not on `'props'`** (corrected 2026-09-08): that
-     file is written only when velocities are *absent*, so the specified gating left
-     `store=('positions', 'velocities', 'props')` with nowhere to put the series.
-     **R5c is cut** (2026-09-08): no `ib_collision_idx` history is built. Nothing reads
-     one, a resume takes the value from the end state, and the collision statistic is
-     already reachable by copying it into props in `after_move`. The checkpoint keeps
-     the latest value, as it always has.
+     end of the run instead, and leaves out a swarm that had not joined by then.
+     *R5b*: `store=(…, 'shared_props')` keeps the shared_props dict per capture,
+     folded into the per-swarm sidecar — no new file and no new write — which is
+     renamed `swarmNN_series.npz` and now exists when `derive or 'shared_props' in
+     store`. A key that appears or vanishes mid-run is masked at the captures it was
+     not there for; one that changes shape, or that would need pickle, is refused by
+     name. *R5c was cut*: no `ib_collision_idx` history is built. Nothing reads one, a
+     resume takes the value from the end state, and the collision statistic is already
+     reachable by copying it into props in `after_move`.
+     **The R5 review also fixed the mid-run-swarm gap it opened, and three defects
+     beside it** (detail in the note under R5b): plotting a *restored* mid-run swarm
+     raised `ZeroDivisionError` from every frame; a *live* one's frames carried times
+     from before it existed; `restore()` left its `props_history` shorter than its
+     `pos_history`, permanently; and the per-swarm series were read at the wrong offset.
+     `_frames.FrameSource` now resolves states to captures **through the time base**
+     rather than by index, which is right for live and restored alike, and
+     `RunArchive.first_capture()` is the public name for the offset.
+   - **Owed alongside: an example of agents arriving mid-run** — the fixed-*N* pool
+     with masked-until-released agents. `Swarm.N` cannot grow (recording refuses, and
+     the two `save_*` paths break), but a masked row already means "not in the domain",
+     so a pool needs **no format change at all**. Specified in `run_persistence.md`
+     §8.1, with a `Swarm.release`/`retire` pair to wrap the one non-obvious step — the
+     mask is hardened, so a row comes back only by assigning a freshly built array.
+     Filed as an example in §7 and as deferred API in §8.
    - **R6 — appending to the archive a restored run came from.** Today a resumed run
      writes a second archive beside the first. Trigger is `envir.time ==
      archive.times[-1]`; nothing already written is rewritten but the tail chunk. Its
@@ -1695,3 +1705,32 @@ Backup anchors if the hash goes stale (a rebase, say):
 - `git log --oneline -S "envir.time = None" -- planktos/_swarm.py`
 - `git log --oneline -S "not t_edge > 0" -- planktos/_ibc.py`
 - the three `changelog.txt` lines quoted above.
+### Open: `perc_left` divided by an empty starting population *(2026-09-08)*
+
+`Swarm._calc_basic_stats` computed "% remaining" against the number of agents unmasked in
+`pos_history[0]`, and raised `ZeroDivisionError` when that frame held none. On `dyload`
+this made **every** frame of a restored mid-run swarm unplottable (`restore()` front-pads
+its history with fully masked frames), which is how it was found. `master` can reach the
+same divide by zero — a swarm whose agents are all masked from the outset, e.g. an
+`init='grid'` grid landing entirely inside a closed structure — so the fix is not
+dyload-specific.
+
+The count is now taken from the first history frame holding anybody, falling back to the
+present positions. A swarm that has *never* had an agent in the domain reports 0% rather
+than raising.
+
+| What | Where | Applies cleanly to `master`? |
+|---|---|---|
+| **The `num_orig` loop** | `planktos/_swarm.py`, `_calc_basic_stats` only | ⚠️ **Port, not a hunk.** Same defect, but `master`'s version is shaped differently (see the 1.0.3 entry above) and spells the no-history fallback `num_orig = num_left` rather than reading the present positions |
+| **Test** — `test_calc_basic_stats_survives_a_history_that_starts_fully_masked` | `tests/test_flow_interface.py` | ⚠️ **Not the module.** `test_flow_interface.py` does not exist on `master`; port it into a statistics module there |
+| **Test** — `test_calc_basic_stats_counts_against_the_population_it_started_with` | `tests/test_flow_interface.py` | **Behavior lock, not a fix.** It pins that a releasing pool reads above 100% (`run_persistence.md` §8.1). Port it or not; it passes on `master` either way |
+
+**Corresponding `changelog.txt` line**, filed under **1.1.0**:
+
+```
+- Bug fix: plots raised ZeroDivisionError when a swarm's first recorded state held no agents; % remaining now counts from the first state that does.
+```
+
+⚠️ Everything else from the R5 review is **dyload-only** — it is inside
+`Environment.record` / `RunArchive` / `_frames.FrameSource`, none of which exist on
+`master`.
