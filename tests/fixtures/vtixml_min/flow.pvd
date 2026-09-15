@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">
+  <Collection>
+    <DataSet timestep="0.1" group="" part="0" file="flow_0001_t0.1.vti"/>
+    <DataSet timestep="0.2" group="" part="0" file="flow_0002_t0.2.vti"/>
+    <DataSet timestep="0.3" group="" part="0" file="flow_0003_t0.3.vti"/>
+    <DataSet timestep="0.4" group="" part="0" file="flow_0004_t0.4.vti"/>
+    <DataSet timestep="0.5" group="" part="0" file="flow_0005_t0.5.vti"/>
+    <DataSet timestep="0.6" group="" part="0" file="flow_0006_t0.6.vti"/>
+    <DataSet timestep="0.7" group="" part="0" file="flow_0007_t0.7.vti"/>
+    <DataSet timestep="0.8" group="" part="0" file="flow_0008_t0.8.vti"/>
+  </Collection>
+</VTKFile>

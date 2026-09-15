@@ -1699,6 +1699,171 @@ def test_structured_points_scalar_roundtrips_in_3d(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+#        VTK XML ImageData series: the .pvd collection and .vti dumps         #
+# --------------------------------------------------------------------------- #
+# vtixml_min is shaped like the 2D sea-fan export in tests/data/openfoam2D: one
+# point thick in z, zlib-compressed, Float32 U beside a scalar p. Its field is
+# u = t, v = x + 10*y, w = 0; the constants below mirror VTIXML_* in
+# _gen_fixtures.py.
+
+VTI_DIR = FIXTURES / 'vtixml_min'
+VTI_TIMES = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+VTI_GRID = [-1.0 + 0.5*np.arange(6), 0.5 + 0.25*np.arange(5), np.array([0.25])]
+
+
+def _vti_name(k):
+    return 'flow_{:04d}_t{:g}.vti'.format(k + 1, VTI_TIMES[k])
+
+
+def _write_pvd(path, entries):
+    '''A .pvd with one DataSet per dict of attributes in entries.'''
+    rows = ''.join('    <DataSet {}/>\n'.format(
+        ' '.join('{}="{}"'.format(k, v) for k, v in e.items())) for e in entries)
+    path.write_text('<?xml version="1.0"?>\n'
+                    '<VTKFile type="Collection" version="0.1">\n'
+                    '  <Collection>\n' + rows + '  </Collection>\n</VTKFile>\n')
+    return path
+
+
+def _write_vti(path, vectors, active=None, extent=(0, 3, 0, 2, 0, 0),
+               direction=None, time=None):
+    '''A small .vti holding each of `vectors` ({name: 3-vector}) at every point.'''
+    import vtk
+    from vtk.util import numpy_support
+    img = vtk.vtkImageData()
+    img.SetExtent(*extent)
+    if direction is not None:
+        img.SetDirectionMatrix(*np.ravel(direction))
+    for name, value in vectors.items():
+        arr = numpy_support.numpy_to_vtk(
+            np.tile(np.asarray(value, dtype=float), (img.GetNumberOfPoints(), 1)),
+            deep=True)
+        arr.SetName(name)
+        img.GetPointData().AddArray(arr)
+    if active is not None:
+        img.GetPointData().SetActiveVectors(active)
+    if time is not None:
+        tv = vtk.vtkDoubleArray()
+        tv.SetName('TimeValue')
+        tv.InsertNextValue(time)
+        img.GetFieldData().AddArray(tv)
+    writer = vtk.vtkXMLImageDataWriter()
+    writer.SetFileName(str(path))
+    writer.SetInputData(img)
+    writer.Write()
+    return path
+
+
+def test_read_pvd_series_resolves_files_and_times():
+    files, times = _dataio.read_pvd_series(VTI_DIR / 'flow.pvd')
+    assert files == [VTI_DIR / _vti_name(k) for k in range(8)]
+    assert all(f.is_file() for f in files)
+    assert times.tolist() == VTI_TIMES
+
+
+def test_read_pvd_series_keeps_the_declared_order_and_marks_unusable_times(tmp_path):
+    # Nothing is checked against the filesystem, and the order is as written.
+    pvd = _write_pvd(tmp_path / 'c.pvd', [
+        {'timestep': '2', 'file': 'b.vti'},
+        {'timestep': '1', 'file': 'sub/a.vti'},
+        {'file': 'c.vti'},
+        {'timestep': 'soon', 'file': 'd.vti'}])
+    files, times = _dataio.read_pvd_series(pvd)
+    assert files == [tmp_path / 'b.vti', tmp_path / 'sub' / 'a.vti',
+                     tmp_path / 'c.vti', tmp_path / 'd.vti']
+    assert times[:2].tolist() == [2., 1.]
+    assert np.isnan(times[2:]).all()
+
+
+def test_read_pvd_series_skips_an_entry_naming_no_file(tmp_path):
+    pvd = _write_pvd(tmp_path / 'c.pvd', [{'timestep': '1', 'file': 'a.vti'},
+                                          {'timestep': '2'}])
+    with pytest.warns(UserWarning, match='no file attribute'):
+        files, times = _dataio.read_pvd_series(pvd)
+    assert files == [tmp_path / 'a.vti']
+    assert times.tolist() == [1.]
+
+
+@pytest.mark.parametrize('attr, values', [('part', ('0', '1')),
+                                          ('group', ('fluid', 'solid'))])
+def test_read_pvd_series_refuses_datasets_split_across_groups_or_parts(
+        tmp_path, attr, values):
+    pvd = _write_pvd(tmp_path / 'c.pvd', [
+        {'timestep': '1', attr: values[0], 'file': 'a.vti'},
+        {'timestep': '1', attr: values[1], 'file': 'b.vti'}])
+    with pytest.raises(ValueError, match='more than one {}'.format(attr)):
+        _dataio.read_pvd_series(pvd)
+
+
+def test_read_pvd_series_refuses_a_file_that_is_not_a_collection():
+    with pytest.raises(ValueError, match='not a ParaView Collection'):
+        _dataio.read_pvd_series(VTI_DIR / _vti_name(0))
+
+
+@pytest.mark.parametrize('k', [0, 2, 7])
+def test_read_vtkxml_image_data_returns_the_analytic_field(k):
+    data, mesh, time = _dataio.read_vtkxml_image_data(VTI_DIR / _vti_name(k))
+    assert time == VTI_TIMES[k]
+    for got, want in zip(mesh, VTI_GRID):
+        assert np.allclose(got, want)
+    assert [d.shape for d in data] == [(6, 5, 1)]*3
+    X, Y, _ = np.meshgrid(*VTI_GRID, indexing='ij')
+    assert np.allclose(data[0], VTI_TIMES[k])          # u = t, Float32 on disk
+    assert np.allclose(data[1], X + 10*Y)              # a transposed read fails
+    assert np.all(data[2] == 0)
+
+
+def test_read_vtkxml_image_data_reads_the_active_vectors_unless_named(tmp_path):
+    f = _write_vti(tmp_path / 'a.vti', {'A': [1, 2, 3], 'B': [4, 5, 6]},
+                   active='B')
+    data, _, _ = _dataio.read_vtkxml_image_data(f)
+    assert [float(d.flat[0]) for d in data] == [4., 5., 6.]
+    data, _, _ = _dataio.read_vtkxml_image_data(f, vec_name='A')
+    assert [float(d.flat[0]) for d in data] == [1., 2., 3.]
+
+
+def test_read_vtkxml_image_data_needs_a_name_when_no_vectors_are_active(tmp_path):
+    f = _write_vti(tmp_path / 'a.vti', {'A': [1, 2, 3], 'B': [4, 5, 6]})
+    with pytest.raises(ValueError, match=r"vec_name, one of \['A', 'B'\]"):
+        _dataio.read_vtkxml_image_data(f)
+
+
+def test_read_vtkxml_image_data_refuses_an_absent_or_scalar_array():
+    f = VTI_DIR / _vti_name(0)
+    with pytest.raises(ValueError, match="no point-data array 'V'"):
+        _dataio.read_vtkxml_image_data(f, vec_name='V')
+    with pytest.raises(ValueError, match='not the 3 of a velocity vector'):
+        _dataio.read_vtkxml_image_data(f, vec_name='p')
+
+
+def test_read_vtkxml_image_data_places_an_extent_not_starting_at_zero(tmp_path):
+    f = _write_vti(tmp_path / 'a.vti', {'U': [1, 0, 0]}, active='U',
+                   extent=(2, 7, 0, 2, 0, 0))
+    data, mesh, _ = _dataio.read_vtkxml_image_data(f)
+    assert np.allclose(mesh[0], np.arange(2, 8))
+    assert data[0].shape == (6, 3, 1)
+
+
+def test_read_vtkxml_image_data_refuses_a_rotated_grid(tmp_path):
+    f = _write_vti(tmp_path / 'a.vti', {'U': [1, 0, 0]}, active='U',
+                   direction=[[0, -1, 0], [1, 0, 0], [0, 0, 1]])
+    with pytest.raises(ValueError, match='rotated relative to the coordinate axes'):
+        _dataio.read_vtkxml_image_data(f)
+
+
+def test_read_vtkxml_image_data_time_is_none_without_a_timevalue(tmp_path):
+    f = _write_vti(tmp_path / 'a.vti', {'U': [1, 0, 0]}, active='U')
+    assert _dataio.read_vtkxml_image_data(f)[2] is None
+    f = _write_vti(tmp_path / 'b.vti', {'U': [1, 0, 0]}, active='U', time=2.5)
+    assert _dataio.read_vtkxml_image_data(f)[2] == 2.5
+
+
+def test_read_vtkxml_image_data_raises_on_a_missing_file(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        _dataio.read_vtkxml_image_data(tmp_path / 'absent.vti')
+
+
+# --------------------------------------------------------------------------- #
 #            a plane exported as 3D vtk is 2D data within Planktos            #
 # --------------------------------------------------------------------------- #
 # A vtk dataset is always three-dimensional, so a solver exporting a single

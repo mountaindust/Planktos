@@ -846,6 +846,178 @@ def read_vtkxml_cell_data(filename, arrays=('U',), load_cell_coordinates=True):
 
 
 
+def read_pvd_series(filename):
+    '''Read a ParaView collection (``.pvd``) index, mapping member files to times.
+
+    A ``.pvd`` is plain XML naming one member file per timestep::
+
+        <VTKFile type="Collection">
+          <Collection>
+            <DataSet timestep="0.1" group="" part="0" file="flow_0001_t0.1.vti"/>
+
+    Nothing is checked against the filesystem.
+
+    Parameters
+    ----------
+    filename : string or Path
+        path and filename of the .pvd file
+
+    Returns
+    -------
+    files : list of Path
+        member files in the order the collection declares them, resolved
+        relative to the directory holding it
+    times : ndarray of float
+        time of each entry of files; NaN where an entry gives no usable time
+
+    Raises
+    ------
+    ValueError
+        if the file is not a Collection, or if it splits its datasets across
+        more than one group or part
+    '''
+
+    filename = Path(filename)
+    root = ET.parse(filename).getroot()
+    if root.get('type') != 'Collection':
+        raise ValueError("{} is not a ParaView Collection (its VTKFile type is "
+                         "{!r}).".format(filename, root.get('type')))
+
+    files = []; times = []; labels = {'group': set(), 'part': set()}
+    for elem in root.iter('DataSet'):
+        member = elem.get('file')
+        if member is None:
+            warnings.warn("Skipping a DataSet with no file attribute in "
+                          "collection {}.".format(filename), UserWarning)
+            continue
+        for attr in labels:
+            labels[attr].add(elem.get(attr, ''))
+        files.append(filename.parent / member)
+        try:
+            times.append(float(elem.get('timestep', '')))
+        except ValueError:
+            times.append(np.nan)
+
+    # Several groups or parts make each timestep a set of datasets rather than
+    #   one, which a list of (file, time) cannot describe.
+    for attr, values in labels.items():
+        if len(values) > 1:
+            raise ValueError(
+                "{} splits its datasets across more than one {}: {}. A "
+                "collection with one dataset per timestep is required.".format(
+                    filename, attr, sorted(values)))
+
+    return files, np.array(times, dtype=float)
+
+
+
+def read_vtkxml_image_data(filename, vec_name=None):
+    '''Read vector point data from a VTK XML ImageData (``.vti``) file.
+
+    Parameters
+    ----------
+    filename : string or Path
+        path and filename of the .vti file
+    vec_name : string, optional
+        name of the point-data array to read. Defaults to the array the file
+        declares as its active vectors.
+
+    Returns
+    -------
+    list of arrays
+        vector data, one array per component in order x, y, z, each indexed
+        as [x,y,z]
+    list of arrays
+        1D arrays of grid points in the x, y, and z directions
+    time : float or None
+        the ``TimeValue`` field-data entry, if the file carries one
+
+    Raises
+    ------
+    ValueError
+        if no array is named and the file declares no active vectors, if the
+        array is absent or does not have three components, or if the grid is
+        not aligned with the coordinate axes
+    '''
+
+    path = _require_file(filename)
+
+    reader = vtk.vtkXMLImageDataReader()
+    reader.SetFileName(str(path))
+    reader.UpdateInformation()
+    selection = reader.GetPointDataArraySelection()
+    available = [selection.GetArrayName(n)
+                 for n in range(selection.GetNumberOfArrays())]
+
+    if vec_name is None:
+        vec_name = _active_vectors_name(path)
+        if vec_name is None:
+            raise ValueError(
+                "{} declares no active vectors; pass vec_name, one of "
+                "{}.".format(path, available))
+    if vec_name not in available:
+        raise ValueError("{} has no point-data array '{}'. Available: "
+                         "{}.".format(path, vec_name, available))
+
+    # Only the velocity is decompressed.
+    selection.DisableAllArrays()
+    selection.EnableArray(vec_name)
+    reader.GetCellDataArraySelection().DisableAllArrays()
+    reader.Update()
+    vtk_data = reader.GetOutput()
+
+    direction = vtk_data.GetDirectionMatrix()
+    direction = np.array([[direction.GetElement(i, j) for j in range(3)]
+                          for i in range(3)])
+    if not np.allclose(direction, np.eye(3)):
+        raise ValueError(
+            "The grid in {} is rotated relative to the coordinate axes "
+            "(Direction {}). Planktos needs a grid aligned with its "
+            "axes.".format(path, direction.ravel().tolist()))
+
+    array = vtk_data.GetPointData().GetArray(vec_name)
+    if array.GetNumberOfComponents() != 3:
+        raise ValueError(
+            "'{}' in {} has {} component(s), not the 3 of a velocity "
+            "vector.".format(vec_name, path, array.GetNumberOfComponents()))
+
+    # The origin is the position of index 0, which the extent need not start at.
+    extent = vtk_data.GetExtent()
+    origin = vtk_data.GetOrigin()
+    spacing = vtk_data.GetSpacing()
+    mesh = [origin[d] + spacing[d]*np.arange(extent[2*d], extent[2*d+1]+1)
+            for d in range(3)]
+
+    # Points run with x fastest, so the flat array reshapes to [z,y,x].
+    #   Transpose each component to [x,y,z].
+    np_data = numpy_support.vtk_to_numpy(array)
+    shape = vtk_data.GetDimensions()[::-1]
+    data = [np.reshape(np_data[:,d], shape).T for d in range(3)]
+
+    time = _single_valued_field(vtk_data, 'TimeValue')
+
+    return data, mesh, time
+
+
+
+def _active_vectors_name(filename):
+    '''The Vectors attribute of a VTK XML file's PointData, or None.
+
+    Parsed incrementally, stopping at the PointData element, so only the XML
+    ahead of the point arrays is read.
+    '''
+
+    try:
+        for _, elem in ET.iterparse(filename, events=('start',)):
+            if elem.tag == 'PointData':
+                return elem.get('Vectors')
+    except ET.ParseError:
+        # Raw appended data is not XML, and lies after any PointData element.
+        pass
+    return None
+
+
+
 def read_2DEulerian_Data_From_vtk(path, simNum, strChoice, xy=False):
     '''Reads ascii Structured Points VTK files using the Python VTK library,
     where the file contains 2D IB2d data, either scalar or vector. 

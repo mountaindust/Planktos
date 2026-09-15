@@ -666,6 +666,9 @@ below), and it roughly doubles the default run on its own.
     a 7×6 field over a 6×5 domain.
   - `vtk3d_min/` — 8 rectilinear 3D dumps carrying `TIME` field data, for
     `VTK3dData`. Field is `u = t`, `v = x`, `w = t·z`.
+  - `vtixml_min/` — 8 zlib-compressed `.vti` dumps one point thick in z,
+    indexed by `flow.pvd` and carrying `TimeValue`, shaped like the 2D sea-fan
+    export. Field is `u = t`, `v = x + 10y`, `w = 0`; times start at 0.1.
 - **Markers** (registered in `pytest.ini`): `slow` (only with `--runslow`),
   `streaming` (only with `--runstreaming`; applied to the whole of
   `tests/test_data_streaming/` by a module-level `pytestmark`),

@@ -440,6 +440,65 @@ def write_openfoam_series(outdir=HERE / 'openfoam_min'):
     return outdir
 
 
+# VTK XML ImageData series indexed by a ParaView collection, for VTKXMLData.
+# Shaped like the 2D sea-fan export in tests/data/openfoam2D: one point thick in
+# z, zlib-compressed inline binary, Float32 U declared as the active vectors
+# beside a scalar p, times starting at 0.1 rather than 0, and filenames carrying
+# a _t<time> suffix. Eight dumps, as for vtk3d_min, so a window of INUM=4
+# slides. The non-zero origin makes the shift to quadrant 1 visible.
+#     u = t          pins the timeline
+#     v = x + 10*y   depends on both axes, so a transposed read cannot pass
+#     w = 0          genuinely planar
+# TimeValue is written in every dump, and flow.pvd declares the same times.
+VTIXML_SHAPE = (6, 5, 1)
+VTIXML_ORIGIN = (-1.0, 0.5, 0.25)
+VTIXML_SPACING = (0.5, 0.25, 1.0)
+VTIXML_TIMES = tuple(round(0.1*(k+1), 10) for k in range(8))
+
+
+def vtixml_grid():
+    '''The coordinate arrays of the ImageData fixture.'''
+    return [VTIXML_ORIGIN[d] + VTIXML_SPACING[d]*np.arange(VTIXML_SHAPE[d])
+            for d in range(3)]
+
+
+def write_vtixml_series(outdir=HERE / 'vtixml_min'):
+    outdir.mkdir(parents=True, exist_ok=True)
+    x, y, z = vtixml_grid()
+    X, Y, _ = np.meshgrid(x, y, z, indexing='ij')
+    rows = []
+    for k, t in enumerate(VTIXML_TIMES):
+        grid = pv.ImageData(dimensions=VTIXML_SHAPE, spacing=VTIXML_SPACING,
+                            origin=VTIXML_ORIGIN)
+        # ImageData points run with x fastest, matching ravel(order='F') over
+        # arrays built with indexing='ij'.
+        U = np.stack([np.full(X.size, t), (X + 10*Y).ravel(order='F'),
+                      np.zeros(X.size)], axis=1)
+        grid.point_data['U'] = U.astype(np.float32)
+        grid.point_data['p'] = (t*X).ravel(order='F').astype(np.float32)
+        grid.set_active_vectors('U')
+        grid.set_active_scalars('p')
+        grid.field_data['TimeValue'] = np.array([t])
+        name = 'flow_{:04d}_t{:g}.vti'.format(k+1, t)
+        writer = vtk.vtkXMLImageDataWriter()
+        writer.SetFileName(str(outdir / name))
+        writer.SetInputData(grid)
+        writer.SetDataModeToBinary()        # inline base64, as the real export
+        writer.SetCompressorTypeToZLib()
+        writer.Write()
+        rows.append('    <DataSet timestep="{:g}" group="" part="0" '
+                    'file="{}"/>\n'.format(t, name))
+
+    # Hand-written in the exact shape ParaView emits.
+    (outdir / 'flow.pvd').write_text(
+        '<?xml version="1.0"?>\n'
+        '<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n'
+        '  <Collection>\n' + ''.join(rows) +
+        '  </Collection>\n'
+        '</VTKFile>\n')
+    return outdir
+
+
 if __name__ == '__main__':
     d = write_moving_mesh()
     print("wrote moving mesh ->", d, sorted(p.name for p in d.iterdir()))
