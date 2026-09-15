@@ -1793,9 +1793,39 @@ def test_a_discarded_nonzero_component_is_called_out(tmp_path):
     # w == 0 means nothing is lost. A nonzero w means this is a slab of a 3D
     # flow rather than 2D data, and dropping it changes the physics -- so the
     # warning has to say more than "read as 2D".
+    # The in-plane scale is max(u, v) = 4, the largest x coordinate.
     envir = _load_slab(_write_slab(tmp_path / 'slab', w=0.7),
-                       match='z-velocity is not everywhere zero')
+                       match=r'z-velocity reaches 0\.7, 0\.175 times the largest '
+                             r'in-plane velocity.*slab of a 3D flow')
     assert len(envir.flow) == 2
+
+
+def _flat_z_field(u, w):
+    '''A 4x3x1 field with a constant in-plane u, zero v and a constant w.'''
+    shape = (4, 3, 1)
+    flow = [np.full(shape, u), np.zeros(shape), np.full(shape, w)]
+    mesh = [np.linspace(0, 3, 4), np.linspace(0, 2, 3), np.array([0.0])]
+    return flow, mesh
+
+
+@pytest.mark.parametrize('w', [0.0, 2.6e-17, -2.6e-17, 1e-9])
+def test_round_off_in_a_discarded_component_is_not_called_out(w):
+    # Regression: the check was exact, so a planar export whose w is round-off
+    # (2.6e-17 against an in-plane 6.7e-3, in the 2D sea-fan data) was reported
+    # as a slab of a 3D flow.
+    from planktos import fluid
+    flow, mesh = _flat_z_field(6.7e-3, w)
+    with pytest.warns(UserWarning, match='single point thick') as record:
+        fluid._collapse_flat_axes(flow, mesh)
+    assert not any('slab of a 3D flow' in str(r.message) for r in record)
+
+
+def test_a_discarded_component_is_called_out_against_a_still_plane():
+    from planktos import fluid
+    flow, mesh = _flat_z_field(0.0, -0.5)
+    with pytest.warns(UserWarning, match=r'z-velocity reaches 0\.5 where the '
+                                         r'in-plane velocity is zero everywhere'):
+        fluid._collapse_flat_axes(flow, mesh)
 
 
 def test_two_flat_axes_are_refused(tmp_path):

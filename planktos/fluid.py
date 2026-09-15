@@ -202,19 +202,34 @@ def _collapse_flat_axes(flow, mesh, periodic_dim=None, source=None):
                 dropped, len(mesh),
                 '' if source is None else 'Read from {}.'.format(source)))
 
-    # A component along an axis that is being dropped is discarded with it. That
-    #   is free for genuinely planar data, where it is identically zero, and is
-    #   a real loss otherwise -- so say which it was.
-    lost = [names[d] for d in axes if np.any(flow[d] != 0)]
+    # A component along an axis that is being dropped is discarded with it. It is
+    #   reported when its peak exceeds 1e-6 of the largest in-plane velocity:
+    #   above the round-off a solver's float32 output carries, below any
+    #   out-of-plane flow worth keeping. The ratio goes in the warning so the
+    #   user can judge it.
+    def peak(f):
+        return max(float(f.max()), -float(f.min()))
+    scale = max(peak(f) for d, f in enumerate(flow) if d not in axes)
+    notes = []
+    for d in axes:
+        w = peak(flow[d])
+        if w <= 1e-6*scale:
+            continue
+        if scale > 0:
+            notes.append('the {}-velocity reaches {:.3g}, {:.3g} times the '
+                         'largest in-plane velocity'.format(names[d], w, w/scale))
+        else:
+            notes.append('the {}-velocity reaches {:.3g} where the in-plane '
+                         'velocity is zero everywhere'.format(names[d], w))
     warnings.warn(
         "Fluid grid is a single point thick in {}, so it is being read as {}D "
         "data on the remaining axes.{}{}".format(
             dropped, len(mesh) - len(axes),
             '' if source is None else ' Read from {}.'.format(source),
-            '' if not lost else
-            ' NOTE: the {}-velocity is not everywhere zero and is being '
-            'discarded with that axis -- this is a slab of a 3D flow rather '
-            'than 2D data.'.format(', '.join(lost))), UserWarning, stacklevel=3)
+            '' if not notes else
+            ' NOTE: {}, and is being discarded with that axis -- this is a '
+            'slab of a 3D flow rather than 2D data.'.format('; '.join(notes))),
+        UserWarning, stacklevel=3)
 
     flow = _drop_flat_axes(flow, axes, len(mesh))
     mesh = [c for d, c in enumerate(mesh) if d not in axes]
