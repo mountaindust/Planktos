@@ -355,8 +355,7 @@ def read_vtk_time_only(filename, nbytes=4096):
     loading needs the whole timeline before it can slice windows out of it, but
     it must not have to parse every dump to get it.
 
-    The header of a legacy VTK file is ASCII even when the data that follows is
-    BINARY, so this works for both.
+    Reads ASCII and BINARY files alike.
 
     Parameters
     ----------
@@ -375,26 +374,46 @@ def read_vtk_time_only(filename, nbytes=4096):
     '''
 
     with open(filename, 'rb') as f:
-        head = f.read(nbytes).decode('utf-8', errors='ignore')
-    lines = head.splitlines()
+        head = f.read(nbytes)
 
-    for n, line in enumerate(lines):
-        # A FIELD array is declared as "<name> <numComponents> <numTuples>
-        # <dataType>" with the values on the following line(s). Require the
-        # single-valued form, matching the assertion in the full reader.
-        parts = line.split()
-        if len(parts) == 4 and parts[0] == 'TIME' and parts[1] == '1' \
-                and parts[2] == '1':
-            # Only trust the value line if it is not the final line in the
-            # buffer, which may have been cut mid-number by the read limit.
-            if n + 1 >= len(lines) - 1:
-                return None
-            try:
-                return float(lines[n+1].split()[0])
-            except (ValueError, IndexError):
-                return None
+    # The third line of a legacy file names its storage mode.
+    lines = head.split(b'\n', 3)
+    if len(lines) < 4:
+        return None
+    binary = lines[2].strip().upper() == b'BINARY'
 
-    return None
+    # A FIELD array is declared as "<name> <numComponents> <numTuples>
+    # <dataType>" on a line of text, with its values following. Require the
+    # single-valued form, matching the assertion in the full reader.
+    decl = re.search(rb'^TIME[ \t]+1[ \t]+1[ \t]+(\w+)[ \t]*\r?\n', head,
+                     re.MULTILINE)
+    if decl is None:
+        return None
+
+    if binary:
+        # The value is raw big-endian bytes, which can include a newline byte, so
+        # it is read by offset from the end of the declaration line.
+        dtypes = {'float': '>f4', 'double': '>f8', 'int': '>i4',
+                  'unsigned_int': '>u4', 'vtktypeint64': '>i8',
+                  'vtktypeuint64': '>u8'}
+        dtype = dtypes.get(decl.group(1).decode('ascii'))
+        if dtype is None:
+            return None
+        dtype = np.dtype(dtype)
+        if decl.end() + dtype.itemsize > len(head):
+            return None
+        return float(np.frombuffer(head, dtype=dtype, count=1,
+                                   offset=decl.end())[0])
+
+    # Only a value followed by its line end is trusted: one running to the end
+    # of the buffer may have been cut mid-number by the read limit.
+    value = re.match(rb'[ \t]*(\S+)[ \t]*\r?\n', head[decl.end():])
+    if value is None:
+        return None
+    try:
+        return float(value.group(1))
+    except ValueError:
+        return None
 
 
 

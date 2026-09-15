@@ -115,6 +115,64 @@ def test_read_vtk_time_only_rejects_a_truncated_value():
     assert _dataio.read_vtk_time_only(f, nbytes=cutoff) is None
 
 
+def _write_timed_vtk(path, t, binary, dtype=np.float64):
+    '''A small rectilinear-grid vector vtk stamped with CYCLE and TIME.'''
+    grid = pv.RectilinearGrid(np.linspace(0, 1, 4), np.linspace(0, 2, 3),
+                              np.linspace(0, 3, 2))
+    grid['vel'] = np.ones((grid.n_points, 3))
+    grid.set_active_vectors('vel')
+    grid.field_data['CYCLE'] = 7
+    grid.field_data['TIME'] = np.array([t], dtype=dtype)
+    grid.save(str(path), binary=binary)
+    return str(path)
+
+
+@pytest.mark.parametrize('binary', [False, True], ids=['ascii', 'binary'])
+@pytest.mark.parametrize('t, dtype', [
+    (0.3, np.float64),
+    (0.09, np.float64),   # its big-endian bytes contain 0x0a
+    (0.01, np.float32),   # likewise, as a 4-byte float
+])
+def test_read_vtk_time_only_reads_binary_files(tmp_path, binary, t, dtype):
+    # Regression: in a BINARY file the TIME value is raw bytes rather than text,
+    # and the scan returned None for every such file.
+    f = _write_timed_vtk(tmp_path / 'u.vtk', t, binary, dtype)
+    scanned = _dataio.read_vtk_time_only(f)
+    assert scanned == pytest.approx(t, rel=1e-7)
+    assert scanned == pytest.approx(_dataio.read_vtk_Rectilinear_Grid_Vector(f)[2],
+                                    rel=1e-7)
+
+
+def test_read_vtk_time_only_rejects_a_truncated_binary_value(tmp_path):
+    f = _write_timed_vtk(tmp_path / 'u.vtk', 0.3, binary=True)
+    with open(f, 'rb') as fh:
+        head = fh.read(4096)
+    decl = b'TIME 1 1 double\n'
+    end = head.index(decl) + len(decl)
+    assert _dataio.read_vtk_time_only(f, nbytes=end + 8) == 0.3
+    assert _dataio.read_vtk_time_only(f, nbytes=end + 7) is None
+
+
+def test_a_binary_series_is_timestamped_without_a_full_parse(tmp_path, monkeypatch):
+    # Regression: with the scan failing on binary files, VTK3dData fell back to a
+    # full parse of every dump just to build its timeline. Only the opening
+    # window should be read in full.
+    from planktos import fluid
+    for k in range(8):
+        _write_timed_vtk(tmp_path / 'IBAMR_db_{:03d}.vtk'.format(k), 0.5*k,
+                         binary=True)
+    real = _dataio.read_vtk_Rectilinear_Grid_Vector
+    calls = []
+    def spy(fname):
+        calls.append(fname)
+        return real(fname)
+    monkeypatch.setattr(fluid._dataio, 'read_vtk_Rectilinear_Grid_Vector', spy)
+
+    flow = fluid.VTK3dData(str(tmp_path), INUM=4)
+    assert np.allclose(flow.flow_times, 0.5*np.arange(8))
+    assert len(calls) == 5      # dumps 0-4, the opening window
+
+
 # --------------------------------------------------------------------------- #
 #        VTK XML multiblock series: .vtm.series, .vtm, and cell data          #
 # --------------------------------------------------------------------------- #
