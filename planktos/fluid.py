@@ -240,6 +240,155 @@ def _collapse_flat_axes(flow, mesh, periodic_dim=None, source=None):
 
 
 
+def _natural_key(name):
+    '''Sort key that orders the numbers embedded in a name numerically.
+
+    Writers that number dumps without zero padding -- foamToVTK's
+    case08_..._787 through case08_..._1034 -- put 1008 ahead of 787 under a
+    lexical sort, silently reversing part of the timeline. The split always
+    alternates non-digit, digit, ..., so two keys compare like with like
+    throughout.
+    '''
+    return tuple(int(s) if s.isdigit() else s
+                 for s in re.split(r'(\d+)', name))
+
+
+
+def _resolve_timeline(candidates, source_label, time_source, declared_order):
+    '''Turn the dumps a source declares into the dumps to load, and their timeline.
+
+    Declared dumps missing from disk are skipped with a warning. A series with
+    no times anywhere falls back to unit steps, with a warning; one with times
+    for only some of its dumps is refused. Times must strictly increase, and
+    uneven spacing is warned about.
+
+    Parameters
+    ----------
+    candidates : list of (dump, time)
+        one entry per dump the source declares, in the source's order. dump is
+        whatever the loader reads it from, or None for a dump that is declared
+        but not on disk; time is NaN where the source gives none.
+    source_label : str
+        names the source in warnings and errors
+    time_source : str
+        names where the times came from
+    declared_order : bool
+        True when the source's order is authoritative (an index), which is
+        kept. Otherwise the dumps are sorted by their times.
+
+    Returns
+    -------
+    dumps : list
+        the dumps that exist, in time order
+    flow_times : ndarray of float, or None if only one dump exists
+        shifted so the first is 0.0
+    time_source : str
+        as passed in, or 'assumed unit steps' when no dump carried a time
+    '''
+
+    ##### Drop the dumps whose data is not on disk #####
+    def _fmt(t):
+        return 'unknown' if t is None or np.isnan(t) else '{:g}'.format(t)
+
+    dumps = []; keep_times = []; missing = []
+    for dump, t in candidates:
+        if dump is None:
+            missing.append(_fmt(t))
+        else:
+            dumps.append(dump)
+            keep_times.append(t)
+
+    if len(dumps) == 0:
+        raise FileNotFoundError(
+            "None of the {} dumps found via {} are present on disk.".format(
+                len(candidates), source_label))
+
+    if len(missing) > 0:
+        # Warn rather than fail: a truncated or interrupted export is normal.
+        # But warn loudly -- silence here would be worse than the failure,
+        # since the run would complete with nothing indicating that the
+        # timeline is not the one the source declared.
+        warnings.warn(
+            "{} of {} dumps found via {} are not on disk and have been "
+            "skipped: t = {}. The timeline is built over the {} dumps that "
+            "remain.".format(len(missing), len(candidates), source_label,
+                             ', '.join(missing), len(dumps)), UserWarning)
+
+    if len(dumps) == 1:
+        return dumps, None, time_source
+
+    keep_times = np.array(keep_times, dtype=float)
+
+    ##### No time information anywhere: fall back to unit steps #####
+    if np.all(np.isnan(keep_times)):
+        warnings.warn(
+            "No time information for any dump found via {}: assuming unit "
+            "time steps. Every time the simulation is run against is "
+            "therefore an index, not a physical time, and any velocity in "
+            "physical units is scaled wrongly by the true dump "
+            "interval.".format(source_label), UserWarning)
+        return dumps, np.arange(len(dumps), dtype=float), 'assumed unit steps'
+
+    if np.any(np.isnan(keep_times)):
+        # Unit steps are defensible only when nothing better exists. Here most
+        # of the series is timed, and indices would move every dump that carries
+        # a time to the wrong place.
+        raise RuntimeError(
+            "No time information for {} of {} dumps found via {}, but the "
+            "rest are timed. Unit time steps would misplace the dumps that "
+            "do carry a time, so the series cannot be read as it "
+            "stands.".format(int(np.isnan(keep_times).sum()), len(dumps),
+                             source_label))
+
+    ##### Order the dumps of an unindexed source by their recovered times ####
+    # An index declares its own order and is authoritative about it, so it is
+    # left as written. For a globbed source the order was ours to pick and the
+    # filenames were only a proxy; the times are the real thing.
+    if not declared_order:
+        order = np.argsort(keep_times, kind='stable')
+        if not np.array_equal(order, np.arange(len(order))):
+            warnings.warn(
+                "The dumps found via {} are not in time order under their "
+                "filenames; they have been reordered by their recorded "
+                "times.".format(source_label), UserWarning)
+            dumps = [dumps[i] for i in order]
+            keep_times = keep_times[order]
+
+    # shift so that the first dump loaded corresponds to environment time 0
+    flow_times = keep_times - keep_times[0]
+
+    ##### The timeline has to be a timeline #####
+    # Both splines divide by the interval between successive times, so a
+    # repeat or a step backward is not a degraded timeline but an unusable
+    # one. A well-formed source cannot produce it, which is exactly why it is
+    # worth saying out loud if it appears.
+    bad = np.nonzero(np.diff(flow_times) <= 0)[0]
+    if len(bad) > 0:
+        raise RuntimeError(
+            "Dump times from {} are not strictly increasing: t = {} is "
+            "followed by t = {}.".format(
+                time_source, '{:g}'.format(keep_times[bad[0]]),
+                '{:g}'.format(keep_times[bad[0]+1])))
+
+    ##### Warn about non-uniform spacing left behind by any gaps #####
+    # Interpolation error scales with the dump interval, so a series with a
+    # hole is measurably worse across that hole and the user should be told
+    # where, separately from being told which dumps are absent.
+    dt = np.diff(flow_times)
+    if not np.allclose(dt, dt[0], rtol=1e-6):
+        wide = np.nonzero(dt > dt.min()*(1+1e-6))[0]
+        warnings.warn(
+            "Dump times are not evenly spaced: intervals range from {:g} to "
+            "{:g}. Temporal interpolation is less accurate across the wider "
+            "ones, which begin at t = {}.".format(
+                dt.min(), dt.max(),
+                ', '.join('{:g}'.format(flow_times[i]) for i in wide)),
+            UserWarning)
+
+    return dumps, flow_times, time_source
+
+
+
 def _spline_index(spline, pos):
     """Index a spline at its own knots, as though it were an ``([t],i,j,[k])`` array.
 
@@ -2736,20 +2885,6 @@ class OpenFOAMData(FluidData):
 
 
     @staticmethod
-    def _natural_key(name):
-        '''Sort key that orders the numbers embedded in a name numerically.
-
-        foamToVTK numbers its dumps without zero padding -- case08_..._787
-        through case08_..._1034 -- so a lexical sort puts 1008 ahead of 787 and
-        silently reverses part of the timeline. The split always alternates
-        non-digit, digit, ..., so two keys compare like with like throughout.
-        '''
-        return tuple(int(s) if s.isdigit() else s
-                     for s in re.split(r'(\d+)', name))
-
-
-
-    @staticmethod
     def _check_internal(datasets, source):
         if 'internal' not in datasets:
             raise RuntimeError(
@@ -2793,7 +2928,7 @@ class OpenFOAMData(FluidData):
 
         ##### 2: the .vtm manifests #####
         vtms = sorted(path.glob('*.vtm'),
-                      key=lambda p: self._natural_key(p.name))
+                      key=lambda p: _natural_key(p.name))
         if len(vtms) > 0:
             warnings.warn(
                 "No .vtm.series index in {}; falling back to the {} .vtm "
@@ -2804,7 +2939,7 @@ class OpenFOAMData(FluidData):
         ##### 3: the dump directories #####
         dumpdirs = sorted((d for d in path.iterdir()
                            if d.is_dir() and (d/'internal.vtu').is_file()),
-                          key=lambda p: self._natural_key(p.name))
+                          key=lambda p: _natural_key(p.name))
         if len(dumpdirs) > 0:
             warnings.warn(
                 "No .vtm.series index and no .vtm manifests in {}; falling "
@@ -2947,110 +3082,9 @@ class OpenFOAMData(FluidData):
         # into a run, which is the worst possible moment and exactly what
         # streaming makes likely.
         candidates = self._find_dumps(path)
-
-        ##### Drop the dumps whose data is not on disk #####
-        def _fmt(t):
-            return 'unknown' if t is None or np.isnan(t) else '{:g}'.format(t)
-
-        dumps = []; keep_times = []; missing = []
-        for datasets, t in candidates:
-            if datasets is None:
-                missing.append(_fmt(t))
-            else:
-                dumps.append(datasets)
-                keep_times.append(t)
-
-        if len(dumps) == 0:
-            raise FileNotFoundError(
-                "None of the {} dumps found via {} are present on disk.".format(
-                    len(candidates), self._source_label))
-
-        if len(missing) > 0:
-            # Warn rather than fail: a truncated or interrupted export is normal.
-            # But warn loudly -- silence here would be worse than the failure,
-            # since the run would complete with nothing indicating that the
-            # timeline is not the one the source declared.
-            warnings.warn(
-                "{} of {} dumps found via {} are not on disk and have been "
-                "skipped: t = {}. The timeline is built over the {} dumps that "
-                "remain.".format(len(missing), len(candidates),
-                                 self._source_label, ', '.join(missing),
-                                 len(dumps)), UserWarning)
-
-        if len(dumps) == 1:
-            return dumps, None
-
-        keep_times = np.array(keep_times, dtype=float)
-
-        ##### No time information anywhere: fall back to unit steps #####
-        if np.all(np.isnan(keep_times)):
-            self.time_source = 'assumed unit steps'
-            warnings.warn(
-                "No time information for any dump found via {}: assuming unit "
-                "time steps. Every time the simulation is run against is "
-                "therefore an index, not a physical time, and any velocity in "
-                "physical units is scaled wrongly by the true dump "
-                "interval.".format(self._source_label), UserWarning)
-            return dumps, np.arange(len(dumps), dtype=float)
-
-        if np.any(np.isnan(keep_times)):
-            # Deliberately not the unit-step fallback that VTK3dData takes when
-            # any single dump is untimed. Unit steps are defensible only when
-            # nothing better exists; here something does, for most of the
-            # series, and overwriting a real timeline with indices would move
-            # every dump that *was* timed to the wrong place.
-            raise RuntimeError(
-                "No time information for {} of {} dumps found via {}, but the "
-                "rest are timed. Unit time steps would misplace the dumps that "
-                "do carry a time, so the series cannot be read as it "
-                "stands.".format(int(np.isnan(keep_times).sum()), len(dumps),
-                                 self._source_label))
-
-        ##### Order the dumps we globbed ourselves by their recovered times ####
-        # A .vtm.series declares its own order and is authoritative about it, so
-        # it is left as written. For a globbed source the order was ours to pick
-        # and the filenames were only a proxy; the times are the real thing.
-        if self.dump_source != 'series':
-            order = np.argsort(keep_times, kind='stable')
-            if not np.array_equal(order, np.arange(len(order))):
-                warnings.warn(
-                    "The dumps found via {} are not in time order under their "
-                    "filenames; they have been reordered by their recorded "
-                    "times.".format(self._source_label), UserWarning)
-                dumps = [dumps[i] for i in order]
-                keep_times = keep_times[order]
-
-        # shift so that the first dump loaded corresponds to environment time 0
-        flow_times = keep_times - keep_times[0]
-
-        ##### The timeline has to be a timeline #####
-        # Both splines divide by the interval between successive times, so a
-        # repeat or a step backward is not a degraded timeline but an unusable
-        # one. Nothing above can produce it from well-formed input, which is
-        # exactly why it is worth saying out loud if it appears.
-        bad = np.nonzero(np.diff(flow_times) <= 0)[0]
-        if len(bad) > 0:
-            raise RuntimeError(
-                "Dump times from {} are not strictly increasing: t = {} is "
-                "followed by t = {}.".format(
-                    self.time_source, '{:g}'.format(keep_times[bad[0]]),
-                    '{:g}'.format(keep_times[bad[0]+1])))
-
-        ##### Warn about non-uniform spacing left behind by any gaps #####
-        # Interpolation error scales with the dump interval, so a series with a
-        # hole is measurably worse across that hole and the user should be told
-        # where, separately from being told which dumps are absent.
-        dt = np.diff(flow_times)
-        if not np.allclose(dt, dt[0], rtol=1e-6):
-            wide = np.nonzero(dt > dt.min()*(1+1e-6))[0]
-            warnings.warn(
-                "Dump times are not evenly spaced: intervals range from {:g} to "
-                "{:g}. Temporal interpolation is less accurate across the wider "
-                "ones, which begin at t = {}.".format(
-                    dt.min(), dt.max(),
-                    ', '.join('{:g}'.format(flow_times[i]) for i in wide)),
-                UserWarning)
-
+        dumps, flow_times, self.time_source = _resolve_timeline(
+            candidates, self._source_label, self.time_source,
+            declared_order=self.dump_source == 'series')
         return dumps, flow_times
 
 

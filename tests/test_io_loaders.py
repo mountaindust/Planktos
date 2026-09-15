@@ -919,7 +919,7 @@ def test_openfoam_natural_sort_orders_unpadded_dump_numbers():
     names = ['case08_alpha2_1e8_{}'.format(n)
              for n in (787, 800, 917, 1008, 1034)]
     assert sorted(reversed(names)) != names            # lexically wrong...
-    assert sorted(reversed(names), key=fluid.OpenFOAMData._natural_key) == names
+    assert sorted(reversed(names), key=fluid._natural_key) == names
 
 
 # ---- 1: no .vtm.series index -> the .vtm manifests --------------------------
