@@ -29,6 +29,20 @@ def cubic_flow():
     return t, flow, cubic
 
 
+@pytest.mark.parametrize('t, want', [(1.0, 'hi'), (0.37, 'blend')])
+def test_linear_blend_does_not_round_float32_samples(t, want):
+    # Regression: the difference between two float32 samples was taken in
+    # float32, so the blend missed the second one by float32 round-off even at
+    # weight 1, and a windowed and an in-memory fluid disagreed at a dump's time.
+    samples = np.array([[1000.3], [0.1], [5.0]], dtype=np.float32)
+    spline = fluid.LinearSpline(np.array([0.0, 1.0, 2.0]), samples)
+    got = spline(t)
+    lo, hi = np.float64(samples[0, 0]), np.float64(samples[1, 0])
+    expected = hi if want == 'hi' else lo + (hi - lo)*t
+    assert got.dtype == np.float64
+    assert got[0] == expected
+
+
 def test_fluiddata_splines_time_varying_into_fcubicsplines(cubic_flow):
     # FluidData replaces each time-varying flow component with an fCubicSpline
     # (the dyload equivalent of mvbnd's create_temporal_interpolations).

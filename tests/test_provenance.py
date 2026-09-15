@@ -266,6 +266,24 @@ def test_the_vtk3d_loader_records_its_call():
     assert envir._fluid_provenance['loader'] == 'read_IBAMR3d_vtk_data'
 
 
+def test_the_vtkxml_loader_records_a_call_that_replays_through_json():
+    # A restored run replays the loader from its record after a JSON round trip,
+    # which turns every tuple argument into a list.
+    envir = planktos.Environment()
+    with pytest.warns(UserWarning, match='single point thick'):
+        envir.read_vtkxml_fluid_data(str(FIXTURES / 'vtixml_min'), INUM=4)
+    record = json.loads(json.dumps(envir._fluid_provenance, allow_nan=False))
+    assert record['loader'] == 'read_vtkxml_fluid_data'
+    assert record['kwargs']['INUM'] == 4 and record['kwargs']['vec_name'] is None
+
+    replayed = planktos.Environment()
+    with pytest.warns(UserWarning, match='single point thick'):
+        getattr(replayed, record['loader'])(**record['kwargs'])
+    assert replayed.flow.periodic_dim == envir.flow.periodic_dim
+    assert np.array_equal(replayed.flow.flow_times, envir.flow.flow_times)
+    assert np.array_equal(replayed.flow(0.65)[0], envir.flow(0.65)[0])
+
+
 @pytest.mark.parametrize('fixture, kwargs', [
     ('mesh_min/box.vertex', {}),
     ('lagspts_min', {'dt': 0.01, 'print_dump': 1}),
@@ -346,7 +364,7 @@ def test_a_loader_still_returns_what_it_returned_before():
 @pytest.mark.parametrize('name', [
     'set_brinkman_flow', 'set_two_layer_channel_flow', 'set_canopy_flow',
     'read_IB2d_fluid_data', 'read_IBAMR3d_vtk_data', 'read_openfoam_vtk_data',
-    'read_comsol_vtu_data', 'read_NetCDF_flow',
+    'read_vtkxml_fluid_data', 'read_comsol_vtu_data', 'read_NetCDF_flow',
     'read_stl_mesh_data', 'read_IB2d_mesh_data',
     'read_3D_vertex_data_to_convex_hull',
 ])

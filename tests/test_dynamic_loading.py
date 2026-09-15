@@ -967,6 +967,80 @@ def test_openfoam_boundary_data_follows_the_timestep():
 
 
 # --------------------------------------------------------------------------- #
+#      VTKXMLData end-to-end -- a planar .vti series indexed by a .pvd         #
+# --------------------------------------------------------------------------- #
+# The fixture (tests/fixtures/vtixml_min) is 8 dumps one point thick in z, timed
+# by its .pvd from 0.1. The field is u = t, v = x + 10*y, w = 0, so u reads back
+# the environment time plus 0.1, and the flat z axis has to be dropped again on
+# every windowed load.
+
+VTIXML = str(FIXTURES / 'vtixml_min')
+
+
+def _vtixml(INUM, path=VTIXML):
+    with pytest.warns(UserWarning, match='single point thick'):
+        return fluid.VTKXMLData(path, INUM=INUM)
+
+
+@pytest.mark.parametrize('INUM', [None, True, 4, 5])
+def test_vtkxml_flow_times_span_the_whole_series(INUM):
+    fd = _vtixml(INUM)
+    assert fd.d_start == 0 and fd.d_finish == 7
+    assert len(fd.flow_times) == 8
+    assert np.allclose(fd.flow_times, 0.1*np.arange(8))
+
+
+def test_vtkxml_windowed_actually_slides():
+    fd = _vtixml(4)
+    assert isinstance(fd._flow[0], fluid.LinearSpline)
+    assert fd._flow[0].extrapolate == (True, False)
+    assert fd.loaded_idx_bnds == (0, 4)
+    assert len(fd._flow[0].x) == 5          # the window, not all 8
+    fd(0.7)
+    assert fd.loaded_idx_bnds[1] == 7       # it really moved
+
+
+def test_vtkxml_windowed_does_not_freeze_and_stays_2d():
+    fd = _vtixml(4)
+    for q in (0.0, 0.2, 0.4, 0.45, 0.6, 0.7):
+        u, v = fd(q)                        # two components after every slide
+        assert u.shape == (6, 5)
+        assert np.allclose(u, q + 0.1)
+
+
+def test_vtkxml_windowed_matches_full_load():
+    dyn = _vtixml(4)
+    full = _vtixml(True)
+    for q in np.linspace(0.0, 0.7, 29):
+        ref = full(q)
+        assert _diff(dyn(q), ref) <= _tol(ref)
+
+
+def test_vtkxml_windowed_mean_velocity_matches_full_load():
+    dyn = _vtixml(4)
+    full = _vtixml(True)
+    for q in np.linspace(0.0, 0.7, 15):
+        got = dyn.get_mean_velocity(time=q)
+        assert np.allclose(got, full.get_mean_velocity(time=q), rtol=0, atol=1e-12)
+        assert np.isclose(got[0], q + 0.1)
+
+
+def test_vtkxml_slide_that_loads_a_single_dump(tmp_path):
+    # Six dumps with INUM=4: the slide past the opening window loads one dump,
+    # which still has to arrive with its time axis and lose its flat z axis.
+    src = tmp_path / 'series'
+    shutil.copytree(VTIXML, src)
+    pvd = src / 'flow.pvd'
+    pvd.write_text(''.join(line for line in pvd.read_text().splitlines(True)
+                           if 'flow_0007' not in line and 'flow_0008' not in line))
+    fd = _vtixml(4, path=str(src))
+    assert fd.d_finish == 5
+    u, v = fd(0.5)
+    assert np.allclose(u, 0.6)
+    assert fd.loaded_idx_bnds[1] == 5
+
+
+# --------------------------------------------------------------------------- #
 #        IB2dData end-to-end -- the 2D reference path, against real files       #
 # --------------------------------------------------------------------------- #
 # 2D IB2d is the dynamic-loading path that has actually been exercised by hand,

@@ -480,6 +480,43 @@ def _openfoam(**kwargs):
         return fluid.OpenFOAMData(str(OF_DIR), **kwargs)
 
 
+def test_openfoam_dump_numbers_count_declared_dumps():
+    # Regression: dump_number was the index over the dumps on disk, so the
+    # vorticity files a recording writes beside the data were named for a
+    # different dump once a missing one arrived.
+    fd = _openfoam()
+    assert [fd.dump_number(i) for i in range(6)] == [0, 1, 2, 3, 4, 6]
+    assert fd.vorticity_filename(5) == 'Omega.0006.vtk'
+
+
+def test_openfoam_a_single_dump_ignores_INUM(tmp_path):
+    # Regression: an int INUM reached FluidData with no timeline and raised
+    # TypeError.
+    from planktos import fluid
+    series = tmp_path / 'one.vtm.series'
+    series.write_text(json.dumps({'files': [
+        {'name': str(OF_DIR / 'case_min_20.vtm'), 'time': 1.0}]}))
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', UserWarning)
+        fd = fluid.OpenFOAMData(str(series), INUM=4)
+    assert fd.flow_times is None and fd.INUM is None
+
+
+@pytest.mark.parametrize('single', ['file', 'range'])
+def test_vtk3d_a_single_dump_ignores_INUM(single):
+    # Regression: an int INUM reached FluidData with no timeline and raised
+    # TypeError.
+    from planktos import fluid
+    if single == 'file':
+        fd = fluid.VTK3dData(str(FIXTURES / 'vtk3d_min' / 'IBAMR_db_003.vtk'),
+                             INUM=4)
+    else:
+        fd = fluid.VTK3dData(str(FIXTURES / 'vtk3d_min'), d_start=3, d_finish=3,
+                             INUM=4)
+    assert fd.flow_times is None and fd.INUM is None
+    assert fd[0].shape == (5, 4, 3)
+
+
 def test_openfoam_grid_spans_the_full_domain():
     # The point of the boundary splice. Raw cell centers would report the domain
     # as 0.75 x 0.75 x 1.6 instead of the true 1 x 1 x 2, and every coordinate in
@@ -1726,12 +1763,13 @@ def _write_pvd(path, entries):
 
 
 def _write_vti(path, vectors, active=None, extent=(0, 3, 0, 2, 0, 0),
-               direction=None, time=None):
+               direction=None, time=None, spacing=(1, 1, 1)):
     '''A small .vti holding each of `vectors` ({name: 3-vector}) at every point.'''
     import vtk
     from vtk.util import numpy_support
     img = vtk.vtkImageData()
     img.SetExtent(*extent)
+    img.SetSpacing(*spacing)
     if direction is not None:
         img.SetDirectionMatrix(*np.ravel(direction))
     for name, value in vectors.items():
@@ -1767,10 +1805,13 @@ def test_read_pvd_series_keeps_the_declared_order_and_marks_unusable_times(tmp_p
         {'timestep': '2', 'file': 'b.vti'},
         {'timestep': '1', 'file': 'sub/a.vti'},
         {'file': 'c.vti'},
-        {'timestep': 'soon', 'file': 'd.vti'}])
+        {'timestep': 'soon', 'file': 'd.vti'},
+        {'timestep': 'inf', 'file': 'e.vti'},
+        {'timestep': 'nan', 'file': 'f.vti'}])
     files, times = _dataio.read_pvd_series(pvd)
     assert files == [tmp_path / 'b.vti', tmp_path / 'sub' / 'a.vti',
-                     tmp_path / 'c.vti', tmp_path / 'd.vti']
+                     tmp_path / 'c.vti', tmp_path / 'd.vti',
+                     tmp_path / 'e.vti', tmp_path / 'f.vti']
     assert times[:2].tolist() == [2., 1.]
     assert np.isnan(times[2:]).all()
 
@@ -1844,6 +1885,24 @@ def test_read_vtkxml_image_data_places_an_extent_not_starting_at_zero(tmp_path):
     assert data[0].shape == (6, 3, 1)
 
 
+@pytest.mark.parametrize('spacing', [(-0.5, 1, 1), (1, 0, 1)])
+def test_read_vtkxml_image_data_refuses_coordinates_that_do_not_increase(
+        tmp_path, spacing):
+    # Regression: negative spacing loaded silently as decreasing coordinates,
+    # giving a negative domain length.
+    f = _write_vti(tmp_path / 'a.vti', {'U': [1, 0, 0]}, active='U',
+                   spacing=spacing)
+    with pytest.raises(ValueError, match='coordinates that increase'):
+        _dataio.read_vtkxml_image_data(f)
+
+
+def test_read_vtkxml_image_data_ignores_the_spacing_of_a_flat_axis(tmp_path):
+    f = _write_vti(tmp_path / 'a.vti', {'U': [1, 0, 0]}, active='U',
+                   spacing=(1, 1, -1))
+    _, mesh, _ = _dataio.read_vtkxml_image_data(f)
+    assert len(mesh[2]) == 1
+
+
 def test_read_vtkxml_image_data_refuses_a_rotated_grid(tmp_path):
     f = _write_vti(tmp_path / 'a.vti', {'U': [1, 0, 0]}, active='U',
                    direction=[[0, -1, 0], [1, 0, 0], [0, 0, 1]])
@@ -1861,6 +1920,199 @@ def test_read_vtkxml_image_data_time_is_none_without_a_timevalue(tmp_path):
 def test_read_vtkxml_image_data_raises_on_a_missing_file(tmp_path):
     with pytest.raises(FileNotFoundError):
         _dataio.read_vtkxml_image_data(tmp_path / 'absent.vti')
+
+
+# ---- VTKXMLData: the loader built on the readers above ----------------------
+
+def _vtixml(path=VTI_DIR, **kwargs):
+    from planktos import fluid
+    with pytest.warns(UserWarning, match='single point thick in z'):
+        return fluid.VTKXMLData(str(path), **kwargs)
+
+
+def _copy_vti_series(tmp_path):
+    dst = tmp_path / 'series'
+    shutil.copytree(VTI_DIR, dst)
+    return dst
+
+
+def test_vtkxml_loads_the_collection_as_2d_data():
+    envir = planktos.Environment()
+    with pytest.warns(UserWarning, match='single point thick in z') as record:
+        envir.read_vtkxml_fluid_data(str(VTI_DIR))
+    assert not any('slab of a 3D flow' in str(r.message) for r in record)
+    fd = envir.flow
+    assert fd.ndim == 2 and len(fd) == 2
+    assert fd.fshape == (8, 6, 5)
+    assert np.allclose(envir.L, [2.5, 1.0])
+    assert np.allclose(fd.fluid_domain_LLC, (-1.0, 0.5))
+    assert np.allclose(fd.flow_points[0], VTI_GRID[0] + 1.0)
+    assert np.allclose(fd.flow_points[1], VTI_GRID[1] - 0.5)
+    assert np.allclose(fd.flow_times, np.array(VTI_TIMES) - 0.1)
+    assert fd.dump_source == 'collection'
+    assert fd.time_source == 'the .pvd collection'
+    assert fd.series_path == VTI_DIR / 'flow.pvd'
+
+
+@pytest.mark.parametrize('INUM', [None, True])
+def test_vtkxml_values_match_the_files(INUM):
+    # u is the physical time, which runs 0.1 ahead of the environment's clock.
+    fd = _vtixml(INUM=INUM)
+    X, Y = np.meshgrid(VTI_GRID[0], VTI_GRID[1], indexing='ij')
+    for k in (0, 3, 7):
+        u, v = fd(VTI_TIMES[k] - 0.1)
+        assert np.allclose(u, VTI_TIMES[k])
+        assert np.allclose(v, X + 10*Y)
+    assert np.allclose(fd(0.25)[0], 0.35)
+
+
+def test_vtkxml_path_may_name_the_collection_itself():
+    fd = _vtixml(VTI_DIR / 'flow.pvd')
+    assert fd.series_path == VTI_DIR / 'flow.pvd'
+    assert len(fd.flow_times) == 8
+
+
+def test_vtkxml_a_single_file_is_time_invariant():
+    fd = _vtixml(VTI_DIR / _vti_name(2))
+    assert fd.flow_times is None
+    assert fd.dump_source == 'file' and fd.series_path is None
+    assert fd[0].shape == (6, 5)
+    assert np.allclose(fd[0], 0.3)
+
+
+@pytest.mark.parametrize('INUM', [True, 4])
+def test_vtkxml_holds_float64_and_is_exact_at_every_dump(INUM):
+    # The fixture's U is Float32 on disk. Held as float32, the in-memory path
+    # blended samples in float32 and missed the stored value at a dump's own
+    # time by float32 round-off, while a window the slider had rebuilt was
+    # float64 and hit it exactly.
+    fd = _vtixml(INUM=INUM)
+    assert all(f.dtype == np.float64 for f in fd.get_raw_loaded_data())
+    for k in range(8):
+        raw = _dataio.read_vtkxml_image_data(VTI_DIR / _vti_name(k))[0]
+        u, v = fd(VTI_TIMES[k] - 0.1)
+        assert np.array_equal(u, raw[0][:, :, 0])
+        assert np.array_equal(v, raw[1][:, :, 0])
+    assert all(f.dtype == np.float64 for f in fd.get_raw_loaded_data())
+
+
+def test_vtkxml_a_single_file_ignores_INUM():
+    # Regression: an int INUM reached FluidData with no timeline and raised
+    # TypeError.
+    fd = _vtixml(VTI_DIR / _vti_name(2), INUM=4)
+    assert fd.flow_times is None and fd.INUM is None
+    assert np.allclose(fd[0], 0.3)
+
+
+def test_vtkxml_dump_numbers_count_declared_dumps(tmp_path):
+    # Regression: dump_number was the index over the dumps on disk, so a
+    # vorticity file written beside the data was named for a different dump
+    # once a missing one arrived, and a later recording reused it for the wrong
+    # dump.
+    from planktos import fluid
+    src = _copy_vti_series(tmp_path)
+    (src / _vti_name(2)).unlink()
+    with pytest.warns(UserWarning):
+        gappy = fluid.VTKXMLData(str(src))
+    whole = _vtixml()
+    assert [gappy.dump_number(i) for i in range(7)] == [0, 1, 3, 4, 5, 6, 7]
+    # flow_0004 is t_idx 2 with the gap and t_idx 3 without it
+    assert gappy.vorticity_filename(2) == whole.vorticity_filename(3) \
+        == 'Omega.0003.vtk'
+
+
+def test_vtkxml_file_suffixes_are_case_insensitive(tmp_path):
+    from planktos import fluid
+    for k in range(2):
+        shutil.copy(VTI_DIR / _vti_name(k), tmp_path / 'D{}.VTI'.format(k))
+    pvd = _write_pvd(tmp_path / 'series.PVD',
+                     [{'timestep': str(k), 'file': 'D{}.VTI'.format(k)}
+                      for k in range(2)])
+    with pytest.warns(UserWarning, match='single point thick'):
+        fd = fluid.VTKXMLData(str(pvd))
+    assert fd.dump_source == 'collection' and len(fd.flow_times) == 2
+
+
+def test_vtkxml_refuses_a_collection_with_a_non_finite_time(tmp_path):
+    # Regression: an inf timestep reached the spline, which raised from scipy
+    # without naming the collection.
+    from planktos import fluid
+    src = _copy_vti_series(tmp_path)
+    pvd = src / 'flow.pvd'
+    pvd.write_text(pvd.read_text().replace('timestep="0.8"', 'timestep="inf"'))
+    with pytest.raises(RuntimeError, match='No time information for 1 of 8 dumps'):
+        fluid.VTKXMLData(str(src))
+
+
+def test_vtkxml_vel_conv_scales_every_load():
+    fd = _vtixml(INUM=4, vel_conv=2.0)
+    assert np.allclose(fd(0.0)[0], 0.2)
+    assert np.allclose(fd(0.7)[0], 1.6)     # read by a window slide
+
+
+def test_vtkxml_reads_a_3d_series_and_accepts_periodic_dim_as_a_list(tmp_path):
+    # A call replayed from a run archive passes JSON's lists in place of tuples.
+    from planktos import fluid
+    for k in range(3):
+        _write_vti(tmp_path / 'd{}.vti'.format(k), {'U': [k, 1, 2]}, active='U',
+                   extent=(0, 3, 0, 2, 0, 1), time=float(k))
+    _write_pvd(tmp_path / 'c.pvd', [{'timestep': str(k), 'file': 'd{}.vti'.format(k)}
+                                    for k in range(3)])
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UserWarning)
+        fd = fluid.VTKXMLData(str(tmp_path), periodic_dim=[False, True, False])
+    assert fd.ndim == 3 and len(fd) == 3
+    assert fd.periodic_dim == (False, True, False)
+    assert np.allclose(fd(1.5)[0], 1.5)
+
+
+def test_vtkxml_skips_a_declared_dump_that_is_absent(tmp_path):
+    from planktos import fluid
+    src = _copy_vti_series(tmp_path)
+    (src / _vti_name(4)).unlink()
+    with pytest.warns(UserWarning) as record:
+        fd = fluid.VTKXMLData(str(src))
+    messages = [str(r.message) for r in record]
+    assert any('1 of 8 dumps' in m and 't = 0.5' in m for m in messages)
+    assert any('not evenly spaced' in m for m in messages)
+    assert fd.d_finish == 6
+    assert np.allclose(fd.flow_times, [0., .1, .2, .3, .5, .6, .7])
+    assert np.allclose(fd(0.4)[0], 0.5)     # across the gap, in simulation time
+
+
+def test_vtkxml_refuses_a_collection_naming_another_file_type(tmp_path):
+    from planktos import fluid
+    pvd = _write_pvd(tmp_path / 'c.pvd', [{'timestep': '0', 'file': 'a.vti'},
+                                          {'timestep': '1', 'file': 'b.vtu'}])
+    with pytest.raises(ValueError, match=r"type \['\.vtu'\]"):
+        fluid.VTKXMLData(str(pvd))
+
+
+def test_vtkxml_needs_exactly_one_collection_in_a_directory(tmp_path):
+    from planktos import fluid
+    with pytest.raises(FileNotFoundError, match='No .pvd collection'):
+        fluid.VTKXMLData(str(tmp_path))
+    for name in ('a.pvd', 'b.pvd'):
+        _write_pvd(tmp_path / name, [{'timestep': '0', 'file': 'x.vti'}])
+    with pytest.raises(RuntimeError, match='Found 2 .pvd collections'):
+        fluid.VTKXMLData(str(tmp_path))
+
+
+@pytest.mark.parametrize('INUM, k', [(None, 1), (4, 6)])
+def test_vtkxml_refuses_a_dump_on_a_different_grid(tmp_path, INUM, k):
+    # Every dump is checked, including one first read by a window slide.
+    from planktos import fluid
+    src = _copy_vti_series(tmp_path)
+    _write_vti(src / _vti_name(k), {'U': [1, 0, 0]}, active='U',
+               extent=(0, 5, 0, 4, 0, 0), time=VTI_TIMES[k])
+    match = 'grid in ' + re.escape(_vti_name(k))
+    if INUM is None:
+        with pytest.raises(RuntimeError, match=match):
+            fluid.VTKXMLData(str(src))
+    else:
+        fd = _vtixml(src, INUM=INUM)
+        with pytest.raises(RuntimeError, match=match):
+            fd(VTI_TIMES[k] - 0.1)
 
 
 # --------------------------------------------------------------------------- #

@@ -1,4 +1,4 @@
-# The .vtu/.vtp test fixtures carry inline base64 payloads and are generated
+# The .vtu/.vtp/.vti/.vtr test fixtures carry inline base64 payloads and are generated
 # files (tests/fixtures/_gen_fixtures.py), so git must leave their bytes exactly
 # as written. With core.autocrlf=true -- the Windows default, and what this repo
 # is developed on -- git would otherwise store LF and check out CRLF: the file on
@@ -11,3 +11,5 @@
 # now would only force a renormalization for no gain.
 tests/fixtures/**/*.vtu -text
 tests/fixtures/**/*.vtp -text
+tests/fixtures/**/*.vti -text
+tests/fixtures/**/*.vtr -text

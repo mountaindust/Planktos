@@ -894,9 +894,11 @@ def read_pvd_series(filename):
             labels[attr].add(elem.get(attr, ''))
         files.append(filename.parent / member)
         try:
-            times.append(float(elem.get('timestep', '')))
+            t = float(elem.get('timestep', ''))
         except ValueError:
-            times.append(np.nan)
+            t = np.nan
+        # inf and nan are not times.
+        times.append(t if np.isfinite(t) else np.nan)
 
     # Several groups or parts make each timestep a set of datasets rather than
     #   one, which a list of (file, time) cannot describe.
@@ -937,7 +939,7 @@ def read_vtkxml_image_data(filename, vec_name=None):
     ValueError
         if no array is named and the file declares no active vectors, if the
         array is absent or does not have three components, or if the grid is
-        not aligned with the coordinate axes
+        not aligned with the coordinate axes or its spacing is not positive
     '''
 
     path = _require_file(filename)
@@ -985,6 +987,12 @@ def read_vtkxml_image_data(filename, vec_name=None):
     extent = vtk_data.GetExtent()
     origin = vtk_data.GetOrigin()
     spacing = vtk_data.GetSpacing()
+    for d in range(3):
+        if extent[2*d+1] > extent[2*d] and not spacing[d] > 0:
+            raise ValueError(
+                "The grid in {} has spacing {} along {}. Planktos needs "
+                "coordinates that increase along each axis.".format(
+                    path, spacing[d], 'xyz'[d]))
     mesh = [origin[d] + spacing[d]*np.arange(extent[2*d], extent[2*d+1]+1)
             for d in range(3)]
 

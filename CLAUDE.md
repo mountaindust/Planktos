@@ -199,7 +199,7 @@ behind since the dynamic-loading work.)
 | `planktos/_environment.py` | `Environment` class | The domain: boundary conditions, immersed boundary mesh, swarms, time. Loads fluid/mesh data, generates analytical flows, plots, computes vorticity/FTLE. Fluid data itself lives in `fluid.py` (see below). |
 | `planktos/_swarm.py` | `Swarm` class | A group of agents: positions/velocities/props, the move loop, boundary-condition application, plotting, data saving. |
 | `planktos/motion.py` | yes (`planktos.motion`) | Equation-of-motion generators & solvers: `Euler_brownian_motion` (default SDE), `inertial_particles`, `highRe_massive_drift`, `tracer_particles`, `RK45`. |
-| `planktos/fluid.py` | `FluidData` is user-visible via `Environment.flow`; the rest internal | All fluid velocity data and its temporal interpolation: `FluidData` (+ per-source `IB2dData`, `VTK3dData`, `ComsolVTUData`), `LinearSpline`, `fCubicSpline`, `SplineRangeError`. See "Fluid data architecture" below. |
+| `planktos/fluid.py` | `FluidData` is user-visible via `Environment.flow`; the rest internal | All fluid velocity data and its temporal interpolation: `FluidData` (+ per-source `IB2dData`, `VTK3dData`, `ComsolVTUData`, `OpenFOAMData`, `VTKXMLData`), `LinearSpline`, `fCubicSpline`, `SplineRangeError`. See "Fluid data architecture" below. |
 | `planktos/_geom.py` | internal | Pure geometry workhorses: segment/line/triangle intersections, closest distances, multilinear-polynomial intersection (for moving meshes). Formerly static methods of `Swarm`. |
 | `planktos/_ibc.py` | internal | Immersed-boundary collision handling: `apply_internal_static_BC`, `apply_internal_moving_BC`, and the project-and-slide routines for static and moving meshes. |
 | `planktos/_dataio.py` | internal | Low-level read/write of vtk, vtu, .vertex, stl, NetCDF. Use `Environment` loader methods instead of calling these directly. |
@@ -232,7 +232,7 @@ against `master`.
 - `FluidData` owns the velocity field, the spatial grid (`flow_points`), the time
   stamps (`flow_times`), periodicity (`periodic_dim`), and the temporal
   interpolation. Per-source subclasses handle ingestion: `IB2dData`, `VTK3dData`,
-  `ComsolVTUData`.
+  `ComsolVTUData`, `OpenFOAMData`, `VTKXMLData` (`.vti` series indexed by a `.pvd`).
 - Fluid-level operations live on the object, not on `Environment`: `tile_flow`,
   `get_vorticity`, `get_dudt`, `calculate_DuDt`, `get_mean_velocity`,
   `update_spline`, `load_dumpfiles`.

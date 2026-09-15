@@ -454,7 +454,10 @@ def _linear_blend(times, t, get):
         # t landed on a knot; one call, and no arithmetic on the nodal values.
         return get(idx)
     lo = get(idx)
-    return lo + (get(idx+1) - lo)*w
+    hi = get(idx+1)
+    # The difference is taken in at least float64. In float32 it rounds, and the
+    #   blend then misses the second entry even at weight 1.
+    return lo + np.subtract(hi, lo, dtype=np.result_type(hi, lo, np.float64))*w
 
 
 
@@ -2357,6 +2360,8 @@ class VTK3dData(FluidData):
         if path.is_file():
             flow, mesh, time = _dataio.read_vtk_Rectilinear_Grid_Vector(path)
             flow_times = None
+            # Time-invariant flow, with no window to slide.
+            INUM = None
         
         elif path.is_dir():
             tlen = len(title)
@@ -2386,6 +2391,9 @@ class VTK3dData(FluidData):
             # extrapolate=(True, True) -- disabling update_spline outright and
             # silently freezing the fluid at the end of the first window.
             flow_times = self._read_all_times(self.d_start, self.d_finish)
+            if flow_times is None:
+                # A single dump is time-invariant flow, with no window to slide.
+                INUM = None
 
             ### Load fluid data ###
             if INUM is None or INUM is True:
@@ -2822,7 +2830,8 @@ class OpenFOAMData(FluidData):
         ##### Load fluid data #####
         print('Reading OpenFOAM fluid data...')
         if flow_times is None:
-            # Single dump: time-invariant flow.
+            # Single dump: time-invariant flow, with no window to slide.
+            INUM = None
             flow = [f[0] for f in self.load_dumpfiles(0, 0)]
         elif INUM is None or INUM is True:
             flow = self.load_dumpfiles(self.d_start, self.d_finish)
@@ -2881,6 +2890,17 @@ class OpenFOAMData(FluidData):
             for ii, d in enumerate(flow):
                 flow[ii] = d*self.vel_conv
         return flow
+
+
+
+    def dump_number(self, t_idx):
+        """The position of dump ``t_idx`` in the series its source declares.
+
+        Counted over every declared dump, present or not, so a file named from
+        it stays with its dump when a missing one later arrives.
+        """
+
+        return self._dump_numbers[int(t_idx)]
 
 
 
@@ -3081,11 +3101,14 @@ class OpenFOAMData(FluidData):
         # missing file: under dynamic loading that raise lands arbitrarily deep
         # into a run, which is the worst possible moment and exactly what
         # streaming makes likely.
-        candidates = self._find_dumps(path)
+        # Each candidate carries its declared position, which dump_number reports.
+        candidates = [((k, d) if d is not None else None, t)
+                      for k, (d, t) in enumerate(self._find_dumps(path))]
         dumps, flow_times, self.time_source = _resolve_timeline(
             candidates, self._source_label, self.time_source,
             declared_order=self.dump_source == 'series')
-        return dumps, flow_times
+        self._dump_numbers = [k for k, _ in dumps]
+        return [d for _, d in dumps], flow_times
 
 
 
@@ -3542,5 +3565,254 @@ class OpenFOAMData(FluidData):
                 "two faces.".format(disagreement, zeroed), UserWarning)
 
         return vel
+
+
+
+class VTKXMLData(FluidData):
+
+    def __init__(self, path, INUM=None, periodic_dim=(False, False, False),
+                 vel_conv=None, vec_name=None):
+        '''Reads fluid velocity point data from VTK XML ImageData (``.vti``)
+        files and creates a FluidData instance from it.
+
+        A series is indexed by a ParaView collection (``.pvd``), which supplies
+        the dumps and their times. Times are shifted so that the first dump is
+        at a Planktos environment time of 0.0. A single ``.vti`` file gives
+        time-invariant flow, for which INUM is ignored.
+
+        The grid is read from the first dump, and every later dump is checked
+        against it. A grid one point thick in a dimension is read as 2D data on
+        the others, with the velocity component along that dimension dropped.
+
+        A dump the collection declares but which is not on disk is skipped with
+        a warning, and the timeline is built over the dumps that exist.
+
+        If INUM (interval number) is set to an integer >= 4, the data will be
+        dynamically loaded as needed with INUM intervals between the temporal
+        data sets available at any given time.
+
+        Parameters
+        ----------
+        path : string
+            a directory holding one ``.pvd`` collection, the ``.pvd`` itself, or
+            a single ``.vti`` file
+        INUM : int > 3, True, or None (default)
+            max number of splined intervals held at any one time; the number of
+            time points held is 1+INUM, and INUM must be at least 4. None splines
+            the entire dataset at once and cubically in time; True holds the
+            entire dataset too but splines it linearly; an int streams a sliding
+            window from storage and splines that linearly.
+        periodic_dim : list of 3 bool, default=(False, False, False)
+            True if that spatial dimension is periodic, otherwise False
+        vel_conv : float, optional
+            scalar to multiply the velocity by in order to convert units to
+            match the spatial grid units
+        vec_name : string, optional
+            name of the velocity point-data array. Defaults to the array each
+            file declares as its active vectors.
+
+        Attributes
+        ----------
+        dump_source : {'collection', 'file'}
+            where the list of dumps came from
+        time_source : string
+            a phrase naming where the times came from
+        series_path : Path or None
+            the ``.pvd`` collection, if there was one
+        '''
+
+        ##### Parse parameters #####
+        self.path = path
+        self.vel_conv = vel_conv
+        self.vec_name = vec_name
+        if not isinstance(periodic_dim, bool):
+            # A call replayed from a run archive's provenance passes a list.
+            periodic_dim = tuple(periodic_dim)
+        if INUM is not None and INUM is not True:
+            assert INUM > 3, 'INUM must be at least 4.'
+
+        ##### Resolve the dumps that exist, and their timeline #####
+        # Each candidate carries its declared position, which dump_number reports.
+        candidates = [((k, f) if f is not None else None, t)
+                      for k, (f, t) in enumerate(self._find_dumps(Path(path)))]
+        dumps, flow_times, self.time_source = _resolve_timeline(
+            candidates, self._source_label, self.time_source,
+            declared_order=True)
+        self._dump_numbers = [k for k, _ in dumps]
+        self._dumps = [f for _, f in dumps]
+        # d_start/d_finish are a dense 0-based index over the dumps that exist,
+        # so that update_spline's arithmetic on them steps in lockstep with
+        # flow_times.
+        self.d_start = 0
+        self.d_finish = len(self._dumps) - 1
+
+        ##### Load fluid data; the first dump read sets the grid #####
+        self._grid = None
+        if flow_times is None:
+            # A single dump is time-invariant flow, with no window to slide.
+            INUM = None
+        print('Reading VTK XML fluid data...')
+        if flow_times is None:
+            # Single dump: time-invariant flow.
+            flow = [f[0] for f in self._read_dumps(0, 0)]
+        elif INUM is None or INUM is True:
+            flow = self._read_dumps(self.d_start, self.d_finish)
+        else:
+            # Clamped to the series, so that an INUM wider than it reaches
+            # FluidData's own check rather than a dump index that does not exist.
+            last = min(self.d_start + INUM, self.d_finish)
+            flow = self._read_dumps(self.d_start, last)
+            # record the inclusive bounds of the starting dump numbers to be used
+            self.loaded_dump_bnds = (self.d_start, last)
+            # same, but based off of zero to correspond with flow_times indices
+            self.loaded_idx_bnds = (0, last - self.d_start)
+        print('Done!')
+
+        # A plane exported as 3D data is 2D data. The dropped axes are
+        #   remembered so that windowed loads are collapsed the same way.
+        flow, mesh, periodic_dim, self._flat = _collapse_flat_axes(
+            flow, self._grid, periodic_dim, source=str(path))
+
+        # shift domain to quadrant 1
+        flow_points = tuple(m - m[0] for m in mesh)
+        fluid_domain_LLC = tuple(m[0] for m in mesh)
+        # ImageData points include the domain boundaries.
+        self.L = [fp[-1] for fp in flow_points]
+
+        super().__init__(flow, flow_points, flow_times, INUM, periodic_dim,
+                         fluid_domain_LLC=fluid_domain_LLC)
+
+
+
+    def load_dumpfiles(self, d_start, d_finish):
+        '''
+        Dynamically load additional data.
+
+        d_start and d_finish are inclusive indices into the series of dumps that
+        exist on disk.
+        '''
+        return _drop_flat_axes(self._read_dumps(d_start, d_finish), self._flat,
+                               len(self._grid))
+
+
+
+    def dump_number(self, t_idx):
+        """The position of dump ``t_idx`` in the series its source declares.
+
+        Counted over every declared dump, present or not, so a file named from
+        it stays with its dump when a missing one later arrives.
+        """
+
+        return self._dump_numbers[int(t_idx)]
+
+
+
+    def _find_dumps(self, path):
+        '''Locate the dumps of the series, and the time each one declares.
+
+        Returns
+        -------
+        list of (file, time), one per dump the source declares, in its order.
+            file is None for a dump that is declared but not on disk; time is
+            NaN where the source gives none.
+        '''
+
+        if path.is_file() and path.suffix.lower() == '.pvd':
+            return self._candidates_from_collection(path)
+        if path.is_file():
+            self.series_path = None
+            self.dump_source = 'file'
+            self._source_label = "the file {}".format(path.name)
+            self.time_source = "a single dump"
+            self._check_readable([path], path)
+            return [(path, np.nan)]
+        if not path.is_dir():
+            raise FileNotFoundError("{} not found!".format(str(path)))
+
+        found = sorted(path.glob('*.pvd'))
+        if len(found) > 1:
+            raise RuntimeError(
+                "Found {} .pvd collections in {}: {}. Pass the one to "
+                "read.".format(len(found), str(path), [f.name for f in found]))
+        if len(found) == 0:
+            raise FileNotFoundError(
+                "No .pvd collection found in {}.".format(str(path)))
+        return self._candidates_from_collection(found[0])
+
+
+
+    def _candidates_from_collection(self, pvd):
+        '''Dumps declared by a .pvd collection, timed by its timesteps.'''
+
+        self.series_path = pvd
+        self.dump_source = 'collection'
+        self._source_label = "the collection {}".format(pvd.name)
+        self.time_source = "the .pvd collection"
+
+        files, times = _dataio.read_pvd_series(pvd)
+        self._check_readable(files, pvd)
+        return [(f if f.is_file() else None, t) for f, t in zip(files, times)]
+
+
+
+    @staticmethod
+    def _check_readable(files, source):
+        '''Refuse a series naming files of a type this class does not read.
+
+        Checked at construction, so that it fails before any data is loaded
+        rather than at the window slide that first reaches such a file.
+        '''
+
+        unreadable = sorted({f.suffix.lower() for f in files} - {'.vti'})
+        if unreadable:
+            raise ValueError(
+                "{} names files of type {}, which VTKXMLData does not read. It "
+                "reads VTK XML ImageData (.vti).".format(source.name, unreadable))
+
+
+
+    def _read_dumps(self, d_start, d_finish):
+        '''Read dumps d_start..d_finish (inclusive) as three (t,i,j,k) components.'''
+
+        flow = None
+        count = d_finish - d_start + 1
+        for m, n in enumerate(range(d_start, d_finish+1)):
+            filename = self._dumps[n]
+            data, mesh, _ = _dataio.read_vtkxml_image_data(filename,
+                                                           self.vec_name)
+            self._check_grid(mesh, filename)
+            if flow is None:
+                # Filled in place, so the series is held once rather than as a
+                # list of dumps and a stacked copy of it. Held as float64
+                # whatever the file stores: a window the slider rebuilds is
+                # float64, and linear interpolation between float32 samples
+                # rounds their difference, missing the stored value even at a
+                # dump's own time.
+                flow = [np.empty((count, *d.shape)) for d in data]
+            for f, d in zip(flow, data):
+                f[m] = d
+
+        if flow is None:
+            # An empty range, from a degenerate slide past the end of the data.
+            shape = tuple(len(c) for c in self._grid)
+            flow = [np.zeros((0, *shape)) for _ in range(3)]
+
+        if self.vel_conv is not None:
+            for f in flow:
+                f *= self.vel_conv
+        return flow
+
+
+
+    def _check_grid(self, mesh, filename):
+        '''The first dump read sets the grid; every later one must match it.'''
+
+        if self._grid is None:
+            self._grid = mesh
+        elif not all(np.array_equal(a, b) for a, b in zip(mesh, self._grid)):
+            raise RuntimeError(
+                "The grid in {} differs from the grid of the first dump read. "
+                "Every dump in a series must share one grid.".format(
+                    Path(filename).name))
 
 

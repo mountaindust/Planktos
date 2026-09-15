@@ -1287,6 +1287,59 @@ class Environment:
 
 
     @_provenance.records_provenance('_fluid_provenance')
+    def read_vtkxml_fluid_data(self, path, INUM=None,
+                               periodic_dim=(False, False, False),
+                               vel_conv=None, vec_name=None):
+        '''Reads in fluid velocity point data from VTK XML ImageData (``.vti``)
+        files, such as solver output resampled onto a uniform grid. A series is
+        indexed by a ParaView collection (``.pvd``), which supplies the times;
+        they are translated so that the first dump corresponds to a Planktos
+        environment time of 0.0. A single ``.vti`` file gives time-invariant
+        flow, for which INUM is ignored.
+
+        A grid one point thick in a dimension is read as 2D data on the others,
+        with the velocity component along that dimension dropped.
+
+        Dumps the collection declares but which are not on disk are skipped with
+        a warning, and the timeline is built over those that remain.
+
+        If INUM (interval number) is set to an integer >= 4, then the data will
+        be dynamically loaded as needed with INUM intervals between the temporal
+        data sets available at any given time.
+
+        All environment variables will be reset.
+
+        Parameters
+        ----------
+        path : string
+            a directory holding one ``.pvd`` collection, the ``.pvd`` itself, or
+            a single ``.vti`` file
+        INUM : int > 3, True, or None (default)
+            max number of splined intervals held at any one time; the number of
+            time points held is 1+INUM, and INUM must be at least 4. None splines
+            the entire dataset at once and cubically in time; True holds the
+            entire dataset too but splines it linearly; an int streams a sliding
+            window from storage and splines that linearly.
+        periodic_dim : list of 3 bool, default=(False, False, False)
+            True if that spatial dimension is periodic, otherwise False
+        vel_conv : float, optional
+            scalar to multiply the velocity by in order to convert units to
+            match the spatial grid units
+        vec_name : string, optional
+            name of the velocity point-data array. Defaults to the array each
+            file declares as its active vectors.
+        '''
+        self._refuse_while_recording()
+
+
+        self.flow = fluid.VTKXMLData(path, INUM, periodic_dim, vel_conv,
+                                     vec_name)
+        self.L = self.flow.L
+        self._reset_flow_variables()
+
+
+
+    @_provenance.records_provenance('_fluid_provenance')
     def read_comsol_vtu_data(self, filename, periodic_dim=(False, False, False),
                              res=101, linear_interp=False, vel_conv=None):
         '''Reads in vtu flow data from a single source. It is assumed this 

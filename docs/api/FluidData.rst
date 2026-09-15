@@ -154,5 +154,9 @@ than directly.
     :members:
     :exclude-members: load_dumpfiles
 
+.. autoclass:: planktos.fluid.VTKXMLData
+    :members:
+    :exclude-members: load_dumpfiles
+
 .. autoclass:: planktos.fluid.ComsolVTUData
     :members:

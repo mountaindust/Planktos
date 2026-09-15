@@ -171,7 +171,8 @@ answered in `dump_source` / `time_source`, warn on every step past the first.
 | 1 | the `.pvd` collection | the `timestep` it declares |
 | 2 | glob of `*.vti`, ordered by `_natural_key` | `TimeValue` field data, if present |
 | 3 | same glob | the `_t<value>` suffix in the filename |
-| 4 | — | unit steps |
+| 4 | any of the above | an explicit `dt` argument, if given (see below) |
+| 5 | — | unit steps |
 
 Source 3 is specific to this dataset's naming and should be opt-in (a `time_from_name`
 regex parameter, default off) rather than a silent guess — a filename is not a
@@ -179,10 +180,56 @@ timestamp, and inferring one that happens to parse would be exactly the "run com
 on a timeline other than the one the user believes they loaded" failure `OpenFOAMData`
 is written to avoid. For *this* dataset the `.pvd` answers, so 3 never fires.
 
+**An explicit `dt` (added alongside the fallback chain).** A `dt` argument, as
+`read_IB2d_fluid_data` has, for a series with no times anywhere — no `.pvd`, no
+`TimeValue`, nothing usable in the filenames — so it need not fall to unit steps. It
+must work for the whole class, not only for the glob source:
+
+- Each dump's time is `dt` × its **declared position**, not its position among the dumps
+  on disk, so a dump a `.pvd` declares but which is absent leaves a gap in the timeline
+  rather than closing it up. (A glob cannot see an absent dump; its positions are the
+  sorted order.) This is the same position `dump_number` already reports.
+- `dt` fills the candidate times *before* `_resolve_timeline`, so the absent-dump skip,
+  the ordering rules and the spacing warning all apply unchanged, and `time_source`
+  names it.
+- Where the source also carries times (a `.pvd`'s timesteps, `TimeValue`), they are
+  compared against `dt`, and a disagreement raises rather than either silently winning.
+- A single dump has no timeline, so `dt` is accepted and has no effect, as `INUM` is.
+- JSON-safe (a float), exposed on `Environment.read_vtkxml_fluid_data` too.
+- Tested against every source — collection (including one with an absent dump), glob,
+  and single file — both in-RAM and windowed.
+
 Reuse from `OpenFOAMData` verbatim: `_natural_key`, the dense 0-based dump index over
-the dumps that actually exist, the declared-but-absent skip with a warning, and the
-non-uniform-spacing warning. Those are general, and lifting them into module-level
-helpers is preferable to a third copy.
+the dumps that actually exist, and the whole of the policy in
+`OpenFOAMData._read_series` that turns a list of candidate dumps into a timeline —
+the declared-but-absent skip with a warning, unit steps when nothing is timed, the
+refusal when only some dumps are, reordering a globbed source by its times, the
+strictly-increasing check and the non-uniform-spacing warning. That method reads
+`self._source_label` / `dump_source` / `time_source`, so it lifts as one module-level
+function taking those as arguments, not as three separate helpers, and the lift is a
+refactor of `OpenFOAMData` that lands (with its tests green) before the new class
+exists.
+
+**Metadata is a property of the series, not of the dump.** Output is written
+algorithmically, so what one dump carries the next carries too; a series where that
+varies is corrupt, and the lifted policy's partial-timeline refusal is the right
+response to it. The loader leans on this for source 2.
+
+**Source 2 has to be settled on the first dump.** Verified against this dataset:
+`_dataio.read_vtkxml_time_only` declines any compressed file, so it returns `None`
+for these dumps — and would for a *timed* compressed series too, inline-binary or
+VTK's default appended alike. The fallback is to ask VTK, but with every point and
+cell array disabled, which still reads `FieldData`:
+
+| Timed copy of `flow_0001` | header scan | disabled-array read | full read |
+|---|---|---|---|
+| inline binary, zlib (as shipped) | `None` | 0.068 s → 0.1 | 0.14 s |
+| appended, zlib (VTK default) | `None` | 0.001 s → 0.1 | — |
+
+So: header scan, then a disabled-array read, of the **first** dump. If that finds no
+`TimeValue`, the series has none — move to source 3/4 without touching the rest. If it
+does, time every dump the same way. Paying a full parse per dump to confirm an absence
+the first file already established is the cost this avoids.
 
 `flow_times` must span the **entire** dump series before any fluid is loaded, not the
 opening window — the frozen-timeline bug in `TODO.md` Phase 2. Here that is cheap:
@@ -240,6 +287,10 @@ the cheap analogue of `_verify_dump_mesh` and needs no coordinate comparison.
 - The `@_provenance.records_provenance('_fluid_provenance')` decorator on the
   `Environment` method, plus the new name added to the loader list in
   `tests/test_provenance.py` — that list is explicit and will not notice on its own.
+- **JSON-safe arguments only.** Restoring a run replays the loader as
+  `getattr(envir, loader)(**kwargs)` from the provenance record
+  (`RunArchive._replay`), so every parameter must survive a JSON round trip:
+  `time_from_name` is a pattern *string*, never a compiled regex.
 
 ---
 
@@ -279,7 +330,8 @@ user their z-velocity is being discarded. Any real solver output will trip this.
 
 Fix: compare against a scale drawn from the retained components, e.g. flag only when
 `max|w|` exceeds a small multiple of the in-plane velocity scale, and say the ratio in
-the warning so the user can judge it.
+the warning so the user can judge it. `test_io_loaders.py` matches the current
+warning text (`'z-velocity is not everywhere zero'`) and moves with it.
 
 ---
 
@@ -319,21 +371,29 @@ three want a question put to the collaborator.
 2. `_dataio.read_vtkxml_image_data` — `vtkXMLImageDataReader`, active vectors with a
    `vec_name` override, array selection, returning components indexed `[x,y,z]` plus
    coordinate arrays and `TimeValue` if present. `.vtr` alongside it.
-3. `fluid.VTKXMLData` — discovery chain (§4), grid read once and checked on the second
-   dump, `_collapse_flat_axes` at construction and `_drop_flat_axes` in
-   `load_dumpfiles`, dense `d_start`/`d_finish`, inherited vorticity.
-4. Lift `_natural_key`, the absent-dump skip and the non-uniform-spacing warning out of
-   `OpenFOAMData` into module-level helpers rather than copying them a third time.
-5. `Environment.read_vtkxml_fluid_data`, decorated with `records_provenance`; add the
-   name to the loader list in `tests/test_provenance.py`.
-6. Fixture: a `vtixml_min/` series in `_gen_fixtures.py` — a handful of `.vti` dumps
-   one point thick in z, indexed by a `.pvd`, with a declared-but-absent dump and one
-   dump carrying `TimeValue` and one not, so the fallback chain is exercised. Fields
-   analytic, as elsewhere (`u = t` reads the timeline back).
+3. Lift `_natural_key` and the timeline policy of `OpenFOAMData._read_series` out of
+   `OpenFOAMData` into module-level functions (§4) rather than copying them a third
+   time. A pure refactor: the OpenFOAM tests and the streaming suite stay green.
+4. `fluid.VTKXMLData` — discovery chain (§4, with source 2 settled on the first dump),
+   built on the functions from step 3; grid read once and checked on the second dump,
+   `_collapse_flat_axes` at construction and `_drop_flat_axes` in `load_dumpfiles`,
+   dense `d_start`/`d_finish`, inherited vorticity. Add it to the `FluidData` subclass
+   list in `CLAUDE.md`. With the fallback chain, add the `dt` argument (§4), working
+   for every source and tested against each.
+5. `Environment.read_vtkxml_fluid_data`, decorated with `records_provenance`, with
+   JSON-safe parameters; add the name to the loader list in `tests/test_provenance.py`.
+6. Fixture: a `vtixml_min/` series in `_gen_fixtures.py` — a handful of zlib-compressed
+   `.vti` dumps (as the real data is) one point thick in z, indexed by a `.pvd`, with
+   `TimeValue` in every dump. Fields analytic, as elsewhere (`u = t` reads the timeline
+   back). The degraded shapes the fallback chain handles are whole-series properties,
+   so tests build them in `tmp_path` from this one — `.pvd` removed, `TimeValue`
+   stripped throughout, a `.pvd` entry whose file is absent — rather than committing a
+   fixture per shape.
 7. Tests: values and grid against the fixture; the flat-z collapse; the full timeline
    spanning the series rather than the opening window (the frozen-timeline lock, as in
-   `test_dynamic_loading.py`); each step of the fallback chain and its warning; a
-   `.pvd` naming an unreadable type refusing at construction.
+   `test_dynamic_loading.py`); each step of the fallback chain and its warning; that an
+   untimed series costs one `TimeValue` probe, not one per dump; a `.pvd` naming an
+   unreadable type refusing at construction.
 8. Fix `read_vtk_time_only` for binary legacy vtk, with a binary fixture (§5).
 9. Give the flat-axis warning a tolerance (§5).
 10. Changelog under `1.1.0`: one line for the new format support. The two fixes in 8
