@@ -1040,6 +1040,21 @@ def test_vtkxml_slide_that_loads_a_single_dump(tmp_path):
     assert fd.loaded_idx_bnds[1] == 5
 
 
+def test_vtkxml_windowed_over_files_with_no_collection(tmp_path):
+    # Found by globbing and timed with dt: the timeline still spans every file
+    # up front, and the window slides across it.
+    src = tmp_path / 'series'
+    shutil.copytree(VTIXML, src)
+    (src / 'flow.pvd').unlink()
+    with pytest.warns(UserWarning, match='single point thick'):
+        fd = fluid.VTKXMLData(str(src), INUM=4, dt=0.1)
+    assert fd.dump_source == 'files'
+    assert np.allclose(fd.flow_times, 0.1*np.arange(8))
+    for q in (0.0, 0.45, 0.7):
+        assert np.allclose(fd(q)[0], q + 0.1)
+    assert fd.loaded_idx_bnds[1] == 7
+
+
 # --------------------------------------------------------------------------- #
 #        IB2dData end-to-end -- the 2D reference path, against real files       #
 # --------------------------------------------------------------------------- #

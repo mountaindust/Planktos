@@ -16,7 +16,7 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - The OpenFOAM reader checks the second dump against the mesh read from the first, catching a series whose cell ordering changes.
 - New read_openfoam_vtk_data(require_boundary=False) extrapolates the interior out to any domain face no boundary patch covers, rather than failing.
 - Where OpenFOAM boundary patches disagree along a domain edge, a no-slip zero now wins instead of being averaged away.
-- New Environment.read_vtkxml_fluid_data reads VTK XML ImageData (.vti) series indexed by a ParaView .pvd, including dynamic loading.
+- New Environment.read_vtkxml_fluid_data reads VTK XML ImageData (.vti) series, with or without a ParaView .pvd index, including dynamic loading.
 - Fluid loaders warn and carry on when a dump the time series declares is missing, rather than failing.
 - plot_all: new playback_rate (simulated seconds per second of video) sets movie speed. Defaults to 1, real time, changing existing movies.
 - Plotting after a failed time step shows the recorded history and leaves the incomplete step out.

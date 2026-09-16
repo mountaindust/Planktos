@@ -1289,13 +1289,17 @@ class Environment:
     @_provenance.records_provenance('_fluid_provenance')
     def read_vtkxml_fluid_data(self, path, INUM=None,
                                periodic_dim=(False, False, False),
-                               vel_conv=None, vec_name=None):
+                               vel_conv=None, vec_name=None,
+                               time_from_name=None, dt=None):
         '''Reads in fluid velocity point data from VTK XML ImageData (``.vti``)
-        files, such as solver output resampled onto a uniform grid. A series is
-        indexed by a ParaView collection (``.pvd``), which supplies the times;
-        they are translated so that the first dump corresponds to a Planktos
-        environment time of 0.0. A single ``.vti`` file gives time-invariant
-        flow, for which INUM is ignored.
+        files, such as solver output resampled onto a uniform grid. The times
+        come from a ParaView collection (``.pvd``) indexing the series if there
+        is one; failing that, from the ``TimeValue`` in each file, then from the
+        filenames through ``time_from_name``, and finally unit time steps, which
+        warns, since those are indices rather than physical times. ``dt`` gives
+        the interval between dumps directly. Times are translated so that the first dump corresponds to a
+        Planktos environment time of 0.0. A single ``.vti`` file gives
+        time-invariant flow, for which INUM and dt are ignored.
 
         A grid one point thick in a dimension is read as 2D data on the others,
         with the velocity component along that dimension dropped.
@@ -1312,8 +1316,8 @@ class Environment:
         Parameters
         ----------
         path : string
-            a directory holding one ``.pvd`` collection, the ``.pvd`` itself, or
-            a single ``.vti`` file
+            a directory holding a ``.pvd`` collection or ``.vti`` files, the
+            ``.pvd`` itself, or a single ``.vti`` file
         INUM : int > 3, True, or None (default)
             max number of splined intervals held at any one time; the number of
             time points held is 1+INUM, and INUM must be at least 4. None splines
@@ -1328,12 +1332,20 @@ class Environment:
         vec_name : string, optional
             name of the velocity point-data array. Defaults to the array each
             file declares as its active vectors.
+        time_from_name : string, optional
+            regular expression whose first group is a dump's time within its
+            filename, such as ``r'_t([0-9.]+)[.]vti$'``. Used for ``.vti`` files
+            that have no collection and carry no ``TimeValue``.
+        dt : float, optional
+            interval between consecutive dumps. Each dump's time is ``dt`` times
+            its position in the series, counting any dump a collection declares
+            but which is absent. Times the files carry must agree with it.
         '''
         self._refuse_while_recording()
 
 
         self.flow = fluid.VTKXMLData(path, INUM, periodic_dim, vel_conv,
-                                     vec_name)
+                                     vec_name, time_from_name, dt)
         self.L = self.flow.L
         self._reset_flow_variables()
 

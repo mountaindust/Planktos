@@ -232,7 +232,7 @@ against `master`.
 - `FluidData` owns the velocity field, the spatial grid (`flow_points`), the time
   stamps (`flow_times`), periodicity (`periodic_dim`), and the temporal
   interpolation. Per-source subclasses handle ingestion: `IB2dData`, `VTK3dData`,
-  `ComsolVTUData`, `OpenFOAMData`, `VTKXMLData` (`.vti` series indexed by a `.pvd`).
+  `ComsolVTUData`, `OpenFOAMData`, `VTKXMLData` (`.vti` series, with or without a `.pvd` index).
 - Fluid-level operations live on the object, not on `Environment`: `tile_flow`,
   `get_vorticity`, `get_dudt`, `calculate_DuDt`, `get_mean_velocity`,
   `update_spline`, `load_dumpfiles`.

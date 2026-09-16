@@ -2088,14 +2088,171 @@ def test_vtkxml_refuses_a_collection_naming_another_file_type(tmp_path):
         fluid.VTKXMLData(str(pvd))
 
 
-def test_vtkxml_needs_exactly_one_collection_in_a_directory(tmp_path):
+def test_vtkxml_a_directory_needs_one_collection_or_some_files(tmp_path):
     from planktos import fluid
-    with pytest.raises(FileNotFoundError, match='No .pvd collection'):
+    with pytest.raises(FileNotFoundError, match=r'No \.pvd collection or \.vti'):
         fluid.VTKXMLData(str(tmp_path))
     for name in ('a.pvd', 'b.pvd'):
         _write_pvd(tmp_path / name, [{'timestep': '0', 'file': 'x.vti'}])
     with pytest.raises(RuntimeError, match='Found 2 .pvd collections'):
         fluid.VTKXMLData(str(tmp_path))
+
+
+# ---- VTKXMLData without a collection, and dt ---------------------------------
+
+def _strip_vti_timevalue(directory):
+    '''Rewrite every .vti in directory without its TimeValue, compressed as before.'''
+    import vtk
+    for f in directory.glob('*.vti'):
+        reader = vtk.vtkXMLImageDataReader()
+        reader.SetFileName(str(f))
+        reader.Update()
+        img = reader.GetOutput()
+        img.GetFieldData().RemoveArray('TimeValue')
+        writer = vtk.vtkXMLImageDataWriter()
+        writer.SetFileName(str(f))
+        writer.SetInputData(img)
+        writer.SetDataModeToBinary()
+        writer.SetCompressorTypeToZLib()
+        writer.Write()
+
+
+def _vti_files(tmp_path, timed=True):
+    '''The fixture's .vti files with no collection beside them.'''
+    src = _copy_vti_series(tmp_path)
+    (src / 'flow.pvd').unlink()
+    if not timed:
+        _strip_vti_timevalue(src)
+    return src
+
+
+def test_vtkxml_without_a_collection_reads_the_files_timed_by_timevalue(tmp_path):
+    from planktos import fluid
+    src = _vti_files(tmp_path)
+    # Reading the files of a directory is an ordinary way for a series to
+    # arrive, not a degraded one, so nothing warns about the missing .pvd.
+    with pytest.warns(UserWarning, match='single point thick') as record:
+        fd = fluid.VTKXMLData(str(src))
+    assert not any('.pvd' in str(r.message) for r in record)
+    assert fd.dump_source == 'files' and fd.series_path is None
+    assert 'TimeValue' in fd.time_source
+    assert np.allclose(fd.flow_times, np.array(VTI_TIMES) - 0.1)
+    assert np.allclose(fd(0.25)[0], 0.35)
+
+
+def test_vtkxml_files_without_times_cost_one_timevalue_probe(tmp_path, monkeypatch):
+    # Whether a writer records TimeValue is a property of the series, so the
+    # first file settles it rather than every file being read to find out.
+    from planktos import fluid
+    src = _vti_files(tmp_path, timed=False)
+    real = _dataio.read_vtkxml_image_time
+    calls = []
+    def spy(filename):
+        calls.append(filename)
+        return real(filename)
+    monkeypatch.setattr(fluid._dataio, 'read_vtkxml_image_time', spy)
+    with pytest.warns(UserWarning) as record:
+        fd = fluid.VTKXMLData(str(src))
+    assert len(calls) == 1
+    assert fd.time_source == 'assumed unit steps'
+    assert np.allclose(fd.flow_times, np.arange(8.))
+    assert any('assuming unit time steps' in str(r.message) for r in record)
+
+
+def test_vtkxml_time_from_name_times_files_that_carry_none(tmp_path):
+    from planktos import fluid
+    src = _vti_files(tmp_path, timed=False)
+    with pytest.warns(UserWarning, match='single point thick'):
+        fd = fluid.VTKXMLData(str(src), time_from_name=r'_t([\d.]+)\.vti$')
+    assert 'filenames' in fd.time_source
+    assert np.allclose(fd.flow_times, np.array(VTI_TIMES) - 0.1)
+
+
+def test_vtkxml_time_from_name_that_misses_a_file_is_refused(tmp_path):
+    from planktos import fluid
+    src = _vti_files(tmp_path, timed=False)
+    (src / _vti_name(3)).rename(src / 'flow_0004_late.vti')
+    with pytest.raises(RuntimeError, match='No time information for 1 of 8'):
+        fluid.VTKXMLData(str(src), time_from_name=r'_t([\d.]+)\.vti$')
+
+
+def test_vtkxml_files_sort_by_the_numbers_in_their_names(tmp_path):
+    # Lexically d10 sorts first; the numbers in the names put it last.
+    from planktos import fluid
+    for k, name in enumerate(['d8.vti', 'd9.vti', 'd10.vti']):
+        _write_vti(tmp_path / name, {'U': [float(k), 0, 0]}, active='U',
+                   time=float(k))
+    with pytest.warns(UserWarning, match='single point thick') as record:
+        fd = fluid.VTKXMLData(str(tmp_path))
+    assert not any('reordered' in str(r.message) for r in record)
+    assert np.allclose(fd.flow_times, [0., 1., 2.])
+    assert [fd.dump_number(i) for i in range(3)] == [0, 1, 2]
+
+
+def test_vtkxml_dt_times_files_that_carry_none(tmp_path):
+    from planktos import fluid
+    src = _vti_files(tmp_path, timed=False)
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter('always')
+        fd = fluid.VTKXMLData(str(src), dt=0.1)
+    assert fd.time_source == 'the dt argument'
+    assert np.allclose(fd.flow_times, 0.1*np.arange(8))
+    assert not any('unit time steps' in str(r.message) for r in record)
+    assert np.allclose(fd(0.35)[0], 0.45)
+
+
+def test_vtkxml_dt_keeps_the_gap_an_absent_dump_leaves(tmp_path):
+    # Positions count the dumps the collection declares, so an absent one
+    # leaves a hole in the timeline rather than closing it up.
+    from planktos import fluid
+    src = _copy_vti_series(tmp_path)
+    pvd = src / 'flow.pvd'
+    pvd.write_text(re.sub(r' timestep="[^"]*"', '', pvd.read_text()))
+    (src / _vti_name(4)).unlink()
+    with pytest.warns(UserWarning):
+        fd = fluid.VTKXMLData(str(src), dt=0.1)
+    assert fd.time_source == 'the dt argument'
+    assert np.allclose(fd.flow_times, [0., .1, .2, .3, .5, .6, .7])
+    assert [fd.dump_number(i) for i in range(7)] == [0, 1, 2, 3, 5, 6, 7]
+    assert np.allclose(fd(0.5)[0], 0.6)
+
+
+def test_vtkxml_dt_fills_the_gaps_in_a_partly_timed_collection(tmp_path):
+    from planktos import fluid
+    src = _copy_vti_series(tmp_path)
+    pvd = src / 'flow.pvd'
+    pvd.write_text(pvd.read_text().replace(' timestep="0.4"', ''))
+    with pytest.raises(RuntimeError, match='No time information for 1 of 8'):
+        fluid.VTKXMLData(str(src))
+    with pytest.warns(UserWarning, match='single point thick'):
+        fd = fluid.VTKXMLData(str(src), dt=0.1)
+    assert 'dt filling 1 gap' in fd.time_source
+    assert np.allclose(fd.flow_times, 0.1*np.arange(8))
+
+
+@pytest.mark.parametrize('source', ['collection', 'files'])
+def test_vtkxml_dt_must_agree_with_the_times_the_source_carries(tmp_path, source):
+    from planktos import fluid
+    src = _copy_vti_series(tmp_path) if source == 'collection' \
+        else _vti_files(tmp_path)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', UserWarning)
+        with pytest.raises(ValueError, match=r'dt=0\.2 disagrees'):
+            fluid.VTKXMLData(str(src), dt=0.2)
+        fd = fluid.VTKXMLData(str(src), dt=0.1)
+    assert np.allclose(fd.flow_times, 0.1*np.arange(8))
+
+
+def test_vtkxml_dt_is_unused_for_a_single_file():
+    fd = _vtixml(VTI_DIR / _vti_name(2), dt=0.1)
+    assert fd.flow_times is None
+
+
+@pytest.mark.parametrize('dt', [0, -0.1])
+def test_vtkxml_dt_must_be_positive(dt):
+    from planktos import fluid
+    with pytest.raises(ValueError, match='dt must be positive'):
+        fluid.VTKXMLData(str(VTI_DIR), dt=dt)
 
 
 @pytest.mark.parametrize('INUM, k', [(None, 1), (4, 6)])

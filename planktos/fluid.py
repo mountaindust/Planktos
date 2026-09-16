@@ -3571,14 +3571,31 @@ class OpenFOAMData(FluidData):
 class VTKXMLData(FluidData):
 
     def __init__(self, path, INUM=None, periodic_dim=(False, False, False),
-                 vel_conv=None, vec_name=None):
+                 vel_conv=None, vec_name=None, time_from_name=None, dt=None):
         '''Reads fluid velocity point data from VTK XML ImageData (``.vti``)
         files and creates a FluidData instance from it.
 
-        A series is indexed by a ParaView collection (``.pvd``), which supplies
-        the dumps and their times. Times are shifted so that the first dump is
-        at a Planktos environment time of 0.0. A single ``.vti`` file gives
-        time-invariant flow, for which INUM is ignored.
+        The dumps of a series, and their times, come from the first of these
+        that is present:
+
+        1. a ParaView collection (``.pvd``), timed by the timesteps it declares;
+        2. the ``.vti`` files in the directory, in numeric-aware filename order,
+           timed by the ``TimeValue`` each one carries;
+        3. the same files, timed by their filenames through ``time_from_name``;
+        4. the same files, in unit time steps.
+
+        Which one answered is recorded in ``dump_source`` and ``time_source``.
+        A ``.pvd`` is a ParaView file and plenty of sources never write one, so
+        reading the files of a directory is ordinary and passes in silence; what
+        warns is a series with no times at all, whose unit steps are indices
+        rather than physical times. Given ``dt``, each dump's time is
+        ``dt`` times its position in the series, counting any dump a collection
+        declares but which is absent; times the source carries must agree with
+        it, and it supplies any the source lacks.
+
+        Times are shifted so that the first dump is at a Planktos environment
+        time of 0.0. A single ``.vti`` file gives time-invariant flow, for which
+        INUM and dt are ignored.
 
         The grid is read from the first dump, and every later dump is checked
         against it. A grid one point thick in a dimension is read as 2D data on
@@ -3594,8 +3611,8 @@ class VTKXMLData(FluidData):
         Parameters
         ----------
         path : string
-            a directory holding one ``.pvd`` collection, the ``.pvd`` itself, or
-            a single ``.vti`` file
+            a directory holding a ``.pvd`` collection or ``.vti`` files, the
+            ``.pvd`` itself, or a single ``.vti`` file
         INUM : int > 3, True, or None (default)
             max number of splined intervals held at any one time; the number of
             time points held is 1+INUM, and INUM must be at least 4. None splines
@@ -3610,10 +3627,16 @@ class VTKXMLData(FluidData):
         vec_name : string, optional
             name of the velocity point-data array. Defaults to the array each
             file declares as its active vectors.
+        time_from_name : string, optional
+            regular expression whose first group is a dump's time within its
+            filename, such as ``r'_t([0-9.]+)[.]vti$'``. Used for ``.vti`` files
+            that have no collection and carry no ``TimeValue``.
+        dt : float, optional
+            interval between consecutive dumps
 
         Attributes
         ----------
-        dump_source : {'collection', 'file'}
+        dump_source : {'collection', 'files', 'file'}
             where the list of dumps came from
         time_source : string
             a phrase naming where the times came from
@@ -3625,19 +3648,28 @@ class VTKXMLData(FluidData):
         self.path = path
         self.vel_conv = vel_conv
         self.vec_name = vec_name
+        self.time_from_name = time_from_name
+        self.dt = dt
         if not isinstance(periodic_dim, bool):
             # A call replayed from a run archive's provenance passes a list.
             periodic_dim = tuple(periodic_dim)
         if INUM is not None and INUM is not True:
             assert INUM > 3, 'INUM must be at least 4.'
+        if dt is not None and not dt > 0:
+            raise ValueError("dt must be positive, not {!r}.".format(dt))
+        self._name_pattern = (None if time_from_name is None
+                              else re.compile(time_from_name))
 
         ##### Resolve the dumps that exist, and their timeline #####
+        candidates = self._find_dumps(Path(path))
+        if dt is not None:
+            candidates = self._apply_dt(candidates)
         # Each candidate carries its declared position, which dump_number reports.
         candidates = [((k, f) if f is not None else None, t)
-                      for k, (f, t) in enumerate(self._find_dumps(Path(path)))]
+                      for k, (f, t) in enumerate(candidates)]
         dumps, flow_times, self.time_source = _resolve_timeline(
             candidates, self._source_label, self.time_source,
-            declared_order=True)
+            declared_order=self.dump_source != 'files')
         self._dump_numbers = [k for k, _ in dumps]
         self._dumps = [f for _, f in dumps]
         # d_start/d_finish are a dense 0-based index over the dumps that exist,
@@ -3648,12 +3680,10 @@ class VTKXMLData(FluidData):
 
         ##### Load fluid data; the first dump read sets the grid #####
         self._grid = None
+        print('Reading VTK XML fluid data...')
         if flow_times is None:
             # A single dump is time-invariant flow, with no window to slide.
             INUM = None
-        print('Reading VTK XML fluid data...')
-        if flow_times is None:
-            # Single dump: time-invariant flow.
             flow = [f[0] for f in self._read_dumps(0, 0)]
         elif INUM is None or INUM is True:
             flow = self._read_dumps(self.d_start, self.d_finish)
@@ -3734,10 +3764,16 @@ class VTKXMLData(FluidData):
             raise RuntimeError(
                 "Found {} .pvd collections in {}: {}. Pass the one to "
                 "read.".format(len(found), str(path), [f.name for f in found]))
-        if len(found) == 0:
+        if len(found) == 1:
+            return self._candidates_from_collection(found[0])
+
+        files = sorted((p for p in path.iterdir()
+                        if p.is_file() and p.suffix.lower() == '.vti'),
+                       key=lambda p: _natural_key(p.name))
+        if len(files) == 0:
             raise FileNotFoundError(
-                "No .pvd collection found in {}.".format(str(path)))
-        return self._candidates_from_collection(found[0])
+                "No .pvd collection or .vti files found in {}.".format(str(path)))
+        return self._candidates_from_files(path, files)
 
 
 
@@ -3752,6 +3788,91 @@ class VTKXMLData(FluidData):
         files, times = _dataio.read_pvd_series(pvd)
         self._check_readable(files, pvd)
         return [(f if f.is_file() else None, t) for f, t in zip(files, times)]
+
+
+
+    def _candidates_from_files(self, directory, files):
+        '''Dumps found by globbing .vti files, timed by TimeValue or filename.'''
+
+        self.series_path = None
+        self.dump_source = 'files'
+        self._source_label = "the .vti files in {}".format(str(directory))
+
+        # A writer records TimeValue in every dump or in none, so the first file
+        #   settles which, and a series without it costs one probe in total.
+        first = self._file_time(files[0])
+        if first is not None:
+            self.time_source = "the TimeValue in each .vti"
+            times = [first] + [self._file_time(f) for f in files[1:]]
+        elif self._name_pattern is not None:
+            self.time_source = "the filenames, through time_from_name"
+            times = [self._name_time(f) for f in files]
+        else:
+            # Left for _resolve_timeline to replace with unit steps, or for dt.
+            self.time_source = "the .vti files, which carry no times"
+            times = [None]*len(files)
+
+        return [(f, np.nan if t is None else t) for f, t in zip(files, times)]
+
+
+
+    def _apply_dt(self, candidates):
+        '''Time each declared dump as dt times its position in the series.
+
+        Times the source already carries must agree with dt; dt supplies the
+        rest.
+        '''
+
+        times = np.array([t for _, t in candidates], dtype=float)
+        positions = np.arange(len(times))
+        timed = ~np.isnan(times)
+        if timed.any():
+            # Measured from the first timed dump, since a source's times need
+            #   not start at zero.
+            ref = int(np.argmax(timed))
+            expected = times[ref] + self.dt*(positions - ref)
+            bad = timed & ~np.isclose(times, expected, rtol=0, atol=1e-6*self.dt)
+            if bad.any():
+                i = int(np.argmax(bad))
+                raise ValueError(
+                    "dt={:g} disagrees with the times from {}: dump {} of the "
+                    "series is at t = {:g}, where dt puts it at t = {:g}.".format(
+                        self.dt, self.time_source, i, times[i], expected[i]))
+        else:
+            expected = self.dt*positions
+
+        gaps = int((~timed).sum())
+        if gaps == len(times):
+            self.time_source = 'the dt argument'
+        elif gaps > 0:
+            self.time_source = '{}, with dt filling {} gap(s)'.format(
+                self.time_source, gaps)
+        return [(f, t) for (f, _), t in
+                zip(candidates, np.where(timed, times, expected))]
+
+
+
+    @staticmethod
+    def _file_time(filename):
+        '''A .vti's TimeValue: from its header where that decodes, else read
+        with no arrays.'''
+
+        t = _dataio.read_vtkxml_time_only(filename)
+        return t if t is not None else _dataio.read_vtkxml_image_time(filename)
+
+
+
+    def _name_time(self, filename):
+        '''The time time_from_name finds in a filename, or None.'''
+
+        match = self._name_pattern.search(filename.name)
+        if match is None:
+            return None
+        try:
+            t = float(match.group(1) if match.groups() else match.group(0))
+        except ValueError:
+            return None
+        return t if np.isfinite(t) else None
 
 
 

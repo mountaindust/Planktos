@@ -669,12 +669,12 @@ def read_vtkxml_time_only(filename, nbytes=4096):
     per file in the reference dataset -- so parsing the series to recover one
     float apiece would read gigabytes for what the headers already carry.
 
-    The ``.vtu``/``.vtp`` counterpart of read_vtk_time_only.
+    The VTK XML (e.g. .vtu, .vtp) counterpart of read_vtk_time_only.
 
     Parameters
     ----------
     filename : string or Path
-        path and filename of the .vtu or .vtp file
+        path and filename of the VTK XML file
     nbytes : int, default=4096
         how many bytes of the header to scan
 
@@ -1005,6 +1005,33 @@ def read_vtkxml_image_data(filename, vec_name=None):
     time = _single_valued_field(vtk_data, 'TimeValue')
 
     return data, mesh, time
+
+
+
+def read_vtkxml_image_time(filename):
+    '''Read the ``TimeValue`` field-data entry of a VTK XML ImageData file.
+
+    No point or cell arrays are read or decompressed, so this is the cheap way
+    to time a file whose header ``read_vtkxml_time_only`` cannot decode.
+
+    Parameters
+    ----------
+    filename : string or Path
+        path and filename of the .vti file
+
+    Returns
+    -------
+    float, or None if the file carries no TimeValue
+    '''
+
+    path = _require_file(filename)
+    reader = vtk.vtkXMLImageDataReader()
+    reader.SetFileName(str(path))
+    reader.UpdateInformation()
+    reader.GetPointDataArraySelection().DisableAllArrays()
+    reader.GetCellDataArraySelection().DisableAllArrays()
+    reader.Update()
+    return _single_valued_field(reader.GetOutput(), 'TimeValue')
 
 
 

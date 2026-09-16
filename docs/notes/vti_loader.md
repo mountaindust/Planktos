@@ -163,8 +163,15 @@ Proposed names, following the `vtkxml` prefix `_dataio` already uses:
 
 ### Dump discovery and the timeline
 
-Same shape as `OpenFOAMData._find_dumps`: try sources in turn, record which one
-answered in `dump_source` / `time_source`, warn on every step past the first.
+Same shape as `OpenFOAMData._find_dumps`: try sources in turn and record which one
+answered in `dump_source` / `time_source`.
+
+**Unlike `OpenFOAMData`, falling past the index does not warn.** A `.vtm.series` is
+part of what `foamToVTK` writes, so its absence says something went wrong; a `.pvd` is
+a ParaView file that many sources never write at all, so reading the `.vti` files of a
+directory is an ordinary way for a series to arrive. What warns is the *timeline*
+degrading — the unit steps of source 5, which are indices rather than physical times.
+Times from `time_from_name` or `dt` were asked for explicitly and pass in silence.
 
 | # | Source | Times from |
 |---|---|---|
