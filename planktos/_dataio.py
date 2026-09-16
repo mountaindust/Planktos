@@ -913,13 +913,33 @@ def read_pvd_series(filename):
 
 
 
-def read_vtkxml_image_data(filename, vec_name=None):
-    '''Read vector point data from a VTK XML ImageData (``.vti``) file.
+def _vtkxml_grid_reader(path):
+    """The XML reader for a .vti or .vtr file, chosen by extension."""
+
+    readers = {'.vti': vtk.vtkXMLImageDataReader,
+               '.vtr': vtk.vtkXMLRectilinearGridReader}
+    factory = readers.get(path.suffix.lower())
+    if factory is None:
+        raise ValueError(
+            "{} is not a VTK XML ImageData (.vti) or RectilinearGrid (.vtr) "
+            "file.".format(path))
+    reader = factory()
+    reader.SetFileName(str(path))
+    return reader
+
+
+
+def read_vtkxml_grid_data(filename, vec_name=None):
+    '''Read vector point data from a VTK XML ImageData (``.vti``) or
+    RectilinearGrid (``.vtr``) file.
+
+    An ImageData grid is uniform, given by an origin and a spacing; a
+    RectilinearGrid carries its coordinates outright and need not be.
 
     Parameters
     ----------
     filename : string or Path
-        path and filename of the .vti file
+        path and filename of the .vti or .vtr file
     vec_name : string, optional
         name of the point-data array to read. Defaults to the array the file
         declares as its active vectors.
@@ -937,15 +957,15 @@ def read_vtkxml_image_data(filename, vec_name=None):
     Raises
     ------
     ValueError
-        if no array is named and the file declares no active vectors, if the
-        array is absent or does not have three components, or if the grid is
-        not aligned with the coordinate axes or its spacing is not positive
+        if the file is of another type, if no array is named and the file
+        declares no active vectors, if the array is absent or does not have
+        three components, or if the grid is not aligned with the coordinate
+        axes or its coordinates do not increase
     '''
 
     path = _require_file(filename)
 
-    reader = vtk.vtkXMLImageDataReader()
-    reader.SetFileName(str(path))
+    reader = _vtkxml_grid_reader(path)
     reader.UpdateInformation()
     selection = reader.GetPointDataArraySelection()
     available = [selection.GetArrayName(n)
@@ -968,14 +988,17 @@ def read_vtkxml_image_data(filename, vec_name=None):
     reader.Update()
     vtk_data = reader.GetOutput()
 
-    direction = vtk_data.GetDirectionMatrix()
-    direction = np.array([[direction.GetElement(i, j) for j in range(3)]
-                          for i in range(3)])
-    if not np.allclose(direction, np.eye(3)):
-        raise ValueError(
-            "The grid in {} is rotated relative to the coordinate axes "
-            "(Direction {}). Planktos needs a grid aligned with its "
-            "axes.".format(path, direction.ravel().tolist()))
+    # ImageData can be rotated relative to the axes; a rectilinear grid has no
+    #   such transform to carry.
+    if hasattr(vtk_data, 'GetDirectionMatrix'):
+        direction = vtk_data.GetDirectionMatrix()
+        direction = np.array([[direction.GetElement(i, j) for j in range(3)]
+                              for i in range(3)])
+        if not np.allclose(direction, np.eye(3)):
+            raise ValueError(
+                "The grid in {} is rotated relative to the coordinate axes "
+                "(Direction {}). Planktos needs a grid aligned with its "
+                "axes.".format(path, direction.ravel().tolist()))
 
     array = vtk_data.GetPointData().GetArray(vec_name)
     if array.GetNumberOfComponents() != 3:
@@ -983,18 +1006,23 @@ def read_vtkxml_image_data(filename, vec_name=None):
             "'{}' in {} has {} component(s), not the 3 of a velocity "
             "vector.".format(vec_name, path, array.GetNumberOfComponents()))
 
-    # The origin is the position of index 0, which the extent need not start at.
-    extent = vtk_data.GetExtent()
-    origin = vtk_data.GetOrigin()
-    spacing = vtk_data.GetSpacing()
-    for d in range(3):
-        if extent[2*d+1] > extent[2*d] and not spacing[d] > 0:
+    if path.suffix.lower() == '.vtr':
+        mesh = [numpy_support.vtk_to_numpy(coords) for coords in
+                (vtk_data.GetXCoordinates(), vtk_data.GetYCoordinates(),
+                 vtk_data.GetZCoordinates())]
+    else:
+        # The origin is the position of index 0, which the extent need not
+        #   start at.
+        extent = vtk_data.GetExtent()
+        origin = vtk_data.GetOrigin()
+        spacing = vtk_data.GetSpacing()
+        mesh = [origin[d] + spacing[d]*np.arange(extent[2*d], extent[2*d+1]+1)
+                for d in range(3)]
+    for d, coords in enumerate(mesh):
+        if len(coords) > 1 and not np.all(np.diff(coords) > 0):
             raise ValueError(
-                "The grid in {} has spacing {} along {}. Planktos needs "
-                "coordinates that increase along each axis.".format(
-                    path, spacing[d], 'xyz'[d]))
-    mesh = [origin[d] + spacing[d]*np.arange(extent[2*d], extent[2*d+1]+1)
-            for d in range(3)]
+                "The grid in {} does not have coordinates that increase along "
+                "{}.".format(path, 'xyz'[d]))
 
     # Points run with x fastest, so the flat array reshapes to [z,y,x].
     #   Transpose each component to [x,y,z].
@@ -1008,8 +1036,9 @@ def read_vtkxml_image_data(filename, vec_name=None):
 
 
 
-def read_vtkxml_image_time(filename):
-    '''Read the ``TimeValue`` field-data entry of a VTK XML ImageData file.
+def read_vtkxml_grid_time(filename):
+    '''Read the ``TimeValue`` field-data entry of a VTK XML ImageData (``.vti``)
+    or RectilinearGrid (``.vtr``) file.
 
     No point or cell arrays are read or decompressed, so this is the cheap way
     to time a file whose header ``read_vtkxml_time_only`` cannot decode.
@@ -1017,7 +1046,7 @@ def read_vtkxml_image_time(filename):
     Parameters
     ----------
     filename : string or Path
-        path and filename of the .vti file
+        path and filename of the .vti or .vtr file
 
     Returns
     -------
@@ -1025,8 +1054,7 @@ def read_vtkxml_image_time(filename):
     '''
 
     path = _require_file(filename)
-    reader = vtk.vtkXMLImageDataReader()
-    reader.SetFileName(str(path))
+    reader = _vtkxml_grid_reader(path)
     reader.UpdateInformation()
     reader.GetPointDataArraySelection().DisableAllArrays()
     reader.GetCellDataArraySelection().DisableAllArrays()

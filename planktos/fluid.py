@@ -3572,15 +3572,16 @@ class VTKXMLData(FluidData):
 
     def __init__(self, path, INUM=None, periodic_dim=(False, False, False),
                  vel_conv=None, vec_name=None, time_from_name=None, dt=None):
-        '''Reads fluid velocity point data from VTK XML ImageData (``.vti``)
-        files and creates a FluidData instance from it.
+        '''Reads fluid velocity point data from VTK XML ImageData (``.vti``) or
+        RectilinearGrid (``.vtr``) files and creates a FluidData instance from
+        it.
 
         The dumps of a series, and their times, come from the first of these
         that is present:
 
         1. a ParaView collection (``.pvd``), timed by the timesteps it declares;
-        2. the ``.vti`` files in the directory, in numeric-aware filename order,
-           timed by the ``TimeValue`` each one carries;
+        2. the ``.vti``/``.vtr`` files in the directory, in numeric-aware
+           filename order, timed by the ``TimeValue`` each one carries;
         3. the same files, timed by their filenames through ``time_from_name``;
         4. the same files, in unit time steps.
 
@@ -3611,8 +3612,8 @@ class VTKXMLData(FluidData):
         Parameters
         ----------
         path : string
-            a directory holding a ``.pvd`` collection or ``.vti`` files, the
-            ``.pvd`` itself, or a single ``.vti`` file
+            a directory holding a ``.pvd`` collection or ``.vti``/``.vtr``
+            files, the ``.pvd`` itself, or a single dump file
         INUM : int > 3, True, or None (default)
             max number of splined intervals held at any one time; the number of
             time points held is 1+INUM, and INUM must be at least 4. None splines
@@ -3629,7 +3630,7 @@ class VTKXMLData(FluidData):
             file declares as its active vectors.
         time_from_name : string, optional
             regular expression whose first group is a dump's time within its
-            filename, such as ``r'_t([0-9.]+)[.]vti$'``. Used for ``.vti`` files
+            filename, such as ``r'_t([0-9.]+)[.]vti$'``. Used for dump files
             that have no collection and carry no ``TimeValue``.
         dt : float, optional
             interval between consecutive dumps
@@ -3768,11 +3769,12 @@ class VTKXMLData(FluidData):
             return self._candidates_from_collection(found[0])
 
         files = sorted((p for p in path.iterdir()
-                        if p.is_file() and p.suffix.lower() == '.vti'),
+                        if p.is_file() and p.suffix.lower() in ('.vti', '.vtr')),
                        key=lambda p: _natural_key(p.name))
         if len(files) == 0:
             raise FileNotFoundError(
-                "No .pvd collection or .vti files found in {}.".format(str(path)))
+                "No .pvd collection, .vti or .vtr files found in {}.".format(
+                    str(path)))
         return self._candidates_from_files(path, files)
 
 
@@ -3792,24 +3794,24 @@ class VTKXMLData(FluidData):
 
 
     def _candidates_from_files(self, directory, files):
-        '''Dumps found by globbing .vti files, timed by TimeValue or filename.'''
+        '''Dumps found by globbing dump files, timed by TimeValue or filename.'''
 
         self.series_path = None
         self.dump_source = 'files'
-        self._source_label = "the .vti files in {}".format(str(directory))
+        self._source_label = "the .vti/.vtr files in {}".format(str(directory))
 
         # A writer records TimeValue in every dump or in none, so the first file
         #   settles which, and a series without it costs one probe in total.
         first = self._file_time(files[0])
         if first is not None:
-            self.time_source = "the TimeValue in each .vti"
+            self.time_source = "the TimeValue in each dump"
             times = [first] + [self._file_time(f) for f in files[1:]]
         elif self._name_pattern is not None:
             self.time_source = "the filenames, through time_from_name"
             times = [self._name_time(f) for f in files]
         else:
             # Left for _resolve_timeline to replace with unit steps, or for dt.
-            self.time_source = "the .vti files, which carry no times"
+            self.time_source = "the dump files, which carry no times"
             times = [None]*len(files)
 
         return [(f, np.nan if t is None else t) for f, t in zip(files, times)]
@@ -3854,11 +3856,11 @@ class VTKXMLData(FluidData):
 
     @staticmethod
     def _file_time(filename):
-        '''A .vti's TimeValue: from its header where that decodes, else read
+        '''A dump's TimeValue: from its header where that decodes, else read
         with no arrays.'''
 
         t = _dataio.read_vtkxml_time_only(filename)
-        return t if t is not None else _dataio.read_vtkxml_image_time(filename)
+        return t if t is not None else _dataio.read_vtkxml_grid_time(filename)
 
 
 
@@ -3884,11 +3886,12 @@ class VTKXMLData(FluidData):
         rather than at the window slide that first reaches such a file.
         '''
 
-        unreadable = sorted({f.suffix.lower() for f in files} - {'.vti'})
+        unreadable = sorted({f.suffix.lower() for f in files} - {'.vti', '.vtr'})
         if unreadable:
             raise ValueError(
                 "{} names files of type {}, which VTKXMLData does not read. It "
-                "reads VTK XML ImageData (.vti).".format(source.name, unreadable))
+                "reads VTK XML ImageData (.vti) and RectilinearGrid "
+                "(.vtr).".format(source.name, unreadable))
 
 
 
@@ -3899,7 +3902,7 @@ class VTKXMLData(FluidData):
         count = d_finish - d_start + 1
         for m, n in enumerate(range(d_start, d_finish+1)):
             filename = self._dumps[n]
-            data, mesh, _ = _dataio.read_vtkxml_image_data(filename,
+            data, mesh, _ = _dataio.read_vtkxml_grid_data(filename,
                                                            self.vec_name)
             self._check_grid(mesh, filename)
             if flow is None:

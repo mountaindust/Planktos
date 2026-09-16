@@ -1792,6 +1792,38 @@ def _write_vti(path, vectors, active=None, extent=(0, 3, 0, 2, 0, 0),
     return path
 
 
+def _write_vtr(path, vectors, active=None, coords=None, time=None):
+    '''A small .vtr on the given coordinate arrays, which need not be uniform.'''
+    import vtk
+    from vtk.util import numpy_support
+    if coords is None:
+        coords = (np.array([0., 1., 2., 4.]), np.array([0., 0.5, 2.]),
+                  np.array([0.]))
+    grid = vtk.vtkRectilinearGrid()
+    grid.SetDimensions(*[len(c) for c in coords])
+    for setter, c in zip((grid.SetXCoordinates, grid.SetYCoordinates,
+                          grid.SetZCoordinates), coords):
+        setter(numpy_support.numpy_to_vtk(np.asarray(c, dtype=float), deep=True))
+    for name, value in vectors.items():
+        arr = numpy_support.numpy_to_vtk(
+            np.tile(np.asarray(value, dtype=float), (grid.GetNumberOfPoints(), 1)),
+            deep=True)
+        arr.SetName(name)
+        grid.GetPointData().AddArray(arr)
+    if active is not None:
+        grid.GetPointData().SetActiveVectors(active)
+    if time is not None:
+        tv = vtk.vtkDoubleArray()
+        tv.SetName('TimeValue')
+        tv.InsertNextValue(time)
+        grid.GetFieldData().AddArray(tv)
+    writer = vtk.vtkXMLRectilinearGridWriter()
+    writer.SetFileName(str(path))
+    writer.SetInputData(grid)
+    writer.Write()
+    return path
+
+
 def test_read_pvd_series_resolves_files_and_times():
     files, times = _dataio.read_pvd_series(VTI_DIR / 'flow.pvd')
     assert files == [VTI_DIR / _vti_name(k) for k in range(8)]
@@ -1842,8 +1874,8 @@ def test_read_pvd_series_refuses_a_file_that_is_not_a_collection():
 
 
 @pytest.mark.parametrize('k', [0, 2, 7])
-def test_read_vtkxml_image_data_returns_the_analytic_field(k):
-    data, mesh, time = _dataio.read_vtkxml_image_data(VTI_DIR / _vti_name(k))
+def test_read_vtkxml_grid_data_returns_the_analytic_field(k):
+    data, mesh, time = _dataio.read_vtkxml_grid_data(VTI_DIR / _vti_name(k))
     assert time == VTI_TIMES[k]
     for got, want in zip(mesh, VTI_GRID):
         assert np.allclose(got, want)
@@ -1854,72 +1886,111 @@ def test_read_vtkxml_image_data_returns_the_analytic_field(k):
     assert np.all(data[2] == 0)
 
 
-def test_read_vtkxml_image_data_reads_the_active_vectors_unless_named(tmp_path):
+def test_read_vtkxml_grid_data_reads_the_active_vectors_unless_named(tmp_path):
     f = _write_vti(tmp_path / 'a.vti', {'A': [1, 2, 3], 'B': [4, 5, 6]},
                    active='B')
-    data, _, _ = _dataio.read_vtkxml_image_data(f)
+    data, _, _ = _dataio.read_vtkxml_grid_data(f)
     assert [float(d.flat[0]) for d in data] == [4., 5., 6.]
-    data, _, _ = _dataio.read_vtkxml_image_data(f, vec_name='A')
+    data, _, _ = _dataio.read_vtkxml_grid_data(f, vec_name='A')
     assert [float(d.flat[0]) for d in data] == [1., 2., 3.]
 
 
-def test_read_vtkxml_image_data_needs_a_name_when_no_vectors_are_active(tmp_path):
+def test_read_vtkxml_grid_data_needs_a_name_when_no_vectors_are_active(tmp_path):
     f = _write_vti(tmp_path / 'a.vti', {'A': [1, 2, 3], 'B': [4, 5, 6]})
     with pytest.raises(ValueError, match=r"vec_name, one of \['A', 'B'\]"):
-        _dataio.read_vtkxml_image_data(f)
+        _dataio.read_vtkxml_grid_data(f)
 
 
-def test_read_vtkxml_image_data_refuses_an_absent_or_scalar_array():
+def test_read_vtkxml_grid_data_refuses_an_absent_or_scalar_array():
     f = VTI_DIR / _vti_name(0)
     with pytest.raises(ValueError, match="no point-data array 'V'"):
-        _dataio.read_vtkxml_image_data(f, vec_name='V')
+        _dataio.read_vtkxml_grid_data(f, vec_name='V')
     with pytest.raises(ValueError, match='not the 3 of a velocity vector'):
-        _dataio.read_vtkxml_image_data(f, vec_name='p')
+        _dataio.read_vtkxml_grid_data(f, vec_name='p')
 
 
-def test_read_vtkxml_image_data_places_an_extent_not_starting_at_zero(tmp_path):
+def test_read_vtkxml_grid_data_places_an_extent_not_starting_at_zero(tmp_path):
     f = _write_vti(tmp_path / 'a.vti', {'U': [1, 0, 0]}, active='U',
                    extent=(2, 7, 0, 2, 0, 0))
-    data, mesh, _ = _dataio.read_vtkxml_image_data(f)
+    data, mesh, _ = _dataio.read_vtkxml_grid_data(f)
     assert np.allclose(mesh[0], np.arange(2, 8))
     assert data[0].shape == (6, 3, 1)
 
 
 @pytest.mark.parametrize('spacing', [(-0.5, 1, 1), (1, 0, 1)])
-def test_read_vtkxml_image_data_refuses_coordinates_that_do_not_increase(
+def test_read_vtkxml_grid_data_refuses_coordinates_that_do_not_increase(
         tmp_path, spacing):
     # Regression: negative spacing loaded silently as decreasing coordinates,
     # giving a negative domain length.
     f = _write_vti(tmp_path / 'a.vti', {'U': [1, 0, 0]}, active='U',
                    spacing=spacing)
     with pytest.raises(ValueError, match='coordinates that increase'):
-        _dataio.read_vtkxml_image_data(f)
+        _dataio.read_vtkxml_grid_data(f)
 
 
-def test_read_vtkxml_image_data_ignores_the_spacing_of_a_flat_axis(tmp_path):
+def test_read_vtkxml_grid_data_ignores_the_spacing_of_a_flat_axis(tmp_path):
     f = _write_vti(tmp_path / 'a.vti', {'U': [1, 0, 0]}, active='U',
                    spacing=(1, 1, -1))
-    _, mesh, _ = _dataio.read_vtkxml_image_data(f)
+    _, mesh, _ = _dataio.read_vtkxml_grid_data(f)
     assert len(mesh[2]) == 1
 
 
-def test_read_vtkxml_image_data_refuses_a_rotated_grid(tmp_path):
+def test_read_vtkxml_grid_data_refuses_a_rotated_grid(tmp_path):
     f = _write_vti(tmp_path / 'a.vti', {'U': [1, 0, 0]}, active='U',
                    direction=[[0, -1, 0], [1, 0, 0], [0, 0, 1]])
     with pytest.raises(ValueError, match='rotated relative to the coordinate axes'):
-        _dataio.read_vtkxml_image_data(f)
+        _dataio.read_vtkxml_grid_data(f)
 
 
-def test_read_vtkxml_image_data_time_is_none_without_a_timevalue(tmp_path):
+def test_read_vtkxml_grid_data_time_is_none_without_a_timevalue(tmp_path):
     f = _write_vti(tmp_path / 'a.vti', {'U': [1, 0, 0]}, active='U')
-    assert _dataio.read_vtkxml_image_data(f)[2] is None
+    assert _dataio.read_vtkxml_grid_data(f)[2] is None
     f = _write_vti(tmp_path / 'b.vti', {'U': [1, 0, 0]}, active='U', time=2.5)
-    assert _dataio.read_vtkxml_image_data(f)[2] == 2.5
+    assert _dataio.read_vtkxml_grid_data(f)[2] == 2.5
 
 
-def test_read_vtkxml_image_data_raises_on_a_missing_file(tmp_path):
+def test_read_vtkxml_grid_data_raises_on_a_missing_file(tmp_path):
     with pytest.raises(FileNotFoundError):
-        _dataio.read_vtkxml_image_data(tmp_path / 'absent.vti')
+        _dataio.read_vtkxml_grid_data(tmp_path / 'absent.vti')
+
+
+def test_read_vtkxml_grid_data_reads_a_rectilinear_grid(tmp_path):
+    # .vtr carries its coordinates outright, so the grid need not be uniform.
+    coords = (np.array([0., 1., 2., 4.]), np.array([0., 0.5, 2.]),
+              np.array([0.25]))
+    f = _write_vtr(tmp_path / 'a.vtr', {'U': [1., 2., 3.]}, active='U',
+                   coords=coords, time=1.5)
+    data, mesh, time = _dataio.read_vtkxml_grid_data(f)
+    assert time == 1.5
+    for got, want in zip(mesh, coords):
+        assert np.allclose(got, want)
+    assert [d.shape for d in data] == [(4, 3, 1)]*3
+    assert np.allclose(data[1], 2.)
+
+
+def test_read_vtkxml_grid_data_refuses_rectilinear_coordinates_out_of_order(tmp_path):
+    f = _write_vtr(tmp_path / 'a.vtr', {'U': [1., 0., 0.]}, active='U',
+                   coords=(np.array([0., 2., 1., 4.]), np.array([0., 1.]),
+                           np.array([0.])))
+    with pytest.raises(ValueError, match='coordinates that increase'):
+        _dataio.read_vtkxml_grid_data(f)
+
+
+def test_read_vtkxml_grid_time_reads_both_formats(tmp_path):
+    vti = _write_vti(tmp_path / 'a.vti', {'U': [1, 0, 0]}, active='U', time=2.5)
+    vtr = _write_vtr(tmp_path / 'a.vtr', {'U': [1., 0., 0.]}, active='U', time=3.5)
+    untimed = _write_vtr(tmp_path / 'b.vtr', {'U': [1., 0., 0.]}, active='U')
+    assert _dataio.read_vtkxml_grid_time(vti) == 2.5
+    assert _dataio.read_vtkxml_grid_time(vtr) == 3.5
+    assert _dataio.read_vtkxml_grid_time(untimed) is None
+
+
+def test_read_vtkxml_grid_calls_refuse_another_extension(tmp_path):
+    f = tmp_path / 'a.vtu'
+    f.write_text('not a grid')
+    for call in (_dataio.read_vtkxml_grid_data, _dataio.read_vtkxml_grid_time):
+        with pytest.raises(ValueError, match='ImageData'):
+            call(f)
 
 
 # ---- VTKXMLData: the loader built on the readers above ----------------------
@@ -1989,7 +2060,7 @@ def test_vtkxml_holds_float64_and_is_exact_at_every_dump(INUM):
     fd = _vtixml(INUM=INUM)
     assert all(f.dtype == np.float64 for f in fd.get_raw_loaded_data())
     for k in range(8):
-        raw = _dataio.read_vtkxml_image_data(VTI_DIR / _vti_name(k))[0]
+        raw = _dataio.read_vtkxml_grid_data(VTI_DIR / _vti_name(k))[0]
         u, v = fd(VTI_TIMES[k] - 0.1)
         assert np.array_equal(u, raw[0][:, :, 0])
         assert np.array_equal(v, raw[1][:, :, 0])
@@ -2090,7 +2161,8 @@ def test_vtkxml_refuses_a_collection_naming_another_file_type(tmp_path):
 
 def test_vtkxml_a_directory_needs_one_collection_or_some_files(tmp_path):
     from planktos import fluid
-    with pytest.raises(FileNotFoundError, match=r'No \.pvd collection or \.vti'):
+    with pytest.raises(FileNotFoundError,
+                       match=r'No \.pvd collection, \.vti or \.vtr'):
         fluid.VTKXMLData(str(tmp_path))
     for name in ('a.pvd', 'b.pvd'):
         _write_pvd(tmp_path / name, [{'timestep': '0', 'file': 'x.vti'}])
@@ -2145,12 +2217,12 @@ def test_vtkxml_files_without_times_cost_one_timevalue_probe(tmp_path, monkeypat
     # first file settles it rather than every file being read to find out.
     from planktos import fluid
     src = _vti_files(tmp_path, timed=False)
-    real = _dataio.read_vtkxml_image_time
+    real = _dataio.read_vtkxml_grid_time
     calls = []
     def spy(filename):
         calls.append(filename)
         return real(filename)
-    monkeypatch.setattr(fluid._dataio, 'read_vtkxml_image_time', spy)
+    monkeypatch.setattr(fluid._dataio, 'read_vtkxml_grid_time', spy)
     with pytest.warns(UserWarning) as record:
         fd = fluid.VTKXMLData(str(src))
     assert len(calls) == 1
@@ -2246,6 +2318,38 @@ def test_vtkxml_dt_must_agree_with_the_times_the_source_carries(tmp_path, source
 def test_vtkxml_dt_is_unused_for_a_single_file():
     fd = _vtixml(VTI_DIR / _vti_name(2), dt=0.1)
     assert fd.flow_times is None
+
+
+def test_vtkxml_reads_a_directory_of_vtr_dumps(tmp_path):
+    # A rectilinear series: same loader, and the non-uniform grid survives.
+    from planktos import fluid
+    coords = (np.array([0., 1., 2., 4.]), np.array([0., 0.5, 2.]),
+              np.array([0.25]))
+    for k in range(3):
+        _write_vtr(tmp_path / 'flow_{:02d}.vtr'.format(k),
+                   {'U': [float(k), 1., 0.]}, active='U', coords=coords,
+                   time=0.5*k)
+    with pytest.warns(UserWarning, match='single point thick'):
+        fd = fluid.VTKXMLData(str(tmp_path))
+    assert fd.dump_source == 'files' and fd.ndim == 2
+    assert np.allclose(fd.flow_times, [0., 0.5, 1.])
+    assert np.allclose(fd.flow_points[0], [0., 1., 2., 4.])
+    assert np.allclose(fd.flow_points[1], [0., 0.5, 2.])
+    assert np.allclose(fd(1.0)[0], 2.)
+
+
+def test_vtkxml_a_collection_may_name_vtr_dumps(tmp_path):
+    from planktos import fluid
+    for k in range(3):
+        _write_vtr(tmp_path / 'd{}.vtr'.format(k), {'U': [float(k), 1., 0.]},
+                   active='U', time=float(k))
+    _write_pvd(tmp_path / 'c.pvd', [{'timestep': str(k), 'file': 'd{}.vtr'.format(k)}
+                                    for k in range(3)])
+    with pytest.warns(UserWarning, match='single point thick'):
+        fd = fluid.VTKXMLData(str(tmp_path))
+    assert fd.dump_source == 'collection'
+    assert np.allclose(fd.flow_times, [0., 1., 2.])
+    assert np.allclose(fd(2.0)[0], 2.)
 
 
 @pytest.mark.parametrize('dt', [0, -0.1])

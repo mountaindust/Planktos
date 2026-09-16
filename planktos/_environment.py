@@ -1292,7 +1292,8 @@ class Environment:
                                vel_conv=None, vec_name=None,
                                time_from_name=None, dt=None):
         '''Reads in fluid velocity point data from VTK XML ImageData (``.vti``)
-        files, such as solver output resampled onto a uniform grid. The times
+        or RectilinearGrid (``.vtr``) files, such as solver output resampled
+        onto a Cartesian grid. The times
         come from a ParaView collection (``.pvd``) indexing the series if there
         is one; failing that, from the ``TimeValue`` in each file, then from the
         filenames through ``time_from_name``, and finally unit time steps, which
@@ -1316,8 +1317,8 @@ class Environment:
         Parameters
         ----------
         path : string
-            a directory holding a ``.pvd`` collection or ``.vti`` files, the
-            ``.pvd`` itself, or a single ``.vti`` file
+            a directory holding a ``.pvd`` collection or ``.vti``/``.vtr``
+            files, the ``.pvd`` itself, or a single dump file
         INUM : int > 3, True, or None (default)
             max number of splined intervals held at any one time; the number of
             time points held is 1+INUM, and INUM must be at least 4. None splines
@@ -1334,7 +1335,7 @@ class Environment:
             file declares as its active vectors.
         time_from_name : string, optional
             regular expression whose first group is a dump's time within its
-            filename, such as ``r'_t([0-9.]+)[.]vti$'``. Used for ``.vti`` files
+            filename, such as ``r'_t([0-9.]+)[.]vti$'``. Used for dump files
             that have no collection and carry no ``TimeValue``.
         dt : float, optional
             interval between consecutive dumps. Each dump's time is ``dt`` times

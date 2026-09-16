@@ -156,7 +156,7 @@ Proposed names, following the `vtkxml` prefix `_dataio` already uses:
 
 | Layer | Name |
 |---|---|
-| low-level read | `_dataio.read_vtkxml_image_data(filename)` |
+| low-level read | `_dataio.read_vtkxml_grid_data(filename)` |
 | timeline index | `_dataio.read_pvd_series(filename)` |
 | `FluidData` subclass | `fluid.VTKXMLData` |
 | `Environment` method | `read_vtkxml_fluid_data` |
@@ -375,7 +375,7 @@ three want a question put to the collaborator.
 
 1. `_dataio.read_pvd_series` — parse the collection, return `(time, path)` in declared
    order with the dataset extension carried through. No VTK.
-2. `_dataio.read_vtkxml_image_data` — `vtkXMLImageDataReader`, active vectors with a
+2. `_dataio.read_vtkxml_grid_data` — `vtkXMLImageDataReader`, active vectors with a
    `vec_name` override, array selection, returning components indexed `[x,y,z]` plus
    coordinate arrays and `TimeValue` if present. `.vtr` alongside it.
 3. Lift `_natural_key` and the timeline policy of `OpenFOAMData._read_series` out of
