@@ -1,38 +1,21 @@
 '''
 Provenance records: what produced an Environment's fluid and immersed mesh.
 
-An Environment cannot be serialized -- doing so would mean writing out the
-whole velocity field and the mesh, which is the volume of data the run archive
-exists to avoid duplicating. But almost everything needed to *reconstruct* one
-is knowable at the moment it is built: the loader that was called and the
-arguments it was given. That information exists only during the call, so each
-loader records its own, and whatever wants it later (the run archive's metadata
-sidecar, an error message explaining why an archive does not match this
-environment) reads what was left behind.
+Each loader and analytic flow generator records its own call onto the
+Environment, under ``_fluid_provenance`` or ``_ibmesh_provenance``. A record is
+a dict holding the method's name and the arguments it was given, plus the names
+of any methods that later altered the loaded data in place (see note_modifier).
+Replaying those calls rebuilds the fluid or the mesh; when a run archive was
+recorded against different data than the Environment it is being read against,
+the mismatch message names the loader call on each side.
 
-Three things this buys, in increasing order of ambition:
+An argument that cannot be stored as itself -- an array, an object, a
+non-finite float -- becomes a marker: a dict naming why it could not be stored,
+with a truncated repr. Restoring a run raises on a record holding a marker
+rather than calling the loader with something that is not what it was given.
 
-1. A validation message that names both sides -- "this archive was recorded
-   against read_IB2d_fluid_data(path='leaf_data', ...); this environment's
-   fluid is read_openfoam_vtk_data(...)" -- rather than a bare mismatch.
-2. A self-describing dataset: months later the archive says what produced it
-   without anyone having to find the script.
-3. Reconstruction, and therefore restart: reload becomes "re-run the recorded
-   loader calls", which is honest about its cost, since the fluid is re-read
-   from its own files, which is where it lives anyway.
-
-**A provenance record is not a guarantee.** Paths go stale, datasets move, and
-an environment built by hand -- an analytic field assembled in a script, a
-programmatically modified bndry, arrays handed straight to Environment() --
-leaves a record that is accurate but not sufficient. The rule is to record what
-can be recorded, mark the rest plainly, and never let a reader silently act on
-a record it could not verify. That is why unrepresentable values become typed
-markers here rather than being dropped or guessed at, and why an in-place
-modifier appends its name (see note_modifier) instead of leaving a record that
-describes a mesh which no longer exists.
-
-Nothing here writes anything. Serialization belongs to whatever consumes these
-records; jsonable() is the guarantee that it can.
+Nothing here writes to disk. jsonable() is what makes a record safe to hand to
+json.dump; where it goes is the caller's business.
 
 Author: Christopher Strickland
 Email: cstric12@utk.edu
@@ -50,8 +33,8 @@ __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
 # How deep to descend into nested containers before giving up and recording a
-#   marker. Loader arguments are flat in practice; this only bounds the damage
-#   from something pathological (or self-referential) being passed in.
+#   marker. Loader arguments are flat in practice; the limit is what stops a
+#   self-referential one from recursing forever.
 MAX_DEPTH = 6
 
 # Longest repr kept for a value that cannot be represented directly. Long
@@ -76,8 +59,7 @@ def _marker(kind, value):
     '''A typed stand-in for a value that cannot be recorded as itself.
 
     Always a dict carrying the reason and a truncated repr, so a reader can
-    tell "this was not recordable" from "this was recorded as null" -- a
-    distinction the run archive's validation depends on.
+    tell "this was not recordable" from "this was recorded as null".
     '''
 
     return {'unrecorded': kind, 'repr': _short_repr(value)}
@@ -88,14 +70,10 @@ def jsonable(value, _depth=0):
 
     Scalars, strings and containers of them pass through as themselves. numpy
     scalars become their Python equivalents and Paths become strings, since
-    both round-trip back into a loader unchanged. Everything else becomes a
-    typed marker: an ndarray records its shape and dtype but not its contents
-    (the contents are the data this whole design avoids duplicating), a
-    callable records its name, and anything unrecognized records its type.
-
-    Non-finite floats are markers rather than bare floats because ``NaN`` and
-    ``Infinity`` are not valid JSON -- Python's json module emits them by
-    default, but the result is a file other tools reject.
+    both round-trip back into a loader unchanged. Everything else -- an
+    ndarray, a callable, a non-finite float, an unrecognized type -- becomes a
+    typed marker: an ndarray records its shape and dtype but not its contents,
+    a callable its name, and anything else its type.
 
     Parameters
     ----------
@@ -108,11 +86,9 @@ def jsonable(value, _depth=0):
     '''
 
     # The numpy scalar types come first, and the order is load-bearing:
-    #   np.float64 *is* a subclass of float, so a plain isinstance(value, float)
-    #   check ahead of this would pass it through as a numpy scalar and the
-    #   promise made above -- plain Python types only -- would quietly not hold.
-    #   np.bool_ and np.integer are the opposite case, subclassing neither bool
-    #   nor int, so they need naming whichever way round this is written.
+    #   np.float64 is a subclass of float, so testing it here is what keeps it
+    #   out of the plain-float branch below. np.bool_ and np.integer subclass
+    #   neither bool nor int, so they need naming either way.
     if isinstance(value, np.bool_):
         return bool(value)
     if isinstance(value, np.integer):
@@ -124,6 +100,8 @@ def jsonable(value, _depth=0):
         return value
     if isinstance(value, int):          # bool already returned above
         return value
+    # NaN and Infinity are not valid JSON. Python's json module writes them
+    #   anyway, producing a file other tools reject, so they become markers.
     if isinstance(value, float):
         return value if math.isfinite(value) else _marker('nonfinite float', value)
     if isinstance(value, Path):
@@ -151,11 +129,8 @@ def records_provenance(slot, preceded_by=None):
     that replaying it reproduces the call whether or not the caller spelled
     every argument out.
 
-    **The slot is cleared before the call and set after it returns.** A loader
-    that raises partway can leave the fluid or the mesh in any state at all, so
-    the honest record for a failed load is "unknown" -- and specifically not
-    the record of whatever was loaded before it, which would now describe data
-    that has been partly overwritten.
+    The slot is cleared before the call and set after it returns, so the record
+    for a load that raised partway through is None.
 
     Parameters
     ----------
@@ -164,10 +139,9 @@ def records_provenance(slot, preceded_by=None):
         '_fluid_provenance'
     preceded_by : string, optional
         another provenance slot whose record is a prerequisite for this call.
-        Its contents are folded in under 'preceded_by' so that replaying the
-        record means replaying both calls in order. Used for NetCDF, where
-        load_NetCDF opens the dataset and read_NetCDF_flow reads a field out of
-        it -- neither call reconstructs the fluid on its own.
+        Its contents are folded in under 'preceded_by', so replaying the record
+        replays both calls in order. Used where two calls load one thing:
+        load_NetCDF opens the dataset, read_NetCDF_flow reads a field out of it.
     '''
 
     def decorate(method):
@@ -175,6 +149,9 @@ def records_provenance(slot, preceded_by=None):
 
         @functools.wraps(method)
         def wrapper(self, *args, **kwargs):
+            # Cleared first: a loader that raises partway leaves the fluid or
+            #   mesh partly overwritten, and None is the accurate record of
+            #   what is then in place.
             setattr(self, slot, None)
             result = method(self, *args, **kwargs)
             bound = signature.bind(self, *args, **kwargs)
@@ -199,16 +176,9 @@ def records_provenance(slot, preceded_by=None):
 def note_modifier(slot):
     '''Decorate a method that alters already-loaded data in place.
 
-    Appends the method's name to the record's 'modified_by' list. Without this
-    a record would keep claiming that the mesh is exactly what the loader
-    produced, and a reconstruction built from it would silently differ from the
-    mesh the run actually used -- the one failure mode this module exists to
-    prevent.
-
-    A record noting a modifier is still useful: every modifier in Planktos
-    today is deterministic given the loaded data, so replaying the loader and
-    then the listed modifiers reproduces the mesh. What a reader must not do is
-    replay the loader alone and assume it matches.
+    Appends the method's name to the record's 'modified_by' list. Every
+    modifier in Planktos is deterministic given the loaded data, so replaying
+    the loader and then the listed modifiers reproduces the mesh the run used.
     '''
 
     def decorate(method):

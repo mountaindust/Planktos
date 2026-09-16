@@ -74,6 +74,13 @@ understand what is in front of them (an ODE solver naming the methods it support
 `FluidData.get_stored_vorticity` saying it is linear-splining only).
 
 - **Be brief.** Summary line, then parameters and returns.
+- **Brevity must not cost specificity.** The short version says *more* concretely
+  what the thing does, not less: name it — the dict a record actually is, the
+  exception raised, the method that raises it — and give every pronoun a
+  referent. Vague shorthand is not brief, only short: *"names them"*, *"a reader
+  must not act on one silently"*, *"jsonable() is the guarantee that it can"*.
+  Do not explain away an alternative nobody would choose. Where a claim is about
+  what some consumer does, read that consumer and say what it actually does.
 - **Never cite `docs/notes/` or `TODO.md`.** Those are working plans and are
   deletable once their work is done and vetted, so a docstring pointing at one
   rots. *Exception:* notes written to hold mathematics (e.g.
