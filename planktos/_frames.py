@@ -177,16 +177,15 @@ class FrameSource:
 
 
     def _global_scales(self, clip):
-        '''Settle the scales the whole render shares.
+        '''Settle the arrow scale and vorticity limit the whole render shares.
 
-        Both come from a recording's per-dump extrema where there is one. Those
-        are fixed once a dump has been read, where ``FluidData.fmax`` covers all
-        data seen so far and goes on growing with every later fluid access -- so
-        two renders of one recorded run agree on the arrow scale only if it
-        comes from the recording. Colour limits additionally grow with each
-        frame drawn, which a limit fixed before the first frame settles.
+        Both come from a recording's extrema where there is one, and from the
+        velocity field otherwise. A caller's own ``clip`` is left as it is.
         '''
 
+        # fmax covers all data seen so far and grows with every later fluid
+        #   access, so the archive's extrema are what make two renders of one
+        #   recorded run agree. They replace this below where there are any.
         if self._quiver_from is not None:
             self.quiver_scale = float(np.linalg.norm(np.array(self.flow.fmax)))
 
@@ -201,6 +200,8 @@ class FrameSource:
             per_component = np.asarray(stats['vmax'], dtype=float)
             if not np.all(np.isnan(per_component)):
                 self.quiver_scale = float(np.linalg.norm(per_component))
+        # Fixed before the first frame, so the limit does not grow with the
+        #   frames drawn.
         if self._vorticity_from is not None and clip is None:
             absmax = stats.get('vort_absmax')
             if absmax is not None and np.isfinite(absmax).all():
@@ -210,7 +211,10 @@ class FrameSource:
     ####################   the states   ####################
 
     def capture_at(self, t):
-        '''Index of the state nearest in time to ``t``. Ties go to the earlier.'''
+        '''Index of the state nearest in time to ``t``. Ties go to the earlier.
+
+        With no time base, the last state.
+        '''
 
         if self.times is None or len(self.times) == 0:
             return self.n_states - 1
@@ -245,6 +249,8 @@ class FrameSource:
     def stats(self, n, DIM3):
         '''The statistics a frame prints, live or from what was recorded.
 
+        ``n`` may be None for the present state.
+
         Live velocities are preferred wherever there are any: they are always
         current, where the archive is only as fresh as the last flush. A
         recording that omitted velocities has none to prefer, and then the
@@ -265,6 +271,8 @@ class FrameSource:
 
     def angles(self, n):
         '''Heading angles recorded for state ``n``, or None if none were.
+
+        ``n`` may be None for the present state.
 
         Only a recording that omitted velocities stores these, since otherwise
         the angle follows from the velocity the caller already has.
@@ -287,16 +295,16 @@ class FrameSource:
 
 
     def _archive_capture(self, n):
-        '''Which of the archive's captures state ``n`` is, or None if it is not.
+        '''Which of the archive's captures state ``n`` is, or None where it is
+        not one.
 
-        Resolved through the time base rather than by index, which is the rule
-        the archive states for anyone reading it. Two conventions meet here and
-        neither is the other: a Swarm's own history begins when the swarm did,
-        where the archive counts from its own capture 0. A state need not be a
-        capture at all -- a recording may have started part-way into a run, or
-        stopped before the end of one -- and time is what says so.
+        A state need not be a capture: a recording may have started part-way
+        into a run, or stopped before the end of one.
         '''
 
+        # Matched on time: a Swarm's history begins when the swarm did, where
+        #   the archive counts from its own capture 0, so the two index spaces
+        #   line up only through the clock they share.
         if self.run is None or self.times is None or not len(self.run.times):
             return None
         if not 0 <= n < len(self.times):
@@ -376,6 +384,8 @@ class FrameSource:
 
     def quiver(self, time):
         '''The downsampled velocity components to draw at ``time``.
+
+        Requires :meth:`resolve_strides` to have run.
 
         Returns
         -------
@@ -510,10 +520,10 @@ def _live_times(swarm):
     n_hist = len(swarm.pos_history)
     if len(envir.time_history) < n_hist:
         return None
-    # The LAST n_hist environment times, not the first: a swarm added part-way
-    #   through a run has a shorter history than the environment does, and it
-    #   covers the steps since it joined. Sliced from the front rather than
-    #   with [-n_hist:], which is the whole list when n_hist is 0.
+    # The LAST n_hist environment times: a swarm added part-way through a run
+    #   has a shorter history than the environment does, covering the steps
+    #   since it joined. Indexed from a computed start so that n_hist of 0
+    #   gives no times.
     start = len(envir.time_history) - n_hist
     history = np.asarray(envir.time_history[start:], dtype=float)
     if envir.time is None:

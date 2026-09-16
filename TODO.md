@@ -83,12 +83,39 @@ back behind it.
    under Phase 2, "Robustness follow-ups". Its last open item — surfacing a stored
    `vorticity` — was folded into `run_persistence.md` §3.3 and landed as part of
    component B, so finishing B finished this too. Nothing is left here.
-3. 🔴 **Docstring style sweep** (asked for 2026-08-27, once component C settled). Go
-   through the git history, collect the docstrings that break the style rule in
-   `CLAUDE.md`, and propose fixes. Many methods were written by past sessions rather
-   than by the user and run long — design reasoning, measurements and history inside
-   the docstring instead of in comments beside the code. **Two worked examples the
-   user named, both deliberately left unfixed** so they can go in the sweep:
+3. 🔴 **Docstring sweep — in progress** (asked for 2026-08-27, started 2026-09-15).
+   Go through the docstrings this branch added or changed and propose fixes, one
+   module at a time. Many were written by past sessions rather than by the user and
+   run long — design reasoning, measurements and history inside the docstring instead
+   of in comments beside the code.
+
+   **Each module gets two passes, not one:**
+   - **Style**, against the rule in `CLAUDE.md`: reasoning moves out of the docstring
+     and into `#` comments beside the code, and the shorter version has to be *more*
+     specific, not less.
+   - **Correctness** *(added 2026-09-16)*: every parameter documented and named
+     right, option lists matching what the code accepts, behavior descriptions
+     matching what it does, and preconditions stated. This finds what style review
+     does not — in `_frames.py`/`_provenance.py` it turned up an undocumented
+     `n=None` convention on two methods, an undocumented `capture_at` fallback, a
+     `jsonable` docstring wrong about tuples and dict keys, and `quiver` not naming
+     its `resolve_strides` precondition.
+
+   **Scope: branch-written code only.** Docstrings new or changed versus `master`, so
+   a `master` merge has nothing to conflict with. `_geom.py`, `_ibc.py` and
+   `motion.py` are out entirely, as are inherited docstrings inside the mixed modules.
+
+   **Order** (smallest first to calibrate, pure-new before mixed): ✅ `_provenance.py`
+   · ✅ `_frames.py` · `_dataio.py` · `archive.py` · `fluid.py` · `_environment.py` ·
+   `_swarm.py`.
+
+   **Three standing exclusions:** `archive.py`'s module docstring (it is the on-disk
+   format spec, rendered for users by `docs/api/RunArchive.rst` — check it for stray
+   narrative, do not shorten it); `tile_flow`/`tile_domain` (rewritten when tiling
+   returns, `run_persistence.md` §9.3); and anything `master` also has.
+
+   **Two worked examples the user named, both deliberately left unfixed** so they
+   can go in the sweep:
    `Swarm._calc_basic_stats`, which opens by saying what the method does *not* do,
    justifies that at length, then recounts the removal of `avg_spd`/`max_spd`; and
    `Environment.record`'s `path` entry, which argues for the redirect decision

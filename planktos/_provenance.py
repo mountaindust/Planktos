@@ -68,12 +68,14 @@ def _marker(kind, value):
 def jsonable(value, _depth=0):
     '''Convert a loader argument into something json.dump can write.
 
-    Scalars, strings and containers of them pass through as themselves. numpy
-    scalars become their Python equivalents and Paths become strings, since
-    both round-trip back into a loader unchanged. Everything else -- an
-    ndarray, a callable, a non-finite float, an unrecognized type -- becomes a
-    typed marker: an ndarray records its shape and dtype but not its contents,
-    a callable its name, and anything else its type.
+    Scalars and strings pass through as themselves, and so do lists and dicts
+    of them -- though a tuple comes back as a list and a dict key as a string,
+    since JSON has neither. numpy scalars become their Python equivalents and
+    Paths become strings, since both round-trip back into a loader unchanged.
+    Everything else -- an ndarray, a callable, a non-finite float, an
+    unrecognized type, or a container nested deeper than ``MAX_DEPTH`` --
+    becomes a typed marker: an ndarray records its shape and dtype but not its
+    contents, a callable its name, and anything else its type.
 
     Parameters
     ----------
@@ -179,6 +181,12 @@ def note_modifier(slot):
     Appends the method's name to the record's 'modified_by' list. Every
     modifier in Planktos is deterministic given the loaded data, so replaying
     the loader and then the listed modifiers reproduces the mesh the run used.
+
+    Parameters
+    ----------
+    slot : string
+        attribute on the Environment holding the record to append to, e.g.
+        '_ibmesh_provenance'
     '''
 
     def decorate(method):
