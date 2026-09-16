@@ -1252,6 +1252,72 @@ Inherited blockers from the overhaul's notes:
 
 ---
 
+## Open from the 2D `.vti` work (2026-09-15) 🟡
+
+The loader itself is done and vetted: `fluid.VTKXMLData` and
+`Environment.read_vtkxml_fluid_data` read `.vti`/`.vtr` with or without a `.pvd` index,
+with `dt`/`time_from_name` for series that carry no times of their own. The
+interpolation-cost numbers that work produced are in `run_persistence.md` Appendix C,
+and the obligation to move them into `docs/api` is filed in that note's §7. What follows
+is what the work left open.
+
+### 🔴 A stored vorticity file is reused without checking it came from the same field
+
+`archive._write_vorticity` never clobbers: an `Omega.####.vtk` already sitting beside the
+source data is taken to be the solver's own field and served to plots. Nothing checks
+that it was produced from the *same* field, so it is silently wrong whenever
+
+- the run uses a different `vel_conv` (or `vec_name`) than the run that wrote it —
+  vorticity scales with the velocity; or
+- the dataset under that directory has changed.
+
+Affects `VTK3dData`, `OpenFOAMData` and `VTKXMLData`. `IB2dData` reads its own `Omega`
+series and takes no `vel_conv`. Found during the 2026-09-15 review; it predates that
+work, which is why it was reported rather than fixed alongside.
+
+Candidate fixes, in order of appeal: stamp what produced the field into the file
+(`vel_conv`, `vec_name`, the dump's time) and refuse a mismatch; or namespace the
+filename by those; or stop writing into the source directory at all and keep the series
+in the archive, which already regenerates it per recording.
+
+⚠️ **Related, and fixed on 2026-09-15 for `VTKXMLData` and `OpenFOAMData`:**
+`dump_number` had been the index over the dumps *on disk*, so a dump that was missing in
+one session and present in the next shifted every derived filename after it. Those two
+now number by declared position. `VTK3dData` and `IB2dData` were never affected, since
+they number by the dump numbers in the filenames themselves.
+
+### Questions for the collaborator about the sea-fan dataset
+
+None of these block reading the data; all three change what a study built on it means.
+
+1. **The export is a cropped core window.** `params.json` gives the OpenFOAM domain as
+   [−50, 50] × [−40, 40] mm, while the `.vti` files cover ±20 mm. Planktos applies the
+   environment's boundary conditions at ±20 mm, where the real flow continues — under the
+   default `'zero'` BC, agents are simply removed there. Whether that is acceptable
+   depends on the study; the collaborator offers more output, and a full-domain re-export
+   would remove the question.
+2. **The geometry does not fit the environment.** `plate.stl` is a 3D extrusion (84
+   triangles, z ∈ [0, 1] mm), so `read_stl_mesh_data` produces an N×3×3 ibmesh — the wrong
+   dimensionality for the 2D fluid this data gives. The usable file is
+   `plate_outline_2d.csv` (7 webs × 4 corners), for which there is no loader. Either set
+   `envir.ibmesh` directly as a (28, 2, 2) array, or emit a `.vertex` file and use
+   `read_IB2d_mesh_data` with `brk_idx_list`/`add_idx_list` to close each web and break
+   between them. A small CSV-outline path may be worth having if more datasets arrive
+   shaped this way.
+3. **`inFluid` is unused.** Planktos ignores it, so without an ibmesh agents drift into
+   the webs and find zero fluid velocity rather than a wall. The mask is exactly the
+   plate interior, but deriving segments from a raster is a worse route than the corners
+   the CSV already gives.
+
+### ⚠️ SI metres bite any example built on this dataset
+
+The domain is 4 cm across in metres, a scale at which the default `shared_props['cov']`
+is enormous: in a smoke test every agent left the domain within 14 steps at `dt = 0.05`.
+An example script on this data has to scale the diffusion and say so in its header —
+every dataset in these units will hit this.
+
+---
+
 ## Deferred / low priority ⚪
 
 > **Most source-specific fluid ingestion is out of scope for this branch.** Planktos

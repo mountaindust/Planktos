@@ -3073,9 +3073,9 @@ Highest-signal sites, by role:
 
 ## Appendix C — what dynamic loading costs, measured on the 2D sea fan
 
-Kept here because `docs/notes/vti_loader.md`, where these were first written down, is
-deletable once its load-bearing content has moved out. **These are user-facing and are
-owed to `docs/api`** in a form a reader can act on without knowing what a withholding
+Kept here because the note they were first written in (`docs/notes/vti_loader.md`) is
+being retired; its remaining open items went to `TODO.md`. **These are user-facing and
+are owed to `docs/api`** in a form a reader can act on without knowing what a withholding
 study is — see §7 Obligations.
 
 Measured 2026-09-15 on `tests/data/openfoam2D/` (40 dumps, 801×801, Δt = 0.1 s,
