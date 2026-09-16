@@ -405,9 +405,11 @@ three want a question put to the collaborator.
 9. Give the flat-axis warning a tolerance (§5).
 10. Changelog under `1.1.0`: one line for the new format support. The two fixes in 8
     and 9 are `dyload`-only regressions in unreleased code and do not go in.
-11. Once it loads: run `pytest --runslow --runstreaming`, then exercise this dataset
-    both in-RAM and windowed, and compare — the 2D analogue of the Phase 1(C)
-    linear-vs-cubic measurement, now on real 2D data rather than a synthetic field.
+11. ✅ **Done.** `tests/manual/quantify_seafan_interp.py` vets the loader and the slider
+    against this dataset and measures linear vs cubic on it — the 2D analogue of the
+    Phase 1(C) measurement, at a far coarser cadence than the leaf data. **The numbers
+    live in `run_persistence.md` Appendix C**, which is also where the obligation to
+    move them into `docs/api` is recorded.
 
 ---
 

@@ -302,6 +302,13 @@ the **2D convergence orders** (median point: linear 1.68, cubic 4.75) — the 3D
 is too coarsely sampled to fit one, and the script refuses to print a meaningless
 slope. Ensemble agent statistics agree to within 0.35% (3D) / 0.6% (2D).
 
+A third dataset, the 2D sea fan, sits at the coarse end — ~20 samples per pulse —
+and is the one to quote for a sparse cadence: **5.49% vs 1.50% of U_rms** at
+Δt=0.2 s, median orders 1.91/4.86, ensemble means within 0.09%. It also pins the
+memory claim on real data: a windowed sweep holds **41 MB where cubic holds 1604 MB**.
+Reproduce with `tests/manual/quantify_seafan_interp.py`; detail in
+`docs/notes/run_persistence.md` Appendix C.
+
 **Velocity components are plain `np.ndarray`.** Index a `FluidData` (`envir.flow[0]`)
 for a static component, or call it (`envir.flow(t)`) for a temporally interpolated
 one; either way you get an ordinary array on which every numpy/scipy/matplotlib

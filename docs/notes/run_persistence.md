@@ -2723,6 +2723,14 @@ seconds assumption, in `docs/quickstart.rst`. Still owed: `.mkv` guidance for lo
 what the archive stores and when it is refused; and an API page for `RunArchive` /
 `load_run` (§2.7) — a public class needs one, unlike everything else in this plan.
 
+⚠️ **Also owed: the interpolation-cost numbers in Appendix C belong in `docs/api`.**
+They answer "what does `INUM` cost me", which is a user's question, not an internal
+one, and they currently sit in a dev note. Write them as a **self-contained** table —
+the three datasets side by side, what was compared against what, and the standing
+caveat that the absolute errors are a property of a cadence against a flow while the
+convergence orders are what transfer — so that someone reading the table needs no
+background from these notes to act on it.
+
 **Examples.** ⚠️ **One new example is owed: agents arriving mid-run** — the fixed-*N*
 pool with masked-until-released agents, specified in §8.1. It is the answer to a question
 that has actually been asked (a predator's capture rate against a continuous influx),
@@ -3062,3 +3070,61 @@ Highest-signal sites, by role:
 - **Save / round-trip:** `save_fluid`, `save_2D_vorticity`.
 - **Plotting:** `plot_flow`, `plot_2D_vort`, `Swarm.plot` / `plot_all` (quiver strided
   slices `flow[k][::M,::N].T`, `fmax` unpack, `fshape[1:]` frame sizing).
+
+## Appendix C — what dynamic loading costs, measured on the 2D sea fan
+
+Kept here because `docs/notes/vti_loader.md`, where these were first written down, is
+deletable once its load-bearing content has moved out. **These are user-facing and are
+owed to `docs/api`** in a form a reader can act on without knowing what a withholding
+study is — see §7 Obligations.
+
+Measured 2026-09-15 on `tests/data/openfoam2D/` (40 dumps, 801×801, Δt = 0.1 s,
+pulsatile at ~20 samples per pulse — the coarse end of the cadence range), reproducible
+with `python tests/manual/quantify_seafan_interp.py [part ...]`. The counterparts are
+`quantify_temporal_interp.py` (IB2d leaf data) and `vet_dynamic_loading_3d.py`, whose
+numbers are in `TODO.md` Phase 1(C).
+
+**The slider is exact, and the memory claim holds on real data.** Windowed (`INUM=4`)
+and in-memory agree **exactly** — 0.0, not round-off — over forward and backward sweeps,
+at every dump time against the stored values, and clamped past the end. A full sweep
+reads each dump **once**. Over that sweep the windowed run held **41 MB**, against
+411 MB for the series held linearly and **1604 MB** splined cubically.
+
+**Interpolation error**, built on every 2nd dump and tested at the 19 withheld ones, so
+these are for **Δt = 0.2 s**:
+
+| | rms err | % of U_rms | max err | ratio |
+|---|---|---|---|---|
+| velocity, linear | 4.25e-4 | **5.49%** | 3.17e-3 | — |
+| velocity, cubic | 1.16e-4 | **1.50%** | 2.92e-3 | 3.7× |
+| ∂u/∂t, linear | 6.41e-4 | 3.74% | 8.53e-3 | — |
+| ∂u/∂t, cubic | 3.39e-4 | 1.98% | 1.04e-2 | 1.9× |
+
+∂u/∂t is where cubic's margin narrows to 1.9× and where its *worst* error is the larger
+of the two — and that is the term feeding `get_dudt` → the material derivative → the
+inertial models.
+
+**Convergence order by error percentile** (Δt = 0.2, 0.3, 0.4 s; theory 2 and 4):
+
+| percentile | linear | cubic |
+|---|---|---|
+| median | 1.91 | 4.86 |
+| 90th | 1.83 | 3.35 |
+| 99th | 1.55 | 2.21 |
+| max | 1.51 | 1.80 |
+
+The two-regime structure the other datasets show: both schemes reach their order where
+the flow is smooth in time and both stall where it is not, so a single rms ratio
+describes neither. Cubic's error spans 535× from median to max at Δt = 0.2 s. The
+whole-field rms scales at 1.68 (linear) and 2.27 (cubic), putting the native 0.1 s
+cadence near **1.7% and 0.3% of U_rms**.
+
+**What an ensemble sees** (2025 tracers, pure advection, 120 Euler steps to t = 3.9):
+mean and standard deviation of position agree to **≤ 0.09%**, mean net displacement to
+0.51%, its spread to 1.3%, the 90th percentile of displacement to 2.9%. Individual
+trajectories separate by 2.0% of the path travelled, which is the flow's own Lyapunov
+growth under any perturbation rather than a property of the scheme.
+
+**Reading these.** Every absolute number is this flow at this cadence; the orders are
+what transfer. The plate's webs are exactly zero velocity and exact under both schemes,
+but at 0.41% of the grid they neither carry nor rescue the averages.
