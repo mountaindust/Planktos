@@ -101,9 +101,19 @@ back behind it.
      `jsonable` docstring wrong about tuples and dict keys, and `quiver` not naming
      its `resolve_strides` precondition.
 
-   **Scope: branch-written code only.** Docstrings new or changed versus `master`, so
-   a `master` merge has nothing to conflict with. `_geom.py`, `_ibc.py` and
-   `motion.py` are out entirely, as are inherited docstrings inside the mixed modules.
+   **Scope: branch-written code only**, plus master-owned text this branch made
+   wrong. Docstrings new or changed versus `master`, so a `master` merge has nothing
+   to conflict with; `_geom.py`, `_ibc.py` and `motion.py` are out entirely, as are
+   inherited docstrings inside the mixed modules.
+
+   **For inherited text the test is *why* it is wrong** *(2026-09-16)*:
+   - wrong **because of** branch work → fix it here. `_dataio.py`'s module docstring
+     still listed only "vtk, vtu, vertex files, and stl" after the branch added the
+     `.vti`/`.vtr`/`.pvd`/`.vtm` readers.
+   - wrong **independently** of the branch → fix it **on `master`** and let it merge,
+     so the released branch gets the correction and no conflict surface is created.
+     `write_vtk_2D_rectilinear_grid_scalars` claimed ascii while `binary=True` has
+     long been its default; done on `master` as `9148c00`.
 
    **Order** (smallest first to calibrate, pure-new before mixed): ✅ `_provenance.py`
    · ✅ `_frames.py` · `_dataio.py` · `archive.py` · `fluid.py` · `_environment.py` ·

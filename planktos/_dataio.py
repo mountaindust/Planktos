@@ -1,4 +1,7 @@
-'''Functions for reading and writing data from vtk, vtu, vertex files, and stl.
+'''Functions for reading and writing vtk data, in both its legacy and XML forms,
+and for reading the .vtm and .pvd indexes that tie a series of files together.
+Also reads IB2d vertex files, stl meshes and NetCDF.
+
 These are low-level functions that are probably unnecessary to use directly,
 unless you just want to directly get numpy arrays from datasets.
 
@@ -349,11 +352,8 @@ def read_vtk_time_only(filename, nbytes=4096):
 
     Legacy VTK writes ``FIELD FieldData`` immediately after the ``DATASET``
     line, so a TIME entry lands within the first few hundred bytes -- ahead of
-    the coordinate arrays and long before POINT_DATA. Recovering it therefore
-    costs one small header read no matter how large the file is, which is what
-    makes it practical to timestamp an entire dump series up front: dynamic
-    loading needs the whole timeline before it can slice windows out of it, but
-    it must not have to parse every dump to get it.
+    the coordinate arrays and long before POINT_DATA -- and costs one small
+    header read whatever the size of the file.
 
     Reads ASCII and BINARY files alike.
 
@@ -373,6 +373,8 @@ def read_vtk_time_only(filename, nbytes=4096):
         read_vtk_Rectilinear_Grid_Vector for that file.
     '''
 
+    # Timing a whole dump series up front is what dynamic loading needs before
+    #   it can slice windows out of one.
     with open(filename, 'rb') as f:
         head = f.read(nbytes)
 
@@ -537,14 +539,8 @@ def read_vtm_series(filename):
         {"file-series-version" : "1.0",
          "files" : [{"name" : "case_787.vtm", "time" : 7.5}, ...]}
 
-    Reading it costs a single small parse and needs no VTK, which is what makes
-    it usable as the timeline source for dynamic loading: windows can only be
-    sliced out of a series whose timestamps are all known up front, and paying a
-    full parse per dump to discover them defeats the purpose.
-
-    Nothing is checked against the filesystem here. The listed files may not all
-    exist -- a truncated or interrupted export is ordinary -- and deciding what
-    to do about that is the caller's policy, not this function's.
+    Nothing is checked against the filesystem: the listed files may not all
+    exist, and a truncated or interrupted export is ordinary.
 
     Parameters
     ----------
@@ -564,6 +560,9 @@ def read_vtm_series(filename):
         time source (e.g. read_vtm_manifest) for just those entries.
     '''
 
+    # Plain JSON and no VTK, so timing a whole series costs one small parse --
+    #   which is what lets dynamic loading know every timestamp up front, before
+    #   it slices a window out of the series.
     filename = Path(filename)
     with open(filename, 'r') as f:
         series = json.load(f)
@@ -600,13 +599,6 @@ def read_vtm_manifest(filename):
             <DataSet name='inlet' file='case_787/boundary/inlet.vtp' />
             ...
 
-    It is parsed here with the standard library rather than
-    ``vtkXMLMultiBlockDataReader``, which would read every child file -- tens of
-    megabytes -- merely to report their names. Resolving names is exactly what is
-    wanted cheaply: it lets a caller settle at construction which timesteps are
-    actually present on disk, instead of discovering a missing file at the window
-    slide that needs it, arbitrarily deep into a streaming run.
-
     Child paths are resolved but not checked for existence; see read_vtm_series.
 
     Parameters
@@ -626,6 +618,9 @@ def read_vtm_manifest(filename):
         a per-file fallback for a series index that is missing or incomplete.
     '''
 
+    # The standard library, not vtkXMLMultiBlockDataReader: resolving names is
+    #   all that is wanted here, and it lets a caller settle at construction
+    #   which timesteps are on disk, before a window slide needs one.
     filename = Path(filename)
     root = ET.parse(filename).getroot()
 
@@ -663,11 +658,7 @@ def read_vtkxml_time_only(filename, nbytes=4096):
 
     VTK XML writes ``<FieldData>`` immediately inside the dataset element, ahead
     of the ``<Piece>`` holding the mesh, so a ``TimeValue`` entry lands within
-    the first few hundred bytes however large the file is. Dynamic loading needs
-    the whole timeline before it can slice windows out of it, and an
-    unstructured export repeats its full mesh in every dump -- 51 MB of geometry
-    per file in the reference dataset -- so parsing the series to recover one
-    float apiece would read gigabytes for what the headers already carry.
+    the first few hundred bytes however large the file is.
 
     The VTK XML (e.g. .vtu, .vtp) counterpart of read_vtk_time_only.
 
@@ -689,12 +680,13 @@ def read_vtkxml_time_only(filename, nbytes=4096):
     Notes
     -----
     Inline ``ascii`` and uncompressed inline ``binary`` (base64) are decoded --
-    what VTK writes by default and what the reference export uses. ``appended``
-    and compressed arrays return None rather than growing a second,
-    barely-exercised decoder for one float; falling back to the full reader is a
-    slow path, not a wrong answer.
+    what VTK writes by default. ``appended`` and compressed arrays return None,
+    leaving the caller to fall back to the full reader.
     '''
 
+    # An unstructured export repeats its whole mesh in every dump, so timing a
+    #   series through the full reader reads gigabytes to recover one float
+    #   apiece.
     with open(filename, 'rb') as f:
         head = f.read(nbytes).decode('utf-8', errors='ignore')
 
@@ -761,13 +753,6 @@ def read_vtkxml_cell_data(filename, arrays=('U',), load_cell_coordinates=True):
     *corners* -- the wrong lattice to interpolate a cell field on. This reads
     ``GetCellData()`` and, by default, returns the cell centers to go with it.
 
-    Only the requested arrays are read. That matters for streaming: an
-    unstructured-grid file repeats its full mesh on every timestep even when the
-    mesh never moves, so most of what is on disk is geometry that is already
-    known, and the field arrays that are not wanted are pure waste on top of it.
-    Deselecting them is the cheap part of that saving; the geometry itself cannot
-    be skipped through this reader.
-
     Parameters
     ----------
     filename : string or Path
@@ -805,7 +790,9 @@ def read_vtkxml_cell_data(filename, arrays=('U',), load_cell_coordinates=True):
     reader.SetFileName(str(filename))
 
     # Array selection has to happen against the file's metadata, before the bulk
-    # read is triggered by Update().
+    # read is triggered by Update(). An unstructured-grid file repeats its whole
+    # mesh every timestep, so this saves the unwanted field arrays on top of
+    # geometry that is re-read whatever is selected.
     reader.UpdateInformation()
     if arrays is not None:
         arrays = tuple(arrays)
@@ -1136,15 +1123,15 @@ def read_2DEulerian_Data_From_vtk(path, simNum, strChoice, xy=False):
 
 
 def read_vtu_mesh_velocity(filename):
-    '''Reads ascii COMSOL velocity data in a vtu or equivalent text file. It is 
-    assumed that the data is on a regular grid. Currently, there is no support 
-    for multiple time points, so the file must contain data from only a single 
-    time.
+    '''Depreciated (see below) - Reads ascii COMSOL velocity data in a vtu or 
+    equivalent text file. It is assumed that the data is on a regular grid. 
+    Currently, there is no support for multiple time points, so the file must 
+    contain data from only a single time.
 
-    This is a work-around for the weird vtu ascii file that COMSOL is spitting 
+    This is a work-around for a weird vtu ascii file that COMSOL was spitting 
     out. VTU is supposed to be a VTK XML file extension, which should be 
     readable using a vtk.vtkXMLUnstructuredGridReader object, but it dies 
-    immediately because the vtu I've got isn't xml at all. We need to fix this.
+    immediately because the vtu I've got isn't xml at all.
 
     Parameters
     ----------
@@ -1437,9 +1424,8 @@ def write_vtk_structured_points_scalars(path, title, data, grid_points,
     time : float, optional
         simulation time
     binary : bool, default=True
-        whether the VTK should be binary rather than ascii. Binary is far cheaper
-        to read and write for identical disk, and ``vtkStructuredPointsReader``
-        takes either.
+        whether the VTK should be binary rather than ascii;
+        ``vtkStructuredPointsReader`` takes either.
     sep : str, default='_'
         what separates the title from the dump number in the filename.
         ``'_'`` gives ``Omega_0042.vtk``, matching the other writers here;
