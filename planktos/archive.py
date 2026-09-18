@@ -2343,23 +2343,20 @@ def fingerprint_of(envir):
 #                                                                           #
 #############################################################################
 
+# A sequence rather than an ndarray subclass: scipy calls np.asarray on anything
+#   array-like, which takes the real buffer and discards an overridden .shape or
+#   __getitem__.
 class CaptureSeries:
     '''One per agent-array of one swarm, across a whole run, read on demand.
 
     Returned by :meth:`RunArchive.positions` and :meth:`RunArchive.velocities`.
     Indexing it gives an ordinary masked array -- ``series[j]`` is one capture,
     ``series[a:b]`` a span of them -- and **only the chunks an index touches are
-    read**. That is what lets an archive larger than memory stay usable, which
-    is half the reason the format is chunked at all.
+    read**, so an archive larger than memory stays usable.
 
-    It is a sequence, not an ndarray, and deliberately so. This branch has
-    already learned what happens to something that pretends to be an array it is
-    not: ``FlowArray`` overrode ``.shape`` and ``__getitem__`` so that scipy and
-    matplotlib would treat one tile as a whole tiled grid, and modern scipy
-    defeated it by calling ``np.asarray`` on anything array-like, silently
-    getting the wrong buffer. So this hands back real arrays and never claims to
-    be one; :meth:`asarray` materializes the lot when that is what you want, and
-    says so in its name.
+    It is a sequence, not an ndarray, and never claims to be one;
+    :meth:`asarray` materializes the lot when that is what you want, and says so
+    in its name.
 
     A swarm that joined partway through a recording is **front-padded with
     fully-masked rows** up to its first capture, so every series is
@@ -2478,8 +2475,7 @@ class RunArchive:
     - **Resolve by time, not by index into someone else's list.** A swarm added
       mid-run starts at a nonzero capture, and a recording started after t=0 has
       its capture 0 partway into the run. Matching on :attr:`times` is right in
-      all of those cases; assuming archive index *j* is history index *j* is
-      right only in the common one.
+      all of those cases.
     - **Agent state is snapped, never interpolated.** :meth:`capture_at` gives
       the nearest capture and nothing blends between them, since interpolating
       across a domain wrap or a boundary slide would invent trajectories that
@@ -2537,9 +2533,6 @@ class RunArchive:
                 "{} has no 'store' in its meta.json, so what its chunk files "
                 "hold cannot be known.".format(self.path))
         self.store = tuple(self.meta['store'])
-        # The N x D arrays, which are chunked and validated as such; the rest of
-        #   store names series with their own containers.
-        self.arrays = tuple(n for n in self.store if n in STORABLE)
         self._chunk_size = int(self.meta['chunk_size'])
         self.grid = dict(np.load(self.path / 'grid.npz', allow_pickle=False))
 
@@ -2604,6 +2597,11 @@ class RunArchive:
         Returns
         -------
         int
+
+        Raises
+        ------
+        ValueError
+            if the archive holds no captures, or ``t`` is not finite
         '''
 
         if not len(self.times):
@@ -2646,6 +2644,11 @@ class RunArchive:
         Returns
         -------
         CaptureSeries
+
+        Raises
+        ------
+        ValueError
+            if this archive does not hold ``name``
         '''
 
         if name not in self.store:
@@ -3315,24 +3318,21 @@ class RunArchive:
     def check_against(self, envir):
         '''Raise unless this archive describes the same domain and fluid.
 
-        The stored positions are bare numbers; nothing in them says what
-        coordinate system they are in. Reading them against a different grid
-        gives a plausible picture that is silently wrong, so a mismatch is a 
-        hard refusal rather than a warning.
-
-        A **provenance** difference is not a mismatch and only warns: replotting
-        a run whose script moved directories is not be refused, while a
-        different simulation that happens to share a mesh and a cadence is loud.
-        ``INUM`` is left out of that comparison entirely -- it says how much of
-        the dataset is held in memory at once and nothing about what the dataset
-        is, and reloading a finished run at a different one, or resident, is an
-        ordinary thing to do.
+        A grid or timeline mismatch is a hard refusal. A **provenance**
+        difference only warns, and ``INUM`` is left out of that comparison
+        entirely, since it says how much of the dataset is held in memory at
+        once rather than what the dataset is.
 
         Parameters
         ----------
         envir : Environment
         '''
 
+        # A hard refusal because the stored positions are bare numbers: nothing
+        #   in them says what coordinate system they are in, so reading them
+        #   against a different grid gives a plausible picture that is silently
+        #   wrong. A run whose script merely moved directories is what the
+        #   provenance warning covers instead.
         problems = compare_fingerprints(self.grid, fingerprint_of(envir))
         recorded = (self.meta.get('provenance') or {}).get('fluid')
         current = envir._fluid_provenance
@@ -3399,9 +3399,7 @@ class RunArchive:
     def _chunk_indices(self, prefix):
         '''Chunk indices present for a file prefix, in numeric order.
 
-        Parsed and sorted as integers rather than sorted as names: zero-padding
-        agrees with numeric order only up to chunk 9999, past which a lexical
-        sort would silently assemble the run out of order.
+        Parsed and sorted as integers; :func:`_chunk_index_of` says why.
         '''
 
         found = []

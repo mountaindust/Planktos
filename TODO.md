@@ -116,8 +116,20 @@ back behind it.
      long been its default; done on `master` as `9148c00`.
 
    **Order** (smallest first to calibrate, pure-new before mixed): ✅ `_provenance.py`
-   · ✅ `_frames.py` · ✅ `_dataio.py` · `archive.py` · `fluid.py` ·
+   · ✅ `_frames.py` · ✅ `_dataio.py` · ✅ `archive.py` · `fluid.py` ·
    `_environment.py` · `_swarm.py`.
+
+   **Then a second pass over the same modules, for navigability** *(asked for
+   2026-09-18)*. Several are large and hard to read in the order they are in:
+   finding a given method means scrolling past unrelated ones, and related
+   things sit far apart. Once the docstrings are settled, go back through and
+   group what belongs together, under section banners, so that a reader can find
+   what they are looking for. Two cautions. Reordering churns `git blame`, and
+   it creates real merge conflicts in the modules `master` also has — so
+   `_environment.py` and `_swarm.py` are the expensive ones, while `archive.py`,
+   `fluid.py`, `_frames.py` and `_provenance.py` are branch-new and nearly free.
+   And **move code without editing it in the same commit**, so the diff reads as
+   pure motion and can be reviewed as such.
 
    **Three standing exclusions:** `archive.py`'s module docstring (it is the on-disk
    format spec, rendered for users by `docs/api/RunArchive.rst` — check it for stray

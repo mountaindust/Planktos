@@ -113,9 +113,10 @@ for. Test files are a partial exception to all of this: a regression test may st
 the defect it pins, since that is the test's purpose.
 
 ⚠️ **Much of the existing tree does not follow this yet** — many methods were
-written by past sessions and run long. A sweep is queued as item 3 in `TODO.md`;
+written by past sessions and run long. **A sweep is in progress** as item 3 in
+`TODO.md`, which records how far it has got and what is still in scope;
 `Swarm._calc_basic_stats` is the worked example and is deliberately left unfixed
-until then. Do not add more.
+until its module comes up. Do not add more.
 
 ## What Planktos is
 
