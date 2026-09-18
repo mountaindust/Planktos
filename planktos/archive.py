@@ -170,19 +170,9 @@ SERIES = ('props', 'shared_props')
 def _atomic_write(path, write_fn):
     '''Write a file so that it appears complete or not at all.
 
-    Writes to a temporary name in the same directory, flushes it to disk, and
-    then renames it into place -- ``os.replace`` is atomic on POSIX, and on
-    Windows for a destination on the same volume. Without this the crash
-    guarantee would be wrong in a way worse than a missing file: a kill during
-    ``np.save`` leaves a **truncated .npy** that raises on read, so one unlucky
-    moment would cost the whole archive rather than one buffer.
-
-    The flush is a real ``fsync``, not just a buffer flush. ``os.replace`` alone
-    is enough to survive process death, which is the common case, but a node
-    failure or power loss can take the page cache with it -- and those are
-    exactly the runs an archive exists for. The cost is one sync per chunk, so
-    once per ``chunk_size`` captures, which is negligible against the physics of
-    that many steps.
+    Writes to a temporary name in the same directory, fsyncs it, and renames it
+    into place -- ``os.replace`` is atomic on POSIX, and on Windows for a
+    destination on the same volume.
 
     Parameters
     ----------
@@ -192,11 +182,17 @@ def _atomic_write(path, write_fn):
         called with an open binary file object; writes the contents
     '''
 
+    # Under a temporary name because a kill partway through np.save leaves a
+    #   truncated .npy that raises on read: one unlucky moment would cost the
+    #   whole archive rather than one buffer.
     tmp = path.with_name(path.name + TMP_SUFFIX)
     try:
         with open(tmp, 'wb') as fobj:
             write_fn(fobj)
             fobj.flush()
+            # A real fsync: os.replace survives process death on its own, but a
+            #   node failure or power loss takes the page cache with it, and
+            #   those are the runs an archive exists for. One sync per chunk.
             os.fsync(fobj.fileno())
         os.replace(tmp, path)
     except BaseException:
@@ -217,14 +213,11 @@ def _save_npy(path, array):
 
 
 def _save_json(path, obj):
-    '''json.dump, atomically, and refusing anything that is not strict JSON.
+    '''json.dump, atomically, refusing non-finite values, which are not JSON.'''
 
-    ``allow_nan=False`` is deliberate: Python's json module emits bare ``NaN``
-    and ``Infinity`` by default, which no other tool will read back. Failing
-    here, at the start of a run, beats writing a metadata file that turns out to
-    be unparsable at the end of one.
-    '''
-
+    # allow_nan=False: Python's json module emits bare NaN and Infinity, which
+    #   no other tool reads back. Failing at the start of a run beats writing a
+    #   metadata file that turns out to be unparsable at the end of one.
     text = json.dumps(obj, indent=2, allow_nan=False, sort_keys=True)
     _atomic_write(path, lambda fobj: fobj.write(text.encode('utf-8')))
 
@@ -238,12 +231,8 @@ def _chunk_name(prefix, index):
 def _chunk_index_of(name):
     '''Recover the chunk index from a chunk filename.
 
-    The inverse of :func:`_chunk_name`, and the reason chunk discovery is safe:
-    a reader parses this integer and sorts on it, rather than sorting filenames.
-    Zero-padding makes the two agree only up to chunk 9999 -- at 10000 the name
-    grows a fifth digit and lexical order puts ``_10000`` before ``_9999``,
-    silently assembling a run out of order. Padding is for humans; the parse is
-    for correctness.
+    The inverse of :func:`_chunk_name`. A reader sorts on this integer, never on
+    the filenames themselves.
 
     Parameters
     ----------
@@ -254,6 +243,9 @@ def _chunk_index_of(name):
     int, or None if this is not a chunk file
     '''
 
+    # Zero-padding makes name order and index order agree only up to chunk 9999:
+    #   at 10000 the name grows a fifth digit and lexical order puts _10000
+    #   before _9999. Padding is for humans; the parse is for correctness.
     stem = Path(name).stem
     _, _, tail = stem.rpartition('_')
     try:
@@ -400,15 +392,9 @@ def build_fingerprint(dimension, L, flow_points=None, flow_times=None,
                       periodic_dim=None):
     '''Assemble the arrays that identify a fluid dataset and domain.
 
-    These are what goes into ``grid.npz``. They are small -- a few hundred
-    floats even for a large 3D grid, one float per dump for the timeline -- and
-    the archive has to store the axes anyway so that it can plot without
-    touching fluid. The fingerprint is therefore not a new stored artifact; it
-    is a comparison over a file that had to exist.
-
-    ``periodic_dim`` is part of it because it changes the vorticity computed in
-    the outermost ring, so a stored vorticity field recorded under a different
-    setting is a different field.
+    These are what goes into ``grid.npz``. ``periodic_dim`` is part of it
+    because it changes the vorticity computed in the outermost ring, so a stored
+    vorticity field recorded under a different setting is a different field.
 
     Parameters
     ----------
@@ -431,6 +417,10 @@ def build_fingerprint(dimension, L, flow_points=None, flow_times=None,
     dict of ndarray, ready for np.savez
     '''
 
+    # Small -- a few hundred floats even for a large 3D grid, one per dump for
+    #   the timeline -- and the archive stores the axes anyway so that it can
+    #   plot without touching fluid, so this is a comparison over a file that
+    #   had to exist rather than a new artifact.
     dimension = int(dimension)
     arrays = {'dimension': np.array(dimension, dtype=np.int64),
               'L': np.asarray(L, dtype=np.float64)}
@@ -466,18 +456,14 @@ def build_fingerprint(dimension, L, flow_points=None, flow_times=None,
 def fingerprint_summary(arrays):
     '''A json-safe précis of the fingerprint, for ``meta.json``.
 
-    This is the only thing in ``meta.json`` that says what fluid the archive was
-    recorded against, so it duplicates ``grid.npz`` deliberately and by the same
-    argument the provenance record makes: this is the file someone opens to see
-    what a run *was*, and a summary that needs a second file loaded to be
-    legible is worse at exactly the job it exists for. Both are written once, in
-    the same call, from one source, so they cannot drift within a run.
-
-    It is a *description*, never the match test -- that is
+    A *description*, never the match test -- that is
     :func:`compare_fingerprints`, which reads the arrays so it can say what
     differs.
     '''
 
+    # Duplicates grid.npz deliberately: meta.json is the file someone opens to
+    #   see what a run was, and a summary needing a second file loaded to be
+    #   legible is worse at that job. Both are written once, from one source.
     dimension = int(arrays['dimension'])
     summary = {'dimension': dimension,
                'L': [float(v) for v in arrays['L']],
@@ -503,16 +489,7 @@ def fingerprint_summary(arrays):
 def compare_fingerprints(stored, current):
     '''Return a list of human-readable differences; empty if they match.
 
-    Comparison is exact -- shape, dtype and values -- because a rebuilt
-    environment re-runs the same loader over the same files and gets
-    bit-identical arrays. ``flow_points``, ``flow_times`` and ``L`` are built in
-    each loader's ``__init__`` and are never reassigned by ``load_dumpfiles`` or
-    ``update_spline``, so a windowed run does not drift from the values recorded
-    when it started.
-
-    The differences are returned rather than raised so that the caller can put
-    them in a message alongside both sides' provenance, which is what makes a
-    refusal actionable instead of merely correct.
+    Comparison is exact -- shape, dtype and values.
 
     Parameters
     ----------
@@ -524,6 +501,12 @@ def compare_fingerprints(stored, current):
     list of str
     '''
 
+    # Exact is safe because a rebuilt environment re-runs the same loader over
+    #   the same files: flow_points, flow_times and L are built in each loader's
+    #   __init__ and never reassigned by load_dumpfiles or update_spline, so a
+    #   windowed run keeps the values it recorded. Differences are returned
+    #   rather than raised so the caller can name both sides' provenance beside
+    #   them, which is what makes a refusal actionable.
     problems = []
     for key in sorted(set(stored) | set(current)):
         if key not in stored:
@@ -602,12 +585,9 @@ def _same_source(recorded, current):
 def _resolve_archive_path(path):
     '''Choose the directory to record into, and create it.
 
-    Overwriting a previous run's data is never the right default, and refusing
-    outright would strand a long job that was ready to start. So a non-empty
-    directory is left alone and a timestamped sibling is used instead. The
-    redirect is never silent: it warns, naming the path actually chosen, and the
-    writer exposes it as ``.path``. Without that, a later
-    ``load_run('run_archive/')`` would quietly read the *previous* run.
+    A non-empty directory is left alone and a timestamped sibling used instead.
+    The redirect warns, naming the path actually chosen, and the writer exposes
+    it as ``.path``.
 
     Parameters
     ----------
@@ -624,6 +604,10 @@ def _resolve_archive_path(path):
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    # Redirect rather than overwrite or refuse: overwriting loses a previous
+    #   run, and refusing strands a long job that was ready to start. The
+    #   warning is what keeps a later load_run(path) from quietly reading the
+    #   earlier run instead.
     stamp = datetime.now().strftime('%Y%m%d%H%M%S')
     candidate = path.with_name('{}_{}'.format(path.name, stamp))
     # Two archives started in the same second would collide; walk forward until
@@ -672,12 +656,7 @@ def _appendable(path, envir, store, chunk_size, capture_interval, fluid_meta):
 
     Appending is decided from a checkable fact rather than a remembered one:
     **the archive's last capture is exactly where the Environment now is**, and
-    the recording is being made the same way. That is better than "this
-    Environment came from a restore" three ways -- it is verifiable from state;
-    it fails safe, since restoring and then running before recording leaves the
-    clock past the last capture, so a separate archive is written rather than a
-    series with a hole in it; and it picks up the notebook workflow of
-    ``stop_recording()``, a look at the data, and a second ``record()``.
+    the recording is being made the same way.
 
     Returns
     -------
@@ -707,6 +686,11 @@ def _appendable(path, envir, store, chunk_size, capture_interval, fluid_meta):
         #   this call's business to complain about.
         return None
 
+    # A checkable fact beats remembering a restore three ways: it is verifiable
+    #   from state; it fails safe, since restoring and then running before
+    #   recording leaves the clock past the last capture and a separate archive
+    #   is written rather than a series with a hole in it; and it picks up
+    #   stop_recording(), a look at the data, and a second record().
     if not len(archive.times) or envir.time != archive.times[-1]:
         archive.close()
         return None
@@ -798,6 +782,25 @@ class _ArchiveWriter:
     ----------
     path : Path
         the directory actually being written to
+    agent_dir : Path
+        the ``agents/`` subdirectory, where every per-swarm file goes
+    store : tuple of str
+        what is kept for each capture, as given
+    arrays : tuple of str
+        the members of ``store`` that are ``N x D`` arrays, chunked together
+    series : tuple of str
+        the members of ``store`` that are not arrays -- 'props' and
+        'shared_props' -- each written by its own machinery
+    derive : bool
+        True when velocities are not stored, so the speed statistics and the 2D
+        heading angle are derived at capture time instead
+    shared : bool
+        True when a ``shared_props`` series is being kept
+    chunk_size : int
+        captures buffered before a chunk is written
+    appending : bool
+        whether this writer continues an existing archive rather than starting
+        one
     '''
 
     def __init__(self, path, fingerprint, meta=None, chunk_size=100,
@@ -1306,10 +1309,7 @@ class _ArchiveWriter:
 
         A masked row means the agent has left the domain -- agents leave whole
         rows, never single coordinates -- so the mask is stored per row rather
-        than per element. A partially masked row would therefore lose
-        information on the way to disk, and is refused rather than flattened,
-        since it means an invariant broke upstream and quietly rounding it off
-        would hide that.
+        than per element, and a partially masked row is refused.
         '''
 
         expected = (entry['N'], entry['D'])
@@ -1319,6 +1319,8 @@ class _ArchiveWriter:
 
         mask = ma.getmaskarray(array)
         any_masked = mask.any(axis=1)
+        # Refused rather than flattened: a partial row means an invariant broke
+        #   upstream, and rounding it off on the way to disk would hide that.
         if not np.array_equal(any_masked, mask.all(axis=1)):
             raise ValueError(
                 'swarm {} has a partially masked {} row; a masked row means the '
@@ -1344,17 +1346,16 @@ class _ArchiveWriter:
     def _write_series(self):
         '''Rewrite each swarm's per-capture sidecar, whole.
 
-        Holds the speed statistics and any ``shared_props`` series: a few
-        values per capture whatever the swarm size, so the whole file is a few
-        tens of kB over a long run -- small enough to rewrite atomically rather
-        than chunk, which is what ``dump_stats.npz`` does for the same reason.
-
-        Called from :meth:`_write_chunk`, so it lands on the same boundary as
-        everything else and covers exactly the captures the chunks do: the
-        accumulators grow per capture, and a chunk closes before the capture
-        that rolled it over is buffered.
+        Holds the speed statistics and any ``shared_props`` series. Called from
+        :meth:`_write_chunk`, so it lands on the same boundary as everything
+        else and covers exactly the captures the chunks do.
         '''
 
+        # A few values per capture whatever the swarm size -- a few tens of kB
+        #   over a long run, small enough to rewrite atomically rather than
+        #   chunk, as dump_stats.npz does. The accumulators grow per capture and
+        #   a chunk closes before the capture that rolled it over is buffered,
+        #   which is what makes the coverage line up.
         for idx in sorted(set(self._stats) | set(self._shared)):
             arrays = {}
             stats = self._stats.get(idx)
@@ -2241,27 +2242,20 @@ class RunRecorder:
     def _sync_swarms(self):
         '''Pick up any swarm that has joined the environment since last capture.
 
-        **Swarms are discovered here rather than notified from ``Swarm``**, and
-        the reason is that a swarm's existence only matters at a capture. Three
-        things follow, all of them why this is the right moment rather than a
-        convenient one:
+        **Swarms are discovered here rather than notified from ``Swarm``**,
+        which has two consequences worth knowing:
 
-        - There is no hook in ``Swarm`` at all, so nothing has to know which of
-          the several ways of building one the user reached for. (An earlier
-          design hooked ``Environment.add_swarm``, which the usual spelling
-          ``planktos.Swarm(envir=envir)`` bypasses entirely; the next hooked
-          both sites where a Swarm appends itself, which fires *partway through*
-          ``Swarm.__init__``, before ``shared_props`` exists.)
         - **A swarm that comes and goes between two captures is never seen.**
           ``calculate_FTLE`` builds a grid of probe agents on the environment
-          and pops it again, so without this it would write a sidecar for its
-          own scratch swarm and then expect it in every later capture. FTLE
-          needs to know nothing about recording for that to come out right.
+          and pops it again, so it needs to know nothing about recording.
         - ``first_capture`` is the capture index the swarm actually starts at,
           by construction, so indices correspond across every swarm with no
           per-swarm time base and no second indexing scheme.
         '''
 
+        # A swarm's existence only matters at a capture, so discovering them
+        #   here needs no hook in Swarm, and nothing has to know which of the
+        #   several ways of building one the user reached for.
         if not self._track_all:
             return
         known = {id(swarm) for swarm in self._swarms}

@@ -199,7 +199,7 @@ class Swarm:
         values can be floats, ndarrays, or iterables, but keep in mind that
         problems will result with parsing if the number of agents is
         equal to the spatial dimension - this is to be avoided. This method of 
-        specifying agent properties is depreciated: use the shared_props 
+        specifying agent properties is deprecated: use the shared_props
         dictionary instead.
 
     Other Parameters

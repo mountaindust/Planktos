@@ -12,9 +12,9 @@ Temporal interpolation of dynamically-loaded data is **linear in time**
 (`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
 story.
 
-**Suite: 1144 passed / 50 skipped (`pytest --runstreaming`, ~40 s),
-1192 / 2 (`pytest --runslow --runstreaming`, ~4 min).** No failures, **and no
-xfails: the pre-release list is empty.** *(Re-measured 2026-09-08.)*
+**Suite: 1285 passed / 50 skipped (`pytest --runstreaming`, ~60 s),
+1333 / 2 (`pytest --runslow --runstreaming`, ~5 min).** No failures, **and no
+xfails: the pre-release list is empty.** *(Re-measured 2026-09-17.)*
 
 **The pre-release list is empty (2026-09-03).** `tests/test_data_streaming/` — the
 adversarial suite written from `run_persistence.md`, covering the streaming story end
@@ -116,8 +116,8 @@ back behind it.
      long been its default; done on `master` as `9148c00`.
 
    **Order** (smallest first to calibrate, pure-new before mixed): ✅ `_provenance.py`
-   · ✅ `_frames.py` · `_dataio.py` · `archive.py` · `fluid.py` · `_environment.py` ·
-   `_swarm.py`.
+   · ✅ `_frames.py` · ✅ `_dataio.py` · `archive.py` · `fluid.py` ·
+   `_environment.py` · `_swarm.py`.
 
    **Three standing exclusions:** `archive.py`'s module docstring (it is the on-disk
    format spec, rendered for users by `docs/api/RunArchive.rst` — check it for stray

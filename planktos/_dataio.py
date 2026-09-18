@@ -1123,7 +1123,7 @@ def read_2DEulerian_Data_From_vtk(path, simNum, strChoice, xy=False):
 
 
 def read_vtu_mesh_velocity(filename):
-    '''Depreciated (see below) - Reads ascii COMSOL velocity data in a vtu or 
+    '''Deprecated (see below) - Reads ascii COMSOL velocity data in a vtu or 
     equivalent text file. It is assumed that the data is on a regular grid. 
     Currently, there is no support for multiple time points, so the file must 
     contain data from only a single time.
