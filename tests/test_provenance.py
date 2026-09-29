@@ -120,6 +120,7 @@ class _Fake:
     def __init__(self):
         self._slot = None
         self._other = None
+        self.flow = None
 
     @_provenance.records_provenance('_slot')
     def load(self, path, size=3, flag=False):
@@ -142,6 +143,10 @@ class _Fake:
     @_provenance.note_modifier('_slot')
     def tweak(self):
         return None
+
+    @_provenance.records_provenance('_slot', order_against='flow')
+    def load_mesh(self, path):
+        self.flow = 'set by the call itself'
 
 
 def test_records_the_loader_name_and_every_argument_including_defaults():
@@ -185,6 +190,20 @@ def test_preceded_by_is_omitted_when_there_was_no_prerequisite():
     obj = _Fake()
     obj.read_from_container('u')
     assert 'preceded_by' not in obj._slot
+
+
+def test_order_against_notes_data_that_was_absent_when_the_call_was_made():
+    # Read before the call: load_mesh sets flow itself, and that must not count.
+    obj = _Fake()
+    obj.load_mesh('m')
+    assert obj._slot['loaded_before'] == 'flow'
+
+
+def test_order_against_is_omitted_when_the_data_was_already_present():
+    obj = _Fake()
+    obj.flow = 'loaded earlier'
+    obj.load_mesh('m')
+    assert 'loaded_before' not in obj._slot
 
 
 def test_a_modifier_appends_its_name_and_does_not_invent_a_record():
@@ -375,6 +394,37 @@ def test_every_fluid_and_mesh_entry_point_is_wired_up(name):
     method = getattr(planktos.Environment, name)
     assert hasattr(method, '__wrapped__'), \
         '{} records no provenance; see planktos/_provenance.py'.format(name)
+
+
+def test_a_mesh_loaded_before_the_fluid_says_so():
+    envir = planktos.Environment()
+    envir.read_IB2d_mesh_data(str(FIXTURES / 'mesh_min/box.vertex'))
+    assert envir._ibmesh_provenance['loaded_before'] == 'flow'
+    envir.read_IB2d_fluid_data(str(FIXTURES / 'ib2d_fluid_min'), dt=0.01,
+                               print_dump=10)
+    envir.read_IB2d_mesh_data(str(FIXTURES / 'mesh_min/box.vertex'))
+    assert 'loaded_before' not in envir._ibmesh_provenance
+
+
+@pytest.mark.parametrize('name', ['read_stl_mesh_data',
+                                  'read_3D_vertex_data_to_convex_hull'])
+def test_every_3d_mesh_loader_records_whether_the_fluid_came_first(name, tmp_path,
+                                                                    monkeypatch):
+    # A mesh loader shifts by the fluid's LLC only when a fluid is present, so a
+    # restore has to know which came first. The file readers are stubbed with a
+    # tetrahedron: only the record is under test, and the real readers need
+    # numpy-stl or 3D vertex data.
+    from planktos import _dataio
+    tet = np.array([[0., 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]])
+    monkeypatch.setattr(_dataio, 'read_stl_mesh', lambda f, u=None: (
+        tet[[[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]]], 1.5))
+    monkeypatch.setattr(_dataio, 'read_vtk_Unstructured_Grid_Points',
+                        lambda f: (tet.copy(), None))
+    path = tmp_path / ('mesh.stl' if name == 'read_stl_mesh_data' else 'mesh.vtk')
+    path.touch()
+    envir = planktos.Environment(Lx=2, Ly=2, Lz=2)
+    getattr(envir, name)(str(path))
+    assert envir._ibmesh_provenance['loaded_before'] == 'flow'
 
 
 @pytest.mark.parametrize('name', ['read_IB2d_fluid_data', 'read_IB2d_mesh_data',

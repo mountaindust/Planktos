@@ -2826,8 +2826,19 @@ class RunArchive:
             kwargs[name] = list(axis)
 
         envir = planktos.Environment(**kwargs)
+        # A mesh loaded while no fluid was present came out of its loader
+        #   unshifted, and any shift_ibmesh_to_match_LLC came after the fluid.
+        #   Replaying the loader first and its modifiers after the fluid puts
+        #   each call back where it was made.
+        mesh = prov.get('ibmesh')
+        mesh_first = mesh is not None and mesh.get('loaded_before') == 'flow'
+        if mesh_first:
+            self._replay(envir, mesh, 'ibmesh', modifiers=False)
         replayed = self._replay(envir, prov.get('fluid'), 'fluid')
-        self._replay(envir, prov.get('ibmesh'), 'ibmesh')
+        if mesh_first:
+            self._replay_modifiers(envir, mesh)
+        else:
+            self._replay(envir, mesh, 'ibmesh')
         if replayed:
             # The fingerprint is what says the rebuilt world is the same world.
             #   Skipped where the fluid could not be replayed at all, since the
@@ -2843,8 +2854,9 @@ class RunArchive:
         return envir
 
 
-    def _replay(self, envir, record, what):
-        '''Re-run one recorded loader call, and any modifier that followed it.
+    def _replay(self, envir, record, what, modifiers=True):
+        '''Re-run one recorded loader call, and any modifier that followed it
+        unless ``modifiers`` is False.
 
         True when the record was replayed or there was nothing to replay; False
         when it named no loader and the data could not be rebuilt.
@@ -2887,11 +2899,18 @@ class RunArchive:
                 'has to still be where it was.'.format(
                     what, loader, ', '.join(sorted(kwargs)),
                     type(err).__name__, err))
+        if modifiers:
+            self._replay_modifiers(envir, record)
+        return True
+
+
+    def _replay_modifiers(self, envir, record):
+        '''Re-run, in order, the modifiers recorded against one loader call.'''
+
         # Every modifier in Planktos is deterministic given the loaded data and
         #   takes no arguments, so replaying by name reproduces the result.
         for name in record.get('modified_by') or []:
             getattr(envir, name)()
-        return True
 
 
     def _restore_swarm(self, envir, index, history, capture, at_capture):

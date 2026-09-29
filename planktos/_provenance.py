@@ -123,7 +123,7 @@ def jsonable(value, _depth=0):
     return _marker(type(value).__name__, value)
 
 
-def records_provenance(slot, preceded_by=None):
+def records_provenance(slot, preceded_by=None, order_against=None):
     '''Decorate a loader so that it records its own call.
 
     The record lands on the Environment as the named attribute, in the form
@@ -144,6 +144,12 @@ def records_provenance(slot, preceded_by=None):
         Its contents are folded in under 'preceded_by', so replaying the record
         replays both calls in order. Used where two calls load one thing:
         load_NetCDF opens the dataset, read_NetCDF_flow reads a field out of it.
+    order_against : string, optional
+        attribute holding other data the call reads when it is present, e.g.
+        'flow' for a mesh loader, which shifts the mesh by the fluid's
+        lower-left corner. If that attribute is None when the call is made, the
+        record gets ``'loaded_before': order_against``, and RunArchive.restore
+        replays this call ahead of that data.
     '''
 
     def decorate(method):
@@ -155,6 +161,9 @@ def records_provenance(slot, preceded_by=None):
             #   mesh partly overwritten, and None is the accurate record of
             #   what is then in place.
             setattr(self, slot, None)
+            # Read before the call, which is the state the loader saw.
+            loaded_first = (order_against is not None
+                            and getattr(self, order_against, None) is None)
             result = method(self, *args, **kwargs)
             bound = signature.bind(self, *args, **kwargs)
             bound.apply_defaults()
@@ -167,6 +176,8 @@ def records_provenance(slot, preceded_by=None):
                 prior = getattr(self, preceded_by, None)
                 if prior is not None:
                     record['preceded_by'] = [prior]
+            if loaded_first:
+                record['loaded_before'] = order_against
             setattr(self, slot, record)
             return result
 

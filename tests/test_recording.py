@@ -998,6 +998,35 @@ def test_restore_replays_the_mesh_loader_and_its_modifiers(tmp_path):
     np.testing.assert_array_equal(rebuilt.ibmesh, envir.ibmesh)
 
 
+@pytest.mark.parametrize('mesh_first', [True, False])
+def test_restore_puts_the_mesh_where_it_was_whichever_loaded_first(tmp_path,
+                                                                     mesh_first):
+    # The defect this pins: restore always replayed the fluid before the mesh,
+    # so a mesh loaded first came back from its loader already shifted by the
+    # fluid's LLC, and the recorded shift_ibmesh_to_match_LLC then shifted it a
+    # second time. vtixml_min's LLC is (-1, 0.5), so the error is visible.
+    mesh = str(FIXTURES / 'mesh_min' / 'box.vertex')
+    envir = planktos.Environment()
+    if mesh_first:
+        envir.read_IB2d_mesh_data(mesh, method='adjacent')
+        envir.read_vtkxml_fluid_data(str(FIXTURES / 'vtixml_min'))
+        envir.shift_ibmesh_to_match_LLC()
+    else:
+        envir.read_vtkxml_fluid_data(str(FIXTURES / 'vtixml_min'))
+        envir.read_IB2d_mesh_data(mesh, method='adjacent')
+    assert any(envir.flow.fluid_domain_LLC)
+    planktos.Swarm(swarm_size=2, envir=envir, init=np.full((2, 2), 0.5))
+    with envir.record(tmp_path / 'run') as rec:
+        pass
+    run = planktos.load_run(rec.path)
+    try:
+        rebuilt, _ = run.restore()
+    finally:
+        run.close()
+    np.testing.assert_array_equal(rebuilt.ibmesh, envir.ibmesh)
+    assert rebuilt._ibmesh_provenance == envir._ibmesh_provenance
+
+
 def test_restore_refuses_a_swarm_class_it_cannot_import(tmp_path):
     # apply_agent_model IS the behavior of the run, so quietly restoring a plain
     # Swarm in its place would be a different simulation.

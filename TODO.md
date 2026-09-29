@@ -1335,6 +1335,51 @@ one session and present in the next shifted every derived filename after it. Tho
 now number by declared position. `VTK3dData` and `IB2dData` were never affected, since
 they number by the dump numbers in the filenames themselves.
 
+### 🟡 A 3D STL in a 2D environment — planned 2026-09-29
+
+`read_stl_mesh_data` raises `IndexError` on this dataset today: its LLC loop runs over
+three axes and a 2D fluid's `fluid_domain_LLC` has two. The plan, agreed first-pass scope
+— **assume the STL comes from the simulation that made the fluid**:
+
+- [ ] **Fluid loaded first.** In a 2D environment, drop the fluid's flattened axis from
+  every vertex. A straight extrusion's walls then project to segments (deduplicate) and
+  its caps to triangles with area (discard); no coordinate arithmetic, so no roundoff.
+  Refuse with `NotImplementedError` anything that is not a straight extrusion — vertices
+  at more than two levels, or a non-cap triangle whose projection is not a segment.
+  Prototyped on `plate.stl`: 28 segments, corners **exactly** equal to
+  `plate_outline_2d.csv` at the STL's float32 precision.
+- [ ] **Mesh loaded first.** At every fluid entry point, after the new fluid is built and
+  before `self.flow` is replaced: flatten an extruded 3D mesh to meet a 2D fluid, and
+  refuse the load — environment untouched — for a genuinely 3D mesh against a 2D fluid,
+  **and** for a 2D or moving mesh against a 3D fluid. About 15 `self.flow =` sites, each
+  becoming one call to a shared helper. The refusal comes after the read; accepted.
+  `shift_ibmesh_to_match_LLC` stays manual, and flattening is not a recorded modifier —
+  replaying the loads in order reproduces it.
+- [ ] Flattened axis: `VTKXMLData`/`VTK3dData` keep `_flat`; `OpenFOAMData` discards it
+  and needs to keep it; natively 2D fluids use z.
+- [ ] Tests: extruded box → 4 segments; non-extrusion refused; 2D LLC shift; 3D
+  unchanged; both load orders give the same mesh; both refusals leave the environment
+  untouched; `plate.stl` vs the CSV in both orders (skip when the data is absent).
+- [ ] Changelog line under 1.1.0; close collaborator question 2 below.
+
+Deferred until a dataset needs it: slicing a genuinely 3D STL at the fluid's plane.
+
+**Done first, 2026-09-29: restore replayed a mesh-first load wrongly.**
+`RunArchive.restore` always replayed the fluid before the mesh, so a mesh loaded first
+came back from its loader already shifted, and the recorded `shift_ibmesh_to_match_LLC`
+shifted it again — silently, since the fingerprint does not cover the mesh. Mesh loaders
+now record `'loaded_before': 'flow'` (`records_provenance(order_against=)`), and restore
+replays such a mesh's loader before the fluid and its modifiers after. Archives without
+the key replay in the old order. Pinned by `test_recording.py::
+test_restore_puts_the_mesh_where_it_was_whichever_loaded_first`.
+
+Still open, not pursued: a mesh loaded between two *different* fluid loads replays
+against the last fluid only, since only the last fluid record is kept.
+
+**Found alongside, not fixed:** `read_3D_vertex_data_to_convex_hull` cannot read a 3D
+`.vertex` file (IBAMR vertex data) — `_dataio.read_IB2d_vertices` keeps two columns.
+Filed as issue #75.
+
 ### Questions for the collaborator about the sea-fan dataset
 
 None of these block reading the data; all three change what a study built on it means.
@@ -1345,7 +1390,8 @@ None of these block reading the data; all three change what a study built on it 
    default `'zero'` BC, agents are simply removed there. Whether that is acceptable
    depends on the study; the collaborator offers more output, and a full-domain re-export
    would remove the question.
-2. **The geometry does not fit the environment.** `plate.stl` is a 3D extrusion (84
+2. **The geometry does not fit the environment** — *being handled in Planktos; see the
+   plan just above.* `plate.stl` is a 3D extrusion (84
    triangles, z ∈ [0, 1] mm), so `read_stl_mesh_data` produces an N×3×3 ibmesh — the wrong
    dimensionality for the 2D fluid this data gives. The usable file is
    `plate_outline_2d.csv` (7 webs × 4 corners), for which there is no loader. Either set

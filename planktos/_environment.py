@@ -1644,7 +1644,7 @@ class Environment:
     #######################################################################
 
 
-    @_provenance.records_provenance('_ibmesh_provenance')
+    @_provenance.records_provenance('_ibmesh_provenance', order_against='flow')
     def read_stl_mesh_data(self, filename, unit_conv=None):
         '''Reads in 3D mesh data from an ascii or binary stl file. Must have
         the numpy-stl library installed. It is assumed that the coordinate
@@ -1677,7 +1677,7 @@ class Environment:
 
 
 
-    @_provenance.records_provenance('_ibmesh_provenance')
+    @_provenance.records_provenance('_ibmesh_provenance', order_against='flow')
     def read_IB2d_mesh_data(self, path, dt=None, print_dump=None, d_start=0, d_finish=None, 
                                 brk_idx_list=(), add_idx_list=None, periodic=False, 
                                 method='adjacent', res_factor=0.501, res=None):
@@ -2004,7 +2004,7 @@ class Environment:
 
 
 
-    @_provenance.records_provenance('_ibmesh_provenance')
+    @_provenance.records_provenance('_ibmesh_provenance', order_against='flow')
     def read_3D_vertex_data_to_convex_hull(self, filename):
         '''Reads in static 3D vertex data from a vtk file or a vertex file and 
         applies ConvexHull triangulation to get a complete, static boundary. 
