@@ -956,6 +956,12 @@ class FluidData:
         Maximum velocity in each direction over all data seen so far.
     '''
 
+    # Axes of the source grid that were one point thick and were dropped on
+    #   reading, numbered as in the source (0, 1, 2 for x, y, z). The loaders
+    #   that collapse such axes set it; Environment reads it to know which axis
+    #   to drop from a 3D immersed mesh.
+    _flat = ()
+
     def __init__(self, flow, flow_points, flow_times=None, INUM=None,
                  periodic_dim=False, fluid_domain_LLC=None):
         '''
@@ -2595,7 +2601,7 @@ class ComsolVTUData(FluidData):
 
         # _read_vtufile hands back a two-entry mesh for 2D data, so the grid is
         #   built over however many axes there are rather than always three.
-        flow, mesh, periodic_dim, _ = _collapse_flat_axes(
+        flow, mesh, periodic_dim, self._flat = _collapse_flat_axes(
             flow, mesh, periodic_dim, source=str(path))
 
         # shift domain to quadrant 1

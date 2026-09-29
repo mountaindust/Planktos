@@ -148,6 +148,12 @@ class _Fake:
     def load_mesh(self, path):
         self.flow = 'set by the call itself'
 
+    @_provenance.records_provenance('_slot', describes='flow')
+    def load_flow(self, path, replace_first=False):
+        if replace_first:
+            self.flow = path
+        raise ValueError('refused')
+
 
 def test_records_the_loader_name_and_every_argument_including_defaults():
     obj = _Fake()
@@ -174,6 +180,23 @@ def test_a_failed_load_leaves_no_record_rather_than_a_stale_one():
     assert obj._slot is not None
     with pytest.raises(FileNotFoundError):
         obj.failing_load('bad')
+    assert obj._slot is None
+
+
+def test_a_load_refused_before_replacing_the_data_keeps_the_prior_record():
+    obj = _Fake()
+    obj.load('good')
+    before = obj._slot
+    with pytest.raises(ValueError):
+        obj.load_flow('bad')
+    assert obj._slot == before
+
+
+def test_a_load_that_replaced_the_data_before_raising_leaves_no_record():
+    obj = _Fake()
+    obj.load('good')
+    with pytest.raises(ValueError):
+        obj.load_flow('bad', replace_first=True)
     assert obj._slot is None
 
 
@@ -326,14 +349,17 @@ def test_loading_a_fluid_does_not_disturb_the_mesh_record_or_the_reverse():
     assert envir._fluid_provenance['loader'] == 'read_IB2d_fluid_data'
 
 
-def test_a_failed_real_load_clears_the_record():
+def test_a_failed_real_load_keeps_the_record_of_the_fluid_still_loaded():
+    # The missing directory raises before the flow is replaced, so the fluid in
+    # place is the first one and its record still describes it.
     envir = planktos.Environment()
     envir.read_IB2d_fluid_data(str(FIXTURES / 'ib2d_fluid_min'), dt=0.01,
                                print_dump=10)
+    before = envir._fluid_provenance
     with pytest.raises(Exception):
         envir.read_IB2d_fluid_data(str(FIXTURES / 'no_such_dir'), dt=0.01,
                                    print_dump=10)
-    assert envir._fluid_provenance is None
+    assert envir._fluid_provenance == before
 
 
 def test_a_mesh_modifier_is_recorded_so_a_reader_cannot_replay_the_loader_alone():

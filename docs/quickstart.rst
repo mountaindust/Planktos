@@ -184,7 +184,9 @@ and NetCDF. A few analytical 1D flow fields are also available and can be
 generated in either 2D or 3D environments; these include Brinkman flow, two layer 
 channel flow, and canopy flow. Flow fields can also be tiled. Mesh data 
 must be time-invariant in 3D but can be time-varying in 2D. They are loaded via 
-IB2d/IBAMR-style vertex data (2D) or via stl file in 3D. 
+IB2d/IBAMR-style vertex data (2D) or via stl file in 3D. An stl file that is a
+straight extrusion, as a 2D simulation's geometry usually is, can also be used
+with 2D fluid data: it is reduced to the outline it was extruded from.
 More (open source) formats may be considered if requested. Mesh data should never 
 intersect any of the domain boundaries. This will not be checked, but is essential
 for correct performance.

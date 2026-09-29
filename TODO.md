@@ -1335,32 +1335,44 @@ one session and present in the next shifted every derived filename after it. Tho
 now number by declared position. `VTK3dData` and `IB2dData` were never affected, since
 they number by the dump numbers in the filenames themselves.
 
-### 🟡 A 3D STL in a 2D environment — planned 2026-09-29
+### ✅ A 3D STL in a 2D environment — done 2026-09-29
 
-`read_stl_mesh_data` raises `IndexError` on this dataset today: its LLC loop runs over
-three axes and a 2D fluid's `fluid_domain_LLC` has two. The plan, agreed first-pass scope
-— **assume the STL comes from the simulation that made the fluid**:
+`read_stl_mesh_data` raised `IndexError` on the sea-fan data: its LLC loop ran over
+three axes and a 2D fluid's `fluid_domain_LLC` has two. First-pass scope, as agreed:
+**assume the STL comes from the simulation that made the fluid**, so it is a straight
+extrusion across the solver's one cell of thickness.
 
-- [ ] **Fluid loaded first.** In a 2D environment, drop the fluid's flattened axis from
-  every vertex. A straight extrusion's walls then project to segments (deduplicate) and
-  its caps to triangles with area (discard); no coordinate arithmetic, so no roundoff.
-  Refuse with `NotImplementedError` anything that is not a straight extrusion — vertices
-  at more than two levels, or a non-cap triangle whose projection is not a segment.
-  Prototyped on `plate.stl`: 28 segments, corners **exactly** equal to
-  `plate_outline_2d.csv` at the STL's float32 precision.
-- [ ] **Mesh loaded first.** At every fluid entry point, after the new fluid is built and
-  before `self.flow` is replaced: flatten an extruded 3D mesh to meet a 2D fluid, and
-  refuse the load — environment untouched — for a genuinely 3D mesh against a 2D fluid,
-  **and** for a 2D or moving mesh against a 3D fluid. About 15 `self.flow =` sites, each
-  becoming one call to a shared helper. The refusal comes after the read; accepted.
-  `shift_ibmesh_to_match_LLC` stays manual, and flattening is not a recorded modifier —
-  replaying the loads in order reproduces it.
-- [ ] Flattened axis: `VTKXMLData`/`VTK3dData` keep `_flat`; `OpenFOAMData` discards it
-  and needs to keep it; natively 2D fluids use z.
-- [ ] Tests: extruded box → 4 segments; non-extrusion refused; 2D LLC shift; 3D
-  unchanged; both load orders give the same mesh; both refusals leave the environment
-  untouched; `plate.stl` vs the CSV in both orders (skip when the data is absent).
-- [ ] Changelog line under 1.1.0; close collaborator question 2 below.
+- [x] `_geom.flatten_extruded_mesh` drops the extrusion axis: walls project to
+  segments (deduplicated), caps to triangles with area (discarded). Coordinates are
+  copied, never computed. `plate.stl` gives 28 segments equal to
+  `plate_outline_2d.csv` at the STL's float32 precision, in both load orders.
+- [x] **Fluid first:** `read_stl_mesh_data` and `read_3D_vertex_data_to_convex_hull`
+  flatten against a 2D fluid, then shift. **Mesh first:** `Environment.flow` is now a
+  property whose setter fits the loaded mesh to the incoming fluid, so every fluid
+  entry point got the check at once instead of ~15 edited call sites.
+  `read_NetCDF_flow` was reordered to assign the flow before `units`/`L`.
+- [x] Refusals raise **`ValueError`** (the plan said `NotImplementedError`; an
+  incompatible input is a value error, and one type serves both load orders): a
+  non-extruded 3D mesh against a 2D fluid, a 2D or moving mesh against a 3D fluid,
+  and `read_IB2d_mesh_data` into a 3D fluid (up front, before reading).
+- [x] **Refused means untouched, provenance included.** The loader wrapper cleared the
+  record before every call, so a refused load would have left the old fluid with a
+  `None` record — and `meta.json` is written once, so a later recording could not
+  restore it. `records_provenance(describes=)` now keeps the prior record when the
+  described data was never replaced. This also fixed the recording guard, which had
+  been clearing the fluid record of a run in progress.
+  `test_a_failed_real_load_clears_the_record` became
+  `..._keeps_the_record_of_the_fluid_still_loaded` accordingly.
+- [x] Flattened axis: `FluidData._flat` (class default `()`); `ComsolVTUData` now keeps
+  it. (Correction to the plan: `OpenFOAMData` never collapses an axis — the boundary
+  splice leaves a one-cell case three points thick — so it needed nothing.)
+- [x] Tests: `test_geom.py` (flatten), `test_io_loaders.py` (both orders, x/y/z flat
+  axes, the refusals leave the environment unchanged, 3D unchanged, the sea-fan plate
+  vs its CSV — skipped when the data is absent), `test_recording.py` (restore of an
+  STL loaded first; refusal while recording keeps the record), `test_provenance.py`.
+- [x] End to end on the sea-fan data: 400 agents released just upstream of the plate,
+  39 collision events over 3 s, none strictly inside a web at any step.
+- [ ] Changelog line under 1.1.0 (wording to confirm).
 
 Deferred until a dataset needs it: slicing a genuinely 3D STL at the fluid's plane.
 
@@ -1390,8 +1402,8 @@ None of these block reading the data; all three change what a study built on it 
    default `'zero'` BC, agents are simply removed there. Whether that is acceptable
    depends on the study; the collaborator offers more output, and a full-domain re-export
    would remove the question.
-2. **The geometry does not fit the environment** — *being handled in Planktos; see the
-   plan just above.* `plate.stl` is a 3D extrusion (84
+2. ✅ **The geometry does not fit the environment** — *resolved in Planktos: an
+   extruded STL now loads into a 2D environment as its outline (see just above).* `plate.stl` is a 3D extrusion (84
    triangles, z ∈ [0, 1] mm), so `read_stl_mesh_data` produces an N×3×3 ibmesh — the wrong
    dimensionality for the 2D fluid this data gives. The usable file is
    `plate_outline_2d.csv` (7 webs × 4 corners), for which there is no loader. Either set

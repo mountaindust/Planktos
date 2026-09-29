@@ -13,6 +13,7 @@ Also here: the scalar rectilinear / structured-points VTK round-trips
 (run_persistence.md section 3.6), which are the I/O half of per-dump vorticity.
 '''
 
+import csv
 import json
 import re
 import shutil
@@ -26,6 +27,7 @@ import pyvista as pv
 
 import planktos
 from planktos import _dataio
+import _ib_harness as H
 
 FIXTURES = Path(__file__).parent / 'fixtures'
 
@@ -2531,3 +2533,203 @@ def test_a_fully_3d_series_is_untouched():
     assert len(envir.flow.flow_points) == 3
     assert len(envir.flow) == 3
     assert envir.flow.fshape == (8, 5, 4, 3)
+
+
+
+# --------------------------------------------------------------------------- #
+#          a 3D STL in a 2D environment is the outline it extrudes            #
+# --------------------------------------------------------------------------- #
+# A 2D simulation's geometry arrives as a straight extrusion across the one
+# cell of thickness the solver needed, and the fluid as a plane of that slab.
+# The mesh is reduced to the outline it was extruded from, whichever of the two
+# loaded first -- or the load that would pair a mesh with a fluid of another
+# dimension is refused, leaving the Environment exactly as it was.
+
+SQUARE = [(0.25, 0.25), (1.5, 0.25), (1.5, 0.75), (0.25, 0.75)]
+VTIXML = str(FIXTURES / 'vtixml_min')          # flat in z; LLC (-1, 0.5)
+TETRA = np.array([[0., 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]])[
+    [[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]]]
+
+
+def _write_stl(path, tris):
+    stlmesh = pytest.importorskip('stl.mesh')
+    data = np.zeros(len(tris), dtype=stlmesh.Mesh.dtype)
+    data['vectors'] = tris
+    stlmesh.Mesh(data).save(str(path))
+    return str(path)
+
+
+def _edges(segs):
+    return {frozenset(map(tuple, seg)) for seg in np.asarray(segs)}
+
+
+def _state(envir):
+    '''What a refused load must leave alone.'''
+    return (envir.flow, list(envir.L), envir._fluid_provenance, envir.ibmesh,
+            envir.max_meshpt_dist, envir._ibmesh_provenance)
+
+
+def _assert_unchanged(envir, before):
+    after = _state(envir)
+    assert after[0] is before[0]
+    assert after[1] == before[1]
+    assert after[2] == before[2]
+    assert after[3] is before[3]
+    assert after[4] == before[4]
+    assert after[5] == before[5]
+
+
+def test_stl_in_a_2d_environment_is_its_outline(tmp_path):
+    stl = _write_stl(tmp_path / 'sq.stl', H.extruded_polygon(SQUARE, 0.0, 0.5))
+    envir = planktos.Environment()
+    envir.read_vtkxml_fluid_data(VTIXML)
+    envir.read_stl_mesh_data(stl)
+    llc = np.array(envir.flow.fluid_domain_LLC)
+    assert envir.ibmesh.shape == (4, 2, 2)
+    assert envir.ibmesh.dtype == np.float64
+    assert _edges(envir.ibmesh) == _edges(H.closed_polygon(np.array(SQUARE) - llc))
+    assert envir.max_meshpt_dist == 1.25
+
+
+def test_stl_loaded_before_the_fluid_is_flattened_when_the_fluid_arrives(tmp_path):
+    stl = _write_stl(tmp_path / 'sq.stl', H.extruded_polygon(SQUARE, 0.0, 0.5))
+    fluid_first = planktos.Environment()
+    fluid_first.read_vtkxml_fluid_data(VTIXML)
+    fluid_first.read_stl_mesh_data(stl)
+
+    mesh_first = planktos.Environment()
+    mesh_first.read_stl_mesh_data(stl)
+    assert mesh_first.ibmesh.shape == (12, 3, 3)       # no fluid yet to fit
+    mesh_first.read_vtkxml_fluid_data(VTIXML)
+    assert _edges(mesh_first.ibmesh) == _edges(H.closed_polygon(SQUARE))
+    mesh_first.shift_ibmesh_to_match_LLC()
+
+    np.testing.assert_array_equal(mesh_first.ibmesh, fluid_first.ibmesh)
+    assert mesh_first.max_meshpt_dist == fluid_first.max_meshpt_dist
+
+
+@pytest.mark.parametrize('mesh_first', [False, True])
+@pytest.mark.parametrize('flat_axis', [0, 1])
+def test_the_axis_dropped_from_the_mesh_is_the_one_the_fluid_dropped(
+        tmp_path, flat_axis, mesh_first):
+    slab = _write_slab(tmp_path / 'slab', flat_axis=flat_axis)
+    stl = _write_stl(tmp_path / 'sq.stl',
+                     H.extruded_polygon(SQUARE, -1.0, 1.0, axis=flat_axis))
+    envir = planktos.Environment()
+    if mesh_first:
+        envir.read_stl_mesh_data(stl)
+    with pytest.warns(UserWarning, match='single point thick'):
+        envir.read_IBAMR3d_vtk_data(str(slab), title='slab_')
+    if not mesh_first:
+        envir.read_stl_mesh_data(stl)
+    assert _edges(envir.ibmesh) == _edges(H.closed_polygon(SQUARE))
+
+
+def test_a_natively_2d_fluid_drops_z_from_the_mesh(tmp_path):
+    stl = _write_stl(tmp_path / 'sq.stl', H.extruded_polygon(SQUARE, 3.0, 4.0))
+    envir = planktos.Environment()
+    envir.read_IB2d_fluid_data(str(FIXTURES / 'ib2d_fluid_min'), dt=0.01,
+                               print_dump=10)
+    envir.read_stl_mesh_data(stl)
+    assert _edges(envir.ibmesh) == _edges(H.closed_polygon(SQUARE))
+
+
+def test_a_3d_stl_that_is_not_an_extrusion_is_refused_in_2d(tmp_path):
+    good = _write_stl(tmp_path / 'sq.stl', H.extruded_polygon(SQUARE, 0.0, 0.5))
+    bad = _write_stl(tmp_path / 'tet.stl', TETRA)
+    envir = planktos.Environment()
+    envir.read_vtkxml_fluid_data(VTIXML)
+    envir.read_stl_mesh_data(good)
+    before = _state(envir)
+    with pytest.raises(ValueError, match='incompatible'):
+        envir.read_stl_mesh_data(bad)
+    _assert_unchanged(envir, before)
+
+
+def test_a_2d_fluid_is_refused_by_a_3d_mesh_loaded_first(tmp_path):
+    envir = planktos.Environment()
+    envir.read_IBAMR3d_vtk_data(str(FIXTURES / 'vtk3d_min'), title='IBAMR_db_')
+    envir.read_stl_mesh_data(_write_stl(tmp_path / 'tet.stl', TETRA))
+    before = _state(envir)
+    with pytest.raises(ValueError, match='2D fluid is incompatible'):
+        envir.read_vtkxml_fluid_data(VTIXML)
+    _assert_unchanged(envir, before)
+
+
+def test_a_3d_fluid_is_refused_by_a_2d_mesh_loaded_first():
+    envir = planktos.Environment()
+    envir.read_IB2d_fluid_data(str(FIXTURES / 'ib2d_fluid_min'), dt=0.01,
+                               print_dump=10)
+    envir.read_IB2d_mesh_data(str(FIXTURES / 'mesh_min' / 'box.vertex'))
+    before = _state(envir)
+    with pytest.raises(ValueError, match='3D fluid is incompatible'):
+        envir.read_IBAMR3d_vtk_data(str(FIXTURES / 'vtk3d_min'),
+                                    title='IBAMR_db_')
+    _assert_unchanged(envir, before)
+
+
+def test_a_moving_2d_mesh_refuses_a_3d_fluid():
+    envir = planktos.Environment()
+    envir.read_IB2d_mesh_data(str(FIXTURES / 'lagspts_min'), dt=0.1,
+                              print_dump=1)
+    with pytest.raises(ValueError, match='3D fluid is incompatible'):
+        envir.read_IBAMR3d_vtk_data(str(FIXTURES / 'vtk3d_min'),
+                                    title='IBAMR_db_')
+    assert envir.flow is None
+
+
+def test_a_2d_mesh_is_refused_in_a_3d_fluid():
+    envir = planktos.Environment()
+    envir.read_IBAMR3d_vtk_data(str(FIXTURES / 'vtk3d_min'), title='IBAMR_db_')
+    before = _state(envir)
+    with pytest.raises(ValueError, match='3D fluid is incompatible'):
+        envir.read_IB2d_mesh_data(str(FIXTURES / 'mesh_min' / 'box.vertex'))
+    _assert_unchanged(envir, before)
+
+
+def test_stl_in_3d_is_unchanged_but_for_the_llc_shift(tmp_path):
+    tris = H.extruded_polygon(SQUARE, 0.0, 0.5)
+    stl = _write_stl(tmp_path / 'sq.stl', tris)
+    g = np.linspace(0, 2, 5)
+    X, Y, Z = np.meshgrid(g, g, g, indexing='ij')
+    envir = planktos.Environment(Lx=2, Ly=2, Lz=2,
+                                 flow=[np.zeros_like(X), np.zeros_like(Y),
+                                       np.zeros_like(Z)])
+    envir.flow.fluid_domain_LLC = (1.0, 0.5, 0.25)
+    envir.read_stl_mesh_data(stl)
+    np.testing.assert_array_equal(envir.ibmesh,
+                                  tris - np.array([1.0, 0.5, 0.25]))
+
+
+SEAFAN = Path(__file__).parent / 'data' / 'openfoam2D'
+
+
+@pytest.mark.skipif(not SEAFAN.is_dir(), reason='sea-fan dataset not present')
+@pytest.mark.parametrize('mesh_first', [False, True])
+def test_the_sea_fan_plate_is_the_outline_its_producer_published(mesh_first):
+    # plate_outline_2d.csv is the dataset's own statement of the geometry, made
+    # independently of the STL. The STL stores float32, so the CSV is rounded
+    # to match before the exact comparison.
+    pytest.importorskip('stl.mesh')
+    with open(SEAFAN / 'geometry' / 'plate_outline_2d.csv') as f:
+        rows = list(csv.DictReader(f))
+    webs = {}
+    for r in rows:
+        webs.setdefault(r['web'], []).append(
+            (float(r['x_m']), float(r['y_m'])))
+    stl = str(SEAFAN / 'geometry' / 'plate.stl')
+    envir = planktos.Environment()
+    if mesh_first:
+        envir.read_stl_mesh_data(stl)
+    envir.read_vtkxml_fluid_data(str(SEAFAN / 'flow'), INUM=4)
+    if mesh_first:
+        envir.shift_ibmesh_to_match_LLC()
+    else:
+        envir.read_stl_mesh_data(stl)
+    llc = np.array(envir.flow.fluid_domain_LLC)
+    expected = set()
+    for corners in webs.values():
+        pts = np.array(corners, dtype=np.float32).astype(np.float64) - llc
+        expected |= _edges(H.closed_polygon(pts))
+    assert envir.ibmesh.shape == (28, 2, 2)
+    assert _edges(envir.ibmesh) == expected

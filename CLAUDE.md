@@ -450,6 +450,14 @@ lives in the pandas DataFrame `Swarm.props`; shared values in `Swarm.shared_prop
   the norm; **3D vertex-point input is deprecated** (2D vertex points are still used).
   2D meshes (static or **moving**) load from IB2d data via `read_IB2d_mesh_data`
   (directory of `lagsPts.####.vtk` → moving; single `.vtk`/`.vertex` → static).
+- **An STL meeting a 2D fluid is flattened, not sliced.** A 2D simulation's geometry
+  arrives as a straight extrusion (the sea-fan `plate.stl`); `_geom.flatten_extruded_mesh`
+  drops the axis the fluid dropped (`FluidData._flat`, else z) and refuses anything
+  else. **`Environment.flow` is a property** whose setter fits an already-loaded mesh
+  to the incoming fluid or refuses the fluid with `ValueError`, leaving the environment
+  unchanged — so a new fluid entry point gets the check for free, and must assign
+  `self.flow` before changing anything else (see `read_NetCDF_flow`). Slicing a genuinely
+  3D STL at the fluid's plane is deferred until a dataset needs it.
 
 ## Correctness invariants & development priorities
 
@@ -529,10 +537,10 @@ they are independent:**
 
 | Invocation | Covers | Time |
 |---|---|---|
-| `pytest` | the focused modules | ~45 s (1202 passed / 140 skipped) |
-| `pytest --runslow` | plus the parallelization tests, the plotting smokes and the movie renders | ~60 s (1235 / 107) |
-| `pytest --runstreaming` | plus the fast half of `tests/test_data_streaming/` | ~60 s (1292 / 50) |
-| `pytest --runslow --runstreaming` | everything | ~5 min (1340 / 2) |
+| `pytest` | the focused modules | ~45 s (1231 passed / 140 skipped) |
+| `pytest --runslow` | plus the parallelization tests, the plotting smokes and the movie renders | ~60 s (1264 / 107) |
+| `pytest --runstreaming` | plus the fast half of `tests/test_data_streaming/` | ~60 s (1321 / 50) |
+| `pytest --runslow --runstreaming` | everything | ~5 min (1369 / 2) |
 
 **Before a commit that touches the archive, the fluid streaming or the plotting
 paths, run both flags.** `--runstreaming` is off by default because that suite is

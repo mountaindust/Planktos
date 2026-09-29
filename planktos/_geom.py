@@ -842,3 +842,83 @@ def dist_point_to_plane(P0, normal, Q0):
     return np.abs(np.dot(normal,P0)-d)/np.linalg.norm(normal)
 
 
+
+
+
+def flatten_extruded_mesh(tris, axis=2):
+    '''Reduce a triangle mesh that is a straight extrusion to the 2D outline it
+    was extruded from, by dropping the extrusion axis.
+
+    A straight extrusion has its vertices at exactly two levels along ``axis``,
+    and each wall triangle has a vertex directly across from another. The walls
+    project onto the remaining two axes as segments, each kept once; the caps
+    project to triangles and are discarded. Coordinates are copied, never
+    computed, so segments that share an endpoint share it exactly.
+
+    Parameters
+    ----------
+    tris : Nx3x3 ndarray
+        triangles, one per row, each a 3x3 matrix whose rows are its vertices
+    axis : int, default=2
+        the axis the mesh was extruded along
+
+    Returns
+    -------
+    Mx2x2 ndarray
+        the outline's segments, each a 2x2 matrix whose rows are its endpoints
+
+    Raises
+    ------
+    ValueError
+        if the mesh is not a straight extrusion along ``axis``
+    '''
+
+    name = 'xyz'[axis]
+    level = tris[:, :, axis]
+    n_levels = len(np.unique(level))
+    if n_levels != 2:
+        raise ValueError(
+            "its vertices lie at {} distinct {}-coordinates, where a straight "
+            "extrusion along {} has exactly two".format(n_levels, name, name))
+
+    # A cap has all three vertices on one level.
+    cap = (level == level[:, :1]).all(axis=1)
+    walls = np.delete(tris[~cap], axis, axis=2)
+    p0, p1, p2 = walls[:, 0], walls[:, 1], walls[:, 2]
+    same01 = (p0 == p1).all(axis=1)
+    same12 = (p1 == p2).all(axis=1)
+    same02 = (p0 == p2).all(axis=1)
+    n_same = same01.astype(int) + same12 + same02
+    # A wall perpendicular to the cut projects to two distinct points, so
+    #   exactly one pair of its vertices coincides. None coinciding is a slanted
+    #   wall; all three is a triangle with no area, which contributes nothing.
+    slanted = np.count_nonzero(n_same == 0)
+    if slanted:
+        raise ValueError(
+            "{} of its {} side triangles are not parallel to the {}-axis, so "
+            "its cross-section varies along {}".format(
+                slanted, len(walls), name, name))
+    keep = n_same == 1
+    a = p0[keep]
+    b = np.where(same01[keep, None], p2[keep], p1[keep])
+    if len(a) == 0:
+        raise ValueError("it has no side walls, only caps")
+
+    # Both triangles of a rectangular wall project to the same segment. Putting
+    #   each segment's endpoints in lexicographic order makes the two copies
+    #   identical, so np.unique removes one.
+    swap = (a[:, 0] > b[:, 0]) | ((a[:, 0] == b[:, 0]) & (a[:, 1] > b[:, 1]))
+    first = np.where(swap[:, None], b, a)
+    second = np.where(swap[:, None], a, b)
+    segs = np.unique(np.concatenate((first, second), axis=1), axis=0)
+    return segs.reshape(-1, 2, 2)
+
+
+
+def max_edge_length(mesh):
+    '''Return the length of the longest edge of a static mesh of segments
+    (Nx2x2) or triangles (Nx3x3).'''
+
+    n = mesh.shape[1]
+    return max(np.linalg.norm(mesh[:, (i+1) % n] - mesh[:, i], axis=1).max()
+               for i in range(n))

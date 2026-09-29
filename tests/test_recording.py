@@ -1027,6 +1027,49 @@ def test_restore_puts_the_mesh_where_it_was_whichever_loaded_first(tmp_path,
     assert rebuilt._ibmesh_provenance == envir._ibmesh_provenance
 
 
+def test_restore_reflattens_an_stl_loaded_before_a_2d_fluid(tmp_path):
+    # The mesh is 3D until the fluid arrives and flattens it, so the restore
+    # has to replay the three calls in the order they were made.
+    stlmesh = pytest.importorskip('stl.mesh')
+    import _ib_harness as H
+    tris = H.extruded_polygon([(0.25, 0.25), (1.5, 0.25), (1.5, 0.75)], 0, 1)
+    data = np.zeros(len(tris), dtype=stlmesh.Mesh.dtype)
+    data['vectors'] = tris
+    stl = tmp_path / 'tri.stl'
+    stlmesh.Mesh(data).save(str(stl))
+
+    envir = planktos.Environment()
+    envir.read_stl_mesh_data(str(stl))
+    envir.read_vtkxml_fluid_data(str(FIXTURES / 'vtixml_min'))
+    envir.shift_ibmesh_to_match_LLC()
+    planktos.Swarm(swarm_size=2, envir=envir, init=np.full((2, 2), 0.5))
+    with envir.record(tmp_path / 'run') as rec:
+        pass
+    run = planktos.load_run(rec.path)
+    try:
+        rebuilt, _ = run.restore()
+    finally:
+        run.close()
+    assert rebuilt.ibmesh.shape == (3, 2, 2)
+    np.testing.assert_array_equal(rebuilt.ibmesh, envir.ibmesh)
+    assert rebuilt.max_meshpt_dist == envir.max_meshpt_dist
+
+
+def test_a_fluid_load_refused_while_recording_keeps_the_fluid_record(tmp_path):
+    # The refusal changes nothing, so the record must still describe the fluid
+    # in place -- a later recording writes it into meta.json.
+    envir = planktos.Environment()
+    envir.read_IB2d_fluid_data(str(FIXTURES / 'ib2d_fluid_min'), dt=0.01,
+                               print_dump=10)
+    before = envir._fluid_provenance
+    _swarm(envir)
+    with envir.record(tmp_path / 'run'):
+        with pytest.raises(RuntimeError, match='not allowed while recording'):
+            envir.read_IB2d_fluid_data(str(FIXTURES / 'ib2d_fluid_min'),
+                                       dt=0.01, print_dump=10)
+    assert envir._fluid_provenance == before
+
+
 def test_restore_refuses_a_swarm_class_it_cannot_import(tmp_path):
     # apply_agent_model IS the behavior of the run, so quietly restoring a plain
     # Swarm in its place would be a different simulation.

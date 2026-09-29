@@ -123,7 +123,8 @@ def jsonable(value, _depth=0):
     return _marker(type(value).__name__, value)
 
 
-def records_provenance(slot, preceded_by=None, order_against=None):
+def records_provenance(slot, preceded_by=None, order_against=None,
+                       describes=None):
     '''Decorate a loader so that it records its own call.
 
     The record lands on the Environment as the named attribute, in the form
@@ -132,7 +133,9 @@ def records_provenance(slot, preceded_by=None, order_against=None):
     every argument out.
 
     The slot is cleared before the call and set after it returns, so the record
-    for a load that raised partway through is None.
+    for a load that raised partway through is None -- unless ``describes`` is
+    given and the load raised without replacing that attribute, in which case
+    the record from before the call is kept.
 
     Parameters
     ----------
@@ -150,6 +153,8 @@ def records_provenance(slot, preceded_by=None, order_against=None):
         lower-left corner. If that attribute is None when the call is made, the
         record gets ``'loaded_before': order_against``, and RunArchive.restore
         replays this call ahead of that data.
+    describes : string, optional
+        attribute holding the data the record describes, e.g. 'flow'
     '''
 
     def decorate(method):
@@ -157,6 +162,8 @@ def records_provenance(slot, preceded_by=None, order_against=None):
 
         @functools.wraps(method)
         def wrapper(self, *args, **kwargs):
+            prior = getattr(self, slot, None)
+            data = getattr(self, describes, None) if describes else None
             # Cleared first: a loader that raises partway leaves the fluid or
             #   mesh partly overwritten, and None is the accurate record of
             #   what is then in place.
@@ -164,7 +171,14 @@ def records_provenance(slot, preceded_by=None, order_against=None):
             # Read before the call, which is the state the loader saw.
             loaded_first = (order_against is not None
                             and getattr(self, order_against, None) is None)
-            result = method(self, *args, **kwargs)
+            try:
+                result = method(self, *args, **kwargs)
+            except BaseException:
+                # A refusal raises before the data is replaced, and the data
+                #   still in place is what the prior record describes.
+                if describes and getattr(self, describes, None) is data:
+                    setattr(self, slot, prior)
+                raise
             bound = signature.bind(self, *args, **kwargs)
             bound.apply_defaults()
             arguments = dict(bound.arguments)
