@@ -9,7 +9,7 @@
 This is **checkpoint and restart**, which ``docs/notes/run_persistence.md``
 2.11 specifies as component R and 6.1 builds in four steps. Written when none of
 it existed, as a statement of what the claim needs rather than a discovery that
-something is broken, in three parts:
+something is broken, in two parts:
 
 * what the archive already carried, asserted positively -- the environment
   really can be rebuilt from provenance, and the agent state really does come
@@ -23,9 +23,6 @@ a time, the end-to-end test covers the same ground, and a list kept past that is
 two things to keep in sync (2.11.5). What a resumed run does with the archive it
 came from -- it continues it, byte for byte -- is pinned in
 tests/test_recording.py, beside the rest of what record() decides.
-
-Every test still marked xfail is a piece of unbuilt work, not a defect in what
-was built.
 '''
 
 import json

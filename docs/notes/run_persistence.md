@@ -2691,27 +2691,14 @@ not obvious from it. Line numbers drift — search for the names.
 - **[done]** the `_calc_basic_stats` velocity fix (§5.1), on two lines: recorded
   velocities replacing differenced positions, and the initial frame showing the starting
   fluid drift instead of zero (§4.3). The `reset()` history fix (§5.2) took a third.
-  All three are filed under **1.0.3**, which is prepared but not yet tagged and so is
-  still open — `reset()` ported to `master` as a clean hunk, `_calc_basic_stats` as a
+  All three are filed under **1.0.3**, released and tagged 2026-08-19 —
+  `reset()` ported to `master` as a clean hunk, `_calc_basic_stats` as a
   genuine port, since `master`'s version of that method is shaped differently;
-- **Owed at step A, and ⚠️ written at A4/A5 rather than as each piece lands.** The
-  feature line is `Environment.record`, the run archive, and `planktos.load_run` — but
-  until the reader exists the archive is **write-only**, and a changelog entry announcing
-  it then would describe something a user cannot yet use. A0, A1, A2 and A3a are all
-  invisible from outside for the same reason and none of them takes a line on its own.
-  Dyload-only in its fluid half — it depends on `FluidData` — but the *agent* half does
-  not, so check portability with `git diff master -- <file>` before assuming the whole
-  feature is dyload-only. Two further lines belong to step A in their own right:
-  **`capture_interval`**, which changes what `time_history`, `pos_history` and
-  `vel_history` contain and so is visible to any script that indexes them; and the fact
-  that recording into a **non-empty directory redirects to a timestamped sibling**
-  (§2.1). ⚠️ *An earlier version of this bullet filed `capture_interval` at A3b, on the
-  grounds that it is observable without a reader. True but beside the point: it is only
-  **reachable** through `record()`, which is itself unannounced until A4/A5, so a line
-  describing it would leave a reader asking where to set it. All three land together.* A0 is an internal refactor with no behavior change and gets no line —
-  if it changes a trajectory, that is a bug, not a changelog entry;
-- **Owed at step B:** if Planktos writes vorticity into the source directory (§3.3) that
-  is user-visible in its own right and needs its own line;
+- **[done]** step A: `Environment.record` and `planktos.load_run`, plus
+  `capture_interval` and the redirect of a non-empty directory to a timestamped sibling
+  (§2.1), each on its own line under 1.1.0;
+- **[done]** step B: vorticity written beside the source's own dumps (§3.3) has its own
+  line under 1.1.0;
 - **[done]** step C: plots reading what a recording wrote, the colour limit becoming
   global rather than growing with the frames drawn, and `record(plot_all=)`. Three
   lines under 1.1.0, plus two bug-fix lines the merge of `animate`'s two branches
@@ -2719,9 +2706,9 @@ not obvious from it. Line numbers drift — search for the names.
   queue.
 
 **Docs:** **[done]** the `fps`/`playback_rate` model and its `dt` ceiling, and the
-seconds assumption, in `docs/quickstart.rst`. Still owed: `.mkv` guidance for long runs;
-what the archive stores and when it is refused; and an API page for `RunArchive` /
-`load_run` (§2.7) — a public class needs one, unlike everything else in this plan.
+seconds assumption, in `docs/quickstart.rst`. **[done]** the `RunArchive` / `load_run`
+API page (§2.7), `docs/api/RunArchive.rst`, which also carries the `.mkv` guidance for
+long runs, what the archive stores, and what it refuses.
 
 ⚠️ **Also owed: the interpolation-cost numbers in Appendix C belong in `docs/api`.**
 They answer "what does `INUM` cost me", which is a user's question, not an internal

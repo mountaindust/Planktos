@@ -4,7 +4,7 @@
 (a sliding window of timesteps) instead of holding the whole dataset in memory, so
 that large 3D time-varying flows (~100 GB raw, larger once splined) can be used.
 
-**Current state (2026-08-27).** The architecture is built and the API has settled —
+**Current state (2026-10-13).** The architecture is built and the API has settled —
 all fluid data is a `FluidData` object (`planktos/fluid.py`). Dynamic windowed
 loading works and is tested in **both** 2D and 3D against committed fixtures.
 Temporal interpolation of dynamically-loaded data is **linear in time**
@@ -12,9 +12,10 @@ Temporal interpolation of dynamically-loaded data is **linear in time**
 (`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
 story.
 
-**Suite: 1285 passed / 50 skipped (`pytest --runstreaming`, ~60 s),
-1333 / 2 (`pytest --runslow --runstreaming`, ~5 min).** No failures, **and no
-xfails: the pre-release list is empty.** *(Re-measured 2026-09-17.)*
+**Suite: 1321 passed / 50 skipped (`pytest --runstreaming`, ~60 s),
+1369 / 2 (`pytest --runslow --runstreaming`, ~5 min).** No failures, **and no
+xfails: the pre-release list is empty.** *(Full run re-measured 2026-10-13; the
+`--runstreaming` count is from 2026-09-29.)*
 
 **The pre-release list is empty (2026-09-03).** `tests/test_data_streaming/` — the
 adversarial suite written from `run_persistence.md`, covering the streaming story end
@@ -53,7 +54,10 @@ it.
   a plot reads the fluid from what the run recorded — no argument needed, the
   Environment remembers — so replaying a windowed run costs **zero** loader calls;
   vorticity colour limits are global; and `Environment.record(plot_all=)` renders when
-  the `with` block ends. The rest is the plan below — component **D**, tiling.
+  the `with` block ends. **Component R**, the full-state reboot, is done too
+  (2026-09-08; item 4 below). The rest is the plan below — component **D**, tiling.
+- **2D `.vti`/`.vtr`/`.pvd` fluid loader** (2026-09-15) and **an extruded STL in a 2D
+  environment** (2026-09-29) — see "Open from the 2D `.vti` work" for what they left.
 - **`_ibc.py` collision passes** — done on `master` and merged here; coverage 91% → 99%.
 
 **Phase 2 is complete (2026-08-11).** The loader reads the real OpenFOAM dataset, the
@@ -62,11 +66,9 @@ asserted. That was the branch's stated remaining reason to exist.
 
 **Where the work goes next, in priority order:**
 
-Items 1 and 2 are closed. **Items 3 and 4 are both open, and 4 is the substantial
-one**: the docstring style sweep was asked for immediately after component C, and the
-**full-state reboot** (`run_persistence.md` §2.11, component R) was scheduled ahead of
-tiling on 2026-08-27. Tiling (item 5) and the §7 prose pass that rides on it both move
-back behind it.
+Items 1, 2, 4 and 6 are closed. **Item 3, the docstring sweep, is the one in
+progress**, with the stored-vorticity check under "Open from the 2D `.vti` work"
+beside it. Tiling (item 5) and the §7 prose pass that rides on it come after.
 
 1. ✅ **The run archive and the plotting work it feeds — components A, B and C are
    complete** (`docs/notes/run_persistence.md`). §5.3 and §6.1 steps **A0–A5**,
@@ -259,7 +261,7 @@ back behind it.
    comes off with the sub-step that earns it. Three of them assert a file location
    §2.11.5 has since decided differently, so they are **retargeted** at the checkpoint
    rather than merely un-`xfail`ed, with behavioral round-trip tests beside them; the
-   retargeted checklist is deleted once R is confirmed done.
+   retargeted checklist was deleted at R6, when R was confirmed done.
 5. 🟡 **Note §9** (real position-wrapping tiling, 2D and 3D; whether `Environment.extend`
    returns) — the design pass is written up in `run_persistence.md` §9; §9.3 is the
    restoration checklist. This also **unblocks the prose-docs sweep**, which is
@@ -1284,8 +1286,8 @@ Inherited blockers from the overhaul's notes:
   are unlikely to change; prefer `INUM=None` for inertial particles when the data
   fits). Per Phase 1 (C) it quotes the **convergence orders and the ensemble result,
   not the bare rms ratio**, and states that absolute errors do not transfer between
-  datasets while the orders do.
-  - Remaining: re-check the numbers on 3D data in Phase 2 and update the page.
+  datasets while the orders do. The 3D OpenFOAM numbers from Phase 2 are on the page
+  too; the 2D sea-fan numbers are not yet (`run_persistence.md` §7).
 
 ## Inherited follow-ups from the mvbnd overhaul (non-blocking) 🟢
 
@@ -1372,7 +1374,7 @@ extrusion across the solver's one cell of thickness.
   STL loaded first; refusal while recording keeps the record), `test_provenance.py`.
 - [x] End to end on the sea-fan data: 400 agents released just upstream of the plate,
   39 collision events over 3 s, none strictly inside a web at any step.
-- [ ] Changelog line under 1.1.0 (wording to confirm).
+- [x] Changelog line under 1.1.0.
 
 Deferred until a dataset needs it: slicing a genuinely 3D STL at the fluid's plane.
 
