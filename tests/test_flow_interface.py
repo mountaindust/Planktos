@@ -246,6 +246,28 @@ def test_flow_points_match_component_shape():
     assert np.isclose(envir.flow.flow_points[1][-1], 8.0)
 
 
+def test_calling_time_invariant_flow_says_to_index_it():
+    # Regression: this raised "'NoneType' object is not subscriptable", from
+    # reading flow_times[0] before anything checked that there were times.
+    envir, _, _ = _linear_2d()
+    with pytest.raises(TypeError, match='time-invariant'):
+        envir.flow(0.5)
+
+
+@pytest.mark.parametrize('INUM', [None, True])
+def test_constructing_fluiddata_leaves_the_callers_list_alone(INUM):
+    # Regression: __init__ replaced the entries of the list it was handed with
+    # its splines, so a caller still holding that list found splines in it.
+    from planktos import fluid
+    t = np.linspace(0.0, 4.0, 5)
+    x = np.linspace(0.0, 1.0, 3)
+    y = np.linspace(0.0, 1.0, 4)
+    comps = [np.ones((5, 3, 4)) * t[:, None, None] for _ in range(2)]
+    given = list(comps)
+    fluid.FluidData(given, (x, y), flow_times=t, INUM=INUM)
+    assert all(g is c for g, c in zip(given, comps))
+
+
 # --------------------------------------------------------------------------- #
 #                    fmin / fmax — tuple contract (Appendix A lock)                  #
 # --------------------------------------------------------------------------- #

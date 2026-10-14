@@ -1200,12 +1200,13 @@ class Environment:
             number of first vtk dump to read in
         d_finish : int, optional
             number of last vtk dump to read in, or None to read to end
-        INUM : int > 3, True, or None (default)
+        INUM : int >= 2, True, or None (default)
             max number of splined intervals held at any one time; the number of
-            time points held is 1+INUM, and INUM must be at least 4. None splines
+            time points held is 1+INUM, and INUM must be at least 2. None splines
             the entire dataset at once and cubically in time; True holds the
             entire dataset too but splines it linearly; an int streams a sliding
-            window from storage and splines that linearly.
+            window from storage and splines that linearly. Use an int only
+            when the dataset will not fit in memory: streaming it is slower.
         '''
         self._refuse_while_recording()
 
@@ -1227,7 +1228,7 @@ class Environment:
         Also, imported times will be translated backward so that the first time 
         loaded corresponds to a Planktos environment time of 0.0.
 
-        If INUM (interval number) is set to an integer >= 4, then the data 
+        If INUM (interval number) is set to an integer >= 2, then the data 
         will be dynamically loaded as needed with INUM intervals between the 
         temporal data sets available at any given time.
 
@@ -1244,12 +1245,13 @@ class Environment:
             vtk dump number to start with.
         d_finish : int, optional
             vtk dump number to end with. If None, end with last one.
-        INUM : int > 3, True, or None (default)
+        INUM : int >= 2, True, or None (default)
             max number of splined intervals held at any one time; the number of
-            time points held is 1+INUM, and INUM must be at least 4. None splines
+            time points held is 1+INUM, and INUM must be at least 2. None splines
             the entire dataset at once and cubically in time; True holds the
             entire dataset too but splines it linearly; an int streams a sliding
-            window from storage and splines that linearly.
+            window from storage and splines that linearly. Use an int only
+            when the dataset will not fit in memory: streaming it is slower.
         periodic_dim : list of 2 or 3 bool, default=(True, True, False)
             True if that spatial dimension is periodic, otherwise False
         vel_conv : float, optional
@@ -1306,7 +1308,7 @@ class Environment:
         different timeline than the user believes they loaded is worse than one
         that fails.
 
-        If INUM (interval number) is set to an integer >= 4, then the data will
+        If INUM (interval number) is set to an integer >= 2, then the data will
         be dynamically loaded as needed with INUM intervals between the temporal
         data sets available at any given time.
 
@@ -1317,12 +1319,13 @@ class Environment:
         path : string
             path to the directory holding the ``.vtm.series`` index (typically
             the ``VTK`` directory foamToVTK writes), or to the index file itself
-        INUM : int > 3, True, or None (default)
+        INUM : int >= 2, True, or None (default)
             max number of splined intervals held at any one time; the number of
-            time points held is 1+INUM, and INUM must be at least 4. None splines
+            time points held is 1+INUM, and INUM must be at least 2. None splines
             the entire dataset at once and cubically in time; True holds the
             entire dataset too but splines it linearly; an int streams a sliding
-            window from storage and splines that linearly.
+            window from storage and splines that linearly. Use an int only
+            when the dataset will not fit in memory: streaming it is slower.
         periodic_dim : list of 3 bool, default=(False, False, False)
             True if that spatial dimension is periodic, otherwise False
         vel_conv : float, optional
@@ -1370,7 +1373,7 @@ class Environment:
         Dumps the collection declares but which are not on disk are skipped with
         a warning, and the timeline is built over those that remain.
 
-        If INUM (interval number) is set to an integer >= 4, then the data will
+        If INUM (interval number) is set to an integer >= 2, then the data will
         be dynamically loaded as needed with INUM intervals between the temporal
         data sets available at any given time.
 
@@ -1381,12 +1384,13 @@ class Environment:
         path : string
             a directory holding a ``.pvd`` collection or ``.vti``/``.vtr``
             files, the ``.pvd`` itself, or a single dump file
-        INUM : int > 3, True, or None (default)
+        INUM : int >= 2, True, or None (default)
             max number of splined intervals held at any one time; the number of
-            time points held is 1+INUM, and INUM must be at least 4. None splines
+            time points held is 1+INUM, and INUM must be at least 2. None splines
             the entire dataset at once and cubically in time; True holds the
             entire dataset too but splines it linearly; an int streams a sliding
-            window from storage and splines that linearly.
+            window from storage and splines that linearly. Use an int only
+            when the dataset will not fit in memory: streaming it is slower.
         periodic_dim : list of 3 bool, default=(False, False, False)
             True if that spatial dimension is periodic, otherwise False
         vel_conv : float, optional

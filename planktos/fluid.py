@@ -882,6 +882,20 @@ class SplineRangeError(ValueError):
 #######################################################################
 
 
+def _check_INUM(INUM):
+    '''Raise ValueError unless INUM is None, True, False or an int of at least 2.
+
+    Called by FluidData.__init__, and by each loader before it reads anything.
+    '''
+    if INUM is None or isinstance(INUM, bool):
+        return
+    if not isinstance(INUM, (int, np.integer)) or INUM < 2:
+        raise ValueError(
+            "INUM must be None, True, or an integer of at least 2, not {!r}. An "
+            "integer INUM holds a window of INUM+1 time points and slides it by "
+            "loading INUM-1 new ones.".format(INUM))
+
+
 # Design note (not user-facing): routines for manipulating the fluid velocity
 # field should find their way into this class from the Environment class.
 class FluidData:
@@ -989,11 +1003,13 @@ class FluidData:
         flow_times : ndarray of floats
             if specified, the time stamp for each index t in the flow arrays (time 
             varying fluid velocity fields only)
-        INUM : int > 3, True, or None (default)
+        INUM : int >= 2, True, or None (default)
             Used by subclasses to dynamically load data from storage. It
             corresponds to the number of intervals loaded at any given time when
             dynamically loading data and linearly splining. True results in
             linearly splining all data, None results in cubic splining all data.
+            Use an int only when the dataset will not fit in memory: streaming
+            it is slower.
         periodic_dim : bool (default=False), or tuple of bool
             Whether or not the fluid data is periodic in each spatial dimension.
             Periodicity of the fluid data is independent of the agent boundary
@@ -1006,6 +1022,9 @@ class FluidData:
             that the LLC was in the lower left corner, this stores the original LLC.
         '''
         
+        _check_INUM(INUM)
+        # Its entries are replaced by splines below; the caller's list is not.
+        flow = list(flow)
         self.INUM = INUM # This is how many intervals to use when initiating 
                          #  the spline object.
         self.fluid_domain_LLC = fluid_domain_LLC
@@ -1115,37 +1134,20 @@ class FluidData:
         '''Retrieve fluid data at the requested time and update the spline 
         dynamically as needed.
         '''
-        # Enforce constant extrapolation beyond full time bounds
+        if self.flow_times is None:
+            raise TypeError('This fluid is time-invariant, so it cannot be '
+                            'evaluated at a time. Index it instead: flow[0] '
+                            'is the x-velocity.')
+        # Constant extrapolation beyond the data's time bounds
         if time <= self.flow_times[0]:
-            start_time = self.flow_times[0]
-            try:
-                return [fspline(start_time) for fspline in self._flow]
-            except SplineRangeError:
-                self.update_spline(start_time)
-                return [fspline(start_time) for fspline in self._flow]
-            except TypeError:
-                print('Cannot pass time to time-invariant flow.')
-                raise
+            time = self.flow_times[0]
         elif time >= self.flow_times[-1]:
-            end_time = self.flow_times[-1]
-            try:
-                return [fspline(end_time) for fspline in self._flow]
-            except SplineRangeError:
-                self.update_spline(end_time)
-                return [fspline(end_time) for fspline in self._flow]
-            except TypeError:
-                print('Cannot pass time to time-invariant flow.')
-                raise
-        else:
-            # interpolate within full time bounds
-            try:
-                return [fspline(time) for fspline in self._flow]
-            except SplineRangeError:
-                self.update_spline(time)
-                return [fspline(time) for fspline in self._flow]
-            except TypeError:
-                print('Cannot pass time to time-invariant flow.')
-                raise
+            time = self.flow_times[-1]
+        try:
+            return [fspline(time) for fspline in self._flow]
+        except SplineRangeError:
+            self.update_spline(time)
+            return [fspline(time) for fspline in self._flow]
     
     def __len__(self):
         '''Returns the len of the fluid list.'''
@@ -1160,7 +1162,7 @@ class FluidData:
         time point based on what data is currently loaded and splined). So, allow 
         this if all the data is splined and otherwise return an error.
         '''
-        if self.INUM is None:
+        if not self.is_windowed:
             return self._flow[pos]
         else:
             raise TypeError('A FluidData object with dynamically loaded data '+
@@ -1249,7 +1251,8 @@ class FluidData:
             called with ``(idx_start, flow)``, where ``idx_start`` is the index
             into ``flow_times`` of the first time point supplied and ``flow`` is
             a list of per-component ndarrays with a leading time axis -- raw
-            data, not splines.
+            data, not splines. Keep the arrays, not the list: the list is
+            reused after the call returns.
         '''
 
         if observer not in self._dump_observers:
@@ -1935,9 +1938,6 @@ class FluidData:
                 self._flow[0](time)
             except SplineRangeError:
                 self.update_spline(time)
-            except TypeError:
-                print('Cannot pass time to time-invariant flow.')
-                raise
             for fspline in self._flow:
                 if isinstance(fspline, fCubicSpline):
                     dudt = fspline.derivative()(time)
@@ -2022,7 +2022,7 @@ class IB2dData(FluidData):
         Can read in vector data with filenames u.####.vtk or scalar data
         with filenames uX.####.vtk and uY.####.vtk.
 
-        If INUM (interval number) is set to an integer >= 4, then the data 
+        If INUM (interval number) is set to an integer >= 2, then the data 
         will be dynamically loaded as needed with INUM intervals between the 
         temporal data sets available at any given time.
 
@@ -2042,12 +2042,13 @@ class IB2dData(FluidData):
             number of first vtk dump to read in
         d_finish : int, optional
             number of last vtk dump to read in, or None to read to end
-        INUM : int > 3, True, or None (default)
+        INUM : int >= 2, True, or None (default)
             max number of splined intervals held at any one time; the number of
-            time points held is 1+INUM, and INUM must be at least 4. None splines
+            time points held is 1+INUM, and INUM must be at least 2. None splines
             the entire dataset at once and cubically in time; True holds the
             entire dataset too but splines it linearly; an int streams a sliding
-            window from storage and splines that linearly.
+            window from storage and splines that linearly. Use an int only
+            when the dataset will not fit in memory: streaming it is slower.
         '''
 
         ##### Parse parameters and read in data #####
@@ -2104,7 +2105,7 @@ class IB2dData(FluidData):
             flow, flow_points, self.L = _wrap_flow(flow, self._orig_flow_points, 
                                                    periodic_dim=(True, True))
         else:
-            assert INUM > 3, 'INUM must be at least 4.'
+            _check_INUM(INUM)
             flow, x, y = self._read_IB2d_dumpfiles(self.path, self.d_start, 
                                                    self.d_start+INUM, 
                                                    self.vector_data)
@@ -2328,7 +2329,7 @@ class VTK3dData(FluidData):
         Also, imported times will be translated backward so that the first time 
         loaded corresponds to a Planktos environment time of 0.0.
 
-        If INUM (interval number) is set to an integer >= 4, then the data 
+        If INUM (interval number) is set to an integer >= 2, then the data 
         will be dynamically loaded as needed with INUM intervals between the 
         temporal data sets available at any given time.
 
@@ -2346,12 +2347,13 @@ class VTK3dData(FluidData):
             vtk dump number to start with.
         d_finish : int, optional
             vtk dump number to end with. If None, end with last one.
-        INUM : int > 3, True, or None (default)
+        INUM : int >= 2, True, or None (default)
             max number of splined intervals held at any one time; the number of
-            time points held is 1+INUM, and INUM must be at least 4. None splines
+            time points held is 1+INUM, and INUM must be at least 2. None splines
             the entire dataset at once and cubically in time; True holds the
             entire dataset too but splines it linearly; an int streams a sliding
-            window from storage and splines that linearly.
+            window from storage and splines that linearly. Use an int only
+            when the dataset will not fit in memory: streaming it is slower.
         periodic_dim : list of 2 or 3 bool, default=(True, True, False)
             True if that spatial dimension is periodic, otherwise False
         vel_conv : float, optional
@@ -2410,7 +2412,7 @@ class VTK3dData(FluidData):
                                                  self.d_start, self.d_finish)
                 print('Done!')
             else:
-                assert INUM > 3, 'INUM must be at least 4.'
+                _check_INUM(INUM)
                 flow, mesh = self._read_vtkfiles(self.path, self.title,
                                                  self.d_start, self.d_start+INUM)
                 # record the inclusive bounds of the starting dump numbers to be used
@@ -2757,7 +2759,7 @@ class OpenFOAMData(FluidData):
         to avoid. Dumps discovered by globbing (2 and 3) are ordered by their
         recovered times, falling back to a numeric-aware sort of their names.
 
-        If INUM (interval number) is set to an integer >= 4, the data will be
+        If INUM (interval number) is set to an integer >= 2, the data will be
         dynamically loaded as needed with INUM intervals between the temporal
         data sets available at any given time.
 
@@ -2767,12 +2769,13 @@ class OpenFOAMData(FluidData):
             path to the directory holding the export (typically the ``VTK``
             directory foamToVTK writes), or to the ``.vtm.series`` index itself.
             A directory need not contain an index; see the fallback chain above.
-        INUM : int > 3, True, or None (default)
+        INUM : int >= 2, True, or None (default)
             max number of splined intervals held at any one time; the number of
-            time points held is 1+INUM, and INUM must be at least 4. None splines
+            time points held is 1+INUM, and INUM must be at least 2. None splines
             the entire dataset at once and cubically in time; True holds the
             entire dataset too but splines it linearly; an int streams a sliding
-            window from storage and splines that linearly.
+            window from storage and splines that linearly. Use an int only
+            when the dataset will not fit in memory: streaming it is slower.
         periodic_dim : list of 3 bool, default=(False, False, False)
             True if that spatial dimension is periodic, otherwise False. Defaults
             to non-periodic throughout, since a finite-volume export of this shape
@@ -2817,7 +2820,7 @@ class OpenFOAMData(FluidData):
         # read -- a window sliding back to the start must not pay for it again.
         self._mesh_verified = False
         if INUM is not None and INUM is not True:
-            assert INUM > 3, 'INUM must be at least 4.'
+            _check_INUM(INUM)
 
         ##### Resolve the series index and the dumps that actually exist #####
         self._dumps, flow_times = self._read_series(path)
@@ -3613,7 +3616,7 @@ class VTKXMLData(FluidData):
         A dump the collection declares but which is not on disk is skipped with
         a warning, and the timeline is built over the dumps that exist.
 
-        If INUM (interval number) is set to an integer >= 4, the data will be
+        If INUM (interval number) is set to an integer >= 2, the data will be
         dynamically loaded as needed with INUM intervals between the temporal
         data sets available at any given time.
 
@@ -3622,12 +3625,13 @@ class VTKXMLData(FluidData):
         path : string
             a directory holding a ``.pvd`` collection or ``.vti``/``.vtr``
             files, the ``.pvd`` itself, or a single dump file
-        INUM : int > 3, True, or None (default)
+        INUM : int >= 2, True, or None (default)
             max number of splined intervals held at any one time; the number of
-            time points held is 1+INUM, and INUM must be at least 4. None splines
+            time points held is 1+INUM, and INUM must be at least 2. None splines
             the entire dataset at once and cubically in time; True holds the
             entire dataset too but splines it linearly; an int streams a sliding
-            window from storage and splines that linearly.
+            window from storage and splines that linearly. Use an int only
+            when the dataset will not fit in memory: streaming it is slower.
         periodic_dim : list of 3 bool, default=(False, False, False)
             True if that spatial dimension is periodic, otherwise False
         vel_conv : float, optional
@@ -3663,7 +3667,7 @@ class VTKXMLData(FluidData):
             # A call replayed from a run archive's provenance passes a list.
             periodic_dim = tuple(periodic_dim)
         if INUM is not None and INUM is not True:
-            assert INUM > 3, 'INUM must be at least 4.'
+            _check_INUM(INUM)
         if dt is not None and not dt > 0:
             raise ValueError("dt must be positive, not {!r}.".format(dt))
         self._name_pattern = (None if time_from_name is None

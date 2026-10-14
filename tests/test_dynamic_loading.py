@@ -40,6 +40,7 @@ because what those sections are about is the timeline a loader builds from files
 
 import os
 import shutil
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -142,7 +143,7 @@ def _from_planktos(caught):
 #            (A) machinery correctness -- windowed == full, to round-off       #
 # --------------------------------------------------------------------------- #
 
-@pytest.mark.parametrize('INUM', [4, 5, 7])
+@pytest.mark.parametrize('INUM', [2, 3, 4, 5, 7])
 def test_windowed_matches_full_linear_forward_sweep(INUM):
     dyn, full, t = _pair(_field_2d(), INUM)
     for q in np.linspace(t[0], t[-1], 97):
@@ -150,7 +151,7 @@ def test_windowed_matches_full_linear_forward_sweep(INUM):
         assert _diff(dyn(q), ref) <= _tol(ref)
 
 
-@pytest.mark.parametrize('INUM', [4, 5, 7])
+@pytest.mark.parametrize('INUM', [2, 3, 4, 5, 7])
 def test_windowed_matches_full_linear_backward_sweep(INUM):
     dyn, full, t = _pair(_field_2d(), INUM)
     for q in np.linspace(t[-1], t[0], 97):
@@ -221,7 +222,7 @@ def test_holdover_roundoff_does_not_accumulate():
 #                       (B) window-sliding behavior                            #
 # --------------------------------------------------------------------------- #
 
-@pytest.mark.parametrize('INUM', [4, 5, 7])
+@pytest.mark.parametrize('INUM', [2, 3, 4, 5, 7])
 def test_window_stays_bounded_across_a_full_sweep(INUM):
     # The whole point of dynamic loading: memory must not grow with the dataset.
     # `<=` rather than `==` because the final window is whatever remains of the
@@ -254,7 +255,7 @@ def test_forward_slide_walks_to_the_end_of_the_dataset():
     assert dyn.loaded_idx_bnds == dyn.loaded_dump_bnds
 
 
-@pytest.mark.parametrize('INUM', [4, 5, 7])
+@pytest.mark.parametrize('INUM', [2, 3, 4, 5, 7])
 def test_index_spaces_agree_at_every_slide(INUM):
     # loaded_dump_bnds and loaded_idx_bnds are parallel inclusive descriptions of
     # the same window. This source numbers dumps to match time indices, so they
@@ -380,6 +381,51 @@ def test_indexing_a_dynamically_loaded_fluiddata_raises():
     dyn, _, _ = _pair(_field_2d(), 5)
     with pytest.raises(TypeError):
         dyn[0]
+
+
+@pytest.mark.filterwarnings('ignore:INUM=20 spans the entire dataset')
+@pytest.mark.parametrize('INUM', [True, 20])
+def test_indexing_works_whenever_the_whole_dataset_is_resident(INUM):
+    # Regression: indexing was refused for every INUM but None, though only a
+    # sliding window makes a time index ambiguous. INUM=True, and an int that
+    # spans the dataset (21 time points here), hold every dump.
+    t, fpoints, comps = _field_2d()
+    fd = fluid.FluidData([c.copy() for c in comps], fpoints, t.copy(), INUM=INUM)
+    assert not fd.is_windowed
+    assert np.array_equal(fd[0][7], comps[0][7])
+    assert np.array_equal(fd[1][-3:], comps[1][-3:])
+
+
+@pytest.mark.parametrize('INUM', [1, 0, -3, 2.5])
+def test_an_INUM_below_two_is_refused(INUM):
+    # Regression: INUM=1 hung forever. Each forward slide loads INUM-1 new
+    # dumps, so the window never advanced. The loaders' own check was an
+    # assert, which python -O strips, and FluidData had none.
+    t, fpoints, comps = _field_2d()
+    with pytest.raises(ValueError, match='at least 2'):
+        fluid.FluidData([c.copy() for c in comps], fpoints, t.copy(), INUM=INUM)
+
+
+@pytest.mark.parametrize('loader', [lambda I: _vtk3d(I), lambda I: _ib2d(I),
+                                    lambda I: fluid.VTKXMLData(VTIXML, INUM=I)],
+                         ids=['VTK3dData', 'IB2dData', 'VTKXMLData'])
+def test_the_loaders_refuse_an_INUM_below_two(loader):
+    # Refused before any file is read: VTKXMLData would otherwise warn that its
+    # fixture is a single point thick in z.
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        with pytest.raises(ValueError, match='at least 2'):
+            loader(1)
+
+
+def test_a_loader_at_the_smallest_INUM_matches_full_linear():
+    # The minimum of 2 is the slider's own limit, not a margin. Drive a real
+    # loader there, in both directions, against the same data held whole.
+    dyn, full = _vtk3d(2), _vtk3d(True)
+    t = full.flow_times
+    for q in list(np.linspace(t[0], t[-1], 29)) + list(np.linspace(t[-1], t[0], 29)):
+        ref = full(q)
+        assert _diff(dyn(q), ref) <= _tol(ref)
 
 
 def test_not_enough_data_for_the_requested_window_raises():
