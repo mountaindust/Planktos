@@ -1220,6 +1220,21 @@ def test_ib2d_periodic_wrap_and_domain():
     assert np.allclose(u[:, -1], u[:, 0])
 
 
+def test_ib2d_single_dump_is_time_invariant_and_wrapped():
+    # One dump comes back with no time axis, its periodic endpoint restored
+    # just as for a series.
+    fd = fluid.IB2dData(IB2D, dt=0.1, print_dump=10, d_start=3, d_finish=3)
+    assert fd.flow_times is None
+    assert fd.fshape == (7, 6)
+    assert np.allclose(fd.L, [6.0, 5.0])
+    u, v = fd[0], fd[1]
+    assert np.allclose(u, 3.0)
+    x = fd.flow_points[0][:, None]
+    assert np.allclose(v, np.sin(2 * np.pi * x / 6.0))
+    assert np.array_equal(v[-1, :], v[0, :])
+    assert np.array_equal(u[:, -1], u[:, 0])
+
+
 # --------------------------------------------------------------------------- #
 #        the leading time axis a load_dumpfiles is contracted to return       #
 # --------------------------------------------------------------------------- #

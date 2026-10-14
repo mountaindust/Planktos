@@ -16,91 +16,11 @@ from pathlib import Path
 from . import _dataio
 
 
-def _wrap_flow(flow, flow_points, periodic_dim=(True, True, False)):
-    '''In some cases, software may print out fluid velocity data that omits
-    the velocities at the right boundaries in spatial dimensions that are
-    meant to be periodic. This helper function restores that data by copying
-    everything over.
-
-    This assumes a regular fluid grid.
-
-    Parameters
-    ----------
-    flow : list of ndarrays
-        not modified; a new list is returned
-    flow_points : tuple of mesh coordinates (x,y,[z])
-    periodic_dim : sequence of bool, one per spatial dimension
-        True if that spatial dimension is periodic, otherwise False. The
-        default, (True, True, False), suits 3D data only.
-
-    Returns
-    -------
-    flow : list of ndarrays
-    flow_points : tuple of mesh coordinates (ndarrays)
-    L : list of dimension lengths
-    '''
-
-    dim = len(flow_points)
-    if dim == len(flow[0].shape):
-        TIME_DEP = False
-    else:
-        TIME_DEP = True
-            
-    dx = np.array([flow_points[d][-1]-flow_points[d][-2] 
-                    for d in range(dim)])
-    
-    # find new flow field shape
-    new_flow_shape = np.array(flow[0].shape)
-    if not TIME_DEP:
-        new_flow_shape += 1*np.array(periodic_dim)
-    else:
-        new_flow_shape[1:] += 1*np.array(periodic_dim)
-
-    # create new flow field, putting old data in lower left corner
-    new_flow = [np.zeros(new_flow_shape) for d in range(dim)]
-    if TIME_DEP:
-        old_shape = flow[0].shape[1:]
-    else:
-        old_shape = flow[0].shape
-    for d in range(dim):
-        if dim == 2:
-            new_flow[d][...,:old_shape[0],:old_shape[1]] = flow[d]
-        else:
-            new_flow[d][...,:old_shape[0],:old_shape[1],:old_shape[2]] = flow[d]
-    # replace old flow field
-    flow = new_flow
-
-    # fill in the new edges and update flow points
-    flow_points_new = []
-    for d in range(dim):
-        if periodic_dim[d]:
-            flow_points_new.append(np.append(flow_points[d], 
-                                flow_points[d][-1]+dx[d]))
-            for dd in range(dim):
-                if d == 0 and not TIME_DEP:
-                    flow[dd][-1,...] = flow[dd][0,...]
-                elif d == 0 and TIME_DEP:
-                    flow[dd][:,-1,...] = flow[dd][:,0,...]
-                elif d == 1 and not TIME_DEP:
-                    flow[dd][:,-1,...] = flow[dd][:,0,...]
-                elif d == 1 and TIME_DEP:
-                    flow[dd][:,:,-1,...] = flow[dd][:,:,0,...]
-                else:
-                    flow[dd][...,-1] = flow[dd][...,0]
-        else:
-            flow_points_new.append(flow_points[d])
-
-    flow_pts = tuple(flow_points_new)
-    # return flow, flow_points, L
-    return flow, flow_pts, [flow_pts[d][-1] for d in range(dim)]
-
-
-
 def _wrap_scalar(f, periodic_dim):
     '''Restore the duplicated end line on each periodic axis of a *scalar* field.
 
-    The scalar counterpart of ``_wrap_flow``, for a derived field read from a
-    source that omits the periodic endpoint, such as IB2d's ``Omega.####.vtk``.
+    For a derived field read from a source that omits the periodic endpoint,
+    such as IB2d's ``Omega.####.vtk``.
 
     Parameters
     ----------
@@ -2107,37 +2027,29 @@ class IB2dData(FluidData):
         ### Load fluid data ###
         if INUM is None or INUM is True:
             print('Reading vtk fluid data...')
-            flow, x, y = self._read_IB2d_dumpfiles(self.path, self.d_start, 
+            flow, x, y = self._read_IB2d_dumpfiles(self.path, self.d_start,
                                                    self.d_finish, self.vector_data)
             print('Done!')
-            
-            # shift domain to quadrant 1
-            self._orig_flow_points = (x-x[0], y-y[0])
-            fluid_domain_LLC = (x[0], y[0])
-
-            ### Convert environment dimensions and add back the periodic gridpoints ###
-            # IB2d always has periodic BC and returns a VTK with fluid specified 
-            #     at grid points but lacking the grid points at the end of the 
-            #     domain (since it's a duplicate). Make the fluid periodic within 
-            #     Planktos and to fill out the domain by adding back these last points
-            flow, flow_points, self.L = _wrap_flow(flow, self._orig_flow_points, 
-                                                   periodic_dim=(True, True))
         else:
             _check_INUM(INUM)
-            flow, x, y = self._read_IB2d_dumpfiles(self.path, self.d_start, 
-                                                   self.d_start+INUM, 
+            flow, x, y = self._read_IB2d_dumpfiles(self.path, self.d_start,
+                                                   self.d_start+INUM,
                                                    self.vector_data)
-            # shift domain to quadrant 1
-            self._orig_flow_points = (x-x[0], y-y[0])
-            fluid_domain_LLC = (x[0], y[0])
-
-            ### Convert environment dimensions and add back the periodic gridpoints ###
-            flow, flow_points, self.L = _wrap_flow(flow, self._orig_flow_points, 
-                                                   periodic_dim=(True, True))
             # record the inclusive bounds of the starting dump numbers to be used
             self.loaded_dump_bnds = (self.d_start, self.d_start+INUM)
             # same, but based off of zero to correspond with flow_times indices
             self.loaded_idx_bnds = (0,INUM)
+
+        # shift domain to quadrant 1
+        self._orig_flow_points = (x-x[0], y-y[0])
+        fluid_domain_LLC = (x[0], y[0])
+
+        # IB2d always has periodic BC, and its vtk omits the grid points at the
+        #   upper end of the domain, which duplicate the lower ones. The reader
+        #   restored them in the field; restore them in the grid.
+        flow_points = tuple(np.append(p, p[-1] + (p[-1] - p[-2]))
+                            for p in self._orig_flow_points)
+        self.L = [p[-1] for p in flow_points]
 
         # pass to parent to spline the data.
         super().__init__(flow, flow_points, flow_times, INUM, periodic_dim=True,
@@ -2149,11 +2061,8 @@ class IB2dData(FluidData):
         '''
         Dynamically load additional IB2d data.
         '''
-        flow = self._read_IB2d_dumpfiles(self.path, d_start, d_finish, 
+        return self._read_IB2d_dumpfiles(self.path, d_start, d_finish,
                                          self.vector_data, False)
-        flow, flow_points, L = _wrap_flow(flow, self._orig_flow_points, 
-                                          periodic_dim=(True, True))
-        return flow
 
 
 
@@ -2242,21 +2151,16 @@ class IB2dData(FluidData):
         Returns
         -------
         fluid : list of ndarray
-        x : x-coordinate mesh, 1D ndarray
-        y : y-coordinate mesh, 1D ndarray
+            one per velocity component, indexed (t,x,y) with the periodic
+            endpoint IB2d omits restored along x and y; (x,y) for a single dump
+        x : x-coordinate mesh, 1D ndarray, as IB2d wrote it
+        y : y-coordinate mesh, 1D ndarray, as IB2d wrote it
         '''
-        X_vel = []
-        Y_vel = []
-        for n in range(d_start, d_finish+1):
+        nt = d_finish - d_start + 1
+        X_vel = None
+        for i, n in enumerate(range(d_start, d_finish+1)):
             # Points to desired data viz_IB2d data file
-            if n < 10:
-                numSim = '000'+str(n)
-            elif n < 100:
-                numSim = '00'+str(n)
-            elif n < 1000:
-                numSim = '0'+str(n)
-            else:
-                numSim = str(n)
+            numSim = '{:04d}'.format(n)
 
             # Imports (x,y) grid values and ALL Eulerian Data %
             #                      DEFINITIONS
@@ -2278,8 +2182,6 @@ class IB2dData(FluidData):
                 else:
                     uX,uY = _dataio.read_2DEulerian_Data_From_vtk(path, numSim,
                                                                   strChoice,xy)
-                X_vel.append(uX.T) # (y,x) -> (x,y) coordinates
-                Y_vel.append(uY.T) # (y,x) -> (x,y) coordinates
             else:
                 # read in x-directed Velocity Magnitude #
                 strChoice = 'uX'
@@ -2289,13 +2191,24 @@ class IB2dData(FluidData):
                 else:
                     uX = _dataio.read_2DEulerian_Data_From_vtk(path,numSim,
                                                                strChoice,xy)
-                X_vel.append(uX.T) # (y,x) -> (x,y) coordinates
 
                 # read in y-directed Velocity Magnitude #
                 strChoice = 'uY'
                 uY = _dataio.read_2DEulerian_Data_From_vtk(path,numSim,
                                                            strChoice)
-                Y_vel.append(uY.T) # (y,x) -> (x,y) coordinates
+
+            if X_vel is None:
+                # The first dump fixes the grid. Each axis gets one extra line
+                #   for the periodic endpoint IB2d omits, filled after the loop.
+                ny, nx = uX.shape
+                X_vel = np.empty((nt, nx+1, ny+1))
+                Y_vel = np.empty((nt, nx+1, ny+1))
+            # (y,x) -> (x,y), copied straight into place. The read returns views
+            #   onto vtk's own buffers; dropping them here frees each dump before
+            #   the next is read, so the series is never held twice.
+            X_vel[i, :nx, :ny] = uX.T
+            Y_vel[i, :nx, :ny] = uY.T
+            del uX, uY
 
             ##### The following is just for reference! ######
             # read in Vorticity #
@@ -2320,19 +2233,18 @@ class IB2dData(FluidData):
             #                                            strChoice,first)
             ###################################################
 
+        ### Restore the periodic endpoints, in place ###
+        # The last line along each axis repeats the first. The corner follows
+        #   from the x line, which is already filled when y is.
+        for f in (X_vel, Y_vel):
+            f[:, -1, :] = f[:, 0, :]
+            f[:, :, -1] = f[:, :, 0]
+
         ### Return data ###
-        if d_start != d_finish:
-            if xy:
-                return [np.transpose(np.dstack(X_vel),(2,0,1)), 
-                        np.transpose(np.dstack(Y_vel),(2,0,1))] , x, y
-            else:
-                return [np.transpose(np.dstack(X_vel),(2,0,1)), 
-                        np.transpose(np.dstack(Y_vel),(2,0,1))]
-        else:
-            if xy:
-                return [X_vel[0], Y_vel[0]], x, y
-            else:
-                return [X_vel[0], Y_vel[0]]
+        flow = [X_vel, Y_vel] if nt > 1 else [X_vel[0], Y_vel[0]]
+        if xy:
+            return flow, x, y
+        return flow
             
 
 

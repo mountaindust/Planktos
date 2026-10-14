@@ -183,7 +183,8 @@ def _ib2d_vorticity(t):
     nx, ny = IB2D_SHAPE
     u, v = _ib2d_vort_fields(t)
     grid = (np.arange(nx) * 1.0, np.arange(ny) * 1.0)
-    flow, fpts, _ = _fluid._wrap_flow([u, v], grid, periodic_dim=(True, True))
+    flow = [_fluid._wrap_scalar(f, (True, True)) for f in (u, v)]
+    fpts = tuple(np.append(g, g[-1] + (g[-1] - g[-2])) for g in grid)
     vort = _fluid._vorticity_from_field(flow, fpts, (True, True))
     return _fluid._unwrap_scalar(vort, (True, True))
 
