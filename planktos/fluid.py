@@ -780,13 +780,15 @@ class LinearSpline:
         left. The first timestamp is the exception, taking the slope to its
         right, since it has no interval on the left.
         '''
+        # Strict >, as in __call__: the last time point is in range and takes
+        #   the slope to its left.
         if (val < self.flow_times[0] and not self.extrapolate[0]) \
-              or (val >= self.flow_times[-1] and not self.extrapolate[1]):
+              or (val > self.flow_times[-1] and not self.extrapolate[1]):
             raise SplineRangeError('Out of range without extrapolation.')
         elif val == self.flow_times[0]:
             idx = 0
-        elif val < self.flow_times[0] or val >= self.flow_times[-1]:
-            return np.zeros_like(self.flow[0]) # constant exrapolation
+        elif val < self.flow_times[0] or val > self.flow_times[-1]:
+            return np.zeros_like(self.flow[0]) # constant extrapolation
         else:
             idx = np.searchsorted(self.flow_times, val) - 1
         return (self.flow[idx+1] - self.flow[idx]) / (self.flow_times[idx+1] - self.flow_times[idx])

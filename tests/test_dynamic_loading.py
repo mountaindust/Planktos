@@ -459,6 +459,32 @@ def test_dudt_is_zero_beyond_the_data_bounds():
             assert np.all(comp == 0.0)
 
 
+def test_dudt_at_every_time_point_matches_full_linear():
+    # Regression: LinearSpline.derivative tested its range with >= where
+    # __call__ uses >, so a time exactly on a window's last time point raised
+    # SplineRangeError -- the call that would have slid the window succeeded,
+    # and the derivative then refused it. With INUM=5 over 21 points that is
+    # t[5], t[9], t[13] and t[17]. Reachable from any inertial-particle run
+    # whose time lands on a dump time. A forward sweep never lands on a
+    # window's first time point, so this asserts nothing about that one.
+    dyn, full, t = _pair(_field_2d(), 5)
+    for q in t:
+        ref = full.get_dudt(time=q)
+        assert _diff(dyn.get_dudt(time=q), ref) <= _tol(ref)
+
+
+def test_dudt_at_the_final_time_point_is_the_slope_to_its_left():
+    # Regression: the same >= returned zero AT t[-1], as though that time were
+    # already beyond the data. The final time point follows the right-closed
+    # convention like every other. (Cubic splining never zeroed it.)
+    dyn, full, t = _pair(_field_2d(), 5)
+    _, _, comps = _field_2d()
+    expected = [(c[-1] - c[-2]) / (t[-1] - t[-2]) for c in comps]
+    assert not np.allclose(expected[0], 0.0)
+    for fd in (dyn, full):
+        assert _diff(fd.get_dudt(time=t[-1]), expected) <= _tol(expected)
+
+
 def test_dudt_3d_matches_full_linear():
     dyn, full, t = _pair(_field_3d(), 5)
     for q in np.linspace(t[0] + 1e-3, t[-1] - 1e-3, 31):
