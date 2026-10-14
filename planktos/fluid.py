@@ -17,20 +17,21 @@ from . import _dataio
 
 
 def _wrap_flow(flow, flow_points, periodic_dim=(True, True, False)):
-    '''In some cases, software may print out fluid velocity data that omits 
-    the velocities at the right boundaries in spatial dimensions that are 
-    meant to be periodic. This helper function restores that data by copying 
-    everything over. 3rd dimension will automatically be ignored if 2D.
+    '''In some cases, software may print out fluid velocity data that omits
+    the velocities at the right boundaries in spatial dimensions that are
+    meant to be periodic. This helper function restores that data by copying
+    everything over.
 
     This assumes a regular fluid grid.
 
     Parameters
     ----------
     flow : list of ndarrays
-        This will be overwritten to save space!
+        not modified; a new list is returned
     flow_points : tuple of mesh coordinates (x,y,[z])
-    periodic_dim : list of 2 or 3 bool, default=[True, True, False]
-        True if that spatial dimension is periodic, otherwise False
+    periodic_dim : sequence of bool, one per spatial dimension
+        True if that spatial dimension is periodic, otherwise False. The
+        default, (True, True, False), suits 3D data only.
 
     Returns
     -------
@@ -98,10 +99,8 @@ def _wrap_flow(flow, flow_points, periodic_dim=(True, True, False)):
 def _wrap_scalar(f, periodic_dim):
     '''Restore the duplicated end line on each periodic axis of a *scalar* field.
 
-    The scalar counterpart of ``_wrap_flow``, which cannot be used here: it takes
-    one array per spatial dimension. Derived scalar fields read back from a
-    source that omits the periodic endpoint -- IB2d's ``Omega.####.vtk``, for
-    instance -- need exactly this.
+    The scalar counterpart of ``_wrap_flow``, for a derived field read from a
+    source that omits the periodic endpoint, such as IB2d's ``Omega.####.vtk``.
 
     Parameters
     ----------
@@ -166,8 +165,7 @@ def _collapse_flat_axes(flow, mesh, periodic_dim=None, source=None):
     Everything that describes the grid moves together -- the field, the
     coordinate arrays, the velocity components and the periodicity flags -- so
     that a plane exported as 3D vtk becomes an ordinary 2D Planktos fluid rather
-    than a 3D one of zero thickness. IB2d's reader has always done this; this is
-    the same rule for the 3D loaders.
+    than a 3D one of zero thickness.
 
     Parameters
     ----------
@@ -187,6 +185,12 @@ def _collapse_flat_axes(flow, mesh, periodic_dim=None, source=None):
     ------
     ValueError
         if fewer than two axes would be left; Planktos is 2D or 3D
+
+    Warns
+    -----
+    UserWarning
+        naming the dropped axes, and any velocity component dropped with them
+        whose peak exceeds 1e-6 of the largest in-plane velocity
     """
 
     axes = tuple(d for d, c in enumerate(mesh) if len(np.atleast_1d(c)) < 2)
@@ -241,14 +245,10 @@ def _collapse_flat_axes(flow, mesh, periodic_dim=None, source=None):
 
 
 def _natural_key(name):
-    '''Sort key that orders the numbers embedded in a name numerically.
-
-    Writers that number dumps without zero padding -- foamToVTK's
-    case08_..._787 through case08_..._1034 -- put 1008 ahead of 787 under a
-    lexical sort, silently reversing part of the timeline. The split always
-    alternates non-digit, digit, ..., so two keys compare like with like
-    throughout.
-    '''
+    '''Sort key that orders the numbers embedded in a name numerically, so that
+    an unpadded ``case_787`` sorts before ``case_1008``.'''
+    # The split always alternates non-digit, digit, ..., so two keys compare
+    #   like with like throughout.
     return tuple(int(s) if s.isdigit() else s
                  for s in re.split(r'(\d+)', name))
 
@@ -284,6 +284,13 @@ def _resolve_timeline(candidates, source_label, time_source, declared_order):
         shifted so the first is 0.0
     time_source : str
         as passed in, or 'assumed unit steps' when no dump carried a time
+
+    Raises
+    ------
+    FileNotFoundError
+        if none of the declared dumps is on disk
+    RuntimeError
+        if only some dumps carry a time, or the times do not strictly increase
     '''
 
     ##### Drop the dumps whose data is not on disk #####
@@ -392,21 +399,23 @@ def _resolve_timeline(candidates, source_label, time_source, declared_order):
 def _spline_index(spline, pos):
     """Index a spline at its own knots, as though it were an ``([t],i,j,[k])`` array.
 
-    Shared by both spline classes: they differ in how they interpolate between
-    knots, not in what an index means. ``spline.x`` is the knot sequence and
-    ``spline(t)`` the field there.
+    ``spline.x`` is the knot sequence and ``spline(t)`` the field there.
 
     Parameters
     ----------
     spline : LinearSpline or fCubicSpline
     pos : int, slice, or tuple
-        The leading entry indexes time; anything after it indexes into the field
-        at that time. Integers may be numpy integers, which is what a caller
-        looping over ``np.arange`` or unpacking ``np.searchsorted`` will supply.
+        The leading entry indexes time, as an int (numpy integers included) or a
+        slice; anything after it indexes into the field at that time.
 
     Returns
     -------
     ndarray -- one time point for an integer index, a stack of them for a slice
+
+    Raises
+    ------
+    IndexError
+        if the time index is neither an integer nor a slice
     """
 
     knots = spline.x
@@ -420,9 +429,7 @@ def _spline_index(spline, pos):
         return at(lead)
     if isinstance(lead, slice):
         # slice.indices resolves None, negative bounds and negative steps against
-        #   the length, which hand-rolled start/stop arithmetic gets wrong: a
-        #   negative start such as [-3:] otherwise runs from -3 up to len-1 and
-        #   returns len+3 wrapped entries instead of the last three.
+        #   the length.
         return np.stack([at(i) for i in range(*lead.indices(len(knots)))])
     raise IndexError('Only integers or slices are supported in {}.'.format(
         type(spline).__name__))
@@ -432,15 +439,21 @@ def _spline_index(spline, pos):
 def _linear_blend(times, t, get):
     """Linearly interpolate at ``t`` between the two entries bracketing it.
 
-    ``get(i)`` supplies entry ``i``. It is called **once** where ``t`` lands on a
-    knot or outside the data and twice otherwise, so a caller whose entries are
-    expensive to produce -- a file read, a spline evaluation -- pays only for
-    what the interpolation needs. Entries may be arrays of any shape.
+    Times outside ``times`` take the nearest end entry.
 
-    This is the one place the weights of a linear interpolation in time are
-    computed, so anything derived per dump and blended here is guaranteed to be
-    consistent with the velocity field itself.
+    Parameters
+    ----------
+    times : 1D ndarray
+        increasing knot times
+    t : float
+    get : callable
+        ``get(i)`` returns entry ``i``, an array of any shape. It is called once
+        where ``t`` lands on a knot or outside the data, and twice otherwise.
     """
+
+    # This is the one place the weights of a linear interpolation in time are
+    #   computed. LinearSpline evaluates the velocity through it, and per-dump
+    #   means and vorticity are blended through it, so all three share weights.
 
     # Bracket t, clamping to the ends so that a time outside the data gets the
     #   constant extrapolation the field itself uses.
@@ -462,17 +475,11 @@ def _linear_blend(times, t, get):
 
 
 def _spatial_gradient(f, coords, axis, periodic=False, edge_order=1):
-    '''Differentiate along one spatial axis, wrapping if that axis is periodic.
+    '''Differentiate along one spatial axis with ``np.gradient``, differencing
+    across the wrap if that axis is periodic.
 
-    A periodic axis carries a duplicated end line -- ``FluidData`` requires the
-    upper grid edge to repeat the lower one -- so the field genuinely continues
-    past either end, and the one-sided difference ``np.gradient`` falls back to
-    there is simply wrong. It has no way to know that on its own.
-
-    One ghost point is taken from the far side at each end, ``np.gradient`` is
-    applied to the extended array, and the ghosts trimmed. Going through
-    ``np.gradient`` rather than differencing by hand keeps its treatment of
-    non-uniform spacing, and keeps the interior identical to what it was.
+    A periodic axis carries a duplicated end line (the upper grid edge repeats
+    the lower one), so the field continues past either end.
 
     Parameters
     ----------
@@ -483,17 +490,17 @@ def _spatial_gradient(f, coords, axis, periodic=False, edge_order=1):
     axis : int
     periodic : bool, default=False
     edge_order : int, default=1
-        passed to np.gradient, which uses it only at the ends of the array. It
-        therefore has no effect on a periodic axis, where the ends are ghost
-        points that get trimmed -- but callers differ on it (get_vorticity takes
-        numpy's default, calculate_DuDt asks for 2), so it is threaded through
-        rather than fixed, and the non-periodic path stays exactly what it was.
+        passed to np.gradient; it has no effect on a periodic axis
 
     Returns
     -------
     ndarray, the same shape as f
     '''
 
+    # A periodic axis takes one ghost point from the far side at each end,
+    #   differences the extended array with np.gradient, and trims the ghosts.
+    #   np.gradient applies edge_order only at the array's ends, which are the
+    #   ghosts, and keeps its handling of non-uniform spacing.
     if not periodic:
         return np.gradient(f, coords, axis=axis, edge_order=edge_order)
 
@@ -513,9 +520,8 @@ def _spatial_gradient(f, coords, axis, periodic=False, edge_order=1):
 def _vorticity_from_field(flow, flow_points, periodic_dim):
     '''Curl of a single-time velocity field held as raw ndarrays.
 
-    What ``FluidData.get_vorticity`` computes with, exposed separately for
-    callers that already hold the raw arrays -- ``get_vorticity(time=)`` goes
-    through the interpolant and can therefore trigger a load.
+    Used by ``FluidData.get_vorticity``, and by the run archive's per-dump
+    vorticity writer, which holds raw arrays as they load.
 
     Parameters
     ----------
@@ -525,10 +531,8 @@ def _vorticity_from_field(flow, flow_points, periodic_dim):
     flow_points : tuple of 1D ndarrays
         the spatial grid, one coordinate array per dimension
     periodic_dim : sequence of bool
-        whether each spatial axis is periodic. A periodic axis carries a
-        duplicated end line, so the field continues past either end and is
-        differenced across the wrap; getting this wrong leaves the interior
-        right and the outermost ring several percent off.
+        whether each spatial axis is periodic; a periodic axis is differenced
+        across the wrap
 
     Returns
     -------
@@ -574,18 +578,14 @@ def center_cell_regrid(flow, flow_points, periodic_dim=None, bounds=None):
 
     The result is rectilinear but not uniform: the two outermost intervals along
     each axis are the half-cell from the outermost centers out to the boundary.
-    That is the same shape ``OpenFOAMData`` builds when it splices real boundary
-    patches on, and the reason to prefer patches when they exist -- this is an
-    extrapolation of the interior, whereas a patch carries the boundary
-    condition the solver actually applied.
+    The new planes extrapolate the interior; they do not carry the solver's
+    boundary condition, which ``OpenFOAMData`` splices on from boundary patches
+    when the export has them.
 
-    **Where the boundary is, is underdetermined.** n cell centers give n
-    equations in the n+1 cell faces. Only the two outermost faces are needed
-    here, and ``_infer_domain_edges`` takes them half the distance to the
-    neighboring center -- exact on a uniform grid, but on a stretched one a
-    biased guess: first two cells of width w and rw give w(1+r)/4 against a true
-    w/2. A warning names any axis inferred that way. Pass ``bounds`` for an end
-    whose true coordinate is known, as ``OpenFOAMData`` does from its patches.
+    Each boundary is placed half the distance to the neighboring cell center,
+    which is exact on a uniform grid and biased on a stretched one, with a
+    warning naming any such axis. Pass ``bounds`` for an end whose true
+    coordinate is known.
 
     Parameters
     ----------
@@ -613,6 +613,13 @@ def center_cell_regrid(flow, flow_points, periodic_dim=None, bounds=None):
         cell centers with the two boundary coordinates added, in the same
         coordinate system as the input -- shifting to the first quadrant is the
         caller's business, as it is for the loaders' own grids
+
+    Raises
+    ------
+    ValueError
+        if an axis has fewer than two points, the components have neither the
+        time-invariant nor the time-varying number of dimensions, or a bound
+        does not lie outside its axis' cell centers
     '''
 
     ndim = len(flow_points)
@@ -641,6 +648,10 @@ def center_cell_regrid(flow, flow_points, periodic_dim=None, bounds=None):
         bounds = [(None, None)]*ndim
 
     ##### Resolve each end, and say where that was a guess rather than exact ###
+    # Where the boundary is, is underdetermined: n cell centers give n equations
+    #   in the n+1 cell faces. _infer_domain_edges takes the outermost face half
+    #   the distance to the neighboring center. First two cells of width w and
+    #   rw put it w(1+r)/4 out, against a true w/2.
     edges = []
     inferred = []
     for d, c in enumerate(flow_points):
@@ -705,16 +716,23 @@ def center_cell_regrid(flow, flow_points, periodic_dim=None, bounds=None):
 
 
 class LinearSpline:
-    '''
-    Handles dynamic loading for linear interpolation of one dimension of fluid
-    data. Returns plain ndarrays.
+    '''Linear interpolant in time of one velocity component.
+
+    Evaluates to plain ndarrays. Holds either the whole dataset (``INUM=True``)
+    or the window ``FluidData.update_spline`` slides.
     '''
 
     def __init__(self, flow_times, flow, extrapolate=(True, True)):
         '''
-        Creates a linear interpolation instance with some additional info
-        and capabilities. Will throw a custom error if times are requested
-        outside of spline time bounds and extrapolate is False on that side.
+        Parameters
+        ----------
+        flow_times : 1D ndarray
+            increasing time points
+        flow : ndarray, indexed (t,i,j,[k])
+            the component at each time point, held by reference
+        extrapolate : (bool, bool), default=(True, True)
+            whether a time before the first / after the last time point takes
+            the end value (True) or raises SplineRangeError (False)
         '''
         self.flow_times = flow_times
         self.flow = flow
@@ -761,24 +779,16 @@ class LinearSpline:
         return np.abs(self.flow).max()
 
     def regenerate_data(self):
-        '''
-        Return the original data the interpolation is based on.
-
-        Mirrors fCubicSpline.regenerate_data so that both spline classes present
-        the same surface. A linear spline stores its raw data outright, so this
-        is a direct reference rather than a reconstruction -- deliberately no
-        copy, since under dynamic loading the window can be very large.
-        '''
+        '''The data the interpolant is built on, by reference rather than copied.'''
         return self.flow
 
     def derivative(self, val):
-        '''
-        Returns time derivative at the specified time.
-        Note: this is a simple finite difference derivative and piecewise
-        constant on right closed intervals (t[i-1], t[i]] -- a time falling
-        exactly on a data timestamp takes the slope of the interval to its
-        left. The first timestamp is the exception, taking the slope to its
-        right, since it has no interval on the left.
+        '''Time derivative at ``val``: the slope of the data interval holding it.
+
+        Piecewise constant on right-closed intervals (t[i-1], t[i]], so a time
+        on a time point takes the slope to its left. The first time point held
+        takes the slope to its right, having no interval held on its left.
+        Zero past an extrapolating end; SplineRangeError past one that is not.
         '''
         # Strict >, as in __call__: the last time point is in range and takes
         #   the slope to its left.
@@ -802,15 +812,19 @@ class fCubicSpline(interpolate.CubicSpline):
 
     def __init__(self, flow_times, flow, extrapolate=(True, True),
                  bc_type='not-a-knot'):
-        '''
-        Creates a PPoly instance spline instance with some additional info
-        and capabilities. Will throw a custom error if times are requested
-        outside of spline time bounds and extrapolate is False on that side.
+        '''Cubic spline in time of one velocity component, over the whole dataset.
 
-        bc_type is passed through to scipy.interpolate.CubicSpline.
-
-        Note that this class splines a whole dataset at once; dynamic loading
-        uses LinearSpline, which is extensible one window at a time.
+        Parameters
+        ----------
+        flow_times : 1D ndarray
+            increasing time points
+        flow : ndarray, indexed (t,i,j,[k])
+            the component at each time point
+        extrapolate : (bool, bool), default=(True, True)
+            whether a time before the first / after the last time point is
+            evaluated (True) or raises SplineRangeError (False)
+        bc_type : default='not-a-knot'
+            passed to scipy.interpolate.CubicSpline
         '''
         super().__init__(flow_times, flow, axis=0, extrapolate=True,
                          bc_type=bc_type)
@@ -896,8 +910,6 @@ def _check_INUM(INUM):
             "loading INUM-1 new ones.".format(INUM))
 
 
-# Design note (not user-facing): routines for manipulating the fluid velocity
-# field should find their way into this class from the Environment class.
 class FluidData:
     '''
     Container class for fluid velocity data and its temporal interpolations.
@@ -914,17 +926,18 @@ class FluidData:
     time ``t``, interpolated in time, as a list of plain ndarrays:
     ``[x-velocity (i,j,[k]), y-velocity (i,j,[k]), z-velocity (3D only)]``,
     where i indexes x, j indexes y and k indexes z, each increasing with the
-    corresponding coordinate. This always works, and it is the only option when
-    data is being loaded dynamically, since the time requested is what
-    determines which data gets loaded.
+    corresponding coordinate. This works for any time-varying field, and it is
+    the only option while a window of data slides, since the time requested is
+    what determines which data gets loaded. A time-invariant field has no time
+    to call it with, and raises ``TypeError``.
 
     **Index it like a list.** ``envir.flow[0]`` gives the x-velocity component.
     For a time-invariant field that is the raw ndarray. For a time-varying field
     it is that component's interpolant in time, which may itself be indexed by
     time index as though it were an ``([t],i,j,[k])`` array. This is unavailable
-    while data is being loaded dynamically (``INUM`` an int), because a time
-    index would then refer to a position in a shifting window rather than in the
-    dataset; ``TypeError`` is raised instead.
+    while a window of data slides (``is_windowed``), because a time index would
+    then refer to a position in the window rather than in the dataset;
+    ``TypeError`` is raised instead.
 
     Interpolation in *space* does not happen here. Use
     ``Environment.interpolate_flow``, or one of the ``Swarm`` accessors that
@@ -953,7 +966,7 @@ class FluidData:
         Shape of a single time slice of one velocity component, ``(i,j,[k])``.
     ndim : int
         Number of spatial dimensions of the fluid velocity field (2 or 3).
-    INUM : None, True, or int
+    INUM : None, True, or int >= 2
         How much data is held in memory, and how it is interpolated in time.
         None (the default) splines the entire dataset cubically. True splines
         the entire dataset linearly. An int loads a sliding window of
@@ -980,46 +993,44 @@ class FluidData:
 
     def __init__(self, flow, flow_points, flow_times=None, INUM=None,
                  periodic_dim=False, fluid_domain_LLC=None):
-        '''
-        Class file for dynamically loading time-varying fluid data and splining it.
-
-        This object must be called with a time (float). It will then provide a 
-        list of fluid ndarrays corresponding to the fluid velocity field at grid 
-        points at that time. Calling rather than indexing is what lets the object 
-        catch times outside the currently loaded window and dynamically 
-        load/spline the data needed.
+        '''Build from velocity arrays in memory; the per-source subclasses read
+        files and call this.
 
         Parameters
         ----------
         flow : list of ndarrays
-            [x-vel field ndarray ([t],i,j,[k]), y-vel field ndarray ([t],i,j,[k]),
-            z-vel field ndarray (if 3D)]. i is x index, j is y index, with the 
-            value of x and y increasing as the index increases.
+            one per velocity component, each ([t],i,j,[k]): i indexes x, 
+            j indexes y, and k indexes the z grid points, each increasing with 
+            its coordinate. The list is not modified.
         flow_points : tuple (len == spatial dimension) of 1D ndarrays
-            points defining the spatial grid for the fluid velocity data. These do 
-            not have to be evenly spaced, but should have the same length as each 
-            spatial dimension of the flow data. It is assumed that endpoints lie 
-            on the domain boundary.
-        flow_times : ndarray of floats
-            if specified, the time stamp for each index t in the flow arrays (time 
-            varying fluid velocity fields only)
+            grid coordinates along each spatial axis, one per point of the data
+            along that axis. They need not be evenly spaced; the endpoints lie on
+            the domain boundary.
+        flow_times : 1D ndarray, optional
+            the time of each index t, for time-varying flow. Omit it for
+            time-invariant flow.
         INUM : int >= 2, True, or None (default)
-            Used by subclasses to dynamically load data from storage. It
-            corresponds to the number of intervals loaded at any given time when
-            dynamically loading data and linearly splining. True results in
-            linearly splining all data, None results in cubic splining all data.
+            None splines all the data cubically in time; True splines all of it
+            linearly; an int holds a window of INUM+1 time points, splines it
+            linearly, and slides it with the subclass's load_dumpfiles. An int
+            equal to the number of intervals holds everything, with a warning.
             Use an int only when the dataset will not fit in memory: streaming
             it is slower.
-        periodic_dim : bool (default=False), or tuple of bool
-            Whether or not the fluid data is periodic in each spatial dimension.
-            Periodicity of the fluid data is independent of the agent boundary
-            conditions (Environment.bndry); set it to match how the data was
-            generated. When True in a dimension, interpolation wraps the upper
-            grid edge to the lower edge (so the upper edge must duplicate the
-            lower edge, as for genuinely periodic data).
+        periodic_dim : bool or tuple of bool, default=False
+            whether the data is periodic along each spatial axis, independent of
+            the agent boundary conditions in Environment.bndry. A periodic axis's
+            upper grid edge must repeat its lower one; interpolation wraps there.
         fluid_domain_LLC : tuple, optional
-            If the fluid velocity came from data and was translated in space so 
-            that the LLC was in the lower left corner, this stores the original LLC.
+            the data's original lower left corner, when it was translated so that
+            corner sits at the origin
+
+        Raises
+        ------
+        ValueError
+            if INUM is not None, True or an int of at least 2
+        RuntimeError
+            if an int INUM is at least the number of time points, or a subclass
+            loading dynamically supplies flow_times for only part of its dumps
         '''
         
         _check_INUM(INUM)
@@ -1131,8 +1142,19 @@ class FluidData:
 
 
     def __call__(self, time):
-        '''Retrieve fluid data at the requested time and update the spline 
-        dynamically as needed.
+        '''Velocity field at simulation time ``time``, interpolated in time.
+
+        Loads data when ``time`` falls outside the window held in memory. A time
+        outside the data's time range takes the value at its nearer end.
+
+        Returns
+        -------
+        list of ndarrays, one per velocity component, each (i,j,[k])
+
+        Raises
+        ------
+        TypeError
+            for time-invariant flow, which is indexed instead
         '''
         if self.flow_times is None:
             raise TypeError('This fluid is time-invariant, so it cannot be '
@@ -1150,17 +1172,17 @@ class FluidData:
             return [fspline(time) for fspline in self._flow]
     
     def __len__(self):
-        '''Returns the len of the fluid list.'''
+        '''Number of velocity components, equal to the spatial dimension.'''
         return len(self._flow)
     
     def __getitem__(self, pos):
-        '''
-        Allows direct access to the component fCubicSpline objects and therefore 
-        indexing into the interpolators at the original time mesh points as if 
-        they were ndarrays. However, behavior is only consistent if all the fluid 
-        data has been splined (otherwise, the time index will refer to a shifting 
-        time point based on what data is currently loaded and splined). So, allow 
-        this if all the data is splined and otherwise return an error.
+        '''Velocity component ``pos``.
+
+        The raw ndarray for time-invariant flow. For time-varying flow, that
+        component's interpolant in time, which indexes by time index like an
+        ``(t,i,j,[k])`` array. Raises ``TypeError`` while a window of data
+        slides (``is_windowed``), since a time index would then point into the
+        window rather than the dataset.
         '''
         if not self.is_windowed:
             return self._flow[pos]
@@ -1188,16 +1210,13 @@ class FluidData:
 
 
     def get_raw_loaded_data(self):
-        '''Get the ndarrays that the current splines are based on.
+        '''The ndarrays the interpolants are built on, one per component.
 
-        Under dynamic loading this is only the currently loaded window, not the
-        whole dataset.
+        Under dynamic loading, only the window held in memory. Linear
+        interpolants return their data by reference; cubic ones rebuild it.
         '''
-        # Static flow is stored as arrays directly; time-varying flow is always
-        # held as splines, of either class. Testing flow_times rather than the
-        # spline type avoids the old bug where the non-cubic branch assumed
-        # "static" and so handed back LinearSpline objects instead of ndarrays
-        # on the dynamic-loading path.
+        # Static flow is stored as arrays; time-varying flow as splines of
+        #   either class, so this branches on flow_times, not the spline type.
         if self.flow_times is None:
             return self._flow
         return [flow.regenerate_data() for flow in self._flow]
@@ -1207,11 +1226,6 @@ class FluidData:
     @property
     def is_windowed(self):
         '''True when only a sliding window of the dataset is held in memory.
-
-        With the whole field resident, recomputing a derived field is cheaper 
-        than any I/O, so nothing is written; with a window sliding, the velocity 
-        a later render would need is gone, so the derived field has to come off 
-        disk.
 
         False for time-invariant flow, for ``INUM=None`` (cubic, all resident)
         and for ``INUM=True`` (linear, all resident) -- and also for an int
@@ -1231,19 +1245,15 @@ class FluidData:
     def add_dump_observer(self, observer):
         '''Call ``observer(idx_start, flow)`` whenever fluid data lands in memory.
 
-        How anything deriving a per-dump quantity is told that a dump has
-        arrived, without having to know which load path delivered it. Two things
-        to know when writing one:
+        Fires from every load path. Registering the same observer twice does
+        nothing.
 
-        - **The same dump can be reported more than once.** A window sliding
-          back to the start of a series reloads the opening dumps, which have
-          usually been reported already. So an observer that acts on each report
-          -- writing a file, appending to a list -- has to remember which dumps
-          it has handled and ignore a repeat.
-        - **Time-invariant flow never fires it**, because no dumps arrive over
-          time: the whole field is present from construction. An observer that
-          needs to see every dump has to handle that case itself, at the point
-          where it registers.
+        - **The same dump can be delivered more than once.** A window sliding
+          back to the start of a series reloads dumps already delivered, so an
+          observer that writes a file or appends to a list must skip a repeat.
+        - **Data already in memory when the observer registers is never
+          delivered**, and time-invariant flow never fires at all. Take what is
+          resident from :meth:`iter_resident_dumps`, which covers both.
 
         Parameters
         ----------
@@ -1268,10 +1278,8 @@ class FluidData:
 
 
     def _record_dump_means(self, idx_start, flow):
-        '''Cache the spatial mean of each velocity component for loaded dumps.
-
-        Called wherever fluid data arrives in memory, so the reduction is over
-        data that is already resident and costs nothing extra.
+        '''Store the spatial mean of each velocity component for the dumps
+        delivered. Called by :meth:`_dumps_arrived`.
 
         Parameters
         ----------
@@ -1301,13 +1309,11 @@ class FluidData:
 
 
     def iter_resident_dumps(self):
-        """Yield ``(t_idx, [single-time component arrays])`` for what is in memory.
+        """Yield ``(t_idx, [one array per component])`` for each dump in memory.
 
-        One dump at a time, and never a stack of them: a caller that reduces
-        each dump as it arrives would otherwise pay a second full copy of the
-        dataset, which under ``INUM=None`` is the whole thing. Covers the
-        time-invariant, all-resident and windowed cases identically, so a
-        consumer needs no branch of its own.
+        One dump at a time, never stacked. Time-invariant flow yields once, with
+        ``t_idx`` 0; cubic splining yields every dump, rebuilt one at a time
+        from the spline; linear splining yields the dumps it holds.
         """
 
         if self.flow_times is None:
@@ -1329,12 +1335,10 @@ class FluidData:
 
 
     def _dumps_arrived(self, idx_start, flow):
-        '''Fluid data just landed in memory: cache what is cheap, tell observers.
+        '''Fluid data just landed in memory: record its means, call the observers.
 
-        Called from every point where that happens, and nowhere else, so an
-        observer inherits the correctness of the call sites -- including the
-        forward slide's deliberate skip of the two holdover dumps it carried
-        over from the outgoing window.
+        Called from every load site. A forward slide passes only the dumps it
+        loaded, not the two it carries over from the outgoing window.
 
         Parameters
         ----------
@@ -1350,18 +1354,16 @@ class FluidData:
 
 
     def _interp_dump_means(self, time):
-        '''Evaluate the per-dump mean sidecar at a time, or None if data is missing.
+        '''The per-dump means at ``time``, weighted as the field is, or None if
+        a bracketing dump has never been loaded.
 
-        Returns None when a dump bracketing the requested time has never been
-        loaded, so its mean was never recorded -- the caller decides whether to
-        pay for a load.
-
-        This mirrors the temporal interpolation of the field itself, and is
-        exact rather than approximate: both spline classes evaluate as a
-        weighted sum of the nodal fields, and the spatial mean is linear, so
-        mean(u(t)) == sum_i w_i(t)*mean(u_i). Times outside the data bounds get
-        the same constant extrapolation __call__ applies.
+        A time outside the data's time range takes its nearer end, as in
+        ``__call__``.
         '''
+
+        # Exact: both spline classes evaluate as a weighted sum of the nodal
+        #   fields, and the spatial mean is linear, so
+        #   mean(u(t)) == sum_i w_i(t)*mean(u_i).
 
         if self._mean_interp is not None:
             # Cubic. The entire dataset was resident when the interpolant was
@@ -1384,26 +1386,27 @@ class FluidData:
 
 
     def get_mean_velocity(self, time=None, t_idx=None):
-        '''Spatial mean of each fluid velocity component.
+        '''Spatial mean of each fluid velocity component, from a per-dump cache.
 
-        Served from a per-dump cache of means built as data loads, so this does
-        not touch the velocity field and does not trigger a load for any time
-        whose bracketing dumps have already been seen. The value is exact rather
-        than approximate: both spline classes evaluate as a weighted sum of the
-        nodal fields, and the spatial mean is linear, so the mean of the splined
-        field is the splined mean.
+        Exactly the mean of ``self(time)``, without touching the field: a time
+        whose two bracketing dumps have both been in memory costs no load.
 
         Parameters
         ----------
         time : float, optional
-            The time at which to evaluate the means. Ignored, with a warning,
-            for time-invariant flow.
+            the time at which to evaluate the means; takes precedence over
+            ``t_idx``. Ignored, with a warning, for time-invariant flow.
         t_idx : int, optional
-            The index into flow_times at which to evaluate the means.
+            the index into flow_times at which to evaluate the means
 
         Returns
         -------
         tuple of floats, one per velocity component
+
+        Raises
+        ------
+        ValueError
+            for time-varying flow, if neither time nor t_idx is given
         '''
 
         if self.flow_times is None:
@@ -1431,27 +1434,35 @@ class FluidData:
 
 
     def load_dumpfiles(self, d_start, d_finish):
-        '''Subclasses should implement this method to load additional data.
+        '''Read dumps ``d_start`` through ``d_finish``, inclusive. Subclasses
+        that load dynamically implement this.
 
-        Return one array per velocity component. A leading time axis is optional:
-        :meth:`_load_dumps`, which is what the slider calls, adds one where a
-        single-dump read left it off.
+        Parameters
+        ----------
+        d_start, d_finish : int
+            ``self.d_start + t_idx`` for the first and last time index wanted
+
+        Returns
+        -------
+        list of ndarrays, one per velocity component, each (t,i,j,[k]). The
+        leading time axis may be dropped for a single dump.
+
+        Raises
+        ------
+        NotImplementedError
+            on the base class
         '''
         raise NotImplementedError('The subclass for this type of data must '+
                                   'implement its own data loaders.')
 
 
     def _load_dumps(self, d_start, d_finish):
-        """load_dumpfiles, with the leading time axis guaranteed.
+        """``load_dumpfiles``, with the leading time axis restored for a single
+        dump. ``update_spline`` loads only through here."""
 
-        ``update_spline`` concatenates what a load returns against the resident
-        window and ``_record_dump_means`` reduces over its leading axis, so the
-        axis has to be there even for a single dump. Some of the readers behind
-        ``load_dumpfiles`` drop it in that case -- correctly, for the
-        constructor's one-shot read of a time-invariant field, and wrongly here.
-        Every load on the streaming path comes through this method, so a subclass
-        implementing ``load_dumpfiles`` does not have to think about it.
-        """
+        # update_spline concatenates along the time axis and _record_dump_means
+        #   reduces over it, so it must be there. Some readers drop it for a
+        #   single dump, as the constructor's read of a time-invariant field needs.
 
         ndim = len(self.flow_points)
         return [f if f.ndim > ndim else f[np.newaxis, ...]
@@ -1460,9 +1471,10 @@ class FluidData:
 
 
     def update_spline(self, time):
-        '''The workhorse function for dynamically loading data. Responds to
-        requests for times outside of the currently loaded time interval by 
-        loading new data and creating a new spline that includes the new data.
+        '''Slide the window held in memory until it covers ``time``.
+
+        Called by ``__call__`` and ``get_dudt`` when a time falls outside the
+        window; does nothing when the whole dataset is held.
         '''
 
         while time > self._flow[0].x[-1] and not self._flow[0].extrapolate[1]:
@@ -1472,27 +1484,12 @@ class FluidData:
             d_start = self.loaded_dump_bnds[1]+1 # first dump to load
             idx_start = self.loaded_idx_bnds[1]-1 # first index in new spline
             if self.loaded_dump_bnds[1]-1 + self.INUM >= self.d_finish:
-                # We are at the end of the dataset. Note >=, not >: a window
-                # reaching exactly the last dump IS the final one, and used to
-                # fall through to the middle branch and be flagged
-                # extrapolate=(False, False) -- claiming there was more data to
-                # the right when there was none. Latent rather than live, since
-                # __call__ clamps to flow_times[-1] and so never asks for a time
-                # past a window that already ends there. But it made the flag
-                # dishonest for anything else reading it, and left the degenerate
-                # "slide past the end" path reachable by a direct update_spline
-                # call, where load_dumpfiles would be handed d_start > d_finish.
-                # Triggered only when the arithmetic lands exactly on the last
-                # index, which is why it survived: forward slides advance the
-                # window end by INUM-1, so with INUM=4 it needs a dump count
-                # congruent to 2 mod 3 -- 17, 20, 23... The real OpenFOAM series
-                # has 17, which is how it was finally found.
+                # The end of the dataset. >=, not >: a window reaching exactly
+                #   the last dump is the final one, open on the right. Each
+                #   forward slide moves the window end by INUM-1, so it lands
+                #   there when the dump count is a multiple of INUM-1, plus 2.
                 d_finish = self.d_finish
-                # Last valid index, matching the inclusive convention used by
-                # loaded_dump_bnds and by the middle branch below. (This was
-                # len(self.flow_times), which named a nonexistent index. The
-                # window itself was unaffected -- the slice below clips -- but
-                # loaded_idx_bnds then disagreed with loaded_dump_bnds.)
+                # Last valid index, inclusive like loaded_dump_bnds.
                 idx_finish = len(self.flow_times) - 1
                 extrapolate = (False, True)
             else:
@@ -1669,17 +1666,28 @@ class FluidData:
 
 
     def get_vorticity(self, time=None, t_idx=None):
-        '''Compute the vorticity field from the fluid velocity field.
+        '''Vorticity of the velocity field, at a time or time index.
 
-        If the flow is time-varying, the vorticity will be computed at 
-        the specified time or time index.
+        Differenced with ``np.gradient``, across the wrap on periodic axes.
+        Time-varying flow evaluates ``self(time)``, which can trigger a load.
 
         Parameters
         ----------
         time : float, optional
-            The time at which to compute the vorticity.
+            the time at which to compute the vorticity; takes precedence over
+            ``t_idx``. Ignored, with a warning, for time-invariant flow.
         t_idx : int, optional
-            The time index at which to compute the vorticity.
+            the index into flow_times at which to compute the vorticity
+
+        Returns
+        -------
+        ndarray (i,j) in 2D, the out-of-plane component; a tuple of three
+        (i,j,k) ndarrays in 3D
+
+        Raises
+        ------
+        ValueError
+            for time-varying flow, if neither time nor t_idx is given
         '''
 
         if self.flow_times is not None:
@@ -1726,22 +1734,19 @@ class FluidData:
 
 
     def dump_number(self, t_idx):
-        """The source's own dump number for index ``t_idx`` into ``flow_times``.
-
-        A time resolves to dumps as ``d_start + i``, uniformly: IB2d's
-        ``d_start`` is the first dump number on disk, and a source with no dump
-        numbering of its own is indexed from zero.
-        """
+        """The source's own dump number for index ``t_idx`` into ``flow_times``:
+        ``d_start + t_idx``, where ``d_start`` is 0 for a source without dump
+        numbers of its own."""
 
         return int(getattr(self, 'd_start', 0)) + int(t_idx)
 
 
     def source_dir(self):
-        """The directory this fluid was read from, or None if it came from arrays.
+        """The directory this fluid was read from (its ``path``), or None for a
+        fluid built from arrays.
 
-        Where a derived field is written by preference, so that a later run,
-        ParaView, or the solver's own tooling finds it beside the velocity dumps
-        with no knowledge of Planktos.
+        ``Environment.record`` writes per-dump vorticity here when the directory
+        is writable.
         """
 
         path = getattr(self, 'path', None)
@@ -1749,28 +1754,27 @@ class FluidData:
 
 
     def probe_stored_vorticity(self):
-        """Does this source already carry a per-dump vorticity field?
+        """Whether this source already carries a per-dump vorticity field.
 
-        ``'partial'`` is reported as such rather than rounded to either of the
-        others, since a caller must not serve one dump's field for another's.
+        The base class returns ``('absent', None)``; a source that ships the
+        field overrides it.
 
         Returns
         -------
         state : {'complete', 'partial', 'absent'}
+            ``'partial'`` when only some dumps have one. ``Environment.record``
+            uses the source's field only when ``'complete'``, and otherwise
+            writes a complete series of its own.
         directory : Path or None
-            where the field is, when the state is not 'absent'
+            where the field is, unless the state is ``'absent'``
         """
 
         return 'absent', None
 
 
     def vorticity_filename(self, t_idx):
-        """Name of the per-dump vorticity file for ``t_idx``.
-
-        The reader, the writer and anything moving the file into place all take
-        the name from here, so a subclass that changes its solver's convention
-        changes it once.
-        """
+        """Name of the per-dump vorticity file for ``t_idx``, ``Omega.NNNN.vtk``
+        numbered by :meth:`dump_number`. The reader and the writer both use it."""
 
         return '{}.{:04d}.vtk'.format(self.VORTICITY_TITLE,
                                       self.dump_number(t_idx))
@@ -1779,9 +1783,10 @@ class FluidData:
     def read_dump_vorticity(self, t_idx):
         """Read one dump's vorticity field off disk, on the velocity's grid.
 
-        Reads what :meth:`write_dump_vorticity` writes: a rectilinear-grid scalar
-        vtk on the same grid as ``flow_points``. A subclass whose solver uses
-        another format overrides both halves together.
+        Reads what :meth:`write_dump_vorticity` writes, a rectilinear-grid
+        scalar vtk on ``flow_points``, from ``vorticity_path``. A subclass whose
+        solver uses another format overrides both. Raises ``RuntimeError`` when
+        no ``vorticity_path`` is set.
 
         Parameters
         ----------
@@ -1801,9 +1806,9 @@ class FluidData:
     def write_dump_vorticity(self, t_idx, vort, path):
         """Write one dump's vorticity field, in this source's own format.
 
-        Writes a rectilinear-grid scalar vtk, which can express any grid
-        ``FluidData`` supports. A subclass on a uniform grid overrides this to
-        write structured points instead, matching what its solver prints.
+        Writes a rectilinear-grid scalar vtk on ``flow_points``. A subclass on a
+        uniform grid overrides this to write structured points instead, as its
+        solver prints them.
 
         Parameters
         ----------
@@ -1834,22 +1839,15 @@ class FluidData:
 
 
     def get_stored_vorticity(self, time):
-        """Vorticity at ``time``, blended from per-dump files on disk.
+        """Vorticity at ``time``, blended from per-dump vorticity files.
 
-        The dynamic-loading counterpart of :meth:`get_vorticity`: the velocity
-        that time falls between is no longer resident, so the curl is assembled
-        from per-dump fields instead. The result is exactly the curl of the
-        velocity in use -- ``LinearSpline`` evaluates as a weighted sum of two
-        adjacent nodal fields and the curl is linear, so blending per-dump
-        vorticity with the same two weights gives the curl of the blend.
+        Equal to the curl of ``self(time)``: the two bracketing dumps are
+        blended with the weights the velocity uses. For a sliding window, where
+        :meth:`get_vorticity` would reload the velocity. Reads at most two files
+        per call, and one per dump interval over a monotone sweep.
 
-        **Linear splining only**, and it raises otherwise. Cubic weights come
-        from a global solve, so reconstructing from per-dump files would mean
-        holding the whole series; that regime has the field resident and should
-        call :meth:`get_vorticity` instead.
-
-        Reads are served from a two-slot cache, which is one read per dump
-        interval for a monotone sweep in either direction.
+        **Linear splining only**: under cubic splining, call
+        :meth:`get_vorticity` instead.
 
         Parameters
         ----------
@@ -1858,6 +1856,11 @@ class FluidData:
         Returns
         -------
         ndarray indexed [x,y]
+
+        Raises
+        ------
+        RuntimeError
+            under cubic splining, or when no ``vorticity_path`` is set
         """
 
         if self.flow_times is None:
@@ -1872,9 +1875,10 @@ class FluidData:
                 'get_vorticity(time=) instead, which differentiates the '
                 'interpolated velocity and is the same field by construction.')
 
-        # Through the same weights the velocity itself is blended with, so the
-        #   result is the curl of the field in use rather than an approximation
-        #   of it. Reads only the dumps the interpolation needs.
+        # Through the same weights the velocity itself is blended with. The
+        #   curl is linear, so the blend of the curls is the curl of the blend.
+        #   Cubic weights come from a global solve, which would need the whole
+        #   series. The two-slot cache in _dump_vorticity serves the reads.
         return _linear_blend(self.flow_times, time, self._dump_vorticity)
 
 
@@ -1895,22 +1899,30 @@ class FluidData:
 
 
     def get_dudt(self, time=None, t_idx=None):
-        '''Compute the derivative of the fluid velocity with respect to time.
+        '''Time derivative of the velocity field, at a time or time index.
 
-        If the flow is time-varying, the derivative will be computed at the
-        specified time or time index, one of which must be provided.
+        Zero strictly outside the data's time range, where the velocity is held
+        constant. Under linear splining it is piecewise constant on
+        (t[i-1], t[i]], so a time on a time point takes the slope to its left;
+        the first time point takes the slope to its right. Can trigger a load.
+        Time-invariant flow returns zeros, with a warning.
 
         Parameters
         ----------
         time : float, optional
-            The time at which to compute the derivative.
+            the time at which to compute the derivative; takes precedence over
+            ``t_idx``
         t_idx : int, optional
-            The time index at which to compute the derivative.
+            the index into flow_times at which to compute the derivative
 
         Returns
         -------
-        list of ndarrays
-            The time derivative of the fluid velocity field.
+        list of ndarrays, one per velocity component, each (i,j,[k])
+
+        Raises
+        ------
+        ValueError
+            for time-varying flow, if neither time nor t_idx is given
         '''
 
         if self.flow_times is not None:
@@ -1951,29 +1963,35 @@ class FluidData:
 
 
     def calculate_DuDt(self, time=None, t_idx=None):
-        '''Compute the material derivative of the fluid velocity field. 
-        Gradient is calculated via second order accurate central differences 
-        (using numpy) with second order accuracy at the boundaries.
+        '''Material derivative of the velocity field, at a time or time index.
 
-        If the flow is time-varying, the material derivative will be computed 
-        at the specified time or time index, one of which must be provided.
-
-        The material derivative is given by
         .. math::
-        \\frac{D\\mathbf{u}}{Dt} = \\mathbf{u}_t + 
-        (\\nabla\\mathbf{u})\\mathbf{u}
+
+            \\frac{D\\mathbf{u}}{Dt} = \\mathbf{u}_t +
+            (\\nabla\\mathbf{u})\\mathbf{u}
+
+        Spatial gradients are second-order differences (``np.gradient`` with
+        ``edge_order=2``), across the wrap on periodic axes; ``u_t`` is
+        :meth:`get_dudt`. Time-varying flow evaluates ``self(time)``, which can
+        trigger a load.
 
         Parameters
         ----------
         time : float, optional
-            The time at which to compute the material derivative.
+            the time at which to compute the material derivative; takes
+            precedence over ``t_idx``. Ignored, with a warning, for
+            time-invariant flow.
         t_idx : int, optional
-            The time index at which to compute the material derivative.
+            the index into flow_times at which to compute it
 
         Returns
         -------
-        list of ndarrays
-            The material derivative of the fluid velocity field.
+        list of ndarrays, one per velocity component, each (i,j,[k])
+
+        Raises
+        ------
+        ValueError
+            for time-varying flow, if neither time nor t_idx is given
         '''
 
         if self.flow_times is not None:
