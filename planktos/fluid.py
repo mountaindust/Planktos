@@ -996,10 +996,13 @@ class FluidData:
 
         self.flow_points = flow_points
         self.flow_times = flow_times
-        if isinstance(periodic_dim, tuple):
-            self.periodic_dim = periodic_dim
+        # A single bool applies to every axis. A sequence gives one entry per
+        #   axis and is stored as a tuple of bools whatever it arrived as: a
+        #   call replayed from a run archive's provenance passes a list.
+        if periodic_dim is None or isinstance(periodic_dim, (bool, np.bool_)):
+            self.periodic_dim = (bool(periodic_dim),)*len(flow)
         else:
-            self.periodic_dim = (periodic_dim,)*len(flow)
+            self.periodic_dim = tuple(bool(p) for p in periodic_dim)
         
         if self.flow_times is not None:
             # record shape of the fluid data
@@ -3593,9 +3596,6 @@ class VTKXMLData(FluidData):
         self.vec_name = vec_name
         self.time_from_name = time_from_name
         self.dt = dt
-        if not isinstance(periodic_dim, bool):
-            # A call replayed from a run archive's provenance passes a list.
-            periodic_dim = tuple(periodic_dim)
         if INUM is not None and INUM is not True:
             _check_INUM(INUM)
         if dt is not None and not dt > 0:

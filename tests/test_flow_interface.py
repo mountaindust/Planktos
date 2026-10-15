@@ -254,6 +254,33 @@ def test_calling_time_invariant_flow_says_to_index_it():
         envir.flow(0.5)
 
 
+@pytest.mark.parametrize('given', [(True, False), [True, False],
+                                   np.array([True, False]),
+                                   (np.True_, np.False_)])
+def test_periodic_dim_per_axis_is_stored_as_a_tuple_of_bools(given):
+    # Regression: anything but a tuple was taken as a single flag and repeated
+    # per axis, so a list made every axis periodic.
+    from planktos import fluid
+    x = np.linspace(0.0, 1.0, 3)
+    y = np.linspace(0.0, 1.0, 4)
+    fd = fluid.FluidData([np.zeros((3, 4)), np.zeros((3, 4))], (x, y),
+                         periodic_dim=given)
+    assert fd.periodic_dim == (True, False)
+    assert all(type(p) is bool for p in fd.periodic_dim)
+
+
+@pytest.mark.parametrize('given, expected', [(True, (True, True)),
+                                             (False, (False, False)),
+                                             (np.True_, (True, True))])
+def test_a_single_periodic_flag_applies_to_every_axis(given, expected):
+    from planktos import fluid
+    x = np.linspace(0.0, 1.0, 3)
+    y = np.linspace(0.0, 1.0, 4)
+    fd = fluid.FluidData([np.zeros((3, 4)), np.zeros((3, 4))], (x, y),
+                         periodic_dim=given)
+    assert fd.periodic_dim == expected
+
+
 @pytest.mark.parametrize('INUM', [None, True])
 def test_constructing_fluiddata_leaves_the_callers_list_alone(INUM):
     # Regression: __init__ replaced the entries of the list it was handed with

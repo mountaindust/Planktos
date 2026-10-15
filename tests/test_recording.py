@@ -983,6 +983,31 @@ def test_restore_rebuilds_the_environment_from_provenance(tmp_path):
     assert len(swarms) == 1 and swarms[0].envir is rebuilt
 
 
+@pytest.mark.parametrize('source', ['vtk3d', 'brinkman'])
+def test_restore_rebuilds_a_fluid_given_periodic_dim_per_axis(tmp_path, source):
+    # Regression: provenance stores the loader call as JSON, so a periodic_dim
+    # tuple came back as a list. FluidData read a list as one flag repeated per
+    # axis -- every axis periodic -- and restore() then raised building the
+    # fingerprint. IB2d passes a bool, which is why the test above never hit it.
+    envir = planktos.Environment(Lx=10.0, Ly=10.0, rho=1000, mu=0.001)
+    if source == 'vtk3d':
+        envir.read_IBAMR3d_vtk_data(str(FIXTURES / 'vtk3d_min'), d_start=0)
+        planktos.Swarm(swarm_size=4, envir=envir, seed=1)
+    else:
+        envir.set_brinkman_flow(alpha=66, h_p=1.5, U=1, dpdx=1, res=21,
+                                periodic_dim=(True, False))
+        _swarm(envir)
+    with envir.record(tmp_path / 'run') as rec:
+        pass
+    run = planktos.load_run(rec.path)
+    try:
+        rebuilt, _ = run.restore()
+    finally:
+        run.close()
+    assert rebuilt.flow.periodic_dim == envir.flow.periodic_dim
+    assert any(envir.flow.periodic_dim) and not all(envir.flow.periodic_dim)
+
+
 def test_restore_replays_the_mesh_loader_and_its_modifiers(tmp_path):
     envir = _envir()
     envir.read_IB2d_mesh_data(str(FIXTURES / 'mesh_min' / 'box.vertex'),
