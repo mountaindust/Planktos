@@ -171,6 +171,32 @@ def test_two_layer_channel_flow_shape(dims):
     assert len(envir.flow[0].shape) == len(envir.L)
 
 
+@pytest.mark.parametrize('dims', [
+    dict(Lx=20, Ly=10),
+    dict(Lx=20, Ly=30, Lz=10, z_bndry=('noflux', 'noflux')),
+])
+def test_two_layer_channel_flow_grid_matches_data(dims):
+    # Regression: in 3D the grid was built for two axes while the data had
+    # three, so the first interpolation raised.
+    envir = planktos.Environment(rho=1000, mu=5000, **dims)
+    res = 11
+    envir.set_two_layer_channel_flow(a=1, h_p=1, Cd=0.25, S=0.1, res=res)
+    pts = envir.flow.flow_points
+    assert len(pts) == len(envir.L)
+    for d, L in enumerate(envir.L):
+        assert len(pts[d]) == res and np.isclose(pts[d][-1], L)
+    # At grid nodes, interpolation returns the stored profile, which varies
+    # with height (the last axis) only.
+    node = tuple(3 for _ in envir.L[:-1])
+    heights = pts[-1][[2, 9]]
+    positions = np.array([[pts[d][3] for d in range(len(envir.L) - 1)] + [h]
+                          for h in heights])
+    u = envir.interpolate_flow(positions)
+    assert np.allclose(u[:, 0], envir.flow[0][node + (slice(None),)][[2, 9]])
+    assert np.allclose(u[:, 1:], 0)
+    assert u[1, 0] > u[0, 0]
+
+
 def test_canopy_flow_2D_time_dependent_physics():
     envir = planktos.Environment(Lx=50, Ly=40, rho=1000, mu=1000)
     U_h = np.arange(-0.5, 1.2, 0.1); U_h[5] = 0

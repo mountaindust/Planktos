@@ -849,7 +849,7 @@ class Environment:
         # get flow velocity profile for surface layer
         u[h_p_index:] = u_star/chi*np.log((y_mesh[h_p_index:]-d)/z_0)
 
-        flow_points, flow_times = self._get_flow_variables((res,res))
+        flow_points, flow_times = self._get_flow_variables((res,)*len(self.L))
 
         # broadcast to flow
         if len(self.L) == 2:
