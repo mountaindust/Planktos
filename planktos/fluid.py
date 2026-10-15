@@ -2008,8 +2008,10 @@ class IB2dData(FluidData):
                 d_finish = u_nums[-1]
             self.vector_data = True
         else:
-            assert 'uX.' in [x[:3] for x in file_names],\
-                "Could not find u.####.vtk or uX.####.vtk files in {}.".format(str(path))
+            if 'uX.' not in [x[:3] for x in file_names]:
+                raise FileNotFoundError(
+                    "Could not find u.####.vtk or uX.####.vtk files in "
+                    "{}.".format(str(path)))
             u_nums = sorted([int(f[3:7]) for f in file_names if f[:3] == 'uX.'])
             if d_finish is None:
                 d_finish = u_nums[-1]
@@ -2254,7 +2256,7 @@ class IB2dData(FluidData):
 class VTK3dData(FluidData):
 
     def __init__(self, path, title='IBAMR_db_', d_start=0, d_finish=None, 
-                 INUM=7, periodic_dim=(True, True, False), vel_conv=None):
+                 INUM=None, periodic_dim=(True, True, False), vel_conv=None):
         '''Reads in one or more vtk Rectilinear Grid Vector files. If path
         refers to a single file, the resulting flow will be time invariant.
         Otherwise, this method will assume that files are named <title>###.vtk 
@@ -2310,6 +2312,9 @@ class VTK3dData(FluidData):
             tlen = len(title)
             file_names = [x.name for x in path.iterdir() if x.is_file() and
                       x.name[:tlen] == title]
+            if len(file_names) == 0:
+                raise FileNotFoundError(
+                    "No files named {}###.vtk in {}.".format(title, str(path)))
             # get number width
             self.nwidth = len(file_names[0])-len(title)-len('.vtk')
             # get file numbers and store d_start, d_finish.
@@ -2318,12 +2323,18 @@ class VTK3dData(FluidData):
                 self.d_start = file_nums[0]
             else:
                 self.d_start = round(d_start)
-                assert d_start in file_nums, "d_start number not found!"
+                if self.d_start not in file_nums:
+                    raise ValueError("No dump {} in {}: its dumps run {} to "
+                                     "{}.".format(self.d_start, str(path),
+                                                  file_nums[0], file_nums[-1]))
             if d_finish is None:
                 self.d_finish = file_nums[-1]
             else:
                 self.d_finish = round(d_finish)
-                assert d_finish in file_nums, "d_finish number not found!"
+                if self.d_finish not in file_nums:
+                    raise ValueError("No dump {} in {}: its dumps run {} to "
+                                     "{}.".format(self.d_finish, str(path),
+                                                  file_nums[0], file_nums[-1]))
             
             ### Timestamp the whole dump series before loading any fluid ###
             # flow_times must span the ENTIRE range, not just whatever window is
@@ -2371,8 +2382,8 @@ class VTK3dData(FluidData):
         
         if self.vel_conv is not None:
             print("Converting vel units by a factor of {}.".format(self.vel_conv))
-            for ii, d in enumerate(flow):
-                flow[ii] = d*self.vel_conv
+            for f in flow:
+                f *= self.vel_conv
 
         super().__init__(flow, flow_points, flow_times, INUM, periodic_dim,
                          fluid_domain_LLC=fluid_domain_LLC)
@@ -2386,8 +2397,8 @@ class VTK3dData(FluidData):
         flow, mesh = self._read_vtkfiles(self.path, self.title,
                                          d_start, d_finish)
         if self.vel_conv is not None:
-            for ii, d in enumerate(flow):
-                flow[ii] = d*self.vel_conv
+            for f in flow:
+                f *= self.vel_conv
         return _drop_flat_axes(flow, self._flat, self._read_ndim)
 
 
@@ -2476,20 +2487,24 @@ class VTK3dData(FluidData):
         path = Path(path)
 
         ### Gather data ###
-        flow = [[], [], []]
-
-        for n in range(d_start, d_finish+1):
+        flow = None
+        count = d_finish - d_start + 1
+        for m, n in enumerate(range(d_start, d_finish+1)):
             num = str(n).zfill(self.nwidth)
             this_file = path / (title+num+'.vtk')
             data, mesh, _ = _dataio.read_vtk_Rectilinear_Grid_Vector(str(this_file))
-            for dim in range(3):
-                flow[dim].append(data[dim])
+            if flow is None:
+                # Filled in place, so the series is held once rather than as a
+                #   list of dumps and a stacked copy of it.
+                flow = [np.empty((count, *d.shape), dtype=d.dtype) for d in data]
+            for f, d in zip(flow, data):
+                f[m] = d
+            del data
 
         # Only the time axis is dropped, and only for a single dump. A blanket
         #   squeeze would also collapse a spatial axis one point thick -- which
         #   is a plane, and is _collapse_flat_axes' business, since the
         #   coordinate arrays have to go with it.
-        flow = [np.array(f) for f in flow]
         if d_start == d_finish:
             flow = [f[0] for f in flow]
 
@@ -2554,8 +2569,8 @@ class ComsolVTUData(FluidData):
 
         if self.vel_conv is not None:
             print("Converting vel units by a factor of {}.".format(self.vel_conv))
-            for ii, d in enumerate(flow):
-                flow[ii] = d*self.vel_conv
+            for f in flow:
+                f *= self.vel_conv
         
         if not linear_interp:
             linear_interp = None
@@ -2860,8 +2875,11 @@ class OpenFOAMData(FluidData):
             empty = np.zeros((0, *(n+2 for n in self._shape)))
             return [empty.copy() for _ in range(3)]
 
-        flow = [[], [], []]
-        for n in range(d_start, d_finish+1):
+        # Filled in place, so the series is held once rather than as a list of
+        #   dumps and a stacked copy of it.
+        flow = [np.empty((d_finish - d_start + 1, *(k+2 for k in self._shape)))
+                for _ in range(3)]
+        for m, n in enumerate(range(d_start, d_finish+1)):
             # Dump 1 is always in the opening load -- the whole series if it
             # fits, else dumps 0..INUM -- so the mesh check lands at
             # construction and costs no read of its own.
@@ -2870,12 +2888,12 @@ class OpenFOAMData(FluidData):
             if verify:
                 self._mesh_verified = True
             for dim in range(3):
-                flow[dim].append(vel[..., dim])
-        flow = [np.array(f) for f in flow]
+                flow[dim][m] = vel[..., dim]
+            del vel
 
         if self.vel_conv is not None:
-            for ii, d in enumerate(flow):
-                flow[ii] = d*self.vel_conv
+            for f in flow:
+                f *= self.vel_conv
         return flow
 
 

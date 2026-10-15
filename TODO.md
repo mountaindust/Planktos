@@ -12,10 +12,9 @@ Temporal interpolation of dynamically-loaded data is **linear in time**
 (`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
 story.
 
-**Suite: 1321 passed / 50 skipped (`pytest --runstreaming`, ~60 s),
-1369 / 2 (`pytest --runslow --runstreaming`, ~5 min).** No failures, **and no
-xfails: the pre-release list is empty.** *(Full run re-measured 2026-10-13; the
-`--runstreaming` count is from 2026-09-29.)*
+**Suite: 1364 passed / 49 skipped (`pytest --runstreaming`, ~65 s),
+1412 / 1 (`pytest --runslow --runstreaming`, ~5 min).** No failures, **and no
+xfails: the pre-release list is empty.** *(Re-measured 2026-10-15.)*
 
 **The pre-release list is empty (2026-09-03).** `tests/test_data_streaming/` — the
 adversarial suite written from `run_persistence.md`, covering the streaming story end

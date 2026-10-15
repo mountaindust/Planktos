@@ -653,6 +653,30 @@ def test_vtk3d_flow_times_span_the_whole_series(INUM):
     assert np.allclose(fd.flow_times, np.arange(8.0))
 
 
+def test_vtk3d_holds_the_whole_series_by_default():
+    # Regression: the signature defaulted to INUM=7, a sliding window, while the
+    # docstring and every Environment reader default to None.
+    fd = fluid.VTK3dData(VTK3D, d_start=0)
+    assert fd.INUM is None and not fd.is_windowed
+    assert all(isinstance(f, fluid.fCubicSpline) for f in fd._flow)
+
+
+def test_vtk3d_refuses_dumps_it_cannot_find(tmp_path):
+    # These were asserts, which python -O strips.
+    with pytest.raises(FileNotFoundError, match='IBAMR_db_'):
+        fluid.VTK3dData(str(tmp_path), d_start=0)
+    with pytest.raises(ValueError, match='No dump 9'):
+        fluid.VTK3dData(VTK3D, d_start=9)
+    with pytest.raises(ValueError, match='No dump 12'):
+        fluid.VTK3dData(VTK3D, d_start=0, d_finish=12)
+
+
+def test_ib2d_refuses_a_directory_without_velocity_dumps(tmp_path):
+    # This was an assert, which python -O strips.
+    with pytest.raises(FileNotFoundError, match='uX'):
+        fluid.IB2dData(str(tmp_path), dt=0.1, print_dump=10)
+
+
 def test_vtk3d_windowed_actually_slides():
     # The consequence of the short timeline was not an error: INUM >= n_times-1
     # sent FluidData down the "all in memory" branch with extrapolate=(True,True),
