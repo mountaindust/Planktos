@@ -55,6 +55,13 @@ IB2d omits the periodic endpoint in each direction, so a 6×5 dump loads back as
   uniform Cartesian box. A miniature of the Phase 2 oral-arm export — see
   `docs/notes/openfoam_oral_arm_dataset.md`. Deliberately non-lexicographic cell
   ordering and unpadded directory numbers, both of which the reader has to handle.
+- `comsol_vtu_min/` — COMSOL-style `.vtu` exports: point arrays named
+  `Velocity_field,_x-component_@_t=…` on a 2D node set flat in z. `flow.vtu` holds
+  t = 0, 0.5, 1; `single.vtu` holds t = 0.25. `u = 1 + t + x/2`, `v = y − 2t`,
+  `w = 0`, which the loader's linear regrid reproduces exactly. Alternate top-wall
+  nodes sit one ulp above the wall, over a row of thin near-wall triangles, so part
+  of the regridded top row falls a rounding error outside the triangulation, as on
+  real COMSOL data. Written as float64 binary, which keeps the ulp.
 
 These paths are exempted from the global `*.vtk` / `*.vertex` / `*.vtu` / `*.vtp` /
 `*.vtm` gitignore rules (see `.gitignore`). The larger fluid datasets used by the

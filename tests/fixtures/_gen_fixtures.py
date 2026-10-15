@@ -21,6 +21,7 @@ from pathlib import Path
 import numpy as np
 import pyvista as pv
 import vtk
+from vtk.util import numpy_support
 
 HERE = Path(__file__).parent
 
@@ -500,6 +501,68 @@ def write_vtixml_series(outdir=HERE / 'vtixml_min'):
     return outdir
 
 
+#############################################################################
+#  COMSOL vtu: every time point's velocity as named point arrays on one mesh  #
+#############################################################################
+
+COMSOL_TIMES = (0.0, 0.5, 1.0)
+COMSOL_L = (3.0, 2.0)
+
+
+def comsol_fields(x, y, t):
+    """Linear in x and y, so the loader's linear regrid reproduces them exactly."""
+    return 1.0 + t + 0.5*x, y - 2.0*t, np.zeros_like(x)
+
+
+def comsol_nodes():
+    """A 7x6 node set on [0,3]x[0,2], flat in z.
+
+    Every other node on the top wall sits one ulp above it, as boundary nodes do
+    in a real COMSOL export, and a row of nodes 1e-4 below the wall gives the
+    thin near-wall triangles a refined mesh has there. Together they put parts of
+    the regular grid's top row a rounding error outside the triangulation, which
+    is the case the loader's edge fill exists for.
+    """
+    rows = np.append(np.linspace(0.0, COMSOL_L[1], 5), COMSOL_L[1] - 1e-4)
+    x, y = np.meshgrid(np.linspace(0.0, COMSOL_L[0], 7), np.sort(rows),
+                       indexing='ij')
+    x = x.ravel(); y = y.ravel()
+    top = np.nonzero(y == COMSOL_L[1])[0]
+    y[top[1::2]] = np.nextafter(COMSOL_L[1], np.inf)
+    return np.column_stack((x, y, np.zeros_like(x)))
+
+
+def _write_comsol_vtu(path, times):
+    pts = comsol_nodes()
+    grid = vtk.vtkUnstructuredGrid()
+    vpts = vtk.vtkPoints()
+    # float64 and binary throughout, or the one-ulp offsets above are lost.
+    vpts.SetDataTypeToDouble()
+    for p in pts:
+        vpts.InsertNextPoint(*p)
+    grid.SetPoints(vpts)
+    # COMSOL's naming: one scalar array per component per time point, the time
+    #   after the last 't='.
+    for t in times:
+        for comp, vals in zip('xyz', comsol_fields(pts[:, 0], pts[:, 1], t)):
+            arr = numpy_support.numpy_to_vtk(np.ascontiguousarray(vals),
+                                            deep=True)
+            arr.SetName('Velocity_field,_{}-component_@_t={:g}'.format(comp, t))
+            grid.GetPointData().AddArray(arr)
+    writer = vtk.vtkXMLUnstructuredGridWriter()
+    writer.SetFileName(str(path))
+    writer.SetInputData(grid)
+    writer.SetDataModeToBinary()
+    writer.Write()
+
+
+def write_comsol_vtu(outdir=HERE / 'comsol_vtu_min'):
+    outdir.mkdir(parents=True, exist_ok=True)
+    _write_comsol_vtu(outdir / 'flow.vtu', COMSOL_TIMES)
+    _write_comsol_vtu(outdir / 'single.vtu', (0.25,))
+    return outdir
+
+
 if __name__ == '__main__':
     d = write_moving_mesh()
     print("wrote moving mesh ->", d, sorted(p.name for p in d.iterdir()))
@@ -517,3 +580,5 @@ if __name__ == '__main__':
     o = write_openfoam_series()
     print("wrote OpenFOAM-style series ->", o,
           sorted(p.name for p in o.iterdir()))
+    c = write_comsol_vtu()
+    print("wrote COMSOL-style vtu ->", c, sorted(p.name for p in c.iterdir()))

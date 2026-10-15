@@ -1537,18 +1537,89 @@ def test_unstructured_grid_points_reader():
 #            COMSOL vtu fluid (external data, vtu-gated)                      #
 # --------------------------------------------------------------------------- #
 
+# Fixture: tests/fixtures/comsol_vtu_min, a COMSOL-shaped 2D export flat in z.
+# flow.vtu holds t = 0, 0.5, 1 and single.vtu t = 0.25, with u = 1 + t + x/2 and
+# v = y - 2t, which the linear regrid reproduces exactly. Alternate top-wall nodes
+# sit one ulp above the wall over thin near-wall triangles, so part of the
+# regridded top row falls a rounding error outside the triangulation, as it does
+# on real COMSOL data.
+
+COMSOL = FIXTURES / 'comsol_vtu_min'
+
+
+def _comsol_expected(fd, t):
+    X, Y = np.meshgrid(*fd.flow_points, indexing='ij')
+    return 1.0 + t + 0.5*X, Y - 2.0*t
+
+
+def test_comsol_vtu_reads_every_time_point_from_one_file():
+    # Regression: ComsolVTUData refused anything but a directory, though what it
+    # reads is a single .vtu holding every time point, so it loaded nothing.
+    envir = planktos.Environment()
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        envir.read_comsol_vtu_data(str(COMSOL / 'flow.vtu'), res=9)
+    fd = envir.flow
+    assert fd.ndim == 2 and fd.periodic_dim == (False, False) and fd._flat == (2,)
+    np.testing.assert_allclose(fd.flow_times, [0.0, 0.5, 1.0])
+    assert np.allclose(envir.L, [3.0, 2.0])
+    for t in (0.0, 0.5, 0.75, 1.0):
+        for got, want in zip(fd(t), _comsol_expected(fd, t)):
+            np.testing.assert_allclose(got, want, rtol=0, atol=1e-12)
+
+
+def test_comsol_vtu_fills_the_edge_the_triangulation_misses():
+    # Regression: a grid point a rounding error outside the triangulation came
+    # back NaN, and the cubic spline then refused the whole field.
+    envir = planktos.Environment()
+    envir.read_comsol_vtu_data(str(COMSOL / 'flow.vtu'), res=9)
+    u, v = envir.flow.get_raw_loaded_data()
+    X, Y = np.meshgrid(*envir.flow.flow_points, indexing='ij')
+    np.testing.assert_allclose(v[:, :, -1], Y[None, :, -1] - 2.0*np.array(
+        [0.0, 0.5, 1.0])[:, None], rtol=0, atol=1e-12)
+    assert not np.isnan(u).any() and not np.isnan(v).any()
+
+
+def test_comsol_vtu_with_one_time_point_is_time_invariant():
+    # Regression: one time point dropped the time axis but still passed a
+    # one-entry flow_times, which FluidData could not spline.
+    envir = planktos.Environment()
+    envir.read_comsol_vtu_data(str(COMSOL / 'single.vtu'), res=9)
+    fd = envir.flow
+    assert fd.flow_times is None
+    for got, want in zip((fd[0], fd[1]), _comsol_expected(fd, 0.25)):
+        np.testing.assert_allclose(got, want, rtol=0, atol=1e-12)
+
+
+def test_comsol_vtu_scales_by_vel_conv():
+    envir = planktos.Environment()
+    envir.read_comsol_vtu_data(str(COMSOL / 'flow.vtu'), res=9, vel_conv=2.0)
+    for got, want in zip(envir.flow(0.5), _comsol_expected(envir.flow, 0.5)):
+        np.testing.assert_allclose(got, 2.0*want, rtol=0, atol=1e-12)
+
+
+def test_comsol_vtu_refuses_a_directory():
+    with pytest.raises(FileNotFoundError):
+        planktos.Environment().read_comsol_vtu_data(str(COMSOL))
+
+
 @pytest.mark.vtu
 def test_vtu_load():
-    pathname = 'tests/data/comsol/vtu_test_data.txt'
-    assert Path(pathname).is_file(), f"Comsol data {pathname} not found!"
+    # The real export this loader was written for: the 2D channel-past-a-cylinder
+    # benchmark, 194 time points.
+    pathname = 'tests/data/comsol_vtu/rect_channelflow_uvw.vtu'
     envir = planktos.Environment()
-    envir.read_comsol_vtu_data(pathname, vel_conv=1000)
-    envir.set_boundary_conditions(('zero', 'zero'), ('zero', 'zero'), ('noflux', 'noflux'))
-
-    assert len(envir.L) == 3 and envir.flow.flow_times is None
-    assert len(envir.flow) == 3 and len(envir.flow[0].shape) == 3
-    assert [envir.flow.flow_points[d][-1] for d in range(3)] == envir.L
-    assert envir.time == 0.0
+    envir.read_comsol_vtu_data(pathname, res=21)
+    fd = envir.flow
+    assert fd.ndim == 2 and fd.fshape == (194, 21, 21)
+    assert fd.flow_times[0] == 0.0 and np.isclose(fd.flow_times[-1], 7.0)
+    assert np.allclose(envir.L, [2.2, 0.41])
+    u, v = fd.get_raw_loaded_data()
+    assert not np.isnan(u).any() and not np.isnan(v).any()
+    # No-slip walls, top and bottom, including along the top row the
+    # triangulation misses.
+    for f in (u, v):
+        assert np.abs(f[..., 0]).max() < 1e-10 and np.abs(f[..., -1]).max() < 1e-10
 
 
 # --------------------------------------------------------------------------- #

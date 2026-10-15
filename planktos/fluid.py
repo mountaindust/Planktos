@@ -11,7 +11,7 @@ Email: cstric12@utk.edu
 import re
 import warnings
 import numpy as np
-from scipy import interpolate
+from scipy import interpolate, spatial
 from pathlib import Path
 from . import _dataio
 
@@ -2501,16 +2501,15 @@ class ComsolVTUData(FluidData):
 
     def __init__(self, path, periodic_dim=(False, False, False), res=101,
                  linear_interp=False, vel_conv=None):
-        '''Reads in one or more vtu Rectilinear Grid Vector files exported from 
-        COMSOL Multiphysics. It is assumed that the fluid spatial grid includes 
-        all domain boundaries.
+        '''Reads one vtu file exported from COMSOL Multiphysics, holding the
+        velocity at every time point on its FEM mesh, and regrids it onto a
+        regular grid spanning the mesh's bounding box. Times are shifted so that
+        the first is at a Planktos environment time of 0.0.
 
         Parameters
         ----------
         path : string
-            path to folder with vtu data.
-        time_points : list or ndarray
-            list of times corresponding to each vtu file.
+            path to the .vtu file
         periodic_dim : list of 2 or 3 bool, default=(False, False, False)
             True if that spatial dimension is periodic, otherwise False
         res : int, default=101
@@ -2528,18 +2527,23 @@ class ComsolVTUData(FluidData):
         self.vel_conv = vel_conv
 
         path = Path(path)
-        if not path.is_dir(): 
-            raise FileNotFoundError("Directory {} not found!".format(str(path)))
+        if not path.is_file():
+            raise FileNotFoundError("File {} not found!".format(str(path)))
 
         ### Load fluid data ###
         print('Reading vtu fluid data...')
         flow, mesh, flow_times = self._read_vtufile(self.path, res=res)
         print('Done!')
 
-        # _read_vtufile hands back a two-entry mesh for 2D data, so the grid is
-        #   built over however many axes there are rather than always three.
+        # _read_vtufile drops z itself from a mesh flat in z, as a 2D export
+        #   is, so its periodicity flag goes here, and z is recorded as flat.
+        dropped_z = len(mesh) == 2
+        if dropped_z and not isinstance(periodic_dim, bool):
+            periodic_dim = tuple(periodic_dim)[:2]
         flow, mesh, periodic_dim, self._flat = _collapse_flat_axes(
             flow, mesh, periodic_dim, source=str(path))
+        if dropped_z:
+            self._flat = (2,)
 
         # shift domain to quadrant 1
         flow_points = tuple(m - m[0] for m in mesh)
@@ -2576,7 +2580,8 @@ class ComsolVTUData(FluidData):
         -------
         flow : list of ndarray (fluid data)
         mesh : list of 1D arrays of grid points in x, y, and z directions
-        flow_times : ndarray of times at which the fluid velocity is specified
+        flow_times : ndarray of times at which the fluid velocity is specified,
+            shifted so the first is 0.0, or None for a single time point
         '''
 
         ### Gather data ###
@@ -2600,18 +2605,53 @@ class ComsolVTUData(FluidData):
             point_list = np.array([[px,py,pz] for px in x for py in y for pz in z])
             mesh = [x, y, z]
 
+        # The mesh is the same at every time point, so it is triangulated once.
+        tri = spatial.Delaunay(points)
+        ndim = points.shape[1]
+        # Grid points the interpolant leaves undefined lie outside the
+        #   triangulation's hull. On a rectangular domain these are edge points
+        #   a rounding error outside, where boundary nodes' coordinates differ
+        #   in the last bit; each takes the linear interpolant of the simplex it
+        #   barely misses. A point outside by more than that is beyond the mesh
+        #   and takes the value of the nearest node, with a warning.
+        miss = np.isnan(interpolate.LinearNDInterpolator(
+            tri, np.zeros(len(points)))(point_list))
+        if miss.any():
+            xm = point_list[miss]
+            simplex = tri.find_simplex(xm, tol=1e-10)
+            edge = simplex >= 0
+            T = tri.transform[simplex[edge]]
+            b = np.einsum('ijk,ik->ij', T[:, :ndim], xm[edge] - T[:, ndim])
+            bary = np.column_stack((b, 1 - b.sum(axis=1)))
+            verts = tri.simplices[simplex[edge]]
+            far = ~edge
+            if far.any():
+                nearest = spatial.cKDTree(points).query(xm[far])[1]
+                warnings.warn(
+                    "{} of the {} regridded points lie outside the COMSOL "
+                    "mesh, and take the velocity of the nearest mesh "
+                    "node.".format(int(far.sum()), len(point_list)),
+                    UserWarning)
+
+        def regrid(values):
+            out = interpolate.LinearNDInterpolator(tri, values)(point_list)
+            if miss.any():
+                fill = np.empty(len(xm))
+                fill[edge] = np.einsum('ij,ij->i', bary, values[verts])
+                if far.any():
+                    fill[far] = values[nearest]
+                out[miss] = fill
+            return out
+
         # In COMSOL, each three arrays correspond to the x, y, z components of velocity
         #   at each mesh point, with each array being length N where N is the
         #   number of mesh points. Each set of three is a different time point.
         #   So total number of time points is data_size/3.
         for n in range(0, len(data), 3):
-            interp = interpolate.LinearNDInterpolator(points, data[n])
-            flow[0].append(interp(point_list))
-            interp = interpolate.LinearNDInterpolator(points, data[n+1])
-            flow[1].append(interp(point_list))
+            flow[0].append(regrid(data[n]))
+            flow[1].append(regrid(data[n+1]))
             if z_dir:
-                interp = interpolate.LinearNDInterpolator(points, data[n+2])
-                flow[2].append(interp(point_list).reshape((res,res,res)))
+                flow[2].append(regrid(data[n+2]).reshape((res,res,res)))
                 flow[0][-1] = flow[0][-1].reshape((res,res,res))
                 flow[1][-1] = flow[1][-1].reshape((res,res,res))
             else:
@@ -2625,9 +2665,12 @@ class ComsolVTUData(FluidData):
         #   third velocity component.
         flow = [np.array(f) for f in flow[:len(mesh)]]
         if len(flow_times) == 1:
-            flow = [f[0] for f in flow]
+            # A single time point is time-invariant flow.
+            return [f[0] for f in flow], mesh, None
 
-        return flow, mesh, flow_times
+        # shift so that the first time point corresponds to environment time 0
+        flow_times = np.array(flow_times)
+        return flow, mesh, flow_times - flow_times[0]
 
 
 

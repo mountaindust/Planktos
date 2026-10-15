@@ -666,7 +666,8 @@ below), and it roughly doubles the default run on its own.
   - `test_analysis.py` — `get_vorticity`, forward & backward FTLE (closed-form).
   - `test_io_loaders.py` — IB2d moving/static mesh import (committed fixtures),
     the IB2d fluid `uX`/`uY` scalar branch, `_dataio.read_vtk_time_only` (the
-    header-only `TIME` scan), IBAMR vtk (`@vtk`), COMSOL vtu (`@vtu`).
+    header-only `TIME` scan), IBAMR vtk (`@vtk`), COMSOL vtu (a committed
+    fixture, plus the real channel-flow export under `@vtu`).
   - `test_frame_selection.py` — the parts of `plot_all` that decide a frame
     without drawing one. `Swarm._select_frames` (frame spacing in simulated time,
     snapping to the nearest recorded state, index alignment with `pos_history`, a
@@ -692,6 +693,10 @@ below), and it roughly doubles the default run on its own.
   - `vtixml_min/` — 8 zlib-compressed `.vti` dumps one point thick in z,
     indexed by `flow.pvd` and carrying `TimeValue`, shaped like the 2D sea-fan
     export. Field is `u = t`, `v = x + 10y`, `w = 0`; times start at 0.1.
+  - `comsol_vtu_min/` — COMSOL-style `.vtu` exports flat in z: `flow.vtu` at
+    t = 0, 0.5, 1 and `single.vtu` at t = 0.25. Field is `u = 1 + t + x/2`,
+    `v = y − 2t`, linear so the regrid is exact; a one-ulp top wall over thin
+    near-wall triangles reproduces the rounding miss real exports have.
 - **Markers** (registered in `pytest.ini`): `slow` (only with `--runslow`),
   `streaming` (only with `--runstreaming`; applied to the whole of
   `tests/test_data_streaming/` by a module-level `pytestmark`),

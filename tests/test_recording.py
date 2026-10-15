@@ -983,15 +983,21 @@ def test_restore_rebuilds_the_environment_from_provenance(tmp_path):
     assert len(swarms) == 1 and swarms[0].envir is rebuilt
 
 
-@pytest.mark.parametrize('source', ['vtk3d', 'brinkman'])
+@pytest.mark.parametrize('source', ['vtk3d', 'brinkman', 'comsol'])
 def test_restore_rebuilds_a_fluid_given_periodic_dim_per_axis(tmp_path, source):
     # Regression: provenance stores the loader call as JSON, so a periodic_dim
     # tuple came back as a list. FluidData read a list as one flag repeated per
     # axis -- every axis periodic -- and restore() then raised building the
     # fingerprint. IB2d passes a bool, which is why the test above never hit it.
+    # The COMSOL export is 2D, so its three flags must also lose the one for z,
+    # or the fingerprint refuses them at record time.
     envir = planktos.Environment(Lx=10.0, Ly=10.0, rho=1000, mu=0.001)
     if source == 'vtk3d':
         envir.read_IBAMR3d_vtk_data(str(FIXTURES / 'vtk3d_min'), d_start=0)
+        planktos.Swarm(swarm_size=4, envir=envir, seed=1)
+    elif source == 'comsol':
+        envir.read_comsol_vtu_data(str(FIXTURES / 'comsol_vtu_min' / 'flow.vtu'),
+                                   res=9, periodic_dim=(True, False, False))
         planktos.Swarm(swarm_size=4, envir=envir, seed=1)
     else:
         envir.set_brinkman_flow(alpha=66, h_p=1.5, U=1, dpdx=1, res=21,

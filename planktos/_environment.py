@@ -1441,7 +1441,8 @@ class Environment:
         res : int, default=101
             number of points at which to resolve the flow in each dimension
         linear_interp : bool, default=False
-            whether to use linear (True) or nearest-neighbor (False) interpolation
+            whether to interpolate in time linearly (True) or with a cubic
+            spline (False)
         vel_conv : float, optional
             scalar to multiply the velocity by in order to convert units
         '''

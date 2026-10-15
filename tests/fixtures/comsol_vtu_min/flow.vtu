@@ -1,0 +1,62 @@
+<?xml version="1.0"?>
+<VTKFile type="UnstructuredGrid" version="0.1" byte_order="LittleEndian" header_type="UInt32" compressor="vtkZLibDataCompressor">
+  <UnstructuredGrid>
+    <Piece NumberOfPoints="42" NumberOfCells="0">
+      <PointData>
+        <DataArray type="Float64" Name="Velocity_field,_x-component_@_t=0" format="binary" RangeMin="1" RangeMax="2.5">
+          AQAAAACAAABQAQAAJAAAAA==eJxjYACBD/YMJNFfSKR/kEj/IZFmcCCNZiKRZiGaBgAQ9CGd
+        </DataArray>
+        <DataArray type="Float64" Name="Velocity_field,_y-component_@_t=0" format="binary" RangeMin="0" RangeMax="2.0000000000000004">
+          AQAAAACAAABQAQAAKQAAAA==eJxjYEAGD+wh9Aco/cO+P7hEZfr//1A+gwMDkeoZSVQ/XMwHALUhOIk=
+        </DataArray>
+        <DataArray type="Float64" Name="Velocity_field,_z-component_@_t=0" format="binary" RangeMin="0" RangeMax="0">
+          AQAAAACAAABQAQAADQAAAA==eJxjYBgF1AQAAVAAAQ==
+        </DataArray>
+        <DataArray type="Float64" Name="Velocity_field,_x-component_@_t=0.5" format="binary" RangeMin="1.5" RangeMax="3">
+          AQAAAACAAABQAQAAIwAAAA==eJxjYACBH/YMJNF/SKQZHEijmUikWUik2UikOYimAe+xFqU=
+        </DataArray>
+        <DataArray type="Float64" Name="Velocity_field,_y-component_@_t=0.5" format="binary" RangeMin="-1" RangeMax="1.0000000000000004">
+          AQAAAACAAABQAQAALAAAAA==eJxjYACBD/vBFMMDKA0DD+zllr/w0Pv/3h7C/wCjCapnIlH9cDEfAIodRXs=
+        </DataArray>
+        <DataArray type="Float64" Name="Velocity_field,_z-component_@_t=0.5" format="binary" RangeMin="0" RangeMax="0">
+          AQAAAACAAABQAQAADQAAAA==eJxjYBgF1AQAAVAAAQ==
+        </DataArray>
+        <DataArray type="Float64" Name="Velocity_field,_x-component_@_t=1" format="binary" RangeMin="2" RangeMax="3.5">
+          AQAAAACAAABQAQAAIQAAAA==eJxjYAADBwaSaCYSaRYSaTYSaQ4SaS4SaR6iaQAqoQt9
+        </DataArray>
+        <DataArray type="Float64" Name="Velocity_field,_y-component_@_t=1" format="binary" RangeMin="-2" RangeMax="4.440892098500626e-16">
+          AQAAAACAAABQAQAAKwAAAA==eJxjYACDAxDqx34I/QFKP9jP4CDz+pGZFJQPB0SqP2BDmvqhbz4AfdFB4A==
+        </DataArray>
+        <DataArray type="Float64" Name="Velocity_field,_z-component_@_t=1" format="binary" RangeMin="0" RangeMax="0">
+          AQAAAACAAABQAQAADQAAAA==eJxjYBgF1AQAAVAAAQ==
+        </DataArray>
+      </PointData>
+      <CellData>
+      </CellData>
+      <Points>
+        <DataArray type="Float64" Name="Points" NumberOfComponents="3" format="binary" RangeMin="0" RangeMax="3.605551275463989">
+          AQAAAACAAADwAwAAmgAAAA==eJyN0rENhDAQRFEjOaAQ+vD2QCvXx4XXnkvYcDNIGEs3uyPhBPkD8rOhtTdjjrq76JH69/wcv+sSzzd7tx4638ecPejsmaP2zLGVHrVPFx4XHhceF571Pnny+f539oTwhPCE8IQ4nzSnnr6n1R70tD8T/4/R9RldeNDZg84edPZ04elWn88uPOjsQWcPOnt24VnrrvVvNfVSbw==
+          <InformationKey name="L2_NORM_RANGE" location="vtkDataArray" length="2">
+            <Value index="0">
+              0
+            </Value>
+            <Value index="1">
+              3.6055512755
+            </Value>
+          </InformationKey>
+        </DataArray>
+      </Points>
+      <Cells>
+        <DataArray type="Int64" Name="connectivity" format="binary" RangeMin="1e+299" RangeMax="-1e+299">
+          AAAAAACAAAAAAAAA
+        </DataArray>
+        <DataArray type="Int64" Name="offsets" format="binary" RangeMin="1e+299" RangeMax="-1e+299">
+          AAAAAACAAAAAAAAA
+        </DataArray>
+        <DataArray type="UInt8" Name="types" format="binary" RangeMin="1e+299" RangeMax="-1e+299">
+          AAAAAACAAAAAAAAA
+        </DataArray>
+      </Cells>
+    </Piece>
+  </UnstructuredGrid>
+</VTKFile>

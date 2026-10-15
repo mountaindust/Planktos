@@ -48,8 +48,8 @@ def pytest_collection_modifyitems(config, items):
             if "vtk" in item.keywords:
                 item.add_marker(skip_vtk)
     # skip comsol tests if unable to find comsol data
-    path = Path('tests/data/comsol/')
-    if not path.is_dir():
+    path = Path('tests/data/comsol_vtu/rect_channelflow_uvw.vtu')
+    if not path.is_file():
         skip_vtu = pytest.mark.skip(reason="could not load VTU data")
         for item in items:
             if "vtu" in item.keywords:
