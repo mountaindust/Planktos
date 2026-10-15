@@ -117,8 +117,17 @@ beside it. Tiling (item 5) and the §7 prose pass that rides on it come after.
      long been its default; done on `master` as `9148c00`.
 
    **Order** (smallest first to calibrate, pure-new before mixed): ✅ `_provenance.py`
-   · ✅ `_frames.py` · ✅ `_dataio.py` · ✅ `archive.py` · `fluid.py` ·
+   · ✅ `_frames.py` · ✅ `_dataio.py` · ✅ `archive.py` · ✅ `fluid.py` ·
    `_environment.py` · `_swarm.py`.
+
+   `fluid.py` (2026-10-13 to 10-15) was the first module where the
+   correctness pass turned up real code defects rather than wrong text, and
+   they were fixed before the prose: a windowed `get_dudt` crash at each
+   window's last time point, `periodic_dim` lists breaking every restore of an
+   IBAMR/OpenFOAM/COMSOL run, a COMSOL loader that could load nothing, the 3D
+   loaders and IB2d holding their series twice while loading, and more — see
+   the commits from `a4fa838` on. **Expect the same of `_environment.py`**: run
+   the behavior through, not just the text.
 
    **Then a second pass over the same modules, for navigability** *(asked for
    2026-09-18)*. Several are large and hard to read in the order they are in:
