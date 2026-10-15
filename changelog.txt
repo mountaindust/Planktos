@@ -19,6 +19,7 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - New Environment.read_vtkxml_fluid_data reads VTK XML ImageData (.vti) and RectilinearGrid (.vtr) series, with or without a ParaView .pvd index.
 - Fluid loaders warn and carry on when a dump the time series declares is missing, rather than failing.
 - read_comsol_vtu_data reads time-varying COMSOL .vtu exports, interpolating in time between them.
+- read_IB2d_fluid_data starts at the first dump on disk by default, rather than at dump 0.
 - plot_all: new playback_rate (simulated seconds per second of video) sets movie speed. Defaults to 1, real time, changing existing movies.
 - Plotting after a failed time step shows the recorded history and leaves the incomplete step out.
 - New Environment.record streams agent state to a run archive on disk as a run proceeds, instead of holding the whole run in memory.

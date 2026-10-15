@@ -677,6 +677,53 @@ def test_ib2d_refuses_a_directory_without_velocity_dumps(tmp_path):
         fluid.IB2dData(str(tmp_path), dt=0.1, print_dump=10)
 
 
+def _ib2d_copy(tmp_path, dumps, src='ib2d_fluid_min', names=('u',)):
+    for k in dumps:
+        for name in names:
+            shutil.copy(FIXTURES / src / '{}.{:04d}.vtk'.format(name, k), tmp_path)
+    return str(tmp_path)
+
+
+def test_ib2d_refuses_a_gap_in_its_dumps_at_construction(tmp_path):
+    # Regression: the timeline is built from the dump numbers, so a missing dump
+    # went unnoticed until a window slid onto it, partway through a run.
+    path = _ib2d_copy(tmp_path, [0, 1, 2, 3, 4, 6, 7])
+    with pytest.raises(FileNotFoundError, match=r'1 of the dumps 0 to 7.*: 5\.'):
+        fluid.IB2dData(path, dt=0.1, print_dump=10, INUM=2)
+
+
+def test_ib2d_scalar_form_needs_both_components_of_every_dump(tmp_path):
+    path = _ib2d_copy(tmp_path, [0, 1, 2], 'ib2d_fluid_scalar_min', ('uX',))
+    _ib2d_copy(tmp_path, [0, 2], 'ib2d_fluid_scalar_min', ('uY',))
+    with pytest.raises(FileNotFoundError, match=r': 1\.'):
+        fluid.IB2dData(path, dt=0.1, print_dump=10)
+
+
+def test_ib2d_starts_at_the_first_dump_on_disk_by_default(tmp_path):
+    # Regression: d_start defaulted to 0, so a series numbered from 1 -- as IB2d
+    # writes some -- could not be read without saying so.
+    fd = fluid.IB2dData(_ib2d_copy(tmp_path, range(1, 8)), dt=0.1, print_dump=10)
+    assert (fd.d_start, fd.d_finish) == (1, 7)
+    assert np.allclose(fd.flow_times, np.arange(7.0))
+    # The field is u = t on the fixture's own clock, so dump 1 reads 1.0 at the
+    # shifted time 0.
+    assert np.allclose(fd(0.0)[0], 1.0)
+
+
+@pytest.mark.parametrize('loader', [
+    lambda I: _ib2d(I), lambda I: _vtk3d(I),
+    lambda I: fluid.OpenFOAMData(str(FIXTURES / 'openfoam_min'), INUM=I),
+    lambda I: fluid.VTKXMLData(VTIXML, INUM=I)],
+    ids=['IB2dData', 'VTK3dData', 'OpenFOAMData', 'VTKXMLData'])
+def test_an_INUM_wider_than_the_series_is_refused_by_name(loader):
+    # Regression: three loaders read past the end of the series first, and
+    # reported a dump that was never part of it as missing (or an IndexError).
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        with pytest.raises(RuntimeError, match='INUM=40 asks for a window of 41'):
+            loader(40)
+
+
 def test_vtk3d_windowed_actually_slides():
     # The consequence of the short timeline was not an error: INUM >= n_times-1
     # sent FluidData down the "all in memory" branch with extrapolate=(True,True),

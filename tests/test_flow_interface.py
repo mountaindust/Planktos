@@ -740,6 +740,31 @@ def test_linear_spline_surface(linear_in_time_field):
     assert sp.shape == data.shape
 
 
+@pytest.mark.parametrize('INUM', [None, True])
+@pytest.mark.parametrize('query', [-1.0, 0.0, 1.0, 2.5, 4.0, 6.0])
+def test_calling_the_fluid_hands_back_a_copy(linear_in_time_field, INUM, query):
+    # Regression: under linear splining, a time at or beyond the data's ends
+    # returned the stored dump itself, so a caller changing the result in place
+    # changed the fluid. t = 0, where every run starts, was one such time.
+    from planktos import fluid
+    t, data, _, _, fpoints = linear_in_time_field
+    fd = fluid.FluidData([data.copy(), data.copy()], fpoints,
+                         flow_times=t.copy(), INUM=INUM)
+    before = fd(query)[0].copy()
+    fd(query)[0][...] += 100.0
+    np.testing.assert_array_equal(fd(query)[0], before)
+
+
+def test_linear_blend_never_returns_an_entry_it_was_given():
+    # get_stored_vorticity blends through the same helper, from a read cache.
+    from planktos import fluid
+    times = np.array([0.0, 1.0, 2.0])
+    entries = [np.full(3, k, float) for k in range(3)]
+    for q in (-1.0, 0.0, 1.0, 1.5, 2.0, 3.0):
+        got = fluid._linear_blend(times, q, entries.__getitem__)
+        assert not any(np.shares_memory(got, e) for e in entries)
+
+
 def test_linear_spline_derivative_is_the_slope(linear_in_time_field):
     # d/dt of a field linear in time is the slope, exactly. This feeds get_dudt
     # -> the material derivative -> the inertial particle models.
