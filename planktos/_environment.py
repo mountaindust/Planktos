@@ -471,6 +471,8 @@ class Environment:
         #   fit is computed before anything is stored, so a refusal leaves the
         #   Environment as it was. __init__ assigns the flow before ibmesh
         #   exists, hence getattr.
+        if getattr(self, '_recorder', None) is not None:
+            self._refuse_while_recording()
         mesh = getattr(self, 'ibmesh', None)
         if new_flow is not None and mesh is not None:
             fitted = self._fit_ibmesh(mesh, new_flow)
@@ -2369,6 +2371,12 @@ class Environment:
 
         Notes
         -----
+        **Hold the environment fixed while recording.** The archive records
+        the domain, boundary conditions, fluid properties, fluid and mesh as
+        they are when recording starts, and ``RunArchive.restore()`` rebuilds
+        them from that record. Loading fluid and :meth:`reset` raise while
+        recording; :meth:`stop_recording` warns about any other change.
+
         **Start recording before the fluid window has moved.** Under dynamic
         loading, per-dump fluid quantities are written as each dump lands, and
         dumps the sliding window has already passed are gone -- so a recording
@@ -2406,9 +2414,9 @@ class Environment:
         #   and are never re-reported, so a recording started after it moved
         #   would have holes in its fluid series -- which would be refused at
         #   render time, i.e. after the run instead of before it.
-        if self.flow is not None and getattr(self.flow, 'INUM', None) is not None:
-            bnds = getattr(self.flow, 'loaded_idx_bnds', None)
-            if bnds is not None and bnds[0] != 0:
+        if self.flow is not None and self.flow.is_windowed:
+            bnds = self.flow.loaded_idx_bnds
+            if bnds[0] != 0:
                 raise RuntimeError(
                     "Cannot start recording: the fluid is being loaded "
                     "dynamically and its window has already moved past the "
@@ -2418,17 +2426,6 @@ class Environment:
                     "Either start recording before the run loop, or load the "
                     "fluid with INUM=None so that all of it stays in "
                     "memory.".format(*bnds))
-
-        if 'velocities' not in store:
-            # Printed rather than warned: it is the default, so it is a notice
-            #   about what this run will and will not be able to answer later,
-            #   not a suspicion that something is wrong. Said at the start,
-            #   because the cost of not having them arrives much later.
-            print("Recording to {}. Storing {}; velocity history will not be "
-                  "kept -- plots and statistics are served from the recorded "
-                  "summaries. To keep per-agent velocities for later analysis, "
-                  "pass store=('positions','velocities').".format(
-                      path, ', '.join(store)))
 
         if int(capture_interval) < 1:
             raise ValueError('capture_interval must be at least 1')
@@ -2449,6 +2446,20 @@ class Environment:
         # The resolved path, not the one asked for: recording into a non-empty
         #   directory redirects to a timestamped sibling.
         self._archive_path = self._recorder.path
+
+        # Printed rather than warned: these are notices about what the archive
+        #   will hold, not suspicions that something is wrong. Said at the
+        #   start, because the cost of each arrives much later.
+        notice = ("Recording to {}. A restore rebuilds the environment as it "
+                  "is now, so hold its domain, boundary conditions, fluid and "
+                  "mesh fixed until recording stops.".format(self._archive_path))
+        if 'velocities' not in store:
+            notice += (" Storing {}; velocity history will not be kept -- "
+                       "plots and statistics are served from the recorded "
+                       "summaries. To keep per-agent velocities for later "
+                       "analysis, pass store=('positions','velocities')."
+                       .format(', '.join(store)))
+        print(notice)
         return self._recorder
 
 
@@ -2466,6 +2477,10 @@ class Environment:
 
     def stop_recording(self):
         '''Flush and unhook. Idempotent, and a no-op if nothing is recording.
+
+        Warns, naming what changed, if the domain, boundary conditions, fluid
+        properties, fluid or mesh differ from when recording started, since
+        ``RunArchive.restore()`` rebuilds them as they were then.
 
         Nothing here is load-bearing for correctness: the archive on disk is
         valid whether or not this is ever reached. The most a hard kill can cost

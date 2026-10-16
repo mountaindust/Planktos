@@ -586,9 +586,92 @@ def test_every_fluid_setter_guards_against_loading_while_recording():
     expected = {'set_brinkman_flow', 'set_two_layer_channel_flow',
                 'set_canopy_flow', 'read_IB2d_fluid_data',
                 'read_IBAMR3d_vtk_data', 'read_openfoam_vtk_data',
-                'read_comsol_vtu_data', 'read_NetCDF_flow', 'reset'}
+                'read_comsol_vtu_data', 'read_NetCDF_flow',
+                'read_vtkxml_fluid_data', 'reset'}
     assert expected <= guarded, \
         'unguarded: {}'.format(sorted(expected - guarded))
+
+
+def test_assigning_flow_directly_while_recording_raises(tmp_path):
+    # The flow setter is the one place every fluid entry point passes through,
+    # including a FluidData assigned by hand.
+    envir = _envir()
+    _swarm(envir)
+    replacement = fluid.FluidData(
+        [np.ones((3, 3)), np.zeros((3, 3))],
+        (np.linspace(0, 10, 3), np.linspace(0, 10, 3)), None)
+    with envir.record(tmp_path / 'run'):
+        with pytest.raises(RuntimeError, match='not allowed while recording'):
+            envir.flow = replacement
+    envir.flow = replacement                     # fine once stopped
+
+
+def _assign_mesh(envir):
+    envir.ibmesh = np.array([[[1., 1.], [2., 2.]]])
+    envir.max_meshpt_dist = np.sqrt(2)
+
+
+@pytest.mark.parametrize('change, named', [
+    (lambda e: e.read_IB2d_mesh_data(str(FIXTURES / 'mesh_min' / 'box.vertex')),
+     'ibmesh'),
+    (_assign_mesh, 'ibmesh'),
+    (lambda e: e.set_boundary_conditions('periodic', 'periodic'), 'bndry'),
+    (lambda e: setattr(e, 'U', 2.0), 'U'),
+    (lambda e: setattr(e, 'L', [12.0, 10.0]), 'L'),
+])
+def test_changing_the_environment_while_recording_warns_at_stop(
+        tmp_path, change, named):
+    # restore() rebuilds the Environment from what meta.json recorded when
+    # recording started, so a change made afterwards would be silently lost.
+    envir = _envir()
+    swrm = _swarm(envir)
+    with pytest.warns(UserWarning, match=r'changed while recording.*\b{}\b'
+                      .format(named)):
+        with envir.record(tmp_path / 'run'):
+            swrm.move(0.1, silent=True)
+            change(envir)
+            swrm.move(0.1, silent=True)
+
+
+def test_editing_a_mesh_in_place_while_recording_warns_at_stop(tmp_path):
+    # In-place edits leave every provenance record as it was; the digest of
+    # the mesh arrays is what notices.
+    envir = _envir()
+    _assign_mesh(envir)
+    swrm = _swarm(envir)
+    with pytest.warns(UserWarning, match='changed while recording.*ibmesh'):
+        with envir.record(tmp_path / 'run'):
+            swrm.move(0.1, silent=True)
+            envir.ibmesh[0, 0, 0] = 1.5
+
+
+def test_an_unchanged_environment_stops_without_warning(tmp_path):
+    envir = planktos.Environment(Lx=10, Ly=10, rho=1000, mu=1000)
+    envir.set_brinkman_flow(alpha=3, h_p=0.5, U=1, dpdx=1, res=11)
+    envir.read_IB2d_mesh_data(str(FIXTURES / 'mesh_min' / 'box.vertex'))
+    swrm = _swarm(envir)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        with envir.record(tmp_path / 'run'):
+            for _ in range(3):
+                swrm.move(0.1, silent=True)
+    assert not [w for w in caught if 'changed while recording' in str(w.message)]
+
+
+def test_record_names_the_directory_it_actually_records_to(tmp_path, capsys):
+    # A non-empty directory redirects to a timestamped sibling; the printed
+    # notice has to name the sibling, as the handle does.
+    (tmp_path / 'run').mkdir()
+    (tmp_path / 'run' / 'occupied.txt').write_text('x')
+    envir = _envir()
+    _swarm(envir)
+    capsys.readouterr()
+    with pytest.warns(UserWarning):
+        rec = envir.record(tmp_path / 'run')
+    rec.stop()
+    printed = capsys.readouterr().out
+    assert 'Recording to {}.'.format(rec.path) in printed
+    assert rec.path != tmp_path / 'run'
 
 
 # --------------------------------------------------------------------------- #

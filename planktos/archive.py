@@ -102,6 +102,8 @@ Author: Christopher Strickland
 Email: cstric12@utk.edu
 '''
 
+import copy
+import hashlib
 import importlib
 import json
 import os
@@ -1977,6 +1979,57 @@ def _writable_source_dir(flow):
     return directory.resolve()
 
 
+def _environment_record(envir):
+    '''The Environment's own parameters, as ``meta.json`` records them.'''
+
+    return {'L': [float(v) for v in envir.L],
+            'units': envir.units,
+            'bndry': [list(b) for b in envir.bndry],
+            'rho': _provenance.jsonable(envir.rho),
+            'mu': _provenance.jsonable(envir.mu),
+            # nu is derivable as mu/rho from every construction but
+            #   Environment(nu=...), where rho and mu are both None and it is
+            #   the only one of the three there is.
+            'nu': _provenance.jsonable(envir.nu),
+            # motion.inertial_particles asserts both of these, so an inertial
+            #   run that loses them cannot be restarted at all -- it raises
+            #   before it moves.
+            'char_L': _provenance.jsonable(envir.char_L),
+            'U': _provenance.jsonable(envir.U),
+            # Resolved rather than as given: 'k' in 2D and 'dimgrey' in 3D
+            #   when the caller named none.
+            'ibmesh_color': _provenance.jsonable(envir.ibmesh_color),
+            # They are functions, so they cannot be recorded. Whether there
+            #   were any can, which is what lets a reboot say they are missing
+            #   only when they are.
+            'has_plot_structs': bool(envir.plot_structs)}
+
+
+# How _restorable_state's keys are named in a warning.
+_RESTORABLE_NAMES = {'has_plot_structs': 'plot_structs',
+                     'ibmesh_data': 'ibmesh'}
+
+
+def _restorable_state(envir):
+    '''What RunArchive.restore() rebuilds an Environment from, in a form that
+    compares with ``==``: the parameters and the fluid and mesh provenance
+    ``meta.json`` records, plus the shape and a digest of the mesh arrays.'''
+
+    # Modifiers append to a provenance record in place, so a later comparison
+    #   needs copies. The digest is what notices an ibmesh assigned directly,
+    #   which records no provenance at all.
+    mesh = None
+    if envir.ibmesh is not None:
+        digest = hashlib.sha1(np.ascontiguousarray(envir.ibmesh).tobytes())
+        if envir.ibmesh_times is not None:
+            digest.update(np.ascontiguousarray(envir.ibmesh_times).tobytes())
+        mesh = (envir.ibmesh.shape, digest.hexdigest())
+    return {**_environment_record(envir),
+            'fluid': copy.deepcopy(envir._fluid_provenance),
+            'ibmesh': copy.deepcopy(envir._ibmesh_provenance),
+            'ibmesh_data': mesh}
+
+
 
 #############################################################################
 #                                                                           #
@@ -2037,31 +2090,12 @@ class RunRecorder:
         record_meta['capture_interval'] = int(capture_interval)
         record_meta['provenance'] = {
             'planktos_version': planktos.__version__,
-            'environment': {'L': [float(v) for v in envir.L],
-                            'units': envir.units,
-                            'bndry': [list(b) for b in envir.bndry],
-                            'rho': _provenance.jsonable(envir.rho),
-                            'mu': _provenance.jsonable(envir.mu),
-                            # nu is derivable as mu/rho from every construction
-                            #   but Environment(nu=...), where rho and mu are
-                            #   both None and it is the only one of the three
-                            #   there is.
-                            'nu': _provenance.jsonable(envir.nu),
-                            # motion.inertial_particles asserts both of these,
-                            #   so an inertial run that loses them cannot be
-                            #   restarted at all -- it raises before it moves.
-                            'char_L': _provenance.jsonable(envir.char_L),
-                            'U': _provenance.jsonable(envir.U),
-                            # Resolved rather than as given: 'k' in 2D and
-                            #   'dimgrey' in 3D when the caller named none.
-                            'ibmesh_color': _provenance.jsonable(
-                                envir.ibmesh_color),
-                            # They are functions, so they cannot be recorded.
-                            #   Whether there were any can, which is what lets a
-                            #   reboot say they are missing only when they are.
-                            'has_plot_structs': bool(envir.plot_structs)},
+            'environment': _environment_record(envir),
             'fluid': envir._fluid_provenance,
             'ibmesh': envir._ibmesh_provenance}
+        # Compared against at stop(), which warns if the run went on to change
+        #   what restore() rebuilds from.
+        self._state_at_start = _restorable_state(envir)
 
         # Decided before the archive exists, because it goes into meta.json --
         #   written once when recording starts and never rewritten.
@@ -2227,6 +2261,26 @@ class RunRecorder:
             self.envir._recorder = None
             # Nothing is being gated any more; history goes back to every step.
             self.envir._capture_interval = 1
+        self._warn_if_environment_changed()
+
+
+    def _warn_if_environment_changed(self):
+        '''Warn, naming what changed, if the Environment no longer matches the
+        record restore() will rebuild it from.'''
+
+        now = _restorable_state(self.envir)
+        changed = []
+        for key, value in now.items():
+            if value != self._state_at_start[key]:
+                name = _RESTORABLE_NAMES.get(key, key)
+                if name not in changed:
+                    changed.append(name)
+        if changed:
+            warnings.warn(
+                'the Environment changed while recording to {} ({}). The '
+                'archive records it as it was when recording started, so '
+                'RunArchive.restore() rebuilds that version, not this '
+                'one.'.format(self.path, ', '.join(changed)), UserWarning)
 
 
     ####################   hooks   ####################
