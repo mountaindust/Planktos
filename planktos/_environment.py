@@ -1158,8 +1158,9 @@ class Environment:
         # set time
         if tspan is not None:
             if not hasattr(tspan, '__iter__'):
-                # set flow_times based off zero
-                flow_times = np.arange(0, tspan*tlen, tspan)
+                # tspan is dt: tlen times from zero, counted by an integer
+                #   range so that the count is exact.
+                flow_times = tspan*np.arange(tlen)
             elif len(tspan) == 2:
                 flow_times = np.linspace(tspan[0], tspan[1], tlen)
             else:
@@ -1599,7 +1600,11 @@ class Environment:
         if flow_y is None:
             assert vec_idx is not None, "vec_idx must be specified if there is only one fluid variable"
 
-        # Get the flow data, permuting the axes as necessary
+        # Get the flow data, permuting the axes as necessary. dim_reorder[i] is
+        #   where NetCDF axis i goes; np.transpose takes, for each output
+        #   axis, the input axis that lands there, which is the inverse.
+        if dim_reorder is not None:
+            axes = np.argsort(dim_reorder)
         flow = []
         if vec_idx is None:
             if dim_reorder is None:
@@ -1608,10 +1613,10 @@ class Environment:
                 if flow_z is not None:
                     flow.append(self.netcdf[flow_z][:])
             else:
-                flow.append(np.transpose(self.netcdf[flow_x][:], dim_reorder))
-                flow.append(np.transpose(self.netcdf[flow_y][:], dim_reorder))
+                flow.append(np.transpose(self.netcdf[flow_x][:], axes))
+                flow.append(np.transpose(self.netcdf[flow_y][:], axes))
                 if flow_z is not None:
-                    flow.append(np.transpose(self.netcdf[flow_z][:], dim_reorder))
+                    flow.append(np.transpose(self.netcdf[flow_z][:], axes))
         else:
             dim = self.netcdf[flow_x].shape[vec_idx]
             full_flow = np.moveaxis(self.netcdf[flow_x][:], vec_idx, 0)
@@ -1620,7 +1625,7 @@ class Environment:
                     flow.append(full_flow[d,...])
             else:
                 for d in range(dim):
-                    flow.append(np.transpose(full_flow[d,...], dim_reorder))
+                    flow.append(np.transpose(full_flow[d,...], axes))
 
         # Detect time dependence and spatial dimension
         ts_dim = len(flow[0].shape)
@@ -1646,7 +1651,8 @@ class Environment:
             if vec_idx is None:
                 dim_idx_reorder = dim_reorder
             else:
-                dim_idx_reorder = list(dim_reorder).insert(vec_idx, 99)
+                dim_idx_reorder = list(dim_reorder)
+                dim_idx_reorder.insert(vec_idx, 99)
             dim_order = []
             for d in range(len(dim_reorder)):
                 for idx, val in enumerate(dim_idx_reorder):
@@ -1761,6 +1767,7 @@ class Environment:
 
         self.ibmesh = ibmesh
         self.max_meshpt_dist = max_meshpt_dist
+        self.ibmesh_times = None
 
 
 
@@ -1887,6 +1894,22 @@ class Environment:
                     pts[:,ii] -= self.flow.fluid_domain_LLC[ii]
             return pts
 
+        def _added_pairs(n_vertices):
+            '''add_idx_list as 0-based index pairs, checked against the number
+            of vertices.'''
+            if add_idx_list is None:
+                return []
+            pairs = []
+            for pair in add_idx_list:
+                if len(pair) != 2 or not all(1 <= idx <= n_vertices
+                                             for idx in pair):
+                    raise ValueError(
+                        "add_idx_list entry {} must be a pair of vertex "
+                        "indices from 1 to {} (indexing starts at 1, as for "
+                        "brk_idx_list).".format(pair, n_vertices))
+                pairs.append((pair[0]-1, pair[1]-1))
+            return pairs
+
         ####### Moving immersed boundary data #######
         if path.is_dir(): 
             #infer d_finish
@@ -1921,6 +1944,7 @@ class Environment:
             ### Convert to T x N x 2 x 2 array of mesh elements
 
             ibmesh = []
+            added = _added_pairs(len(mesh_list[0]))
 
             for t in range(len(mesh_list)):
                 ibmesh.append([])
@@ -1929,9 +1953,8 @@ class Environment:
                         ibmesh[t].append([mesh_list[t][n,:],mesh_list[t][n+1,:]])
                 if periodic:
                     ibmesh[t].append([mesh_list[t][-1,:],mesh_list[t][0,:]])
-                if add_idx_list is not None:
-                    for tup in add_idx_list:
-                        ibmesh[t].append([mesh_list[t][tup[0],:],mesh_list[t][tup[1],:]])
+                for i0, i1 in added:
+                    ibmesh[t].append([mesh_list[t][i0,:],mesh_list[t][i1,:]])
 
             print('Done! Visually check structure with plot_envir().')
 
@@ -1941,12 +1964,13 @@ class Environment:
                 self.ibmesh_times = np.arange(d_start,d_finish+1,dtype=np.float64)*print_dump*dt
                 # shift time so that ibmesh starts at t=0
                 self.ibmesh_times -= self.ibmesh_times[0]
+                # A moving mesh's element lengths change, so it has no maximum.
+                self.max_meshpt_dist = None
             else:
                 self.ibmesh = np.array(ibmesh[0], dtype=np.float64) # squash t dimension
                 self.ibmesh_times = None
+                self.max_meshpt_dist = _geom.max_edge_length(self.ibmesh)
 
-            # Do not set maximum distance between mesh points - it changes.
-        
         
         ####### Static immersed boundary data #######
         elif path.is_file():
@@ -1958,9 +1982,8 @@ class Environment:
                 for n in range(vertices.shape[0]-1):
                     if n+1 not in brk_idx_list:
                         ibmesh.append([vertices[n,:],vertices[n+1,:]])
-                if add_idx_list is not None:
-                    for tup in add_idx_list:
-                        ibmesh.append([vertices[tup[0],:],vertices[tup[1],:]])
+                for i0, i1 in _added_pairs(vertices.shape[0]):
+                    ibmesh.append([vertices[i0,:],vertices[i1,:]])
                 self.ibmesh = np.array(ibmesh, dtype=np.float64)
                 print('Done! Visually check structure with plot_envir().')
             
@@ -1999,6 +2022,7 @@ class Environment:
             # Set maximum distance between mesh points.
             self.max_meshpt_dist = np.linalg.norm(self.ibmesh[:,0,:]
                                                   -self.ibmesh[:,1,:],axis=1).max()
+            self.ibmesh_times = None
         
         
         ####### Neither a directory nor a filename #######
@@ -2131,6 +2155,7 @@ class Environment:
 
         self.ibmesh = ibmesh
         self.max_meshpt_dist = _geom.max_edge_length(ibmesh)
+        self.ibmesh_times = None
 
 
 

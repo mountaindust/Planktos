@@ -147,6 +147,17 @@ def test_flow_points_axis_order_static():
     assert np.isclose(envir.flow.flow_points[0][-1], 10) and np.isclose(envir.flow.flow_points[1][-1], 8)
 
 
+@pytest.mark.parametrize('dt, n', [(0.1, 3), (0.1, 7), (0.3, 10), (1.0, 3)])
+def test_flow_times_from_a_scalar_dt(dt, n):
+    # Regression: the times came from np.arange(0, dt*n, dt), which returns
+    # n+1 points when dt*n rounds up -- 0.1*3 does -- and the extra time
+    # point then failed against the data's n.
+    envir = planktos.Environment(flow=[np.zeros((n, 5, 5)), np.zeros((n, 5, 5))],
+                                 flow_times=dt)
+    assert len(envir.flow.flow_times) == n
+    assert np.allclose(envir.flow.flow_times, dt*np.arange(n))
+
+
 def test_flow_points_axis_order_time_dependent():
     T, nx, ny = 4, 12, 9
     envir = planktos.Environment(Lx=10, Ly=8,

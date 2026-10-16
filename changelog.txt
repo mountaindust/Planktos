@@ -54,6 +54,8 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - Bug fix: Swarm.plot at a past time with a moving immersed boundary mesh raised AttributeError.
 - Bug fix: plot_all raised KeyError in 2D for a swarm with per-agent colors, which have no shared color entry to fall back on.
 - Bug fix: plot_all(fluid='vort') raised over a time-invariant flow, which is every analytic flow (brinkman, channel, canopy).
+- Bug fix: read_IB2d_mesh_data's add_idx_list is now 1-based, as documented and as brk_idx_list is.
+- Bug fix: read_NetCDF_flow accepts dim_reorder alongside vec_idx, and any axis permutation rather than only swaps.
 - other minor bug fixes
 
 

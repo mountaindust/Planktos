@@ -1259,13 +1259,86 @@ def test_static_vertex_import_adjacent():
 
 
 def test_static_vertex_import_closed_with_add_idx():
-    # add_idx_list adds the closing segment (vertex 3 -> 0), giving all 4 sides.
-    # (The static 'adjacent' method, unlike the moving branch, ignores `periodic`.)
+    # add_idx_list adds the closing segment (vertex 4 -> 1, counting from 1),
+    # giving all 4 sides. (The static 'adjacent' method, unlike the moving
+    # branch, ignores `periodic`.)
     envir = planktos.Environment(Lx=10, Ly=10)
     envir.read_IB2d_mesh_data(str(FIXTURES / 'mesh_min' / 'box.vertex'),
-                              method='adjacent', add_idx_list=[(3, 0)])
+                              method='adjacent', add_idx_list=[(4, 1)])
     assert envir.ibmesh.shape == (4, 2, 2)
     assert np.allclose(envir.ibmesh[-1], [[2., 4.], [2., 2.]])   # last vertex -> first
+
+
+def test_moving_mesh_add_idx_counts_from_one_like_brk_idx():
+    # Closing the 4-vertex chain with add_idx_list=[(4, 1)] gives exactly the
+    # segment periodic=True adds.
+    added = planktos.Environment(Lx=10, Ly=10)
+    added.read_IB2d_mesh_data(str(FIXTURES / 'lagspts_min'), dt=0.1,
+                              print_dump=1, add_idx_list=[(4, 1)])
+    closed = planktos.Environment(Lx=10, Ly=10)
+    closed.read_IB2d_mesh_data(str(FIXTURES / 'lagspts_min'), dt=0.1,
+                               print_dump=1, periodic=True)
+    assert np.array_equal(added.ibmesh, closed.ibmesh)
+
+
+@pytest.mark.parametrize('pair', [(4, 0), (5, 1), (1, 2, 3)])
+@pytest.mark.parametrize('source', ['mesh_min/box.vertex', 'lagspts_min'])
+def test_add_idx_out_of_range_raises(source, pair):
+    # Indices count from 1, so a 0 left over from 0-based indexing is refused
+    # rather than read as the last vertex.
+    envir = planktos.Environment(Lx=10, Ly=10)
+    with pytest.raises(ValueError, match='add_idx_list'):
+        envir.read_IB2d_mesh_data(str(FIXTURES / source), dt=0.1, print_dump=1,
+                                  add_idx_list=[pair])
+
+
+# --------------------------------------------------------------------------- #
+#        the mesh bookkeeping each loader leaves behind (regression)          #
+# --------------------------------------------------------------------------- #
+# ibmesh_times marks a mesh as moving and max_meshpt_dist bounds a static
+# mesh's element length for the collision search. A loader that did not set
+# both left them describing the previous mesh.
+
+def _moving(envir):
+    envir.read_IB2d_mesh_data(str(FIXTURES / 'lagspts_min'), dt=0.1, print_dump=1)
+
+
+@pytest.mark.parametrize('load_static', [
+    lambda e: e.read_IB2d_mesh_data(str(FIXTURES / 'mesh_min' / 'box.vertex')),
+    lambda e: e.read_IB2d_mesh_data(str(FIXTURES / 'lagspts_min'), dt=0.1,
+                                    print_dump=1, d_start=1, d_finish=1),
+    lambda e: e.read_3D_vertex_data_to_convex_hull(
+        str(FIXTURES / 'mesh_min' / 'box.vertex')),
+], ids=['vertex', 'one-lagsPts-dump', 'hull'])
+def test_a_static_mesh_read_after_a_moving_one_is_static(load_static):
+    envir = planktos.Environment(Lx=10, Ly=10)
+    _moving(envir)
+    load_static(envir)
+    assert envir.ibmesh.ndim == 3
+    assert envir.ibmesh_times is None
+    lengths = np.linalg.norm(envir.ibmesh[:, 0] - envir.ibmesh[:, 1], axis=1)
+    assert np.isclose(envir.max_meshpt_dist, lengths.max())
+    # A stale ibmesh_times made calculate_FTLE refuse the mesh as moving.
+    envir.calculate_FTLE(grid_dim=(5, 5), T=0.1, dt=0.05)
+
+
+def test_a_moving_mesh_read_after_a_static_one_has_no_max_length():
+    envir = planktos.Environment(Lx=10, Ly=10)
+    envir.read_IB2d_mesh_data(str(FIXTURES / 'mesh_min' / 'box.vertex'))
+    _moving(envir)
+    assert envir.max_meshpt_dist is None
+
+
+def test_a_single_lagspts_dump_is_a_static_mesh_agents_can_move_around():
+    # d_start == d_finish squashes the time axis; the collision search then
+    # needs a maximum element length, which this branch never computed.
+    envir = planktos.Environment(Lx=10, Ly=10)
+    envir.read_IB2d_mesh_data(str(FIXTURES / 'lagspts_min'), dt=0.1,
+                              print_dump=1, d_start=0, d_finish=0)
+    assert envir.ibmesh.shape == (3, 2, 2)
+    assert np.isclose(envir.max_meshpt_dist, 1.0)
+    swrm = planktos.Swarm(5, envir, seed=1)
+    swrm.move(0.1)
 
 
 # --------------------------------------------------------------------------- #
@@ -1620,6 +1693,78 @@ def test_vtu_load():
     # triangulation misses.
     for f in (u, v):
         assert np.abs(f[..., 0]).max() < 1e-10 and np.abs(f[..., -1]).max() < 1e-10
+
+
+# --------------------------------------------------------------------------- #
+#            NetCDF fluid (files written by the test; needs netCDF4)          #
+# --------------------------------------------------------------------------- #
+# Each component's value encodes its own coordinates, u = x + 10y + 100t and
+# v = -u, and the axes have different lengths, so a permutation that lands
+# any axis in the wrong place shows up in the values even where the shapes
+# happen to fit.
+
+_NC_AXES = {'t': np.array([0., 1., 2.]), 'x': np.linspace(0, 4, 5),
+            'y': np.linspace(0, 6, 4)}
+
+
+def _nc_component(c, t, x, y):
+    u = x + 10*y + 100*t
+    return u if c == 0 else -u
+
+
+def _write_netcdf(path, order, comp_at=None):
+    '''Write u and v with their dimensions in `order`, as two variables, or as
+    one variable with a component dimension inserted at index comp_at.'''
+    netCDF4 = pytest.importorskip('netCDF4')
+    ds = netCDF4.Dataset(str(path), 'w')
+    for d in order:
+        ds.createDimension(d, len(_NC_AXES[d]))
+        ds.createVariable(d, 'f8', (d,))[:] = _NC_AXES[d]
+    grid = dict(zip(order, np.meshgrid(*[_NC_AXES[d] for d in order],
+                                       indexing='ij')))
+    comps = [_nc_component(c, grid['t'], grid['x'], grid['y']) for c in (0, 1)]
+    if comp_at is None:
+        for name, values in zip(('u', 'v'), comps):
+            ds.createVariable(name, 'f8', order)[:] = values
+    else:
+        ds.createDimension('c', 2)
+        dims = list(order)
+        dims.insert(comp_at, 'c')
+        ds.createVariable('uv', 'f8', tuple(dims))[:] = np.stack(comps, comp_at)
+    ds.close()
+
+
+@pytest.mark.parametrize('order, reorder, comp_at', [
+    (('t', 'x', 'y'), None, None),
+    (('t', 'y', 'x'), [0, 2, 1], None),
+    # dim_reorder[i] is where NetCDF axis i goes. These two are not their own
+    # inverse, which is where that reading and np.transpose's part ways.
+    (('y', 't', 'x'), [2, 0, 1], None),
+    (('x', 'y', 't'), [1, 2, 0], None),
+    (('t', 'x', 'y'), None, 0),
+    # A component dimension with dim_reorder given raised TypeError, from
+    # list.insert returning None.
+    (('t', 'y', 'x'), [0, 2, 1], 3),
+    (('t', 'y', 'x'), [0, 2, 1], 1),
+], ids=['planktos-order', 'swap', 'cycle', 'cycle-inverse', 'component',
+        'component-last-reordered', 'component-mid-reordered'])
+def test_netcdf_flow_lands_on_the_planktos_axes(tmp_path, order, reorder, comp_at):
+    _write_netcdf(tmp_path / 'flow.nc', order, comp_at)
+    envir = planktos.Environment()
+    envir.load_NetCDF(str(tmp_path / 'flow.nc'))
+    if comp_at is None:
+        envir.read_NetCDF_flow('u', 'v', dim_reorder=reorder)
+    else:
+        envir.read_NetCDF_flow('uv', vec_idx=comp_at, dim_reorder=reorder)
+
+    assert np.allclose(envir.flow.flow_times, _NC_AXES['t'])
+    assert np.allclose(envir.flow.flow_points[0], _NC_AXES['x'])
+    assert np.allclose(envir.flow.flow_points[1], _NC_AXES['y'])
+    t, x, y = np.meshgrid(_NC_AXES['t'], _NC_AXES['x'], _NC_AXES['y'],
+                          indexing='ij')
+    raw = envir.flow.get_raw_loaded_data()
+    for c in (0, 1):
+        assert np.allclose(np.asarray(raw[c]), _nc_component(c, t, x, y))
 
 
 # --------------------------------------------------------------------------- #
