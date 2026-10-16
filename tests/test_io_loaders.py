@@ -1533,7 +1533,18 @@ def test_shift_ibmesh_to_match_LLC_requires_a_mesh():
     envir = planktos.Environment(Lx=10, Ly=10)
     envir.flow = _fluid_with_llc()
     assert envir.ibmesh is None
-    with pytest.raises(AssertionError, match='mesh'):
+    with pytest.raises(RuntimeError, match='mesh'):
+        envir.shift_ibmesh_to_match_LLC()
+
+
+def test_shift_ibmesh_to_match_LLC_requires_a_translated_fluid():
+    envir = planktos.Environment(Lx=10, Ly=10)
+    envir.read_IB2d_mesh_data(str(FIXTURES / 'mesh_min' / 'box.vertex'))
+    with pytest.raises(RuntimeError, match='No fluid'):
+        envir.shift_ibmesh_to_match_LLC()
+    envir.flow = _fluid_with_llc()
+    envir.flow.fluid_domain_LLC = None
+    with pytest.raises(RuntimeError, match='fluid_domain_LLC'):
         envir.shift_ibmesh_to_match_LLC()
 
 

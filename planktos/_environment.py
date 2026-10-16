@@ -541,9 +541,14 @@ class Environment:
         translating the segment.
         '''
 
-        assert self.flow is not None, "No fluid velocity field loaded."
-        assert self.flow.fluid_domain_LLC is not None, "No orig LLC info."
-        assert self.ibmesh is not None, "No immersed boundary mesh loaded."
+        if self.flow is None:
+            raise RuntimeError("No fluid velocity field loaded.")
+        if self.flow.fluid_domain_LLC is None:
+            raise RuntimeError("The loaded fluid was not translated, so there "
+                               "is no shift to match: it records no original "
+                               "lower-left corner (fluid_domain_LLC).")
+        if self.ibmesh is None:
+            raise RuntimeError("No immersed boundary mesh loaded.")
         # move any ibmesh to match the LLC shift
         for ii in range(len(self.flow.fluid_domain_LLC)):
             self.ibmesh[...,ii] -= self.flow.fluid_domain_LLC[ii]
@@ -1451,10 +1456,6 @@ class Environment:
             scalar to multiply the velocity by in order to convert units
         '''
         self._refuse_while_recording()
-
-        path = Path(filename)
-        if not path.is_file(): 
-            raise FileNotFoundError("File {} not found!".format(str(filename)))
 
         self.flow = fluid.ComsolVTUData(filename, periodic_dim, res, linear_interp, 
                                         vel_conv)
