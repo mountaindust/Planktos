@@ -39,7 +39,7 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 
 class Environment:
     '''
-    Rectangular environment containing fluid info, immersed meshs, and Swarms.
+    Rectangular environment containing fluid info, immersed meshes, and Swarms.
 
     The Environment class does much of the heavy lifting of Planktos. It loads 
     and contains information about the fluid velocity field, the dimensions of 
@@ -138,12 +138,15 @@ class Environment:
         current environment time
     time_history : list of floats
         list of past time states
-    flow : FluidData object
-        The fluid velocity field, any temporal interpolation, and attributes.
-        Assigning a fluid (as every fluid loader does) raises ValueError if the
-        loaded ibmesh cannot be put in the fluid's dimension, leaving the
-        Environment unchanged. A 3D triangle mesh that is a straight extrusion
-        meets a 2D fluid by being reduced to the outline it was extruded from.
+    flow : FluidData or None
+        the fluid velocity field and its interpolation in time; None until a
+        fluid is set, and agents then see zero velocity. Assigning a fluid, as
+        every fluid loader does, raises RuntimeError while recording, and
+        ValueError if the loaded ibmesh cannot be put in the fluid's dimension;
+        either way the Environment is left unchanged. A 3D triangle mesh can
+        be used with a 2D fluid only if it is a 2D shape extruded straight
+        along the out-of-plane axis (the geometry of a 2D simulation usually
+        is); the mesh is then replaced by that 2D shape.
     h_p : float
         height of porous region in analytic flows, e.g. Brinkman
     g : float
@@ -162,17 +165,19 @@ class Environment:
     netcdf : netCDF4 Dataset object
         only present if a netCDF file has been loaded for reading
     ibmesh : ndarray
-        This is either an Nx2x2 array (2D, line mesh) or an Nx3x3 array (3D, 
-        triangular mesh) specifying internal mesh structures that agents will 
-        treat as solid barriers. Each value of the first index into the array 
-        specifies a mesh element, and each 1x2 or 1x3 contained in that index 
-        is a point in space (so, two for a line, three for a triangle). Avoid 
-        mesh structures that intersect with a periodic boundary - behavior 
+        This is either an Nx2x2 array (2D, line mesh) or an Nx3x3 array (3D,
+        triangular mesh) specifying internal mesh structures that agents will
+        treat as solid barriers. Each value of the first index into the array
+        specifies a mesh element, and each 1x2 or 1x3 contained in that index
+        is a point in space (so, two for a line, three for a triangle). A
+        moving 2D mesh is TxNx2x2, one Nx2x2 mesh per time in ibmesh_times.
+        Avoid mesh structures that intersect with a periodic boundary - behavior
         related to this is not implemented.
-    max_meshpt_dist : float
-        maximum length of a static mesh segment in ibmesh, typically determined 
-        automatically. This is used in search algorithms to winnow down the 
-        number of mesh elements to search for intersections of movement.
+    max_meshpt_dist : float or None
+        maximum length of a static mesh segment in ibmesh, typically determined
+        automatically. This is used in search algorithms to winnow down the
+        number of mesh elements to search for intersections of movement. None
+        for a moving mesh.
     ibmesh_times : ndarray of floats or None
         if specified, the time stamp for each index t in the ibmesh (time 
         varying meshes only)
@@ -202,6 +207,8 @@ class Environment:
         integration time for FTLE
     FTLE_grid_dim : tuple of int
         grid dimension for the FTLE calculation (x,y,[z])
+    FTLE_backward : bool
+        whether the stored FTLE fields are backward-time
     mag_grad : ndarray
         acts as a cache for the gradient of magnitude of the fluid velocity
     mag_grad_time : float
@@ -523,22 +530,20 @@ class Environment:
 
     @_provenance.note_modifier('_ibmesh_provenance')
     def shift_ibmesh_to_match_LLC(self):
-        '''If the fluid position was translated to the origin but the
-        ibmesh wasn't (possibly b/c the ibmesh was loaded first),
-        this method will shift the ibmesh based on the original
-        location of the fluid LLC.
+        '''Translate the ibmesh by the offset the fluid's loader applied.
 
-        Call this only when the mesh was loaded *before* the fluid. A mesh
-        loaded after a fluid has already been shifted by its loader, and calling
-        this on top of that would shift it a second time. Nothing can detect
-        that from the stored state, so it is up to the caller.
+        Fluid loaders move their data so that its lower-left corner is at the
+        origin, recording the original corner as ``flow.fluid_domain_LLC``. A
+        mesh loaded after the fluid is moved with it; call this after loading
+        the fluid when the mesh was loaded first. Called on a mesh that was
+        already moved, it moves it a second time. Works on static and moving
+        meshes.
 
-        Works for every ibmesh layout: static 2D (N,2,2), static 3D triangles
-        (N,3,3), and moving 2D (T,N,2,2). The coordinate axis is the last one in
-        all three, which is why the indexing below is by ellipsis -- indexing a
-        fixed axis silently sheared moving meshes, subtracting one component of
-        the LLC from *both* coordinates of each segment endpoint rather than
-        translating the segment.
+        Raises
+        ------
+        RuntimeError
+            if no fluid or no mesh is loaded, or the fluid records no
+            fluid_domain_LLC
         '''
 
         if self.flow is None:
@@ -549,7 +554,8 @@ class Environment:
                                "lower-left corner (fluid_domain_LLC).")
         if self.ibmesh is None:
             raise RuntimeError("No immersed boundary mesh loaded.")
-        # move any ibmesh to match the LLC shift
+        # The coordinate axis is the last one in every ibmesh layout -- (N,2,2),
+        #   (N,3,3) and moving (T,N,2,2) -- hence the ellipsis.
         for ii in range(len(self.flow.fluid_domain_LLC)):
             self.ibmesh[...,ii] -= self.flow.fluid_domain_LLC[ii]
 
@@ -602,8 +608,7 @@ class Environment:
         periodic_dim : bool or tuple of bool, default=False
             whether the generated flow is periodic in each spatial dimension
             (governs interpolation at the domain edges; independent of the agent
-            boundary conditions). Brinkman flow is wall-bounded, so the default is
-            non-periodic.
+            boundary conditions).
 
         Examples
         --------
@@ -804,7 +809,7 @@ class Environment:
 
         Notes
         -----
-        In addition to self.flow, this will set self.h_p = a
+        In addition to self.flow, this will set self.h_p = h_p
 
         References
         ----------
@@ -906,7 +911,7 @@ class Environment:
         beta : float, default=0.3
             mass flux through the canopy (u_star/U_h)
         C : float, default=0.25
-            drag coefficient of indivudal canopy elements
+            drag coefficient of individual canopy elements
         res : int
             number of points at which to resolve the flow, including boundaries
         tspan : [float, float] or iterable of floats, optional
@@ -938,13 +943,8 @@ class Environment:
         def zero_nonfinite(value):
             """inf, -inf and nan -> zero, for scalars and arrays alike.
 
-            A zero flow parameter is meaningful here -- u_star == 0 or
-            U_h == 0 means no wind -- so the ratios below zero a non-finite
-            result rather than raising. This replaced `x[x == np.inf] = 0`,
-            which assumed x was an array and so raised TypeError on every
-            scalar-parameter call, and `x[x == np.nan] = 0`, which never
-            matched anything at all: nan compares equal to nothing, itself
-            included.
+            A zero flow parameter means no wind (u_star == 0 or U_h == 0), so a
+            ratio that divides by one is zero.
             """
 
             cleaned = np.where(np.isfinite(value), value, 0.0)
@@ -1022,9 +1022,7 @@ class Environment:
 
         if u_star is not None:
             if U_h is not None:
-                # np.all: with time-varying parameters np.isclose returns an
-                #   array, and asserting on one raises "truth value of an array
-                #   is ambiguous" rather than checking anything.
+                # np.all: time-varying parameters give one comparison per time.
                 assert np.all(np.isclose(U_h*beta, u_star)), "Flow not set: the relation u_star = U_h*beta must be satisfied, and for time-varying parameters it must hold at every time point."
             else:
                 # calculate mean wind speed at top of the canopy
@@ -1042,8 +1040,7 @@ class Environment:
         d = l/kappa
 
         # Both profile branches need these two ratios, and both divide by a
-        #   parameter the caller is allowed to set to zero. Compute them once,
-        #   guarded, rather than inline in one branch and guarded in the other.
+        #   parameter the caller is allowed to set to zero.
         with np.errstate(divide='ignore', invalid='ignore'):
             beta_l = zero_nonfinite(beta/l)
             kappa_beta = zero_nonfinite(kappa/beta)
@@ -1067,8 +1064,7 @@ class Environment:
         # The log profile above the canopy divides by the displacement height d,
         #   which is zero when the canopy mixing length is -- so beta == 0 (or a
         #   U_h of zero, which produces it) leaves the model with no roughness
-        #   length and no defined profile. Say so, rather than handing back a
-        #   field of nan that only shows up later as agents going nowhere.
+        #   length and no defined profile.
         if not np.all(np.isfinite(U_B)):
             raise ValueError(
                 "Canopy flow is undefined for these parameters: the wind "
@@ -1127,20 +1123,22 @@ class Environment:
 
 
     def _get_flow_variables(self, fshape, tspan=None):
-        '''Return points at which flow is specified, and time information.
+        '''Return the grid and time stamps for flow data of shape fshape.
 
         Parameters
         ----------
-            tspan : float, floats [tstart, tend], or iterable, optional
-                times at which flow is specified or scalar dt. Required if flow 
-                is time-dependent; None will be interpreted as steady-state 
-                flow.
-            fshape : tuple, FluidData.fshape
+        fshape : tuple of int
+            shape of one velocity component, ([t], x, y, [z])
+        tspan : float, (float, float), or iterable of floats, optional
+            None for time-invariant flow, whose fshape has no time axis.
+            Otherwise the first axis of fshape is time, and tspan is dt (times
+            from 0), (tstart, tend) (evenly spaced), or one time per time point.
 
         Returns
         -------
-            flow_points
-            flow_times
+        flow_points : tuple of ndarray
+            for each spatial axis, evenly spaced points from 0 to that axis's L
+        flow_times : ndarray or None
         '''
 
         # Get points defining the spatial grid for flow data. flow_points[i] is
@@ -1187,10 +1185,12 @@ class Environment:
                              d_finish=None, INUM=None):
         '''Reads in vtk flow velocity data generated by IB2d and sets environment
         variables accordingly. Time will be shifted to start at t=0 regardless of
-        d_start.
+        d_start; give read_IB2d_mesh_data the same d_start so that a moving
+        mesh starts at the same dump.
 
         Can read in vector data with filenames u.####.vtk or scalar data
-        with filenames uX.####.vtk and uY.####.vtk.
+        with filenames uX.####.vtk and uY.####.vtk. IB2d data is periodic in
+        both directions, and is interpolated as such.
 
         IB2d is an Immersed Boundary (IB) code for solving fully coupled
         fluid-structure interaction models in Python and MATLAB. The code is 
@@ -1237,11 +1237,9 @@ class Environment:
         Also, imported times will be translated backward so that the first time 
         loaded corresponds to a Planktos environment time of 0.0.
 
-        If INUM (interval number) is set to an integer >= 2, then the data 
-        will be dynamically loaded as needed with INUM intervals between the 
-        temporal data sets available at any given time.
-
-        All environment variables will be reset.
+        Sets L to the fluid's domain and clears h_p, plot_structs and the
+        cached speed gradient; swarms, time, the immersed mesh and the fluid
+        properties are kept.
 
         Parameters
         ----------
@@ -1261,7 +1259,7 @@ class Environment:
             entire dataset too but splines it linearly; an int streams a sliding
             window from storage and splines that linearly. Use an int only
             when the dataset will not fit in memory: streaming it is slower.
-        periodic_dim : list of 2 or 3 bool, default=(True, True, False)
+        periodic_dim : bool or tuple of 3 bool, default=(True, True, False)
             True if that spatial dimension is periodic, otherwise False
         vel_conv : float, optional
             scalar to multiply the velocity by in order to convert units to 
@@ -1288,40 +1286,27 @@ class Environment:
         so that the first time loaded corresponds to a Planktos environment time
         of 0.0.
 
-        OpenFOAM is finite-volume, so the velocity is specified at cell centers
-        rather than at grid points. Those centers are inset half a cell from the
-        domain, so the boundary patches are spliced onto the six faces of the
-        interior block to recover the true domain extent. The resulting grid is
+        OpenFOAM gives the velocity at cell centers, inset half a cell from the
+        domain boundary, so the boundary patches are spliced onto the six faces
+        of the interior to recover the full domain. The resulting grid is
         rectilinear but not uniform: the outermost interval in each direction is
         half-width.
 
-        The mesh must be rectilinear, which is checked rather than assumed --
-        OpenFOAM writes an unstructured container regardless of the mesh inside
-        it, so a plain ``blockMesh`` box and a refined ``snappyHexMesh`` are not
-        distinguishable by file type. A mesh that is not a complete
-        tensor-product grid raises.
+        The mesh is read from the first dump and must be a complete
+        tensor-product grid, or this raises; a ``snappyHexMesh`` refinement,
+        for one, is not. Later dumps are reordered onto it, the second is
+        checked against it cell by cell, and a changed cell count raises on any
+        dump.
 
-        The mesh is read once, from the first dump, and every later dump is
-        reordered onto it. The second dump is checked against it automatically,
-        since a dump whose cells were merely reordered would otherwise load with
-        every value in the wrong place and no symptom; a changed cell count is
-        caught on every dump.
+        Dumps the series index declares but which are not on disk are skipped
+        with a warning. Without the index, the timeline is rebuilt from the
+        ``.vtm`` manifests, then from the ``TimeValue`` in each
+        ``internal.vtu``, then from unit time steps; each fallback warns and is
+        recorded on the flow as ``dump_source`` and ``time_source``.
 
-        Dumps that the series index declares but which are not on disk are
-        skipped with a warning, and the timeline is built over those that remain.
-        Missing pieces of the export are tolerated the same way: absent the
-        index, the timeline is rebuilt from the ``.vtm`` manifests, then from the
-        ``TimeValue`` in each ``internal.vtu``, and finally from unit time steps.
-        Every fallback warns and is recorded on the resulting flow object in
-        ``dump_source`` and ``time_source``, since a run completing on a
-        different timeline than the user believes they loaded is worse than one
-        that fails.
-
-        If INUM (interval number) is set to an integer >= 2, then the data will
-        be dynamically loaded as needed with INUM intervals between the temporal
-        data sets available at any given time.
-
-        All environment variables will be reset.
+        Sets L to the fluid's domain and clears h_p, plot_structs and the
+        cached speed gradient; swarms, time, the immersed mesh and the fluid
+        properties are kept.
 
         Parameters
         ----------
@@ -1335,20 +1320,16 @@ class Environment:
             entire dataset too but splines it linearly; an int streams a sliding
             window from storage and splines that linearly. Use an int only
             when the dataset will not fit in memory: streaming it is slower.
-        periodic_dim : list of 3 bool, default=(False, False, False)
+        periodic_dim : bool or tuple of 3 bool, default=(False, False, False)
             True if that spatial dimension is periodic, otherwise False
         vel_conv : float, optional
             scalar to multiply the velocity by in order to convert units to
             match the spatial grid units
         require_boundary : bool, default=True
-            whether to require that a boundary patch covers each of the six
-            domain faces. Without one, the domain is short by half a cell in
-            that direction and nothing downstream can detect it, so this raises
-            by default. False extrapolates the interior out to any uncovered
-            face instead, with a warning; it is applied per face, so the faces
-            that do have a patch still use it. A patch carries the boundary
-            condition the solver applied and is the better source wherever one
-            exists.
+            whether to require a boundary patch on each of the six domain faces.
+            True raises when one is missing; False extrapolates the interior out
+            to each uncovered face instead, with a warning, and still uses the
+            patches that exist.
         '''
         self._refuse_while_recording()
 
@@ -1367,26 +1348,24 @@ class Environment:
                                time_from_name=None, dt=None):
         '''Reads in fluid velocity point data from VTK XML ImageData (``.vti``)
         or RectilinearGrid (``.vtr``) files, such as solver output resampled
-        onto a Cartesian grid. The times
-        come from a ParaView collection (``.pvd``) indexing the series if there
-        is one; failing that, from the ``TimeValue`` in each file, then from the
-        filenames through ``time_from_name``, and finally unit time steps, which
-        warns, since those are indices rather than physical times. ``dt`` gives
-        the interval between dumps directly. Times are translated so that the first dump corresponds to a
-        Planktos environment time of 0.0. A single ``.vti`` file gives
-        time-invariant flow, for which INUM and dt are ignored.
+        onto a Cartesian grid.
+
+        Times come from a ParaView collection (``.pvd``) indexing the series if
+        there is one; failing that, from the ``TimeValue`` in each file, then
+        from the filenames through ``time_from_name``, and finally from unit
+        time steps, with a warning. ``dt`` gives the interval between dumps
+        directly instead. Times are translated so that the first dump
+        corresponds to a Planktos environment time of 0.0. A single ``.vti``
+        file gives time-invariant flow, for which INUM and dt are ignored.
 
         A grid one point thick in a dimension is read as 2D data on the others,
-        with the velocity component along that dimension dropped.
+        with the velocity component along that dimension dropped. Dumps the
+        collection declares but which are not on disk are skipped with a
+        warning.
 
-        Dumps the collection declares but which are not on disk are skipped with
-        a warning, and the timeline is built over those that remain.
-
-        If INUM (interval number) is set to an integer >= 2, then the data will
-        be dynamically loaded as needed with INUM intervals between the temporal
-        data sets available at any given time.
-
-        All environment variables will be reset.
+        Sets L to the fluid's domain and clears h_p, plot_structs and the
+        cached speed gradient; swarms, time, the immersed mesh and the fluid
+        properties are kept.
 
         Parameters
         ----------
@@ -1400,7 +1379,7 @@ class Environment:
             entire dataset too but splines it linearly; an int streams a sliding
             window from storage and splines that linearly. Use an int only
             when the dataset will not fit in memory: streaming it is slower.
-        periodic_dim : list of 3 bool, default=(False, False, False)
+        periodic_dim : bool or tuple of 3 bool, default=(False, False, False)
             True if that spatial dimension is periodic, otherwise False
         vel_conv : float, optional
             scalar to multiply the velocity by in order to convert units to
@@ -1433,19 +1412,18 @@ class Environment:
         '''Reads in vtu flow data from a single source. It is assumed this 
         data is on a FEM mesh, and so it will be regridded onto a regular grid 
         with resolution res in each dimension. Imported times will be translated 
-        backward so that the first time loaded corresponds to a Planktos 
-        environment time of 0.0.
+        backward so that the first time loaded corresponds to a Planktos
+        environment time of 0.0. The whole export is held in memory.
 
-        All environment variables will be reset.
-
-        The legacy reader for the weird, non-XML vtu files that COMSOL would 
-        spit out is deprecated. Use this method instead with conforming vtu files.
+        Sets L to the fluid's domain and clears h_p, plot_structs and the
+        cached speed gradient; swarms, time, the immersed mesh and the fluid
+        properties are kept.
 
         Parameters
         ----------
         filename : string
             filename of data to read, incl. file extension
-        periodic_dim : list of 2 or 3 bool, default=(False, False, False)
+        periodic_dim : bool or tuple of 3 bool, default=(False, False, False)
             True if that spatial dimension is periodic, otherwise False
         res : int, default=101
             number of points at which to resolve the flow in each dimension
@@ -1522,10 +1500,11 @@ class Environment:
         them. Otherwise, strings must be specified for x_name, y_name, and 
         z_name giving the Variable names. The same goes for the time mesh data.
 
-        **Blurb about time conversion**
+        Times are taken as stored in the time variable, not translated to start
+        at 0.0. Set conv_time to convert datetime values to numbers (see Notes).
 
-        If the coordinate variables have a Unit attribute, this will be loaded 
-        as the environment's units.
+        If the x coordinate variable has a units attribute, it becomes the
+        environment's units.
 
         Parameters
         ----------
@@ -1549,9 +1528,10 @@ class Environment:
             then no adjustment is necessary. Otherwise, this must be specified 
             as a tuple or list which contains a permutation of [0,1,..,N-1] 
             where N is the number of spatial-temporal dimensions and the numbers 
-            correspond to where each dimension of the NetCDF variable should go 
-            in the Planktos ordering. If the NetCDF variable has a dimension 
-            specifying the component of the fluid velocity, ignore it and do not 
+            correspond to where each dimension of the NetCDF variable should go
+            in the Planktos ordering, e.g. [0, 2, 1] for a variable stored as
+            (time, y, x). If the NetCDF variable has a dimension
+            specifying the component of the fluid velocity, ignore it and do not
             include it in the permutation list.
         x_name : string, optional
             Variable name (or path, if the variable is inside a group) for the 
@@ -1730,13 +1710,16 @@ class Environment:
         '''Reads in 3D mesh data from an ascii or binary stl file. Must have
         the numpy-stl library installed. It is assumed that the coordinate
         system of the stl mesh matches the coordinate system of the flow field.
-        Thus, the mesh will be translated using the flow LLC if necessary.
+        With a fluid already loaded, the mesh is translated by the offset its
+        loader applied (``flow.fluid_domain_LLC``); loaded before the fluid, it
+        is not, and shift_ibmesh_to_match_LLC applies that offset afterwards.
 
-        With a 2D fluid loaded, the mesh must be a straight extrusion along the
-        axis the fluid dropped (z for fluid that was never 3D), as the geometry
-        of a 2D simulation is; it is reduced to the 2D outline it was extruded
-        from, and anything else raises ValueError. Loaded before any fluid, the
-        mesh stays 3D, and assigning a 2D fluid later does the same reduction.
+        With a 2D fluid loaded, the mesh must be a 2D shape extruded straight
+        along the out-of-plane axis, as the geometry of a 2D simulation usually
+        is. That axis is z, or, for a 2D fluid read from a 3D grid one point
+        thick in some other axis, that axis. The mesh is replaced by the 2D
+        shape; any other mesh raises ValueError. A mesh loaded before any fluid
+        stays 3D until a 2D fluid is assigned, which does the same.
 
         Avoid mesh structures that intersect with a periodic boundary; behavior
         related to this is not implemented.
@@ -1804,11 +1787,12 @@ class Environment:
         Parameters for moving immersed boundaries
         -----------------------------------------
         dt : float
-            dt in input2d
+            dt in input2d; required for a moving mesh
         print_dump : int
-            print_dump in input2d
+            print_dump in input2d; required for a moving mesh
         d_start : int, default=0
-            number of first vtk dump to read in
+            number of first vtk dump to read in. Mesh times start at 0.0 at this
+            dump, so give read_IB2d_fluid_data the same d_start.
         d_finish : int, optional
             number of last vtk dump to read in, or None to read to end
         brk_idx_list : iterable of int, optional
@@ -1820,9 +1804,10 @@ class Environment:
             the indices of the vertices that are not connected with their 
             predecessor using Python convention (indexing starts at 0).
         add_idx_list : iterable of 2-tuple of int, optional
-            If additional line segments should be added between non-successive 
-            vertices, list index pairs of the vertices that should be connected 
-            using the MATLAB convention that indexing starts at 1.
+            If additional line segments should be added between non-successive
+            vertices, list index pairs of the vertices that should be connected
+            using the MATLAB convention that indexing starts at 1. An index
+            outside 1 to the number of vertices raises ValueError.
         periodic : bool (default: False)
             Whether or not the last vertex point should be considered adjacent 
             to the first.
@@ -1875,21 +1860,9 @@ class Environment:
             return points
 
         def _shift_to_fluid_frame(pts):
-            '''Match any translation the fluid loaders applied to the fluid.
-
-            The loaders move fluid data so that its lower-left corner sits at the
-            origin, recording the original corner in fluid_domain_LLC. Mesh
-            coordinates come out of their files in that original frame, so they
-            have to follow, or mesh and fluid end up offset from one another --
-            silently, since nothing about it raises.
-
-            With no fluid loaded there is no translation to match, which is a
-            supported way to build an environment.
-
-            Every branch below goes through this. Two of them used to inline the
-            shift and two did not, which is exactly the kind of omission a shared
-            helper makes impossible.
-            '''
+            '''Translate pts by the offset the fluid's loader applied
+            (fluid_domain_LLC), if a fluid is loaded. Mesh files are in the
+            fluid's original frame. Every branch below goes through this.'''
             if self.flow is not None and self.flow.fluid_domain_LLC is not None:
                 for ii in range(2):
                     pts[:,ii] -= self.flow.fluid_domain_LLC[ii]
@@ -2127,9 +2100,11 @@ class Environment:
     @_provenance.records_provenance('_ibmesh_provenance', order_against='flow',
                                     describes='ibmesh')
     def read_3D_vertex_data_to_convex_hull(self, filename):
-        '''Reads in static 3D vertex data from a vtk file or a vertex file and 
-        applies ConvexHull triangulation to get a complete, static boundary. 
+        '''Reads in static 3D vertex data from a vtk file or a vertex file and
+        applies ConvexHull triangulation to get a complete, static boundary.
         This uses Qhull through Scipy under the hood http://www.qhull.org/.
+        With a fluid already loaded, the hull is fitted and translated to it as
+        read_stl_mesh_data describes.
         '''
 
         path = Path(filename)
