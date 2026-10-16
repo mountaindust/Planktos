@@ -111,10 +111,13 @@ beside it. Tiling (item 5) and the §7 prose pass that rides on it come after.
    - wrong **because of** branch work → fix it here. `_dataio.py`'s module docstring
      still listed only "vtk, vtu, vertex files, and stl" after the branch added the
      `.vti`/`.vtr`/`.pvd`/`.vtm` readers.
-   - wrong **independently** of the branch → fix it **on `master`** and let it merge,
-     so the released branch gets the correction and no conflict surface is created.
+   - wrong **independently** of the branch → ~~fix it on `master` and let it merge~~.
      `write_vtk_2D_rectilinear_grid_scalars` claimed ascii while `binary=True` has
      long been its default; done on `master` as `9148c00`.
+     **Superseded 2026-10-16: fix it here too.** Merging `master` in is not the cheap
+     step this rule assumed (item 7), and with no 1.0.4 planned a `master` fix reaches
+     users no sooner than 1.1.0 does. Editing the same docstring on both branches
+     would only add to that merge.
 
    **Order** (smallest first to calibrate, pure-new before mixed): ✅ `_provenance.py`
    · ✅ `_frames.py` · ✅ `_dataio.py` · ✅ `archive.py` · ✅ `fluid.py` ·
@@ -278,6 +281,19 @@ beside it. Tiling (item 5) and the §7 prose pass that rides on it come after.
    `master` and tagged `v1.0.3`; the cherry-pick queue at the bottom of this file is the
    record of what moved and what deliberately did not. **The next release is meant to be
    `1.1.0`, with no `1.0.4`** — see that queue for the one thing that would change it.
+7. 🟡 **Merge `master` into `dyload` before 1.1.0 ships** *(found 2026-10-16)*. Four
+   `master` commits have never come across: the 1.0.3 ports `bf7112c` and `1c5334c`,
+   `a1c2128` (docs repo link) and `9148c00` (a `_dataio` docstring). The ports are
+   hand-written versions of fixes that already live here in another shape, so a dry run
+   (`git merge-tree --write-tree dyload master`) conflicts in six files: `_swarm.py`
+   (9 hunks, 277 lines), `tests/test_swarm_lifecycle.py` (3, 286), `changelog.txt`
+   (2, 74), and one each in `_environment.py` (`regenerate_flow_data`, removed here),
+   `_dataio.py` and `__init__.py` (the version). Resolution is mostly keeping this
+   branch's version of a fix it already has, but read each `master` hunk rather than
+   trusting that — the hazard under Phase 0 applies. Also fold `master`'s
+   `tests/test_plot_helpers.py` into `test_frame_selection.py` (see the 1.0.3 notes in
+   the cherry-pick queue). Its own session; until it lands, fix text here rather than
+   on `master` (item 3).
 
 **The run archive, in detail.** The go/no-go was **decided 2026-08-11 in favor of
 building it**: plotting is a measured bottleneck on our own runs, and it is cheapest to
