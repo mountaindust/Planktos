@@ -300,9 +300,9 @@ class Environment:
         #   that a plot of a finished run reads what that run wrote about the
         #   fluid rather than reading the fluid again.
         self._archive_path = None
-        # Which step is being taken. len(time_history) is no longer the step
-        #   count once a capture schedule can skip steps, so the environment
-        #   keeps its own, and both trigger sites ask it the same question.
+        # Which step is being taken. Under a capture schedule len(time_history)
+        #   counts kept states, not steps, so the environment counts steps
+        #   itself, and both trigger sites ask it the same question.
         self._step_count = 0
         # Capture every k-th step, counting from the step recording began at.
         #   k == 1 makes the predicate below always true, which is the state
@@ -1783,8 +1783,8 @@ class Environment:
 
         Parameters
         ----------
-        path or filename : str
-            path to directory with vtk data if importing a moving immersed boundary; 
+        path : str
+            path to directory with vtk data if importing a moving immersed boundary;
             otherwise, in the case of a static mesh, a single vtk or vertex file 
             to load (including file extension).
 
@@ -2218,20 +2218,22 @@ class Environment:
 
 
     def add_swarm(self, swarm_size=100, **kwargs):
-        ''' Adds a Swarm into this Environment.
+        '''Adds a Swarm to this Environment.
 
         Parameters
         ----------
-        swarm_size : Swarm object or int (size of swarm), default=100
-            If a Swarm object is given, all following parameters will be ignored 
-            (since the object is already initialized)
-        init : string
-            Method for initializing positions. See Swarm class for options.
-        seed : int
-            Seed for random number generator
-        kwargs
-            keyword arguments to be set as Swarm properties (see Swarm class for 
-            details)
+        swarm_size : Swarm or int, default=100
+            a Swarm to move here, which leaves its previous Environment and is
+            projected to 2D if this Environment is 2D; or the number of agents
+            in a new Swarm
+        **kwargs
+            passed to the Swarm constructor for a new Swarm, e.g. init, seed or
+            shared_props (see Swarm). Ignored when swarm_size is a Swarm.
+
+        Returns
+        -------
+        Swarm or None
+            the new Swarm, or None when swarm_size is a Swarm
         '''
 
         if isinstance(swarm_size, planktos.Swarm):
