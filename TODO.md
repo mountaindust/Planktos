@@ -121,7 +121,16 @@ beside it. Tiling (item 5) and the §7 prose pass that rides on it come after.
 
    **Order** (smallest first to calibrate, pure-new before mixed): ✅ `_provenance.py`
    · ✅ `_frames.py` · ✅ `_dataio.py` · ✅ `archive.py` · ✅ `fluid.py` ·
-   `_environment.py` · `_swarm.py`.
+   ✅ `_environment.py` · `_swarm.py`.
+
+   `_environment.py` (2026-10-15 to 10-20) turned up code defects too, each fixed in
+   its own commit before the prose: the 3D two-layer channel flow (a regression), a
+   restore silently missing mid-recording mesh/boundary changes (now a warning at
+   stop), four loader defects `master` shares (a scalar-`dt` timeline, stale mesh
+   bookkeeping, NetCDF `dim_reorder`, and `add_idx_list` made 1-based like
+   `brk_idx_list`), spurious warnings on every inertial-particle step over a steady
+   flow, and `init_swarms` leaving a swarm in its old Environment. Commits `d6d2588`
+   to `4c35f70`.
 
    `fluid.py` (2026-10-13 to 10-15) was the first module where the
    correctness pass turned up real code defects rather than wrong text, and
@@ -294,6 +303,13 @@ beside it. Tiling (item 5) and the §7 prose pass that rides on it come after.
    `tests/test_plot_helpers.py` into `test_frame_selection.py` (see the 1.0.3 notes in
    the cherry-pick queue). Its own session; until it lands, fix text here rather than
    on `master` (item 3).
+
+   **Follow-up owed right after the merge** — held back only because editing it first
+   would add a conflict, since both branches added it identically in the 1.0.3 port:
+   - [ ] `calculate_FTLE`'s normalization comment ("Normalize by the time actually
+     integrated, not by T") says T where it means T − t0 (the docstring has it right
+     since `c80f407`), and quotes the "0.34–0.72 of truth" measurement. State what the
+     division does and drop the measurement.
 
 **The run archive, in detail.** The go/no-go was **decided 2026-08-11 in favor of
 building it**: plotting is a measured bottleneck on our own runs, and it is cheapest to
