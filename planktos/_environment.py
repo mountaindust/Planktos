@@ -2245,130 +2245,96 @@ class Environment:
                store=('positions',), capture_interval=1,
                chunk_size=100, quiver_shape=archive.QUIVER_SHAPE,
                plot_all=None):
-        '''Begin recording agent state to a run archive, and return the handle.
+        '''Start recording the run to an archive directory, and return the handle.
 
-        Planktos otherwise holds an entire run in memory and can only write it
-        out at the end. Recording streams it to disk as the run proceeds -- the
-        mirror image of what dynamic fluid loading does for the velocity field.
-
-        **Recording starts immediately.** The ``with`` form only adds the
-        guaranteed stop; a bare ``envir.record(path)`` records from that moment
-        on, which is why this is not a context manager that does its work in
-        ``__enter__``. Captures fire automatically on every environmental time
-        step, so the loop below is an ordinary Planktos loop, unchanged::
+        Recording starts with this call, and from then on a capture is taken at
+        every environmental time step, with no change to the run loop. A
+        ``with`` block stops recording when it ends::
 
             with envir.record('run_archive/'):
                 for _ in range(steps):
                     swrm.move(dt)
 
+        Without one, call :meth:`stop_recording`.
+
         Parameters
         ----------
         path : str or Path
-            directory to record into, created if missing. **If it exists and is
-            non-empty the archive goes to a timestamped sibling instead**, with
-            a warning naming it -- overwriting a previous run is never the right
-            default, and refusing outright would strand a job that was ready to
-            start. The handle's ``.path`` says where the data actually went.
+            directory to record into, created if missing. If it exists and is
+            not empty, the archive goes to a timestamped sibling instead, with
+            a warning naming it; the handle's ``.path`` says where the data
+            went.
 
-            **The exception is an archive this run continues**: where its last
-            capture is exactly where this Environment now is -- which is where
-            restoring leaves the clock -- the recording is appended to it and
-            the directory is used as it stands. ``store``, ``chunk_size``,
-            ``capture_interval`` and the recorded fluid quantities have to
-            match, and every swarm the archive holds has to go on being
-            recorded; any of those differing raises rather than redirecting.
+            The exception is an archive this run continues: one whose last
+            capture is at this Environment's current time, which is where
+            ``RunArchive.restore()`` leaves the clock. The recording is then
+            appended to it. ``store``, ``chunk_size``, ``capture_interval`` and
+            the recorded fluid quantities must match the archive's, and every
+            swarm it holds must still be recorded, or this raises ValueError.
         fluid : {'vort', 'quiver', tuple of both, None}, default='vort'
-            which fluid quantity **the render will need**. Note this is not 
-            "which quantity to write": asking for ``'vort'`` frequently
-            writes nothing at all because the field is either already on disk
-            beside the velocity dumps or cheap enough to recompute from a velocity
-            field that is still in memory. What the keyword guarantees is that a
-            render will have it without re-streaming the fluid.
-
-            The same keyword on ``Swarm.plot_all`` selects the backdrop to draw;
-            this is the capture side of that line.
-
-            **Forced to None, silently, in two cases**: in 3D, where no fluid 
-            backdrop is drawn, and when the environment has no fluid.
+            which fluid backdrops a later ``Swarm.plot_all`` must be able to
+            draw without reading the fluid again. ``'vort'`` writes per-dump
+            vorticity only when the source does not provide it and the field
+            is not held in memory, so it often writes nothing. Set to None in
+            3D, where no backdrop is drawn, and when the environment has no
+            fluid.
         swarms : list of Swarm, optional
-            which swarms to capture. Defaults to every swarm in the environment,
-            plus any added later. Agent data runs a few hundred MB per large
-            swarm, so restricting it is sometimes worth doing.
+            which swarms to capture. Defaults to every swarm in the
+            environment, including any added later.
         store : tuple of str, default=('positions',)
-            what to keep for every capture. ``'positions'`` is required;
-            anything not named below raises.
+            what to keep at every capture; must include ``'positions'``.
 
-            The per-agent arrays are ``'positions'``, ``'velocities'`` and
-            ``'accelerations'``. ``'props'`` keeps the whole props DataFrame
-            per capture instead of only the latest, written as readable csv
-            with any column holding one ndarray per agent spilled beside it.
-            ``'shared_props'`` keeps the shared_props dict per capture. It is
-            a separate opt-in because it is O(run length) whatever the swarm
-            size, where ``'props'`` is O(agents x run length); a ramping
-            ``mu`` or similar is the case it exists for. Without it, restoring 
-            at an earlier capture resumes with the run's final shared_props.
-
-            **Velocities are opt-in**, and leaving them out is 48% less disk
-            and 59% less recording overhead. What they are needed for is
-            recorded instead -- the agent-speed statistics a plot prints and
-            the 2D heading markers, both derived as each capture is taken. What
-            is given up is per-agent velocity at a past time, which cannot be
-            recovered afterwards: differencing stored positions is wrong for
-            any agent that collided or wrapped. Add ``'velocities'`` when a
-            later analysis will want them.
+            - ``'velocities'``, ``'accelerations'``: the per-agent arrays.
+              Without velocities, the agent-speed statistics and 2D headings
+              that plots use are still recorded, but per-agent velocity at a
+              past time is not, and cannot be recovered from positions for an
+              agent that collided or wrapped.
+            - ``'props'``: the whole props DataFrame, as csv, with any column
+              of per-agent ndarrays written beside it.
+            - ``'shared_props'``: the shared_props dict. Without it, restoring
+              at an earlier capture resumes with the run's final shared_props.
         capture_interval : int, default=1
-            capture -- and retain history -- every *k*-th step. The framing is
-            **"as if dt were larger"**: the archive then looks exactly like a
-            run performed at the coarser timestep, and ``time_history``,
-            ``pos_history`` and ``vel_history`` hold exactly the captured
-            states, so nothing downstream needs a second notion of "a recorded
-            state". It earns its place on two counts, and space is the smaller
-            one: writing every step to disk is a per-step cost paid against the
-            physics, and on a long run that is the dominant reason to coarsen.
-
-            Deliberately *not* a video frame rate. Frame rate is a presentation
-            choice that stays adjustable forever (see ``Swarm.plot_all``);
-            this is a data-fidelity choice fixed at run time. Conflating them
-            would be the old ``dt``/``fps`` footgun in a new costume.
+            capture every *k*-th step. ``time_history``, ``pos_history`` and
+            ``vel_history`` keep only the captured states too, so the run looks
+            like one taken with a time step *k* times as long. This sets the
+            data kept, not a movie's frame rate, which ``Swarm.plot_all`` sets
+            afterwards.
         chunk_size : int, default=100
-            captures buffered before a chunk is written. Bounds recording memory
-            and the amount a hard kill can cost.
+            captures held in memory before a chunk is written; a hard kill
+            loses at most these.
         quiver_shape : tuple of 2 int, default=(60, 60)
-            target arrow grid for a stored quiver; ignored unless ``fluid`` asks
-            for one. Resolved against the fluid grid into integer strides and 
-            fixed for the run. ``plot_all`` normally derives its arrow
-            density from the figure size and axis extent, which do not exist
-            while a simulation is running, so an archive-backed render uses the
-            stored grid and warns if the figure would have used a denser one.
+            target arrow grid for a stored quiver, fixed for the run; used only
+            when ``fluid`` includes ``'quiver'``. A render that would draw
+            denser arrows uses this grid, with a warning.
         plot_all : dict, optional
-            keyword arguments for ``Swarm.plot_all``, rendered automatically
-            when a ``with`` block ends::
+            keyword arguments for ``Swarm.plot_all``, rendered when a ``with``
+            block ends::
 
                 with envir.record('run/', plot_all=dict(movie_filename='out.mkv',
                                                         fluid='vort')):
                     ...
 
-            Renders on a clean exit and when the run raises, but not on a
-            ``KeyboardInterrupt``. All three flush. A failure inside the render
-            is warned about and the run's own exception still propagates. Takes
-            a recording covering exactly one swarm, and is refused at this call
-            otherwise.
+            Renders on a clean exit and when the run raised, but not after a
+            ``KeyboardInterrupt``; a failed render warns, and the run's own
+            exception still propagates. Needs a recording of exactly one swarm.
 
         Returns
         -------
         RunRecorder
-            usable as a context manager, and exposing ``.path``
+            usable as a context manager; ``.path`` is the directory written to
 
         Raises
         ------
         RuntimeError
-            if this environment is already recording, or if the fluid is
-            dynamically loaded and its window has already moved past the first
-            dump (see below)
+            if this Environment is already recording, or its fluid is
+            dynamically loaded and the window has moved past the first dump
         ValueError
-            if ``plot_all`` is given for a recording covering more than one
-            swarm, or if this would continue an existing archive (see ``path``)
-            but is configured differently from it
+            for a ``store`` entry that is unknown or a missing
+            ``'positions'``, a ``capture_interval`` below 1, ``plot_all`` with
+            more than one swarm, or a continued archive configured differently
+            (see ``path``)
+        TypeError
+            if ``plot_all`` is not a dict
 
         Notes
         -----
@@ -2379,22 +2345,18 @@ class Environment:
         recording; :meth:`stop_recording` warns about any other change.
 
         **Start recording before the fluid window has moved.** Under dynamic
-        loading, per-dump fluid quantities are written as each dump lands, and
-        dumps the sliding window has already passed are gone -- so a recording
-        started mid-run would have holes in its fluid series. Re-reading those
-        dumps would be a second streaming pass over exactly the data this design
-        exists to avoid re-streaming, so this refuses early instead. Start
-        before the loop, or load with ``INUM=None``.
+        loading, per-dump fluid quantities are written as each dump arrives,
+        and dumps the window has passed are not read again, so this raises once
+        the window has moved. Start before the run loop, or load with
+        ``INUM=None``.
 
-        **Where a derived fluid field goes.** Vorticity, when it has to be
-        written, goes into the *source's own* fluid directory in the
-        source's own naming, e.g. ``Omega.0042.vtk`` beside ``u.0042.vtk``, so
-        that a later run, ParaView, or the solver's own tooling reads it with no
-        knowledge of Planktos. An existing file is never overwritten. If that
-        directory cannot be written, the archive's own ``fluid/`` directory is 
-        used instead; ``meta.json`` records which happened. The per-dump 
-        statistics every plot needs, component means and extrema, always are in 
-        the archive, in 2D and 3D alike.
+        **Where vorticity is written.** When it has to be written, vorticity
+        goes in the source's own fluid directory in the source's own naming,
+        e.g. ``Omega.0042.vtk`` beside ``u.0042.vtk``, where ParaView and the
+        solver's tools can read it. An existing file is never overwritten. If
+        that directory is not writable, the archive's ``fluid/`` directory is
+        used instead, and ``meta.json`` records which. The per-dump component
+        means and extrema that plots need are always in the archive.
 
         See Also
         --------
@@ -2404,11 +2366,8 @@ class Environment:
 
         if self._recorder is not None:
             raise RuntimeError(
-                "This Environment is already recording to {}. There is one "
-                "recorder per Environment -- the time-advance hook finds it "
-                "through a single reference -- so a second would either "
-                "abandon the first archive partly written or run beside it, "
-                "which the hook cannot express. Call envir.stop_recording() "
+                "This Environment is already recording to {}, and there is "
+                "one recorder per Environment. Call envir.stop_recording() "
                 "first.".format(self._recorder.path))
 
         # Under a sliding window, dumps the window has already passed are gone
@@ -2465,12 +2424,8 @@ class Environment:
 
 
     def flush_recording(self):
-        '''Write buffered captures to disk, and keep recording.
-
-        Separate from :meth:`stop_recording` on purpose: a mid-run plot needs a
-        flush that does not end the recording, since the next ``record()`` would
-        refuse the now-non-empty directory. Harmless to call repeatedly.
-        '''
+        '''Write buffered captures to disk, and keep recording; e.g. before
+        plotting partway through a run. A no-op if nothing is recording.'''
 
         if self._recorder is not None:
             self._recorder.flush()
@@ -2483,9 +2438,8 @@ class Environment:
         properties, fluid or mesh differ from when recording started, since
         ``RunArchive.restore()`` rebuilds them as they were then.
 
-        Nothing here is load-bearing for correctness: the archive on disk is
-        valid whether or not this is ever reached. The most a hard kill can cost
-        is the captures buffered since the last chunk boundary.
+        The archive on disk is readable whether or not this is called; without
+        it, the captures since the last chunk was written are lost.
         '''
 
         if self._recorder is not None:
@@ -2493,52 +2447,37 @@ class Environment:
 
 
     def _records_this_step(self):
-        '''Is the state of the step now being taken one of the ones kept?
+        '''Whether the state of the step now being taken is kept, in the
+        histories and in the archive alike. Always True unless recording with
+        a capture_interval above 1.'''
 
-        **One answer gates both the history appends and the archive capture**,
-        so the two cannot drift apart -- that identity is what lets capture *j*
-        be exactly ``full_pos_history[j]`` with no index translation anywhere.
-
-        Always true when nothing is recording, and when recording every step,
-        because the interval is then 1 and every step satisfies the modulus.
-        '''
-
+        # One answer gates both the history appends and the archive capture,
+        #   which is what makes capture j exactly full_pos_history[j].
         return (self._step_count - self._capture_phase) % self._capture_interval == 0
 
 
     def _notify_step_complete(self):
-        '''One environmental time step has completed: count it, and capture it
-        if it is a captured step.
+        '''Count a completed environmental time step, and capture it if it is
+        kept. Called at the end of :meth:`move_swarms`, and of ``Swarm.move``
+        when it advances the time itself.'''
 
-        Called from exactly two places, both meaning "the environment just
-        advanced one step": the end of ``Swarm.move`` when it updates the time,
-        and the end of :meth:`move_swarms`.
-
-        The counter advances first, so the predicate is asked about the state
-        the step just produced. ``Swarm.move`` asks the same predicate at the
-        *start* of a step, about the state that step began from -- the two ends
-        of a step, and the same set of states.
-
-        Deliberately not called from ``calculate_FTLE``, which inlines its own
-        move loop -- otherwise FTLE probe trajectories would be written into the
-        archive.
-        '''
-
+        # The counter advances first, so the predicate is asked about the state
+        #   the step just produced. Swarm.move asks it at the start of a step,
+        #   about the state that step began from: the two ends of a step, and
+        #   the same set of states.
         self._step_count += 1
         if self._recorder is not None and self._records_this_step():
             self._recorder._capture()
 
 
     def _refuse_while_recording(self):
-        '''Raise if a recording is active.
+        '''Raise RuntimeError if a recording is active.
 
         Called by the operations that would invalidate an archive already being
-        written: reset(), which rewinds the clock; every fluid setter, which
-        replaces the grid and timeline the archive fixed when it started; and
-        moving a recorded swarm out of the environment, which the format has no
-        way to express. One message covers all of them deliberately -- the
-        traceback already names the call that raised, and a per-site variant
-        would be one more thing to keep in step with the guard list.
+        written: reset(), which rewinds the clock; every fluid setter and the
+        flow setter, which replace the grid and timeline the archive fixed when
+        it started; and moving a recorded swarm out of the environment, which
+        the format cannot express.
         '''
 
         if self._recorder is not None:
@@ -2557,10 +2496,8 @@ class Environment:
 
         Parameters
         ----------
-        dt : float
+        dt : float, default=1.0
             length of time step to move all agents
-        params : any, optional
-            parameters to pass along to apply_agent_model, if necessary
         ib_collisions : {None, 'sliding' (default), 'sticky'}
             Type of interaction with immersed boundaries. If None, turn off all 
             interaction with immersed boundaries. In sliding collisions, 
@@ -2600,9 +2537,20 @@ class Environment:
 
 
     def set_boundary_conditions(self, x_bndry, y_bndry, z_bndry=None):
-        '''Check and set boundary conditions. Set Z-dimension only if
-        zdim is not None. Each boundary condition must be either a list or an
-        iterable of length 2.
+        '''Check and set the agent boundary conditions, self.bndry.
+
+        Parameters
+        ----------
+        x_bndry, y_bndry, z_bndry : str or pair of str
+            one of 'zero', 'noflux' or 'periodic' for both sides of that axis,
+            or a pair (low side, high side). None gives the default: 'zero' for
+            x and y, 'noflux' for z. The z entry is set in 2D too, where agents
+            ignore it.
+
+        Raises
+        ------
+        NameError
+            for a condition not among the three above
         '''
 
         supprted_conds = ['zero', 'noflux', 'periodic']
@@ -2685,22 +2633,27 @@ class Environment:
 
 
     def interpolate_temporal_flow(self, t_index=None, time=None):
-        '''Interpolate flow in time using a cubic spline. Defaults to 
-        interpolating at the current time, given by self.time.
+        '''Interpolate the flow in time, cubically or linearly as the fluid's
+        INUM sets (see FluidData). Defaults to the current time, self.time.
 
         Parameters
         ----------
-        t_indx : int
-            Interpolate at a time referred to by self.envir.time_history[t_indx]
-        time : float
-            Interpolate at a specific time
+        t_index : int, optional
+            interpolate at self.time_history[t_index]; takes precedence over
+            time
+        time : float, optional
+            interpolate at this time
 
         Returns
         -------
-            interpolated flow field as a list of ndarrays
+        list of ndarrays, one per velocity component
+
+        Raises
+        ------
+        RuntimeError
+            if there is no flow, or it is time-invariant
         '''
 
-        # If fCubicSplines do not exist, create them.
         if self.flow is None:
             raise RuntimeError("Cannot temporally interpolate None flow.")
         if self.flow.flow_times is None:
@@ -2803,18 +2756,20 @@ class Environment:
         
         Parameters
         ----------
-        t_index : int
-            Interpolate at a time referred to by self.envir.time_history[t_indx]
-        time : float
-            Interpolate at a specific time
+        time : float, optional
+            interpolate at this time
+        t_index : int, optional
+            interpolate at self.time_history[t_index]; takes precedence over
+            time
 
         Returns
         -------
-            interpolated mesh as an ndarray
+        ndarray
+            the mesh at that time, Nx2x2; constant outside ibmesh_times
         '''
 
         if self.ibmesh is None or self.ibmesh.ndim < 4:
-            raise RuntimeError("Cannot temporally interpolate None or static flow.")
+            raise RuntimeError("Cannot temporally interpolate None or static mesh.")
 
         if t_index is None and time is None:
             time = self.time
@@ -2878,8 +2833,8 @@ class Environment:
             # first, interpolate flow in time. Then calculate gradient.
             speed = np.sqrt(np.sum(
                         np.array(self.interpolate_temporal_flow())**2, axis=0))
-        # Per axis, not one call over all of them: periodicity is a per-axis
-        # property, and np.gradient would one-side against data that continues.
+        # Per axis, since periodicity is per axis: a periodic axis is
+        #   differenced across the wrap.
         flow_grad = [fluid._spatial_gradient(speed, self.flow.flow_points[d], d,
                                              self.flow.periodic_dim[d],
                                              edge_order=2)
@@ -3141,8 +3096,8 @@ class Environment:
     def calculate_FTLE(self, grid_dim=None, testdir=None, t0=0, T=0.1, dt=0.001,
                        ode_gen=None, props=None, t_bound=None, swrm=None,
                        backward=False):
-        '''Calculate the FTLE field at the given time(s) t0 with integration 
-        length T on a discrete grid with given dimensions. The calculation will 
+        '''Calculate the FTLE field over the integration from time t0 to time T
+        on a discrete grid with given dimensions. The calculation will
         be conducted with respect to the fluid velocity field loaded in this 
         environment and either tracer particle movement (default), an ode specifying
         deterministic equations of motion, or other arbitrary particle movement 
@@ -3153,9 +3108,11 @@ class Environment:
         - Environment.FTLE_largest
         - Environment.FTLE_smallest
         - Environment.FTLE_loc
+        - Environment.FTLE_loc_end
         - Environment.FTLE_t0
         - Environment.FTLE_T
         - Environment.FTLE_grid_dim
+        - Environment.FTLE_backward
 
         All FTLE calculations will be done using a Swarm object. This means that:
         
@@ -3172,23 +3129,15 @@ class Environment:
         FTLE based on massless tracer particles.
 
         **Points whose neighbors leave the domain early.** The FTLE at a grid
-        point is found by central differences against its immediate neighbors,
-        so it needs all of them to still be in the domain. Where one is not, the
-        flow map is evaluated at the last time the whole stencil was still
-        available, and the result is normalized by **that elapsed time rather
-        than by T**. The stretching in the numerator and the time in the
-        denominator then refer to the same interval, which is what makes the
-        result a rate; normalizing by T instead would systematically under-report
-        at exactly those points. The consequence to be aware of is that such a
-        point reports the FTLE over a *shorter window* than T, so a field
-        containing them is not computed over one uniform integration time. The
-        returned last_time array is what says which points those are.
-
-        For a point at the domain edge, a shorter window is the best available
-        answer -- the integration cannot be extended without enlarging the
-        domain. A point is masked entirely only when the stencil cannot be formed
-        at all: when both neighbors in some direction are gone, or when the one
-        that remains is the point itself.
+        point is found by central differences against its immediate neighbors.
+        Where one of them leaves the domain before T, the point's FTLE is taken
+        over the shorter interval from t0 to the last time its whole stencil
+        was present, and normalized by that interval rather than by T - t0. A
+        field containing such points is therefore not computed over one uniform
+        integration time; the returned last_time array identifies them. A point
+        is masked only when no stencil can be formed: when both neighbors in
+        some direction are gone, or when the one that remains is the point
+        itself.
 
         Parameters
         ----------
@@ -3204,16 +3153,12 @@ class Environment:
             will be drawn in (e.g. 'x1' for positive x-direction, 'y0' for 
             negative y-direction). If None, do not perform this check and use 
             all gridpoints.
-        t0 : float, optional
-            start time for calculating FTLE. If None, default 
-            behavior is to set t0=0.
-            TODO: Iterable to calculate at many times. Default then becomes 
-            t0=0 for time invariant flows and calculate FTLE at all times 
-            the flow field was specified at (self.flow.flow_times) 
-            for time varying flows?
+        t0 : float, default=0
+            start time of the integration
         T : float, default=0.1
-            integration time. Default is 1, but longer is better (up to a point),
-            unless smallest FTLE is desired and agents are leaving the domain...
+            end time of the integration, which must be greater than t0. A
+            longer integration is better (up to a point), unless the smallest
+            FTLE is wanted and agents are leaving the domain.
         dt : float, default=0.001
             if solving ode or tracer particles, this is the time step for 
             checking boundary conditions. If passing in a Swarm object, 
@@ -3266,6 +3211,14 @@ class Environment:
             is less than T, that point (and any point using it as a stencil
             neighbor) reports the FTLE over the shorter window -- see the
             discussion of early exits above.
+
+        Raises
+        ------
+        ValueError
+            if T is not greater than t0
+        NotImplementedError
+            for backward=True with ode_gen or swrm, and for a moving immersed
+            boundary mesh
         '''
 
         ###########################################################
@@ -3455,6 +3408,8 @@ class Environment:
             self.time = t0
             self.time_history = []
 
+            # This loop advances self.time itself rather than through
+            #   _notify_step_complete, so a recording captures none of it.
             while self.time < T:
                 # Save current position to put in the history, and hand the
                 #   same array to the boundary stage below as this step's
@@ -3688,23 +3643,22 @@ class Environment:
     def get_vorticity(self, t_indx=None, time=None, t_n=None):
         '''Calculate the vorticity of the fluid velocity field at a given time.
 
-        If all time arguments are None but the flow is time-varying, the vorticity
-        at the current time will be returned. If more than one time argument is
-        specified, only the first will be used.
+        With no time argument, the vorticity is at the current time. If more
+        than one is given, the first in the order below is used.
 
         Parameters
         ----------
-        t_indx : int
-            integer time index into self.time_history[t_indx]
-        time : float
-            time
-        t_n : int
-            integer time index into self.flow.flow_times[t_n]
+        t_indx : int, optional
+            index into self.time_history
+        time : float, optional
+            the time
+        t_n : int, optional
+            index into self.flow.flow_times
 
         Returns
         -------
-        vorticity as an ndarray
-
+        ndarray (i,j) in 2D, the out-of-plane component; a tuple of three
+        (i,j,k) ndarrays in 3D
         '''
 
         if t_indx is not None:
@@ -3829,19 +3783,20 @@ class Environment:
 
 
     def get_dudt(self, t_indx=None, time=None):
-        '''Return the derivative of the fluid velocity with respect to time.
-        Defaults to interpolating at the current time, given by self.time.
+        '''Return the derivative of the fluid velocity with respect to time,
+        by default at the current time. See FluidData.get_dudt for how it is
+        computed under each interpolation in time.
 
         Parameters
         ----------
         t_indx : int, optional
-            Interpolate at a time referred to by self.envir.time_history[t_indx]
+            evaluate at self.time_history[t_indx]; takes precedence over time
         time : float, optional
-            Interpolate at a specific time. default is current time.
+            evaluate at this time
 
         Returns
         -------
-        List of ndarrays
+        list of ndarrays, one per velocity component
         '''
 
         if t_indx is None and time is None:
@@ -3854,22 +3809,28 @@ class Environment:
 
 
     def calculate_DuDt(self, t_indx=None, time=None):
-        '''Calculate and store material derivative of the fluid velocity with 
-        respect to time. Defaults to interpolating at the current time, given by 
-        self.time. Gradient is calculated via second order accurate central 
-        differences (using numpy) with second order accuracy at the boundaries.
+        '''Return the material derivative of the fluid velocity, by default at
+        the current time. Time arguments do not apply to time-invariant flow.
 
-        The material derivative is given by
         .. math::
-        \\frac{D\\mathbf{u}}{Dt} = \\mathbf{u}_t + 
-        (\\nabla\\mathbf{u})\\mathbf{u}
-        
+
+            \\frac{D\\mathbf{u}}{Dt} = \\mathbf{u}_t +
+            (\\nabla\\mathbf{u})\\mathbf{u}
+
+        Spatial gradients are second-order central differences, second-order
+        at the boundaries too, and across the wrap on periodic axes. See
+        FluidData.calculate_DuDt.
+
         Parameters
         ----------
         t_indx : int, optional
-            Interpolate at a time referred to by self.envir.time_history[t_indx]
+            evaluate at self.time_history[t_indx]; takes precedence over time
         time : float, optional
-            Interpolate at a specific time. default is current time.
+            evaluate at this time
+
+        Returns
+        -------
+        list of ndarrays, one per velocity component
         '''
 
         if self.flow.flow_times is None:
@@ -3896,8 +3857,7 @@ class Environment:
         Raises
         ------
         RuntimeError
-            if a recording is active. Rewinding the clock would give the archive
-            a second capture at t=0 and a timeline that goes backwards.
+            if a recording is active
         '''
 
         self._refuse_while_recording()
@@ -4182,19 +4142,20 @@ class Environment:
 
 
     def plot_flow(self, time=None, downsamp=5, interval=500, figsize=None, **kwargs):
-        '''Plot the velocity field of the fluid at a given time t or at all
-        times if t is None.
+        '''Plot the velocity field of the fluid at a given time, or animate it
+        over every time in flow_times if time is None.
 
         For densely sampled velocity fields, specify an int for downsamp to plot
         every nth vector in each direction.
 
         For time dependent velocity fields, interval is the delay between plotting
         of each time's flow data, in milliseconds. Defaults to 500.
-        
+
         Extra keyword arguments will be passed to pyplot's quiver.
 
-        2D arrow lengths are scaled based on the maximum of all the data over 
-        all times.
+        2D arrow lengths are scaled by the largest velocity components among
+        the dumps loaded so far: the whole dataset, unless INUM is an int. An
+        animation of a dynamically loaded fluid reads every dump.
         '''
 
         if self.flow is None:
