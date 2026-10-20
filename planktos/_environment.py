@@ -332,16 +332,20 @@ class Environment:
 
         ##### swarm list #####
 
-        if init_swarms is None:
-            self.swarms = []
-        else:
-            if isinstance(init_swarms, list):
-                self.swarms = init_swarms
-            else:
-                self.swarms = [init_swarms]
-            # reset each Swarm's environment
-            for sw in self.swarms:
-                sw.envir = self
+        self.swarms = []
+        if init_swarms is not None:
+            if not isinstance(init_swarms, list):
+                init_swarms = [init_swarms]
+            for sw in init_swarms:
+                if getattr(sw, 'envir', None) is None:
+                    # A Swarm still being constructed, which builds its default
+                    #   Environment this way: nothing to leave or project yet.
+                    sw.envir = self
+                    self.swarms.append(sw)
+                else:
+                    # As add_swarm does: leave the old Environment, fit this
+                    #   one's dimension, and join this one's list.
+                    sw._change_envir(self)
 
         ##### Fluid Variables #####
 

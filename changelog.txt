@@ -43,7 +43,7 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - Loading a fluid whose dimension doesn't match the loaded immersed mesh raises ValueError.
 - Bug fix: plots raised ZeroDivisionError when a swarm's first recorded state held no agents; % remaining now counts from the first state that does.
 - Swarm.move now raises when the Environment holds more than one Swarm; use Environment.move_swarms. It previously warned and froze the others, misaligning their histories.
-- Bug fix: adding a Swarm to a different Environment now removes it from its previous one, which kept moving it and left it in both.
+- Bug fix: adding a Swarm to a different Environment (add_swarm or init_swarms) now removes it from its previous one, which kept moving it.
 - Bug fix: set_canopy_flow works with scalar u_star/U_h/beta, which raised TypeError, and a zero wind parameter now gives zero flow instead of nan.
 - Bug fix: set_canopy_flow checks the u_star = U_h*beta relation at every time point; with time-varying parameters it raised instead of checking.
 - Bug fix: vorticity is now differenced across the wrap on periodic dimensions. The outermost ring of every plot was previously one-sided and wrong.

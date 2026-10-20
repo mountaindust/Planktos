@@ -608,6 +608,33 @@ def test_the_old_environment_stops_moving_a_swarm_that_left():
     assert len(swrm.pos_history) == 1
 
 
+def test_init_swarms_moves_swarms_as_add_swarm_does():
+    # Regression: Environment(init_swarms=...) set each swarm's envir directly,
+    # so a swarm from another Environment stayed in that one's list too and
+    # went on being moved by it; and the caller's list became this one's.
+    a = planktos.Environment()
+    one = planktos.Swarm(swarm_size=3, envir=a, seed=1)
+    two = planktos.Swarm(swarm_size=3, envir=a, seed=2)
+    given = [one, two]
+
+    b = planktos.Environment(init_swarms=given)
+
+    assert a.swarms == []
+    assert b.swarms == [one, two] and b.swarms is not given
+    assert one.envir is b and two.envir is b
+    a.move_swarms(0.1, silent=True)
+    assert len(one.pos_history) == 0, 'the old Environment still moved it'
+
+    c = planktos.Environment(init_swarms=one)       # a single Swarm, not a list
+    assert c.swarms == [one] and b.swarms == [two]
+
+
+def test_init_swarms_projects_a_3d_swarm_into_a_2d_environment():
+    swrm = planktos.Swarm(swarm_size=3, envir=planktos.Environment(Lz=10), seed=1)
+    envir = planktos.Environment(init_swarms=swrm)
+    assert swrm.positions.shape == (3, 2)
+
+
 def test_ftle_with_a_user_swarm_still_works_during_a_recording(tmp_path):
     # calculate_FTLE adds a shallow copy of the caller's Swarm to this same
     # Environment and pops it again. The copy is not in envir.swarms to begin
