@@ -2304,7 +2304,7 @@ class Environment:
             ``vel_history`` keep only the captured states too, so the run looks
             like one taken with a time step *k* times as long. This sets the
             data kept, not a movie's frame rate, which ``Swarm.plot_all`` sets
-            afterwards.
+            afterwards. A non-integer is truncated, with a warning.
         chunk_size : int, default=100
             captures held in memory before a chunk is written; a hard kill
             loses at most these.
@@ -2393,8 +2393,12 @@ class Environment:
                     "fluid with INUM=None so that all of it stays in "
                     "memory.".format(*bnds))
 
-        if int(capture_interval) < 1:
+        if capture_interval < 1:
             raise ValueError('capture_interval must be at least 1')
+        if int(capture_interval) != capture_interval:
+            warnings.warn("capture_interval={} is not a whole number of "
+                          "steps; capturing every {} steps.".format(
+                              capture_interval, int(capture_interval)))
 
         # Captures are counted from the step recording starts at, so that they
         #   are evenly spaced even when recording begins mid-run.
@@ -3501,11 +3505,6 @@ class Environment:
         grid_loc_iter = np.ndindex(last_time.shape)
         for grid_loc in grid_loc_iter:
 
-            ### DEBUG ###
-            # flat_loc = np.ravel_multi_index((grid_loc[0],grid_loc[1]),grid_dim)
-            # start_pos = s.pos_history[0][flat_loc,:]
-            # if 0.96 < start_pos[0] < 0.98 and 0.15 < start_pos[1] < 0.18:
-            #     import pdb; pdb.set_trace()
             # if the central point is masked, skip this calculation.
             #  (inside a structure or non-repairable edge point)
             if last_time.mask[grid_loc]:

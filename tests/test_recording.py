@@ -863,6 +863,29 @@ def test_a_capture_interval_below_one_is_refused(tmp_path):
         envir.record(tmp_path / 'run', capture_interval=0)
     assert envir._recorder is None
     assert envir._capture_interval == 1
+    with pytest.raises(ValueError, match='capture_interval'):
+        envir.record(tmp_path / 'run', capture_interval=0.5)
+    assert envir._recorder is None
+
+
+def test_a_fractional_capture_interval_warns_and_truncates(tmp_path):
+    envir = _envir()
+    swrm = _swarm(envir)
+    with pytest.warns(UserWarning, match=r'capture_interval=2\.5.*every 2 steps'):
+        rec = envir.record(tmp_path / 'run', capture_interval=2.5)
+    with rec:
+        for _ in range(4):
+            swrm.move(0.1, silent=True)
+    assert envir.time_history == pytest.approx([0.0, 0.2])
+
+
+def test_a_whole_capture_interval_does_not_warn(tmp_path):
+    envir = _envir()
+    _swarm(envir)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        envir.record(tmp_path / 'run', capture_interval=np.int64(3))
+    envir.stop_recording()
 
 
 # --------------------------------------------------------------------------- #
