@@ -43,6 +43,43 @@ def _headings(source, n, velocities, sel=slice(None)):
     return np.arctan2(velocities[sel, 1], velocities[sel, 0])
 
 
+_ANGLE_FALLBACK = ("Using velocity for heading markers at past times: the props "
+                   "'angle' column only describes the present unless a "
+                   "property history is kept (store_prop_history=True).")
+
+
+def _heading_angles(swarm, source, n, props, velocities, sel=None):
+    '''Heading angles for state n (None for the present), and whether a props
+    'angle' column was passed over for them.
+
+    The 'angle' column gives the headings where it describes state n: at the
+    present, or at any state when a property history is kept. Otherwise they
+    come from _headings, and the second return value is True if there was an
+    'angle' column, so that the caller can warn.
+
+    Parameters
+    ----------
+    swarm : Swarm
+    source : _frames.FrameSource
+    n : int or None
+        the state's index, as for source.positions
+    props : pandas DataFrame
+        the props for state n, from source.props
+    velocities : ndarray
+        the velocities for state n
+    sel : iterable of int, optional
+        the agents to return headings for; all of them if None
+    '''
+
+    present = n is None or n >= len(swarm.pos_history)
+    if 'angle' in props and (present or swarm.props_history is not None):
+        column = props['angle'] if sel is None else props.loc[sel, 'angle']
+        return column, False
+    angles = _headings(source, n, velocities,
+                       slice(None) if sel is None else sel)
+    return angles, 'angle' in props
+
+
 def _vorticity_norm(vort, clip=None, norm=None):
     '''Colour limits for the RdBu vorticity backdrop, symmetric about zero.
 
@@ -2257,10 +2294,10 @@ class Swarm:
             if plot_heading:
                 line_codes = np.array([mPath.MOVETO, mPath.LINETO])
                 codes = np.concatenate([circle.codes, line_codes])
-                if 'angle' in props:
-                    angles = props['angle']
-                else:
-                    angles = _headings(source, loc, velocities)
+                angles, passed_over = _heading_angles(self, source, loc, props,
+                                                      velocities)
+                if passed_over:
+                    warnings.warn(_ANGLE_FALLBACK, stacklevel=2)
                 for angle in angles:
                     if ma.is_masked(angle):
                         paths.append(circle)
@@ -3111,9 +3148,6 @@ class Swarm:
                 elif fluid == 'quiver' and self.envir.flow is not None:
                     u, v = source.quiver(time)
                     fld.set_UVC(u.T, v.T)
-                warning_msg = "Using velocity for heading markers "+\
-                              "and not the 'angles' property because "+\
-                              "the property history was not recorded."
                 if mesh_col is not None and self.envir.ibmesh.ndim == 4:
                     ibmesh = self.envir.interpolate_temporal_mesh(time=time)
                     mesh_col.set_segments(ibmesh)
@@ -3121,34 +3155,17 @@ class Swarm:
                     scat.set_offsets(positions)
                     if 'color' in frame_props:
                         scat.set_color(frame_props['color'])
-                    # Grab angles for heading markers
-                    if 'angle' in frame_props and plot_heading:
-                        if self.props_history is not None:
-                            angles = frame_props['angle']
-                        else:
-                            if not angle_props_warned[0]:
-                                warnings.warn(warning_msg, stacklevel=9)
-                            angle_props_warned[0] = True
-                            angles = _headings(source, n, velocities)
-                    elif plot_heading:
-                        angles = _headings(source, n, velocities)
                 else:
                     scat.set_offsets(positions[downsamp,:])
                     if 'color' in frame_props:
                         scat.set_color(frame_props.loc[downsamp,'color'])
-                    # Grab angles for heading markers
-                    if 'angle' in frame_props and plot_heading:
-                        if self.props_history is not None:
-                            angles = frame_props.loc[downsamp,'angle']
-                        else:
-                            if not angle_props_warned[0]:
-                                warnings.warn(warning_msg, stacklevel=9)
-                            angle_props_warned[0] = True
-                            angles = _headings(source, n, velocities, downsamp)
-                    elif plot_heading:
-                        angles = _headings(source, n, velocities, downsamp)
                 # set heading markers
                 if plot_heading:
+                    angles, passed_over = _heading_angles(
+                        self, source, n, frame_props, velocities, downsamp)
+                    if passed_over and not angle_props_warned[0]:
+                        warnings.warn(_ANGLE_FALLBACK, stacklevel=9)
+                        angle_props_warned[0] = True
                     paths = []
                     for angle in angles:
                         if ma.is_masked(angle):

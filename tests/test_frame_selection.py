@@ -23,7 +23,8 @@ import numpy as np
 import pytest
 
 import planktos
-from planktos._swarm import _vorticity_norm
+from planktos import _frames
+from planktos._swarm import _ANGLE_FALLBACK, _heading_angles, _vorticity_norm
 
 
 def _run(dt=0.025, steps=48):
@@ -259,3 +260,69 @@ def test_vorticity_norm_is_grown_in_place():
     norm = _vorticity_norm(np.array([[1.0]]))
     same = _vorticity_norm(np.array([[9.0]]), norm=norm)
     assert same is norm and np.isclose(norm.vmax, 9.0)
+
+
+# --------------------------------------------------------------------------- #
+#                            heading angles                                   #
+# --------------------------------------------------------------------------- #
+# A props 'angle' column gives the heading markers where it describes the
+# state drawn: the present, or any state when a property history is kept.
+# Regression: plot(t=past) drew the present angles at a past time, silently,
+# when no history was kept.
+
+def _angled_run(store_prop_history=False, steps=3):
+    '''A 2D swarm whose 'angle' column is the step count, so a heading drawn
+    from it says which state it came from.'''
+    swrm = planktos.Swarm(swarm_size=4, envir=planktos.Environment(), seed=1,
+                          init=np.full((4, 2), 5.0),
+                          store_prop_history=store_prop_history)
+    swrm.props['angle'] = np.zeros(4)
+    for k in range(steps):
+        swrm.move(0.1, silent=True)
+        swrm.props['angle'] = np.full(4, float(k + 1))
+    return swrm
+
+
+def test_a_past_state_without_props_history_uses_velocity_and_says_so():
+    swrm = _angled_run()
+    source = _frames.FrameSource(swrm)
+    vel = source.velocities(1)
+    angles, passed_over = _heading_angles(swrm, source, 1, source.props(1), vel)
+    assert passed_over
+    assert np.allclose(angles, np.arctan2(vel[:, 1], vel[:, 0]))
+
+
+def test_the_present_uses_the_angle_column_without_props_history():
+    swrm = _angled_run()
+    source = _frames.FrameSource(swrm)
+    n = len(swrm.pos_history)
+    for loc, vel in ((None, swrm.velocities), (n, source.velocities(n))):
+        angles, passed_over = _heading_angles(swrm, source, loc, swrm.props, vel)
+        assert not passed_over
+        assert np.allclose(angles, 3.0)
+
+
+def test_a_past_state_uses_the_angle_column_when_props_history_is_kept():
+    swrm = _angled_run(store_prop_history=True)
+    source = _frames.FrameSource(swrm)
+    angles, passed_over = _heading_angles(
+        swrm, source, 1, source.props(1), source.velocities(1))
+    assert not passed_over
+    assert np.allclose(angles, 1.0)
+    sel = [0, 2]
+    angles, _ = _heading_angles(swrm, source, 1, source.props(1),
+                                source.velocities(1), sel)
+    assert len(angles) == 2 and np.allclose(angles, 1.0)
+
+
+def test_plot_at_a_past_time_warns_when_it_passes_over_the_angle_column(tmp_path):
+    import matplotlib.pyplot as plt
+    swrm = _angled_run()
+    try:
+        with pytest.warns(UserWarning, match="'angle' column"):
+            swrm.plot(t=0.1, filename=tmp_path / 'past.png')
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', UserWarning)
+            swrm.plot(filename=tmp_path / 'now.png')  # the present: no warning
+    finally:
+        plt.close('all')
