@@ -3872,6 +3872,9 @@ class Environment:
             Interpolate at a specific time. default is current time.
         '''
 
+        if self.flow.flow_times is None:
+            # Time-invariant flow is the same at every time.
+            return self.flow.calculate_DuDt()
         if t_indx is None and time is None:
             time = self.time
         elif t_indx is not None:

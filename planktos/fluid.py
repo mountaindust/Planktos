@@ -1955,8 +1955,9 @@ class FluidData:
             DuDt.append(g*f)
         DuDt = np.sum(DuDt, axis=0)
 
-        # Add dudt
-        DuDt += np.array(self.get_dudt(time))
+        # Add dudt, which is zero for time-invariant flow
+        if self.flow_times is not None:
+            DuDt += np.array(self.get_dudt(time))
 
         return [u for u in DuDt]
 

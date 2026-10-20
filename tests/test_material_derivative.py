@@ -93,6 +93,22 @@ def test_DuDt_steady_shear_flow_convective_term_cancels():
     assert np.allclose(swrm.get_DuDt(positions=PTS_2D), 0.0, atol=1e-9)
 
 
+def test_DuDt_of_a_steady_flow_does_not_warn():
+    # Regression: Swarm.get_DuDt, which inertial_particles calls at every
+    # solver step, warned twice over a steady flow -- that the time it passed
+    # was ignored, and that du/dt was zero -- though neither is a problem.
+    import warnings
+    a = 1.5
+    x, y, X, Y = _grid_2d()
+    envir = _envir_2d(x, y, a * X, -a * Y)
+    swrm = _swarm(envir, PTS_2D)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        swrm.get_DuDt(positions=PTS_2D)
+        envir.calculate_DuDt()
+        envir.calculate_DuDt(time=1.0)
+
+
 def test_DuDt_default_positions_uses_swarm_locations():
     # Exercise the default (self.positions) path, including the masked-array
     # handling: agents are seeded exactly at the query points.
