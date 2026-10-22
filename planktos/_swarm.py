@@ -1758,7 +1758,7 @@ class Swarm:
         Returns a tuple consumed by _ibc.make_ib_worker. For a static mesh this
         is cheap; for a moving mesh it interpolates the mesh at the start and end
         of the step and computes the max inter-vertex distance and the max vertex
-        displacement once for the whole swarm (previously recomputed per agent).
+        displacement once for the whole swarm.
 
         Parameters
         ----------
@@ -2009,32 +2009,15 @@ class Swarm:
 
 
     def _calc_basic_stats(self, DIM3, t_indx=None, speeds=None):
-        ''' Return basic stats about % agents remaining, fluid velocity, and
-        agent velocity for plot printing.
+        '''Return the % of agents remaining and the mean fluid and agent
+        velocities that plots print.
 
-        No fluid velocity field is pulled here. The fluid component means come
-        from FluidData's per-dump mean cache, which is exact at any time and
-        needs no data loaded, so a plot or movie costs nothing in fluid I/O even
-        when the run is dynamically loading. Whole-grid reductions over the
-        fluid (mean and max fluid speed) were removed for that reason: they are
-        nonlinear, so they cannot be cached that way, and they summarize the
-        whole domain including regions holding no agents. The spread of agent
-        speeds took their place -- it says directly whether the population is
-        moving coherently. Whole-field values are still available on demand from
-        FluidData.fmin/fmax and Environment.get_mean_fluid_speed().
-
-        Agent velocities are read from vel_history, which records the velocity
-        each agent actually had. They are not recovered by differencing
-        pos_history: velocities are set in move() from pre-boundary-condition
-        positions, so the two quantities part company for any agent that
-        collided with an immersed boundary or the domain edge, and across a
-        periodic wrap the difference of positions is meaningless.
-
-        At t_indx=0 this reports the initial velocities, which Swarm.__init__
-        sets to the local fluid drift where a flow exists. An earlier version
-        reported the zero vector there on the grounds that velocity is
-        undefined before the first step; the recorded value is the truth and
-        agrees with what the agents were actually doing.
+        Agent velocities are those recorded in vel_history; at t_indx=0 that is
+        the initial velocity, the local fluid drift where there is a flow. A
+        past state with neither a velocity history nor speeds reports zero
+        agent velocity. Fluid means come from FluidData.get_mean_velocity, which
+        loads no fluid data. % remaining counts against the first recorded state
+        holding any agents.
 
         Parameters
         ----------
@@ -2045,10 +2028,9 @@ class Swarm:
             index at or past the end of the history is the current time too,
             which is the state a final animation frame draws.
         speeds : tuple, optional
-            (avg_swrm_vel, avg_swrm_spd, std_swrm_spd) to report in place of
-            computing them, for a run whose velocities were not kept but whose
-            recording derived these as each capture was taken. Everything else
-            returned is still read off the positions and the fluid.
+            (avg_swrm_vel, avg_swrm_spd, std_swrm_spd) to report instead of
+            computing them from velocities, as a recording without velocities
+            stores them.
 
         Returns
         -------
@@ -2069,13 +2051,9 @@ class Swarm:
         '''
 
         # positions, velocities and the time of the state being summarized.
-        #   Agent velocities are READ from what was recorded, not
-        #   finite-differenced from positions: move() sets velocities from
-        #   pre-boundary-condition positions and then apply_boundary_conditions
-        #   mutates positions, so the two differ for any agent that collided
-        #   with an immersed boundary or the domain edge. On a periodic
-        #   dimension a wrap makes the difference of positions a spurious
-        #   near-domain-width velocity.
+        #   Agent velocities are read from what was recorded: move() sets them
+        #   from pre-boundary-condition positions, so differencing pos_history
+        #   would disagree for any agent that collided or wrapped.
         n_hist = len(self.pos_history)
         have_vel = len(self.vel_history) >= n_hist
         if t_indx is None or t_indx >= n_hist:
@@ -2134,7 +2112,10 @@ class Swarm:
         elif self.envir.flow is None and DIM3:
             return perc_left, 0, 0, 0, avg_swrm_vel, avg_swrm_spd, std_swrm_spd
 
-        # get the fluid component means from the cache
+        # get the fluid component means from the per-dump cache, which is exact
+        #   at any time with nothing loaded. A whole-grid speed is nonlinear in
+        #   the field, so it cannot come from that cache; plots print agent
+        #   speeds instead.
         if self.envir.flow.flow_times is None:
             # temporally constant flow
             fluid_means = self.envir.flow.get_mean_velocity()
@@ -2187,8 +2168,8 @@ class Swarm:
             if plotting vorticity, specifies the clip value for pseudocolor.
             this value is used for both negative and positive vorticity.
         figsize : tuple of length 2, optional
-            figure size in inches, (width, height). default is a heurstic that 
-            works... most of the time?
+            figure size in inches, (width, height). Defaults to a size set by
+            the domain's aspect ratio.
         circ_rad : float, default=0.25
             plotting size of the agent circles (in 2D only)
         plot_heading : bool, default=True
@@ -2207,8 +2188,8 @@ class Swarm:
         -----
         Where the Environment has recorded a run archive, the fluid backdrop is
         served from it rather than read from the velocity field, so drawing a
-        dynamically loaded run costs no fluid reads. See
-        :meth:`planktos.Environment.record`.
+        dynamically loaded run costs no fluid reads. A backdrop the archive does
+        not hold raises ValueError. See :meth:`planktos.Environment.record`.
         '''
 
         source = _frames.FrameSource(self, fluid=fluid, clip=clip)
@@ -2683,10 +2664,10 @@ class Swarm:
             of file saved.
         frames : iterable of integers, optional.
             If None, frames are chosen from fps and playback_rate (below). If
-            an iterable, plot only the time steps of the swarm as indexed by
-            the iterable, overriding playback_rate (note, this is an iterable
-            of the time step indices, not the time in seconds at those time
-            steps!).
+            an iterable, the recorded states to draw, overriding
+            playback_rate: indices into pos_history, with len(pos_history) for
+            the present -- not times. A recorded state is a time step unless
+            the Environment recorded with a capture_interval.
         downsamp : iterable of int or int, optional
             If None, do not downsample the agents - plot them all. If an integer,
             plot only the first n agents (equivalent to range(downsamp)).
@@ -2702,8 +2683,9 @@ class Swarm:
             is half-speed slow motion, 10 is ten times fast forward. Together 
             with fps this fixes the simulated time between frames,
             dt_frame = playback_rate/fps, and each frame shows the recorded
-            state nearest to it in time. dt_frame must be at least the
-            timestep dt.
+            state nearest to it in time. A dt_frame shorter than the interval
+            between recorded states is clamped to one frame per state, with a
+            warning.
         dist : {'density' (default), 'cov', float, 'hist'}
             whether to plot Gaussian kernel density estimation or histogram.
             Options are:
@@ -2725,8 +2707,8 @@ class Swarm:
             if plotting vorticity, specifies the clip value for pseudocolor.
             this value is used for both negative and positive vorticity.
         figsize : tuple of length 2, optional
-            figure size in inches, (width, height). default is a heurstic that 
-            works... most of the time?
+            figure size in inches, (width, height). Defaults to a size set by
+            the domain's aspect ratio.
         circ_rad : float, default=0.25
             plotting size of the agent circles (in 2D only)
         plot_heading : bool, default=True
@@ -3135,10 +3117,9 @@ class Swarm:
                 if fluid == 'vort' and self.envir.flow is not None:
                     vort = source.vorticity(time)
                     fld.set_array(vort.T)
-                    # NOT autoscale(): it rescales to this frame's own
-                    # min/max, which discards any clip the caller asked for
-                    # and moves zero off the white centre of RdBu, differently
-                    # every frame. That was the background flashing.
+                    # Limits from _vorticity_norm: symmetric about zero so the
+                    # RdBu centre stays white, growing across frames, and fixed
+                    # by a clip.
                     fld.norm = _vorticity_norm(vort, source.vort_clip, fld.norm)
                     fld.changed()
                 elif fluid == 'quiver' and self.envir.flow is not None:

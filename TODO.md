@@ -4,7 +4,7 @@
 (a sliding window of timesteps) instead of holding the whole dataset in memory, so
 that large 3D time-varying flows (~100 GB raw, larger once splined) can be used.
 
-**Current state (2026-10-13).** The architecture is built and the API has settled —
+**Current state (2026-10-22).** The architecture is built and the API has settled —
 all fluid data is a `FluidData` object (`planktos/fluid.py`). Dynamic windowed
 loading works and is tested in **both** 2D and 3D against committed fixtures.
 Temporal interpolation of dynamically-loaded data is **linear in time**
@@ -12,9 +12,9 @@ Temporal interpolation of dynamically-loaded data is **linear in time**
 (`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
 story.
 
-**Suite: 1364 passed / 49 skipped (`pytest --runstreaming`, ~65 s),
-1412 / 1 (`pytest --runslow --runstreaming`, ~5 min).** No failures, **and no
-xfails: the pre-release list is empty.** *(Re-measured 2026-10-15.)*
+**Suite: 1345 passed / 139 skipped (`pytest`, ~60 s), 1483 / 1 (`pytest --runslow
+--runstreaming`, ~5 min).** No failures, **and no xfails: the pre-release list is
+empty.** *(Re-measured 2026-10-22; the other two configurations are in `CLAUDE.md`.)*
 
 **The pre-release list is empty (2026-09-03).** `tests/test_data_streaming/` — the
 adversarial suite written from `run_persistence.md`, covering the streaming story end
@@ -65,9 +65,22 @@ asserted. That was the branch's stated remaining reason to exist.
 
 **Where the work goes next, in priority order:**
 
-Items 1, 2, 4 and 6 are closed. **Item 3, the docstring sweep, is the one in
-progress**, with the stored-vorticity check under "Open from the 2D `.vti` work"
-beside it. Tiling (item 5) and the §7 prose pass that rides on it come after.
+Items 1, 2, 4 and 6 are closed, and **item 3's docstring pass is complete
+(2026-10-22)** — only its navigability pass is left, best decided after item 7.
+
+**Next, in order:** (a) 🔴 **the stored-vorticity check** under "Open from the 2D
+`.vti` work" — an `Omega.####.vtk` beside the source data is served to plots without
+checking it came from the same field; (b) **item 7, merging `master` in**, then its
+four follow-ups; (c) item 3's navigability pass; (d) tiling (item 5) and the §7 prose
+pass.
+
+⚠️ **Open decision for the user, raised 2026-10-20: does 1.1.0 wait for tiling?** It
+need not — `run_persistence.md` §9.4 says the changelog's "tiling temporarily raises"
+line is correct if 1.1.0 ships first. The shortest path to release is (a), (b), the
+parts of §7 that do not describe tiling (the Appendix C cost table into `docs/api`,
+the mid-run arrival example), and a version/changelog check, with tiling after. The
+cost is a prose pass that calls tiling unavailable and needs a second pass when it
+returns. The user wants 1.1.0 out the door; ask before planning past (b).
 
 1. ✅ **The run archive and the plotting work it feeds — components A, B and C are
    complete** (`docs/notes/run_persistence.md`). §5.3 and §6.1 steps **A0–A5**,
@@ -121,7 +134,8 @@ beside it. Tiling (item 5) and the §7 prose pass that rides on it come after.
 
    **Order** (smallest first to calibrate, pure-new before mixed): ✅ `_provenance.py`
    · ✅ `_frames.py` · ✅ `_dataio.py` · ✅ `archive.py` · ✅ `fluid.py` ·
-   ✅ `_environment.py` · `_swarm.py`.
+   ✅ `_environment.py` · ✅ `_swarm.py`. **The docstring pass is complete
+   (2026-10-22)**; the navigability pass below is what is left of this item.
 
    `_environment.py` (2026-10-15 to 10-20) turned up code defects too, each fixed in
    its own commit before the prose: the 3D two-layer channel flow (a regression), a
@@ -131,6 +145,13 @@ beside it. Tiling (item 5) and the §7 prose pass that rides on it come after.
    `brk_idx_list`), spurious warnings on every inertial-particle step over a steady
    flow, and `init_swarms` leaving a swarm in its old Environment. Commits `d6d2588`
    to `4c35f70`.
+
+   `_swarm.py` (2026-10-20 to 10-22) turned up three more, each in its own commit:
+   `plot(t=past)` drawing present-time headings from a props `'angle'` column,
+   `plot_all(writer_kwargs=...)` encoding movies at 5 fps rather than `fps`, and
+   `calc_re` ignoring an explicit `diam`. The default artist metadata on movies was
+   dropped at the user's request. `_calc_basic_stats` — the named worked example —
+   is fixed. Commits `9a9cb6b` to the sweep's last.
 
    `fluid.py` (2026-10-13 to 10-15) was the first module where the
    correctness pass turned up real code defects rather than wrong text, and
@@ -310,6 +331,13 @@ beside it. Tiling (item 5) and the §7 prose pass that rides on it come after.
      integrated, not by T") says T where it means T − t0 (the docstring has it right
      since `c80f407`), and quotes the "0.34–0.72 of truth" measurement. State what the
      division does and drop the measurement.
+   - [ ] `Swarm.__init_subclass__`'s docstring argues its design at length (why `move()`
+     is the harness, how the delegation check can be wrong and why that direction is
+     safe). Cut it to what it warns about and when; the reasoning goes to comments.
+   - [ ] `_swarm._vorticity_norm`'s docstring tells the flashing-backdrop story
+     ("which is what made vorticity movies flash"). State the limits it returns.
+   - [ ] `Swarm.move`'s error-state comments (the `time is None` guard and the
+     `except BaseException` block) are long; trim them to what the code does.
 
 **The run archive, in detail.** The go/no-go was **decided 2026-08-11 in favor of
 building it**: plotting is a measured bottleneck on our own runs, and it is cheapest to

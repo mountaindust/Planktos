@@ -112,11 +112,11 @@ If the worry behind a long explanation is regression, that is what the tests are
 for. Test files are a partial exception to all of this: a regression test may state
 the defect it pins, since that is the test's purpose.
 
-⚠️ **Much of the existing tree does not follow this yet** — many methods were
-written by past sessions and run long. **A sweep is in progress** as item 3 in
-`TODO.md`, which records how far it has got and what is still in scope;
-`Swarm._calc_basic_stats` is the worked example and is deliberately left unfixed
-until its module comes up. Do not add more.
+**The branch's docstrings were swept to this standard** (TODO item 3, finished
+2026-10-22) — every module this branch added or changed. What the sweep did *not*
+reach: docstrings `master` also has and this branch never touched, and four texts
+held back until the `master` merge (TODO item 7's follow-up list). Do not add more
+of what the sweep removed.
 
 ## What Planktos is
 
@@ -537,10 +537,10 @@ they are independent:**
 
 | Invocation | Covers | Time |
 |---|---|---|
-| `pytest` | the focused modules | ~55 s (1274 passed / 139 skipped) |
-| `pytest --runslow` | plus the parallelization tests, the plotting smokes and the movie renders | ~70 s (1307 / 106) |
-| `pytest --runstreaming` | plus the fast half of `tests/test_data_streaming/` | ~65 s (1364 / 49) |
-| `pytest --runslow --runstreaming` | everything | ~5 min (1412 / 1) |
+| `pytest` | the focused modules | ~60 s (1345 passed / 139 skipped) |
+| `pytest --runslow` | plus the parallelization tests, the plotting smokes and the movie renders | ~75 s (1378 / 106) |
+| `pytest --runstreaming` | plus the fast half of `tests/test_data_streaming/` | ~75 s (1435 / 49) |
+| `pytest --runslow --runstreaming` | everything | ~5 min (1483 / 1) |
 
 **Before a commit that touches the archive, the fluid streaming or the plotting
 paths, run both flags.** `--runstreaming` is off by default because that suite is
