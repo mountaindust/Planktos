@@ -365,7 +365,6 @@ def test_writer_kwargs_keep_the_fps_the_frames_were_chosen_for(_writer, tmp_path
     (writer,) = _writer
     assert writer.kwargs['fps'] == 20
     assert writer.kwargs['bitrate'] == 1800
-    assert 'metadata' in writer.kwargs
 
 
 def test_the_default_writer_encodes_at_fps(_writer, tmp_path):

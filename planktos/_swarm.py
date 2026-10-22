@@ -30,11 +30,8 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 
 
 def _headings(source, n, velocities, sel=slice(None)):
-    '''Heading angles for one frame, from what was recorded or from velocity.
-
-    A recording that omitted velocities stored the angle instead, since it is
-    what the marker needed them for. Everything else derives it here.
-    '''
+    '''Heading angles for state n: those a recording stored in place of
+    velocities, or else the angle of the given velocities.'''
 
     stored = source.angles(n)
     if stored is not None:
@@ -198,9 +195,9 @@ class Swarm:
         This is the method by which individual variation among the agents should 
         be specified. The number of rows in the dataframe should match the 
         number of agents. If no dataframe is supplied, an empty one will be 
-        created. A special property (column) can be specified called 'angle' 
-        which, if props_history is being stored, will plot as the agent heading 
-        in 2D.
+        created. A column named 'angle' sets the 2D heading markers in plots:
+        at the present, and at past times too when store_prop_history is True
+        (otherwise past headings come from velocity).
     store_prop_history : bool
         Whether or not to keep a history of props at all time points
     name : string, optional
@@ -286,8 +283,8 @@ class Swarm:
     props : pandas DataFrame
         Pandas dataframe of individual agent properties that vary between agents. 
         This is the method by which individual variation among the agents should 
-        be specified. A special column can be specified called 'angle' which, if 
-        props_history is being stored, will plot as the agent heading in 2D.
+        be specified. A column named 'angle' sets the 2D heading markers in
+        plots, as described for the props parameter.
     props_history : List of past Pandas DataFrames or None
         If not None, this list records individual agent attributes at all 
         previous points in time corresponding to the time_history attribute of 
@@ -336,11 +333,8 @@ class Swarm:
                 #   automatically by Planktos after this function returns. The
                 #   new positions you return should be an ndarray of shape NxD
                 #   where N is the number of agents in the swarm and D is the 
-                #   spatial dimension of the system. The params argument is 
-                #   there in case you want this method to take in any external 
-                #   info (e.g. time-varying forcing functions, user-controlled 
-                #   behavior switching, etc.). Note that this method has full 
-                #   access to all of the Swarm attributes via the "self" 
+                #   spatial dimension of the system. Note that this method has
+                #   full access to all of the Swarm attributes via the "self"
                 #   argument. For example, self.positions will return an NxD 
                 #   masked array of current agent positions. The one thing this 
                 #   method SHOULD NOT do is set the positions, velocities, or 
@@ -354,8 +348,8 @@ class Swarm:
     
         swrm = myagents() # add Swarm parameters as necessary, as documented above
 
-    This will create a Swarm object, but with your my_positions method instead 
-    of the default one!
+    This will create a Swarm object, but with your apply_agent_model method
+    instead of the default one!
 
     Examples
     --------
@@ -823,7 +817,7 @@ class Swarm:
 
     @property
     def full_vel_history(self):
-        '''History of self.positions, including present time.'''
+        '''History of self.velocities, including present time.'''
         return [*self.vel_history, self.velocities]
 
 
@@ -920,7 +914,7 @@ class Swarm:
             of numerical data
         sv_vel : bool, default=False
             whether or not to save the current time velocity data
-        sv_accel : book, default=False
+        sv_accel : bool, default=False
             whether or not to save the current time acceleration data
 
         See Also
@@ -1019,9 +1013,10 @@ class Swarm:
         '''Manages a change from one Environment to another.
 
         Reached through Environment.add_swarm when it is handed a Swarm object
-        rather than a size -- which is how a Swarm built on its own (and so
-        given a default Environment) is moved into the one it belongs in, and
-        how Environment.calculate_FTLE adds its working copy.
+        rather than a size, and through Environment(init_swarms=...): that is
+        how a Swarm built on its own (and so given a default Environment) is
+        moved into the one it belongs in, and how Environment.calculate_FTLE
+        adds its working copy.
         '''
 
         if self.positions.shape[1] != len(envir.L):
@@ -1120,7 +1115,9 @@ class Swarm:
 
         Performs a lot of utility tasks such as updating the positions and 
         pos_history attributes, checking boundary conditions, and recalculating 
-        the current velocities and accelerations attributes.
+        the current velocities and accelerations attributes. While the
+        Environment is recording with a capture_interval k, the histories keep
+        only every k-th state.
 
         Parameters
         ----------
@@ -1145,8 +1142,9 @@ class Swarm:
         ------
         RuntimeError
             if the Environment holds more than one Swarm and update_time is
-            True. One Swarm cannot advance the environment time on its own
-            while the others stand still; call Environment.move_swarms instead.
+            True: call Environment.move_swarms instead. Also if an earlier step
+            failed partway through, leaving envir.time None; the message says
+            how to back that step out.
 
         See Also
         --------
@@ -1178,16 +1176,9 @@ class Swarm:
                 "    swrm.positions = swrm.pos_history.pop()\n"
                 "    swrm.velocities = swrm.vel_history.pop()")
 
-        # Advancing the environment clock on behalf of one Swarm while the
-        #   others stand still is not supported. It used to warn and then
-        #   freeze the other swarms by appending their current positions to
-        #   pos_history -- but only to pos_history, so vel_history and
-        #   props_history fell behind and full_vel_history no longer lined up
-        #   with full_pos_history for the rest of the session. Every consumer
-        #   that pairs the two (plot_all's heading arrows, _calc_basic_stats)
-        #   then read the wrong entry or raised. There is no half-moved state
-        #   worth recording, so this is an error rather than a repaired
-        #   approximation of one.
+        # One Swarm cannot advance the environment clock while the others
+        #   stand still: their histories would fall out of step with
+        #   time_history, and with each other.
         if update_time and len(self.envir.swarms) > 1:
             raise RuntimeError(
                 "This Environment holds {} Swarms, so no single Swarm can "
@@ -1389,8 +1380,8 @@ class Swarm:
         get_prop : 
             given an agent/Swarm property name, return the value(s). When 
             accessing a property in Swarm.props, this can be preferred over 
-            accessing the property directly through the because instead of 
-            returning a pandas Series object (for a column in the DataFrame), it 
+            accessing the property directly, because instead of returning a
+            pandas Series object (for a column in the DataFrame), it
             automatically converts to a numpy array first.
         add_prop : add a new agent/Swarm property or overwrite an old one
         get_fluid_drift : return the fluid velocity at each agent location
@@ -1455,20 +1446,20 @@ class Swarm:
 
 
     def add_prop(self, prop_name, value, shared=False):
-        '''Method that will automatically delete any conflicting properties
-        when adding a new one.
-        
+        '''Add a property, removing any property of the same name from the
+        other store.
+
         Parameters
         ----------
         prop_name : str
             name of the property to add
         value : any
-            value to set the property at
-        shared : bool
-            if False, set as a property that applies to all agents in the swarm. 
-            if True, value should be an ndarray with a number of rows equal to 
-            the number of agents in the swarm, and the property will be set as 
-            a column in the Swarm.props DataFrame.
+            value to set the property at; for a per-agent property, one value
+            per agent
+        shared : bool, default=False
+            if True, value is shared by all agents and goes in shared_props. If
+            False, value has one entry per agent and becomes a column of the
+            props DataFrame.
         '''
         if shared:
             self.shared_props[prop_name] = value
@@ -2735,14 +2726,12 @@ class Swarm:
             whether or not to plot the direction (heading) of each agent as a 
             small line.
         save_kwargs : dict of keyword arguments, optional
-            keys must be valid strings that match keyword arguments for the 
-            matplotlib animation.FFMpegWriter object. These arguments will be 
-            used in the writer object initiation save assuming that a 
-            movie_filename has been specified. Otherwise, defaults are the 
-            passed in fps and metadata=dict(artist='Christopher Strickland')).
+            keyword arguments for matplotlib's Animation.save when a
+            movie_filename is given. Defaults to dpi=150.
         writer_kwargs : dict of keyword arguments, optional
-            keys must be valid strings that match keyword arguments for a  
-            matplotlib 
+            keyword arguments for the matplotlib animation.FFMpegWriter that
+            encodes a movie. fps defaults to the fps above; a different fps
+            here is used, with a warning, since frames were chosen for that one.
         azim : float, optional
             In 3D plots, the azimuthal viewing angle. Defaults to -60.
         elev : float, optional
@@ -3377,8 +3366,6 @@ class Swarm:
                                   writer_kwargs['fps'], fps,
                                   writer_kwargs['fps']/fps))
             writer_kwargs.setdefault('fps', fps)
-            #writer_kwargs.setdefault('metadata',
-            #                         dict(artist='Christopher Strickland'))
             try:
                 writer = animation.FFMpegWriter(**writer_kwargs)
                 if save_kwargs is None:
