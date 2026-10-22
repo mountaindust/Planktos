@@ -3367,12 +3367,20 @@ class Swarm:
                                     interval=1000/fps, repeat=False, blit=True)
 
         if movie_filename is not None:
+            # The frames were chosen for fps, so the writer encodes at fps
+            #   unless writer_kwargs says otherwise.
+            writer_kwargs = dict(writer_kwargs or {})
+            if writer_kwargs.get('fps', fps) != fps:
+                warnings.warn("writer_kwargs fps={} replaces fps={}, which the "
+                              "frames were chosen for, so the movie plays at "
+                              "{:.3g} times playback_rate.".format(
+                                  writer_kwargs['fps'], fps,
+                                  writer_kwargs['fps']/fps))
+            writer_kwargs.setdefault('fps', fps)
+            #writer_kwargs.setdefault('metadata',
+            #                         dict(artist='Christopher Strickland'))
             try:
-                if writer_kwargs is None:
-                    writer = animation.FFMpegWriter(fps=fps, 
-                        metadata=dict(artist='Christopher Strickland'))#, bitrate=1800)
-                else:
-                    writer = animation.FFMpegWriter(**writer_kwargs)
+                writer = animation.FFMpegWriter(**writer_kwargs)
                 if save_kwargs is None:
                     anim.save(movie_filename, writer=writer, dpi=150)
                 else:

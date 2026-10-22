@@ -326,3 +326,57 @@ def test_plot_at_a_past_time_warns_when_it_passes_over_the_angle_column(tmp_path
             swrm.plot(filename=tmp_path / 'now.png')  # the present: no warning
     finally:
         plt.close('all')
+
+
+# --------------------------------------------------------------------------- #
+#                      the movie writer's frame rate                           #
+# --------------------------------------------------------------------------- #
+# Frames are chosen for fps, so the writer has to encode at fps too.
+# Regression: passing writer_kwargs replaced the default writer outright, so
+# unless fps was repeated inside it the movie was encoded at FFMpegWriter's
+# own default of 5 fps, and played at 5/fps times the playback_rate asked for.
+
+class _RecordingWriter:
+    '''Stands in for FFMpegWriter, keeping the arguments it was built with.'''
+    made = []
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        _RecordingWriter.made.append(self)
+
+
+@pytest.fixture
+def _writer(monkeypatch):
+    from matplotlib import animation
+    import planktos._swarm as swarm_module
+    _RecordingWriter.made = []
+    monkeypatch.setattr(swarm_module.animation, 'FFMpegWriter', _RecordingWriter)
+    monkeypatch.setattr(animation.Animation, 'save',
+                        lambda self, *args, **kwargs: None)
+    yield _RecordingWriter.made
+    import matplotlib.pyplot as plt
+    plt.close('all')
+
+
+def test_writer_kwargs_keep_the_fps_the_frames_were_chosen_for(_writer, tmp_path):
+    swrm = _run(0.025, 8)
+    swrm.plot_all(movie_filename=str(tmp_path / 'm.mp4'), fps=20,
+                  writer_kwargs={'bitrate': 1800})
+    (writer,) = _writer
+    assert writer.kwargs['fps'] == 20
+    assert writer.kwargs['bitrate'] == 1800
+    assert 'metadata' in writer.kwargs
+
+
+def test_the_default_writer_encodes_at_fps(_writer, tmp_path):
+    swrm = _run(0.025, 8)
+    swrm.plot_all(movie_filename=str(tmp_path / 'm.mp4'), fps=20)
+    assert _writer[0].kwargs['fps'] == 20
+
+
+def test_a_different_fps_in_writer_kwargs_is_used_with_a_warning(_writer, tmp_path):
+    swrm = _run(0.025, 8)
+    with pytest.warns(UserWarning, match=r'fps=5 replaces fps=10.*0\.5 times'):
+        swrm.plot_all(movie_filename=str(tmp_path / 'm.mp4'), fps=10,
+                      writer_kwargs={'fps': 5})
+    assert _writer[0].kwargs['fps'] == 5
