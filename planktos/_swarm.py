@@ -1093,17 +1093,24 @@ class Swarm:
         -------
         float
             Reynolds number
+
+        Raises
+        ------
+        RuntimeError
+            if diam is neither given nor in shared_props, or the Environment
+            has neither rho and mu nor nu
         '''
 
         if diam is None:
+            if 'diam' not in self.shared_props:
+                raise RuntimeError("calc_re needs diam, given as an argument "
+                                   "or as shared_props['diam'].")
             diam = self.shared_props['diam']
-        else:
-            diam = diam
-        if self.envir.rho is not None and self.envir.mu is not None and\
-            'diam' in self.shared_props:
+        if self.envir.rho is not None and self.envir.mu is not None:
             return self.envir.rho*u*diam/self.envir.mu
-        else:
-            raise RuntimeError("Parameters necessary for Re calculation in Environment are undefined.")
+        if self.envir.nu is not None:
+            return u*diam/self.envir.nu
+        raise RuntimeError("calc_re needs the Environment's rho and mu, or nu.")
 
 
 

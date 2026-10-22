@@ -284,3 +284,38 @@ def test_the_guard_does_not_break_a_subclass_that_still_works():
     swrm = StillUsableSwarm(swarm_size=3, envir=envir, seed=1)
     swrm.move(0.1)
     assert swrm.moved
+
+
+# --------------------------------------------------------------------------- #
+#                         Swarm.calc_re                                       #
+# --------------------------------------------------------------------------- #
+# Regression: calc_re raised "Parameters ... undefined" whenever shared_props
+# had no 'diam', even with diam passed explicitly.
+
+def test_calc_re_takes_diam_as_an_argument():
+    envir = planktos.Environment(rho=1000, mu=1e-3)
+    swrm = planktos.Swarm(swarm_size=3, envir=envir, seed=1)
+    assert swrm.calc_re(0.1, diam=0.01) == pytest.approx(1000*0.1*0.01/1e-3)
+
+
+def test_calc_re_takes_diam_from_shared_props():
+    envir = planktos.Environment(rho=1000, mu=1e-3)
+    swrm = planktos.Swarm(swarm_size=3, envir=envir, seed=1)
+    swrm.shared_props['diam'] = 0.02
+    assert swrm.calc_re(0.1) == pytest.approx(1000*0.1*0.02/1e-3)
+
+
+def test_calc_re_uses_nu_when_rho_and_mu_are_unset():
+    envir = planktos.Environment(nu=1e-6)
+    swrm = planktos.Swarm(swarm_size=3, envir=envir, seed=1)
+    assert swrm.calc_re(0.1, diam=0.01) == pytest.approx(0.1*0.01/1e-6)
+
+
+def test_calc_re_says_what_is_missing():
+    swrm = planktos.Swarm(swarm_size=3, envir=planktos.Environment(rho=1000, mu=1e-3),
+                          seed=1)
+    with pytest.raises(RuntimeError, match='needs diam'):
+        swrm.calc_re(0.1)
+    bare = planktos.Swarm(swarm_size=3, envir=planktos.Environment(), seed=1)
+    with pytest.raises(RuntimeError, match='rho and mu, or nu'):
+        bare.calc_re(0.1, diam=0.01)
