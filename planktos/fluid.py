@@ -8,6 +8,7 @@ Author: Christopher Strickland
 Email: cstric12@utk.edu
 '''
 
+import hashlib
 import re
 import warnings
 import numpy as np
@@ -481,6 +482,51 @@ def _vorticity_from_field(flow, flow_points, periodic_dim):
     dvzdx = d(flow[2][:], 0)
     dvzdy = d(flow[2][:], 1)
     return (dvzdy - dvydz, dvxdz - dvzdx, dvydx - dvxdy)
+
+
+
+# The header line of a per-dump vorticity file Planktos wrote: the version that
+#   wrote it and a digest of the field it holds. A file without one is foreign --
+#   a solver's own -- and is read but never overwritten.
+_VORTICITY_STAMP = 'Planktos {} vorticity {}'
+
+
+def _vorticity_digest(vort):
+    '''Digest of one dump's vorticity field, as 32 hex characters.'''
+
+    # The digest is of the field itself, so anything that changes the field --
+    #   vel_conv, vec_name, periodic_dim, the source data -- changes it.
+    vort = np.ascontiguousarray(vort, dtype=np.float64)
+    h = hashlib.blake2b(digest_size=16)
+    h.update(repr(vort.shape).encode())
+    h.update(vort.tobytes())
+    return h.hexdigest()
+
+
+def _vorticity_stamp(vort):
+    '''The header line a per-dump vorticity file is written with.'''
+
+    from . import __version__
+    return _VORTICITY_STAMP.format(__version__, _vorticity_digest(vort))
+
+
+def _read_vorticity_stamp(filename):
+    '''``(version, digest)`` from the header of a vorticity file Planktos wrote.
+
+    Returns None for a file without the stamp, or one that cannot be opened.
+    '''
+
+    # A legacy vtk file's header is its second line, ascii even when the data
+    #   is binary, so reading it costs two short reads.
+    try:
+        with open(filename, 'rb') as fobj:
+            fobj.readline()
+            header = fobj.readline(257).decode('ascii', 'replace').split()
+    except OSError:
+        return None
+    if len(header) == 4 and header[0] == 'Planktos' and header[2] == 'vorticity':
+        return header[1], header[3]
+    return None
 
 
 
@@ -1741,7 +1787,9 @@ class FluidData:
 
         Writes a rectilinear-grid scalar vtk on ``flow_points``. A subclass on a
         uniform grid overrides this to write structured points instead, as its
-        solver prints them.
+        solver prints them. Either way the file's header line is the stamp
+        ``Planktos <version> vorticity <digest>``, which marks it as Planktos's
+        and records a digest of ``vort``.
 
         Parameters
         ----------
@@ -1757,7 +1805,7 @@ class FluidData:
             path, self.VORTICITY_TITLE, vort, self.flow_points,
             cycle=self.dump_number(t_idx),
             time=None if self.flow_times is None else float(self.flow_times[t_idx]),
-            sep='.')
+            sep='.', header=_vorticity_stamp(vort))
 
 
     def _vorticity_dir(self):
@@ -2097,21 +2145,26 @@ class IB2dData(FluidData):
         """Whether IB2d's own ``Omega.####.vtk`` beside the velocity covers
         dumps d_start to d_finish: ``'complete'`` for all of them, ``'partial'``
         for some, ``'absent'`` for none, with the directory unless absent. IB2d
-        writes them when its ``input2d`` asks for vorticity.
+        writes them when its ``input2d`` asks for vorticity. A file carrying
+        Planktos's stamp is Planktos's own and does not count.
         """
 
         # Checked against the whole dump range rather than by existence of any
         #   file, so that a series covering part of the run reads as partial.
         directory = Path(self.path)
+        needed = set(range(self.d_start, self.d_finish+1))
         present = set()
         for f in directory.glob('{}.*.vtk'.format(self.VORTICITY_TITLE)):
             stem = f.name[len(self.VORTICITY_TITLE)+1:-4]
             try:
-                present.add(int(stem))
+                n = int(stem)
             except ValueError:
                 continue
-        needed = set(range(self.d_start, self.d_finish+1))
-        if not present & needed:
+            # A stamped file is a series an earlier recording wrote, which the
+            #   writer checks against the field and rewrites if it is stale.
+            if n in needed and _read_vorticity_stamp(f) is None:
+                present.add(n)
+        if not present:
             return 'absent', None
         if needed <= present:
             return 'complete', directory
@@ -2136,7 +2189,8 @@ class IB2dData(FluidData):
     def write_dump_vorticity(self, t_idx, vort, path):
         """Write one dump's vorticity as IB2d prints its own: structured points
         on the solver's own coordinates, without the periodic endpoint, so that
-        :meth:`read_dump_vorticity` reads it back unchanged.
+        :meth:`read_dump_vorticity` reads it back unchanged. The header line is
+        Planktos's stamp, as in :meth:`FluidData.write_dump_vorticity`.
         """
 
         stripped = _unwrap_scalar(vort, self.periodic_dim)
@@ -2148,7 +2202,7 @@ class IB2dData(FluidData):
             path, self.VORTICITY_TITLE, stripped, grid,
             cycle=self.dump_number(t_idx),
             time=None if self.flow_times is None else float(self.flow_times[t_idx]),
-            sep='.')
+            sep='.', header=_vorticity_stamp(vort))
 
 
     def _read_IB2d_dumpfiles(self, path, d_start, d_finish, vector_data, xy=True):

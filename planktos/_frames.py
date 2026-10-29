@@ -170,6 +170,9 @@ class FrameSource:
             directory = Path(self.flow.vorticity_path)
             _require_dumps('vort', range(first, last + 1),
                            lambda i: directory / self.flow.vorticity_filename(i))
+            _require_unchanged_vorticity(
+                range(first, last + 1), self._fluid_run.dump_stats(),
+                lambda i: directory / self.flow.vorticity_filename(i))
         if self._quiver_from == 'dumps':
             directory = self._fluid_run.path / 'fluid'
             _require_dumps('quiver', range(first, last + 1),
@@ -562,6 +565,35 @@ def _require_dumps(quantity, indices, path_of):
         "the fluid with INUM=None to keep all of it in memory, or plot with "
         "fluid=None.".format(list(indices)[0], list(indices)[-1], quantity,
                              span))
+
+
+def _require_unchanged_vorticity(indices, stats, path_of):
+    '''Raise if a vorticity file this run wrote has since been rewritten.
+
+    Compares each file's stamp with the digest the recording kept for it. An
+    archive that kept none, or a dump it wrote no file for, is not checked.
+    '''
+
+    digests = None if stats is None else stats.get('vort_digest')
+    if digests is None:
+        return
+    changed = []
+    for i in indices:
+        if not digests[i]:
+            continue
+        stamp = _fluid._read_vorticity_stamp(path_of(i))
+        if stamp is None or stamp[1] != digests[i]:
+            changed.append(i)
+    if not changed:
+        return
+    span = ('{}'.format(changed[0]) if len(changed) == 1
+            else '{}-{}'.format(changed[0], changed[-1]))
+    raise ValueError(
+        "the vorticity files for dumps {} in {} were rewritten after this run "
+        "was recorded, by a recording with a different velocity field, so they "
+        "no longer match this run. Re-record the run, load the fluid with "
+        "INUM=None to keep all of it in memory, or plot with fluid=None.".format(
+            span, path_of(changed[0]).parent))
 
 
 def _missing(quantity, quantities):

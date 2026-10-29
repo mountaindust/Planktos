@@ -115,6 +115,26 @@ def _stamp_cycle_time(grid, cycle=None, time=None):
         grid.field_data['TIME'] = time
 
 
+def _save_legacy_vtk(grid, filepath, binary, header=None):
+    """Write a pyvista dataset as legacy vtk, with ``header`` as its header line.
+
+    VTK's own default header, ``vtk output``, when header is None.
+    """
+
+    # vtkDataSetWriter hands off to the writer for the dataset's type, as
+    #   pyvista's save does, and is the one that exposes the header line.
+    writer = vtk.vtkDataSetWriter()
+    if header is not None:
+        writer.SetHeader(header)
+    if binary:
+        writer.SetFileTypeToBinary()
+    else:
+        writer.SetFileTypeToASCII()
+    writer.SetFileName(str(filepath))
+    writer.SetInputData(grid)
+    writer.Write()
+
+
 #############################################################################
 #                                                                           #
 #                          DEPENDENCY DECORATORS                            #
@@ -1347,9 +1367,9 @@ def write_vtk_point_data(path, title, data, cycle=None, time=None):
 
 
 
-def write_vtk_2D_rectilinear_grid_scalars(path, title, data, grid_points, 
+def write_vtk_2D_rectilinear_grid_scalars(path, title, data, grid_points,
                                           cycle=None, time=None, binary=True,
-                                          sep='_'):
+                                          sep='_', header=None):
     '''Write scalar data to an ascii VTK Rectilinear Grid file (e.g. vorticity). 
     Expects data to be on a 2D rectilinear grid. Uses the pyvista library. 
     
@@ -1377,6 +1397,9 @@ def write_vtk_2D_rectilinear_grid_scalars(path, title, data, grid_points,
     sep : str, default='_'
         what separates the title from the dump number in the filename. '_' gives
         Omega_0042.vtk; '.' gives Omega.0042.vtk, which is IB2d's convention.
+    header : str, optional
+        the file's header line, at most 256 characters. VTK's default,
+        ``vtk output``, when None.
     '''
 
     filepath = _dump_filepath(path, title, cycle, sep)
@@ -1389,13 +1412,13 @@ def write_vtk_2D_rectilinear_grid_scalars(path, title, data, grid_points,
     #   memory layout, our arrays move in the z, then y, then x directions
     grid.point_data["values"] = data.flatten(order="F")
     _stamp_cycle_time(grid, cycle, time)
-    grid.save(str(filepath), binary=binary)
+    _save_legacy_vtk(grid, filepath, binary, header)
 
 
 
 def write_vtk_structured_points_scalars(path, title, data, grid_points,
                                         cycle=None, time=None, binary=True,
-                                        sep='_'):
+                                        sep='_', header=None):
     '''Write scalar data on a *uniform* grid to a VTK Structured Points file.
 
     The companion to ``write_vtk_2D_rectilinear_grid_scalars``, for an evenly
@@ -1430,6 +1453,9 @@ def write_vtk_structured_points_scalars(path, title, data, grid_points,
         what separates the title from the dump number in the filename.
         ``'_'`` gives ``Omega_0042.vtk``, matching the other writers here;
         ``'.'`` gives ``Omega.0042.vtk``, which is IB2d's own convention.
+    header : str, optional
+        the file's header line, at most 256 characters. VTK's default,
+        ``vtk output``, when None.
     '''
 
     filepath = _dump_filepath(path, title, cycle, sep)
@@ -1476,7 +1502,7 @@ def write_vtk_structured_points_scalars(path, title, data, grid_points,
     grid[title] = data.ravel(order='F')
     grid.set_active_scalars(title)
     _stamp_cycle_time(grid, cycle, time)
-    grid.save(str(filepath), binary=binary)
+    _save_legacy_vtk(grid, filepath, binary, header)
 
 
 

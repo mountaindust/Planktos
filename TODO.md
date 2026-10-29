@@ -12,9 +12,10 @@ Temporal interpolation of dynamically-loaded data is **linear in time**
 (`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
 story.
 
-**Suite: 1345 passed / 139 skipped (`pytest`, ~60 s), 1483 / 1 (`pytest --runslow
+**Suite: 1351 passed / 139 skipped (`pytest`, ~60 s), 1489 / 1 (`pytest --runslow
 --runstreaming`, ~5 min).** No failures, **and no xfails: the pre-release list is
-empty.** *(Re-measured 2026-10-22; the other two configurations are in `CLAUDE.md`.)*
+empty.** *(Full run re-measured 2026-10-29; the other configurations are the 2026-10-22
+counts plus the six unmarked tests added since, and are in `CLAUDE.md`.)*
 
 **The pre-release list is empty (2026-09-03).** `tests/test_data_streaming/` — the
 adversarial suite written from `run_persistence.md`, covering the streaming story end
@@ -68,11 +69,13 @@ asserted. That was the branch's stated remaining reason to exist.
 Items 1, 2, 4 and 6 are closed, and **item 3's docstring pass is complete
 (2026-10-22)** — only its navigability pass is left, best decided after item 7.
 
-**Next, in order:** (a) 🔴 **the stored-vorticity check** under "Open from the 2D
-`.vti` work" — an `Omega.####.vtk` beside the source data is served to plots without
-checking it came from the same field; (b) **item 7, merging `master` in**, then its
-four follow-ups; (c) item 3's navigability pass; (d) tiling (item 5) and the §7 prose
-pass.
+**Next, in order:** (a) ✅ **the stored-vorticity check** — done 2026-10-29, see "Open
+from the 2D `.vti` work"; (b) **item 7, merging `master` in**, then its four follow-ups;
+(c) item 3's navigability pass; (d) tiling (item 5) and the §7 prose pass. The parts of
+§7 that do not describe tiling (the Appendix C table, the mid-run arrival example) do
+not depend on the merge and can go before it.
+
+*(Shortest path below updated 2026-10-29: (a) is done.)*
 
 ⚠️ **Open decision for the user, raised 2026-10-20: does 1.1.0 wait for tiling?** It
 need not — `run_persistence.md` §9.4 says the changelog's "tiling temporarily raises"
@@ -1380,24 +1383,30 @@ interpolation-cost numbers that work produced are in `run_persistence.md` Append
 and the obligation to move them into `docs/api` is filed in that note's §7. What follows
 is what the work left open.
 
-### 🔴 A stored vorticity file is reused without checking it came from the same field
+### ✅ A stored vorticity file was reused without checking it came from the same field — fixed 2026-10-29
 
-`archive._write_vorticity` never clobbers: an `Omega.####.vtk` already sitting beside the
-source data is taken to be the solver's own field and served to plots. Nothing checks
-that it was produced from the *same* field, so it is silently wrong whenever
+`archive._write_vorticity` never clobbered: an `Omega.####.vtk` already beside the source
+data — typically one an *earlier recording* had written there — was served to plots with
+nothing checking it came from the same field. Silently wrong under a different
+`vel_conv`/`vec_name`/`periodic_dim`, or a re-exported dataset. Exposed: `VTKXMLData`,
+`VTK3dData` loaded flat, and `IB2dData`. (`OpenFOAMData` never collapses an axis and
+`ComsolVTUData` never windows, so neither ever writes the series; the original report
+listed `OpenFOAMData` and omitted `IB2dData`.)
 
-- the run uses a different `vel_conv` (or `vec_name`) than the run that wrote it —
-  vorticity scales with the velocity; or
-- the dataset under that directory has changed.
+**Fix:** each written file's vtk header line is `Planktos <version> vorticity <digest>`,
+a blake2b of the field. Same digest → left alone; different → rewritten with one warning
+per recording, plus an FYI print of the writing version if it differs (never a mismatch
+by itself, decided 2026-10-29); unstamped → the solver's, never touched. The archive
+keeps per-dump digests in `dump_stats.npz` (`vort_digest`), and `FrameSource` refuses to
+draw a recording whose files a later one rewrote. Detail in `run_persistence.md` §3.3,
+"The stamp". Tests in `test_fluid_recording.py`'s last section.
 
-Affects `VTK3dData`, `OpenFOAMData` and `VTKXMLData`. `IB2dData` reads its own `Omega`
-series and takes no `vel_conv`. Found during the 2026-09-15 review; it predates that
-work, which is why it was reported rather than fixed alongside.
+⚠️ **One-off cleanup on existing data:** `Omega` files written by dev builds before this
+fix carry no stamp, so they now read as the solver's own and are never rewritten. Delete
+any such series from `.vti`/IBAMR source directories (sea fan included) once.
+**IB2d directories need care:** there, an unstamped `Omega` series may be IB2d's own.
 
-Candidate fixes, in order of appeal: stamp what produced the field into the file
-(`vel_conv`, `vec_name`, the dump's time) and refuse a mismatch; or namespace the
-filename by those; or stop writing into the source directory at all and keep the series
-in the archive, which already regenerates it per recording.
+No changelog line: the source-directory vorticity series is new in 1.1.0 and unreleased.
 
 ⚠️ **Related, and fixed on 2026-09-15 for `VTKXMLData` and `OpenFOAMData`:**
 `dump_number` had been the index over the dumps *on disk*, so a dump that was missing in

@@ -150,10 +150,17 @@ blend.
 the source's own naming -- ``Omega.0042.vtk`` beside ``u.0042.vtk`` -- so a later
 run, ParaView, or the solver's own tooling reads it with no knowledge of
 Planktos, and the source becomes indistinguishable from one whose solver had
-printed vorticity all along. An existing file is never overwritten. If that
-directory cannot be written, which for a read-only mount or a shared dataset is
-normal, the archive's own ``fluid/`` is used instead, and ``meta.json`` records
-which happened.
+printed vorticity all along. If that directory cannot be written, which for a
+read-only mount or a shared dataset is normal, the archive's own ``fluid/`` is
+used instead, and ``meta.json`` records which happened.
+
+**A written file is stamped.** Its vtk header line reads ``Planktos <version>
+vorticity <digest>``, where the digest is of the field the file holds. A later
+recording whose field differs -- another ``vel_conv``, ``vec_name`` or
+``periodic_dim``, or changed source data -- rewrites the series and warns that
+it is doing so. A recording that relied on the old files then refuses to draw its
+vorticity backdrop rather than draw the new field. A file without the stamp, such
+as the solver's own, is never overwritten.
 
 A source carrying the field for only *part* of the dump range is not used at all.
 Serving one dump's field for another's is a plausible-looking wrong answer, so
@@ -432,7 +439,8 @@ Planktos::
                                 was, or both
         times_0000.npy          (rows,) shared across swarms
       fluid/
-        dump_stats.npz          per-dump component means and extrema
+        dump_stats.npz          per-dump component means and extrema, and the
+                                digest stamped into each vorticity file written
         quiver_00042.npy        downsampled velocity, only if asked for
         Omega.0042.vtk          vorticity, ONLY when it had to be written and
                                 the source directory could not take it

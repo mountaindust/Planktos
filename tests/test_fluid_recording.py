@@ -46,7 +46,8 @@ import numpy as np
 import pytest
 
 import planktos
-from planktos import archive
+from planktos import archive, _dataio, _frames
+from planktos import fluid as _fluid
 
 FIXTURES = Path(__file__).parent / 'fixtures'
 VORT_FIXTURE = FIXTURES / 'ib2d_fluid_vort_min'
@@ -192,12 +193,13 @@ def test_a_partial_series_in_the_source_is_left_untouched(tmp_path):
     assert len(_omega_files(rec.path / 'fluid')) == NDUMPS
 
 
-def test_the_writer_refuses_to_overwrite_a_dump_it_finds(tmp_path):
+def test_the_writer_refuses_to_overwrite_an_unstamped_dump_it_finds(tmp_path):
     # Defence in depth. probe_stored_vorticity is what normally keeps this from
     # arising -- a directory that has the field is read from, and a partial one
     # is written past -- so this guard is unreachable through record() today. It
     # is asserted directly rather than dropped because it makes _write_vorticity
-    # correct standing alone, independent of a policy decided elsewhere.
+    # correct standing alone, independent of a policy decided elsewhere. A file
+    # without Planktos's stamp is someone else's, and is vouched for by nobody.
     src = _copy_fixture(tmp_path, 'novort')
     envir = _envir(src, INUM=4)
     with envir.record(str(tmp_path / 'archive')) as rec:
@@ -205,7 +207,8 @@ def test_the_writer_refuses_to_overwrite_a_dump_it_finds(tmp_path):
         target = src / 'Omega.0003.vtk'
         planted = b'not a vtk file at all'
         target.write_bytes(planted)
-        writer._write_vorticity(3, np.zeros(envir.flow.fshape[1:]))
+        assert writer._write_vorticity(3, np.zeros(envir.flow.fshape[1:]),
+                                       'f'*32) == ''
         assert target.read_bytes() == planted
 
 
@@ -836,7 +839,8 @@ def test_a_failed_vorticity_write_leaves_no_truncated_file(tmp_path, monkeypatch
         monkeypatch.setattr(type(envir.flow), 'write_dump_vorticity',
                             _truncating_writer(TRUNCATED))
         with pytest.raises(OSError):
-            rec._fluid._write_vorticity(6, np.zeros(envir.flow.fshape[1:]))
+            rec._fluid._write_vorticity(6, np.zeros(envir.flow.fshape[1:]),
+                                        'f'*32)
 
         # The truncated file is not where a reader looks for the series...
         assert not (src / TRUNCATED).exists()
@@ -868,7 +872,7 @@ def test_staging_is_cleared_even_after_a_failed_write(tmp_path, monkeypatch):
     monkeypatch.setattr(type(envir.flow), 'write_dump_vorticity',
                         _truncating_writer(TRUNCATED))
     with pytest.raises(OSError):
-        rec._fluid._write_vorticity(6, np.zeros(envir.flow.fshape[1:]))
+        rec._fluid._write_vorticity(6, np.zeros(envir.flow.fshape[1:]), 'f'*32)
     monkeypatch.undo()
     envir.stop_recording()
     assert not (src / archive.TMP_DIRNAME).exists()
@@ -881,8 +885,138 @@ def test_a_written_series_is_complete_and_readable(tmp_path):
     envir = _envir(src, INUM=4)
     _record_and_sweep(envir, tmp_path / 'archive')
 
-    assert envir.flow.probe_stored_vorticity()[0] == 'complete'
+    assert len(_omega_files(src)) == NDUMPS
     for t_idx in range(NDUMPS):
         field = envir.flow.read_dump_vorticity(t_idx)
         assert field.shape == envir.flow.fshape[1:]
         assert np.isfinite(field).all()
+
+
+# --------------------------------------------------------------------------- #
+#     a written series is stamped, and checked against the field it holds     #
+# --------------------------------------------------------------------------- #
+# The series lives beside the source data, so one directory serves every
+# recording made from it. Each file Planktos writes carries a digest of its field
+# in the vtk header line. A later recording whose field differs rewrites the
+# series; one whose field is the same leaves it alone; and a recording whose
+# files were rewritten under it refuses to draw them.
+#
+# vtixml_min is used for the field-changing cases because it takes vel_conv. Its
+# field is u = t, v = x + 10*y, so its vorticity is exactly 1 everywhere, and
+# exactly vel_conv under a conversion.
+
+VTIXML_FIXTURE = FIXTURES / 'vtixml_min'
+
+
+def _vtixml_envir(src, vel_conv=None):
+    envir = planktos.Environment(x_bndry='periodic', y_bndry='periodic')
+    with pytest.warns(UserWarning, match='single point thick'):
+        envir.read_vtkxml_fluid_data(str(src), INUM=4, vel_conv=vel_conv)
+    return envir
+
+
+def _vtixml_run(src, path, vel_conv=None):
+    '''Record a sweep over the whole series; return the swarm and recorder.'''
+
+    envir = _vtixml_envir(src, vel_conv)
+    with envir.record(str(path)) as rec:
+        swrm = _sweep(envir, steps=14, dt=0.05)
+    return swrm, rec
+
+
+def _stamps(directory):
+    return {p.name: _fluid._read_vorticity_stamp(p)
+            for p in sorted(Path(directory).glob('Omega.*.vtk'))}
+
+
+def test_a_written_vorticity_file_carries_the_digest_its_archive_kept(tmp_path):
+    src = _copy_fixture(tmp_path, 'novort')
+    envir = _envir(src, INUM=4)
+    rec = _record_and_sweep(envir, tmp_path / 'archive')
+
+    digests = np.load(rec.path / 'fluid' / 'dump_stats.npz')['vort_digest']
+    stamps = _stamps(src)
+    assert len(stamps) == NDUMPS
+    for k in range(NDUMPS):
+        version, digest = stamps['Omega.{:04d}.vtk'.format(k)]
+        assert version == planktos.__version__
+        assert digest == digests[k]
+
+
+def test_the_same_field_recorded_again_rewrites_nothing(tmp_path):
+    src = tmp_path / 'src'
+    shutil.copytree(VTIXML_FIXTURE, src)
+    _vtixml_run(src, tmp_path / 'first')
+    before = {p.name: (p.read_bytes(), p.stat().st_mtime_ns)
+              for p in src.glob('Omega.*.vtk')}
+    assert len(before) == NDUMPS
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings('error', message='rewriting the vorticity')
+        _vtixml_run(src, tmp_path / 'second')
+    after = {p.name: (p.read_bytes(), p.stat().st_mtime_ns)
+             for p in src.glob('Omega.*.vtk')}
+    assert after == before
+
+
+def test_a_changed_vel_conv_rewrites_the_series_and_says_so(tmp_path, capsys):
+    src = tmp_path / 'src'
+    shutil.copytree(VTIXML_FIXTURE, src)
+    _, first = _vtixml_run(src, tmp_path / 'first')
+    old = np.load(first.path / 'fluid' / 'dump_stats.npz')['vort_digest']
+
+    with pytest.warns(UserWarning, match='rewriting the vorticity') as caught:
+        _, second = _vtixml_run(src, tmp_path / 'second', vel_conv=2.0)
+    assert sum('rewriting the vorticity' in str(w.message) for w in caught) == 1
+    # Same Planktos wrote both, so there is no version to mention.
+    assert 'written by Planktos' not in capsys.readouterr().out
+
+    new = np.load(second.path / 'fluid' / 'dump_stats.npz')['vort_digest']
+    assert not np.any(new == old)
+    for k, (_, digest) in enumerate(_stamps(src).values()):
+        assert digest == new[k]
+        vort, _, _ = _dataio.read_vtk_Rectilinear_Grid_Scalars(
+            src / 'Omega.{:04d}.vtk'.format(k))
+        assert np.allclose(vort, 2.0)
+
+
+def test_a_recording_whose_vorticity_was_rewritten_refuses_to_draw_it(tmp_path):
+    src = tmp_path / 'src'
+    shutil.copytree(VTIXML_FIXTURE, src)
+    swrm, _ = _vtixml_run(src, tmp_path / 'first')
+    _frames.FrameSource(swrm, fluid='vort')          # draws while it is current
+
+    with pytest.warns(UserWarning, match='rewriting the vorticity'):
+        _vtixml_run(src, tmp_path / 'second', vel_conv=2.0)
+    with pytest.raises(ValueError, match='rewritten after this run was recorded'):
+        _frames.FrameSource(swrm, fluid='vort')
+
+
+def test_replacing_another_versions_series_names_that_version(
+        tmp_path, capsys, monkeypatch):
+    src = tmp_path / 'src'
+    shutil.copytree(VTIXML_FIXTURE, src)
+    monkeypatch.setattr(planktos, '__version__', '0.9.0')
+    _vtixml_run(src, tmp_path / 'first')
+    monkeypatch.undo()
+    assert {v for v, _ in _stamps(src).values()} == {'0.9.0'}
+
+    with pytest.warns(UserWarning, match='rewriting the vorticity'):
+        _vtixml_run(src, tmp_path / 'second', vel_conv=2.0)
+    assert 'written by Planktos 0.9.0' in capsys.readouterr().out
+    assert {v for v, _ in _stamps(src).values()} == {planktos.__version__}
+
+
+def test_ib2d_does_not_take_a_series_planktos_wrote_for_its_own(tmp_path):
+    # The solver's own series is read and never rewritten. One an earlier
+    # recording wrote is checked against the field like any other, so the probe
+    # must not report it as the solver's.
+    src = _copy_fixture(tmp_path, 'novort')
+    _record_and_sweep(_envir(src, INUM=4), tmp_path / 'first')
+    assert len(_omega_files(src)) == NDUMPS
+
+    envir = _envir(src, INUM=4)
+    assert envir.flow.probe_stored_vorticity() == ('absent', None)
+    with envir.record(str(tmp_path / 'second')) as rec:
+        assert rec._fluid._writes_vorticity
+        assert Path(_meta(rec)['fluid']['vorticity_dir']) == src.resolve()

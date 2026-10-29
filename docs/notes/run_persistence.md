@@ -1603,8 +1603,9 @@ ParaView, or IB2d's own tooling reads them with no knowledge of Planktos, and so
 the source becomes indistinguishable from one whose solver had printed vorticity all
 along. Two guards:
 
-- **Never clobber.** If `Omega` for a dump already exists, that is the middle row of the
-  table, not this one.
+- **Never clobber the solver's field.** If an unstamped `Omega` for a dump already
+  exists, that is the middle row of the table, not this one. A *stamped* one is
+  Planktos's own and is checked — see "The stamp" below.
 - **Fall back to `run_archive/fluid/` if the source directory cannot be written** —
   read-only mounts and shared datasets are normal. `meta.json` records which of the two
   happened, so the reader knows where to look.
@@ -1696,8 +1697,30 @@ Two decisions the specification left open, taken here:
   one is written past, and an absent one cannot collide. The guard survives because
   it makes `_write_vorticity` correct standing alone rather than by a policy
   decided elsewhere, and it costs one `exists()` per dump.
-  `test_the_writer_refuses_to_overwrite_a_dump_it_finds` calls it directly and says
-  so.
+  `test_the_writer_refuses_to_overwrite_an_unstamped_dump_it_finds` calls it directly
+  and says so.
+
+**The stamp** *(2026-10-29)*. A series in the source directory is shared by every
+recording made from that source, so a file written under one `vel_conv` would be
+served to a later run under another. Each file Planktos writes therefore carries
+`Planktos <version> vorticity <digest>` as its vtk header line, the digest being a
+blake2b of the field itself — so it covers `vel_conv`, `vec_name`, `periodic_dim`, a
+re-exported dataset and any change to the curl alike, with no list of settings to keep
+complete. The rules:
+
+- a stamped file with the **same** digest is left alone, so recording the same field
+  twice writes nothing;
+- a stamped file with a **different** digest is rewritten, with one `UserWarning` per
+  recording, and an FYI `print` naming the Planktos version that wrote it when that
+  differs from the running one — a version difference alone is never a mismatch;
+- an **unstamped** file is the solver's and is never touched; IB2d's probe counts only
+  unstamped files as the solver's series.
+
+The archive keeps each dump's digest in `dump_stats.npz` (`vort_digest`), and
+`FrameSource` compares it with the stamp before a render. A recording whose files a
+later one rewrote refuses rather than drawing the other field. The stamp lives in the
+file rather than in a manifest beside the series, so that concurrent jobs on one source
+cannot race on a shared file and a file can never disagree with its stamp.
 
 **Measured as built, on the real datasets** — `tests/data/leaf_data` (149 dumps,
 129×193, no `Omega`) and `tests/data/Rubberband_with_Damped_Springs` (76 dumps,

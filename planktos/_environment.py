@@ -2359,10 +2359,13 @@ class Environment:
         **Where vorticity is written.** When it has to be written, vorticity
         goes in the source's own fluid directory in the source's own naming,
         e.g. ``Omega.0042.vtk`` beside ``u.0042.vtk``, where ParaView and the
-        solver's tools can read it. An existing file is never overwritten. If
-        that directory is not writable, the archive's ``fluid/`` directory is
-        used instead, and ``meta.json`` records which. The per-dump component
-        means and extrema that plots need are always in the archive.
+        solver's tools can read it. Each file is stamped in its header with a
+        digest of its field; a stamped file computed from a different field
+        (another ``vel_conv``, say) is rewritten, with a warning, and a file
+        without the stamp is never overwritten. If that directory is not
+        writable, the archive's ``fluid/`` directory is used instead, and
+        ``meta.json`` records which. The per-dump component means and extrema
+        that plots need are always in the archive.
 
         See Also
         --------

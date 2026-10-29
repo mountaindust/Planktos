@@ -31,7 +31,8 @@ This module owns the on-disk format::
                                 _meta.json beside it
       fluid/
         dump_stats.npz          per-dump component means, plus the run's
-                                velocity and vorticity extrema
+                                velocity and vorticity extrema, and the digest
+                                stamped into each vorticity file written
         quiver_00042.npy        downsampled velocity, if requested
         Omega.0042.vtk          vorticity, only if written and the source
                                 directory could not take it
@@ -1661,6 +1662,15 @@ class _FluidWriter:
         self._flow_times = (None if self.flow.flow_times is None
                             else np.asarray(self.flow.flow_times, dtype=DTYPE))
 
+        # The digest each written vorticity file carries in its stamp, per dump,
+        #   so that a render can tell when a later recording has rewritten one
+        #   from a different field. '' is a dump not yet seen, or one whose file
+        #   Planktos did not write. Only a writing regime has files to vouch for,
+        #   and it is always windowed, so flow_times is never None here.
+        self._digests = (np.full(len(self.flow.flow_times), '', dtype='U32')
+                         if plan.write_vorticity else None)
+        self._warned_stale = False
+
         # Continuing an archive: everything the earlier recording derived, so
         #   that what it wrote is neither lost nor written again. Before the
         #   resident sweep below, which must see the seeded _written.
@@ -1704,6 +1714,10 @@ class _FluidWriter:
         absmax = stats.get('vort_absmax')
         if absmax is not None:
             self._vort_absmax = float(np.fmax(self._vort_absmax, absmax))
+        digests = stats.get('vort_digest')
+        if (self._digests is not None and digests is not None
+                and digests.shape == self._digests.shape):
+            self._digests = digests.astype(self._digests.dtype)
 
 
     ####################   lifecycle   ####################
@@ -1729,6 +1743,8 @@ class _FluidWriter:
         arrays = {'means': means, 'vmax': self._vmax}
         if 'vort' in self.quantities:
             arrays['vort_absmax'] = np.asarray(self._vort_absmax)
+        if self._digests is not None:
+            arrays['vort_digest'] = self._digests
         if self._flow_times is not None:
             arrays['flow_times'] = self._flow_times
         _atomic_write(self.dir / 'dump_stats.npz',
@@ -1776,7 +1792,8 @@ class _FluidWriter:
             self._vort_absmax = float(
                 np.fmax(self._vort_absmax, np.max(np.abs(vort))))
             if self._writes_vorticity:
-                self._write_vorticity(t_idx, vort)
+                self._digests[t_idx] = self._write_vorticity(
+                    t_idx, vort, _fluid._vorticity_digest(vort))
 
         if 'quiver' in self.quantities:
             self._write_quiver(t_idx, field)
@@ -1784,19 +1801,32 @@ class _FluidWriter:
 
     ####################   the two writes   ####################
 
-    def _write_vorticity(self, t_idx, vort):
-        '''Write one dump's vorticity, unless something is already there.
+    def _write_vorticity(self, t_idx, vort, digest):
+        '''Write one dump's vorticity, unless an up-to-date file is there.
 
+        A file Planktos stamped with ``digest`` is left as it is, and one it
+        stamped with any other digest is rewritten, with a ``UserWarning`` the
+        first time per recording. A file without the stamp is never touched.
         The file appears complete or not at all, like every other file in an
-        archive: a kill partway through would otherwise leave a truncated vtk,
-        which raises on read and is worse than a missing one.
+        archive.
+
+        Returns
+        -------
+        str
+            the digest the file in place now carries, or '' for an unstamped one
         '''
 
         name = self.flow.vorticity_filename(t_idx)
-        # Never clobber. An existing file is the solver's own field, which is at
-        #   least as good as a recomputation and better at the domain edge.
-        if (self._vort_dir / name).exists():
-            return
+        target = self._vort_dir / name
+        if target.exists():
+            stamp = _fluid._read_vorticity_stamp(target)
+            # Unstamped is the solver's own field, which is at least as good as
+            #   a recomputation and better at the domain edge.
+            if stamp is None:
+                return ''
+            if stamp[1] == digest:
+                return digest
+            self._note_stale(stamp[0])
 
         # The per-source writer names its own file, so it cannot be given a
         #   temporary name -- it gets a temporary directory on the same
@@ -1809,7 +1839,27 @@ class _FluidWriter:
         #   the page cache to a node failure.
         with open(staging / name, 'rb+') as fobj:
             os.fsync(fobj.fileno())
-        os.replace(staging / name, self._vort_dir / name)
+        os.replace(staging / name, target)
+        return digest
+
+
+    def _note_stale(self, version):
+        '''Say, once per recording, that stamped vorticity files are being
+        rewritten, and which Planktos version wrote them if it is not this one.'''
+
+        if self._warned_stale:
+            return
+        self._warned_stale = True
+        warnings.warn(
+            "rewriting the vorticity in {}: those files were computed from a "
+            "different velocity field (another vel_conv, vec_name or "
+            "periodic_dim, or changed source data). A recording that relied on "
+            "them can no longer draw its vorticity backdrop.".format(
+                self._vort_dir), UserWarning)
+        if version != planktos.__version__:
+            print("The vorticity files being replaced were written by Planktos "
+                  "{}; this is Planktos {}.".format(version,
+                                                    planktos.__version__))
 
 
     def _write_quiver(self, t_idx, field):
@@ -1950,8 +2000,9 @@ def _replan_as_recorded(plan, recorded):
     meta['vorticity'] = recorded['vorticity']
     meta['vorticity_dir'] = recorded.get('vorticity_dir')
     # Any regime but 'recomputed' means the series lives on disk, so this
-    #   stretch goes on filling it in. Writing is per dump and never clobbers,
-    #   so a series the source already shipped whole simply skips every one.
+    #   stretch goes on filling it in. Writing is per dump and never touches an
+    #   unstamped file, so a series the source already shipped whole simply
+    #   skips every one.
     return plan._replace(write_vorticity=recorded['vorticity'] != 'recomputed',
                          vorticity_dir=directory, meta=meta)
 
@@ -3338,11 +3389,14 @@ class RunArchive:
         recorded, ``vort_absmax`` are single extrema **over the whole run**, which
         is what fixes a colour limit and an arrow scale that two renders of the
         same run agree on. NaN in those means no dump ever arrived.
+        ``vort_digest``, when Planktos wrote the vorticity series, is the digest
+        stamped into each dump's file, '' where it wrote none.
 
         Returns
         -------
         dict of ndarray, keyed 'means' and 'vmax', and where present
-        'vort_absmax' and 'flow_times'. None when the recording had no fluid.
+        'vort_absmax', 'vort_digest' and 'flow_times'. None when the recording
+        had no fluid.
         """
 
         stats_file = self.path / 'fluid' / 'dump_stats.npz'

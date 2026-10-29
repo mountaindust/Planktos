@@ -271,7 +271,10 @@ against `master`.
   `get_stored_vorticity(time)`, which blends the two bracketing dumps with
   `LinearSpline`'s own weights through a two-slot cache. It **raises** under cubic
   splining, where the weights are global — that regime recomputes from the resident
-  field. `docs/notes/run_persistence.md` §3.3 has the reasoning.
+  field. `docs/notes/run_persistence.md` §3.3 has the reasoning. A series Planktos
+  writes is **stamped** in each file's vtk header with a digest of its field, so a
+  later recording rewrites a stale one and a replay refuses a rewritten one; an
+  unstamped file is the solver's and is never touched.
 - ⚠️ **A single-dump load is ordinary**, and two of the readers behind
   `load_dumpfiles` drop the leading time axis for one. `FluidData._load_dumps` is what
   the slider calls and restores it, so a subclass implements `load_dumpfiles` without
@@ -537,10 +540,10 @@ they are independent:**
 
 | Invocation | Covers | Time |
 |---|---|---|
-| `pytest` | the focused modules | ~60 s (1345 passed / 139 skipped) |
-| `pytest --runslow` | plus the parallelization tests, the plotting smokes and the movie renders | ~75 s (1378 / 106) |
-| `pytest --runstreaming` | plus the fast half of `tests/test_data_streaming/` | ~75 s (1435 / 49) |
-| `pytest --runslow --runstreaming` | everything | ~5 min (1483 / 1) |
+| `pytest` | the focused modules | ~60 s (1351 passed / 139 skipped) |
+| `pytest --runslow` | plus the parallelization tests, the plotting smokes and the movie renders | ~75 s (1384 / 106) |
+| `pytest --runstreaming` | plus the fast half of `tests/test_data_streaming/` | ~75 s (1441 / 49) |
+| `pytest --runslow --runstreaming` | everything | ~5 min (1489 / 1) |
 
 **Before a commit that touches the archive, the fluid streaming or the plotting
 paths, run both flags.** `--runstreaming` is off by default because that suite is
