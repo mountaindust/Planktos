@@ -2548,7 +2548,6 @@ class Environment:
         self._notify_step_complete()
 
 
-
     def set_boundary_conditions(self, x_bndry, y_bndry, z_bndry=None):
         '''Check and set the agent boundary conditions, self.bndry.
 

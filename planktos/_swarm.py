@@ -28,6 +28,10 @@ __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
+_ANGLE_FALLBACK = ("Using velocity for heading markers at past times: the props "
+                   "'angle' column only describes the present unless a "
+                   "property history is kept (store_prop_history=True).")
+
 
 def _headings(source, n, velocities, sel=slice(None)):
     '''Heading angles for state n: those a recording stored in place of
@@ -38,11 +42,6 @@ def _headings(source, n, velocities, sel=slice(None)):
         return stored[sel]
     # Defined even at (0,0) by convention.
     return np.arctan2(velocities[sel, 1], velocities[sel, 0])
-
-
-_ANGLE_FALLBACK = ("Using velocity for heading markers at past times: the props "
-                   "'angle' column only describes the present unless a "
-                   "property history is kept (store_prop_history=True).")
 
 
 def _heading_angles(swarm, source, n, props, velocities, sel=None):

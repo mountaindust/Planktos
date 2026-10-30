@@ -177,8 +177,10 @@ returns. The user wants 1.1.0 out the door; ask before planning past (b).
    And **move code without editing it in the same commit**, so the diff reads as
    pure motion and can be reviewed as such.
 
-   **Progress (2026-10-29):** `archive.py` split three ways — reading stays in
-   `archive.py`, writing moved to `_recording.py`, shared format and fingerprint to
+   **Progress (2026-10-29):** `fluid.py`'s helpers regrouped under three banners
+   (temporal interpolation, ingestion, derived fields) and `center_cell_regrid`
+   underscored; `archive.py` split three ways — reading stays in `archive.py`,
+   writing moved to `_recording.py`, shared format and fingerprint to
    `_archive_format.py` — with `RunArchive`'s methods regrouped by section.
 
    **Three standing exclusions:** `archive.py`'s module docstring (it is the on-disk
@@ -999,7 +1001,7 @@ were written as independent functions precisely so this could be a chain.
   load-bearing — with no times to sort by, the filename order *is* the timeline.
 - [x] ✅ **`require_boundary=False`** → extrapolates the interior out to any face with
   no boundary patch, instead of raising. Two steps, both done.
-  - [x] ✅ **(2026-08-12) `fluid.center_cell_regrid` is back as a module-level
+  - [x] ✅ **(2026-08-12) `fluid._center_cell_regrid` is back as a module-level
     function, extended to rectilinear grids and tested.** Takes `(flow, flow_points)`
     and returns them with one grid plane added at each end of each spatial axis, at the
     domain boundary. Handles 2D/3D, a leading time axis, and periodic axes; returns
@@ -1021,7 +1023,7 @@ were written as independent functions precisely so this could be a chain.
       axis. A `bounds=` argument takes the true edge per end where the caller knows
       it, which suppresses both the inference and the warning for that end.
   - [x] ✅ **(2026-08-12) Folded into the OpenFOAM loader.** `require_boundary=False`
-    now fills each uncovered face from `center_cell_regrid` and warns; `True` still
+    now fills each uncovered face from `_center_cell_regrid` and warns; `True` still
     raises, with the message pointing at the option.
     - **Per face, not per dataset.** A patch carries the boundary condition the solver
       applied and is strictly better than extrapolating, so every face that has one
@@ -1043,7 +1045,7 @@ were written as independent functions precisely so this could be a chain.
       or from a patch, so the slice still means "the cell centers".
     - ⚠️ **The `bounds=` pass-through is not distinguishable on the reference
       dataset** — its mesh is uniform and its patches sit exactly half a cell out, so
-      the inferred and true edges coincide. `center_cell_regrid`'s own tests pin the
+      the inferred and true edges coincide. `_center_cell_regrid`'s own tests pin the
       mechanism; the loader-level call is correctness insurance for a stretched mesh.
 - [x] ✅ **Mesh verification (second dump).** The mesh is read once and the permutation
   built from it; a same-count reordering (a series stitched from two runs, a corrupt
@@ -1829,7 +1831,7 @@ interior bit-identical.
 | What | Where | Applies cleanly to `master`? |
 |---|---|---|
 | `_spatial_gradient`, and `get_vorticity` calling it per axis with `periodic_dim[axis]` | `planktos/fluid.py` | ⚠️ **Not as a hunk — needs a port.** Master has no `fluid.py`; the method is `Environment.get_2D_vorticity` (its line 3386), 2D only, and carries the identical two `np.gradient` calls |
-| — | — | ⚠️ **And master has no `periodic_dim` state to consult.** It appears there only as an argument passed to `_wrap_flow` at IB2d load time (its line 1071) and to `center_cell_regrid`; there is no `self.periodic_dim`. So the port needs one of: (i) store `periodic_dim` on `Environment` at load time, or (ii) detect it in `get_2D_vorticity` by testing whether the last grid line duplicates the first, which is exactly the documented contract and is self-contained. **(ii) is the smaller patch-release change**; (i) is the right long-term shape and is what `dyload` already has |
+| — | — | ⚠️ **And master has no `periodic_dim` state to consult.** It appears there only as an argument passed to `_wrap_flow` at IB2d load time (its line 1071) and to `_center_cell_regrid`; there is no `self.periodic_dim`. So the port needs one of: (i) store `periodic_dim` on `Environment` at load time, or (ii) detect it in `get_2D_vorticity` by testing whether the last grid line duplicates the first, which is exactly the documented contract and is self-contained. **(ii) is the smaller patch-release change**; (i) is the right long-term shape and is what `dyload` already has |
 | **Tests** — the "2D vorticity on a periodic grid" section of `tests/test_analysis.py` | `tests/test_analysis.py` | **Mostly.** The file exists on master. The 3D case must be dropped (master's is 2D-only), and `_periodic_envir` must set `flow_points` the way master expects |
 
 Rows for the two physics call sites, fixed the same day:
@@ -1844,7 +1846,7 @@ Rows for the two physics call sites, fixed the same day:
 ⛔ **NOT ported to 1.0.3 — by decision, recorded below.** Every other queued entry
 shipped in 1.0.3; these three did not, because **`master` has no `periodic_dim` state to
 consult.** It exists there only as an argument passed to `_wrap_flow` at IB2d load time
-and to `center_cell_regrid`; there is no `self.periodic_dim` anywhere.
+and to `_center_cell_regrid`; there is no `self.periodic_dim` anywhere.
 
 ⚠️ **An earlier row above suggested detecting periodicity by testing whether the last
 grid line duplicates the first. That suggestion was wrong and must not be taken.**

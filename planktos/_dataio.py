@@ -155,6 +155,7 @@ def stl_dep(func):
     wrapper.__doc__ = func.__doc__
     return wrapper
 
+
 def netcdf_dep(func):
     '''Decorator for NetCDF readers to check package import.'''
     def wrapper(*args, **kwargs):

@@ -17,852 +17,6 @@ from pathlib import Path
 from . import _dataio
 
 
-def _wrap_scalar(f, periodic_dim):
-    '''Restore the duplicated end line on each periodic axis of a *scalar* field.
-
-    For a derived field read from a source that omits the periodic endpoint,
-    such as IB2d's ``Omega.####.vtk``.
-
-    Parameters
-    ----------
-    f : ndarray, indexed [x,y(,z)]
-    periodic_dim : sequence of bool, one per axis of f
-
-    Returns
-    -------
-    ndarray with one extra entry along each periodic axis
-    '''
-
-    for d, periodic in enumerate(periodic_dim):
-        if periodic:
-            f = np.concatenate((f, np.take(f, [0], axis=d)), axis=d)
-    return f
-
-
-
-def _unwrap_scalar(f, periodic_dim):
-    '''Drop the duplicated end line on each periodic axis. Inverse of
-    ``_wrap_scalar``, for writing a derived field back in the source's own
-    convention.'''
-
-    return f[tuple(slice(0, -1) if periodic else slice(None)
-                   for periodic in periodic_dim)]
-
-
-
-def _drop_flat_axes(flow, axes, ndim):
-    """Remove flat spatial axes from a velocity field, components included.
-
-    The component *along* a flat axis goes with it: Planktos carries one
-    velocity component per spatial dimension, so a 2D grid holds a 2D vector.
-
-    Parameters
-    ----------
-    flow : list of ndarrays
-        one per velocity component, each ``([t],i,j,[k])``
-    axes : tuple of int
-        spatial axes to drop, as :func:`_collapse_flat_axes` identifies them
-    ndim : int
-        spatial dimension of the data as read, before anything is dropped.
-        Used to tell whether the arrays carry a leading time axis.
-
-    Returns
-    -------
-    list of ndarrays, one shorter and one axis flatter per entry in ``axes``
-    """
-
-    if not axes:
-        return flow
-    # A leading time axis shifts every spatial axis along by one.
-    offset = 1 if flow[0].ndim > ndim else 0
-    kept = [f for d, f in enumerate(flow) if d not in axes]
-    return [np.squeeze(f, axis=tuple(d + offset for d in axes)) for f in kept]
-
-
-
-def _collapse_flat_axes(flow, mesh, periodic_dim=None, source=None):
-    """Reduce a field written on a one-point-thick grid to its real dimension.
-
-    Everything that describes the grid moves together -- the field, the
-    coordinate arrays, the velocity components and the periodicity flags -- so
-    that a plane exported as 3D vtk becomes an ordinary 2D Planktos fluid rather
-    than a 3D one of zero thickness.
-
-    Parameters
-    ----------
-    flow : list of ndarrays
-    mesh : sequence of 1D ndarrays
-        coordinates along each axis
-    periodic_dim : bool or sequence of bool, optional
-    source : str, optional
-        named in the warning
-
-    Returns
-    -------
-    flow, mesh, periodic_dim, axes -- the first three with flat axes removed,
-    and the axes that were dropped, for a loader to reapply to later reads
-
-    Raises
-    ------
-    ValueError
-        if fewer than two axes would be left; Planktos is 2D or 3D
-
-    Warns
-    -----
-    UserWarning
-        naming the dropped axes, and any velocity component dropped with them
-        whose peak exceeds 1e-6 of the largest in-plane velocity
-    """
-
-    axes = tuple(d for d, c in enumerate(mesh) if len(np.atleast_1d(c)) < 2)
-    if not axes:
-        return flow, list(mesh), periodic_dim, axes
-
-    names = 'xyz'
-    dropped = ', '.join(names[d] for d in axes)
-    if len(mesh) - len(axes) < 2:
-        raise ValueError(
-            "This grid is one point thick along {} of its {} axes, leaving "
-            "fewer than the two Planktos needs. {}".format(
-                dropped, len(mesh),
-                '' if source is None else 'Read from {}.'.format(source)))
-
-    # A component along an axis that is being dropped is discarded with it. It is
-    #   reported when its peak exceeds 1e-6 of the largest in-plane velocity:
-    #   above the round-off a solver's float32 output carries, below any
-    #   out-of-plane flow worth keeping. The ratio goes in the warning so the
-    #   user can judge it.
-    def peak(f):
-        return max(float(f.max()), -float(f.min()))
-    scale = max(peak(f) for d, f in enumerate(flow) if d not in axes)
-    notes = []
-    for d in axes:
-        w = peak(flow[d])
-        if w <= 1e-6*scale:
-            continue
-        if scale > 0:
-            notes.append('the {}-velocity reaches {:.3g}, {:.3g} times the '
-                         'largest in-plane velocity'.format(names[d], w, w/scale))
-        else:
-            notes.append('the {}-velocity reaches {:.3g} where the in-plane '
-                         'velocity is zero everywhere'.format(names[d], w))
-    warnings.warn(
-        "Fluid grid is a single point thick in {}, so it is being read as {}D "
-        "data on the remaining axes.{}{}".format(
-            dropped, len(mesh) - len(axes),
-            '' if source is None else ' Read from {}.'.format(source),
-            '' if not notes else
-            ' NOTE: {}, and is being discarded with that axis -- this is a '
-            'slab of a 3D flow rather than 2D data.'.format('; '.join(notes))),
-        UserWarning, stacklevel=3)
-
-    flow = _drop_flat_axes(flow, axes, len(mesh))
-    mesh = [c for d, c in enumerate(mesh) if d not in axes]
-    if periodic_dim is not None and not isinstance(periodic_dim, bool):
-        periodic_dim = tuple(v for d, v in enumerate(periodic_dim)
-                             if d not in axes)
-    return flow, mesh, periodic_dim, axes
-
-
-
-def _natural_key(name):
-    '''Sort key that orders the numbers embedded in a name numerically, so that
-    an unpadded ``case_787`` sorts before ``case_1008``.'''
-    # The split always alternates non-digit, digit, ..., so two keys compare
-    #   like with like throughout.
-    return tuple(int(s) if s.isdigit() else s
-                 for s in re.split(r'(\d+)', name))
-
-
-
-def _resolve_timeline(candidates, source_label, time_source, declared_order):
-    '''Turn the dumps a source declares into the dumps to load, and their timeline.
-
-    Declared dumps missing from disk are skipped with a warning. A series with
-    no times anywhere falls back to unit steps, with a warning; one with times
-    for only some of its dumps is refused. Times must strictly increase, and
-    uneven spacing is warned about.
-
-    Parameters
-    ----------
-    candidates : list of (dump, time)
-        one entry per dump the source declares, in the source's order. dump is
-        whatever the loader reads it from, or None for a dump that is declared
-        but not on disk; time is NaN where the source gives none.
-    source_label : str
-        names the source in warnings and errors
-    time_source : str
-        names where the times came from
-    declared_order : bool
-        True when the source's order is authoritative (an index), which is
-        kept. Otherwise the dumps are sorted by their times.
-
-    Returns
-    -------
-    dumps : list
-        the dumps that exist, in time order
-    flow_times : ndarray of float, or None if only one dump exists
-        shifted so the first is 0.0
-    time_source : str
-        as passed in, or 'assumed unit steps' when no dump carried a time
-
-    Raises
-    ------
-    FileNotFoundError
-        if none of the declared dumps is on disk
-    RuntimeError
-        if only some dumps carry a time, or the times do not strictly increase
-    '''
-
-    ##### Drop the dumps whose data is not on disk #####
-    def _fmt(t):
-        return 'unknown' if t is None or np.isnan(t) else '{:g}'.format(t)
-
-    dumps = []; keep_times = []; missing = []
-    for dump, t in candidates:
-        if dump is None:
-            missing.append(_fmt(t))
-        else:
-            dumps.append(dump)
-            keep_times.append(t)
-
-    if len(dumps) == 0:
-        raise FileNotFoundError(
-            "None of the {} dumps found via {} are present on disk.".format(
-                len(candidates), source_label))
-
-    if len(missing) > 0:
-        # Warn rather than fail: a truncated or interrupted export is normal.
-        # But warn loudly -- silence here would be worse than the failure,
-        # since the run would complete with nothing indicating that the
-        # timeline is not the one the source declared.
-        warnings.warn(
-            "{} of {} dumps found via {} are not on disk and have been "
-            "skipped: t = {}. The timeline is built over the {} dumps that "
-            "remain.".format(len(missing), len(candidates), source_label,
-                             ', '.join(missing), len(dumps)), UserWarning)
-
-    if len(dumps) == 1:
-        return dumps, None, time_source
-
-    keep_times = np.array(keep_times, dtype=float)
-
-    ##### No time information anywhere: fall back to unit steps #####
-    if np.all(np.isnan(keep_times)):
-        warnings.warn(
-            "No time information for any dump found via {}: assuming unit "
-            "time steps. Every time the simulation is run against is "
-            "therefore an index, not a physical time, and any velocity in "
-            "physical units is scaled wrongly by the true dump "
-            "interval.".format(source_label), UserWarning)
-        return dumps, np.arange(len(dumps), dtype=float), 'assumed unit steps'
-
-    if np.any(np.isnan(keep_times)):
-        # Unit steps are defensible only when nothing better exists. Here most
-        # of the series is timed, and indices would move every dump that carries
-        # a time to the wrong place.
-        raise RuntimeError(
-            "No time information for {} of {} dumps found via {}, but the "
-            "rest are timed. Unit time steps would misplace the dumps that "
-            "do carry a time, so the series cannot be read as it "
-            "stands.".format(int(np.isnan(keep_times).sum()), len(dumps),
-                             source_label))
-
-    ##### Order the dumps of an unindexed source by their recovered times ####
-    # An index declares its own order and is authoritative about it, so it is
-    # left as written. For a globbed source the order was ours to pick and the
-    # filenames were only a proxy; the times are the real thing.
-    if not declared_order:
-        order = np.argsort(keep_times, kind='stable')
-        if not np.array_equal(order, np.arange(len(order))):
-            warnings.warn(
-                "The dumps found via {} are not in time order under their "
-                "filenames; they have been reordered by their recorded "
-                "times.".format(source_label), UserWarning)
-            dumps = [dumps[i] for i in order]
-            keep_times = keep_times[order]
-
-    # shift so that the first dump loaded corresponds to environment time 0
-    flow_times = keep_times - keep_times[0]
-
-    ##### The timeline has to be a timeline #####
-    # Both splines divide by the interval between successive times, so a
-    # repeat or a step backward is not a degraded timeline but an unusable
-    # one. A well-formed source cannot produce it, which is exactly why it is
-    # worth saying out loud if it appears.
-    bad = np.nonzero(np.diff(flow_times) <= 0)[0]
-    if len(bad) > 0:
-        raise RuntimeError(
-            "Dump times from {} are not strictly increasing: t = {} is "
-            "followed by t = {}.".format(
-                time_source, '{:g}'.format(keep_times[bad[0]]),
-                '{:g}'.format(keep_times[bad[0]+1])))
-
-    ##### Warn about non-uniform spacing left behind by any gaps #####
-    # Interpolation error scales with the dump interval, so a series with a
-    # hole is measurably worse across that hole and the user should be told
-    # where, separately from being told which dumps are absent.
-    dt = np.diff(flow_times)
-    if not np.allclose(dt, dt[0], rtol=1e-6):
-        wide = np.nonzero(dt > dt.min()*(1+1e-6))[0]
-        warnings.warn(
-            "Dump times are not evenly spaced: intervals range from {:g} to "
-            "{:g}. Temporal interpolation is less accurate across the wider "
-            "ones, which begin at t = {}.".format(
-                dt.min(), dt.max(),
-                ', '.join('{:g}'.format(flow_times[i]) for i in wide)),
-            UserWarning)
-
-    return dumps, flow_times, time_source
-
-
-
-def _spline_index(spline, pos):
-    """Index a spline at its own knots, as though it were an ``([t],i,j,[k])`` array.
-
-    ``spline.x`` is the knot sequence and ``spline(t)`` the field there.
-
-    Parameters
-    ----------
-    spline : LinearSpline or fCubicSpline
-    pos : int, slice, or tuple
-        The leading entry indexes time, as an int (numpy integers included) or a
-        slice; anything after it indexes into the field at that time.
-
-    Returns
-    -------
-    ndarray -- one time point for an integer index, a stack of them for a slice
-
-    Raises
-    ------
-    IndexError
-        if the time index is neither an integer nor a slice
-    """
-
-    knots = spline.x
-    lead, rest = (pos[0], pos[1:]) if isinstance(pos, tuple) else (pos, ())
-
-    def at(i):
-        field = spline(knots[i])
-        return field[rest] if rest else field
-
-    if isinstance(lead, (int, np.integer)):
-        return at(lead)
-    if isinstance(lead, slice):
-        # slice.indices resolves None, negative bounds and negative steps against
-        #   the length.
-        return np.stack([at(i) for i in range(*lead.indices(len(knots)))])
-    raise IndexError('Only integers or slices are supported in {}.'.format(
-        type(spline).__name__))
-
-
-
-def _linear_blend(times, t, get):
-    """Linearly interpolate at ``t`` between the two entries bracketing it.
-
-    Times outside ``times`` take the nearest end entry.
-
-    Parameters
-    ----------
-    times : 1D ndarray
-        increasing knot times
-    t : float
-    get : callable
-        ``get(i)`` returns entry ``i``, an array of any shape. It is called once
-        where ``t`` lands on a knot or outside the data, and twice otherwise.
-
-    Returns
-    -------
-    ndarray, always a new one rather than an entry ``get`` returned
-    """
-
-    # This is the one place the weights of a linear interpolation in time are
-    #   computed. LinearSpline evaluates the velocity through it, and per-dump
-    #   means and vorticity are blended through it, so all three share weights.
-
-    # Bracket t, clamping to the ends so that a time outside the data gets the
-    #   constant extrapolation the field itself uses. A single entry is copied,
-    #   since get may hand back stored data -- a window's own dump, or a read
-    #   cache -- and the caller is free to change what it is given.
-    if len(times) < 2 or t <= times[0]:
-        return np.array(get(0))
-    if t >= times[-1]:
-        return np.array(get(len(times) - 1))
-    idx = int(np.searchsorted(times, t)) - 1
-    w = (t - times[idx]) / (times[idx+1] - times[idx])
-    if w == 0.0:
-        # t landed on a knot; one call, and no arithmetic on the nodal values.
-        return np.array(get(idx))
-    lo = get(idx)
-    hi = get(idx+1)
-    # The difference is taken in at least float64. In float32 it rounds, and the
-    #   blend then misses the second entry even at weight 1.
-    return lo + np.subtract(hi, lo, dtype=np.result_type(hi, lo, np.float64))*w
-
-
-
-def _spatial_gradient(f, coords, axis, periodic=False, edge_order=1):
-    '''Differentiate along one spatial axis with ``np.gradient``, differencing
-    across the wrap if that axis is periodic.
-
-    A periodic axis carries a duplicated end line (the upper grid edge repeats
-    the lower one), so the field continues past either end.
-
-    Parameters
-    ----------
-    f : ndarray
-        the field, indexed [x,y(,z)]
-    coords : 1D ndarray
-        grid coordinates along this axis
-    axis : int
-    periodic : bool, default=False
-    edge_order : int, default=1
-        passed to np.gradient; it has no effect on a periodic axis
-
-    Returns
-    -------
-    ndarray, the same shape as f
-    '''
-
-    # A periodic axis takes one ghost point from the far side at each end,
-    #   differences the extended array with np.gradient, and trims the ghosts.
-    #   np.gradient applies edge_order only at the array's ends, which are the
-    #   ghosts, and keeps its handling of non-uniform spacing.
-    if not periodic:
-        return np.gradient(f, coords, axis=axis, edge_order=edge_order)
-
-    # The point before index 0 is index -2, not -1: the last line repeats the
-    # first. Likewise the point after the last is index 1.
-    period = coords[-1] - coords[0]
-    x = np.concatenate(([coords[-2] - period], coords, [coords[1] + period]))
-    ext = np.concatenate((np.take(f, [-2], axis=axis), f,
-                          np.take(f, [1], axis=axis)), axis=axis)
-    grad = np.gradient(ext, x, axis=axis, edge_order=edge_order)
-    trim = [slice(None)]*f.ndim
-    trim[axis] = slice(1, -1)
-    return grad[tuple(trim)]
-
-
-
-def _vorticity_from_field(flow, flow_points, periodic_dim):
-    '''Curl of a single-time velocity field held as raw ndarrays.
-
-    Used by ``FluidData.get_vorticity``, and by the run archive's per-dump
-    vorticity writer, which holds raw arrays as they load.
-
-    Parameters
-    ----------
-    flow : sequence of ndarrays
-        one velocity component per spatial dimension, each indexed [x,y(,z)]
-        with **no** leading time axis
-    flow_points : tuple of 1D ndarrays
-        the spatial grid, one coordinate array per dimension
-    periodic_dim : sequence of bool
-        whether each spatial axis is periodic; a periodic axis is differenced
-        across the wrap
-
-    Returns
-    -------
-    ndarray in 2D (the scalar out-of-plane component), or a tuple of three
-    ndarrays in 3D (the vector curl)
-    '''
-
-    ndim = len(flow_points)
-
-    def d(f, axis):
-        return _spatial_gradient(f, flow_points[axis], axis, periodic_dim[axis])
-
-    if ndim == 2:
-        return d(flow[1][:], 0) - d(flow[0][:], 1)
-
-    dvxdy = d(flow[0][:], 1)
-    dvxdz = d(flow[0][:], 2)
-    dvydx = d(flow[1][:], 0)
-    dvydz = d(flow[1][:], 2)
-    dvzdx = d(flow[2][:], 0)
-    dvzdy = d(flow[2][:], 1)
-    return (dvzdy - dvydz, dvxdz - dvzdx, dvydx - dvxdy)
-
-
-
-# The header line of a per-dump vorticity file Planktos wrote: the version that
-#   wrote it and a digest of the field it holds. A file without one is foreign --
-#   a solver's own -- and is read but never overwritten.
-_VORTICITY_STAMP = 'Planktos {} vorticity {}'
-
-
-def _vorticity_digest(vort):
-    '''Digest of one dump's vorticity field, as 32 hex characters.'''
-
-    # The digest is of the field itself, so anything that changes the field --
-    #   vel_conv, vec_name, periodic_dim, the source data -- changes it.
-    vort = np.ascontiguousarray(vort, dtype=np.float64)
-    h = hashlib.blake2b(digest_size=16)
-    h.update(repr(vort.shape).encode())
-    h.update(vort.tobytes())
-    return h.hexdigest()
-
-
-def _vorticity_stamp(vort):
-    '''The header line a per-dump vorticity file is written with.'''
-
-    from . import __version__
-    return _VORTICITY_STAMP.format(__version__, _vorticity_digest(vort))
-
-
-def _read_vorticity_stamp(filename):
-    '''``(version, digest)`` from the header of a vorticity file Planktos wrote.
-
-    Returns None for a file without the stamp, or one that cannot be opened.
-    '''
-
-    # A legacy vtk file's header is its second line, ascii even when the data
-    #   is binary, so reading it costs two short reads.
-    try:
-        with open(filename, 'rb') as fobj:
-            fobj.readline()
-            header = fobj.readline(257).decode('ascii', 'replace').split()
-    except OSError:
-        return None
-    if len(header) == 4 and header[0] == 'Planktos' and header[2] == 'vorticity':
-        return header[1], header[3]
-    return None
-
-
-
-def _infer_domain_edges(c):
-    '''Locate a cell-centered axis' domain boundaries from its own spacing.
-
-    Half the distance to the neighboring center: exact on a uniform grid, a
-    guess on a stretched one. See center_cell_regrid for why it is a guess.
-    '''
-    return c[0] - (c[1] - c[0])/2, c[-1] + (c[-1] - c[-2])/2
-
-
-
-def center_cell_regrid(flow, flow_points, periodic_dim=None, bounds=None):
-    '''Extend cell-centered fluid data out to the edges of its domain.
-
-    Finite-volume solvers specify velocity at the center of each cell, so the
-    outermost samples sit half a cell inside the domain and the data reports it
-    one cell narrower than it is. This adds one grid plane at each end of each
-    spatial axis, at the domain boundary, and fills it by extending the field.
-
-    The result is rectilinear but not uniform: the two outermost intervals along
-    each axis are the half-cell from the outermost centers out to the boundary.
-    The new planes extrapolate the interior; they do not carry the solver's
-    boundary condition, which ``OpenFOAMData`` splices on from boundary patches
-    when the export has them.
-
-    Each boundary is placed half the distance to the neighboring cell center,
-    which is exact on a uniform grid and biased on a stretched one, with a
-    warning naming any such axis. Pass ``bounds`` for an end whose true
-    coordinate is known.
-
-    Parameters
-    ----------
-    flow : list of ndarray
-        one array per velocity component, each indexed [x,y(,z)] for
-        time-invariant flow or [t,x,y(,z)] for time-varying. Not modified.
-    flow_points : tuple of ndarray
-        1D cell-center coordinates along each spatial axis, increasing. At least
-        two per axis, since the boundary is located from the spacing.
-    periodic_dim : list of bool, optional
-        per spatial axis; defaults to non-periodic throughout. A periodic axis
-        wraps rather than extrapolating, so both of its new planes hold the same
-        values and the field stays periodic on the returned grid.
-    bounds : sequence of (float or None, float or None), optional
-        the true domain boundary of each spatial axis, where it is known. A None
-        entry -- or None throughout -- is inferred as above. Supplying an end
-        both places the new plane exactly and extends the field to it, so the
-        two need not be half a cell out.
-
-    Returns
-    -------
-    flow : list of ndarray
-        each grown by two along every spatial axis
-    flow_points : tuple of ndarray
-        cell centers with the two boundary coordinates added, in the same
-        coordinate system as the input -- shifting to the first quadrant is the
-        caller's business, as it is for the loaders' own grids
-
-    Raises
-    ------
-    ValueError
-        if an axis has fewer than two points, the components have neither the
-        time-invariant nor the time-varying number of dimensions, or a bound
-        does not lie outside its axis' cell centers
-    '''
-
-    ndim = len(flow_points)
-    flow_points = [np.asarray(c, dtype=float) for c in flow_points]
-    flow = [np.asarray(f) for f in flow]
-
-    if periodic_dim is None:
-        periodic_dim = [False]*ndim
-    for d, c in enumerate(flow_points):
-        if len(c) < 2:
-            raise ValueError(
-                "Axis {} has {} grid point(s). At least two are needed: the "
-                "domain boundary is located from the spacing between "
-                "them.".format('xyz'[d], len(c)))
-    if flow[0].ndim == ndim:
-        toff = 0
-    elif flow[0].ndim == ndim + 1:
-        toff = 1                          # leading time axis
-    else:
-        raise ValueError(
-            "Flow components have {} dimensions against {} spatial axes; "
-            "expected {} (time-invariant) or {} (time-varying).".format(
-                flow[0].ndim, ndim, ndim, ndim+1))
-
-    if bounds is None:
-        bounds = [(None, None)]*ndim
-
-    ##### Resolve each end, and say where that was a guess rather than exact ###
-    # Where the boundary is, is underdetermined: n cell centers give n equations
-    #   in the n+1 cell faces. _infer_domain_edges takes the outermost face half
-    #   the distance to the neighboring center. First two cells of width w and
-    #   rw put it w(1+r)/4 out, against a true w/2.
-    edges = []
-    inferred = []
-    for d, c in enumerate(flow_points):
-        guess = _infer_domain_edges(c)
-        ends = tuple(guess[e] if bounds[d][e] is None else float(bounds[d][e])
-                     for e in (0, 1))
-        if not (ends[0] < c[0] and ends[1] > c[-1]):
-            raise ValueError(
-                "Domain bounds ({:g}, {:g}) for axis {} do not lie outside its "
-                "cell centers ({:g}, {:g}).".format(
-                    ends[0], ends[1], 'xyz'[d], c[0], c[-1]))
-        edges.append(ends)
-        # Only an end that was actually inferred can be wrong, and only a
-        # stretched axis makes the inference more than a restatement of dx.
-        if any(bounds[d][e] is None for e in (0, 1)) and \
-                not np.allclose(np.diff(c), c[1]-c[0], rtol=1e-6):
-            inferred.append(d)
-
-    if len(inferred) > 0:
-        warnings.warn(
-            "Cell-center spacing is not uniform along {}, so the domain "
-            "boundary there is inferred as half the distance to the "
-            "neighboring cell center. That is exact only for a uniform grid; "
-            "on a stretched one it is biased by the local stretch ratio. Pass "
-            "bounds= if the true extent is known.".format(
-                ', '.join('xyz'[d] for d in inferred)), UserWarning)
-
-    ##### Extend one axis at a time #####
-    # Axis by axis rather than by assembling the shell of boundary points and
-    # interpolating it in one go. Sweeping this way gets the edges and corners
-    # for free -- the second axis extends planes the first has already extended,
-    # which is exactly the tensor-product (multilinear) extension those corners
-    # need -- and the axes commute, so the order does not matter.
-    new_points = []
-    for d in range(ndim):
-        c = flow_points[d]
-        ax = d + toff
-        h_lo = c[0] - edges[d][0]
-        h_hi = edges[d][1] - c[-1]
-        new_points.append(np.concatenate(([edges[d][0]], c, [edges[d][1]])))
-
-        for ii, f in enumerate(flow):
-            v0 = np.take(f, 0, axis=ax); v1 = np.take(f, 1, axis=ax)
-            u0 = np.take(f, -1, axis=ax); u1 = np.take(f, -2, axis=ax)
-            if periodic_dim[d]:
-                # The two edges are the same place, so they hold the same value:
-                # the field across the wrap, weighted by the two half-widths
-                # meeting there.
-                lo = hi = (h_lo*u0 + h_hi*v0)/(h_lo + h_hi)
-            else:
-                lo = v0 - (v1 - v0)*h_lo/(c[1] - c[0])
-                hi = u0 + (u0 - u1)*h_hi/(c[-1] - c[-2])
-            flow[ii] = np.concatenate((np.expand_dims(lo, ax), f,
-                                       np.expand_dims(hi, ax)), axis=ax)
-
-    return flow, tuple(new_points)
-
-
-#######################################################################
-#####                BASE-LEVEL FLUID DATA CLASSES                #####
-#######################################################################
-
-
-class LinearSpline:
-    '''Linear interpolant in time of one velocity component.
-
-    Evaluates to plain ndarrays. Holds either the whole dataset (``INUM=True``)
-    or the window ``FluidData.update_spline`` slides.
-    '''
-
-    def __init__(self, flow_times, flow, extrapolate=(True, True)):
-        '''
-        Parameters
-        ----------
-        flow_times : 1D ndarray
-            increasing time points
-        flow : ndarray, indexed (t,i,j,[k])
-            the component at each time point, held by reference
-        extrapolate : (bool, bool), default=(True, True)
-            whether a time before the first / after the last time point takes
-            the end value (True) or raises SplineRangeError (False)
-        '''
-        self.flow_times = flow_times
-        self.flow = flow
-        self.extrapolate = extrapolate
-        self._shape = flow.shape
-
-    @property
-    def shape(self):
-        # Custom getter for shape property
-        return self._shape
-
-    @shape.setter
-    def shape(self, value):
-        # Make this property read-only
-        raise AttributeError("shape is read-only in LinearSpline")
-
-    @property
-    def x(self):
-        return self.flow_times
-
-    def __call__(self, val):
-        if (val < self.flow_times[0] and not self.extrapolate[0]) \
-              or (val > self.flow_times[-1] and not self.extrapolate[1]):
-            raise SplineRangeError('Out of range without extrapolation.')
-        return _linear_blend(self.flow_times, val, self.flow.__getitem__)
-
-
-    def __getitem__(self, pos):
-        '''
-        Allows indexing into the interpolator at original time mesh points.
-        '''
-        return _spline_index(self, pos)
-
-    def __setitem__(self, pos, val):
-        self.flow[pos] = val
-
-    def max(self):
-        return self.flow.max()
-    
-    def min(self):
-        return self.flow.min()
-    
-    def absmax(self):
-        return np.abs(self.flow).max()
-
-    def regenerate_data(self):
-        '''The data the interpolant is built on, by reference rather than copied.'''
-        return self.flow
-
-    def derivative(self, val):
-        '''Time derivative at ``val``: the slope of the data interval holding it.
-
-        Piecewise constant on right-closed intervals (t[i-1], t[i]], so a time
-        on a time point takes the slope to its left. The first time point held
-        takes the slope to its right, having no interval held on its left.
-        Zero past an extrapolating end; SplineRangeError past one that is not.
-        '''
-        # Strict >, as in __call__: the last time point is in range and takes
-        #   the slope to its left.
-        if (val < self.flow_times[0] and not self.extrapolate[0]) \
-              or (val > self.flow_times[-1] and not self.extrapolate[1]):
-            raise SplineRangeError('Out of range without extrapolation.')
-        elif val == self.flow_times[0]:
-            idx = 0
-        elif val < self.flow_times[0] or val > self.flow_times[-1]:
-            return np.zeros_like(self.flow[0]) # constant extrapolation
-        else:
-            idx = np.searchsorted(self.flow_times, val) - 1
-        return (self.flow[idx+1] - self.flow[idx]) / (self.flow_times[idx+1] - self.flow_times[idx])
-
-
-
-class fCubicSpline(interpolate.CubicSpline):
-    '''
-    Extends Scipy's CubicSpline object to get info about original fluid data.
-    '''
-
-    def __init__(self, flow_times, flow, extrapolate=(True, True),
-                 bc_type='not-a-knot'):
-        '''Cubic spline in time of one velocity component, over the whole dataset.
-
-        Parameters
-        ----------
-        flow_times : 1D ndarray
-            increasing time points
-        flow : ndarray, indexed (t,i,j,[k])
-            the component at each time point
-        extrapolate : (bool, bool), default=(True, True)
-            whether a time before the first / after the last time point is
-            evaluated (True) or raises SplineRangeError (False)
-        bc_type : default='not-a-knot'
-            passed to scipy.interpolate.CubicSpline
-        '''
-        super().__init__(flow_times, flow, axis=0, extrapolate=True,
-                         bc_type=bc_type)
-
-        self._shape = flow.shape
-        self.extrapolate = extrapolate
-        # These are inaccurate and should only be used for plotting!
-        self.data_max = flow.max()
-        self.data_min = flow.min()
-
-    @property
-    def shape(self):
-        # Custom getter for shape property
-        return self._shape
-
-    @shape.setter
-    def shape(self, value):
-        # Make this property read-only
-        raise AttributeError("shape is read-only in fCubicSpline")
-
-
-
-    def __call__(self, val):
-        if (val < self.x[0] and not self.extrapolate[0]) \
-              or (val > self.x[-1] and not self.extrapolate[1]):
-            raise SplineRangeError('Out of range without extrapolation.')
-        return super().__call__(val)
-
-    def __getitem__(self, pos):
-        '''
-        Allows indexing into the interpolator at original time mesh points.
-        '''
-        return _spline_index(self, pos)
-
-    def __setitem__(self, pos, val):
-        raise RuntimeError("Cannot assign to spline object. "+
-                           "Use regenerate_data to recreate original data first.")
-    
-    def max(self):
-        '''This will return a data max based on the data used to build the spline.'''
-        return self.data_max
-
-    def min(self):
-        '''This will return a data min based on the data used to build the spline.'''
-        return self.data_min
-
-    def absmax(self):
-        return np.abs(np.array([self.data_max, self.data_min])).max()
-
-    def regenerate_data(self):
-        '''
-        Rebuild the original data.
-        '''
-        return np.stack([self.__call__(val) for val in self.x])
-    
-
-
-class SplineRangeError(ValueError):
-    """
-    Exception raised for asking for a value outside of interpolation range.
-    """
-    def __init__(self, message="Value is outside of valid interpolation range."):
-        self.message = message
-        super().__init__(self.message)
-    
-
 #######################################################################
 #####    CONTAINER CLASSES FOR LOADING AND HANDLING FLUID DATA    #####
 #######################################################################
@@ -3420,7 +2574,7 @@ class OpenFOAMData(FluidData):
         ##### Assemble the grid coordinates #####
         # Where a patch covers a face its plane is the domain edge exactly.
         # Where none does, it is inferred from the cell spacing -- the same
-        # closure center_cell_regrid uses, which is then handed those resolved
+        # closure _center_cell_regrid uses, which is then handed those resolved
         # edges as `bounds` so the grid and the data cannot disagree.
         self._grid = []
         for d in range(3):
@@ -3522,7 +2676,7 @@ class OpenFOAMData(FluidData):
 
         ##### Stage 1b: any face with no patch, by extending the interior #####
         # Only the faces' interior runs are taken; the edges and corners
-        # center_cell_regrid also fills are discarded, so that stages 2 and 3
+        # _center_cell_regrid also fills are discarded, so that stages 2 and 3
         # below decide those by one rule whatever mix of patched and
         # extrapolated faces meet there. Each face's interior run depends only
         # on the sweep along its own axis, so the discarded parts cannot affect
@@ -3533,8 +2687,8 @@ class OpenFOAMData(FluidData):
             # is extended to exactly the grid the loader reports. The two
             # coincide on a uniform mesh whose patches sit half a cell out -- as
             # the reference dataset's do, which is why no test here can tell the
-            # difference; center_cell_regrid's own tests pin it.
-            ext, _ = center_cell_regrid(
+            # difference; _center_cell_regrid's own tests pin it.
+            ext, _ = _center_cell_regrid(
                 [inner[..., k] for k in range(3)],
                 [g[1:-1] for g in self._grid], self._periodic_dim,
                 bounds=[(g[0], g[-1]) for g in self._grid])
@@ -3984,3 +3138,857 @@ class VTKXMLData(FluidData):
                     Path(filename).name))
 
 
+#######################################################################
+#####                    TEMPORAL INTERPOLATION                   #####
+#######################################################################
+
+
+
+
+class LinearSpline:
+    '''Linear interpolant in time of one velocity component.
+
+    Evaluates to plain ndarrays. Holds either the whole dataset (``INUM=True``)
+    or the window ``FluidData.update_spline`` slides.
+    '''
+
+    def __init__(self, flow_times, flow, extrapolate=(True, True)):
+        '''
+        Parameters
+        ----------
+        flow_times : 1D ndarray
+            increasing time points
+        flow : ndarray, indexed (t,i,j,[k])
+            the component at each time point, held by reference
+        extrapolate : (bool, bool), default=(True, True)
+            whether a time before the first / after the last time point takes
+            the end value (True) or raises SplineRangeError (False)
+        '''
+        self.flow_times = flow_times
+        self.flow = flow
+        self.extrapolate = extrapolate
+        self._shape = flow.shape
+
+    @property
+    def shape(self):
+        # Custom getter for shape property
+        return self._shape
+
+    @shape.setter
+    def shape(self, value):
+        # Make this property read-only
+        raise AttributeError("shape is read-only in LinearSpline")
+
+    @property
+    def x(self):
+        return self.flow_times
+
+    def __call__(self, val):
+        if (val < self.flow_times[0] and not self.extrapolate[0]) \
+              or (val > self.flow_times[-1] and not self.extrapolate[1]):
+            raise SplineRangeError('Out of range without extrapolation.')
+        return _linear_blend(self.flow_times, val, self.flow.__getitem__)
+
+
+    def __getitem__(self, pos):
+        '''
+        Allows indexing into the interpolator at original time mesh points.
+        '''
+        return _spline_index(self, pos)
+
+    def __setitem__(self, pos, val):
+        self.flow[pos] = val
+
+    def max(self):
+        return self.flow.max()
+    
+    def min(self):
+        return self.flow.min()
+    
+    def absmax(self):
+        return np.abs(self.flow).max()
+
+    def regenerate_data(self):
+        '''The data the interpolant is built on, by reference rather than copied.'''
+        return self.flow
+
+    def derivative(self, val):
+        '''Time derivative at ``val``: the slope of the data interval holding it.
+
+        Piecewise constant on right-closed intervals (t[i-1], t[i]], so a time
+        on a time point takes the slope to its left. The first time point held
+        takes the slope to its right, having no interval held on its left.
+        Zero past an extrapolating end; SplineRangeError past one that is not.
+        '''
+        # Strict >, as in __call__: the last time point is in range and takes
+        #   the slope to its left.
+        if (val < self.flow_times[0] and not self.extrapolate[0]) \
+              or (val > self.flow_times[-1] and not self.extrapolate[1]):
+            raise SplineRangeError('Out of range without extrapolation.')
+        elif val == self.flow_times[0]:
+            idx = 0
+        elif val < self.flow_times[0] or val > self.flow_times[-1]:
+            return np.zeros_like(self.flow[0]) # constant extrapolation
+        else:
+            idx = np.searchsorted(self.flow_times, val) - 1
+        return (self.flow[idx+1] - self.flow[idx]) / (self.flow_times[idx+1] - self.flow_times[idx])
+
+
+
+class fCubicSpline(interpolate.CubicSpline):
+    '''
+    Extends Scipy's CubicSpline object to get info about original fluid data.
+    '''
+
+    def __init__(self, flow_times, flow, extrapolate=(True, True),
+                 bc_type='not-a-knot'):
+        '''Cubic spline in time of one velocity component, over the whole dataset.
+
+        Parameters
+        ----------
+        flow_times : 1D ndarray
+            increasing time points
+        flow : ndarray, indexed (t,i,j,[k])
+            the component at each time point
+        extrapolate : (bool, bool), default=(True, True)
+            whether a time before the first / after the last time point is
+            evaluated (True) or raises SplineRangeError (False)
+        bc_type : default='not-a-knot'
+            passed to scipy.interpolate.CubicSpline
+        '''
+        super().__init__(flow_times, flow, axis=0, extrapolate=True,
+                         bc_type=bc_type)
+
+        self._shape = flow.shape
+        self.extrapolate = extrapolate
+        # These are inaccurate and should only be used for plotting!
+        self.data_max = flow.max()
+        self.data_min = flow.min()
+
+    @property
+    def shape(self):
+        # Custom getter for shape property
+        return self._shape
+
+    @shape.setter
+    def shape(self, value):
+        # Make this property read-only
+        raise AttributeError("shape is read-only in fCubicSpline")
+
+
+
+    def __call__(self, val):
+        if (val < self.x[0] and not self.extrapolate[0]) \
+              or (val > self.x[-1] and not self.extrapolate[1]):
+            raise SplineRangeError('Out of range without extrapolation.')
+        return super().__call__(val)
+
+    def __getitem__(self, pos):
+        '''
+        Allows indexing into the interpolator at original time mesh points.
+        '''
+        return _spline_index(self, pos)
+
+    def __setitem__(self, pos, val):
+        raise RuntimeError("Cannot assign to spline object. "+
+                           "Use regenerate_data to recreate original data first.")
+    
+    def max(self):
+        '''This will return a data max based on the data used to build the spline.'''
+        return self.data_max
+
+    def min(self):
+        '''This will return a data min based on the data used to build the spline.'''
+        return self.data_min
+
+    def absmax(self):
+        return np.abs(np.array([self.data_max, self.data_min])).max()
+
+    def regenerate_data(self):
+        '''
+        Rebuild the original data.
+        '''
+        return np.stack([self.__call__(val) for val in self.x])
+    
+
+
+class SplineRangeError(ValueError):
+    """
+    Exception raised for asking for a value outside of interpolation range.
+    """
+    def __init__(self, message="Value is outside of valid interpolation range."):
+        self.message = message
+        super().__init__(self.message)
+
+
+def _spline_index(spline, pos):
+    """Index a spline at its own knots, as though it were an ``([t],i,j,[k])`` array.
+
+    ``spline.x`` is the knot sequence and ``spline(t)`` the field there.
+
+    Parameters
+    ----------
+    spline : LinearSpline or fCubicSpline
+    pos : int, slice, or tuple
+        The leading entry indexes time, as an int (numpy integers included) or a
+        slice; anything after it indexes into the field at that time.
+
+    Returns
+    -------
+    ndarray -- one time point for an integer index, a stack of them for a slice
+
+    Raises
+    ------
+    IndexError
+        if the time index is neither an integer nor a slice
+    """
+
+    knots = spline.x
+    lead, rest = (pos[0], pos[1:]) if isinstance(pos, tuple) else (pos, ())
+
+    def at(i):
+        field = spline(knots[i])
+        return field[rest] if rest else field
+
+    if isinstance(lead, (int, np.integer)):
+        return at(lead)
+    if isinstance(lead, slice):
+        # slice.indices resolves None, negative bounds and negative steps against
+        #   the length.
+        return np.stack([at(i) for i in range(*lead.indices(len(knots)))])
+    raise IndexError('Only integers or slices are supported in {}.'.format(
+        type(spline).__name__))
+
+
+def _linear_blend(times, t, get):
+    """Linearly interpolate at ``t`` between the two entries bracketing it.
+
+    Times outside ``times`` take the nearest end entry.
+
+    Parameters
+    ----------
+    times : 1D ndarray
+        increasing knot times
+    t : float
+    get : callable
+        ``get(i)`` returns entry ``i``, an array of any shape. It is called once
+        where ``t`` lands on a knot or outside the data, and twice otherwise.
+
+    Returns
+    -------
+    ndarray, always a new one rather than an entry ``get`` returned
+    """
+
+    # This is the one place the weights of a linear interpolation in time are
+    #   computed. LinearSpline evaluates the velocity through it, and per-dump
+    #   means and vorticity are blended through it, so all three share weights.
+
+    # Bracket t, clamping to the ends so that a time outside the data gets the
+    #   constant extrapolation the field itself uses. A single entry is copied,
+    #   since get may hand back stored data -- a window's own dump, or a read
+    #   cache -- and the caller is free to change what it is given.
+    if len(times) < 2 or t <= times[0]:
+        return np.array(get(0))
+    if t >= times[-1]:
+        return np.array(get(len(times) - 1))
+    idx = int(np.searchsorted(times, t)) - 1
+    w = (t - times[idx]) / (times[idx+1] - times[idx])
+    if w == 0.0:
+        # t landed on a knot; one call, and no arithmetic on the nodal values.
+        return np.array(get(idx))
+    lo = get(idx)
+    hi = get(idx+1)
+    # The difference is taken in at least float64. In float32 it rounds, and the
+    #   blend then misses the second entry even at weight 1.
+    return lo + np.subtract(hi, lo, dtype=np.result_type(hi, lo, np.float64))*w
+
+
+
+#######################################################################
+#####          INGESTION: FROM A SOURCE'S FILES TO A GRID         #####
+#######################################################################
+
+
+####################   the timeline   ####################
+
+def _natural_key(name):
+    '''Sort key that orders the numbers embedded in a name numerically, so that
+    an unpadded ``case_787`` sorts before ``case_1008``.'''
+    # The split always alternates non-digit, digit, ..., so two keys compare
+    #   like with like throughout.
+    return tuple(int(s) if s.isdigit() else s
+                 for s in re.split(r'(\d+)', name))
+
+
+def _resolve_timeline(candidates, source_label, time_source, declared_order):
+    '''Turn the dumps a source declares into the dumps to load, and their timeline.
+
+    Declared dumps missing from disk are skipped with a warning. A series with
+    no times anywhere falls back to unit steps, with a warning; one with times
+    for only some of its dumps is refused. Times must strictly increase, and
+    uneven spacing is warned about.
+
+    Parameters
+    ----------
+    candidates : list of (dump, time)
+        one entry per dump the source declares, in the source's order. dump is
+        whatever the loader reads it from, or None for a dump that is declared
+        but not on disk; time is NaN where the source gives none.
+    source_label : str
+        names the source in warnings and errors
+    time_source : str
+        names where the times came from
+    declared_order : bool
+        True when the source's order is authoritative (an index), which is
+        kept. Otherwise the dumps are sorted by their times.
+
+    Returns
+    -------
+    dumps : list
+        the dumps that exist, in time order
+    flow_times : ndarray of float, or None if only one dump exists
+        shifted so the first is 0.0
+    time_source : str
+        as passed in, or 'assumed unit steps' when no dump carried a time
+
+    Raises
+    ------
+    FileNotFoundError
+        if none of the declared dumps is on disk
+    RuntimeError
+        if only some dumps carry a time, or the times do not strictly increase
+    '''
+
+    ##### Drop the dumps whose data is not on disk #####
+    def _fmt(t):
+        return 'unknown' if t is None or np.isnan(t) else '{:g}'.format(t)
+
+    dumps = []; keep_times = []; missing = []
+    for dump, t in candidates:
+        if dump is None:
+            missing.append(_fmt(t))
+        else:
+            dumps.append(dump)
+            keep_times.append(t)
+
+    if len(dumps) == 0:
+        raise FileNotFoundError(
+            "None of the {} dumps found via {} are present on disk.".format(
+                len(candidates), source_label))
+
+    if len(missing) > 0:
+        # Warn rather than fail: a truncated or interrupted export is normal.
+        # But warn loudly -- silence here would be worse than the failure,
+        # since the run would complete with nothing indicating that the
+        # timeline is not the one the source declared.
+        warnings.warn(
+            "{} of {} dumps found via {} are not on disk and have been "
+            "skipped: t = {}. The timeline is built over the {} dumps that "
+            "remain.".format(len(missing), len(candidates), source_label,
+                             ', '.join(missing), len(dumps)), UserWarning)
+
+    if len(dumps) == 1:
+        return dumps, None, time_source
+
+    keep_times = np.array(keep_times, dtype=float)
+
+    ##### No time information anywhere: fall back to unit steps #####
+    if np.all(np.isnan(keep_times)):
+        warnings.warn(
+            "No time information for any dump found via {}: assuming unit "
+            "time steps. Every time the simulation is run against is "
+            "therefore an index, not a physical time, and any velocity in "
+            "physical units is scaled wrongly by the true dump "
+            "interval.".format(source_label), UserWarning)
+        return dumps, np.arange(len(dumps), dtype=float), 'assumed unit steps'
+
+    if np.any(np.isnan(keep_times)):
+        # Unit steps are defensible only when nothing better exists. Here most
+        # of the series is timed, and indices would move every dump that carries
+        # a time to the wrong place.
+        raise RuntimeError(
+            "No time information for {} of {} dumps found via {}, but the "
+            "rest are timed. Unit time steps would misplace the dumps that "
+            "do carry a time, so the series cannot be read as it "
+            "stands.".format(int(np.isnan(keep_times).sum()), len(dumps),
+                             source_label))
+
+    ##### Order the dumps of an unindexed source by their recovered times ####
+    # An index declares its own order and is authoritative about it, so it is
+    # left as written. For a globbed source the order was ours to pick and the
+    # filenames were only a proxy; the times are the real thing.
+    if not declared_order:
+        order = np.argsort(keep_times, kind='stable')
+        if not np.array_equal(order, np.arange(len(order))):
+            warnings.warn(
+                "The dumps found via {} are not in time order under their "
+                "filenames; they have been reordered by their recorded "
+                "times.".format(source_label), UserWarning)
+            dumps = [dumps[i] for i in order]
+            keep_times = keep_times[order]
+
+    # shift so that the first dump loaded corresponds to environment time 0
+    flow_times = keep_times - keep_times[0]
+
+    ##### The timeline has to be a timeline #####
+    # Both splines divide by the interval between successive times, so a
+    # repeat or a step backward is not a degraded timeline but an unusable
+    # one. A well-formed source cannot produce it, which is exactly why it is
+    # worth saying out loud if it appears.
+    bad = np.nonzero(np.diff(flow_times) <= 0)[0]
+    if len(bad) > 0:
+        raise RuntimeError(
+            "Dump times from {} are not strictly increasing: t = {} is "
+            "followed by t = {}.".format(
+                time_source, '{:g}'.format(keep_times[bad[0]]),
+                '{:g}'.format(keep_times[bad[0]+1])))
+
+    ##### Warn about non-uniform spacing left behind by any gaps #####
+    # Interpolation error scales with the dump interval, so a series with a
+    # hole is measurably worse across that hole and the user should be told
+    # where, separately from being told which dumps are absent.
+    dt = np.diff(flow_times)
+    if not np.allclose(dt, dt[0], rtol=1e-6):
+        wide = np.nonzero(dt > dt.min()*(1+1e-6))[0]
+        warnings.warn(
+            "Dump times are not evenly spaced: intervals range from {:g} to "
+            "{:g}. Temporal interpolation is less accurate across the wider "
+            "ones, which begin at t = {}.".format(
+                dt.min(), dt.max(),
+                ', '.join('{:g}'.format(flow_times[i]) for i in wide)),
+            UserWarning)
+
+    return dumps, flow_times, time_source
+
+
+####################   flat axes   ####################
+
+def _collapse_flat_axes(flow, mesh, periodic_dim=None, source=None):
+    """Reduce a field written on a one-point-thick grid to its real dimension.
+
+    Everything that describes the grid moves together -- the field, the
+    coordinate arrays, the velocity components and the periodicity flags -- so
+    that a plane exported as 3D vtk becomes an ordinary 2D Planktos fluid rather
+    than a 3D one of zero thickness.
+
+    Parameters
+    ----------
+    flow : list of ndarrays
+    mesh : sequence of 1D ndarrays
+        coordinates along each axis
+    periodic_dim : bool or sequence of bool, optional
+    source : str, optional
+        named in the warning
+
+    Returns
+    -------
+    flow, mesh, periodic_dim, axes -- the first three with flat axes removed,
+    and the axes that were dropped, for a loader to reapply to later reads
+
+    Raises
+    ------
+    ValueError
+        if fewer than two axes would be left; Planktos is 2D or 3D
+
+    Warns
+    -----
+    UserWarning
+        naming the dropped axes, and any velocity component dropped with them
+        whose peak exceeds 1e-6 of the largest in-plane velocity
+    """
+
+    axes = tuple(d for d, c in enumerate(mesh) if len(np.atleast_1d(c)) < 2)
+    if not axes:
+        return flow, list(mesh), periodic_dim, axes
+
+    names = 'xyz'
+    dropped = ', '.join(names[d] for d in axes)
+    if len(mesh) - len(axes) < 2:
+        raise ValueError(
+            "This grid is one point thick along {} of its {} axes, leaving "
+            "fewer than the two Planktos needs. {}".format(
+                dropped, len(mesh),
+                '' if source is None else 'Read from {}.'.format(source)))
+
+    # A component along an axis that is being dropped is discarded with it. It is
+    #   reported when its peak exceeds 1e-6 of the largest in-plane velocity:
+    #   above the round-off a solver's float32 output carries, below any
+    #   out-of-plane flow worth keeping. The ratio goes in the warning so the
+    #   user can judge it.
+    def peak(f):
+        return max(float(f.max()), -float(f.min()))
+    scale = max(peak(f) for d, f in enumerate(flow) if d not in axes)
+    notes = []
+    for d in axes:
+        w = peak(flow[d])
+        if w <= 1e-6*scale:
+            continue
+        if scale > 0:
+            notes.append('the {}-velocity reaches {:.3g}, {:.3g} times the '
+                         'largest in-plane velocity'.format(names[d], w, w/scale))
+        else:
+            notes.append('the {}-velocity reaches {:.3g} where the in-plane '
+                         'velocity is zero everywhere'.format(names[d], w))
+    warnings.warn(
+        "Fluid grid is a single point thick in {}, so it is being read as {}D "
+        "data on the remaining axes.{}{}".format(
+            dropped, len(mesh) - len(axes),
+            '' if source is None else ' Read from {}.'.format(source),
+            '' if not notes else
+            ' NOTE: {}, and is being discarded with that axis -- this is a '
+            'slab of a 3D flow rather than 2D data.'.format('; '.join(notes))),
+        UserWarning, stacklevel=3)
+
+    flow = _drop_flat_axes(flow, axes, len(mesh))
+    mesh = [c for d, c in enumerate(mesh) if d not in axes]
+    if periodic_dim is not None and not isinstance(periodic_dim, bool):
+        periodic_dim = tuple(v for d, v in enumerate(periodic_dim)
+                             if d not in axes)
+    return flow, mesh, periodic_dim, axes
+
+
+def _drop_flat_axes(flow, axes, ndim):
+    """Remove flat spatial axes from a velocity field, components included.
+
+    The component *along* a flat axis goes with it: Planktos carries one
+    velocity component per spatial dimension, so a 2D grid holds a 2D vector.
+
+    Parameters
+    ----------
+    flow : list of ndarrays
+        one per velocity component, each ``([t],i,j,[k])``
+    axes : tuple of int
+        spatial axes to drop, as :func:`_collapse_flat_axes` identifies them
+    ndim : int
+        spatial dimension of the data as read, before anything is dropped.
+        Used to tell whether the arrays carry a leading time axis.
+
+    Returns
+    -------
+    list of ndarrays, one shorter and one axis flatter per entry in ``axes``
+    """
+
+    if not axes:
+        return flow
+    # A leading time axis shifts every spatial axis along by one.
+    offset = 1 if flow[0].ndim > ndim else 0
+    kept = [f for d, f in enumerate(flow) if d not in axes]
+    return [np.squeeze(f, axis=tuple(d + offset for d in axes)) for f in kept]
+
+
+####################   cell-centred data   ####################
+
+def _infer_domain_edges(c):
+    '''Locate a cell-centered axis' domain boundaries from its own spacing.
+
+    Half the distance to the neighboring center: exact on a uniform grid, a
+    guess on a stretched one. See _center_cell_regrid for why it is a guess.
+    '''
+    return c[0] - (c[1] - c[0])/2, c[-1] + (c[-1] - c[-2])/2
+
+
+def _center_cell_regrid(flow, flow_points, periodic_dim=None, bounds=None):
+    '''Extend cell-centered fluid data out to the edges of its domain.
+
+    Finite-volume solvers specify velocity at the center of each cell, so the
+    outermost samples sit half a cell inside the domain and the data reports it
+    one cell narrower than it is. This adds one grid plane at each end of each
+    spatial axis, at the domain boundary, and fills it by extending the field.
+
+    The result is rectilinear but not uniform: the two outermost intervals along
+    each axis are the half-cell from the outermost centers out to the boundary.
+    The new planes extrapolate the interior; they do not carry the solver's
+    boundary condition, which ``OpenFOAMData`` splices on from boundary patches
+    when the export has them.
+
+    Each boundary is placed half the distance to the neighboring cell center,
+    which is exact on a uniform grid and biased on a stretched one, with a
+    warning naming any such axis. Pass ``bounds`` for an end whose true
+    coordinate is known.
+
+    Parameters
+    ----------
+    flow : list of ndarray
+        one array per velocity component, each indexed [x,y(,z)] for
+        time-invariant flow or [t,x,y(,z)] for time-varying. Not modified.
+    flow_points : tuple of ndarray
+        1D cell-center coordinates along each spatial axis, increasing. At least
+        two per axis, since the boundary is located from the spacing.
+    periodic_dim : list of bool, optional
+        per spatial axis; defaults to non-periodic throughout. A periodic axis
+        wraps rather than extrapolating, so both of its new planes hold the same
+        values and the field stays periodic on the returned grid.
+    bounds : sequence of (float or None, float or None), optional
+        the true domain boundary of each spatial axis, where it is known. A None
+        entry -- or None throughout -- is inferred as above. Supplying an end
+        both places the new plane exactly and extends the field to it, so the
+        two need not be half a cell out.
+
+    Returns
+    -------
+    flow : list of ndarray
+        each grown by two along every spatial axis
+    flow_points : tuple of ndarray
+        cell centers with the two boundary coordinates added, in the same
+        coordinate system as the input -- shifting to the first quadrant is the
+        caller's business, as it is for the loaders' own grids
+
+    Raises
+    ------
+    ValueError
+        if an axis has fewer than two points, the components have neither the
+        time-invariant nor the time-varying number of dimensions, or a bound
+        does not lie outside its axis' cell centers
+    '''
+
+    ndim = len(flow_points)
+    flow_points = [np.asarray(c, dtype=float) for c in flow_points]
+    flow = [np.asarray(f) for f in flow]
+
+    if periodic_dim is None:
+        periodic_dim = [False]*ndim
+    for d, c in enumerate(flow_points):
+        if len(c) < 2:
+            raise ValueError(
+                "Axis {} has {} grid point(s). At least two are needed: the "
+                "domain boundary is located from the spacing between "
+                "them.".format('xyz'[d], len(c)))
+    if flow[0].ndim == ndim:
+        toff = 0
+    elif flow[0].ndim == ndim + 1:
+        toff = 1                          # leading time axis
+    else:
+        raise ValueError(
+            "Flow components have {} dimensions against {} spatial axes; "
+            "expected {} (time-invariant) or {} (time-varying).".format(
+                flow[0].ndim, ndim, ndim, ndim+1))
+
+    if bounds is None:
+        bounds = [(None, None)]*ndim
+
+    ##### Resolve each end, and say where that was a guess rather than exact ###
+    # Where the boundary is, is underdetermined: n cell centers give n equations
+    #   in the n+1 cell faces. _infer_domain_edges takes the outermost face half
+    #   the distance to the neighboring center. First two cells of width w and
+    #   rw put it w(1+r)/4 out, against a true w/2.
+    edges = []
+    inferred = []
+    for d, c in enumerate(flow_points):
+        guess = _infer_domain_edges(c)
+        ends = tuple(guess[e] if bounds[d][e] is None else float(bounds[d][e])
+                     for e in (0, 1))
+        if not (ends[0] < c[0] and ends[1] > c[-1]):
+            raise ValueError(
+                "Domain bounds ({:g}, {:g}) for axis {} do not lie outside its "
+                "cell centers ({:g}, {:g}).".format(
+                    ends[0], ends[1], 'xyz'[d], c[0], c[-1]))
+        edges.append(ends)
+        # Only an end that was actually inferred can be wrong, and only a
+        # stretched axis makes the inference more than a restatement of dx.
+        if any(bounds[d][e] is None for e in (0, 1)) and \
+                not np.allclose(np.diff(c), c[1]-c[0], rtol=1e-6):
+            inferred.append(d)
+
+    if len(inferred) > 0:
+        warnings.warn(
+            "Cell-center spacing is not uniform along {}, so the domain "
+            "boundary there is inferred as half the distance to the "
+            "neighboring cell center. That is exact only for a uniform grid; "
+            "on a stretched one it is biased by the local stretch ratio. Pass "
+            "bounds= if the true extent is known.".format(
+                ', '.join('xyz'[d] for d in inferred)), UserWarning)
+
+    ##### Extend one axis at a time #####
+    # Axis by axis rather than by assembling the shell of boundary points and
+    # interpolating it in one go. Sweeping this way gets the edges and corners
+    # for free -- the second axis extends planes the first has already extended,
+    # which is exactly the tensor-product (multilinear) extension those corners
+    # need -- and the axes commute, so the order does not matter.
+    new_points = []
+    for d in range(ndim):
+        c = flow_points[d]
+        ax = d + toff
+        h_lo = c[0] - edges[d][0]
+        h_hi = edges[d][1] - c[-1]
+        new_points.append(np.concatenate(([edges[d][0]], c, [edges[d][1]])))
+
+        for ii, f in enumerate(flow):
+            v0 = np.take(f, 0, axis=ax); v1 = np.take(f, 1, axis=ax)
+            u0 = np.take(f, -1, axis=ax); u1 = np.take(f, -2, axis=ax)
+            if periodic_dim[d]:
+                # The two edges are the same place, so they hold the same value:
+                # the field across the wrap, weighted by the two half-widths
+                # meeting there.
+                lo = hi = (h_lo*u0 + h_hi*v0)/(h_lo + h_hi)
+            else:
+                lo = v0 - (v1 - v0)*h_lo/(c[1] - c[0])
+                hi = u0 + (u0 - u1)*h_hi/(c[-1] - c[-2])
+            flow[ii] = np.concatenate((np.expand_dims(lo, ax), f,
+                                       np.expand_dims(hi, ax)), axis=ax)
+
+    return flow, tuple(new_points)
+
+
+
+#######################################################################
+#####            DERIVED FIELDS: GRADIENT AND VORTICITY           #####
+#######################################################################
+
+
+def _spatial_gradient(f, coords, axis, periodic=False, edge_order=1):
+    '''Differentiate along one spatial axis with ``np.gradient``, differencing
+    across the wrap if that axis is periodic.
+
+    A periodic axis carries a duplicated end line (the upper grid edge repeats
+    the lower one), so the field continues past either end.
+
+    Parameters
+    ----------
+    f : ndarray
+        the field, indexed [x,y(,z)]
+    coords : 1D ndarray
+        grid coordinates along this axis
+    axis : int
+    periodic : bool, default=False
+    edge_order : int, default=1
+        passed to np.gradient; it has no effect on a periodic axis
+
+    Returns
+    -------
+    ndarray, the same shape as f
+    '''
+
+    # A periodic axis takes one ghost point from the far side at each end,
+    #   differences the extended array with np.gradient, and trims the ghosts.
+    #   np.gradient applies edge_order only at the array's ends, which are the
+    #   ghosts, and keeps its handling of non-uniform spacing.
+    if not periodic:
+        return np.gradient(f, coords, axis=axis, edge_order=edge_order)
+
+    # The point before index 0 is index -2, not -1: the last line repeats the
+    # first. Likewise the point after the last is index 1.
+    period = coords[-1] - coords[0]
+    x = np.concatenate(([coords[-2] - period], coords, [coords[1] + period]))
+    ext = np.concatenate((np.take(f, [-2], axis=axis), f,
+                          np.take(f, [1], axis=axis)), axis=axis)
+    grad = np.gradient(ext, x, axis=axis, edge_order=edge_order)
+    trim = [slice(None)]*f.ndim
+    trim[axis] = slice(1, -1)
+    return grad[tuple(trim)]
+
+
+def _vorticity_from_field(flow, flow_points, periodic_dim):
+    '''Curl of a single-time velocity field held as raw ndarrays.
+
+    Used by ``FluidData.get_vorticity``, and by the run archive's per-dump
+    vorticity writer, which holds raw arrays as they load.
+
+    Parameters
+    ----------
+    flow : sequence of ndarrays
+        one velocity component per spatial dimension, each indexed [x,y(,z)]
+        with **no** leading time axis
+    flow_points : tuple of 1D ndarrays
+        the spatial grid, one coordinate array per dimension
+    periodic_dim : sequence of bool
+        whether each spatial axis is periodic; a periodic axis is differenced
+        across the wrap
+
+    Returns
+    -------
+    ndarray in 2D (the scalar out-of-plane component), or a tuple of three
+    ndarrays in 3D (the vector curl)
+    '''
+
+    ndim = len(flow_points)
+
+    def d(f, axis):
+        return _spatial_gradient(f, flow_points[axis], axis, periodic_dim[axis])
+
+    if ndim == 2:
+        return d(flow[1][:], 0) - d(flow[0][:], 1)
+
+    dvxdy = d(flow[0][:], 1)
+    dvxdz = d(flow[0][:], 2)
+    dvydx = d(flow[1][:], 0)
+    dvydz = d(flow[1][:], 2)
+    dvzdx = d(flow[2][:], 0)
+    dvzdy = d(flow[2][:], 1)
+    return (dvzdy - dvydz, dvxdz - dvzdx, dvydx - dvxdy)
+
+
+####################   per-dump vorticity files   ####################
+
+# The header line of a per-dump vorticity file Planktos wrote: the version that
+#   wrote it and a digest of the field it holds. A file without one is foreign --
+#   a solver's own -- and is read but never overwritten.
+_VORTICITY_STAMP = 'Planktos {} vorticity {}'
+
+
+def _vorticity_digest(vort):
+    '''Digest of one dump's vorticity field, as 32 hex characters.'''
+
+    # The digest is of the field itself, so anything that changes the field --
+    #   vel_conv, vec_name, periodic_dim, the source data -- changes it.
+    vort = np.ascontiguousarray(vort, dtype=np.float64)
+    h = hashlib.blake2b(digest_size=16)
+    h.update(repr(vort.shape).encode())
+    h.update(vort.tobytes())
+    return h.hexdigest()
+
+
+def _vorticity_stamp(vort):
+    '''The header line a per-dump vorticity file is written with.'''
+
+    from . import __version__
+    return _VORTICITY_STAMP.format(__version__, _vorticity_digest(vort))
+
+
+def _read_vorticity_stamp(filename):
+    '''``(version, digest)`` from the header of a vorticity file Planktos wrote.
+
+    Returns None for a file without the stamp, or one that cannot be opened.
+    '''
+
+    # A legacy vtk file's header is its second line, ascii even when the data
+    #   is binary, so reading it costs two short reads.
+    try:
+        with open(filename, 'rb') as fobj:
+            fobj.readline()
+            header = fobj.readline(257).decode('ascii', 'replace').split()
+    except OSError:
+        return None
+    if len(header) == 4 and header[0] == 'Planktos' and header[2] == 'vorticity':
+        return header[1], header[3]
+    return None
+
+
+def _wrap_scalar(f, periodic_dim):
+    '''Restore the duplicated end line on each periodic axis of a *scalar* field.
+
+    For a derived field read from a source that omits the periodic endpoint,
+    such as IB2d's ``Omega.####.vtk``.
+
+    Parameters
+    ----------
+    f : ndarray, indexed [x,y(,z)]
+    periodic_dim : sequence of bool, one per axis of f
+
+    Returns
+    -------
+    ndarray with one extra entry along each periodic axis
+    '''
+
+    for d, periodic in enumerate(periodic_dim):
+        if periodic:
+            f = np.concatenate((f, np.take(f, [0], axis=d)), axis=d)
+    return f
+
+
+def _unwrap_scalar(f, periodic_dim):
+    '''Drop the duplicated end line on each periodic axis. Inverse of
+    ``_wrap_scalar``, for writing a derived field back in the source's own
+    convention.'''
+
+    return f[tuple(slice(0, -1) if periodic else slice(None)
+                   for periodic in periodic_dim)]

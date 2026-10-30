@@ -122,7 +122,7 @@ def closest_dist_btwn_two_lines(a0,a1,b0_list,b1_list):
     '''
     if len(b0_list.shape) == 1:
         b0_list = np.reshape(b0_list, (1,len(b0_list)))
-        b1_list = np.reshape(b1_list, (1,len(b1)))
+        b1_list = np.reshape(b1_list, (1,len(b1_list)))
 
     # Calculate denominator
     A = a1 - a0
@@ -840,8 +840,6 @@ def dist_point_to_plane(P0, normal, Q0):
 
     d = np.dot(normal, Q0)
     return np.abs(np.dot(normal,P0)-d)/np.linalg.norm(normal)
-
-
 
 
 

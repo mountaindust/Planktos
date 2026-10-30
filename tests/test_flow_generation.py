@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 
 import planktos
-from planktos.fluid import center_cell_regrid
+from planktos.fluid import _center_cell_regrid
 
 
 # --------------------------------------------------------------------------- #
@@ -346,11 +346,11 @@ def test_flow_periodic_dim_true_wraps_upper_edge():
 
 
 # --------------------------------------------------------------------------- #
-#              center_cell_regrid -- cell-centered data to the edges          #
+#             _center_cell_regrid -- cell-centered data to the edges          #
 # --------------------------------------------------------------------------- #
 # Finite-volume solvers sample at cell centers, so the outermost samples sit
 # half a cell inside the domain and the data reports it one cell narrower than
-# it is. center_cell_regrid adds a grid plane at each end of each axis, at the
+# it is. _center_cell_regrid adds a grid plane at each end of each axis, at the
 # domain boundary, and extends the field onto it.
 #
 # The field extension is multilinear, so anything linear in the coordinates is
@@ -370,7 +370,7 @@ def test_regrid_recovers_a_uniform_2d_domain():
     # 0.75 where the truth is 1.0. The added planes must land on 0 and 1.
     x, y = _centers(0., 1., 4), _centers(0., 2., 5)
     X, Y = np.meshgrid(x, y, indexing='ij')
-    flow, pts = center_cell_regrid([X.copy(), Y.copy()], (x, y))
+    flow, pts = _center_cell_regrid([X.copy(), Y.copy()], (x, y))
     assert np.isclose(pts[0][0], 0.) and np.isclose(pts[0][-1], 1.)
     assert np.isclose(pts[1][0], 0.) and np.isclose(pts[1][-1], 2.)
     assert np.array_equal(pts[0][1:-1], x) and np.array_equal(pts[1][1:-1], y)
@@ -386,7 +386,7 @@ def test_regrid_recovers_a_uniform_3d_domain():
     X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
     # a general trilinear field, so the cross terms have to survive too
     f = [1 + 2*X - 3*Y + 0.5*Z + X*Y - 2*Y*Z + X*Y*Z, X - Z, np.zeros_like(X)]
-    flow, pts = center_cell_regrid([a.copy() for a in f], (x, y, z))
+    flow, pts = _center_cell_regrid([a.copy() for a in f], (x, y, z))
     assert np.allclose([pts[d][0] for d in range(3)], [0., 0., 0.])
     assert np.allclose([pts[d][-1] for d in range(3)], [1., 1., 2.])
     NX, NY, NZ = np.meshgrid(*pts, indexing='ij')
@@ -404,7 +404,7 @@ def test_regrid_handles_a_leading_time_axis():
     t = np.array([0., 1., 4.])
     u = np.stack([tt*X for tt in t])                 # u = t*x
     v = np.stack([Y + tt for tt in t])               # v = y + t
-    flow, pts = center_cell_regrid([u, v], (x, y))
+    flow, pts = _center_cell_regrid([u, v], (x, y))
     assert flow[0].shape == (3, 6, 5) and flow[1].shape == (3, 6, 5)
     NX, NY = np.meshgrid(pts[0], pts[1], indexing='ij')
     for k, tt in enumerate(t):
@@ -420,7 +420,7 @@ def test_regrid_on_a_rectilinear_grid():
     y = _centers(0., 1., 3)
     X, _ = np.meshgrid(x, y, indexing='ij')
     with pytest.warns(UserWarning, match='not uniform'):
-        flow, pts = center_cell_regrid([X.copy(), 2*X - 1], (x, y))
+        flow, pts = _center_cell_regrid([X.copy(), 2*X - 1], (x, y))
     assert np.isclose(pts[0][0], 0.1 - 0.05)         # half of the .1 spacing
     assert np.isclose(pts[0][-1], 1.3 + 0.1)         # half of the .2 spacing
     assert np.allclose(pts[1], np.concatenate(([0.], y, [1.])))
@@ -436,7 +436,7 @@ def test_regrid_warns_only_where_the_grid_is_stretched():
     y = _centers(0., 1., 3)                          # uniform
     X, _ = np.meshgrid(x, y, indexing='ij')
     with pytest.warns(UserWarning, match='not uniform') as rec:
-        center_cell_regrid([X.copy(), X.copy()], (x, y))
+        _center_cell_regrid([X.copy(), X.copy()], (x, y))
     assert 'along x, so' in str(rec[0].message)      # x named, y not
 
 
@@ -445,7 +445,7 @@ def test_regrid_uniform_grid_does_not_warn():
     X, _ = np.meshgrid(x, y, indexing='ij')
     with warnings.catch_warnings():
         warnings.simplefilter('error')               # any warning fails
-        center_cell_regrid([X.copy(), X.copy()], (x, y))
+        _center_cell_regrid([X.copy(), X.copy()], (x, y))
 
 
 def test_regrid_periodic_axis_wraps_instead_of_extrapolating():
@@ -455,8 +455,8 @@ def test_regrid_periodic_axis_wraps_instead_of_extrapolating():
     x = _centers(0., 1., 4)
     y = _centers(0., 1., 3)
     u = np.array([[10., 20., 30.], [1., 1., 1.], [2., 2., 2.], [50., 60., 70.]])
-    flow, pts = center_cell_regrid([u.copy(), np.zeros_like(u)], (x, y),
-                                   periodic_dim=[True, False])
+    flow, pts = _center_cell_regrid([u.copy(), np.zeros_like(u)], (x, y),
+                                    periodic_dim=[True, False])
     assert np.allclose(flow[0][0], flow[0][-1])      # same place, same value
     # uniform spacing, so the wrap value is the plain mean of the two ends
     assert np.allclose(flow[0][0][1:-1], (u[0] + u[-1])/2)
@@ -471,11 +471,11 @@ def test_regrid_periodic_and_extrapolated_axes_commute():
     rng = np.random.default_rng(4)
     x, y, z = _centers(0., 1., 4), _centers(0., 1., 3), _centers(0., 1., 5)
     u = rng.normal(size=(4, 3, 5))
-    fwd, pts = center_cell_regrid([u.copy()], (x, y, z),
-                                  periodic_dim=[True, False, True])
-    # the same problem with the axes reversed, then permuted back
-    rev, rpts = center_cell_regrid([u.transpose(2, 1, 0).copy()], (z, y, x),
+    fwd, pts = _center_cell_regrid([u.copy()], (x, y, z),
                                    periodic_dim=[True, False, True])
+    # the same problem with the axes reversed, then permuted back
+    rev, rpts = _center_cell_regrid([u.transpose(2, 1, 0).copy()], (z, y, x),
+                                    periodic_dim=[True, False, True])
     assert np.allclose(fwd[0], rev[0].transpose(2, 1, 0))
     for d in range(3):
         assert np.allclose(pts[d], rpts[2-d])
@@ -493,7 +493,7 @@ def test_regrid_matches_the_openfoam_boundary_splice_geometry():
     z = np.array([0.2, 0.6, 1.0, 1.4, 1.8])
     X, _, Z = np.meshgrid(x, y, z, indexing='ij')
     t = 3.0
-    flow, pts = center_cell_regrid(                  # u = t, v = x, w = t*z
+    flow, pts = _center_cell_regrid(                  # u = t, v = x, w = t*z
         [np.full_like(X, t), X.copy(), t*Z], (x, y, z))
     assert np.allclose(pts[0], [0., 0.125, 0.375, 0.625, 0.875, 1.])
     assert np.allclose(pts[2], [0., 0.2, 0.6, 1.0, 1.4, 1.8, 2.])
@@ -508,14 +508,14 @@ def test_regrid_rejects_an_axis_it_cannot_locate_a_boundary_for():
     x, y = np.array([0.5]), _centers(0., 1., 3)
     u = np.zeros((1, 3))
     with pytest.raises(ValueError, match='At least two'):
-        center_cell_regrid([u, u.copy()], (x, y))
+        _center_cell_regrid([u, u.copy()], (x, y))
 
 
 def test_regrid_rejects_a_component_of_the_wrong_rank():
     x, y = _centers(0., 1., 4), _centers(0., 1., 3)
     bad = np.zeros((4, 3, 2, 2))
     with pytest.raises(ValueError, match='dimensions against'):
-        center_cell_regrid([bad, bad.copy()], (x, y))
+        _center_cell_regrid([bad, bad.copy()], (x, y))
 
 
 def test_regrid_does_not_modify_its_inputs():
@@ -524,7 +524,7 @@ def test_regrid_does_not_modify_its_inputs():
     u = [X.copy(), X.copy()]
     u_ref = [a.copy() for a in u]
     xy = (x.copy(), y.copy())
-    center_cell_regrid(u, xy)
+    _center_cell_regrid(u, xy)
     for a, b in zip(u, u_ref):
         assert np.array_equal(a, b)
     assert np.array_equal(xy[0], x) and np.array_equal(xy[1], y)
@@ -543,8 +543,8 @@ def test_regrid_uses_supplied_bounds():
     x = _centers(0., 1., 4)                          # spacing .25, half-cell .125
     y = _centers(0., 1., 3)
     X, _ = np.meshgrid(x, y, indexing='ij')
-    flow, pts = center_cell_regrid([X.copy(), 3*X], (x, y),
-                                   bounds=[(-1.0, 2.0), (None, None)])
+    flow, pts = _center_cell_regrid([X.copy(), 3*X], (x, y),
+                                    bounds=[(-1.0, 2.0), (None, None)])
     assert np.isclose(pts[0][0], -1.0) and np.isclose(pts[0][-1], 2.0)
     assert np.isclose(pts[1][0], 0.) and np.isclose(pts[1][-1], 1.)
     # u = x is linear, so extending to -1 and 2 must give exactly -1 and 2
@@ -559,8 +559,8 @@ def test_regrid_bounds_may_be_given_for_one_end_only():
     x = _centers(0., 1., 4)
     y = _centers(0., 1., 3)
     X, _ = np.meshgrid(x, y, indexing='ij')
-    flow, pts = center_cell_regrid([X.copy(), X.copy()], (x, y),
-                                   bounds=[(None, 3.0), (None, None)])
+    flow, pts = _center_cell_regrid([X.copy(), X.copy()], (x, y),
+                                    bounds=[(None, 3.0), (None, None)])
     assert np.isclose(pts[0][0], 0.)                 # inferred, half a cell out
     assert np.isclose(pts[0][-1], 3.0)               # supplied
     assert np.allclose(flow[0][0], 0.) and np.allclose(flow[0][-1], 3.0)
@@ -574,8 +574,8 @@ def test_regrid_supplied_bounds_suppress_the_stretch_warning():
     X, _ = np.meshgrid(x, y, indexing='ij')
     with warnings.catch_warnings():
         warnings.simplefilter('error')
-        center_cell_regrid([X.copy(), X.copy()], (x, y),
-                           bounds=[(-0.5, 9.0), (0., 1.)])
+        _center_cell_regrid([X.copy(), X.copy()], (x, y),
+                            bounds=[(-0.5, 9.0), (0., 1.)])
 
 
 def test_regrid_still_warns_for_an_end_left_inferred_on_a_stretched_axis():
@@ -583,8 +583,8 @@ def test_regrid_still_warns_for_an_end_left_inferred_on_a_stretched_axis():
     y = _centers(0., 1., 3)
     X, _ = np.meshgrid(x, y, indexing='ij')
     with pytest.warns(UserWarning, match='not uniform'):
-        center_cell_regrid([X.copy(), X.copy()], (x, y),
-                           bounds=[(-0.5, None), (0., 1.)])
+        _center_cell_regrid([X.copy(), X.copy()], (x, y),
+                            bounds=[(-0.5, None), (0., 1.)])
 
 
 def test_regrid_rejects_bounds_inside_the_cell_centers():
@@ -593,5 +593,5 @@ def test_regrid_rejects_bounds_inside_the_cell_centers():
     x, y = _centers(0., 1., 4), _centers(0., 1., 3)
     X, _ = np.meshgrid(x, y, indexing='ij')
     with pytest.raises(ValueError, match='do not lie outside'):
-        center_cell_regrid([X.copy(), X.copy()], (x, y),
-                           bounds=[(0.5, 2.0), (None, None)])
+        _center_cell_regrid([X.copy(), X.copy()], (x, y),
+                            bounds=[(0.5, 2.0), (None, None)])
