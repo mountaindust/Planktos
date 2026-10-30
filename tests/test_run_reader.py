@@ -1,6 +1,5 @@
 '''Tests for reading a run archive back
-(planktos.archive.RunArchive / load_run, run_persistence.md section 2.7-2.8,
-build step A4).
+(planktos.archive.RunArchive / load_run).
 
 test_run_archive.py pins the bytes on disk and test_recording.py pins what a run
 writes; this pins what comes back out. The two properties that matter most:

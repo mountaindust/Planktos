@@ -1,7 +1,12 @@
 # CLAUDE.md
 
-Guidance for working in the Planktos repository. Keep this file current; it is
-loaded into every session.
+Guidance for working in the Planktos repository. It is loaded into every session.
+
+**Keep it durable.** Anything likely to change often — counts, versions, what is next,
+what a test module covers — does not get stated here as a fact. Point to the place the
+current answer lives; where there is no such place, date the claim, so that its age is
+obvious. Claims below marked *(as of …)* are the dated kind: check them before relying
+on them.
 
 ## Git policy (strict — this has repeatedly been mishandled; read carefully)
 
@@ -31,19 +36,18 @@ number and the changelog** — these are easy to forget. Be proactive about it:
 
 - The version lives in `planktos/__init__.py` (`__version__`); `setup.cfg` reads
   it via `attr: planktos.__version__`, and `docs/conf.py` imports it — so the one
-  string in `__init__.py` is the single source of truth. The current development
-  version on this branch is `1.1.0`.
-- **`v1.0.0`, `v1.0.1` (documentation-only), `v1.0.2` and `v1.0.3` are all
-  released and tagged.** `master`'s `__version__` is `1.0.3` — i.e. it currently
-  sits *on* a released version, so the next change landing there needs a bump
-  first. The existing `1.0.2` and `1.0.3` entries in `changelog.txt` are shipped
-  history: leave them alone, on both branches.
-- **A fix made here that is not dyload-specific has nowhere to go but `1.1.0`,**
-  since `1.0.3` is closed. File it under `1.1.0` in `changelog.txt` *and* add it
-  to the **cherry-pick queue at the bottom of `TODO.md`**. Check portability with
+  string in `__init__.py` is the single source of truth.
+- **`git tag` lists what has been released, and a tagged version is closed.** Its
+  `changelog.txt` entry is shipped history: leave it alone, on both branches. If
+  `master`'s `__version__` equals its newest tag, the next change landing there needs
+  a bump first.
+- *(As of 2026-10-30: `dyload` is developing `1.1.0`; the newest release is `1.0.3`.)*
+- **A fix made here that is not dyload-specific goes under the development version,**
+  since the released ones are closed: in `changelog.txt` *and* in the
+  **cherry-pick queue at the bottom of `TODO.md`**. Check portability with
   `git diff master -- <file>` before assuming it applies — `_swarm.py` in
   particular has diverged a long way.
-- **The plan is that the next release is `1.1.0`, with no `1.0.4`.** That queue is
+- *(Plan as of 2026-10-30.)* **The next release is `1.1.0`, with no `1.0.4`.** That queue is
   a holding pen in case the plan changes, not a release in preparation: log fixes
   there, but **do not propose cherry-picking them to `master`.** The user will ask
   if the list ever grows long enough to be worth a patch release.
@@ -112,11 +116,11 @@ If the worry behind a long explanation is regression, that is what the tests are
 for. Test files are a partial exception to all of this: a regression test may state
 the defect it pins, since that is the test's purpose.
 
-**The branch's docstrings were swept to this standard** (TODO item 3, finished
-2026-10-22) — every module this branch added or changed. What the sweep did *not*
-reach: docstrings `master` also has and this branch never touched, and four texts
-held back until the `master` merge (TODO item 7's follow-up list). Do not add more
-of what the sweep removed.
+**The branch's docstrings were swept to this standard** (finished 2026-10-22) — every
+module this branch added or changed. What the sweep did *not* reach: docstrings
+`master` also has and this branch never touched, and the texts held back until the
+`master` merge (the merge item's follow-up list in `TODO.md`). Do not add more of what
+the sweep removed.
 
 ## What Planktos is
 
@@ -134,7 +138,7 @@ Biology* 84(72). Docs: https://planktos.readthedocs.io
 
 ## Branch context (read this first)
 
-- **`dyload`** — **current development branch.** The main feature work: **dynamic
+- **`dyload`** — *(as of 2026-10-30)* **the development branch.** The main feature work: **dynamic
   loading of fluid data** (streaming/loading fluid time steps on demand rather
   than all at once). This matters because time-dependent 3D fluid data is often
   ~100 GB raw and significantly larger once splined, so it cannot be held in
@@ -147,9 +151,7 @@ Biology* 84(72). Docs: https://planktos.readthedocs.io
   been deleted locally and on origin. Older notes and commit messages still
   mention it; that history is preserved in `master`.
 
-**3D moving boundaries are parked and not scheduled.** They were blocked on `dyload`
-(3D dynamic fluid loading), which is no longer the case — that work completed
-2026-08-11 — but nothing about them is being picked up. `TODO.md` keeps the list under
+*(As of 2026-10-30.)* **3D moving boundaries are parked and not scheduled.** `TODO.md` keeps the list under
 a PARKED heading purely so the pieces are not rediscovered from scratch later; do not
 start work from it. Moving boundaries are currently **2D only**.
 
@@ -159,7 +161,7 @@ objects, as SAMRAI files on an adaptive rectangular mesh) or **OpenFOAM**. Plank
 **assumes a rectilinear fluid grid** — that assumption stands, and is the thing to
 check about any new dataset.
 
-What it does *not* mean is that the data must arrive as rectilinear vtk. **The Phase 2
+What it does *not* mean is that the data must arrive as rectilinear vtk. **The oral-arm
 OpenFOAM dataset is stored as `vtkUnstructuredGrid` yet sits on a perfectly uniform
 Cartesian grid** — `foamToVTK` writes `.vtu` regardless of the underlying mesh, so the
 container says nothing about the geometry. It needs **no resampling**, only a reordering
@@ -169,15 +171,14 @@ porosity source term rather than being cut out of the mesh. Verify a dataset's a
 lattice before assuming it needs a VisIt/ParaView pass; see
 `docs/notes/openfoam_oral_arm_dataset.md`.
 
-Reading that dataset **is** in scope for `dyload` — it is Phase 2, and it blocks 3D
-moving boundaries. What stays out of scope is *other* source-specific ingestion:
-porting the old VisIt SAMRAI→vtk script, reading COMSOL directly, and OpenFOAM cases
+`OpenFOAMData` reads that dataset. What stays out of scope is *other* source-specific
+ingestion: porting the old VisIt SAMRAI→vtk script, reading COMSOL directly, and OpenFOAM cases
 whose mesh is genuinely unstructured (`snappyHexMesh` refinement, tets, polyhedra).
 
-**`TODO.md` is the working plan for this branch** — phased, prioritized, and kept
-current. Read it before starting work here: it records what is done, what is
-known-broken, and the design history behind the fluid architecture. Keep it
-updated as items land.
+**`TODO.md` is the working plan for this branch**, and the authority on what is done,
+what is known-broken and what comes next. Read it before starting work here, keep it
+updated as items land, and look there rather than here for status. It also holds the
+design history behind the fluid architecture.
 
 **How `dyload` diverges from `master`.** Almost all of it is the fluid API: on
 this branch `Environment.flow` is a `FluidData` object, and a number of
@@ -197,13 +198,9 @@ The installable package is `planktos/`. Public API is intentionally tiny;
 internal modules carry a **leading underscore** and are not part of the public
 surface (a deliberate convention — see `changelog.txt`).
 
-(Line counts are deliberately omitted — they went stale faster than they were
-useful. `_environment.py` and `_swarm.py` are the big ones, with `fluid.py` close
-behind since the dynamic-loading work.)
-
 | File | Public? | Purpose |
 |------|---------|---------|
-| `planktos/__init__.py` | yes | Exports `Environment`, `Swarm`. `motion` is reachable as `planktos.motion`. |
+| `planktos/__init__.py` | yes | The public API: its imports are the list. `motion` is reachable as `planktos.motion`. |
 | `planktos/_environment.py` | `Environment` class | The domain: boundary conditions, immersed boundary mesh, swarms, time. Loads fluid/mesh data, generates analytical flows, plots, computes vorticity/FTLE. Fluid data itself lives in `fluid.py` (see below). |
 | `planktos/_swarm.py` | `Swarm` class | A group of agents: positions/velocities/props, the move loop, boundary-condition application, plotting, data saving. |
 | `planktos/motion.py` | yes (`planktos.motion`) | Equation-of-motion generators & solvers: `Euler_brownian_motion` (default SDE), `inertial_particles`, `highRe_massive_drift`, `tracer_particles`, `RK45`. |
@@ -307,7 +304,7 @@ O(Δt⁴)→O(Δt²), and ∂u/∂t becomes a piecewise-constant step function �
 `get_dudt` → the material derivative → the inertial-particle models. Full cubic
 stays the default for datasets that fit in memory.
 
-**That gap has been measured** — Phase 1(C), done 2026-08-11; detail in `TODO.md`,
+**That gap has been measured** (2026-08-11); detail in `TODO.md`,
 reproducible via `tests/manual/quantify_temporal_interp.py` and
 `vet_dynamic_loading_3d.py`. Linear vs cubic rms error: **1.27% vs 0.54% of U_rms** in
 2D (Δt=1e-3 s), **9.46% vs 1.13%** in 3D at the coarser cadence reachable there. Quote
@@ -337,10 +334,10 @@ numpy operations on flow data. `docs/notes/run_persistence.md` Appendix A is the
 surviving record; the full analysis is in the git history of the deleted
 `docs/notes/flow_field_interface.md`.
 
-**Domain tiling currently raises `NotImplementedError`** (`FluidData.tile_flow`,
-`Environment.tile_domain`) — it went away with `FlowArray` and returns as a
-position-wrapping implementation covering 2D *and* 3D, after the plotting work.
-`Environment.extend` remains removed, and is decided at the same time. Do not
+*(As of 2026-10-30; `TODO.md` has its status.)* **Domain tiling raises
+`NotImplementedError`** (`FluidData.tile_flow`, `Environment.tile_domain`) — it went
+away with `FlowArray` and returns as a position-wrapping implementation covering 2D
+*and* 3D. `Environment.extend` remains removed, and is decided at the same time. Do not
 reintroduce a materializing tiling stopgap — nor a virtualizing one; see
 `docs/notes/run_persistence.md` §9.2 for why both failed.
 
@@ -413,11 +410,10 @@ Two rules it enforces:
 `source.positions(n)` returns `self.positions` at `n == len(pos_history)`. The old
 `n >= len(pos_history)` duplicate is deleted; do not reintroduce one.
 
-**Plotting a run in a later session is not a plotting problem.** It needs the
-Environment and Swarm restored to where the run left off, which Planktos does not do
-yet. That is **component R, the full-state reboot** — `run_persistence.md` §2.11 for
-the specification and §6.1 Step R for the build order — and it is the next substantial
-item on this branch, ahead of tiling. Do not solve it inside `plot`/`plot_all`.
+**Plotting a run in a later session is not a plotting problem.** It goes through
+`planktos.load_run(path).restore()`, which rebuilds the Environment and Swarms where the
+run left off (`run_persistence.md` §2.11), and then plots them as usual. Do not solve it
+inside `plot`/`plot_all`.
 
 ## Customizing agent behavior — the one rule that matters
 
@@ -540,174 +536,39 @@ The suite is organized into focused, deterministic, fast modules (overhauled
 2026-06). Run `pytest` from the repository root. **Two flags widen the run, and
 they are independent:**
 
-| Invocation | Covers | Time |
+| Invocation | Covers | Time *(2026-10-29, Windows)* |
 |---|---|---|
-| `pytest` | the focused modules | ~60 s (1351 passed / 139 skipped) |
-| `pytest --runslow` | plus the parallelization tests, the plotting smokes and the movie renders | ~75 s (1384 / 106) |
-| `pytest --runstreaming` | plus the fast half of `tests/test_data_streaming/` | ~75 s (1441 / 49) |
-| `pytest --runslow --runstreaming` | everything | ~5 min (1489 / 1) |
+| `pytest` | the focused modules | ~1 min |
+| `pytest --runslow` | plus the parallelization tests, the plotting smokes and the movie renders | ~1¼ min |
+| `pytest --runstreaming` | plus the fast half of `tests/test_data_streaming/` | ~1¼ min |
+| `pytest --runslow --runstreaming` | everything; most of the extra time is the example scripts | ~5 min |
+
+For the current count, run it. `pytest --durations=20` shows where the time goes.
 
 **Before a commit that touches the archive, the fluid streaming or the plotting
-paths, run both flags.** `--runstreaming` is off by default because that suite is
-a goal line for work in progress rather than a regression net (see the carve-out
-below), and it roughly doubles the default run on its own.
+paths, run both flags.**
 
 - **Run** the whole thing with `pytest`; a specific area with e.g.
   `pytest tests/test_collisions_static.py`.
-- **Modules** (all self-contained / analytic-answer unless noted):
-  - `test_geom.py` — `_geom` intersection & closest-distance functions.
-  - `test_collisions_static.py` / `test_collisions_moving.py` /
-    `test_collisions_static_3d.py` — call `_ibc.apply_internal_static_BC` /
-    `apply_internal_moving_BC` directly across a geometry × movement matrix (2D
-    segments, 3D triangle meshes; convex/concave joints, grazing, deep recursive
-    multi-element slides); assert no-penetration and exact post-collision
-    positions. `test_collisions_moving.py` also pins a deterministic multi-step
-    `Swarm.move()` trajectory (golden drift detector), the moving slider's
-    rotate-away release branch (needs an element pivoting about an *interior*
-    point — see `_ib_harness.pivoting_segment`), and frame-independence of the
-    slide.
-  - `test_collisions_junctions.py` — the cases the chain-shaped builders above
-    structurally cannot reach: vertices of degree > 2 and non-manifold edges,
-    where a slide running off an element has several candidates to continue
-    onto. Asserts invariants (finite, motion not amplified, stays outside a
-    closed obstacle, rigid-motion equivariance) rather than exact positions.
-  - `test_collisions_invariants.py` — the checks that are *not* tied to any
-    geometry: the answer must be finite, must not amplify the motion, must not
-    depend on where the problem sits or which way the axes point, and must
-    behave the same in any units. Also holds the stack-exhaustion cases, since
-    recursion depth is set by step length against mesh spacing rather than by
-    shape. Deliberately uses plain geometries, so a failure is attributable to
-    the property and not to an exotic mesh.
-  - `test_ibc_helpers.py` — the small helpers and guard rails inside `_ibc`:
-    `_boundary_eps`, `_point_in_triangle`, `make_ib_worker` unpacking, and the
-    2D-only guard on moving meshes.
-  - `test_collisions_stl_3d.py` — end-to-end 3D: load a generated STL via
-    `Environment.read_stl_mesh_data` and drive agents into it with `Swarm.move()`
-    (needs the optional numpy-stl; module skips otherwise).
-  - `test_flow_generation.py` — brinkman/channel/canopy, `tile_domain` (now pinned
-    as raising `NotImplementedError`, including that a failed call leaves the
-    environment unmutated), `flow_points` axis order. One deliberate skip: `Environment.extend`
-    was removed on this branch (extrapolation is the intended replacement), and
-    the test is parked rather than deleted because `extend` may come back for the
-    specific fluid fields where it makes sense. Un-skip it if that happens.
-  - `test_temporal_interp.py` — `fluid.fCubicSpline` and `FluidData`'s temporal
-    interpolation (`create_temporal_interpolations` was absorbed into `FluidData`).
-  - `test_flow_interface.py` — pins the `Environment.flow` consumer contract (it
-    was written as the safety net for the `FlowArray` removal, which it survived
-    unchanged): `interpolate_flow`/`interpolate_temporal_flow`
-    values, the container + spline-indexing surface, `fmin`/`fmax` tuples,
-    `_calc_basic_stats` (including that it pulls **no** fluid field),
-    `get_mean_velocity`, `get_mean_fluid_speed`, `calculate_mag_gradient`,
-    `get_raw_loaded_data`, `fshape`, the plotting strided-slice path, the
-    `LinearSpline`/`INUM` temporal path (the in-memory half of dynamic loading —
-    `test_temporal_interp.py` covers only `fCubicSpline`), and 3D vorticity. All
-    closed-form. See `docs/notes/run_persistence.md` Appendix A — **this is the
-    safety net for that refactor; keep it green as the work lands.**
-  - `test_run_archive.py` — the **on-disk archive format**, driven directly with
-    synthetic arrays and no simulation: chunk boundaries, the fingerprint, atomic
-    file replacement, and crash validity demonstrated by actually `SIGKILL`ing a
-    subprocess mid-recording. Reads the bytes back with raw `np.load`/`json.load`
-    rather than through a reader of our own, since a round-trip through our own
-    code can be self-consistently wrong.
-  - `test_recording.py` — `Environment.record` and the capture hooks against **real
-    runs**: the round-trip versus `pos_history`/`vel_history`/`time_history`, a
-    swarm added mid-run, `capture_interval` (including that a coarse schedule gives
-    **bit-identical** trajectories, over two mesh geometries — see the note in
-    `run_persistence.md` §6.1 A3b for why one is not enough), the five refusals, and
-    the headline: recording a windowed run costs *identically* many loader calls as
-    the same run without it.
-  - `test_run_reader.py` — `planktos.load_run` / `RunArchive`: that reading one
-    capture opens exactly two files, that chunks are memmapped and the open-file
-    cache stays bounded, that a missing middle chunk refuses rather than
-    short-reads, and that reading never writes.
-  - `test_provenance.py` — that every fluid and mesh entry point is wrapped by
-    `_provenance.records_provenance`, asserted **structurally**: a loader nobody
-    decorated produces no error, just an environment that cannot say what it is.
-  - `test_fluid_recording.py` — the **fluid half of a run archive** (component B of
-    `run_persistence.md`): which of §3.3's three vorticity regimes gets chosen, that a
-    blended per-dump field equals the live curl for the sourced *and* the written case
-    and that the two agree, the two-slot read cache reading each dump once on a
-    monotone sweep in either direction, the per-dump statistics sidecar (including
-    that it is written in 3D, which is the whole 3D deliverable), quiver, and the B
-    counterpart of the headline: recording the fluid costs **no extra loader calls**.
-  - `test_data_streaming/` — an **adversarial suite** written from
-    `run_persistence.md`, covering the streaming story end to end (in-RAM,
-    windowed replay, recorded replay, restart). **Opt-in: `--runstreaming`**, and
-    its slow members additionally need `--runslow`. Its strict `xfail`s are the
-    pre-release list — see "What an `xfail` means here". Run it after any change
-    to the archive, the fluid streaming or the plotting paths.
-  - `test_archive_rendering.py` — **drawing a run whose fluid was recorded**
-    (component C of `run_persistence.md`). Its headline is the third of the series:
-    replaying a recorded windowed run costs **zero** loader calls, with the same
-    replay unrecorded costing a full second pass beside it so the zero means
-    something. Also the refusals, the global colour limit (including that `NaN` for a
-    dump the run never reached does not poison it), the quiver grid fixed at record
-    time, and `record(plot_all=)`. Mostly drives `_frames.FrameSource` rather than a
-    figure — it is what decides a frame, and it is exactly what `animate` calls; the
-    end-to-end movie renders are `@slow` and need ffmpeg.
-  - `test_dynamic_loading.py` — the **windowed** (`INUM=int`) path, i.e. this
-    branch's headline feature: `FluidData.update_spline`. Covers TODO Phase 1
-    (A) windowed-linear == full-linear to round-off, (B) slide behavior (forward,
-    backward, jump-to-start, extrapolation flags, bounded window and load count),
-    and (D) `get_dudt` under linear splining, plus the per-dump mean cache behind
-    the plot statistics (`get_mean_velocity` exact across slides; a replay after a
-    full sweep costs zero loads). Those sections drive the
-    real slider from a synthetic `FluidData` subclass whose `load_dumpfiles`
-    slices an in-memory array, so they touch no files. Two further sections run
-    the actual loaders — `VTK3dData` and `IB2dData` — against committed fixtures,
-    because what they pin is the **timeline a loader builds from files**: that it
-    spans the whole dump series rather than the opening window, which is what
-    decides whether a window ever slides. Only Phase 1 (C), the quantitative
-    linear-vs-cubic number, still needs real data.
-  - `test_agent_models.py` — `apply_agent_model`/`after_move` overrides, the
-    `motion` generators, and the public `motion.RK45` solver contract.
-  - `test_material_derivative.py` — `Swarm.get_DuDt` / `get_dudt` (closed-form).
-  - `test_swarm_lifecycle.py` — `move()` bookkeeping, mask contract, and domain
-    BCs (zero/noflux/periodic) in 2D, 3D, and mixed-per-dimension combinations.
-  - `test_periodic_ib.py` — periodic domain boundary × immersed boundary (an
-    agent wraps across the domain and immediately meets a wall on the far side).
-  - `test_swarm_save.py` — round-trips for `save_pos_to_csv` / `save_data` /
-    `save_pos_to_vtk`.
-  - `test_analysis.py` — `get_vorticity`, forward & backward FTLE (closed-form).
-  - `test_io_loaders.py` — IB2d moving/static mesh import (committed fixtures),
-    the IB2d fluid `uX`/`uY` scalar branch, `_dataio.read_vtk_time_only` (the
-    header-only `TIME` scan), IBAMR vtk (`@vtk`), COMSOL vtu (a committed
-    fixture, plus the real channel-flow export under `@vtu`).
-  - `test_frame_selection.py` — the parts of `plot_all` that decide a frame
-    without drawing one. `Swarm._select_frames` (frame spacing in simulated time,
-    snapping to the nearest recorded state, index alignment with `pos_history`, a
-    run whose `dt` changed partway, the clamp and uneven-spacing warnings), and
-    `_vorticity_norm`, the colour limits of the RdBu backdrop. Drives real tiny
-    runs but renders nothing; rendering is `test_plotting_smoke.py`.
-  - `test_parallel_ib.py` — serial == threads == processes (`@slow`).
-  - `test_plotting_smoke.py` — `plot_*` methods run without error on the Agg
-    backend (`@slow`; the movie test also needs ffmpeg).
-- **Helpers / fixtures**: `tests/_ib_harness.py` (mesh builders + invariant
-  assertions; also drives the parallel scenarios and the golden moving-boundary
-  trajectory); `tests/fixtures/` holds tiny committed fixtures (~100 kB total),
-  all regenerable via `tests/fixtures/_gen_fixtures.py` — edit that script rather
-  than hand-editing a vtk:
-  - `lagspts_min/`, `mesh_min/` — IB2d moving and static immersed boundaries.
-  - `ib2d_fluid_min/` (vector `u.####.vtk`), `ib2d_fluid_scalar_min/`
-    (`uX`/`uY.####.vtk`) — 2D fluid. Fields are `u = t` and `v = sin(2πx/Lx)`, so
-    `u` reads back the simulation time and a frozen or truncated timeline is
-    immediately visible. IB2d omits the periodic endpoint, so a 6×5 dump loads as
-    a 7×6 field over a 6×5 domain.
-  - `vtk3d_min/` — 8 rectilinear 3D dumps carrying `TIME` field data, for
-    `VTK3dData`. Field is `u = t`, `v = x`, `w = t·z`.
-  - `vtixml_min/` — 8 zlib-compressed `.vti` dumps one point thick in z,
-    indexed by `flow.pvd` and carrying `TimeValue`, shaped like the 2D sea-fan
-    export. Field is `u = t`, `v = x + 10y`, `w = 0`; times start at 0.1.
-  - `comsol_vtu_min/` — COMSOL-style `.vtu` exports flat in z: `flow.vtu` at
-    t = 0, 0.5, 1 and `single.vtu` at t = 0.25. Field is `u = 1 + t + x/2`,
-    `v = y − 2t`, linear so the regrid is exact; a one-ulp top wall over thin
-    near-wall triangles reproduces the rounding miss real exports have.
-- **Markers** (registered in `pytest.ini`): `slow` (only with `--runslow`),
-  `streaming` (only with `--runstreaming`; applied to the whole of
-  `tests/test_data_streaming/` by a module-level `pytestmark`),
-  `vtk` (skipped if vtk data absent), `vtu` (skipped if COMSOL data absent).
-  The two `--run*` flags are independent, so a test carrying both markers needs
-  both flags.
+- **Modules.** Each module's docstring says what it pins, and is the place to look; this
+  is only a map. A new module does not need adding here unless it starts a new area.
+
+  | Area | Modules |
+  |---|---|
+  | Intersections and collisions | `test_geom`, `test_collisions_*`, `test_ibc_helpers`, `test_periodic_ib`, `test_parallel_ib` |
+  | Fluid data and analysis | `test_flow_generation`, `test_flow_interface`, `test_temporal_interp`, `test_dynamic_loading`, `test_material_derivative`, `test_analysis` |
+  | File loaders and low-level I/O | `test_io_loaders` |
+  | Run archive | `test_run_archive` (the bytes), `test_recording` (real runs, restore, append), `test_run_reader`, `test_fluid_recording`, `test_archive_rendering`, `test_provenance` |
+  | Swarm behavior | `test_agent_models`, `test_swarm_lifecycle`, `test_swarm_save` |
+  | Plotting | `test_frame_selection`, `test_plotting_smoke` |
+  | End-to-end acceptance | `test_data_streaming/` (see its `README.md`) |
+
+- **Helpers and fixtures.** `tests/_ib_harness.py` holds the mesh builders and invariant
+  assertions. `tests/fixtures/README.md` describes every committed fixture and its
+  analytic field; regenerate them with `tests/fixtures/_gen_fixtures.py` rather than
+  hand-editing a vtk.
+- **Markers** are registered in `pytest.ini`. `slow` needs `--runslow`, `streaming` needs
+  `--runstreaming`, and a test carrying both needs both flags.
 - **Non-automated** visual/exploratory scripts live in `tests/manual/` —
   excluded from collection via `collect_ignore` in `conftest.py` (at the
   repository root, not in `tests/`).
@@ -727,28 +588,18 @@ cycle for.** It is not a way to defer something inconvenient. The convention:
   catalogues it, with an executable reproduction — that is strictly better than
   prose. Duplicating it in the tracker just creates two things to keep in sync.
 - **Delete the marker in the same commit as the fix.**
-- Outside the carve-out below, the steady state is zero `xfail`s. One appearing
-  in ordinary work means drop everything and fix it.
+- The steady state is zero `xfail`s, everywhere. One appearing means drop everything
+  and fix it.
 
 Check with `pytest -rX` (lists xfails) or `pytest -rxX` (xfails and xpasses).
 
-**The carve-out: `tests/test_data_streaming/`.** This is an adversarial suite
-written against `docs/notes/run_persistence.md`, covering the streaming story end
-to end — in-RAM, windowed replay, recorded replay, restart. Its strict `xfail`s
-are **the pre-release list for `dyload`**: known gaps to be worked before the
-branch ships, not stop-the-cycle defects. A non-empty list there is expected, so
-watch the **count** rather than the presence — it should only ever go down, and
-each one that goes down takes its marker with it.
-
-**It is opt-in, behind `--runstreaming`** (its slow members want `--runslow`
-too). That is why: it is a statement of where the work is going, so it is read
-deliberately rather than swept past in every run, and it costs more than the rest
-of the suite put together. The flip side is that **it never runs unless someone
-asks**, CI included — so:
+**`tests/test_data_streaming/` is opt-in, behind `--runstreaming`** (its slow members
+want `--runslow` too). It is an adversarial acceptance suite covering the streaming story
+end to end — in-RAM, windowed replay, recorded replay, restart — and it costs more than
+the rest of the suite put together. It **never runs unless someone asks**, CI included, so:
 
 ⚠️ **Run `pytest --runslow --runstreaming` after any change to the archive, the
-fluid streaming or the plotting paths, and before a release.** It has already
-caught three defects the focused modules missed, all in component C.
+fluid streaming or the plotting paths, and before a release.**
 
 Its own `tests/test_data_streaming/README.md` is the standing record: the four
 claims, the verdict on each, and every finding with what fixed it.
@@ -798,8 +649,7 @@ worth knowing (`calculate_FTLE`):
   with data.
 - `past_projects/` holds prior research code (e.g. `brine_shrimp/`) kept for
   reference; not part of the package.
-- Build: setuptools via `setup.cfg` (deps: numpy, scipy>=1.10.1, matplotlib>=3,
-  pandas, vtk>=9.2, pyvista>=0.44; optional extras: STL, netCDF, test). Editable
+- Build: setuptools; `setup.cfg` lists the dependencies and optional extras. Editable
   install with `pip install -e .`.
 - `changelog.txt` is hand-maintained — update it for user-facing changes.
 - `TODO.md` is the working plan for this branch (phases, known bugs, design

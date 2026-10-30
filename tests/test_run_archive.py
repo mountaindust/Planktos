@@ -1,12 +1,12 @@
 '''Tests for the run-archive writer and the on-disk format
-(planktos/archive.py, run_persistence.md section 2, build step A2).
+(planktos/_recording.py, planktos/_archive_format.py).
 
 Everything here drives the writer directly with synthetic captures -- plain
 arrays, no Environment, no Swarm, no fluid -- and reads the results back with
 raw np.load and json.load rather than through a reader of our own. That is
 deliberate: a round-trip through our own code can be self-consistently wrong,
-where reading the bytes pins the format itself. The reader gets its own tests
-when it exists (A4).
+where reading the bytes pins the format itself. The reader's tests are in
+test_run_reader.py.
 
 The three properties under test, in order of how much they matter:
 

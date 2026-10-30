@@ -117,7 +117,7 @@ def test_tile_flow_raises_on_fluiddata_directly():
 # --------------------------------------------------------------------------- #
 
 @pytest.mark.skip(reason="Environment.extend was removed on dyload (extrapolation "
-                         "is the intended replacement; see changelog/TODO.md). "
+                         "is the intended replacement). "
                          "Un-skip if extend is re-added.")
 def test_extend_grows_domain_and_copies_edges():
     envir = planktos.Environment(Lx=10, Ly=10, rho=1000, mu=5000)

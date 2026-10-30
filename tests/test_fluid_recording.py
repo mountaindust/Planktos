@@ -1,12 +1,11 @@
-'''Tests for the fluid half of a run archive -- component B of
-docs/notes/run_persistence.md (sections 3.3 to 3.6, build step B).
+'''Tests for the fluid half of a run archive.
 
 Where test_recording.py pins the *agent* half, this pins what an archive stores
 about the fluid, and the property that matters is the same one: a render must
 never re-stream the dataset to draw a picture of it. Three things are stored, and
 each has its own rule because the regimes genuinely differ.
 
-**Vorticity is not cached -- it is sourced, by regime** (section 3.3). Which of
+**Vorticity is not cached -- it is sourced, by regime.** Which of
 three things happens is decided by whether a sliding window is in use and by
 whether the source already ships the field:
 
@@ -16,7 +15,7 @@ whether the source already ships the field:
 
 The headline test here is that the middle and bottom rows both reproduce
 ``envir.get_vorticity(time=t)`` exactly, and agree with each other. That is
-section 3.2's linearity argument made executable: ``LinearSpline`` evaluates as a
+a linearity argument made executable: ``LinearSpline`` evaluates as a
 weighted sum of two adjacent nodal fields and the curl is linear, so blending
 per-dump vorticity with the same two weights *is* the curl of the blend. For the
 top row there is nothing to compare, so what is asserted instead is that **no
@@ -116,7 +115,7 @@ def _omega_files(directory):
 
 
 # --------------------------------------------------------------------------- #
-#         the three regimes of section 3.3, and which one gets chosen         #
+#                 the three regimes, and which one gets chosen                #
 # --------------------------------------------------------------------------- #
 
 # INUM=None splines the resident dataset cubically and INUM=True linearly. The
@@ -176,8 +175,8 @@ def test_a_source_without_vorticity_gets_a_complete_series_written(tmp_path):
 
 
 def test_a_partial_series_in_the_source_is_left_untouched(tmp_path):
-    # A file that is already there is the solver's own field, which section 3.3
-    # measures as the better one where the two differ. Nothing Planktos writes
+    # A file that is already there is the solver's own field, the better one
+    # where the two differ. Nothing Planktos writes
     # may land on top of it -- and because a partial series sends the write to
     # the archive instead, that holds for the whole directory and not just the
     # dumps that have one.
@@ -213,8 +212,8 @@ def test_the_writer_refuses_to_overwrite_an_unstamped_dump_it_finds(tmp_path):
 
 
 def test_a_partial_stored_series_is_not_used(tmp_path):
-    # Serving one dump's field for another's is a plausible-looking wrong answer
-    # (section 2.8), so a source covering part of the range is refused as a
+    # Serving one dump's field for another's is a plausible-looking wrong answer,
+    # so a source covering part of the range is refused as a
     # source. The existing files are left alone and a complete, homogeneous
     # series is written elsewhere -- mixing the two would be the very thing
     # being avoided.
@@ -749,8 +748,8 @@ def test_recording_the_fluid_costs_no_extra_loads(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------- #
 #              reading the fluid half back through the archive                #
 # --------------------------------------------------------------------------- #
-# What component C consumes. Enough surface here that the fluid half is not
-# write-only; the render-time refusals of section 2.8 belong with the rendering.
+# What a render consumes. Enough surface here that the fluid half is not
+# write-only; the render-time refusals belong with the rendering.
 
 def test_the_reader_serves_the_per_dump_statistics(tmp_path):
     envir = _envir(VORT_FIXTURE, INUM=4)

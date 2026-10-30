@@ -1,18 +1,14 @@
-'''Tests for Environment.record and the capture hooks
-(run_persistence.md section 2.1-2.3, build step A3a).
+'''Tests for Environment.record and the capture hooks, and for what a recording
+makes possible afterwards: the checkpoint, restoring, resuming and appending.
 
 Where test_run_archive.py drives the writer with synthetic arrays, these drive
-real runs and check that what lands on disk is what the run actually did. The
-archive is read back with raw np.load, since the reader is A4.
+real runs and check that what lands on disk is what the run actually did.
 
 The headline is test_recording_costs_no_extra_fluid_loads: recording a
 dynamically-loaded run must cost *identically* many loader calls as the same run
 without it. That single assertion is the property the whole design exists for --
 an archive that re-streamed the fluid to write itself would be worse than no
 archive at all.
-
-At this step every environmental time step is captured. The capture schedule
-(capture_interval) is A3b.
 '''
 
 import hashlib
@@ -490,7 +486,7 @@ def test_move_swarms_does_not_trip_the_hand_rolled_warning(tmp_path):
 
 
 def test_the_default_stores_positions_only(tmp_path):
-    # Velocities are opt-in as of R4.
+    # Velocities are opt-in.
     envir = _envir()
     swrm = _swarm(envir)
     rec = envir.record(tmp_path / 'run')
@@ -677,7 +673,7 @@ def test_record_names_the_directory_it_actually_records_to(tmp_path, capsys):
 
 
 # --------------------------------------------------------------------------- #
-#                        the capture schedule (A3b)                            #
+#                             the capture schedule                             #
 # --------------------------------------------------------------------------- #
 # capture_interval=k keeps state every k-th step, in the archive AND in
 # time_history / pos_history / vel_history -- the same set of states, from one
@@ -736,9 +732,9 @@ def _drive_into_wall(tmp_path, capture_interval, geometry, steps=6, name='run'):
 @pytest.mark.parametrize('geometry', ['across', 'around'])
 @pytest.mark.parametrize('k', [2, 3, 5])
 def test_a_capture_schedule_does_not_change_what_happens(k, geometry, tmp_path):
-    # THE test for this step. What is recorded must not change the physics --
+    # What is recorded must not change the physics --
     # and the collision path is where it could, since the movement start point
-    # used to be read straight out of pos_history (A0 decoupled it).
+    # used to be read straight out of pos_history.
     every_step, every_hit = _drive_into_wall(tmp_path, 1, geometry, name='every')
     coarse, coarse_hit = _drive_into_wall(tmp_path, k, geometry, name='coarse')
 
@@ -891,11 +887,10 @@ def test_a_whole_capture_interval_does_not_warn(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-#                        the checkpoint (section 2.11, R2)                     #
+#                                the checkpoint                                #
 # --------------------------------------------------------------------------- #
 # Where the chunk files are append-only history, a checkpoint is the one latest
-# state plus everything history cannot give you. These drive real runs; the
-# containers and why each was chosen are in run_persistence.md 2.11.5.
+# state plus everything history cannot give you. These drive real runs.
 
 def _checkpointed_run(tmp_path, steps=5, chunk_size=3, n=6):
     '''A recorded run whose swarm carries one prop of every awkward kind.'''
@@ -914,8 +909,7 @@ def _checkpointed_run(tmp_path, steps=5, chunk_size=3, n=6):
 
 
 def test_the_checkpoint_carries_every_piece_of_swarm_state(tmp_path):
-    # run_persistence.md 2.11.2's "State" column, made executable. R0 verified
-    # that restoring exactly this list gives a bit-identical resume, so what is
+    # Restoring exactly this list gives a bit-identical resume, so what is
     # pinned here is that all of it survives the round trip.
     rec, envir, swrm = _checkpointed_run(tmp_path)
     run = planktos.load_run(rec.path)
@@ -1060,7 +1054,7 @@ def test_writing_a_checkpoint_leaves_nothing_partial_behind(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-#                     restoring a run (section 2.11, R3)                       #
+#                               restoring a run                                #
 # --------------------------------------------------------------------------- #
 # RunArchive.restore turns a directory back into an Environment and its Swarms.
 # The three failure modes are meant to read differently: a fluid that cannot be
@@ -1392,12 +1386,12 @@ def test_a_restored_run_plots_from_its_own_archive(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-#              the derived quantities (section 2.4 / 3.1, R4)                  #
+#                            the derived quantities                            #
 # --------------------------------------------------------------------------- #
 # An archive that does not store velocities still has to be able to draw what
 # velocities were needed for: the agent-speed statistics a plot prints, and the
 # 2D heading markers. Both are derived at capture time, when the velocity is in
-# hand, and neither is recoverable from stored positions (section 5.1).
+# hand, and neither is recoverable from stored positions.
 
 def _derived_run(tmp_path, steps=6, chunk_size=3, n=5, D=2):
     envir = _envir() if D == 2 else planktos.Environment(
@@ -1508,7 +1502,7 @@ def test_a_partial_angle_series_is_refused_like_any_other(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-#                  the opt-in props series (section 2.11.4, R4c)               #
+#                           the opt-in props series                            #
 # --------------------------------------------------------------------------- #
 # store=(..., 'props') keeps the whole DataFrame per capture rather than only
 # the checkpoint's latest copy. Opt-in because it is the one thing here that
@@ -1615,7 +1609,7 @@ def test_a_restored_run_gets_its_props_history_back(tmp_path):
     resumed.move(0.1, silent=True)
     assert len(resumed.props_history) == len(swrm.props_history) + 1
 # --------------------------------------------------------------------------- #
-#            resuming from an arbitrary capture (section 6.1, R5a)             #
+#                      resuming from an arbitrary capture                      #
 # --------------------------------------------------------------------------- #
 # restore(capture=j) rebuilds at capture j rather than at the end of the run.
 # Only the per-capture series can come from j; everything else is the run's
@@ -1779,7 +1773,7 @@ def test_a_swarm_that_had_not_joined_yet_is_not_restored(tmp_path):
     assert len(swarms) == 1 and rebuilt.swarms == swarms
     assert len(both) == 2
 # --------------------------------------------------------------------------- #
-#           the opt-in shared_props series (section 6.1, R5b)                  #
+#                        the opt-in shared_props series                        #
 # --------------------------------------------------------------------------- #
 # store=(..., 'shared_props') keeps the shared_props dict per capture, folded
 # into the per-swarm sidecar the speed statistics already write on the same
@@ -2007,7 +2001,7 @@ def test_restore_says_so_when_a_promised_series_is_missing(tmp_path):
     np.testing.assert_allclose(resumed.shared_props['mu'],
                                swrm.shared_props['mu'])
 # --------------------------------------------------------------------------- #
-#      appending to the archive a run was restored from (section 6.1, R6)      #
+#               appending to the archive a run was restored from               #
 # --------------------------------------------------------------------------- #
 # A resumed run used to write a second archive beside the first, since record()
 # met the non-empty-directory rule and redirected. It continues the first now,
@@ -2031,7 +2025,7 @@ def _fluid_source(tmp_path, with_vorticity=False):
     '''A writable copy of the fluid fixture, shared by the runs of one test.
 
     Never the committed fixture directory itself: under ``INUM`` the field is
-    windowed, and section 3.3 then writes per-dump vorticity **beside the
+    windowed, and a recording then writes per-dump vorticity **beside the
     source's own dumps**, which would both dirty the repository and make the
     regime depend on whether an earlier test had already written there.
 

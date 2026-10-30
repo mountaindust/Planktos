@@ -169,7 +169,7 @@ def test_3d_mixed_bc_applies_per_dimension():
 
 
 def test_2d_mixed_bc_periodic_x_noflux_y():
-    # The TODO's explicit example: periodic in x, noflux in y.
+    # Periodic in x, noflux in y.
     envir = planktos.Environment(Lx=1, Ly=1,
                                  x_bndry=('periodic', 'periodic'),
                                  y_bndry=('noflux', 'noflux'),
@@ -498,7 +498,7 @@ def _drive_into_wall(cls, ib_collisions='sliding'):
 
 @pytest.mark.parametrize('ib_collisions', ['sliding', 'sticky'])
 def test_collisions_do_not_read_the_position_history(ib_collisions):
-    # The claim A0 makes: destroying the recording cannot change the physics.
+    # Destroying the recording cannot change the physics.
     control, control_hits = _drive_into_wall(planktos.Swarm, ib_collisions)
     hostile, hostile_hits = _drive_into_wall(_HistoryHostileSwarm, ib_collisions)
     assert np.isfinite(control).all(), 'control run should not produce NaN'
@@ -512,10 +512,9 @@ def test_collisions_do_not_read_the_position_history(ib_collisions):
 
 
 def test_prev_positions_is_the_history_entry_while_capture_is_every_step():
-    # At capture_interval=1 the two are the same object, which is what makes
-    # A0 a provable no-op. When the capture schedule lands (run_persistence.md
-    # A3) this is the invariant that catches one append site being gated and
-    # the other not.
+    # At capture_interval=1 the two are the same object. This is the invariant
+    # that catches one append site being gated by the capture schedule and the
+    # other not.
     envir = _wall_envir()
     swrm = planktos.Swarm(swarm_size=3, envir=envir,
                           init=np.array([[4.0, 3.0], [4.0, 5.0], [4.0, 7.0]]),

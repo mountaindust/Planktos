@@ -1,21 +1,13 @@
-'''Pins the fluid-velocity-field interface contract of Environment.flow.
-
-This module was written as the safety net required by
-docs/notes/run_persistence.md Appendix A: it fixed the *observable behavior* of
-every consumer of Environment.flow before the FlowArray removal (§7.3), so that
-the deletion could be shown to be behavior-preserving rather than merely assumed
-so. It served that purpose -- FlowArray is gone and every assertion here passed
-unchanged, including after the defensive np.asarray wrappers were stripped out --
-and it now stands as the general contract test for the fluid interface. Keep it
-green through the tiling (§9) and persistence/plotting (§2-§4) work still to come.
+'''Pins the fluid-velocity-field interface contract of Environment.flow: the
+observable behavior of every consumer of it.
 
 Scope is deliberately the surfaces that had no direct coverage:
   * Environment.interpolate_flow / interpolate_temporal_flow — the per-move hot
     path, and the single most important thing not to break.
   * Swarm._calc_basic_stats — the summary printed on every plot frame, and
     FluidData.get_mean_velocity, the per-dump mean cache behind its fluid half.
-  * FluidData.fmin/fmax — the tuple contract (regression lock, Appendix A).
-  * 3D vorticity — a known-answer test the mvbnd overhaul deferred to this branch.
+  * FluidData.fmin/fmax — the tuple contract (regression lock).
+  * 3D vorticity — a known-answer test.
 2D vorticity (test_analysis.py) and save_fluid round-trips (test_io_loaders.py)
 are already pinned elsewhere and are not duplicated here.
 
@@ -207,8 +199,7 @@ def test_interpolate_temporal_flow_returns_spatial_field():
 
 def test_interpolate_temporal_flow_at_data_times_reproduces_data():
     # For time-varying flow, flow[dim] is a temporal spline object rather than an
-    # array; spline[idx] recovers the raw field at that data time. Pinning that
-    # indexing contract matters because §6 of the refactor note keeps it.
+    # array; spline[idx] recovers the raw field at that data time.
     envir = _linear_in_time_2d()
     x = np.linspace(0, 10, 11)
     for idx, t in enumerate(envir.flow.flow_times):
@@ -332,14 +323,11 @@ def test_fmin_fmax_are_reusable_tuples_time_varying():
 #                _calc_basic_stats — the summary shown on plots                #
 # --------------------------------------------------------------------------- #
 #
-# §3.1 of the run-persistence note replaced the whole-grid fluid reductions (mean and
-# max fluid speed) with the spread of agent speeds, so that a frame needs no
-# fluid field at all: the surviving fluid statistics are the component means,
-# and those come from FluidData's per-dump mean cache. The old assertion that
-# max_spd was the max *speed* rather than max|u| was itself a bug fix (§3.4);
-# retiring it is deliberate, and the equivalent lock now lives on the agent
-# statistics -- test_calc_basic_stats_agent_speed_vs_mean_velocity pins that
-# ⟨|v|⟩ and ‖⟨v⟩‖ are the different quantities they claim to be.
+# A frame needs no fluid field at all: the fluid statistics are the component
+# means, and those come from FluidData's per-dump mean cache. Whole-grid fluid
+# speed reductions are not computed; the speeds reported are the agents'.
+# test_calc_basic_stats_agent_speed_vs_mean_velocity pins that ⟨|v|⟩ and ‖⟨v⟩‖
+# are the different quantities they claim to be.
 
 def test_calc_basic_stats_2d_known_answers():
     envir, X, Y = _linear_2d()
@@ -441,7 +429,7 @@ def test_calc_basic_stats_time_varying_uses_requested_time_index():
 
 
 def test_calc_basic_stats_pulls_no_fluid_field(monkeypatch):
-    # The whole point of §3.1: a frame must cost no fluid data. Under dynamic
+    # A frame must cost no fluid data. Under dynamic
     # loading, reaching for the field here is what re-streams the dataset a
     # second time, so make any such reach a hard failure.
     from planktos import fluid
@@ -498,7 +486,7 @@ def test_calc_basic_stats_agent_velocity_at_initial_time_is_the_recorded_drift()
     # version reported the zero vector here on the grounds that velocity is
     # undefined before the first step. The recorded value is the truth, and the
     # run archive stores the truth, so live and archive-backed statistics have to
-    # agree (run_persistence.md §4.3).
+    # agree.
     envir, _, _ = _linear_2d()                          # u = x, v = 2y
     swrm = planktos.Swarm(swarm_size=4, envir=envir, seed=1)
     # place the agents by hand so the drift is closed-form. The field is exactly
@@ -579,7 +567,7 @@ def test_calc_basic_stats_returns_plain_scalars():
 #
 # The cache is exact, not an approximation: both spline classes evaluate as a
 # weighted sum of the nodal fields and the spatial mean is linear, so the mean
-# commutes with interpolation in time (§3.2). The fields below are deliberately
+# commutes with interpolation in time. The fields below are deliberately
 # NOT linear in time, so agreement is a statement about that identity rather
 # than about both schemes being trivially exact.
 
@@ -672,8 +660,7 @@ def test_calculate_mag_gradient_known_answer():
 #
 # test_temporal_interp.py unit-tests fCubicSpline thoroughly but never touches
 # LinearSpline, which is what every INUM (dynamic-loading) run interpolates
-# with. Since §7.3 changes what *both* spline classes return, the linear path
-# needs equivalent pinning. Environment(flow=...) hardcodes INUM=None, so these
+# with, so the linear path needs equivalent pinning. Environment(flow=...) hardcodes INUM=None, so these
 # build FluidData directly -- the same approach test_temporal_interp.py takes.
 
 @pytest.fixture
@@ -714,7 +701,7 @@ def test_linear_spline_exact_on_linear_data(linear_in_time_field, query):
 
 def test_linear_and_cubic_agree_on_linear_data(linear_in_time_field):
     # Both schemes are exact for data linear in time, so any disagreement means
-    # one of the two paths is broken -- a cross-check that survives §7.3.
+    # one of the two paths is broken.
     from planktos import fluid
     t, data, _, _, fpoints = linear_in_time_field
     fd_lin = fluid.FluidData([data.copy(), data.copy()], fpoints,
@@ -727,8 +714,7 @@ def test_linear_and_cubic_agree_on_linear_data(linear_in_time_field):
 
 
 def test_linear_spline_surface(linear_in_time_field):
-    # The __call__/__getitem__/min/max/absmax/regenerate_data surface that §6 of
-    # the refactor note commits to keeping.
+    # The __call__/__getitem__/min/max/absmax/regenerate_data surface.
     from planktos import fluid
     t, data, _, _, _ = linear_in_time_field
     sp = fluid.LinearSpline(t.copy(), data.copy())

@@ -1,23 +1,21 @@
-'''Pins the dynamic (windowed) fluid-loading machinery -- TODO.md Phase 1 (A),
-(B) and (D), plus the per-dump mean cache that plotting reads instead of the
-field (run_persistence.md §3.1).
+'''Pins the dynamic (windowed) fluid-loading machinery -- that a window gives the
+same answer as the whole field, how it slides, and get_dudt under linear
+splining -- plus the per-dump mean cache that plotting reads instead of the field.
 
-`FluidData.update_spline` is the workhorse of this branch: it responds to a
+`FluidData.update_spline` is the workhorse of dynamic loading: it responds to a
 request for a time outside the currently loaded window by loading the next or
-previous set of dumps and re-splining. Until this module it had **no automated
-coverage at all** -- `INUM` appeared in the suite only as None (cubic, all in
-memory) or True (linear, all in memory), never as an int, which is the setting
-that actually slides a window.
+previous set of dumps and re-splining. `INUM` as an int is the setting that
+actually slides a window.
 
-Phase 1 was written as needing real IB2d data, but the slider itself does not:
-what it requires of a source is only a `load_dumpfiles(d_start, d_finish)` that
-returns a list of per-component ndarrays with a leading time axis. The synthetic
-subclass below supplies that from an in-memory array, so the real `update_spline`
-is exercised exactly and deterministically with nothing on disk. Ingestion (the
-vtk readers) and Phase 1 (C) -- the quantitative windowed-linear vs. full-cubic
-error -- still need real data and are out of scope here.
+The slider needs no real data: what it requires of a source is only a
+`load_dumpfiles(d_start, d_finish)` that returns a list of per-component ndarrays
+with a leading time axis. The synthetic subclass below supplies that from an
+in-memory array, so the real `update_spline` is exercised exactly and
+deterministically with nothing on disk. The quantitative windowed-linear vs.
+full-cubic error needs real data and is measured by
+tests/manual/quantify_temporal_interp.py.
 
-The key property in (A) is that linear interpolation in time is *local*: it
+The key property is that linear interpolation in time is *local*: it
 depends only on the two bracketing samples, so which window happens to be
 resident cannot change the answer. Windowed-linear must therefore agree with
 full-linear to round-off at every query time. The test field is deliberately
@@ -30,7 +28,7 @@ raw data. That costs an ulp per slide; it does not compound, which is itself
 pinned below (test_holdover_roundoff_does_not_accumulate) since a long 3D run
 makes thousands of slides.
 
-No RNG and no external data anywhere. The (A)/(B)/(D) and mean-cache sections
+No RNG and no external data anywhere. All but the last two sections
 touch no files at all; the two closing sections drive the real loaders --
 VTK3dData and IB2dData --
 against small committed fixtures (tests/fixtures/vtk3d_min and
@@ -96,7 +94,7 @@ def _field_2d(nt=21, nx=6, ny=5, t_end=4.0):
 
 def _field_3d(nt=13, n=4, t_end=3.0):
     '''3D counterpart. The slider is dimension-agnostic (it only ever touches the
-    leading time axis); this pins that, cheaply, ahead of Phase 2.'''
+    leading time axis); this pins that, cheaply.'''
     t = np.linspace(0.0, t_end, nt)
     g = np.linspace(0.0, 6.0, n)
     X, Y, Z = np.meshgrid(g, g, g, indexing='ij')
@@ -140,7 +138,7 @@ def _from_planktos(caught):
 
 
 # --------------------------------------------------------------------------- #
-#            (A) machinery correctness -- windowed == full, to round-off       #
+#           machinery correctness -- windowed == full, to round-off            #
 # --------------------------------------------------------------------------- #
 
 @pytest.mark.parametrize('INUM', [2, 3, 4, 5, 7])
@@ -219,7 +217,7 @@ def test_holdover_roundoff_does_not_accumulate():
 
 
 # --------------------------------------------------------------------------- #
-#                       (B) window-sliding behavior                            #
+#                           window-sliding behavior                            #
 # --------------------------------------------------------------------------- #
 
 @pytest.mark.parametrize('INUM', [2, 3, 4, 5, 7])
@@ -341,8 +339,8 @@ def test_no_load_when_query_stays_inside_the_window():
 
 
 def test_fmin_fmax_stay_tuples_and_widen_across_slides():
-    # Regression lock for the generator bug (run_persistence.md Appendix A) on the
-    # path where it actually bit: update_spline subscripts self.fmin on every
+    # Regression lock for the generator bug on the path where it actually bit:
+    # update_spline subscripts self.fmin on every
     # slide, which raised TypeError when it was a generator expression.
     dyn, _, t = _pair(_field_2d(), 5)
     assert isinstance(dyn.fmin, tuple) and isinstance(dyn.fmax, tuple)
@@ -360,7 +358,7 @@ def test_fmin_fmax_stay_tuples_and_widen_across_slides():
 
 
 def test_get_raw_loaded_data_returns_window_ndarrays():
-    # §3.5 regression, on a genuinely *sliding* window rather than INUM=True.
+    # On a genuinely *sliding* window rather than INUM=True.
     dyn, _, t = _pair(_field_2d(), 5)
     _, _, comps = _field_2d()
     dyn(t[9])                                   # land mid-dataset
@@ -435,7 +433,7 @@ def test_not_enough_data_for_the_requested_window_raises():
 
 
 # --------------------------------------------------------------------------- #
-#                  (D) get_dudt under linear splining                          #
+#                        get_dudt under linear splining                        #
 # --------------------------------------------------------------------------- #
 
 def test_dudt_is_the_finite_difference_on_each_interval():
@@ -539,14 +537,14 @@ def test_dudt_3d_matches_full_linear():
 
 
 # --------------------------------------------------------------------------- #
-#        per-dump mean cache under a sliding window (plotting, §3.1)         #
+#                 per-dump mean cache under a sliding window                 #
 # --------------------------------------------------------------------------- #
 # Plot frames need the spatial mean of each velocity component. Computing it
 # from the field would make plotting re-stream the whole dataset a second time,
 # so FluidData caches the mean of each dump as that dump loads and evaluates it
 # with the same interpolation weights the field uses. The mean is linear and the
 # interpolation is a weighted sum of nodal fields, so this is exact, not an
-# approximation (§3.2).
+# approximation.
 #
 # The field here is not linear in time, so agreement with the field's own mean is
 # a statement about that identity rather than about both being trivially exact.
@@ -561,7 +559,7 @@ def test_dump_means_match_the_field_across_slides():
 
 def test_dump_means_match_full_linear():
     # The windowed cache must not depend on which window happened to be resident
-    # -- the same property (A) pins for the field itself.
+    # -- the same property the windowed == full section pins for the field itself.
     dyn, full, t = _pair(_field_2d(), 5)
     for q in np.linspace(t[0], t[-1], 37):
         assert np.allclose(dyn.get_mean_velocity(time=q),
@@ -868,8 +866,7 @@ def _envir(INUM, field=None):
 
 @pytest.mark.parametrize('ndim', [2, 3])
 def test_periodic_fluid_survives_a_window_slide(ndim):
-    # TODO Phase 1 (E)'s surviving half: periodic x dynamic, never tested in
-    # either dimension. periodic_dim is a property of the spatial grid and the
+    # Periodic x dynamic, in either dimension. periodic_dim is a property of the spatial grid and the
     # slider only ever touches the time axis, so these are expected to be
     # independent -- but "expected to be" is what this is here to replace.
     # Sampled at the upper grid edge, where periodic wrapping is what decides
@@ -1385,7 +1382,7 @@ def test_vtk3d_slide_that_loads_a_single_dump(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-#          is_windowed -- the regime discriminator component B keys on        #
+#                   is_windowed -- the regime discriminator                   #
 # --------------------------------------------------------------------------- #
 
 def test_is_windowed_is_true_only_when_a_window_can_slide():
@@ -1409,7 +1406,7 @@ def test_is_windowed_is_true_only_when_a_window_can_slide():
 
 
 # --------------------------------------------------------------------------- #
-#              the dump-arrival observer component B rides on                 #
+#                          the dump-arrival observer                          #
 # --------------------------------------------------------------------------- #
 
 def test_the_observer_fires_wherever_data_lands_in_memory():

@@ -26,7 +26,7 @@ The claims, in the user's words:
 | `test_stream_d_restart.py` | 4 — checkpoint and restart |
 | `_streaming.py` | the shared harness (world builders, I/O counters, `walk_frames`) |
 
-Run with `pytest tests/test_data_streaming/`. Add `--runslow` for the example
+Run with `pytest --runstreaming tests/test_data_streaming/`. Add `--runslow` for the example
 scripts, the cross-version comparison and the ffmpeg movie renders.
 
 ---
@@ -166,7 +166,7 @@ resident field.
 
 Pinned: `test_stream_c_recorded_replay.py::test_frames_outside_the_recorded_dumps_are_refused_before_any_are_drawn`
 
-### F5 (being worked) — claim 4 was unbuilt (five items, three closed)
+### F5 (fixed) — claim 4 was unbuilt (five items)
 
 `run_persistence.md` §2.11's table, made executable. The archive carried no
 `rndState` (so a restart could not be reproducible), no `props` or

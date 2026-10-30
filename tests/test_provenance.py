@@ -1,5 +1,5 @@
 '''Tests for provenance records -- what produced an Environment's fluid and
-immersed mesh (planktos/_provenance.py, run_persistence.md section 2.6).
+immersed mesh (planktos/_provenance.py).
 
 Two halves. The first unit-tests the conversion and the decorators against
 throwaway objects, so a failure points at the mechanism. The second drives the

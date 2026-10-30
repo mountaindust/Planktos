@@ -136,7 +136,7 @@ def write_ib2d_fluid_scalar(outdir=HERE / 'ib2d_fluid_scalar_min'):
 
 # 2D IB2d fluid series that also ships VORTICITY -- Omega.####.vtk beside the
 # u dumps, which is what IB2d writes when input2d asks for it. This is the fixture
-# for run_persistence.md section 3.3: per-dump vorticity, sourced from disk under
+# for per-dump vorticity, sourced from disk under
 # a sliding window instead of recomputed from a velocity field that is no longer
 # resident.
 #
@@ -234,7 +234,7 @@ def write_vtk3d_series(outdir=HERE / 'vtk3d_min'):
 
 
 # OpenFOAM-style multiblock series, for the .vtm.series / .vtm / cell-data readers.
-# Structurally a miniature of the Phase 2 oral-arm export (see
+# Structurally a miniature of the oral-arm export (see
 # docs/notes/openfoam_oral_arm_dataset.md): a uniform Cartesian box of hexahedra
 # carrying CELL data, wrapped in per-timestep .vtm manifests that name an interior
 # .vtu plus inlet/outlet/walls .vtp boundary patches, indexed by a .vtm.series JSON.

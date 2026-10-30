@@ -15,7 +15,7 @@ story.
 **Suite: 1351 passed / 139 skipped (`pytest`, ~60 s), 1489 / 1 (`pytest --runslow
 --runstreaming`, ~5 min).** No failures, **and no xfails: the pre-release list is
 empty.** *(Full run re-measured 2026-10-29; the other configurations are the 2026-10-22
-counts plus the six unmarked tests added since, and are in `CLAUDE.md`.)*
+counts plus the six unmarked tests added since.)*
 
 **The pre-release list is empty (2026-09-03).** `tests/test_data_streaming/` — the
 adversarial suite written from `run_persistence.md`, covering the streaming story end
@@ -23,7 +23,7 @@ to end — carried six strict `xfail`s. All six are gone: `plot_all`'s vorticity
 placeholder over a time-invariant flow was fixed 2026-08-31, and the five
 checkpoint/restart markers came off with R1–R3 (2026-09-02 to 2026-09-03), the last of
 them being the headline `test_a_run_resumes_from_disk_as_if_nothing_had_happened`.
-**All four of the suite's claims now hold.** Per the carve-out in `CLAUDE.md` the
+**All four of the suite's claims now hold.** Per the `xfail` rule in `CLAUDE.md` the
 steady state from here is zero: a new `xfail` anywhere means drop everything and fix
 it.
 

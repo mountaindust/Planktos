@@ -9,8 +9,7 @@ Two tiers:
     COMSOL vtu (@vtu). These assert the loaded-flow contract and that domain
     boundary conditions are respected by a moving swarm.
 
-Also here: the scalar rectilinear / structured-points VTK round-trips
-(run_persistence.md section 3.6), which are the I/O half of per-dump vorticity.
+Also here: the scalar rectilinear / structured-points VTK round-trips, which are the I/O half of per-dump vorticity.
 '''
 
 import csv
@@ -1132,8 +1131,8 @@ def test_openfoam_raises_when_there_is_nothing_to_read(tmp_path):
 # succeeds and every value lands in the wrong place. The second dump is checked
 # against the mesh for it.
 #
-# Second dump only, deliberately; TODO.md item 5 records why, and what that
-# leaves uncovered.
+# Second dump only: checking every dump costs about 8% of a full load, and one
+# dump costs nothing extra. A reordering that first appears later goes uncaught.
 
 
 def _of_reorder(path, seed, drop=0):
@@ -1842,7 +1841,7 @@ def test_save_2D_vorticity_static_roundtrips(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-#      scalar rectilinear / structured-points VTK I/O (run_persistence 3.6)   #
+#                scalar rectilinear / structured-points VTK I/O               #
 # --------------------------------------------------------------------------- #
 # The write half of the rectilinear pair existed alone for years, because
 # nothing read a Planktos scalar field back. Per-dump vorticity does (section
@@ -1951,7 +1950,7 @@ def test_structured_points_scalar_checks_the_grid_against_the_data(tmp_path):
 
 
 def test_structured_points_scalar_roundtrips_in_3d(tmp_path):
-    # 2D is what component B writes today, but the writer is not 2D-only and a
+    # 2D is what a recording writes today, but the writer is not 2D-only and a
     # 3D grid must not be silently mangled into a plane.
     x = np.linspace(0, 3, 4); y = np.linspace(0, 2, 3); z = np.linspace(0, 1, 2)
     X, Y, Z = np.meshgrid(x, y, z, indexing='ij')

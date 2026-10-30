@@ -9,7 +9,7 @@ claims:
 
 * **Nothing breaks.** The tutorials and the ordinary plotting calls still run.
   The example scripts are exercised as written, in a subprocess, because that
-  is how the last three defects of this kind were found (TODO.md, Phase 0).
+  is how defects of this kind have been found.
 * **Nothing changes.** Drawing a picture of a run must not alter the run. That
   is stronger than "no exception": a plot that consumed a random number, slid a
   fluid window, or appended to a history would leave the *next* step different,

@@ -444,8 +444,7 @@ def test_two_renders_of_the_same_run_share_an_arrow_scale(tmp_path):
 
 
 def test_the_arrow_scale_is_the_one_the_archive_recorded(tmp_path):
-    # The value the specification names, stated on its own so that the xfail
-    # above says which of the two numbers is wanted.
+    # Which number the shared scale is: the extrema the archive recorded.
     rec, envir, swrm = _recorded(tmp_path, fluid='quiver', steps=6)
     stats = planktos.load_run(rec.path).dump_stats()
     want = float(np.linalg.norm(np.asarray(stats['vmax'])))

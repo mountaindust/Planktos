@@ -10,8 +10,6 @@ Two of them, both pure enough to test in the fast run:
     RdBu backdrop is scaled against. Pure function, no simulation needed.
 
 The rendering side of plot_all is covered by test_plotting_smoke.py.
-
-See docs/notes/run_persistence.md sections 3.5 and 4.1.
 '''
 
 import warnings

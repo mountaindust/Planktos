@@ -30,8 +30,7 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "slow" in item.keywords:
                 item.add_marker(skip_slow)
-    # The data-streaming acceptance tests are a goal line for work in progress,
-    # not a regression suite, and they run whole simulations -- so they are
+    # The data-streaming acceptance tests run whole simulations, so they are
     # opt-in rather than part of the default run. --runstreaming and --runslow
     # are independent: the slow members of that directory (the example scripts,
     # the cross-version check, the movie renders) need both.

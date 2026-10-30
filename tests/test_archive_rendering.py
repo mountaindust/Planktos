@@ -1,5 +1,4 @@
-'''Drawing a run whose fluid was recorded -- component C of
-docs/notes/run_persistence.md.
+'''Drawing a run whose fluid was recorded.
 
 Where test_recording.py and test_fluid_recording.py pin what an archive holds,
 this pins what a plot does with it. One rule decides most of it, and it is about

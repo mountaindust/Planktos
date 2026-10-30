@@ -74,8 +74,6 @@ jobs:
           PY
 
       # --runslow adds the parallelization checks and the plotting smokes.
-      # The whole suite is ~13s locally, so there is no reason to skip them
-      # here; the run time is dominated by installing dependencies.
       - name: Run test suite
         run: pytest --runslow
 
