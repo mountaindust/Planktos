@@ -37,7 +37,7 @@ scripts, the cross-version comparison and the ffmpeg movie renders.
 Recording and plotting leave a run bit-identical, in 2D and 3D, with and
 without an immersed boundary, and a run continues
 bit-identically after being plotted. Separately, three in-RAM scenarios were run
-under this working tree and under a `master` worktree and agree **bit for bit**
+under this working tree and under a `v1.0.3` worktree and agree **bit for bit**
 (`test_an_in_ram_run_gives_the_numbers_the_released_line_gives`).
 
 **Claim 2 — holds.** A windowed replay's backdrop equals the fully resident one

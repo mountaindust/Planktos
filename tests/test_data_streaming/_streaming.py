@@ -298,12 +298,14 @@ def assert_unchanged(swrm, before, what='plotting'):
 #                                  skipping                                   #
 # --------------------------------------------------------------------------- #
 
-def needs_dir(path, why):
-    '''Skip unless an optional (gitignored) dataset is present.'''
+def needs_dir(path, pattern, why):
+    '''Skip unless path holds a file matching pattern, the data of an optional
+    (gitignored) dataset. A pattern is required because a dataset's directory
+    can exist with only a tracked README in it.'''
 
     path = Path(path)
-    if not path.is_dir() or not any(path.iterdir()):
-        pytest.skip('{} not present: {}'.format(path, why))
+    if not any(path.glob(pattern)):
+        pytest.skip('no {} in {}: {}'.format(pattern, path, why))
     return path
 
 

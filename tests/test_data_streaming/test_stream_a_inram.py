@@ -347,7 +347,9 @@ def test_property_history_is_used_for_headings_when_it_is_kept():
 # --------------------------------------------------------------------------- #
 
 # "Nothing should change from when we started dyload" is answerable directly:
-# check out master beside this tree and run the same simulations under both.
+# check out the last release before this branch's fluid rewrite beside this tree
+# and run the same simulations under both. It is a tag because master comes to
+# hold this code once the branch merges, and would then be compared with itself.
 # The scenarios use only API that both branches have, so the comparison is of
 # the physics and not of the fluid interface.
 
@@ -409,7 +411,7 @@ print('planktos', planktos.__version__)
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize('rev', ['master'])
+@pytest.mark.parametrize('rev', ['v1.0.3'])
 def test_an_in_ram_run_gives_the_numbers_the_released_line_gives(tmp_path, rev):
     if shutil.which('git') is None:
         pytest.skip('git not on PATH')
@@ -467,12 +469,12 @@ SELF_CONTAINED_EXAMPLES = [
     'ex_ind_var.py',
     'ex_ode_gen.py',
     'ex_poisson_search.py',
-]
-
-# These need examples/ib2d_data, which is gitignored.
-DATA_EXAMPLES = [
     'ex_vicsek_model_2d.py',
     'ex_vicsek_model_3d.py',
+]
+
+# These need the dumps of examples/ib2d_data, which are gitignored.
+DATA_EXAMPLES = [
     'ex_produce_ftle_2d.py',
     'ex_ib2d_ibmesh.py',
     'ex_ib2d_sticky.py',
@@ -482,6 +484,9 @@ DATA_EXAMPLES = [
 @pytest.mark.slow
 @pytest.mark.parametrize('script', SELF_CONTAINED_EXAMPLES)
 def test_a_self_contained_example_runs_to_completion(script, tmp_path):
+    # This example's mesh is an STL, which needs the optional numpy-stl.
+    if script == 'ex_vicsek_model_3d.py':
+        pytest.importorskip('stl.mesh')
     # Run as written, in a subprocess, from a copy of examples/ so that any
     # movie or figure lands in the temporary directory. Agg makes plt.show a
     # no-op, which is what a headless run of the tutorial does anyway.
@@ -497,7 +502,7 @@ def test_a_self_contained_example_runs_to_completion(script, tmp_path):
 @pytest.mark.slow
 @pytest.mark.parametrize('script', DATA_EXAMPLES)
 def test_an_example_needing_downloaded_data_runs_to_completion(script, tmp_path):
-    needs_dir(REPO / 'examples' / 'ib2d_data',
+    needs_dir(REPO / 'examples' / 'ib2d_data', 'u.*.vtk',
               'download the IB2d channel-flow dataset to run this example')
     work = tmp_path / 'examples'
     shutil.copytree(REPO / 'examples', work,
