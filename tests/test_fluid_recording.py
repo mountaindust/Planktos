@@ -46,7 +46,7 @@ import numpy as np
 import pytest
 
 import planktos
-from planktos import archive, _dataio, _frames
+from planktos import _archive_format, _dataio, _frames, _recording
 from planktos import fluid as _fluid
 
 FIXTURES = Path(__file__).parent / 'fixtures'
@@ -252,17 +252,17 @@ def test_writable_source_dir_tests_rather_than_assumes(tmp_path):
     # Discovering this at the first dump would mean discovering it after the run
     # has started, so it is probed at record() time.
     envir = _envir(VORT_FIXTURE, INUM=4)
-    assert archive._writable_source_dir(envir.flow) == VORT_FIXTURE.resolve()
+    assert _recording._writable_source_dir(envir.flow) == VORT_FIXTURE.resolve()
 
     class _NoDir:
         def source_dir(self):
             return tmp_path / 'nope'
-    assert archive._writable_source_dir(_NoDir()) is None
+    assert _recording._writable_source_dir(_NoDir()) is None
 
     class _NoSource:
         def source_dir(self):
             return None
-    assert archive._writable_source_dir(_NoSource()) is None
+    assert _recording._writable_source_dir(_NoSource()) is None
     # nothing left behind by the probe itself
     assert not (VORT_FIXTURE / '.planktos_write_probe').exists()
 
@@ -637,8 +637,8 @@ def test_quiver_strides_never_drop_below_one():
     # Asking for more arrows than there are grid points cannot be honoured, and
     # a stride of zero would raise deep inside a slice.
     points = (np.linspace(0, 1, 5), np.linspace(0, 1, 4))
-    assert archive._quiver_strides(points, (60, 60)) == (1, 1)
-    assert archive._quiver_strides(points, (1, 1)) == (5, 4)
+    assert _recording._quiver_strides(points, (60, 60)) == (1, 1)
+    assert _recording._quiver_strides(points, (1, 1)) == (5, 4)
 
 
 def test_a_resident_field_still_stores_a_quiver(tmp_path):
@@ -848,7 +848,7 @@ def test_a_failed_vorticity_write_leaves_no_truncated_file(tmp_path, monkeypatch
                                     for k in range(5)]
         # ...it is in the staging directory, and the probe's own glob does not
         # recurse into it, so a truncated file can never enter the series.
-        assert (src / archive.TMP_DIRNAME / TRUNCATED).is_file()
+        assert (src / _archive_format.TMP_DIRNAME / TRUNCATED).is_file()
         assert TRUNCATED not in [f.name for f
                                         in src.glob('Omega.*.vtk')]
 
@@ -858,8 +858,8 @@ def test_the_staging_directory_is_cleared_when_recording_stops(tmp_path):
     envir = _envir(src, INUM=4)
     with envir.record(str(tmp_path / 'archive')):
         _sweep(envir)
-        assert (src / archive.TMP_DIRNAME).is_dir()      # in use during the run
-    assert not (src / archive.TMP_DIRNAME).exists()
+        assert (src / _archive_format.TMP_DIRNAME).is_dir()  # in use during the run
+    assert not (src / _archive_format.TMP_DIRNAME).exists()
     # Nothing but the series itself is left in the source directory.
     assert [p.name for p in src.iterdir() if p.is_dir()] == []
     assert len(_omega_files(src)) == NDUMPS
@@ -875,7 +875,7 @@ def test_staging_is_cleared_even_after_a_failed_write(tmp_path, monkeypatch):
         rec._fluid._write_vorticity(6, np.zeros(envir.flow.fshape[1:]), 'f'*32)
     monkeypatch.undo()
     envir.stop_recording()
-    assert not (src / archive.TMP_DIRNAME).exists()
+    assert not (src / _archive_format.TMP_DIRNAME).exists()
 
 
 def test_a_written_series_is_complete_and_readable(tmp_path):

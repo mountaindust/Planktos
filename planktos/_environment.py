@@ -28,7 +28,7 @@ from mpl_toolkits import mplot3d
 from matplotlib.collections import LineCollection
 
 import planktos
-from . import _dataio, _geom, _provenance, archive, fluid, motion
+from . import _dataio, _geom, _provenance, _recording, fluid, motion
 
 if _dataio.NETCDF:
     from cftime import date2num
@@ -2249,7 +2249,7 @@ class Environment:
 
     def record(self, path, *, fluid='vort', swarms=None,
                store=('positions',), capture_interval=1,
-               chunk_size=100, quiver_shape=archive.QUIVER_SHAPE,
+               chunk_size=100, quiver_shape=_recording.QUIVER_SHAPE,
                plot_all=None):
         '''Start recording the run to an archive directory, and return the handle.
 
@@ -2408,7 +2408,7 @@ class Environment:
         self._capture_interval = int(capture_interval)
         self._capture_phase = self._step_count
         try:
-            self._recorder = archive.RunRecorder(
+            self._recorder = _recording.RunRecorder(
                 self, path, swarms=swarms, store=store, chunk_size=chunk_size,
                 fluid=fluid, quiver_shape=quiver_shape, plot_all=plot_all,
                 capture_interval=self._capture_interval)

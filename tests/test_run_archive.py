@@ -24,7 +24,7 @@ import numpy as np
 import numpy.ma as ma
 import pytest
 
-from planktos import archive
+from planktos import _archive_format, _recording
 
 
 # --------------------------------------------------------------------------- #
@@ -33,16 +33,16 @@ from planktos import archive
 
 def _fingerprint(dimension=2, L=(10.0, 5.0), n_dumps=4, npts=(5, 3)):
     flow_points = tuple(np.linspace(0, L[d], npts[d]) for d in range(dimension))
-    return archive.build_fingerprint(dimension, L, flow_points=flow_points,
-                                     flow_times=np.linspace(0, 1, n_dumps),
-                                     periodic_dim=False)
+    return _archive_format.build_fingerprint(dimension, L, flow_points=flow_points,
+                                             flow_times=np.linspace(0, 1, n_dumps),
+                                             periodic_dim=False)
 
 
 def _writer(tmp_path, chunk_size=100, meta=None, name='run',
             store=('positions', 'velocities'), **kwargs):
     '''A writer holding both N x D arrays, which is what _capture supplies.'''
-    return archive._ArchiveWriter(tmp_path / name, _fingerprint(), meta=meta,
-                                  chunk_size=chunk_size, store=store, **kwargs)
+    return _recording._ArchiveWriter(tmp_path / name, _fingerprint(), meta=meta,
+                                     chunk_size=chunk_size, store=store, **kwargs)
 
 
 def _capture(N=3, D=2, value=0.0, masked=()):
@@ -74,7 +74,7 @@ def _read(path):
 
 def _chunk_files(agent_dir, prefix):
     return sorted(agent_dir.glob(prefix + '_*.npy'),
-                  key=lambda p: archive._chunk_index_of(p))
+                  key=lambda p: _archive_format._chunk_index_of(p))
 
 
 # --------------------------------------------------------------------------- #
@@ -84,7 +84,7 @@ def _chunk_files(agent_dir, prefix):
 def test_the_fingerprint_round_trips_through_grid_npz(tmp_path):
     w = _writer(tmp_path)
     stored = dict(np.load(w.path / 'grid.npz', allow_pickle=False))
-    assert archive.compare_fingerprints(stored, _fingerprint()) == []
+    assert _archive_format.compare_fingerprints(stored, _fingerprint()) == []
 
 
 def test_the_fingerprint_holds_the_grid_the_timeline_and_periodicity():
@@ -94,27 +94,28 @@ def test_the_fingerprint_holds_the_grid_the_timeline_and_periodicity():
 
 
 def test_a_flow_free_environment_fingerprints_on_dimension_and_domain_alone():
-    fp = archive.build_fingerprint(2, (10.0, 5.0))
+    fp = _archive_format.build_fingerprint(2, (10.0, 5.0))
     assert set(fp) == {'dimension', 'L', 'periodic_dim'}
-    assert archive.fingerprint_summary(fp)['grid_shape'] is None
-    assert archive.fingerprint_summary(fp)['n_dumps'] == 0
+    assert _archive_format.fingerprint_summary(fp)['grid_shape'] is None
+    assert _archive_format.fingerprint_summary(fp)['n_dumps'] == 0
 
 
 def test_periodic_dim_is_broadcast_to_one_flag_per_dimension():
-    assert archive.build_fingerprint(3, (1, 1, 1))['periodic_dim'].tolist() == \
-        [False, False, False]
-    assert archive.build_fingerprint(2, (1, 1), periodic_dim=(True, False)
-                                    )['periodic_dim'].tolist() == [True, False]
+    fp = _archive_format.build_fingerprint(3, (1, 1, 1))
+    assert fp['periodic_dim'].tolist() == [False, False, False]
+    fp = _archive_format.build_fingerprint(2, (1, 1), periodic_dim=(True, False))
+    assert fp['periodic_dim'].tolist() == [True, False]
 
 
 def test_a_mismatched_domain_size_is_refused_at_construction():
     with pytest.raises(ValueError, match='L has'):
-        archive.build_fingerprint(3, (1.0, 2.0))
+        _archive_format.build_fingerprint(3, (1.0, 2.0))
 
 
 def test_a_mismatched_axis_count_is_refused_at_construction():
     with pytest.raises(ValueError, match='flow_points has'):
-        archive.build_fingerprint(3, (1., 1., 1.), flow_points=(np.zeros(3),))
+        _archive_format.build_fingerprint(3, (1., 1., 1.),
+                                          flow_points=(np.zeros(3),))
 
 
 def test_every_field_of_the_fingerprint_is_load_bearing():
@@ -124,12 +125,12 @@ def test_every_field_of_the_fingerprint_is_load_bearing():
     for changed in (_fingerprint(L=(10.0, 6.0)),
                     _fingerprint(n_dumps=5),
                     _fingerprint(npts=(6, 3)),
-                    archive.build_fingerprint(
+                    _archive_format.build_fingerprint(
                         2, (10.0, 5.0),
                         flow_points=(np.linspace(0, 10, 5), np.linspace(0, 5, 3)),
                         flow_times=np.linspace(0, 1, 4), periodic_dim=True)):
-        assert archive.compare_fingerprints(base, changed) != []
-    assert archive.compare_fingerprints(base, _fingerprint()) == []
+        assert _archive_format.compare_fingerprints(base, changed) != []
+    assert _archive_format.compare_fingerprints(base, _fingerprint()) == []
 
 
 def test_a_corrupted_grid_file_is_caught_by_the_container(tmp_path):
@@ -146,25 +147,25 @@ def test_a_corrupted_grid_file_is_caught_by_the_container(tmp_path):
 
 def test_comparing_fingerprints_names_what_differs_not_just_that_it_does():
     # A refusal has to be actionable. A digest could only ever say a != b.
-    problems = archive.compare_fingerprints(_fingerprint(n_dumps=6),
-                                            _fingerprint(n_dumps=9))
+    problems = _archive_format.compare_fingerprints(_fingerprint(n_dumps=6),
+                                                    _fingerprint(n_dumps=9))
     assert len(problems) == 1
     assert 'flow_times' in problems[0]
     assert '6 values' in problems[0] and '9 values' in problems[0]
 
 
 def test_comparing_fingerprints_reports_a_field_present_on_only_one_side():
-    problems = archive.compare_fingerprints(archive.build_fingerprint(2, (10., 5.)),
-                                            _fingerprint())
+    problems = _archive_format.compare_fingerprints(
+        _archive_format.build_fingerprint(2, (10., 5.)), _fingerprint())
     assert any('absent from the archive' in p for p in problems)
 
 
 def test_comparing_fingerprints_catches_a_shifted_grid_of_the_same_shape():
-    shifted = archive.build_fingerprint(
+    shifted = _archive_format.build_fingerprint(
         2, (10.0, 5.0),
         flow_points=(np.linspace(0, 10, 5) + 1.0, np.linspace(0, 5, 3)),
         flow_times=np.linspace(0, 1, 4))
-    problems = archive.compare_fingerprints(_fingerprint(), shifted)
+    problems = _archive_format.compare_fingerprints(_fingerprint(), shifted)
     assert len(problems) == 1 and 'flow_points_0' in problems[0]
 
 
@@ -175,7 +176,7 @@ def test_comparing_fingerprints_catches_a_shifted_grid_of_the_same_shape():
 def test_metadata_is_written_at_construction_before_any_capture(tmp_path):
     w = _writer(tmp_path)
     meta = json.loads((w.path / 'meta.json').read_text())
-    assert meta['version'] == archive.FORMAT_VERSION
+    assert meta['version'] == _archive_format.FORMAT_VERSION
     assert meta['dtype'] == 'float64'
     assert meta['chunk_size'] == 100
     assert meta['grid']['dimension'] == 2
@@ -244,14 +245,14 @@ def test_reusing_a_swarm_index_is_refused(tmp_path):
 
 def test_a_missing_directory_is_created_with_its_parents(tmp_path):
     target = tmp_path / 'deep' / 'deeper' / 'run'
-    resolved = archive._resolve_archive_path(target)
+    resolved = _recording._resolve_archive_path(target)
     assert resolved == target and resolved.is_dir()
 
 
 def test_an_existing_empty_directory_is_used_as_is(tmp_path):
     target = tmp_path / 'run'
     target.mkdir()
-    assert archive._resolve_archive_path(target) == target
+    assert _recording._resolve_archive_path(target) == target
 
 
 def test_a_non_empty_directory_redirects_to_a_timestamped_sibling(tmp_path):
@@ -259,7 +260,7 @@ def test_a_non_empty_directory_redirects_to_a_timestamped_sibling(tmp_path):
     target.mkdir()
     (target / 'meta.json').write_text('{}')
     with pytest.warns(UserWarning, match='already holds data'):
-        resolved = archive._resolve_archive_path(target)
+        resolved = _recording._resolve_archive_path(target)
     assert resolved != target
     assert resolved.name.startswith('run_') and resolved.is_dir()
     # the previous run is untouched
@@ -271,7 +272,7 @@ def test_the_writer_exposes_the_directory_it_actually_chose(tmp_path):
     target.mkdir()
     (target / 'stale.npy').write_bytes(b'x')
     with pytest.warns(UserWarning):
-        w = archive._ArchiveWriter(target, _fingerprint())
+        w = _recording._ArchiveWriter(target, _fingerprint())
     # Without this, a later load_run('run/') would quietly read the earlier run.
     assert w.path != target
     assert (w.path / 'meta.json').is_file()
@@ -284,9 +285,9 @@ def test_two_redirects_in_the_same_second_do_not_collide(tmp_path):
     (target / 'x').write_bytes(b'x')
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        first = archive._resolve_archive_path(target)
+        first = _recording._resolve_archive_path(target)
         (first / 'x').write_bytes(b'x')
-        second = archive._resolve_archive_path(target)
+        second = _recording._resolve_archive_path(target)
     assert first != second
 
 
@@ -480,15 +481,15 @@ def test_an_archive_is_readable_with_no_finalizer_having_run(tmp_path):
 
     path = next(tmp_path.glob('run*'))
     meta = json.loads((path / 'meta.json').read_text())
-    assert meta['version'] == archive.FORMAT_VERSION
+    assert meta['version'] == _archive_format.FORMAT_VERSION
     stored = dict(np.load(path / 'grid.npz', allow_pickle=False))
-    assert archive.compare_fingerprints(stored, _fingerprint()) == []
+    assert _archive_format.compare_fingerprints(stored, _fingerprint()) == []
 
     agents = path / 'agents'
     chunks = _chunk_files(agents, 'swarm00_pos')
     # 8 captures at chunk_size 3: chunks 0 and 1 are complete, chunk 2 held the
     # two captures that were still buffered and is simply not there.
-    assert [archive._chunk_index_of(p) for p in chunks] == [0, 1]
+    assert [_archive_format._chunk_index_of(p) for p in chunks] == [0, 1]
     assert [len(_read(p)) for p in chunks] == [3, 3]
     joined = np.concatenate([_read(p) for p in chunks])
     assert joined[:, 0, 0].tolist() == [0., 1., 2., 3., 4., 5.]
@@ -518,7 +519,7 @@ def test_no_partially_written_file_is_ever_visible(tmp_path, monkeypatch):
     agents = w.path / 'agents'
     assert (agents / 'times_0000.npy').is_file()
     assert not (agents / 'times_0001.npy').exists(), 'a truncated chunk appeared'
-    assert list(agents.glob('*' + archive.TMP_SUFFIX)) == [], \
+    assert list(agents.glob('*' + _archive_format.TMP_SUFFIX)) == [], \
         'a temporary file was left behind'
     # and what did land is still readable
     assert len(_read(agents / 'swarm00_pos_0000.npy')) == 2
@@ -527,7 +528,8 @@ def test_no_partially_written_file_is_ever_visible(tmp_path, monkeypatch):
 def test_a_failed_write_leaves_no_temporary_file(tmp_path):
     target = tmp_path / 'thing.npy'
     with pytest.raises(ValueError):
-        archive._atomic_write(target, lambda f: (_ for _ in ()).throw(ValueError()))
+        _archive_format._atomic_write(
+            target, lambda f: (_ for _ in ()).throw(ValueError()))
     assert not target.exists()
     assert list(tmp_path.iterdir()) == []
 
@@ -574,7 +576,7 @@ def test_closing_a_recording_that_captured_nothing_leaves_a_valid_archive(tmp_pa
     w.add_swarm(0, 'organism', 2, 2, 0)
     w.close()
     assert json.loads((w.path / 'meta.json').read_text())['version'] == \
-        archive.FORMAT_VERSION
+        _archive_format.FORMAT_VERSION
     assert list((w.path / 'agents').glob('*.npy')) == []
 
 
@@ -584,13 +586,13 @@ def test_closing_a_recording_that_captured_nothing_leaves_a_valid_archive(tmp_pa
 
 def test_a_chunk_index_survives_the_round_trip_through_its_filename():
     for index in (0, 7, 42, 9999, 10_000, 123_456):
-        assert archive._chunk_index_of(archive._chunk_name('swarm00_pos', index)) \
-            == index
+        name = _archive_format._chunk_name('swarm00_pos', index)
+        assert _archive_format._chunk_index_of(name) == index
 
 
 def test_a_non_chunk_filename_yields_no_index():
-    assert archive._chunk_index_of('swarm00.json') is None
-    assert archive._chunk_index_of('meta.json') is None
+    assert _archive_format._chunk_index_of('swarm00.json') is None
+    assert _archive_format._chunk_index_of('meta.json') is None
 
 
 def test_numeric_ordering_is_not_lexical_ordering_past_four_digits():
@@ -598,9 +600,10 @@ def test_numeric_ordering_is_not_lexical_ordering_past_four_digits():
     # %04d grows a fifth digit at chunk 10000 and lexical order breaks, which
     # would silently assemble a run out of order. The same mistake has already
     # been paid for once on this branch, in the OpenFOAM dump directories.
-    names = [archive._chunk_name('times', i) for i in (9999, 10_000, 10_001)]
+    names = [_archive_format._chunk_name('times', i)
+             for i in (9999, 10_000, 10_001)]
     assert sorted(names) != names, 'the hazard this guards against is gone'
-    assert sorted(names, key=archive._chunk_index_of) == names
+    assert sorted(names, key=_archive_format._chunk_index_of) == names
 
 
 def test_an_array_masked_differently_from_positions_is_refused(tmp_path):

@@ -19,7 +19,8 @@ from pathlib import Path
 import numpy as np
 
 from . import fluid as _fluid
-from .archive import RunArchive, _quiver_name
+from ._archive_format import _quiver_name
+from .archive import RunArchive
 
 __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"

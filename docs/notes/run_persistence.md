@@ -1059,6 +1059,11 @@ through `load_run`, so it follows `fluid.py` exactly. The recorder (`RunRecorder
 returned by `Environment.record`) lives in the same module, as `fluid.py` holds both
 `FluidData` and its loaders.
 
+*(2026-10-29)* For navigability the writing half then moved to `planktos/_recording.py`
+and the shared format helpers and fingerprint to `planktos/_archive_format.py`.
+`archive.py` keeps the reader and the format spec, and re-exports `RunRecorder`, so
+`planktos.archive.RunRecorder` is unchanged.
+
 ### 2.8 Validation on load — missing ≠ mismatched
 
 - **Mismatched** (wrong fingerprint, wrong grid) → hard refusal with a clear message,
@@ -2694,7 +2699,7 @@ not obvious from it. Line numbers drift — search for the names.
   is how a plot finds the archive without being told.
 - `FluidData._dumps_arrived` — the one method called at all four load sites, which
   caches the per-dump means and fans out to observers. `_FluidWriter` hangs off it.
-- `archive._appendable` — the whole of the decision to continue an archive rather than
+- `_recording._appendable` — the whole of the decision to continue an archive rather than
   start one (§6.1 R6).
 
 ---

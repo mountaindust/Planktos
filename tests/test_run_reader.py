@@ -20,7 +20,7 @@ import numpy.ma as ma
 import pytest
 
 import planktos
-from planktos import archive
+from planktos import _archive_format, archive
 
 
 # --------------------------------------------------------------------------- #
@@ -81,10 +81,10 @@ def test_load_run_is_the_public_entry_point(tmp_path):
 
 def test_the_metadata_and_fingerprint_come_back(tmp_path):
     run, envir, _ = _recorded(tmp_path)
-    assert run.meta['version'] == archive.FORMAT_VERSION
+    assert run.meta['version'] == _archive_format.FORMAT_VERSION
     assert run.meta['provenance']['planktos_version'] == planktos.__version__
-    assert archive.compare_fingerprints(run.grid,
-                                        archive.fingerprint_of(envir)) == []
+    assert _archive_format.compare_fingerprints(
+        run.grid, _archive_format.fingerprint_of(envir)) == []
 
 
 def test_a_masked_agent_reads_back_masked(tmp_path):
@@ -322,7 +322,7 @@ def test_an_array_that_was_not_stored_is_refused_by_name(tmp_path):
 def test_a_future_format_version_is_refused(tmp_path):
     run, _, _ = _recorded(tmp_path)
     meta = json.loads((run.path / 'meta.json').read_text())
-    meta['version'] = archive.FORMAT_VERSION + 1
+    meta['version'] = _archive_format.FORMAT_VERSION + 1
     (run.path / 'meta.json').write_text(json.dumps(meta))
     with pytest.raises(ValueError, match='format version'):
         archive.load_run(run.path)

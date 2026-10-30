@@ -26,7 +26,7 @@ import numpy.ma as ma
 import pytest
 
 import planktos
-from planktos import _frames, archive, fluid
+from planktos import _archive_format, _frames, fluid
 
 FIXTURES = Path(__file__).parent / 'fixtures'
 
@@ -51,7 +51,7 @@ def _swarm(envir, n=4, mu=(1.0, 0.0), seed=1):
 
 def _chunks(agent_dir, pattern):
     '''Concatenate a swarm's chunk files back into one array, in index order.'''
-    files = sorted(agent_dir.glob(pattern), key=archive._chunk_index_of)
+    files = sorted(agent_dir.glob(pattern), key=_archive_format._chunk_index_of)
     return np.concatenate([np.load(f, allow_pickle=False) for f in files])
 
 
@@ -214,11 +214,13 @@ def test_the_fingerprint_matches_the_environment_that_wrote_it(tmp_path):
     with envir.record(tmp_path / 'run') as rec:
         pass
     stored = dict(np.load(rec.path / 'grid.npz', allow_pickle=False))
-    assert archive.compare_fingerprints(stored, archive.fingerprint_of(envir)) == []
+    assert _archive_format.compare_fingerprints(
+        stored, _archive_format.fingerprint_of(envir)) == []
     # and it would refuse a differently-gridded environment, naming the field
     other = planktos.Environment(Lx=99.0, Ly=10.0,
                                  flow=[np.zeros((3, 3)), np.zeros((3, 3))])
-    problems = archive.compare_fingerprints(stored, archive.fingerprint_of(other))
+    problems = _archive_format.compare_fingerprints(
+        stored, _archive_format.fingerprint_of(other))
     assert any('L' in p for p in problems)
 
 
@@ -379,7 +381,7 @@ def test_a_raise_mid_run_leaves_a_readable_archive(tmp_path):
     times = _chunks(rec.path / 'agents', 'times_*.npy')
     assert len(times) == 4                       # t0 plus the three good steps
     assert json.loads((rec.path / 'meta.json').read_text())['version'] == \
-        archive.FORMAT_VERSION
+        _archive_format.FORMAT_VERSION
 
 
 # --------------------------------------------------------------------------- #
@@ -1053,7 +1055,7 @@ def test_a_props_column_that_cannot_be_stored_warns_and_is_skipped(tmp_path):
 
 def test_writing_a_checkpoint_leaves_nothing_partial_behind(tmp_path):
     rec, envir, swrm = _checkpointed_run(tmp_path)
-    partial = [p.name for p in rec.path.rglob('*' + archive.TMP_SUFFIX)]
+    partial = [p.name for p in rec.path.rglob('*' + _archive_format.TMP_SUFFIX)]
     assert partial == []
 
 
@@ -2153,8 +2155,8 @@ def test_an_append_does_not_rewrite_vorticity_already_on_disk(tmp_path):
     assert written, 'the windowed regime wrote no vorticity at all'
     # One per dump reached, none duplicated, and none left half-written.
     assert len(written) == len(set(written))
-    assert not list(src.glob('*' + archive.TMP_SUFFIX))
-    assert not list(src.glob(archive.TMP_DIRNAME))
+    assert not list(src.glob('*' + _archive_format.TMP_SUFFIX))
+    assert not list(src.glob(_archive_format.TMP_DIRNAME))
 
     run = planktos.load_run(path)
     try:
@@ -2188,7 +2190,7 @@ def test_the_tail_chunk_is_refilled_rather_than_restarted(tmp_path):
     agents = path / 'agents'
     rows = [len(np.load(f, mmap_mode='r'))
             for f in sorted(agents.glob('swarm00_pos_*.npy'),
-                            key=archive._chunk_index_of)]
+                            key=_archive_format._chunk_index_of)]
     assert rows == [3, 3, 3]
     # And load_run validates it rather than taking our word for it.
     planktos.load_run(path).close()

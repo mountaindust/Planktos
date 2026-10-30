@@ -177,6 +177,10 @@ returns. The user wants 1.1.0 out the door; ask before planning past (b).
    And **move code without editing it in the same commit**, so the diff reads as
    pure motion and can be reviewed as such.
 
+   **Progress (2026-10-29):** `archive.py` split three ways — reading stays in
+   `archive.py`, writing moved to `_recording.py`, shared format and fingerprint to
+   `_archive_format.py` — with `RunArchive`'s methods regrouped by section.
+
    **Three standing exclusions:** `archive.py`'s module docstring (it is the on-disk
    format spec, rendered for users by `docs/api/RunArchive.rst` — check it for stray
    narrative, do not shorten it); `tile_flow`/`tile_domain` (rewritten when tiling
@@ -1385,7 +1389,7 @@ is what the work left open.
 
 ### ✅ A stored vorticity file was reused without checking it came from the same field — fixed 2026-10-29
 
-`archive._write_vorticity` never clobbered: an `Omega.####.vtk` already beside the source
+`_FluidWriter._write_vorticity` never clobbered: an `Omega.####.vtk` already beside the source
 data — typically one an *earlier recording* had written there — was served to plots with
 nothing checking it came from the same field. Silently wrong under a different
 `vel_conv`/`vec_name`/`periodic_dim`, or a re-exported dataset. Exposed: `VTKXMLData`,
