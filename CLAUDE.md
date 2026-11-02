@@ -334,20 +334,20 @@ numpy operations on flow data. `docs/notes/run_persistence.md` Appendix A is the
 surviving record; the full analysis is in the git history of the deleted
 `docs/notes/flow_field_interface.md`.
 
-*(As of 2026-10-30; `TODO.md` has its status.)* **Domain tiling raises
+*(As of 2026-11-02; `TODO.md` has its status.)* **Domain tiling raises
 `NotImplementedError`** (`FluidData.tile_flow`, `Environment.tile_domain`) — it went
 away with `FlowArray` and returns as a position-wrapping implementation covering 2D
-*and* 3D. `Environment.extend` remains removed, and is decided at the same time. Do not
-reintroduce a materializing tiling stopgap — nor a virtualizing one; see
-`docs/notes/run_persistence.md` §9.2 for why both failed.
+*and* 3D. Do not reintroduce a materializing tiling stopgap — nor a virtualizing one;
+see `docs/notes/run_persistence.md` §9.2 for why both failed. `Environment.extend`
+remains removed; whether it returns is a separate pass.
 
-**When tiling comes back, work from the restoration checklist at
-`docs/notes/run_persistence.md` §9.3.** Gating it off left notices and
-replaced tests across source, tests, examples, docs, and prose; §9.3 lists every
-one. Both old bodies are preserved **commented out beneath their `raise`**, under a
-`PREVIOUS IMPLEMENTATION, KEPT FOR RESTORATION` banner — reuse them rather than
-rewriting. Only the fluid halves are superseded; `tile_domain`'s ibmesh/`L` logic
-and `tile_flow`'s `flow_points` extension still stand.
+**The plan for bringing tiling back is `docs/notes/run_persistence.md` §9** (settled
+2026-11-02): the design, a consumer audit, the ground-truth tests and the build order,
+with the restoration checklist at §9.6. Two things there overrule older guidance.
+**`flow_points` stays the stored tile's grid** — only `L` and the plotted extent are
+tiled — so `tile_flow`'s old `flow_points` extension does not come back. And **the
+commented-out `tile_domain` mesh loop is not to be reused verbatim**: it duplicates the
+base mesh and mis-indexes moving meshes, bugs the released `1.0.3` shares.
 
 ## The canonical workflow
 

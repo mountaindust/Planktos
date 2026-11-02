@@ -68,13 +68,12 @@ asserted. That was the branch's stated remaining reason to exist.
 Items 1, 2, 4 and 6 are closed, and **item 3's docstring pass is complete
 (2026-10-22)** — only its navigability pass is left, best decided after item 7.
 
-**Next, in order:** (a) ✅ **the stored-vorticity check** — done 2026-10-29, see "Open
-from the 2D `.vti` work"; (b) **item 7, merging `master` in**, then its four follow-ups;
-(c) item 3's navigability pass; (d) tiling (item 5) and the §7 prose pass. The parts of
-§7 that do not describe tiling (the Appendix C table, the mid-run arrival example) do
-not depend on the merge and can go before it.
-
-*(Shortest path below updated 2026-10-29: (a) is done.)*
+**Next (revised 2026-11-02): tiling, item 5**, planned in full in `run_persistence.md`
+§9 and built on a `tiling` branch (§9.0). Item 7 (merging `master` in) does not depend
+on it in either direction. The three `_swarm.py` conflict hunks tiling rewrites resolve
+to "keep `dyload`" either way, since `master`'s side there uses the old fluid API. Then
+item 3's navigability pass and the §7 prose pass, which tiling unblocks. (a), the
+stored-vorticity check, was done 2026-10-29.
 
 ⏸️ **Docs rst pass — started 2026-11-02, paused and stashed.** A check of the rst pages
 under `docs/` (`index.rst`, `quickstart.rst`, `api/*.rst`, `examples/*.rst`) for
@@ -108,13 +107,10 @@ user's planned example-script updates**, since the quickstart describes both.
   (2) Whether the `pip uninstall` fix goes in the cherry-pick queue — `master`'s
   quickstart has the same line.
 
-⚠️ **Open decision for the user, raised 2026-10-20: does 1.1.0 wait for tiling?** It
-need not — `run_persistence.md` §9.4 says the changelog's "tiling temporarily raises"
-line is correct if 1.1.0 ships first. The shortest path to release is (a), (b), the
-parts of §7 that do not describe tiling (the Appendix C cost table into `docs/api`,
-the mid-run arrival example), and a version/changelog check, with tiling after. The
-cost is a prose pass that calls tiling unavailable and needs a second pass when it
-returns. The user wants 1.1.0 out the door; ask before planning past (b).
+✅ **Settled 2026-11-02: 1.1.0 waits for tiling.** Shipping first would have meant
+prose and a changelog calling tiling unavailable, rewritten when it returned; tiling
+first means one prose pass. `run_persistence.md` §9.7 has the changelog lines to
+replace.
 
 1. ✅ **The run archive and the plotting work it feeds — components A, B and C are
    complete** (`docs/notes/run_persistence.md`). §5.3 and §6.1 steps **A0–A5**,
@@ -217,7 +213,7 @@ returns. The user wants 1.1.0 out the door; ask before planning past (b).
    **Three standing exclusions:** `archive.py`'s module docstring (it is the on-disk
    format spec, rendered for users by `docs/api/RunArchive.rst` — check it for stray
    narrative, do not shorten it); `tile_flow`/`tile_domain` (rewritten when tiling
-   returns, `run_persistence.md` §9.3); and anything `master` also has.
+   returns, `run_persistence.md` §9.6); and anything `master` also has.
 
    **Two worked examples the user named, both deliberately left unfixed** so they
    can go in the sweep:
@@ -342,10 +338,21 @@ returns. The user wants 1.1.0 out the door; ask before planning past (b).
    §2.11.5 has since decided differently, so they are **retargeted** at the checkpoint
    rather than merely un-`xfail`ed, with behavioral round-trip tests beside them; the
    retargeted checklist was deleted at R6, when R was confirmed done.
-5. 🟡 **Note §9** (real position-wrapping tiling, 2D and 3D; whether `Environment.extend`
-   returns) — the design pass is written up in `run_persistence.md` §9; §9.3 is the
-   restoration checklist. This also **unblocks the prose-docs sweep**, which is
-   deliberately held because §9 decides exactly what that prose would describe.
+5. 🟡 **Tiling — plan settled 2026-11-02, next up.** `run_persistence.md` §9 is the
+   whole plan:
+   - the design (§9.1): position-wrapping, `flow_points` stays the stored tile,
+     `tile_domain(x, y, z, tile_ibmesh)` as the last domain operation;
+   - the consumer audit (§9.3);
+   - the ground-truth tests (§9.4): tiling off bitwise unchanged against the branch
+     point; tiling on, periodic, bitwise equal to the data materialized in memory, on
+     non-square tilings; an array of cylinders as the headline case;
+   - the build order T0–T6 (§9.5) and the restoration checklist (§9.6).
+
+   Built on a `tiling` branch off `dyload` (§9.0). **One question is open for the
+   user** (§9.1, "exports"): whether `save_fluid` / `save_2D_vorticity` write the
+   stored tile (recommended) or the tiled field. `Environment.extend` is now a
+   separate pass (Deferred, below). Tiling also **unblocks the prose-docs sweep** and
+   the paused docs stash.
 6. ✅ **The 1.0.3 decision — settled (2026-08-19).** The patch release was cut from
    `master` and tagged `v1.0.3`; the cherry-pick queue at the bottom of this file is the
    record of what moved and what deliberately did not. **The next release is meant to be
@@ -830,15 +837,12 @@ in `tests/test_flow_interface.py`.
   had backwards: `du/dt` is constant on **right**-closed intervals `(t[i-1], t[i]]`,
   so a time landing exactly on a timestamp takes the slope of the interval to its
   *left* (`t0` excepted, having none). Docstring corrected in `fluid.py`.
-- [~] **(E) Tiling/periodic × dynamic — SUPERSEDED / on hold.** Was: `FlowArray` view +
-  `tiling` propagation through `update_spline`. Tiling now raises
-  `NotImplementedError` for the duration of the plotting work, and the `tiling`
-  propagation (and its `assert ... "Tiling did not propagate correctly"` guards) is
-  gone from `update_spline`, so there is nothing to test here yet. Revisit as part of
-  the real tiling implementation (`docs/notes/run_persistence.md` §9), which
-  covers 2D and 3D together and must define how `tiling` interacts with
-  `periodic_dim`. **Periodic × dynamic on its own is still worth testing** and stays
-  in scope for Phase 1.
+- [~] **(E) Tiling/periodic × dynamic — SUPERSEDED.** Was: `FlowArray` view +
+  `tiling` propagation through `update_spline`, both gone. The real implementation
+  touches nothing in the windowing (wrapping is spatial only). Its `tiling` ×
+  `periodic_dim` rule and the windowed-against-materialized test are in
+  `docs/notes/run_persistence.md` §9.1 and §9.4.2. **Periodic × dynamic on its own
+  is still worth testing** and stays in scope for Phase 1.
 
 ---
 
@@ -1384,8 +1388,7 @@ Inherited blockers from the overhaul's notes:
   merge fixed the two that were outright wrong (`get_2D_vorticity` → `get_vorticity`,
   and the claim that flow can be "extended"), but the overall framing still assumes
   master's API. Worth a pass once the fluid API stops moving — **still deliberately
-  held**, since §9 decides what `tile_flow` becomes and whether `Environment.extend`
-  returns, and both are exactly what this prose would describe. The new
+  held until tiling lands**, since tiling is exactly what this prose would describe. The new
   `docs/api/FluidData.rst` covers the reference side in the meantime.
 - [x] **`INUM` and the linear-vs-cubic tradeoff — DONE.** In `docs/api/FluidData.rst`
   (anchor `inum-tradeoff`): the `INUM` table, why linear in time is permanent rather
@@ -1590,14 +1593,16 @@ every dataset in these units will hit this.
   job, which installs the newest numpy) failing a test that promoted *all* warnings to
   errors — that test now filters to planktos-origin warnings only, so the deprecation
   no longer masquerades as our bug. Re-check when bumping the vtk or numpy minimum.
-- [ ] Changelog housekeeping (`changelog.txt`, 1.1.0): drop "TODO: test dynamic loading"
-  once Phases 1–2 land; resolve the `tiling`-setter TODO (make tiling a setter of
-  `FluidData.tiling`, with `Environment.L` updating off it) — folded into the real
-  tiling implementation, `docs/notes/run_persistence.md` §9.
-- [ ] `Environment.extend` was removed (extrapolation is the intended replacement).
-  Whether it returns is decided in `docs/notes/run_persistence.md` §9, alongside
-  the real tiling work — the two are the same class of operation (reported domain ≠
-  stored grid) and should share a mechanism. The parked test
+- [x] Changelog housekeeping (`changelog.txt`, 1.1.0): both TODO lines are gone from
+  the changelog. The `tiling`-setter idea is superseded: tiling is set only by
+  `Environment.tile_domain`, and `FluidData.tile_flow` is to be removed
+  (`docs/notes/run_persistence.md` §9.1).
+- [ ] `Environment.extend` was removed on this branch (`3eb9d1d`; extrapolation is the
+  intended replacement) and still exists on `master`. It is not broken, just absent.
+  **Whether it returns is its own pass** (decided 2026-11-02), separate from tiling.
+  If it does, it fits as a clamping out-of-grid policy beside extrapolation and
+  wrapping in `interpolate_flow` (§9.1's last paragraph); the brine-shrimp projects
+  in `past_projects/` used `extend(y_plus=384)`. The parked test
   `test_flow_generation.py::test_extend_grows_domain_and_copies_edges` un-skips if so.
 - [ ] **Optional agent-history retention (maybe-feature).** `Swarm.pos_history` grows
   every step, so long runs accumulate memory whether or not anyone plots them. A flag
