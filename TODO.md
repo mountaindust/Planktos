@@ -76,6 +76,38 @@ not depend on the merge and can go before it.
 
 *(Shortest path below updated 2026-10-29: (a) is done.)*
 
+⏸️ **Docs rst pass — started 2026-11-02, paused and stashed.** A check of the rst pages
+under `docs/` (`index.rst`, `quickstart.rst`, `api/*.rst`, `examples/*.rst`) for
+correctness and coverage against dyload. **Resume it after tiling (item 5) and the
+user's planned example-script updates**, since the quickstart describes both.
+- **Where it is:** `git stash list` → *"docs rst pass 2026-11-02: paused until tiling
+  and example updates land"*, and the same diff as
+  `proj_dev/docs_rst_pass_2026-11-02.patch` (gitignored, local to this clone), which
+  applied cleanly to `7a2e0e2` when saved. It includes a small edit or two of the
+  user's own in `quickstart.rst`. Restore with `git stash pop` or
+  `git apply proj_dev/docs_rst_pass_2026-11-02.patch`; expect conflicts in
+  `quickstart.rst` and the example pages once tiling and the examples have changed.
+- **What the stash does.** Corrections: the quickstart overview's master-era list of
+  readers and "flow fields can also be tiled"; "cubic spline in time" (cubic only when
+  resident); `fps` frames limited per *recorded state*, not per timestep; `pip
+  uninstall .` (pip ignores a path) → `pip uninstall planktos`; "regular mesh" →
+  "rectilinear grid" in `api/Environment.rst`; the benchmark path in `ib2d_mvbnd.rst`;
+  `basic_3d.rst` implying `plot_all` needs `frames`. Coverage: an `INUM` paragraph and
+  a record / `load_run` / `restore` paragraph in the quickstart, two feature bullets in
+  `index.rst`, a pointer to recording in `ib2d_ibmesh.rst`. **And the Appendix C cost
+  table** (§7's obligation): `api/FluidData.rst`'s two-dataset prose replaced by a
+  three-dataset table with the sea fan and the 41 MB / 1604 MB memory figure; the stash
+  also marks that done here and in `run_persistence.md` §7.
+- **Checked and fine:** a fresh Sphinx build gave zero warnings before and after, and
+  every API name and signature the pages use exists as described.
+- **Two decisions still open for the user:** (1) **`api/RunArchive.rst`** is 456 lines
+  of manual largely duplicating `Environment.record`'s and `RunArchive.restore`'s
+  docstrings, and its on-disk layout tree has drifted (missing `_acc`, `_ang`, props
+  and checkpoint files; the `archive` module docstring has the complete one, which no
+  page renders). Proposed: cut it to a ~150–200 line narrative and drop the tree.
+  (2) Whether the `pip uninstall` fix goes in the cherry-pick queue — `master`'s
+  quickstart has the same line.
+
 ⚠️ **Open decision for the user, raised 2026-10-20: does 1.1.0 wait for tiling?** It
 need not — `run_persistence.md` §9.4 says the changelog's "tiling temporarily raises"
 line is correct if 1.1.0 ships first. The shortest path to release is (a), (b), the
