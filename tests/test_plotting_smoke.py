@@ -128,6 +128,31 @@ def test_swarm_plot_at_a_past_time_with_a_moving_mesh(tmp_path):
     assert out.is_file()
 
 
+@pytest.mark.parametrize('dim', [2, 3])
+def test_porous_layer_backdrop_is_reproducible_and_leaves_global_rng_alone(
+        tmp_path, dim):
+    # Regression: the porous layer's grass was drawn from numpy's global random
+    # state, so every render differed and plotting advanced that state -- which
+    # changes the run of a user model that draws from np.random.
+    kw = {} if dim == 2 else {'Lz': 10}
+    envir = planktos.Environment(rho=1000, mu=1000, **kw)
+    envir.set_brinkman_flow(alpha=66, h_p=1.5, U=1, dpdx=1, res=21)
+    assert envir.h_p is not None
+    swrm = _spread_swarm(envir, n=5)
+    np.random.seed(123)
+    before = np.random.get_state()
+    renders = []
+    for k in range(2):
+        out = tmp_path / 'grass{}.png'.format(k)
+        swrm.plot(filename=str(out), blocking=False)
+        plt.close('all')
+        renders.append(out.read_bytes())
+    after = np.random.get_state()
+    np.testing.assert_array_equal(before[1], after[1])
+    assert before[2:] == after[2:]
+    assert renders[0] == renders[1]
+
+
 def test_swarm_plot_3d_saves_file(tmp_path):
     swrm = _spread_swarm(_envir_3d())
     out = tmp_path / 'plot3d.png'

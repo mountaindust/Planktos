@@ -58,6 +58,7 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - Bug fix: read_NetCDF_flow accepts dim_reorder alongside vec_idx, and any axis permutation rather than only swaps.
 - Bug fix: plot_all(writer_kwargs=...) encodes movies at fps unless writer_kwargs sets its own; it fell back to 5 fps.
 - color setting in ex_poisson_search.py now compatible with matplotlib 3.11
+- Porous-layer plots are now the same every time, and no longer use numpy's global random state.
 - other minor bug fixes
 
 
