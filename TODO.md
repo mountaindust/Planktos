@@ -352,7 +352,8 @@ replace.
    **T0 done:** `tests/test_tiling_baseline.py` + `_tiling_baseline_runner.py` (the
    scaffold, deleted at T6), `tests/_tiling_harness.py` (pixel capture, the oracle),
    the `ib2d_fluid_dyadic` fixture, and `tests/test_tiling.py`'s checks of the oracle.
-   Next is T1.
+   **T1 done:** `_geom.tile_mesh`, which refuses a mesh not strictly inside the stored
+   tile along every tiled axis (the user's decision, §9.1). Next is T2.
    Exports (`save_fluid` / `save_2D_vorticity`) write the stored tile — the user's
    decision, §9.1. `Environment.extend` is now a separate pass (Deferred, below).
    Tiling also **unblocks the prose-docs sweep** and the paused docs stash.
@@ -1758,7 +1759,7 @@ Add to this list whenever a fix made on `dyload` is not dyload-specific. The tes
 that is simple: does the code it touches look the same on `master`? Check with
 `git diff master -- <file>` before assuming.
 
-### Queued for a possible 1.0.4 — fifteen entries
+### Queued for a possible 1.0.4 — sixteen entries
 
 Everything below the next heading is history — it shipped, or was deliberately not
 ported — kept for the porting notes rather than because anything is pending. Per the
@@ -1781,6 +1782,7 @@ release plan there is no `1.0.4` in preparation; this is a holding pen.
 | **`plot_all(writer_kwargs=...)` encoded at 5 fps** (2026-10-20). Passing `writer_kwargs` replaced the default `FFMpegWriter(fps=fps, metadata=...)` outright, so unless `fps` was repeated inside it the movie was encoded at FFMpegWriter's own default of 5 fps. On `dyload` the frames are chosen for `fps` (`playback_rate`), so the movie played at 5/fps times the rate asked for. `fps` is now a default inside `writer_kwargs`; a different `fps` there is used, with a warning giving the speed factor. The default `metadata=dict(artist='Christopher Strickland')` was dropped at the same time (2026-10-22), so no movie carries it now. Its own changelog line. Three tests in `test_frame_selection.py`, with a stand-in writer | `planktos/_swarm.py` (`plot_all`, the movie branch), `tests/test_frame_selection.py` | **Yes, by hunk** for the writer block, which is byte-identical on `master`. On `master` frames are one per step, so the warning's speed factor reads against fps rather than `playback_rate` — reword it when porting |
 | **`Swarm.calc_re` ignored an explicit `diam`** (2026-10-22). It raised "Parameters necessary for Re calculation ... undefined" whenever `shared_props` had no `'diam'`, even with `diam` passed, and a `diam` of neither kind gave a bare `KeyError`. It also raised for an `Environment(nu=...)`, which has no `rho`/`mu` but a perfectly good Re = u·diam/ν. Now: `diam` from the argument or `shared_props`, `rho`/`mu` when both are set (the same formula as before, so results do not shift), else `nu`, each failure naming what is missing. Under "other minor bug fixes". Four tests in `test_agent_models.py` | `planktos/_swarm.py` (`calc_re` only), `tests/test_agent_models.py` | **Yes, by hunk.** `calc_re` is byte-identical on `master` |
 | **The porous-layer backdrop used numpy's global random state** (2026-11-02). `_plot_setup` drew the Brinkman "grass" with `np.random.rand`, so every render differed and plotting advanced the global state — changing the run of a user model that draws from `np.random`. Now a private `np.random.default_rng(0)`, in 2D and 3D. Test: `test_porous_layer_backdrop_is_reproducible_and_leaves_global_rng_alone` | `planktos/_environment.py` (`_plot_setup`, both grass blocks); `tests/test_plotting_smoke.py` | **Yes.** Both grass blocks are byte-identical on `master`, and the test's `_spread_swarm` helper exists there |
+| **Tiling duplicated the base immersed mesh, and mangled moving ones** (2026-11-02, the `tiling` branch's T1). `master`'s `Environment.tile_flow` seeds `newmeshs = [self.ibmesh]` and then loops from copy `(0, 0)`, so the base mesh appears twice. On a moving mesh `(T, N, 2, 2)` it offsets `[:, :, 0]`, both coordinates of each element's first vertex, and concatenates along time. `_geom.tile_mesh` replaces the loop: copies offset on `[..., d]`, concatenated on the element axis, x slowest with the base first, and refused unless the mesh is strictly inside the tile along every tiled axis. Tests: the `tile_mesh` section of `tests/test_tiling.py` | `planktos/_geom.py` (`tile_mesh`, new); on `master`, the mesh block at the end of `tile_flow` in `planktos/_environment.py` | **Not as a commit.** `tile_mesh` is self-contained (it needs only `import itertools`) and ports as a new function; `tile_flow`'s mesh block becomes one call. The tests compare against `_tiling_harness`, which `master` lacks, so they port with hand-built expectations |
 
 ### Shipped in 1.0.3 — the 2026-08-10 `move()`/`_ibc` work
 

@@ -13,6 +13,8 @@ __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
+import itertools
+
 import numpy as np
 
 
@@ -920,3 +922,76 @@ def max_edge_length(mesh):
     n = mesh.shape[1]
     return max(np.linalg.norm(mesh[:, (i+1) % n] - mesh[:, i], axis=1).max()
                for i in range(n))
+
+
+
+def tile_mesh(mesh, L, counts):
+    '''Replicate an immersed mesh across a tiled domain.
+
+    Copies are offset by ``L[d]*i_d`` along each axis and ordered with x
+    slowest and the base mesh first, so element ``t*N + e`` of the result is
+    element ``e`` of copy ``t`` and ``idx % N`` recovers the base element. A
+    moving mesh's copies move in phase.
+
+    Along every tiled axis (count > 1), every vertex in every frame must lie
+    strictly inside the tile, ``0 < x_d < L[d]``, so no two copies touch.
+
+    Parameters
+    ----------
+    mesh : ndarray
+        static segments (N,2,2), static triangles (N,3,3), or moving segments
+        (T,N,2,2)
+    L : sequence of float
+        the tile's length along each spatial axis
+    counts : sequence of int >= 1
+        the number of tiles along each spatial axis
+
+    Returns
+    -------
+    ndarray
+        the copies concatenated along the element axis: (K*N,2,2), (K*N,3,3)
+        or (T,K*N,2,2), where K is the product of counts
+
+    Raises
+    ------
+    ValueError
+        if counts is not one int >= 1 per axis, or if an element touches or
+        crosses a tile face along a tiled axis, naming the elements and axes
+    '''
+
+    mesh = np.asarray(mesh, dtype=np.float64)
+    D = mesh.shape[-1]
+    L = np.asarray(L, dtype=np.float64)
+    if len(L) != D or len(counts) != D:
+        raise ValueError("Need one tile length and one count per spatial "
+                         "axis ({}); got L={} and counts={}.".format(
+                             D, list(L), tuple(counts)))
+    if any(int(k) != k or k < 1 for k in counts):
+        raise ValueError("Tile counts must be integers of at least 1; got "
+                         "{}.".format(tuple(counts)))
+    counts = tuple(int(k) for k in counts)
+
+    # Each element's extent over all its vertices and frames. A moving mesh is
+    #   interpolated linearly between frames, so the frames bound every
+    #   position it takes.
+    over = (0, 2) if mesh.ndim == 4 else 1
+    lo = mesh.min(axis=over)
+    hi = mesh.max(axis=over)
+    out = (np.array(counts) > 1) & ((lo <= 0) | (hi >= L))
+    bad = np.nonzero(out.any(axis=1))[0]
+    if bad.size:
+        names = ['{} ({})'.format(e, ', '.join('xyz'[d] for d in
+                                              np.nonzero(out[e])[0]))
+                 for e in bad[:10]]
+        more = bad.size - len(names)
+        raise ValueError(
+            "Tiling the domain {} needs the immersed mesh strictly inside the "
+            "domain along each tiled axis, but these elements touch or cross "
+            "its boundary (along the axes shown): {}{}.".format(
+                counts, ', '.join(names),
+                ', and {} more'.format(more) if more else ''))
+
+    # i*L[d] per axis, the same arithmetic as a copy placed by hand.
+    copies = itertools.product(*(range(k) for k in counts))
+    return np.concatenate([mesh + np.array(idx)*L for idx in copies],
+                          axis=1 if mesh.ndim == 4 else 0)

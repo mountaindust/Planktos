@@ -3012,20 +3012,17 @@ criterion, and confirmed by the user the same day.)*
   Moving meshes offset `[..., d]` and concatenate along the element axis; every copy
   moves in phase, as a periodic fluid implies. `ibmesh_times` and `max_meshpt_dist`
   are unchanged by tiling.
-- **Copies must not cross or coincide.** The mesh assumption (elements meet only at
-  shared vertices) has to survive tiling, so `tile_domain` refuses, naming the
-  elements, when copies would cross or produce coincident elements. A wall on both
-  `x=0` and `x=L` is the obvious source of coincident elements, and a mesh reaching
-  more than half a tile past an edge the obvious source of crossings. Only elements
-  extending past a seam or lying in one need checking. 2D uses `seg_intersect_2D`.
-  3D checks triangle edges against triangles with `seg_intersect_3D_triangles`, plus
-  an exact-duplicate check for coplanar coincidence.
+- **The mesh must lie strictly inside the stored tile along every tiled axis**
+  (decided by the user 2026-11-02): `0 < x_d < L_d` for every vertex in every frame,
+  else `tile_domain` refuses, naming the elements and axes. Copies then never touch, so
+  the mesh assumption (elements meet only at shared vertices) survives tiling with no
+  geometry tests at all, and no seam joints appear. A moving mesh is linear between
+  frames, so checking its frames is exact. In practice nothing is refused: the CFD
+  solvers themselves fail on a structure touching the domain boundary. Untiled axes are
+  not checked, as no copy lies across them.
 - `tile_ibmesh=False` leaves the mesh as loaded — for a mesh already describing the
   whole tiled domain (loaded before tiling, extending past the stored tile), or for a
   single obstacle in a periodic flow.
-- Seams create **new joints**: a wall spanning the stored tile becomes collinear
-  segments meeting at `x = kL`. Joints are the hard case for the no-penetration
-  invariant, so §9.4.3 tests sliding across one.
 - Collision cost scales with element count, so a 13× tiling costs about 13× per
   collision check. No spatial index is planned. The docstring states the scaling.
 
@@ -3261,11 +3258,6 @@ cylinder.
 
 #### 9.4.3 What the oracle cannot check
 
-- **Seam joints.** A wall along the whole stored tile, tiled `(3, 1)`, gives collinear
-  segments meeting at `x = 1, 2`. Agents sliding along it across the joints must not
-  penetrate and must end where the analytic slide puts them. The same holds for a
-  moving wall and a 3D floor. The oracle shares the joints, so equality with it proves
-  nothing here.
 - **Non-periodic semantics.** Inside each tile, velocity equals the stored field
   interpolated at the wrapped position. The warning fires for an unflagged axis and for
   mismatched edges, and stays silent for flagged, matching data.
@@ -3299,7 +3291,8 @@ commit (each one separately authorized).
   builders and the new fixture, before any source change. The baseline passes
   trivially at this point, and from here on it guards every step.
 - **T1 — mesh copying as a pure function** (`_geom.tile_mesh(mesh, L, counts)`) with
-  its unit tests: the duplicate and moving-mesh fixes, the order, the seam check.
+  its unit tests: the duplicate and moving-mesh fixes, the order, the strictly-inside
+  refusal.
   Testable while `tile_domain` still raises. The duplicate fix is `master`-portable:
   log it in the cherry-pick queue.
 - **T2 — the core.** `tile_domain`, `Environment.tiling`, the guards (`ibmesh`
