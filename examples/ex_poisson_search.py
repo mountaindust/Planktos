@@ -10,6 +10,7 @@ of bits and pieces that can be pulled out and used in your own project!
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.colors import to_hex
 import planktos
 
 # We will assume that the target is in the middle of the domain with radius 0.5
@@ -51,9 +52,10 @@ class imsearch(planktos.Swarm):
         in_target = self.test_for_target(self.positions)
         self.props.loc[in_target, 'found'] = True
 
-        # Get the first three colors in the default colormap
+        # Get the first three colors in the default colormap, as hex strings so
+        #   that each fills a props entry as one value
         prop_cycle = plt.rcParams['axes.prop_cycle']
-        colors = prop_cycle.by_key()['color']
+        colors = [to_hex(c) for c in prop_cycle.by_key()['color']]
         self.searching_color = colors[0]
         self.found_color = colors[1]
         self.moving_color = colors[2]

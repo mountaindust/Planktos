@@ -79,9 +79,9 @@ jobs:
 
       # --runslow adds the parallelization checks, the plotting smokes and the
       # cross-version comparison. --runexamples adds the example scripts; those
-      # needing downloaded data skip themselves.
+      # needing downloaded data skip themselves. -rs prints why each skip did.
       - name: Run test suite
-        run: pytest --runslow --runexamples
+        run: pytest --runslow --runexamples -rs
 
   codespell:
     name: codespell

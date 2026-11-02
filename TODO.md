@@ -2004,3 +2004,21 @@ than raising.
 ⚠️ Everything else from the R5 review is **dyload-only** — it is inside
 `Environment.record` / `RunArchive` / `_frames.FrameSource`, none of which exist on
 `master`.
+
+### Open: `ex_poisson_search.py` crashed under matplotlib 3.11 *(2026-11-02)*
+
+The example filled its `color` prop with `np.full(N, colour)` straight from the default
+colour cycle. Under matplotlib 3.11 the cycle yields RGB tuples, which `np.full` tries to
+broadcast, so the script raised `ValueError` before its first step. Each colour is now
+passed through `matplotlib.colors.to_hex`. Found by CI's first `--runexamples` run.
+
+| What | Where | Applies cleanly to `master`? |
+|---|---|---|
+| The import and the `to_hex` conversion | `examples/ex_poisson_search.py` | **Yes** — `master`'s copy is identical |
+
+**Corresponding `changelog.txt` line**, filed under **1.1.0**:
+
+```
+- color setting in ex_poisson_search.py now compatible with matplotlib 3.11
+```
+
