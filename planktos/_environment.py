@@ -3981,9 +3981,11 @@ class Environment:
                     axHisty.set_position([left, bottom, width, height])
 
 
-            # add a grassy porous layer background (if porous layer present)
+            # add a grassy porous layer background (if porous layer present).
+            #   A private fixed-seed generator draws it, so the picture is the
+            #   same every time and numpy's global random state is untouched.
             if self.h_p is not None:
-                grass = np.random.rand(80)*self.L[0]
+                grass = np.random.default_rng(0).random(80)*self.L[0]
                 for g in grass:
                     ax.axvline(x=g, ymax=self.h_p/self.L[1], color='.5', zorder=0.5)
 
@@ -4073,9 +4075,10 @@ class Environment:
             ax.set_ylabel('Y')
             ax.set_zlabel('Z')
 
-            # add a grassy porous layer background (if porous layer present)
+            # add a grassy porous layer background (if porous layer present).
+            #   A private fixed-seed generator, as in 2D.
             if self.h_p is not None:
-                grass = np.random.rand(120,2)
+                grass = np.random.default_rng(0).random((120,2))
                 grass[:,0] *= self.L[0]
                 grass[:,1] *= self.L[1]
                 for g in grass:
