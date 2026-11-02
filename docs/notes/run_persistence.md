@@ -2997,7 +2997,7 @@ statistics read it, at two significant figures, so the difference never reaches 
 physics or a plotted digit. *(Matching the materialized mean is what criterion 2 asks.
 The alternative was the stored tile's own mean, which differs by the endpoint-weighting
 term, roughly 2% of the fluctuation on a 33-point grid. Settled 2026-11-02 by the
-criterion; revisit only if the user overrules.)*
+criterion, and confirmed by the user the same day.)*
 
 **The immersed mesh.**
 
@@ -3073,11 +3073,10 @@ and `get_raw_loaded_data` return the stored tile, which is correct for interpola
 their docstrings say so. `ex_IBAMR_ibmesh.py` prints `fshape` as "Flow shape is now…",
 and that text changes.
 
-**Open for the user: exports.** `save_fluid` and `save_2D_vorticity` write the stored
-tile under this plan. A materialized run would write the tiled field, which in 3D (the
-seafan's 13×) is exactly the disk and memory cost tiling exists to avoid.
-**Recommended:** keep the stored tile, say so in both docstrings, and name it as the
-deliberate exception to criterion 2.
+**Exports write the stored tile** (decided by the user 2026-11-02). `save_fluid` and
+`save_2D_vorticity` write one tile; both docstrings say so. This is the one deliberate
+exception to criterion 2: a materialized run would write the tiled field, which in 3D
+(the seafan's 13×) is exactly the disk and memory cost tiling exists to avoid.
 
 **`extend` is a separate pass** (decided 2026-11-02). It is not broken: it was removed
 on `dyload` in `3eb9d1d`, with linear extrapolation as the intended replacement, and

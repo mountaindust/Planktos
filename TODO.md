@@ -348,11 +348,14 @@ replace.
      non-square tilings; an array of cylinders as the headline case;
    - the build order T0–T6 (§9.5) and the restoration checklist (§9.6).
 
-   Built on a `tiling` branch off `dyload` (§9.0). **One question is open for the
-   user** (§9.1, "exports"): whether `save_fluid` / `save_2D_vorticity` write the
-   stored tile (recommended) or the tiled field. `Environment.extend` is now a
-   separate pass (Deferred, below). Tiling also **unblocks the prose-docs sweep** and
-   the paused docs stash.
+   Built on a `tiling` branch off `dyload` (§9.0), **in progress there** (2026-11-02).
+   **T0 done:** `tests/test_tiling_baseline.py` + `_tiling_baseline_runner.py` (the
+   scaffold, deleted at T6), `tests/_tiling_harness.py` (pixel capture, the oracle),
+   the `ib2d_fluid_dyadic` fixture, and `tests/test_tiling.py`'s checks of the oracle.
+   Next is T1.
+   Exports (`save_fluid` / `save_2D_vorticity`) write the stored tile — the user's
+   decision, §9.1. `Environment.extend` is now a separate pass (Deferred, below).
+   Tiling also **unblocks the prose-docs sweep** and the paused docs stash.
 6. ✅ **The 1.0.3 decision — settled (2026-08-19).** The patch release was cut from
    `master` and tagged `v1.0.3`; the cherry-pick queue at the bottom of this file is the
    record of what moved and what deliberately did not. **The next release is meant to be
