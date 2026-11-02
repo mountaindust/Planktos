@@ -17,29 +17,26 @@ def pytest_addoption(parser):
     '''Adds parser options'''
     parser.addoption('--runslow', action='store_true', default=False,
                      help='run slow tests')
-    parser.addoption('--runstreaming', action='store_true', default=False,
-                     help='run the data-streaming acceptance tests '
-                          '(tests/test_data_streaming/)')
+    parser.addoption('--runexamples', action='store_true', default=False,
+                     help='run the example scripts as written')
 
 def pytest_collection_modifyitems(config, items):
-    '''If test is marked with the pytest.mark.slow decorator, mark it to be
-    skipped, unless the --runslow option has been passed.'''
+    '''Skip tests marked slow unless --runslow has been passed, and tests marked
+    examples unless --runexamples has been passed.'''
     if not config.getoption("--runslow"):
         # --runslow not given in cli: skip slow tests
         skip_slow = pytest.mark.skip(reason="need --runslow option to run")
         for item in items:
             if "slow" in item.keywords:
                 item.add_marker(skip_slow)
-    # The data-streaming acceptance tests run whole simulations, so they are
-    # opt-in rather than part of the default run. --runstreaming and --runslow
-    # are independent: the slow members of that directory (the example scripts,
-    # the cross-version check, the movie renders) need both.
-    if not config.getoption("--runstreaming"):
-        skip_streaming = pytest.mark.skip(
-            reason="need --runstreaming option to run")
+    # The example scripts run whole simulations and take minutes between them,
+    # so they have their own flag, independent of --runslow.
+    if not config.getoption("--runexamples"):
+        skip_examples = pytest.mark.skip(
+            reason="need --runexamples option to run")
         for item in items:
-            if "streaming" in item.keywords:
-                item.add_marker(skip_streaming)
+            if "examples" in item.keywords:
+                item.add_marker(skip_examples)
     # skip vtk tests if unable to import vtk
     if not VTK:
         skip_vtk = pytest.mark.skip(reason="could not load VTK")

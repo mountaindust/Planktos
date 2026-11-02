@@ -536,17 +536,19 @@ The suite is organized into focused, deterministic, fast modules (overhauled
 2026-06). Run `pytest` from the repository root. **Two flags widen the run, and
 they are independent:**
 
-| Invocation | Covers | Time *(2026-10-29, Windows)* |
+| Invocation | Covers | Time *(2026-10-30, Windows)* |
 |---|---|---|
-| `pytest` | the focused modules | ~1 min |
-| `pytest --runslow` | plus the parallelization tests, the plotting smokes and the movie renders | ~1¼ min |
-| `pytest --runstreaming` | plus the fast half of `tests/test_data_streaming/` | ~1¼ min |
-| `pytest --runslow --runstreaming` | everything; most of the extra time is the example scripts | ~5 min |
+| `pytest` | the regular suite | ~1 min |
+| `pytest --runslow` | plus the parallelization tests, the plotting smokes, the movie renders and the cross-version comparison | ~1½ min |
+| `pytest --runexamples` | plus the example scripts, run as written | ~4 min |
+| `pytest --runslow --runexamples` | everything; this is what CI runs | ~4½ min |
 
 For the current count, run it. `pytest --durations=20` shows where the time goes.
 
 **Before a commit that touches the archive, the fluid streaming or the plotting
-paths, run both flags.**
+paths, and before a release, run both flags.** Examples needing downloaded data skip
+themselves where it is absent, as they do in CI, so only a machine holding that data
+runs them.
 
 - **Run** the whole thing with `pytest`; a specific area with e.g.
   `pytest tests/test_collisions_static.py`.
@@ -567,8 +569,8 @@ paths, run both flags.**
   assertions. `tests/fixtures/README.md` describes every committed fixture and its
   analytic field; regenerate them with `tests/fixtures/_gen_fixtures.py` rather than
   hand-editing a vtk.
-- **Markers** are registered in `pytest.ini`. `slow` needs `--runslow`, `streaming` needs
-  `--runstreaming`, and a test carrying both needs both flags.
+- **Markers** are registered in `pytest.ini`. `slow` needs `--runslow`, and `examples`
+  needs `--runexamples`.
 - **Non-automated** visual/exploratory scripts live in `tests/manual/` —
   excluded from collection via `collect_ignore` in `conftest.py` (at the
   repository root, not in `tests/`).
@@ -593,16 +595,10 @@ cycle for.** It is not a way to defer something inconvenient. The convention:
 
 Check with `pytest -rX` (lists xfails) or `pytest -rxX` (xfails and xpasses).
 
-**`tests/test_data_streaming/` is opt-in, behind `--runstreaming`** (its slow members
-want `--runslow` too). It is an adversarial acceptance suite covering the streaming story
-end to end — in-RAM, windowed replay, recorded replay, restart — and it costs more than
-the rest of the suite put together. It **never runs unless someone asks**, CI included, so:
-
-⚠️ **Run `pytest --runslow --runstreaming` after any change to the archive, the
-fluid streaming or the plotting paths, and before a release.**
-
-Its own `tests/test_data_streaming/README.md` is the standing record: the four
-claims, the verdict on each, and every finding with what fixed it.
+**`tests/test_data_streaming/` is an adversarial acceptance suite** covering the streaming
+story end to end — in-RAM, windowed replay, recorded replay, restart — and it runs with
+everything else. Its own `README.md` is the standing record: the four claims, the verdict
+on each, and every finding with what fixed it.
 
 ### Resolved defects & FTLE notes
 

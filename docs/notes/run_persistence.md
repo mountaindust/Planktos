@@ -2674,10 +2674,10 @@ recognizable as breaking the design rather than a test.
   subprocess mid-recording and reads the bytes back with raw `np.load`/`json.load`,
   since a round trip through our own reader can be self-consistently wrong.
 
-⚠️ **`tests/test_data_streaming/` is opt-in** (`--runstreaming`) and is the adversarial
-suite written from this note — four claims, end to end. Its own `README.md` is the
-standing record of the verdict on each and of every defect it found. Run it, with
-`--runslow`, after any change to the archive, the fluid streaming or the plotting paths.
+`tests/test_data_streaming/` is the adversarial suite written from this note — four
+claims, end to end. Its own `README.md` is the standing record of the verdict on each and
+of every defect it found. Run it with `--runslow --runexamples` after any change to the
+archive, the fluid streaming or the plotting paths.
 
 ### 6.3 Entry points for a cold start
 

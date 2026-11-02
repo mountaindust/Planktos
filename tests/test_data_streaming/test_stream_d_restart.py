@@ -30,12 +30,6 @@ import planktos
 from _streaming import (assert_same_state, copy_ib2d, ib2d_envir, run)
 
 
-# A goal line for work in progress rather than a regression suite: these run
-# whole simulations and are opt-in, via --runstreaming. The members also marked
-# slow (the example scripts, the cross-version check, the movie renders) need
-# --runslow as well.
-pytestmark = pytest.mark.streaming
-
 DT = 0.5
 STEPS = 8
 

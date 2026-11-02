@@ -32,7 +32,11 @@ jobs:
             os: ubuntu-22.04
 
     steps:
+      # The tags are what the cross-version test compares against; without them
+      # it skips.
       - uses: actions/checkout@v7
+        with:
+          fetch-tags: true
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v7
@@ -73,9 +77,11 @@ jobs:
               print(f'{name:12} {ver}')
           PY
 
-      # --runslow adds the parallelization checks and the plotting smokes.
+      # --runslow adds the parallelization checks, the plotting smokes and the
+      # cross-version comparison. --runexamples adds the example scripts; those
+      # needing downloaded data skip themselves.
       - name: Run test suite
-        run: pytest --runslow
+        run: pytest --runslow --runexamples
 
   codespell:
     name: codespell

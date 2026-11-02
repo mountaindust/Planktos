@@ -43,12 +43,6 @@ from _streaming import (IB2D_NDUMPS, REPO, LoadCounter, VorticityReadCounter,
                         vtk3d_envir, walk_frames)
 
 
-# A goal line for work in progress rather than a regression suite: these run
-# whole simulations and are opt-in, via --runstreaming. The members also marked
-# slow (the example scripts, the cross-version check, the movie renders) need
-# --runslow as well.
-pytestmark = pytest.mark.streaming
-
 WINDOW = 4
 STEPS = 14
 DT = 0.5            # dumps sit at t = 0, 1, ... 7; 14 steps of 0.5 cross them all
@@ -441,15 +435,6 @@ def test_two_renders_of_the_same_run_share_an_arrow_scale(tmp_path):
     assert a == b, 'arrow scale moved from {} to {}'.format(a, b)
     # ...and fmax did move, so this is not two readings of one drifting number.
     assert not np.isclose(np.linalg.norm(np.array(envir.flow.fmax)), a)
-
-
-def test_the_arrow_scale_is_the_one_the_archive_recorded(tmp_path):
-    # Which number the shared scale is: the extrema the archive recorded.
-    rec, envir, swrm = _recorded(tmp_path, fluid='quiver', steps=6)
-    stats = planktos.load_run(rec.path).dump_stats()
-    want = float(np.linalg.norm(np.asarray(stats['vmax'])))
-    got = _frames.FrameSource(swrm, fluid='quiver').quiver_scale
-    assert got == pytest.approx(want)
 
 
 # --------------------------------------------------------------------------- #

@@ -26,8 +26,8 @@ The claims, in the user's words:
 | `test_stream_d_restart.py` | 4 — checkpoint and restart |
 | `_streaming.py` | the shared harness (world builders, I/O counters, `walk_frames`) |
 
-Run with `pytest --runstreaming tests/test_data_streaming/`. Add `--runslow` for the example
-scripts, the cross-version comparison and the ffmpeg movie renders.
+These run with the ordinary `pytest`. Add `--runslow` for the cross-version comparison
+and the ffmpeg movie renders, and `--runexamples` for the example scripts.
 
 ---
 
@@ -147,7 +147,8 @@ repo-side test that pinned the old behavior became
 with a companion asserting `fmax` genuinely moved.
 
 Pinned: `test_stream_c_recorded_replay.py::test_two_renders_of_the_same_run_share_an_arrow_scale`
-(with `test_the_arrow_scale_is_the_one_the_archive_recorded` naming the wanted value)
+(with `test_archive_rendering.py::test_the_arrow_scale_comes_from_the_recorded_extrema`
+naming the wanted value)
 
 ### F4 (fixed) — no check that the frames to be drawn were covered by the recording
 

@@ -34,12 +34,6 @@ from _streaming import (IB2D_NDUMPS, LoadCounter, assert_same_run,
                         vtk3d_envir, walk_frames)
 
 
-# A goal line for work in progress rather than a regression suite: these run
-# whole simulations and are opt-in, via --runstreaming. The members also marked
-# slow (the example scripts, the cross-version check, the movie renders) need
-# --runslow as well.
-pytestmark = pytest.mark.streaming
-
 WINDOW = 4          # INUM: 5 resident time points out of 8
 STEPS = 14
 DT = 0.5            # the fixture's dumps sit at t = 0, 1, ... 7, so 14

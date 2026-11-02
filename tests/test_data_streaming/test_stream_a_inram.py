@@ -40,12 +40,6 @@ from _streaming import (REPO, FIXTURES, IB2D_NDUMPS, LoadCounter,
                         run_script, snapshot, vtk3d_envir, walk_frames)
 
 
-# A goal line for work in progress rather than a regression suite: these run
-# whole simulations and are opt-in, via --runstreaming. The members also marked
-# slow (the example scripts, the cross-version check, the movie renders) need
-# --runslow as well.
-pytestmark = pytest.mark.streaming
-
 BOX = FIXTURES / 'mesh_min' / 'box.vertex'
 
 
@@ -481,7 +475,7 @@ DATA_EXAMPLES = [
 ]
 
 
-@pytest.mark.slow
+@pytest.mark.examples
 @pytest.mark.parametrize('script', SELF_CONTAINED_EXAMPLES)
 def test_a_self_contained_example_runs_to_completion(script, tmp_path):
     # This example's mesh is an STL, which needs the optional numpy-stl.
@@ -499,7 +493,7 @@ def test_a_self_contained_example_runs_to_completion(script, tmp_path):
                                              proc.stderr[-4000:])
 
 
-@pytest.mark.slow
+@pytest.mark.examples
 @pytest.mark.parametrize('script', DATA_EXAMPLES)
 def test_an_example_needing_downloaded_data_runs_to_completion(script, tmp_path):
     needs_dir(REPO / 'examples' / 'ib2d_data', 'u.*.vtk',

@@ -130,7 +130,7 @@ as for vtk.)
 All tests can be run by typing `pytest` into a terminal in the base directory. 
 This requires installation of the optional pytest package. Add `--runslow` to
 include the slower checks (the parallelization tests and the plotting smoke
-tests).
+tests), and `--runexamples` to also run the example scripts.
 
 ## Overview
 

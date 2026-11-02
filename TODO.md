@@ -12,10 +12,9 @@ Temporal interpolation of dynamically-loaded data is **linear in time**
 (`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
 story.
 
-**Suite: 1351 passed / 139 skipped (`pytest`, ~60 s), 1489 / 1 (`pytest --runslow
---runstreaming`, ~5 min).** No failures, **and no xfails: the pre-release list is
-empty.** *(Full run re-measured 2026-10-29; the other configurations are the 2026-10-22
-counts plus the six unmarked tests added since.)*
+**Suite: 1440 passed / 49 skipped (`pytest`, ~1 min), 1488 / 1 (`pytest --runslow
+--runexamples`, ~4½ min).** No failures, **and no xfails: the pre-release list is
+empty.** *(Measured 2026-10-30.)*
 
 **The pre-release list is empty (2026-09-03).** `tests/test_data_streaming/` — the
 adversarial suite written from `run_persistence.md`, covering the streaming story end
@@ -306,8 +305,7 @@ returns. The user wants 1.1.0 out the door; ask before planning past (b).
    A per-capture `rndState` series was **dropped**: its only gain over the above is a
    bit-exact resume from an arbitrary capture, and stochastic difference is acceptable.
 
-   Finished against `tests/test_data_streaming/test_stream_d_restart.py` (run it with
-   `--runstreaming`): its five strict `xfail`s are the acceptance criteria, and each
+   Finished against `tests/test_data_streaming/test_stream_d_restart.py`: its five strict `xfail`s are the acceptance criteria, and each
    comes off with the sub-step that earns it. Three of them assert a file location
    §2.11.5 has since decided differently, so they are **retargeted** at the checkpoint
    rather than merely un-`xfail`ed, with behavioral round-trip tests beside them; the
@@ -1594,11 +1592,9 @@ every dataset in these units will hit this.
 
 ## How to run the tests
 
-- Fast loop: `pytest` (≈30s; skips `slow` / `vtk`-absent / `vtu`-absent).
-- Full: `pytest --runslow` (adds the parallelization checks, the plotting smokes,
-  the end-to-end movie renders and most of `test_data_streaming/`; ≈4 min).
-- `tests/test_data_streaming/` is slow and worth running on its own after any
-  change to the archive, the fluid streaming or the plotting paths.
+- Fast loop: `pytest`. Everything: `pytest --runslow --runexamples`, which is what to
+  run after any change to the archive, the fluid streaming or the plotting paths. See
+  "Tests" in `CLAUDE.md`.
 - List any `xfail`s with `pytest -rX` — a non-empty list means work is in flight.
 - Regenerate IB2d fixtures after editing the generator:
   `python tests/fixtures/_gen_fixtures.py`.
