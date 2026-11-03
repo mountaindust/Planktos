@@ -125,7 +125,11 @@ class Environment:
     Attributes
     ----------
     L : list of floats
-        length of the domain [x, y, [z]] in the stated units
+        length of the domain [x, y, [z]] in the stated units; the tiled length
+        once the domain is tiled
+    tiling : tuple of int
+        number of tiles along each axis, set by tile_domain; all ones when
+        untiled
     units : str
         A place to remind yourself of the spatial units you are working in. Note 
         that none of the methods of this class use this attribute in any way, 
@@ -146,7 +150,8 @@ class Environment:
         either way the Environment is left unchanged. A 3D triangle mesh can
         be used with a 2D fluid only if it is a 2D shape extruded straight
         along the out-of-plane axis (the geometry of a 2D simulation usually
-        is); the mesh is then replaced by that 2D shape.
+        is); the mesh is then replaced by that 2D shape. Assigning a fluid
+        after tile_domain raises ValueError.
     h_p : float
         height of porous region in analytic flows, e.g. Brinkman
     g : float
@@ -172,7 +177,8 @@ class Environment:
         is a point in space (so, two for a line, three for a triangle). A
         moving 2D mesh is TxNx2x2, one Nx2x2 mesh per time in ibmesh_times.
         Avoid mesh structures that intersect with a periodic boundary - behavior
-        related to this is not implemented.
+        related to this is not implemented. Assigning a mesh after tile_domain
+        raises ValueError.
     max_meshpt_dist : float or None
         maximum length of a static mesh segment in ibmesh, typically determined
         automatically. This is used in search algorithms to winnow down the
@@ -231,6 +237,10 @@ class Environment:
                  x_bndry='zero', y_bndry='zero', z_bndry='noflux', flow=None,
                  flow_times=None, periodic_dim=False, rho=None, mu=None, nu=None,
                  char_L=None, U=None, init_swarms=None, units='m', ibmesh_color=None):
+
+        # Tile counts once tile_domain has run. Set first: the flow and ibmesh
+        #   setters below consult it.
+        self._tiling = None
 
         # Save domain size, units
         if Lz is None:
@@ -482,6 +492,7 @@ class Environment:
         #   fit is computed before anything is stored, so a refusal leaves the
         #   Environment as it was. __init__ assigns the flow before ibmesh
         #   exists, hence getattr.
+        self._refuse_once_tiled('assign a fluid')
         if getattr(self, '_recorder', None) is not None:
             self._refuse_while_recording()
         mesh = getattr(self, 'ibmesh', None)
@@ -491,6 +502,23 @@ class Environment:
                 self.ibmesh = fitted
                 self.max_meshpt_dist = _geom.max_edge_length(fitted)
         self._flow = new_flow
+
+
+    @property
+    def ibmesh(self):
+        return self._ibmesh
+
+    @ibmesh.setter
+    def ibmesh(self, mesh):
+        # Every mesh loader assigns here, as does a direct assignment; the
+        #   tiled mesh is the one thing written past it, by tile_domain.
+        self._refuse_once_tiled('assign an immersed mesh')
+        self._ibmesh = mesh
+
+
+    @property
+    def tiling(self):
+        return (1,)*len(self.L) if self._tiling is None else self._tiling
 
 
     def _fit_ibmesh(self, mesh, flow):
@@ -550,6 +578,7 @@ class Environment:
             fluid_domain_LLC
         '''
 
+        self._refuse_once_tiled('move the immersed mesh')
         if self.flow is None:
             raise RuntimeError("No fluid velocity field loaded.")
         if self.flow.fluid_domain_LLC is None:
@@ -655,6 +684,7 @@ class Environment:
         set_two_layer_channel_flow
         set_canopy_flow
         '''
+        self._refuse_once_tiled('load a fluid')
         self._refuse_while_recording()
 
 
@@ -820,6 +850,7 @@ class Environment:
         .. [3] A. Defina and A.C. Bixio, (2005). "Mean flow and turbulence in 
            vegetated open channel flow," Water Resources Research, 41(7).
         '''
+        self._refuse_once_tiled('load a fluid')
         self._refuse_while_recording()
 
         # Get channel height
@@ -942,6 +973,7 @@ class Environment:
             Society, 130(596), 1-29.
 
         '''
+        self._refuse_once_tiled('load a fluid')
         self._refuse_while_recording()
 
         def zero_nonfinite(value):
@@ -1221,6 +1253,7 @@ class Environment:
             window from storage and splines that linearly. Use an int only
             when the dataset will not fit in memory: streaming it is slower.
         '''
+        self._refuse_once_tiled('load a fluid')
         self._refuse_while_recording()
 
 
@@ -1269,6 +1302,7 @@ class Environment:
             scalar to multiply the velocity by in order to convert units to 
             match the spatial grid units
         '''
+        self._refuse_once_tiled('load a fluid')
         self._refuse_while_recording()
 
 
@@ -1335,6 +1369,7 @@ class Environment:
             to each uncovered face instead, with a warning, and still uses the
             patches that exist.
         '''
+        self._refuse_once_tiled('load a fluid')
         self._refuse_while_recording()
 
 
@@ -1400,6 +1435,7 @@ class Environment:
             its position in the series, counting any dump a collection declares
             but which is absent. Times the files carry must agree with it.
         '''
+        self._refuse_once_tiled('load a fluid')
         self._refuse_while_recording()
 
 
@@ -1437,6 +1473,7 @@ class Environment:
         vel_conv : float, optional
             scalar to multiply the velocity by in order to convert units
         '''
+        self._refuse_once_tiled('load a fluid')
         self._refuse_while_recording()
 
         self.flow = fluid.ComsolVTUData(filename, periodic_dim, res, linear_interp, 
@@ -1579,6 +1616,7 @@ class Environment:
         ‘julian’, ‘all_leap’, ‘366_day’. Default is None which means the 
         calendar associated with the first input datetime instance will be used.
         '''
+        self._refuse_once_tiled('load a fluid')
         self._refuse_while_recording()
 
         
@@ -1736,6 +1774,8 @@ class Environment:
             scalar to multiply the mesh by in order to convert units
         '''
 
+        self._refuse_once_tiled('change the immersed mesh')
+
         path = Path(filename)
         if not path.is_file():
             raise FileNotFoundError("File {} not found!".format(filename))
@@ -1843,6 +1883,8 @@ class Environment:
             instead of calculating it from a loaded fluid velocity field, in the 
             case of the 'proximity' method
         '''
+
+        self._refuse_once_tiled('change the immersed mesh')
 
         # Every mesh this reads is 2D.
         if self.flow is not None and self.flow.ndim != 2:
@@ -2024,6 +2066,8 @@ class Environment:
         vertices.
         '''
 
+        self._refuse_once_tiled('change the immersed mesh')
+
         if self.ibmesh is None:
             print("No ibmesh found!")
             return
@@ -2111,6 +2155,8 @@ class Environment:
         read_stl_mesh_data describes.
         '''
 
+        self._refuse_once_tiled('change the immersed mesh')
+
         path = Path(filename)
         if not path.is_file(): 
             raise FileNotFoundError("File {} not found!".format(filename))
@@ -2144,72 +2190,123 @@ class Environment:
     #######################################################################
 
 
-    def tile_domain(self, x=1, y=1):
-        '''Tile the fluid flow and immersed meshes a number of times in the x
-        and/or y directions.
+    def tile_domain(self, x=1, y=1, z=None, tile_ibmesh=True):
+        '''Repeat the domain a number of times along each axis.
 
-        .. note::
-           **Temporarily unavailable.** See :meth:`planktos.fluid.FluidData.tile_flow`
-           for why: tiling was implemented as a virtual ndarray view that modern
-           scipy defeats, and that view has been removed. Tiling will return as a
-           position-wrapping implementation covering both 2D and 3D, after the
-           plotting work. See ``docs/notes/run_persistence.md``.
+        The fluid is extended periodically without copying its data: ``L``
+        becomes the tiled length, while ``flow.flow_points``, ``flow.fshape``
+        and every field the fluid returns stay one stored tile, and positions
+        are wrapped onto that tile when the fluid is interpolated.
 
-           Raising here rather than in ``tile_flow`` alone keeps the environment
-           from being left half-tiled (mesh and ``L`` updated, fluid not) when
-           there is no fluid loaded.
+        Tile last: after loading the fluid and the mesh, before the run starts,
+        and before creating swarms whose initial positions should span the
+        tiled domain. Once tiled, loading or assigning a fluid or a mesh, or
+        moving the mesh, raises ValueError. Tiling all ones does nothing.
 
-           The previous body is preserved commented-out below. Only its *fluid*
-           call is superseded by position-wrapping; the ibmesh tiling and ``L``
-           scaling are still correct as written and should be reused rather than
-           rewritten. See §9.3 of the note for the full restoration checklist.
+        A tiled axis along which the fluid is not flagged periodic
+        (``flow.periodic_dim``), or whose opposite edges differ, draws a
+        warning: the field jumps at each seam there.
 
         Parameters
         ----------
         x : int, default=1
-            number of tiles in the x direction (counting the one already there)
+            number of tiles along x, counting the stored one
         y : int, default=1
-            number of tiles in the y direction (counting the one already there)
+            number of tiles along y, counting the stored one
+        z : int, optional
+            number of tiles along z, counting the stored one; 3D only
+        tile_ibmesh : bool, default=True
+            copy the immersed mesh into every tile. Copies are ordered with x
+            slowest and the stored tile first, so element ``t*N + e`` is element
+            ``e`` of copy ``t`` and ``ib_collision_idx % N`` is the stored
+            element. Collision checks cost in proportion to the number of
+            copies. Along each tiled axis the mesh must lie strictly inside the
+            stored domain. False leaves the mesh as loaded.
 
         Raises
         ------
-        NotImplementedError
-            always, until the position-wrapping implementation lands
+        ValueError
+            for a count that is not an int >= 1, for z in 2D, if the domain is
+            already tiled or the run has started (time_history is not empty),
+            or if tile_ibmesh is True and the mesh touches or crosses the
+            domain boundary along a tiled axis. Nothing is changed.
+        RuntimeError
+            while recording
         '''
 
-        raise NotImplementedError(
-            'Tiling is temporarily unavailable. The previous implementation '
-            'relied on the FlowArray view, which modern scipy defeats by '
-            'coercing array-API objects with np.asarray; FlowArray has been '
-            'removed. Tiling will return as a position-wrapping implementation '
-            'for 2D and 3D. See docs/notes/run_persistence.md.')
+        if z is not None and len(self.L) == 2:
+            raise ValueError("z applies only to a 3D domain; this one is 2D.")
+        counts = (x, y) if len(self.L) == 2 else (x, y, 1 if z is None else z)
+        if any(int(k) != k or k < 1 for k in counts):
+            raise ValueError("Tile counts must be integers of at least 1; got "
+                             "{}.".format(tuple(counts)))
+        counts = tuple(int(k) for k in counts)
+        if all(k == 1 for k in counts):
+            return
 
-        # --- PREVIOUS IMPLEMENTATION, KEPT FOR RESTORATION ------------------
-        # Retained deliberately rather than left to git history: the mesh and
-        # domain-size handling below is still wanted verbatim when tiling
-        # returns. Only `self.flow.tile_flow(x,y)` is superseded (by the
-        # position-wrapping scheme in the note). Restore with the raise deleted.
-        #
-        # if self.flow is not None:
-        #     self.flow.tile_flow(x,y)
-        #
-        # # tile Lagrangian meshes
-        # if self.ibmesh is not None:
-        #     newmeshs = [self.ibmesh]
-        #     for ii in range(x):
-        #         for jj in range(y):
-        #             new_mesh = np.array(self.ibmesh)
-        #             new_mesh[:,:,0] += self.L[0]*ii
-        #             new_mesh[:,:,1] += self.L[1]*jj
-        #             newmeshs.append(new_mesh)
-        #     self.ibmesh = np.concatenate(newmeshs).astype(np.float64)
-        #
-        # # update environment dimensions
-        # self.L[0] *= x; self.L[1] *= y
-        #
-        # print("Fluid tiled. Planktos domain size is now {}.".format(self.L))
-        # self._reset_flow_deriv()
-        # --------------------------------------------------------------------
+        self._refuse_while_recording()
+        if self._tiling is not None:
+            raise ValueError("The domain is already tiled {}; tile_domain can "
+                             "be called only once.".format(self._tiling))
+        if len(self.time_history) > 0:
+            raise ValueError("Tile the domain before the run starts; this one "
+                             "has taken {} steps. reset() rewinds it.".format(
+                                 len(self.time_history)))
+
+        # Everything that can refuse runs before anything is changed.
+        mesh = self.ibmesh
+        if tile_ibmesh and mesh is not None:
+            mesh = _geom.tile_mesh(mesh, self.L, counts)
+        if self.flow is not None:
+            self._warn_on_tiling_seams(counts)
+
+        self._ibmesh = mesh
+        # A new list: the loaders set self.L = self.flow.L, so an in-place
+        #   edit would tile the fluid's own L.
+        self.L = [L*k for L, k in zip(self.L, counts)]
+        self._tiling = counts
+        if self.flow is not None:
+            self.flow._set_tiling(counts)
+        self._reset_flow_deriv()
+        print("Domain tiled {}. Planktos domain size is now {}.".format(
+              counts, self.L))
+
+
+
+    def _warn_on_tiling_seams(self, counts):
+        '''Warn, naming the axes, where tiling makes the fluid jump at a seam:
+        along a tiled axis not flagged periodic, or one whose opposite edges
+        differ in the data held in memory.'''
+
+        unflagged = [d for d, k in enumerate(counts)
+                     if k > 1 and not self.flow.periodic_dim[d]]
+        flagged = [d for d, k in enumerate(counts)
+                   if k > 1 and self.flow.periodic_dim[d]]
+        if unflagged:
+            warnings.warn(
+                "Tiling along {}, where the fluid is not flagged periodic "
+                "(periodic_dim): the tiled field jumps at each seam there, and "
+                "is differenced one-sided up to it.".format(
+                    ', '.join('xyz'[d] for d in unflagged)), UserWarning)
+        if not flagged:
+            return
+        # Close rather than equal, since a solver writing both edges of a
+        #   periodic grid may differ in the last bits.
+        mismatched = set()
+        for _, comps in self.flow.iter_resident_dumps():
+            for c in comps:
+                scale = np.abs(c).max()
+                for d in flagged:
+                    if d not in mismatched and not np.allclose(
+                            np.take(c, 0, axis=d), np.take(c, -1, axis=d),
+                            rtol=1e-9, atol=1e-12*scale):
+                        mismatched.add(d)
+        if mismatched:
+            warnings.warn(
+                "Tiling along {}, where the fluid is flagged periodic but its "
+                "opposite edges differ: the tiled field jumps at each seam "
+                "there.".format(', '.join('xyz'[d] for d in sorted(mismatched))),
+                UserWarning)
 
 
     #######################################################################
@@ -2503,6 +2600,17 @@ class Environment:
                 "Call envir.stop_recording() first to proceed.".format(self._recorder.path))
 
 
+    def _refuse_once_tiled(self, action):
+        '''Raise ValueError if tile_domain has run. ``action`` completes
+        "Cannot ..." in the message.'''
+
+        if getattr(self, '_tiling', None) is not None:
+            raise ValueError(
+                "Cannot {} after tile_domain{}: tiling is the last operation on "
+                "the domain. Load the fluid and the mesh first, then "
+                "tile.".format(action, self._tiling))
+
+
     def move_swarms(self, dt=1.0, ib_collisions='sliding', 
                     silent=False):
         '''Move all Swarms in the Environment.
@@ -2734,7 +2842,19 @@ class Environment:
             flow_points = self.flow.flow_points
 
         # Treat potential periodicity in fluid domain
-        if any(self.flow.periodic_dim):
+        if self._tiling is not None:
+            # A tiled axis wraps by the tiled extent first, exactly as
+            #   interpolating the materialized tiled field would, and then onto
+            #   the stored tile, which makes the two agree for every position,
+            #   outside the domain included. Other axes are treated as below.
+            mod_positions = np.array(positions)
+            for n, k in enumerate(self._tiling):
+                L_tile = flow_points[n][-1]
+                if k > 1:
+                    mod_positions[:,n] = positions[:,n] % (L_tile*k) % L_tile
+                elif self.flow.periodic_dim[n]:
+                    mod_positions[:,n] = positions[:,n] % L_tile
+        elif any(self.flow.periodic_dim):
             mod_positions = np.array(positions)
             for n,dim_bool in enumerate(self.flow.periodic_dim):
                 if dim_bool:
@@ -2826,6 +2946,9 @@ class Environment:
         comps = [flow_now[n] for n in range(3 if DIM3 else 2)]
         fluid_speed = np.sqrt(sum(c**2 for c in comps))
 
+        if self._tiling is not None:
+            # the mean over the tiled grid
+            return self.flow._tiled_mean(fluid_speed)
         return np.mean(fluid_speed)
 
 
@@ -3155,7 +3278,7 @@ class Environment:
         ----------
         grid_dim : tuple of int 
             size of the grid in each dimension (x, y, [z]). Defaults to the 
-            fluid grid.
+            fluid grid, across the tiled domain when tiled.
         testdir : str
             grid points can heuristically be removed from the interior of 
             immersed structures. To accomplish this, a line will be drawn from 
@@ -3262,7 +3385,7 @@ class Environment:
                 "mesh, or compute FTLE on a fluid-only copy of the environment.")
 
         if grid_dim is None:
-            grid_dim = tuple(len(pts) for pts in self.flow.flow_points)
+            grid_dim = tuple(len(pts) for pts in self.flow.tiled_points)
 
         if len(grid_dim) == 3:
             print("Warning: FTLE has not been well tested for 3D cases!")

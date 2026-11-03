@@ -352,10 +352,12 @@ class Swarm:
 
     Examples
     --------
-    Create a default Swarm in an Environment with some fluid data loaded.
+    Create a default Swarm in an Environment with some fluid data loaded and
+    tiled three times in x and y.
 
     >>> envir = planktos.Environment()
     >>> envir.read_IBAMR3d_vtk_data('../tests/IBAMR_test_data', d_start=5, d_finish=None)
+    >>> envir.tile_domain(3,3)
     >>> swrm = Swarm(envir=envir)
 
     '''

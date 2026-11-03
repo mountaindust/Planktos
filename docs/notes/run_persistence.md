@@ -3316,19 +3316,19 @@ docs and prose. **This is the complete list**; work down it in T2–T5, and dele
 subsection once it is empty.
 
 **Source — remove the gates:**
-- [ ] `planktos/fluid.py` — `FluidData.tile_flow`: **removed** (§9.1), with its
+- [x] `planktos/fluid.py` — `FluidData.tile_flow`: **removed** (§9.1), with its
       commented-out body. The `fshape`/`flow_points` arithmetic it preserved becomes
       `tiled_points`.
-- [ ] `planktos/_environment.py` — `Environment.tile_domain`: the new implementation.
+- [x] `planktos/_environment.py` — `Environment.tile_domain`: the new implementation.
       Of the commented-out body, `_reset_flow_deriv()` and the idea of scaling `L`
       survive. The mesh loop is replaced by `_geom.tile_mesh`, since it carries both
       bugs. The in-place `L` edit is replaced, because of the aliasing. Delete the
       commented block.
-- [ ] `planktos/_swarm.py` — the `Swarm` class docstring example lost its
+- [x] `planktos/_swarm.py` — the `Swarm` class docstring example lost its
       `>>> envir.tile_domain(3,3)` line. Restore it.
 
 **Tests:**
-- [ ] `tests/test_flow_generation.py` — delete `test_tile_domain_raises_not_implemented`,
+- [x] `tests/test_flow_generation.py` — delete `test_tile_domain_raises_not_implemented`,
       `test_tile_domain_leaves_environment_untouched` and
       `test_tile_flow_raises_on_fluiddata_directly`, plus the section comment above
       them. The replacements are §9.4. `test_extend_grows_domain_and_copies_edges`

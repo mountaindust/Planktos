@@ -353,7 +353,11 @@ replace.
    scaffold, deleted at T6), `tests/_tiling_harness.py` (pixel capture, the oracle),
    the `ib2d_fluid_dyadic` fixture, and `tests/test_tiling.py`'s checks of the oracle.
    **T1 done:** `_geom.tile_mesh`, which refuses a mesh not strictly inside the stored
-   tile along every tiled axis (the user's decision, §9.1). Next is T2.
+   tile along every tiled axis (the user's decision, §9.1).
+   **T2 done:** `tile_domain`, `tiling`, the guards (`ibmesh` is a property), the
+   two-step wrap, `FluidData`'s tiling helpers and weighted means, FTLE's default
+   grid, the seam warnings. Next is T3. `CLAUDE.md` still describes tiling as
+   raising, and lists `tile_flow` on `FluidData`, until T5's prose pass.
    Exports (`save_fluid` / `save_2D_vorticity`) write the stored tile — the user's
    decision, §9.1. `Environment.extend` is now a separate pass (Deferred, below).
    Tiling also **unblocks the prose-docs sweep** and the paused docs stash.

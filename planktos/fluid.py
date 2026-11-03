@@ -109,6 +109,12 @@ class FluidData:
         Minimum velocity in each direction over all data seen so far.
     fmax : tuple
         Maximum velocity in each direction over all data seen so far.
+    tiling : tuple of int
+        Number of tiles along each axis, set by ``Environment.tile_domain``; all
+        ones when untiled. Tiling repeats the stored grid without copying it, so
+        ``flow_points``, ``fshape`` and every field returned describe one tile.
+    tiled_points : tuple of 1D ndarrays
+        Grid coordinates across the tiled domain.
     '''
 
     # Axes of the source grid that were one point thick and were dropped on
@@ -116,6 +122,9 @@ class FluidData:
     #   that collapse such axes set it; Environment reads it to know which axis
     #   to drop from a 3D immersed mesh.
     _flat = ()
+    # Tile counts per axis once Environment.tile_domain has run; None until
+    #   then, and None is what keeps every untiled code path as it was.
+    _tiling = None
 
     def __init__(self, flow, flow_points, flow_times=None, INUM=None,
                  periodic_dim=False, fluid_domain_LLC=None):
@@ -425,7 +434,10 @@ class FluidData:
         '''
 
         for n, f in enumerate(flow):
-            means = np.mean(f, axis=tuple(range(1, f.ndim)))
+            if self._tiling is None:
+                means = np.mean(f, axis=tuple(range(1, f.ndim)))
+            else:
+                means = self._tiled_mean(f)
             self._dump_means[idx_start:idx_start+len(means), n] = means
 
 
@@ -561,6 +573,8 @@ class FluidData:
             if means is None:
                 # The load did not cover both bracketing dumps. Reduce the field
                 # we now hold; it is the same value, just paid for the hard way.
+                if self._tiling is not None:
+                    return tuple(float(self._tiled_mean(f)) for f in flow)
                 return tuple(float(np.mean(f)) for f in flow)
         return means
 
@@ -727,75 +741,130 @@ class FluidData:
     
 
 
-    def tile_flow(self, x=1, y=1):
-        '''Tile the fluid flow a number of times in the x and/or y directions.
+    @property
+    def tiling(self):
+        '''Number of tiles along each axis; all ones when untiled.'''
 
-        .. note::
-           **Temporarily unavailable.** Tiling will return as a
-           position-wrapping implementation that works in both 2D and 3D without
-           materializing the tiled field. The previous body is preserved
-           commented-out below.
+        if self._tiling is None:
+            return (1,)*len(self.flow_points)
+        return self._tiling
+
+
+    @property
+    def tiled_points(self):
+        '''Grid coordinates across the tiled domain, one array per axis.
+
+        Along an axis tiled k times with N stored points there are k(N-1)+1,
+        ``fp[1:] + n*fp[-1]`` appended for each extra tile. ``flow_points``
+        itself when untiled.
+        '''
+
+        if self._tiling is None:
+            return self.flow_points
+        return tuple(fp if k == 1 else
+                     np.concatenate([fp] + [fp[1:] + n*fp[-1] for n in range(1, k)])
+                     for fp, k in zip(self.flow_points, self._tiling))
+
+
+    def _tiled_index(self, d):
+        '''The stored index each point of the tiled grid reads along axis d.'''
+
+        # A tiled point at v*h wraps onto the stored tile at (v mod (N-1))*h,
+        #   just as interpolate_flow wraps a position, so a tiled field read
+        #   through this map is the field the simulation sees at every node.
+        N = len(self.flow_points[d])
+        if self.tiling[d] == 1:
+            return np.arange(N)
+        return np.arange(self.tiling[d]*(N-1) + 1) % (N-1)
+
+
+    def materialize_tiled(self, field):
+        '''Replicate a field on the stored grid across the tiled domain.
+
+        Applies to the trailing spatial axes, so a leading time axis is kept.
+        The result is the product of the tile counts times the size of
+        ``field``. Returns ``field`` itself when untiled.
 
         Parameters
         ----------
-        x : int, default=1
-            number of tiles in the x direction (counting the one already there)
-        y : int, default=1
-            number of tiles in the y direction (counting the one already there)
+        field : ndarray
+            ([t],i,j,[k]) on the stored grid, e.g. a velocity component or the
+            vorticity
 
-        Raises
-        ------
-        NotImplementedError
-            always, until the position-wrapping implementation lands
+        Returns
+        -------
+        ndarray on ``tiled_points``
         '''
 
-        raise NotImplementedError(
-            'Tiling is temporarily unavailable. The previous implementation '
-            'relied on the FlowArray view, which modern scipy defeats by '
-            'coercing array-API objects with np.asarray; FlowArray has been '
-            'removed. Tiling will return as a position-wrapping implementation '
-            'for 2D and 3D. See docs/notes/run_persistence.md.')
+        if self._tiling is None:
+            return field
+        lead = field.ndim - len(self.flow_points)
+        for d, k in enumerate(self._tiling):
+            if k > 1:
+                field = np.take(field, self._tiled_index(d), axis=lead+d)
+        return field
 
-        # --- PREVIOUS IMPLEMENTATION, KEPT FOR RESTORATION ------------------
-        # Retained deliberately rather than left to git history. The `f.tiling`
-        # propagation is dead (FlowArray and the spline `tiling` attributes are
-        # gone), but the fshape arithmetic and the flow_points extension are the
-        # shape/geometry half of the "public geometry reflects the tiled domain,
-        # stored data stays the base tile" rule, and carry over as-is.
-        #
-        # TIME_DEP = self.flow_times is not None
-        #
-        # self.tiling = (x,y)
-        # new_flow_shape = list(self.fshape)
-        #
-        # # get new dimensions and pass to flow objects
-        # if not TIME_DEP:
-        #     for dim,tnum in enumerate(self.tiling):
-        #         new_flow_shape[dim] += (self.fshape[dim]-1)*(tnum-1)
-        #     self.fshape = tuple(new_flow_shape)
-        #     # Update tiling of FlowArray objects
-        #     for f in self._flow:
-        #         f.tiling = self.tiling
-        # else:
-        #     for dim,tnum in enumerate(self.tiling):
-        #         new_flow_shape[dim+1] += (self.fshape[dim+1]-1)*(tnum-1)
-        #     self.fshape = tuple(new_flow_shape)
-        #     # Update tiling of fCubicSpline objects
-        #     for f in self._flow:
-        #         f.tiling = self.tiling
-        #         assert f.shape[1:] == self.fshape[1:], "Tiling did not propagate correctly"
-        #
-        # # extend flow_points
-        # flow_points = []
-        # for d,fp in enumerate(self.flow_points[:2]):
-        #     flow_points.append(np.concatenate(
-        #         [fp] + [fp[1:]+fp[-1]*n for n in range(1,self.tiling[d])]
-        #         ))
-        # if len(self.flow_points) == 3:
-        #     flow_points.append(self.flow_points[2])
-        # self.flow_points = tuple(flow_points)
-        # --------------------------------------------------------------------
-    
+
+    def tiled_strided(self, field, strides):
+        '''Every ``strides[d]``-th point of the tiled field along each axis.
+
+        Equal to ``materialize_tiled(field)`` sliced by ``strides``, without
+        building the tiled field. Its coordinates are
+        ``tiled_points[d][::strides[d]]``.
+
+        Parameters
+        ----------
+        field : ndarray
+            ([t],i,j,[k]) on the stored grid
+        strides : sequence of int, one per spatial axis
+
+        Returns
+        -------
+        ndarray
+        '''
+
+        lead = field.ndim - len(self.flow_points)
+        for d, s in enumerate(strides):
+            field = np.take(field, self._tiled_index(d)[::s], axis=lead+d)
+        return field
+
+
+    def _tiled_mean(self, field):
+        '''Node mean over the tiled grid of the trailing spatial axes of
+        ``field``, as a materialized field's np.mean would give, to roundoff.'''
+
+        # Through _tiled_index, stored index 0 appears k+1 times along an axis
+        #   tiled k times, the interior k times and index N-1 never. The
+        #   weights are separable, so contract one axis at a time, last first.
+        for k in reversed(self.tiling):
+            if k == 1:
+                field = field.mean(axis=-1)
+            else:
+                w = np.full(field.shape[-1], float(k))
+                w[0] = k + 1
+                w[-1] = 0
+                field = field @ w / w.sum()
+        return field
+
+
+    def _set_tiling(self, counts):
+        '''Record the domain's tiling and recompute the per-dump means as the
+        tiled domain's. Called by ``Environment.tile_domain``.'''
+
+        self._tiling = tuple(counts)
+        if self.flow_times is None:
+            self._dump_means = np.array([self._tiled_mean(f) for f in self._flow])
+            return
+        # A dump not in memory loses its mean and reloads on demand, as a
+        #   never-loaded dump does.
+        means = np.full_like(self._dump_means, np.nan)
+        for t_idx, comps in self.iter_resident_dumps():
+            means[t_idx] = [self._tiled_mean(f) for f in comps]
+        self._dump_means = means
+        if self._mean_interp is not None:
+            self._mean_interp = fCubicSpline(self.flow_times, self._dump_means,
+                                             extrapolate=(True, True))
+
 
 
     def get_vorticity(self, time=None, t_idx=None):
