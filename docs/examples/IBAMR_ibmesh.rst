@@ -32,16 +32,17 @@ This data was generated with periodic boundary conditions in the x and y
 directions, simulating an infinite array of cylinders. This means that we
 can tile our environment if we like, getting a bigger domain for the agents!
 In this case, let's tile the environment to a 3x3 grid with respect to its
-original size. ::
+original size. Tiling comes last, after the fluid and the mesh are loaded. This
+data was resampled onto a rectilinear grid, so its opposite edges do not match
+exactly, and ``tile_domain`` warns with the size of the mismatch (here about
+0.1% of the flow speed). ::
 
     envir.tile_domain(3,3)
     envir.plot_flow()
 
-.. warning::
-   ``tile_domain`` currently raises ``NotImplementedError``. Tiling is
-   temporarily unavailable while the fluid-data interface is reworked, and will
-   return as a position-wrapping implementation covering both 2D and 3D. This
-   part of the example does not run until then.
+Notice that the cylinder mesh got tiled too! The fluid data is not copied:
+``envir.flow`` still holds the one stored tile, and agent positions are wrapped
+onto it.
 
 .. image:: ../_static/IBAMR_tiled.png
 

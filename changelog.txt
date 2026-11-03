@@ -4,8 +4,14 @@ Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids whe
 - New FluidData class (per-source subclasses); all loaded fluid data is now a FluidData instance.
 - Fluid data handling moved out of Environment into a new fluid module.
 - Velocity field components are plain ndarrays; all numpy/scipy/matplotlib operations work on them directly.
-- tile_flow is now Environment.tile_domain (implemented on FluidData).
-- Domain tiling temporarily raises NotImplementedError; it returns with 2D and 3D support.
+- tile_flow is now Environment.tile_domain.
+- tile_domain tiles 2D and 3D domains (new z) without copying the fluid data.
+- tile_domain(tile_ibmesh=False) leaves the immersed mesh untiled.
+- Bug fix: tile_domain no longer duplicates the base mesh, and now tiles moving meshes correctly.
+- tile_domain refuses an immersed mesh touching the domain boundary along a tiled axis.
+- Loading fluid or meshes after tile_domain, or calling it mid-run, raises ValueError.
+- Tiled fluid that is not periodic now jumps at each seam; tile_domain warns, giving the jump size.
+- calculate_FTLE's default grid spans a tiled domain at the fluid's own resolution.
 - Environment.extend was removed.
 - FluidData is documented in the API reference, including the INUM interpolation-in-time tradeoff.
 - Plots now show mean agent speed and its spread in place of mean and max fluid speed; plotting no longer loads fluid data for statistics.

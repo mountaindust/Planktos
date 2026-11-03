@@ -43,7 +43,7 @@ too big to hold at once.
 | **B** | **Fluid-side streaming** — per-dump means, vorticity by regime, whole-run extrema | dyload: never re-stream the dataset to draw a picture of it | **[done]** — §6.1 B1–B3, 2026-08-25 |
 | **C** | **Rendering** — frame selection by time, archive-backed `plot_all`, global colour/arrow scales | consumes A and B | **[done]** — §6.1 C1–C2, 2026-08-27 |
 | **R** | **Full-state reboot** — a checkpoint beside the archive, a reader that turns a directory back into an `Environment` and its `Swarm`s, and appending to the archive a run resumed from | the third problem this architecture solves, and the one A was built for: a run that outlives the process that made it | **[done]** — §6.1 R0–R6, 2026-08-31 to 2026-09-08 |
-| **D** | **Tiling** — position-wrapping, memory-free, 2D and 3D, with optional mesh tiling | tiling has raised `NotImplementedError` since the `FlowArray` removal | plan settled 2026-11-02 (§9), not built; `extend` split out to its own pass |
+| **D** | **Tiling** — position-wrapping, memory-free, 2D and 3D, with optional mesh tiling | tiling had raised `NotImplementedError` since the `FlowArray` removal | **[done]** — §9, T0–T6 on the `tiling` branch, 2026-11-02 to 2026-11-03, merged into `dyload`; `extend` split out to its own pass |
 
 ⚠️ **Two lettering schemes overlap, and the letters do not agree.** The components here
 are A, B, C, R, D; the build steps in §6.1 are Step 0, A, B, C, R, D — and **Step D is
@@ -79,10 +79,7 @@ first, since each settled state the archive was going to store.
 
 What is left in this note:
 
-1. **§9 — tiling**, the one unbuilt component, planned in full (2026-11-02): the
-   design, a consumer audit, tests against ground truth, a build order (T0–T6), and a
-   restoration checklist (§9.6) for the notices gating it off left behind.
-2. **§7 — the prose pass**, which rides on §9 because §9 decides what that prose
+1. **§7 — the prose pass**, which rides on §9 because §9 decides what that prose
    describes. One new example is owed there in its own right: agents arriving mid-run
    (§8.1).
 
@@ -2863,16 +2860,17 @@ present against how many you started with", which stays meaningful for an open s
 
 ## 9. Component D — tiling
 
-*(Plan settled 2026-11-02, from a full consumer audit and the user's decisions; nothing in
-this section is built yet. `extend` was split out into a pass of its own on the same day —
-see the end of §9.1.)*
+*(Settled 2026-11-02, from a full consumer audit and the user's decisions, built
+2026-11-02 to 2026-11-03 on the `tiling` branch, and merged into `dyload`. This section is the record of what was
+decided and why; `tests/test_tiling.py` holds it in place. `extend` was split out into a
+pass of its own — see the end of §9.1.)*
 
 Done once, for 2D **and** 3D together, with `tests/IBAMR_test_data/` available to verify
 the 3D path end to end. This is the last thing gated off by the `FlowArray` removal
 (Appendix A) that has not come back.
 
-**The acceptance criteria are the user's, and §9.4 turns each into tests against ground
-truth:**
+**The acceptance criteria are the user's, and §9.3 says how each is tested against
+ground truth:**
 
 1. **Tiling off ⇒ nothing changes.** Every output of an untiled run — simulation,
    fluid accessors, plots, archives, exports — is identical to what the code produced
@@ -2895,7 +2893,7 @@ work. `dyload` stays usable for anything else meanwhile (the `master` merge, the
 docs stash). And `git diff dyload...tiling` is the whole change, for review.
 
 Merge back with a merge commit, not a squash, so the step commits survive. The baseline
-test (§9.4.1) is deleted in the merge commit: after the merge there is no "before" left
+test (§9.3) is deleted in the merge commit: after the merge there is no "before" left
 to compare against.
 
 ### 9.1 The design
@@ -2904,8 +2902,7 @@ A tiled domain is a periodic extension, and `interpolate_flow` *already* impleme
 periodic extension by wrapping query positions. So tiling never needs a big array on any
 hot path: the fluid stays one stored tile, positions are wrapped into it, and `L` grows.
 
-**The rule** (revised 2026-11-02 — the previous version said "reported grid shape"
-reflects the tiled domain, which the audit showed cannot work):
+**The rule:**
 
 > **`Environment.L` and the plotted extent reflect the *tiled* domain. `flow_points`,
 > `fshape` and every field the fluid returns describe the *stored* tile. Nothing
@@ -2919,7 +2916,7 @@ Tiled geometry is derived where a consumer needs it, through the virtual grid be
 
 **The API.**
 
-    Environment.tile_domain(x=1, y=1, z=1, tile_ibmesh=True)
+    Environment.tile_domain(x=1, y=1, z=None, tile_ibmesh=True)
     Environment.tiling        -> tuple of int, one per axis; all ones when untiled
 
 - `z` is accepted only in 3D (`ValueError` otherwise). Every count is an int ≥ 1.
@@ -2969,9 +2966,13 @@ the whole `tiling` × `periodic_dim` interaction:
 **Non-periodic data** (decision 4): inside each tile the field is exactly the stored
 field, so the seams carry whatever jump separates the data's opposite edges, and
 derivatives there are one-sided. `master` instead ramped across the first cell of each
-new tile. `tile_domain` **warns**, naming the axes, when a tiled axis is not flagged
-periodic or when its opposite edges differ in the resident data. The changelog records
-the seam change, since it shifts results near seams for non-periodic data.
+new tile. `tile_domain` **warns**, naming the axes and judged from the resident data,
+where a tiled axis's opposite edges differ, giving that jump as a share of the largest
+velocity component; and where an axis not flagged periodic has matching edges but a field
+that varies along it, since it is still differenced one-sided at each seam. An analytic
+flow, unflagged but uniform along its tiled axes, draws neither (user's choice
+2026-11-03). The changelog records the seam change, since it shifts results near seams
+for non-periodic data.
 
 **The virtual tiled grid.** Along a tiled axis with `N` stored points the tiled grid has
 `k(N-1)+1` points: coordinates `fp[1:] + n·fp[-1]` appended per tile, and virtual
@@ -2994,10 +2995,12 @@ non-resident dumps dropped (they reload on demand, as a never-loaded dump alread
 This reproduces the materialized value to roundoff, not bitwise, since the sum runs in a
 different order. Only the plot statistics text and the archive's per-capture
 statistics read it, at two significant figures, so the difference never reaches the
-physics or a plotted digit. *(Matching the materialized mean is what criterion 2 asks.
+physics, and reaches a plotted digit only for a component whose mean is zero: there
+each side prints its own roundoff (found at T3: `9.1e-19` tiled, `2.5e-19`
+materialized), which an untiled plot already does. *(Matching the materialized mean is what criterion 2 asks.
 The alternative was the stored tile's own mean, which differs by the endpoint-weighting
 term, roughly 2% of the fluctuation on a 33-point grid. Settled 2026-11-02 by the
-criterion; revisit only if the user overrules.)*
+criterion, and confirmed by the user the same day.)*
 
 **The immersed mesh.**
 
@@ -3012,20 +3015,17 @@ criterion; revisit only if the user overrules.)*
   Moving meshes offset `[..., d]` and concatenate along the element axis; every copy
   moves in phase, as a periodic fluid implies. `ibmesh_times` and `max_meshpt_dist`
   are unchanged by tiling.
-- **Copies must not cross or coincide.** The mesh assumption (elements meet only at
-  shared vertices) has to survive tiling, so `tile_domain` refuses, naming the
-  elements, when copies would cross or produce coincident elements. A wall on both
-  `x=0` and `x=L` is the obvious source of coincident elements, and a mesh reaching
-  more than half a tile past an edge the obvious source of crossings. Only elements
-  extending past a seam or lying in one need checking. 2D uses `seg_intersect_2D`.
-  3D checks triangle edges against triangles with `seg_intersect_3D_triangles`, plus
-  an exact-duplicate check for coplanar coincidence.
+- **The mesh must lie strictly inside the stored tile along every tiled axis**
+  (decided by the user 2026-11-02): `0 < x_d < L_d` for every vertex in every frame,
+  else `tile_domain` refuses, naming the elements and axes. Copies then never touch, so
+  the mesh assumption (elements meet only at shared vertices) survives tiling with no
+  geometry tests at all, and no seam joints appear. A moving mesh is linear between
+  frames, so checking its frames is exact. In practice nothing is refused: the CFD
+  solvers themselves fail on a structure touching the domain boundary. Untiled axes are
+  not checked, as no copy lies across them.
 - `tile_ibmesh=False` leaves the mesh as loaded — for a mesh already describing the
   whole tiled domain (loaded before tiling, extending past the stored tile), or for a
   single obstacle in a periodic flow.
-- Seams create **new joints**: a wall spanning the stored tile becomes collinear
-  segments meeting at `x = kL`. Joints are the hard case for the no-penetration
-  invariant, so §9.4.3 tests sliding across one.
 - Collision cost scales with element count, so a 13× tiling costs about 13× per
   collision check. No spatial index is planned. The docstring states the scaling.
 
@@ -3055,9 +3055,13 @@ criterion; revisit only if the user overrules.)*
 - Vorticity on disk stays the stored tile, whether written beside the source or into
   the archive. That is smaller than a materialized run's, and replay replicates it for
   display. The stamps are unaffected, since the field is unchanged.
-- `provenance['environment']['tiling'] = {'x', 'y', 'z', 'tile_ibmesh'}`, present
-  only when tiled. `restore()` replays `tile_domain` after the fluid and mesh calls
-  and before `check_against`. "Last operation" makes that position always right.
+- `provenance['environment']['tiling'] = {'x', 'y', 'z', 'tile_ibmesh', 'tile_L'}`,
+  present only when tiled (`z` only in 3D). `tile_L` is the stored tile's `L`, which
+  `restore()` constructs the Environment with, since an analytic generator builds its
+  grid over it. `restore()` replays `tile_domain` after the fluid and mesh calls and
+  before `check_against`. "Last operation" makes that position always right. When the
+  fluid or mesh cannot be replayed (arrays given to `Environment()`), it warns and
+  leaves the domain untiled, so that they can still be set and then tiled.
 - **The fingerprint gains a `tiling` key only when tiled.** `compare_fingerprints`
   reports a key present on one side as a mismatch. Writing it unconditionally would
   make every existing archive stop matching, while writing it only when tiled leaves
@@ -3070,14 +3074,13 @@ criterion; revisit only if the user overrules.)*
 takes the stored count and spaces it over `L`, diluting resolution by `k`.
 `envir.flow[0]`, `flow(t)`, `get_vorticity`, `get_dudt`, `calculate_DuDt`, `mag_grad`
 and `get_raw_loaded_data` return the stored tile, which is correct for interpolation;
-their docstrings say so. `ex_IBAMR_ibmesh.py` prints `fshape` as "Flow shape is now…",
-and that text changes.
+their docstrings say so. `ex_IBAMR_ibmesh.py`, which printed `fshape` as "Flow shape is
+now…", prints the domain size instead.
 
-**Open for the user: exports.** `save_fluid` and `save_2D_vorticity` write the stored
-tile under this plan. A materialized run would write the tiled field, which in 3D (the
-seafan's 13×) is exactly the disk and memory cost tiling exists to avoid.
-**Recommended:** keep the stored tile, say so in both docstrings, and name it as the
-deliberate exception to criterion 2.
+**Exports write the stored tile** (decided by the user 2026-11-02). `save_fluid` and
+`save_2D_vorticity` write one tile; both docstrings say so. This is the one deliberate
+exception to criterion 2: a materialized run would write the tiled field, which in 3D
+(the seafan's 13×) is exactly the disk and memory cost tiling exists to avoid.
 
 **`extend` is a separate pass** (decided 2026-11-02). It is not broken: it was removed
 on `dyload` in `3eb9d1d`, with linear extrapolation as the intended replacement, and
@@ -3112,282 +3115,71 @@ long as it did. Meanwhile the subclass corrupted ordinary numpy operations on fl
 the tiling consumers in the tree (`examples/ex_IBAMR_ibmesh.py`,
 `examples/ex_sticky_seafan_3d.py`, the tiling discussion in `examples/basic_ex_3d.py`)
 are all 3D, and because a throwaway 2D materializer would contradict the rule in §9.1.
-The materialized environment survives only as the **test oracle** of §9.4.2, built in
+The materialized environment survives only as the **test oracle** of §9.3, built in
 test code.
 
-### 9.3 Consumer audit (2026-11-02)
+### 9.3 How it is verified
 
-Every reader of `flow_points`, `fshape`, `L`, `ibmesh`, `periodic_dim`, and every
-`interpolate_flow` caller, checked by hand. Re-run with Appendix B's grep before
-trusting it after other work lands.
+**Against a materialized oracle.** `tests/test_tiling.py` compares a tiled run against
+the same fluid and mesh copied out to the tiled size. The oracle is built in test code
+(`tests/_tiling_harness.py`), never with the helpers under test: the field concatenated
+tile by tile, the grid extended point by point, mesh copies translated in the documented
+order. The geometry is dyadic — `L = (1, 0.5, 0.25)`, `N = (33, 17, 9)` — so every node
+and every tile offset is exactly representable and equality can be bitwise, and a field
+is made periodic by copying its first line onto its last (`sin(2π)` is not `sin(0)`).
+The tilings are `(3, 2)`, `(5, 1)`, `(3, 2, 1)` and `(1, 2, 3)`: every count differs, on
+a domain whose axes differ, so a swapped axis or a shared multiplier fails.
 
-**Wrong under tiling, changed by this plan:**
+Bitwise: interpolation (inside, outside, on seams, at `-1e-17`); trajectories under
+static, cubic, linear and windowed fluid, with Brownian, inertial and tracer agents;
+vorticity, the material derivative and `mag_grad`; FTLE on its default grid; the array
+of cylinders, a moving mesh and a 3D mesh; every plot, pixel for pixel; the archive's
+agent files and stored arrows; frames served from an archive; restore-and-continue
+against the oracle's uninterrupted run; an append after restore against one recording.
+To roundoff: the means (§9.1), and single evaluations on a non-dyadic grid
+(`rtol=1e-12`).
 
-| Consumer | Problem | §9.1 answer |
-|---|---|---|
-| `Environment.interpolate_flow` | no wrap on tiled axes | two-step wrap. All four swarm accessors (`get_fluid_drift`, `get_dudt`, `get_DuDt`, `get_fluid_mag_gradient`) and the default initial velocity go through it |
-| `Swarm.plot`, `plot_all` setup, `animate` | backdrop over one tile only | one artist, tiled points |
-| `Swarm._quiver_strides` | arrow density `k×` too high | count tiled points |
-| `_recording._plan_fluid` | `quiver_shape` strides per tile | virtual grid |
-| `Environment.plot_flow`, `plot_2D_vort` | one tile only | as `Swarm.plot` |
-| `calculate_FTLE` default `grid_dim` | resolution diluted by `k` | tiled count |
-| `FluidData` mean cache, `get_mean_fluid_speed` | stored-tile mean ≠ materialized mean | separable weights |
-| `tile_domain` mesh copy | duplicate base mesh; moving meshes corrupted | fixed (also in `1.0.3`) |
-| `tile_domain` `L` | in-place edit tiles `flow.L` through aliasing | new list |
-| `_archive_format` fingerprint | a new key would break old archives | key only when tiled |
-| provenance / `restore()` | tiling not recorded or replayed | `environment['tiling']`, replayed last |
-| fluid and mesh entry points | loads after tiling leave it half-applied | refuse; `ibmesh` becomes a property |
+**Three findings from building it**, each now part of the design:
 
-**Correct, but returns the stored tile** (docstrings say so): `flow[i]`, `flow(t)`,
-`get_vorticity`, `get_dudt`, `calculate_DuDt`, `mag_grad`, `get_raw_loaded_data`,
-`save_fluid`, `save_2D_vorticity`, the archive's vorticity files.
+- **A component whose mean is zero prints its own roundoff** in the plot statistics,
+  which differs between summation orders (`9.1e-19` tiled, `2.5e-19` materialized). An
+  untiled plot already prints such noise. Accepted by the user, 2026-11-03; the test
+  flow is given nonzero means so the pixel comparison tests what matters.
+- **A windowed plot's arrow scale is `fmax` over the dumps loaded so far**, so a windowed
+  run is compared with a windowed oracle there. That is a windowed-versus-resident
+  difference, not a tiling one.
+- **The IBAMR test data's opposite edges differ by about 0.1% of the flow speed**, as
+  large as the step between neighbouring nodes (the cause was not investigated).
+  The seam warning therefore reports the jump as a share of the largest velocity
+  component, so a user can judge it.
 
-**Verified fine as is:**
-- axes, ticks, histogram and density bins, canopy grass (`_plot_setup` reads `L`);
-- swarm boundary conditions, including periodic re-entry against the mesh;
-- initial positions, `grid_init`, `define_pic_grid`;
-- vorticity colour limits and quiver scale (same extrema);
-- `_ibc`, `_geom`, `motion.py` (they take the mesh as given);
-- FTLE integration and `plot_2D_FTLE` (positions over `L`);
-- windowed loading (wrapping is spatial only);
-- `reset()` (tiling is not time state);
-- moving-mesh interpolation in time.
+**What the oracle cannot check** is tested directly: non-periodic semantics and the
+warnings, `tile_ibmesh=False`, mesh copying and its order, every refusal leaving the
+environment unchanged, a non-periodic backdrop's extent, a tiled archive refusing an
+untiled environment, and a restore whose fluid cannot be replayed.
 
-### 9.4 Tests against ground truth
+**Tiling off is unchanged:** while the branch was open, `tests/test_tiling_baseline.py`
+(scaffolding, deleted in the merge commit) ran one script against the branch and against
+its branch point in a detached worktree and compared every untiled output bitwise —
+agent state, accessors, means, archive files, restore, exports and rendered pixels. It
+passed at every step. Because untiled archives came out byte-identical, one written
+before this work restores as before.
 
-Three layers. **9.4.1 is scaffolding**, deleted at the merge back into `dyload`. **9.4.2
-and 9.4.3 are the behavioral tests that stay.**
+**The examples:** `ex_IBAMR_ibmesh.py` is back in the streaming suite's self-contained
+list and runs end to end. `ex_sticky_seafan_3d.py` needs `Velocity2to1_8mmps.vtu`, which
+is not on the development machine *(2026-11-03)*, so it has not been run. Its cylinder
+has to lie strictly inside the domain along x; the STL loader's shift by the fluid's
+lower-left corner should place it there.
 
-**The common geometry, chosen so equality can be exact.** A non-square domain with a
-different point count per axis and power-of-two spacing — 2D `Lx=1, Ly=0.5`,
-`Nx=33, Ny=17`; 3D adds `Lz=0.25, Nz=9`. With every node and every tile offset exactly
-representable, the wrapped and the materialized interpolation perform the same
-floating-point operations, and the periodic gradient likewise (both verified bitwise
-2026-11-02). A field is made periodic by **copying** its first line onto its last, not
-by evaluating a periodic function there (`sin(2π)` is not exactly `sin(0)`). A
-**non-dyadic** geometry (`Lx=0.7, Nx=31`, …) is also run, for single evaluations only
-(interpolated velocity, gradient, vorticity) at `rtol=1e-12`. The difference there is
-pure roundoff (about 2e-15), physically meaningless, but it compounds along a
-trajectory, so trajectories are compared only on the dyadic geometry.
+Re-running the consumer audit after other work lands: Appendix B.
 
-**Tilings used throughout:** 2D `(3, 2)` and `(5, 1)`, the latter mirroring the seafan's
-single-axis case; 3D `(3, 2, 1)` and `(1, 2, 3)`, the latter tiling z. Every count is
-different from every other, on a domain whose axes differ, so a swapped axis, a
-transposed array or a shared multiplier fails.
+### 9.4 The merge
 
-A new dyadic periodic IB2d fixture is generated by `tests/fixtures/_gen_fixtures.py`, for
-the windowed and file-loader paths. IB2d data is periodic by construction
-(`IB2dData` sets `periodic_dim=True`).
-
-#### 9.4.1 Tiling off is unchanged — the baseline (scaffolding)
-
-`tests/test_tiling_baseline.py`, `slow`. It follows the worktree pattern of
-`test_stream_a_inram.py::test_an_in_ram_run_gives_the_numbers_the_released_line_gives`:
-one runner script, run against `HEAD` and against `git merge-base HEAD dyload` in a
-detached worktree, writing one `.npz` each, compared with `assert_array_equal` (NaN
-compared as a value). It must use only API that exists at the base. A `tile_domain(1, 1)`
-call is wrapped in `except NotImplementedError: pass`, since the base raises before
-mutating anything (pinned there by `test_tile_domain_leaves_environment_untouched`), so
-the all-ones no-op is covered too.
-
-Scenarios — each one a path this plan edits:
-- 2D analytic (brinkman), static and time-varying;
-- the IB2d fixture: cubic, `INUM=True` and windowed;
-- the 3D VTK fixture;
-- periodic and non-periodic fluid, with positions inside and outside the domain;
-- static mesh, sliding and sticky; moving mesh; 3D STL;
-- tracer, Brownian and inertial agents (the material derivative), plus `mag_grad`;
-- a small 2D FTLE.
-
-Compared, **bitwise**:
-- positions, velocities, accelerations, `ib_collision_idx` and props at every step;
-- accessor values at fixed points, `get_mean_velocity`, `get_mean_fluid_speed`;
-- every archive file — `grid.npz`, chunks, sidecars, checkpoint, written vorticity —
-  plus `meta.json` parsed (it records resolved input paths, identical when both sides
-  read the same fixtures);
-- a `restore()` and a continued run;
-- `save_fluid` / `save_2D_vorticity` output;
-- **rendered pixels** for `Swarm.plot` and selected `plot_all` frames, with
-  `fluid=None`, `'vort'` and `'quiver'`, live and archive-served, plus `plot_flow` and
-  `plot_2D_vort`.
-
-`walk_frames` drives `animate` but rasterizes nothing, so frames are captured with a
-small `MovieWriter` subclass that stores `canvas.buffer_rgba()` per frame. Both sides
-render in the same process environment, so the comparison does not depend on fonts or
-backend versions.
-
-**Deletion trigger:** removed in the commit that merges `tiling` into `dyload`.
-
-#### 9.4.2 Tiling on equals the materialized oracle (behavioral)
-
-`tests/test_tiling.py`. **The oracle is built independently in test code**, never with
-the helpers under test:
-- the fluid is concatenated to the tiled size, the base followed by `field[1:]` per
-  extra tile along each axis;
-- the grid is built as `fp[1:] + n·fp[-1]`, with the same `periodic_dim`, `L_tile·k`
-  and agent boundary conditions;
-- the mesh is made by placing copies directly in the documented order;
-- time-varying oracles are in-memory `FluidData` with `INUM=True`, linear like a
-  windowed run.
-
-Same seed, same agents, same steps. **Preconditions:** `periodic_dim=True` on every tiled
-axis (§9.1's table — the oracle wraps only then), and the dyadic geometry.
-
-Compared **bitwise** unless noted:
-- positions, velocities, accelerations, props and `ib_collision_idx` at every step —
-  for static, time-varying and **windowed** (`INUM` int against the oracle's `True`)
-  fluid, in 2D and 3D;
-- accessor values at random points, inside and outside the domain, exactly on seams,
-  and at `-1e-17`;
-- `get_vorticity` / `mag_grad` / `calculate_DuDt` fields: the tiled run's
-  `materialize_tiled(...)` against the oracle's field;
-- the FTLE field and `FTLE_loc`, with default `grid_dim`;
-- `get_mean_velocity` and `get_mean_fluid_speed` — **to roundoff** (§9.1, means);
-- rendered pixels, against the oracle's own render:
-  - `Swarm.plot` and `plot_all` frames with `fluid=None`, `'vort'` and `'quiver'`, a
-    static and a moving mesh;
-  - `plot_flow` and `plot_2D_vort`;
-  - frames served from an archive as well as live;
-- the archive: agent series and checkpoints bitwise; the stored quiver bitwise; stored
-  vorticity after `materialize_tiled`; the statistics sidecar to roundoff;
-- `restore()` of the tiled archive, then 20 more steps, against the oracle continued
-  the same way.
-
-**The headline test is the user's motivating case — an array of cylinders.** One
-cylinder polygon centered in the stored tile, tiled `(3, 2)` with a periodic flow and
-periodic agent boundaries, set against an oracle mesh of six cylinders placed at the
-lattice centers. Many agents, sliding collisions, a long enough run that most of them
-interact with a copy other than the base. Bitwise equal, and no agent inside any
-cylinder.
-
-#### 9.4.3 What the oracle cannot check
-
-- **Seam joints.** A wall along the whole stored tile, tiled `(3, 1)`, gives collinear
-  segments meeting at `x = 1, 2`. Agents sliding along it across the joints must not
-  penetrate and must end where the analytic slide puts them. The same holds for a
-  moving wall and a 3D floor. The oracle shares the joints, so equality with it proves
-  nothing here.
-- **Non-periodic semantics.** Inside each tile, velocity equals the stored field
-  interpolated at the wrapped position. The warning fires for an unflagged axis and for
-  mismatched edges, and stays silent for flagged, matching data.
-- **`tile_ibmesh=False`** gives an untiled mesh with tiled fluid, against an oracle
-  with the materialized fluid and the original mesh.
-- **Mesh copying unit tests:** element counts, the `t·N_base + e` order, no
-  duplicated base; static 2D, 3D STL, moving `(T, N, 2, 2)`; `idx % N_base` recovering
-  the base element.
-- **Refusals,** each leaving the environment unchanged:
-  - a fluid load, a mesh load and a mesh modifier after tiling;
-  - a direct `ibmesh =` and `flow =` after tiling;
-  - a second `tile_domain`; tiling while recording; tiling after the run started;
-  - `z` in 2D; a count below 1;
-  - copies that would cross or coincide.
-- **Ordering of guards versus replay:** `restore()` of a tiled run works even though
-  loads after tiling are refused, because replay tiles last.
-- **Archives:** an untiled archive written before this work still restores and matches
-  (fingerprint without `tiling`); a tiled archive appended to after restore is
-  byte-identical to one recorded in one go (R6's headline, tiled).
-- **Display for non-periodic data** draws without error and with the expected extent.
-- **Examples, end to end:** `ex_IBAMR_ibmesh.py` against `tests/IBAMR_test_data/`
-  (it returns to the streaming suite's self-contained list), and
-  `ex_sticky_seafan_3d.py` on `examples/comsol_data/` where present.
-
-### 9.5 Build order
-
-Each step ends with the baseline (§9.4.1) and the whole suite passing, and is its own
-commit (each one separately authorized).
-
-- **T0 — scaffolding first.** The baseline test, the frame-grabbing writer, the oracle
-  builders and the new fixture, before any source change. The baseline passes
-  trivially at this point, and from here on it guards every step.
-- **T1 — mesh copying as a pure function** (`_geom.tile_mesh(mesh, L, counts)`) with
-  its unit tests: the duplicate and moving-mesh fixes, the order, the seam check.
-  Testable while `tile_domain` still raises. The duplicate fix is `master`-portable:
-  log it in the cherry-pick queue.
-- **T2 — the core.** `tile_domain`, `Environment.tiling`, the guards (`ibmesh`
-  property), `FluidData.tiling` and the virtual-grid helpers, the two-step wrap,
-  weighted means, FTLE's default, the warnings. Remove `FluidData.tile_flow` and the
-  three "raises" tests. Lands with 9.4.2's simulation equality and 9.4.3's
-  non-plotting tests.
-- **T3 — plotting.** `Swarm.plot`, `plot_all`, `animate`, `_quiver_strides`,
-  `plot_flow`, `plot_2D_vort`. Lands with the live pixel-equality tests.
-- **T4 — archive.** Quiver on the virtual grid, provenance, fingerprint, restore.
-  Lands with archive-served pixels, restore, append and the old-archive test.
-- **T5 — examples and prose.** §9.6, both examples run end to end, the changelog
-  (§9.7), `CLAUDE.md`, `TODO.md`.
-- **T6 — merge back** into `dyload`, deleting the baseline test. Then resume the
-  docs stash.
-
-### 9.6 Restoration checklist — everything the gating touched
-
-Gating tiling off left notices, stubs and replaced tests across source, tests, examples,
-docs and prose. **This is the complete list**; work down it in T2–T5, and delete this
-subsection once it is empty.
-
-**Source — remove the gates:**
-- [ ] `planktos/fluid.py` — `FluidData.tile_flow`: **removed** (§9.1), with its
-      commented-out body. The `fshape`/`flow_points` arithmetic it preserved becomes
-      `tiled_points`.
-- [ ] `planktos/_environment.py` — `Environment.tile_domain`: the new implementation.
-      Of the commented-out body, `_reset_flow_deriv()` and the idea of scaling `L`
-      survive. The mesh loop is replaced by `_geom.tile_mesh`, since it carries both
-      bugs. The in-place `L` edit is replaced, because of the aliasing. Delete the
-      commented block.
-- [ ] `planktos/_swarm.py` — the `Swarm` class docstring example lost its
-      `>>> envir.tile_domain(3,3)` line. Restore it.
-
-**Tests:**
-- [ ] `tests/test_flow_generation.py` — delete `test_tile_domain_raises_not_implemented`,
-      `test_tile_domain_leaves_environment_untouched` and
-      `test_tile_flow_raises_on_fluiddata_directly`, plus the section comment above
-      them. The replacements are §9.4. `test_extend_grows_domain_and_copies_edges`
-      stays skipped; it belongs to the `extend` pass.
-- [ ] `tests/test_data_streaming/test_stream_a_inram.py` — put `ex_IBAMR_ibmesh.py`
-      back in `SELF_CONTAINED_EXAMPLES` and delete the comment excluding it.
-
-**Examples — delete the notices:**
-- [ ] `examples/ex_IBAMR_ibmesh.py` — the "!!! THIS EXAMPLE DOES NOT CURRENTLY RUN TO
-      COMPLETION !!!" block, and the `fshape` "Flow shape is now" print.
-- [ ] `examples/ex_sticky_seafan_3d.py` — the same block.
-- [ ] `examples/basic_ex_3d.py` — the `# NOTE: tile_domain currently raises ...`
-      comment; mention `z` and `tile_ibmesh`.
-- [ ] `examples/old_examples/old_ex_pltcyl.py` calls `tile_domain(3,3)` and was
-      **deliberately left unflagged** — archived record-keeping code whose own header
-      says to skip it. Nothing to undo.
-
-**Docs — delete the warnings:**
-- [ ] `docs/examples/IBAMR_ibmesh.rst` — the `.. warning::` after the `tile_domain`
-      snippet.
-- [ ] `docs/examples/basic_3d.rst` — the `.. warning::` after the tiling paragraph.
-- [ ] `docs/api/FluidData.rst` — no `tile_flow` left to document. Check that the page
-      says fields are the stored tile.
-
-**Prose — retract the "temporarily unavailable" framing:**
-- [ ] `CLAUDE.md` — the "**Domain tiling raises `NotImplementedError`**" paragraph and
-      its restoration pointer in "Fluid data architecture". Replace them with the rule
-      from §9.1 and the stored-tile fact.
-- [ ] `TODO.md` — item 5, Phase 1 item **(E)**, the changelog-housekeeping item.
-- [ ] This note — §9 down to a short record of what was decided, and the tiling row
-      in §0.2.
-
-### 9.7 Release coordination
-
-**Tiling lands before 1.1.0** (settled 2026-11-02), so only one prose pass is needed.
-`changelog.txt` under 1.1.0 currently carries
-`- Domain tiling temporarily raises NotImplementedError; it returns with 2D and 3D support.`
-which is deleted, and `- tile_flow is now Environment.tile_domain (implemented on
-FluidData).`, which loses its parenthetical (`FluidData.tile_flow` is removed). Add
-lines describing what shipped, roughly:
-
-- `Environment.tile_domain` tiles 2D and 3D domains (new `z`) without copying the fluid
-  data; `tile_ibmesh=` chooses whether the immersed mesh is tiled.
-- Tiled fluid that is not periodic jumps at the seams; `tile_domain` warns when it is
-  not.
-- Bug fix: `tile_domain` no longer duplicates the base immersed mesh, and tiles moving
-  meshes correctly. *(Also in the cherry-pick queue.)*
-- Loading fluid or meshes after `tile_domain`, or calling it mid-run, raises
-  `ValueError`.
-
-Within the changelog's style rules: ≤ 100 characters where possible, effect only.
+**T6 — `tiling` merged back into `dyload`** (2026-11-03) with a merge commit, not a
+squash, so the step commits survive (§9.0). The baseline test and its runner were
+deleted in that commit, since after it there is no "before" to compare against. Next is
+the paused docs stash. The duplicate-mesh fix is logged in `TODO.md`'s cherry-pick
+queue.
 
 ---
 

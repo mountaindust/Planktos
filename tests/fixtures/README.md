@@ -32,6 +32,12 @@ IB2d omits the periodic endpoint in each direction, so a 6×5 dump loads back as
   or truncated timeline is immediately visible. The reference 2D dynamic-loading
   fixture: 8 dumps is the smallest series that lets a window of `INUM=4` actually
   slide.
+- `ib2d_fluid_dyadic/u.####.vtk` — 8 dumps on a **dyadic** grid: 32×16 points at
+  spacing 1/32, loading as 33×17 over a 1×0.5 domain, at times 0, 0.25, … 1.75
+  (`dt=1/16`, `print_dump=4`). `u = 0.4 + 0.2·sin(2πx/Lx)·cos(2πy/Ly) + 0.1t`,
+  `v = 0.15·cos(2πx/Lx + t)·sin(2πy/Ly)`. For the tiling tests: every node and tile
+  offset is exactly representable, so a tiled run can be compared bitwise against
+  the same data materialized to the tiled size.
 - `ib2d_fluid_scalar_min/{uX,uY}.####.vtk` — 3 dumps of the same field in IB2d's
   **scalar** form, only to cover that read branch.
 - `ib2d_fluid_vort_min/` — 8 dumps of `u.####.vtk` **plus** IB2d's own

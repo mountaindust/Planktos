@@ -103,9 +103,9 @@ def _ib2d_image():
                         origin=(0., 0., 0.))
 
 
-def _write_ib2d_velocity_dump(outdir, k, u, v):
-    '''One u.####.vtk, as IB2d writes them.'''
-    grid = _ib2d_image()
+def _write_ib2d_velocity_dump(outdir, k, u, v, grid=None):
+    '''One u.####.vtk, as IB2d writes them, on _ib2d_image() by default.'''
+    grid = _ib2d_image() if grid is None else grid
     # set_vectors, not grid['vel']: read_vtk_Structured_Points prefers scalars
     # when both are present, and would take the wrong branch.
     grid.point_data.set_vectors(
@@ -203,6 +203,50 @@ def write_ib2d_fluid_with_vorticity(outdir=HERE / 'ib2d_fluid_vort_min'):
         ogrid['Omega'] = omega.ravel(order='F')
         ogrid.set_active_scalars('Omega')
         ogrid.save(str(outdir / f'Omega.{k:04d}.vtk'), binary=False)
+    return outdir
+
+
+# 2D IB2d fluid series on a DYADIC grid, for the tiling tests
+# (tests/test_tiling.py). 32 x 16 points written at spacing 1/32 become, once Planktos wraps the
+# endpoint back on, a 33 x 17 field over a 1 x 0.5 domain: non-square, a different
+# count per axis, and every node and tile offset exactly representable, so a tiled
+# run and the same data materialized to the tiled size do bit-identical arithmetic.
+# dt * print_dump = 1/4, so the timestamps 0, 0.25, ... 1.75 are exact as well.
+#
+#     u = 0.4 + 0.2 sin(2 pi x/Lx) cos(2 pi y/Ly) + 0.1 t
+#     v = 0.15 cos(2 pi x/Lx + t) sin(2 pi y/Ly)
+#
+# Both components vary in x, y and t, so a transposed axis, a wrong tile offset or
+# a time slip all show. IB2d data is periodic by construction: the loader copies
+# the first line onto the last, so the wrapped field is exactly periodic.
+IB2D_DYADIC_SHAPE = (32, 16)
+IB2D_DYADIC_SPACING = 1 / 32
+IB2D_DYADIC_NT = 8
+IB2D_DYADIC_DT = 1 / 16
+IB2D_DYADIC_PRINT_DUMP = 4
+
+
+def _ib2d_dyadic_fields(t):
+    nx, ny = IB2D_DYADIC_SHAPE
+    h = IB2D_DYADIC_SPACING
+    Lx, Ly = nx * h, ny * h
+    X, Y = np.meshgrid(np.arange(nx) * h, np.arange(ny) * h, indexing='ij')
+    u = (0.4 + 0.2 * np.sin(2 * np.pi * X / Lx) * np.cos(2 * np.pi * Y / Ly)
+         + 0.1 * t)
+    v = 0.15 * np.cos(2 * np.pi * X / Lx + t) * np.sin(2 * np.pi * Y / Ly)
+    return u, v
+
+
+def write_ib2d_fluid_dyadic(outdir=HERE / 'ib2d_fluid_dyadic'):
+    '''Vector form on the dyadic 32 x 16 grid: one u.####.vtk per dump.'''
+    outdir.mkdir(parents=True, exist_ok=True)
+    nx, ny = IB2D_DYADIC_SHAPE
+    h = IB2D_DYADIC_SPACING
+    for k in range(IB2D_DYADIC_NT):
+        t = k * IB2D_DYADIC_DT * IB2D_DYADIC_PRINT_DUMP
+        grid = pv.ImageData(dimensions=(nx, ny, 1), spacing=(h, h, 1.),
+                            origin=(0., 0., 0.))
+        _write_ib2d_velocity_dump(outdir, k, *_ib2d_dyadic_fields(t), grid=grid)
     return outdir
 
 
@@ -574,6 +618,8 @@ if __name__ == '__main__':
     print("wrote IB2d fluid (vector) ->", f, sorted(p.name for p in f.iterdir()))
     s = write_ib2d_fluid_scalar()
     print("wrote IB2d fluid (scalar) ->", s, sorted(p.name for p in s.iterdir()))
+    y = write_ib2d_fluid_dyadic()
+    print("wrote IB2d fluid (dyadic) ->", y, sorted(p.name for p in y.iterdir()))
     w = write_ib2d_fluid_with_vorticity()
     print("wrote IB2d fluid + vorticity ->", w,
           sorted(p.name for p in w.iterdir()))

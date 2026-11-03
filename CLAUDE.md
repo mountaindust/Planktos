@@ -240,7 +240,7 @@ against `master`.
   stamps (`flow_times`), periodicity (`periodic_dim`), and the temporal
   interpolation. Per-source subclasses handle ingestion: `IB2dData`, `VTK3dData`,
   `ComsolVTUData`, `OpenFOAMData`, `VTKXMLData` (`.vti`/`.vtr` series, with or without a `.pvd` index).
-- Fluid-level operations live on the object, not on `Environment`: `tile_flow`,
+- Fluid-level operations live on the object, not on `Environment`:
   `get_vorticity`, `get_dudt`, `calculate_DuDt`, `get_mean_velocity`,
   `update_spline`, `load_dumpfiles`.
 - **`get_mean_velocity(time=|t_idx=)` reads a cache, not the field.** The spatial
@@ -334,20 +334,32 @@ numpy operations on flow data. `docs/notes/run_persistence.md` Appendix A is the
 surviving record; the full analysis is in the git history of the deleted
 `docs/notes/flow_field_interface.md`.
 
-*(As of 2026-11-02; `TODO.md` has its status.)* **Domain tiling raises
-`NotImplementedError`** (`FluidData.tile_flow`, `Environment.tile_domain`) — it went
-away with `FlowArray` and returns as a position-wrapping implementation covering 2D
-*and* 3D. Do not reintroduce a materializing tiling stopgap — nor a virtualizing one;
-see `docs/notes/run_persistence.md` §9.2 for why both failed. `Environment.extend`
-remains removed; whether it returns is a separate pass.
+### Tiling wraps positions; the fluid stays one stored tile
 
-**The plan for bringing tiling back is `docs/notes/run_persistence.md` §9** (settled
-2026-11-02): the design, a consumer audit, the ground-truth tests and the build order,
-with the restoration checklist at §9.6. Two things there overrule older guidance.
-**`flow_points` stays the stored tile's grid** — only `L` and the plotted extent are
-tiled — so `tile_flow`'s old `flow_points` extension does not come back. And **the
-commented-out `tile_domain` mesh loop is not to be reused verbatim**: it duplicates the
-base mesh and mis-indexes moving meshes, bugs the released `1.0.3` shares.
+`Environment.tile_domain(x, y, z=None, tile_ibmesh=True)` tiles 2D and 3D domains.
+**`Environment.L` and the plotted extent are the tiled domain; `flow_points`, `fshape`
+and every field the fluid returns stay the stored tile.** `interpolate_flow` wraps a
+position on a tiled axis in two steps, `% (L_tile*k) % L_tile`, which is what makes a
+tiled run bitwise equal to the same data materialized in memory. Tiled geometry is
+derived where a consumer needs it, through `FluidData.tiled_points`,
+`tiled_strided` (arrows) and `materialize_tiled` (2D display only); the means use
+separable weights that match a materialized node mean to roundoff. An untiled
+environment takes the old code paths untouched.
+
+- **`tile_domain` is the last operation on the domain.** Fluid and mesh loaders, mesh
+  modifiers, and `flow =` / `ibmesh =` (both guarded properties) raise `ValueError`
+  once tiled, so a new entry point must call `_refuse_once_tiled`.
+- **The mesh must lie strictly inside the stored tile along every tiled axis**
+  (`_geom.tile_mesh`), so copies never touch and no seam joints arise.
+- A run archive records the call (with the stored tile's `L`) and `restore()` replays
+  it last; `grid.npz` gains a `tiling` key only when tiled, so untiled archives are
+  byte-identical to before.
+- Do not reintroduce a materializing or a virtualizing implementation;
+  `docs/notes/run_persistence.md` §9.2 says why both failed. `Environment.extend`
+  remains removed; whether it returns is a separate pass.
+- `tests/test_tiling.py` compares every path against an oracle materialized in test
+  code (`tests/_tiling_harness.py`), bitwise on a dyadic grid — simulation, plots
+  pixel for pixel, archives, restore.
 
 ## The canonical workflow
 
@@ -563,6 +575,7 @@ runs them.
   | Run archive | `test_run_archive` (the bytes), `test_recording` (real runs, restore, append), `test_run_reader`, `test_fluid_recording`, `test_archive_rendering`, `test_provenance` |
   | Swarm behavior | `test_agent_models`, `test_swarm_lifecycle`, `test_swarm_save` |
   | Plotting | `test_frame_selection`, `test_plotting_smoke` |
+  | Tiling | `test_tiling` |
   | End-to-end acceptance | `test_data_streaming/` (see its `README.md`) |
 
 - **Helpers and fixtures.** `tests/_ib_harness.py` holds the mesh builders and invariant

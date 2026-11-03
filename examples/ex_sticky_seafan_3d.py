@@ -12,13 +12,6 @@ It can be downloaded from:
 https://drive.google.com/drive/folders/1etoBspZ76mwFZ63V0NdqdeVNNKlPYUxu?usp=sharing
 Put it into a comsol_data folder in this example directory, and you should be
 good to go!
-
-!!! THIS EXAMPLE DOES NOT CURRENTLY RUN TO COMPLETION !!!
-Tiling is central to this example, and the tile_domain call below raises
-NotImplementedError: tiling is temporarily unavailable while the fluid-data
-interface is reworked. It returns as a position-wrapping implementation
-covering 2D and 3D. Delete this notice and re-run when that lands. See
-docs/notes/run_persistence.md.
 '''
 
 import numpy as np

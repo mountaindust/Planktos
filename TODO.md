@@ -68,9 +68,8 @@ asserted. That was the branch's stated remaining reason to exist.
 Items 1, 2, 4 and 6 are closed, and **item 3's docstring pass is complete
 (2026-10-22)** — only its navigability pass is left, best decided after item 7.
 
-**Next (revised 2026-11-02): tiling, item 5**, planned in full in `run_persistence.md`
-§9 and built on a `tiling` branch (§9.0). Item 7 (merging `master` in) does not depend
-on it in either direction. The three `_swarm.py` conflict hunks tiling rewrites resolve
+**Tiling, item 5, is done and merged (2026-11-03).** Item 7 (merging `master` in)
+did not depend on it in either direction. The three `_swarm.py` conflict hunks tiling rewrites resolve
 to "keep `dyload`" either way, since `master`'s side there uses the old fluid API. Then
 item 3's navigability pass and the §7 prose pass, which tiling unblocks. (a), the
 stored-vorticity check, was done 2026-10-29.
@@ -109,8 +108,7 @@ user's planned example-script updates**, since the quickstart describes both.
 
 ✅ **Settled 2026-11-02: 1.1.0 waits for tiling.** Shipping first would have meant
 prose and a changelog calling tiling unavailable, rewritten when it returned; tiling
-first means one prose pass. `run_persistence.md` §9.7 has the changelog lines to
-replace.
+first means one prose pass. The changelog's tiling lines were rewritten at T5.
 
 1. ✅ **The run archive and the plotting work it feeds — components A, B and C are
    complete** (`docs/notes/run_persistence.md`). §5.3 and §6.1 steps **A0–A5**,
@@ -212,8 +210,8 @@ replace.
 
    **Three standing exclusions:** `archive.py`'s module docstring (it is the on-disk
    format spec, rendered for users by `docs/api/RunArchive.rst` — check it for stray
-   narrative, do not shorten it); `tile_flow`/`tile_domain` (rewritten when tiling
-   returns, `run_persistence.md` §9.6); and anything `master` also has.
+   narrative, do not shorten it); `tile_domain` (rewritten with tiling, to the
+   standard); and anything `master` also has.
 
    **Two worked examples the user named, both deliberately left unfixed** so they
    can go in the sweep:
@@ -338,21 +336,14 @@ replace.
    §2.11.5 has since decided differently, so they are **retargeted** at the checkpoint
    rather than merely un-`xfail`ed, with behavioral round-trip tests beside them; the
    retargeted checklist was deleted at R6, when R was confirmed done.
-5. 🟡 **Tiling — plan settled 2026-11-02, next up.** `run_persistence.md` §9 is the
-   whole plan:
-   - the design (§9.1): position-wrapping, `flow_points` stays the stored tile,
-     `tile_domain(x, y, z, tile_ibmesh)` as the last domain operation;
-   - the consumer audit (§9.3);
-   - the ground-truth tests (§9.4): tiling off bitwise unchanged against the branch
-     point; tiling on, periodic, bitwise equal to the data materialized in memory, on
-     non-square tilings; an array of cylinders as the headline case;
-   - the build order T0–T6 (§9.5) and the restoration checklist (§9.6).
-
-   Built on a `tiling` branch off `dyload` (§9.0). **One question is open for the
-   user** (§9.1, "exports"): whether `save_fluid` / `save_2D_vorticity` write the
-   stored tile (recommended) or the tiled field. `Environment.extend` is now a
-   separate pass (Deferred, below). Tiling also **unblocks the prose-docs sweep** and
-   the paused docs stash.
+5. ✅ **Tiling — done (2026-11-03).** Built on a `tiling` branch off `dyload`
+   (`run_persistence.md` §9.0) and merged back with a merge commit, which deleted the
+   baseline scaffold: `tile_domain(x, y, z, tile_ibmesh)` in 2D and 3D,
+   position-wrapping with the fluid kept as one stored tile, plots, archives and
+   `restore()`, the examples and the prose. §9 is the record of what was decided.
+   Exports (`save_fluid` / `save_2D_vorticity`) write the stored tile — the user's
+   decision, §9.1. `Environment.extend` is a separate pass (Deferred, below). Tiling
+   **unblocks the paused docs stash and the prose-docs sweep**.
 6. ✅ **The 1.0.3 decision — settled (2026-08-19).** The patch release was cut from
    `master` and tagged `v1.0.3`; the cherry-pick queue at the bottom of this file is the
    record of what moved and what deliberately did not. **The next release is meant to be
@@ -401,7 +392,7 @@ around that framing and split into four components: **A** the archive, **B** flu
 streaming, **C** rendering, **D** tiling. A and B are independently shippable.
 `run_persistence.md` §0 is the orientation; §2.1–§2.3 and §4.2 carry the interface
 reasoning; §6.1 has the build order and §6.3 the entry points. **A, B and C are all
-done**; §9 (tiling) is what is left, plus the §7 prose pass.
+done**, as is §9 (tiling); the §7 prose pass is left.
 
 ⚠️ **One thing component B settled that the specification had left ambiguous**, worth
 knowing before reading §3: the per-dump statistics sidecar `fluid/dump_stats.npz` is
@@ -837,12 +828,11 @@ in `tests/test_flow_interface.py`.
   had backwards: `du/dt` is constant on **right**-closed intervals `(t[i-1], t[i]]`,
   so a time landing exactly on a timestamp takes the slope of the interval to its
   *left* (`t0` excepted, having none). Docstring corrected in `fluid.py`.
-- [~] **(E) Tiling/periodic × dynamic — SUPERSEDED.** Was: `FlowArray` view +
-  `tiling` propagation through `update_spline`, both gone. The real implementation
-  touches nothing in the windowing (wrapping is spatial only). Its `tiling` ×
-  `periodic_dim` rule and the windowed-against-materialized test are in
-  `docs/notes/run_persistence.md` §9.1 and §9.4.2. **Periodic × dynamic on its own
-  is still worth testing** and stays in scope for Phase 1.
+- [x] **(E) Tiling/periodic × dynamic — done by tiling.** Was: `FlowArray` view +
+  `tiling` propagation through `update_spline`, both gone. Tiling touches nothing in
+  the windowing (wrapping is spatial only); `tests/test_tiling.py` runs windowed tiled
+  fluid against a materialized oracle, bitwise. **Periodic × dynamic on its own is
+  still worth testing** and stays in scope for Phase 1.
 
 ---
 
@@ -1387,8 +1377,9 @@ Inherited blockers from the overhaul's notes:
   and `README.md` still frame fluid handling as `Environment`-level. The 1.0.1
   merge fixed the two that were outright wrong (`get_2D_vorticity` → `get_vorticity`,
   and the claim that flow can be "extended"), but the overall framing still assumes
-  master's API. Worth a pass once the fluid API stops moving — **still deliberately
-  held until tiling lands**, since tiling is exactly what this prose would describe. The new
+  master's API. Worth a pass once the fluid API stops moving — **held until tiling
+  merges into `dyload`** (it is built), since tiling is exactly what this prose would
+  describe. The new
   `docs/api/FluidData.rst` covers the reference side in the meantime.
 - [x] **`INUM` and the linear-vs-cubic tradeoff — DONE.** In `docs/api/FluidData.rst`
   (anchor `inum-tradeoff`): the `INUM` table, why linear in time is permanent rather
@@ -1595,8 +1586,8 @@ every dataset in these units will hit this.
   no longer masquerades as our bug. Re-check when bumping the vtk or numpy minimum.
 - [x] Changelog housekeeping (`changelog.txt`, 1.1.0): both TODO lines are gone from
   the changelog. The `tiling`-setter idea is superseded: tiling is set only by
-  `Environment.tile_domain`, and `FluidData.tile_flow` is to be removed
-  (`docs/notes/run_persistence.md` §9.1).
+  `Environment.tile_domain`, `FluidData.tile_flow` is removed, and the 1.1.0 tiling
+  lines describe what shipped.
 - [ ] `Environment.extend` was removed on this branch (`3eb9d1d`; extrapolation is the
   intended replacement) and still exists on `master`. It is not broken, just absent.
   **Whether it returns is its own pass** (decided 2026-11-02), separate from tiling.
@@ -1755,7 +1746,7 @@ Add to this list whenever a fix made on `dyload` is not dyload-specific. The tes
 that is simple: does the code it touches look the same on `master`? Check with
 `git diff master -- <file>` before assuming.
 
-### Queued for a possible 1.0.4 — fifteen entries
+### Queued for a possible 1.0.4 — sixteen entries
 
 Everything below the next heading is history — it shipped, or was deliberately not
 ported — kept for the porting notes rather than because anything is pending. Per the
@@ -1778,6 +1769,7 @@ release plan there is no `1.0.4` in preparation; this is a holding pen.
 | **`plot_all(writer_kwargs=...)` encoded at 5 fps** (2026-10-20). Passing `writer_kwargs` replaced the default `FFMpegWriter(fps=fps, metadata=...)` outright, so unless `fps` was repeated inside it the movie was encoded at FFMpegWriter's own default of 5 fps. On `dyload` the frames are chosen for `fps` (`playback_rate`), so the movie played at 5/fps times the rate asked for. `fps` is now a default inside `writer_kwargs`; a different `fps` there is used, with a warning giving the speed factor. The default `metadata=dict(artist='Christopher Strickland')` was dropped at the same time (2026-10-22), so no movie carries it now. Its own changelog line. Three tests in `test_frame_selection.py`, with a stand-in writer | `planktos/_swarm.py` (`plot_all`, the movie branch), `tests/test_frame_selection.py` | **Yes, by hunk** for the writer block, which is byte-identical on `master`. On `master` frames are one per step, so the warning's speed factor reads against fps rather than `playback_rate` — reword it when porting |
 | **`Swarm.calc_re` ignored an explicit `diam`** (2026-10-22). It raised "Parameters necessary for Re calculation ... undefined" whenever `shared_props` had no `'diam'`, even with `diam` passed, and a `diam` of neither kind gave a bare `KeyError`. It also raised for an `Environment(nu=...)`, which has no `rho`/`mu` but a perfectly good Re = u·diam/ν. Now: `diam` from the argument or `shared_props`, `rho`/`mu` when both are set (the same formula as before, so results do not shift), else `nu`, each failure naming what is missing. Under "other minor bug fixes". Four tests in `test_agent_models.py` | `planktos/_swarm.py` (`calc_re` only), `tests/test_agent_models.py` | **Yes, by hunk.** `calc_re` is byte-identical on `master` |
 | **The porous-layer backdrop used numpy's global random state** (2026-11-02). `_plot_setup` drew the Brinkman "grass" with `np.random.rand`, so every render differed and plotting advanced the global state — changing the run of a user model that draws from `np.random`. Now a private `np.random.default_rng(0)`, in 2D and 3D. Test: `test_porous_layer_backdrop_is_reproducible_and_leaves_global_rng_alone` | `planktos/_environment.py` (`_plot_setup`, both grass blocks); `tests/test_plotting_smoke.py` | **Yes.** Both grass blocks are byte-identical on `master`, and the test's `_spread_swarm` helper exists there |
+| **Tiling duplicated the base immersed mesh, and mangled moving ones** (2026-11-02, the `tiling` branch's T1). `master`'s `Environment.tile_flow` seeds `newmeshs = [self.ibmesh]` and then loops from copy `(0, 0)`, so the base mesh appears twice. On a moving mesh `(T, N, 2, 2)` it offsets `[:, :, 0]`, both coordinates of each element's first vertex, and concatenates along time. `_geom.tile_mesh` replaces the loop: copies offset on `[..., d]`, concatenated on the element axis, x slowest with the base first, and refused unless the mesh is strictly inside the tile along every tiled axis. Tests: the `tile_mesh` section of `tests/test_tiling.py` | `planktos/_geom.py` (`tile_mesh`, new); on `master`, the mesh block at the end of `tile_flow` in `planktos/_environment.py` | **Not as a commit.** `tile_mesh` is self-contained (it needs only `import itertools`) and ports as a new function; `tile_flow`'s mesh block becomes one call. The tests compare against `_tiling_harness`, which `master` lacks, so they port with hand-built expectations |
 
 ### Shipped in 1.0.3 — the 2026-08-10 `move()`/`_ibc` work
 

@@ -1,12 +1,12 @@
 '''Tests for analytic flow generation and flow-field manipulation on Environment.
 
 Covers the self-contained flow generators (set_brinkman_flow,
-set_two_layer_channel_flow, set_canopy_flow) plus the flow utility tile_domain and
-the flow_points axis-ordering contract. No external data, no agents, no RNG;
+set_two_layer_channel_flow, set_canopy_flow) and the flow_points axis-ordering
+contract; tiling is tested in test_tiling.py. No external data, no agents, no RNG;
 resolutions are kept small so the whole module runs in well under a second.
 
-On dyload the per-Environment fluid API (flow_times, flow_points, tile_flow) moved
-onto the FluidData object at Environment.flow; the extend utility was removed.
+On dyload the per-Environment fluid API (flow_times, flow_points) moved onto the
+FluidData object at Environment.flow; the extend utility was removed.
 
 Folded in from the former test_flow_points.py (axis ordering) and the flow halves
 of test_framework.py (with the tautological move-loop bookkeeping asserts removed).
@@ -57,59 +57,6 @@ def test_brinkman_3D_static_shape():
     assert envir.flow.flow_times is None
     assert envir.flow[0].shape == (21, 21, 21)
     assert len(envir.L) == 3
-
-
-# --------------------------------------------------------------------------- #
-#                    tile_domain (temporarily unavailable)                    #
-# --------------------------------------------------------------------------- #
-#
-# Tiling was implemented as a virtual ndarray view (FlowArray) reporting a tiled
-# shape over a single stored tile. Modern scipy defeats that -- RegularGridInterp-
-# olator calls np.asarray on any array-API object, discarding the virtual shape --
-# so the tiled interpolation path was broken and untested, and FlowArray has been
-# removed. Tiling returns later as a position-wrapping implementation covering 2D
-# and 3D. See docs/notes/run_persistence.md.
-#
-# These pin the *interim* contract: a loud failure, and no partial mutation.
-
-def test_tile_domain_raises_not_implemented():
-    nx, ny = 21, 21
-    x = np.linspace(0, 10, nx); y = np.linspace(0, 8, ny)
-    X, Y = np.meshgrid(x, y, indexing='ij')
-    u = np.sin(2 * np.pi * X / 10); v = np.cos(2 * np.pi * Y / 8)
-    envir = planktos.Environment(Lx=10, Ly=8, flow=[u.copy(), v.copy()])
-
-    with pytest.raises(NotImplementedError):
-        envir.tile_domain(2, 2)
-
-
-def test_tile_domain_leaves_environment_untouched():
-    # A half-tiled environment (mesh/L updated, fluid not) would be worse than no
-    # tiling at all, so the raise must happen before anything is mutated.
-    nx, ny = 11, 11
-    x = np.linspace(0, 10, nx); y = np.linspace(0, 8, ny)
-    X, Y = np.meshgrid(x, y, indexing='ij')
-    envir = planktos.Environment(Lx=10, Ly=8, flow=[X.copy(), Y.copy()])
-    L_before = list(envir.L)
-    shape_before = envir.flow[0].shape
-    fp_before = [fp.copy() for fp in envir.flow.flow_points]
-
-    with pytest.raises(NotImplementedError):
-        envir.tile_domain(3, 2)
-
-    assert envir.L == L_before
-    assert envir.flow[0].shape == shape_before
-    for before, after in zip(fp_before, envir.flow.flow_points):
-        assert np.allclose(before, after)
-
-
-def test_tile_flow_raises_on_fluiddata_directly():
-    nx = 11
-    x = np.linspace(0, 10, nx); y = np.linspace(0, 8, nx)
-    X, Y = np.meshgrid(x, y, indexing='ij')
-    envir = planktos.Environment(Lx=10, Ly=8, flow=[X.copy(), Y.copy()])
-    with pytest.raises(NotImplementedError):
-        envir.flow.tile_flow(2, 2)
 
 
 # --------------------------------------------------------------------------- #
