@@ -375,7 +375,7 @@ def _pair(dim, counts, regime='static', mesh=None, ibmesh_times=None,
 
 def _ib2d_dyadic(tmp_path, INUM=None):
     src = tmp_path / 'ib2d_fluid_dyadic'
-    shutil.copytree(FIXTURES / 'ib2d_fluid_dyadic', src)
+    shutil.copytree(FIXTURES / 'ib2d_fluid_dyadic', src, dirs_exist_ok=True)
     envir = planktos.Environment(x_bndry='periodic', y_bndry='periodic')
     envir.read_IB2d_fluid_data(str(src), dt=1/16, print_dump=4, INUM=INUM)
     return envir
@@ -489,7 +489,7 @@ AFTER_TILING = {
 @pytest.mark.parametrize('action', list(AFTER_TILING))
 def test_after_tiling_the_domain_cannot_change(action, tmp_path):
     src = tmp_path / 'ib2d'
-    shutil.copytree(FIXTURES / 'ib2d_fluid_dyadic', src)
+    shutil.copytree(FIXTURES / 'ib2d_fluid_dyadic', src, dirs_exist_ok=True)
     flow, fp = T.dyadic_flow(2)
     envir = T.fluid_envir(flow, fp)
     envir.rho, envir.mu = 1000, 1e-3
@@ -964,3 +964,169 @@ def test_a_non_periodic_backdrop_spans_the_tiled_domain(monkeypatch):
         np.asarray(drawn['mesh'][0].get_array()).reshape(33, 97),
         envir.flow.materialize_tiled(envir.flow.get_vorticity()).T)
     assert drawn['xlim'] == (0, 3.0)
+
+
+# --------------------------------------------------------------------------- #
+#                 a tiled archive is the oracle's, and restores               #
+# --------------------------------------------------------------------------- #
+
+RECORD = dict(fluid=('vort', 'quiver'), quiver_shape=(20, 10), chunk_size=4)
+
+
+def _files(root, sub):
+    '''Every file under ``root/sub``, by relative path, as bytes.'''
+    return {str(f.relative_to(root)): f.read_bytes()
+            for f in sorted((root / sub).rglob('*')) if f.is_file()}
+
+
+def _recorded_pair(tmp_path, steps=10):
+    '''A windowed tiled run and its windowed oracle, each recorded.'''
+    swarms, paths = [], []
+    for name, envir in zip(('tiled', 'oracle'),
+                           _pair(2, (3, 2), 'window', windowed_oracle=True)):
+        swrm = _swarm(envir, n=60, seed=8, cov=5e-3)
+        with envir.record(str(tmp_path / name), **RECORD) as rec:
+            for _ in range(steps):
+                swrm.move(0.05, silent=True)
+        swarms.append(swrm)
+        paths.append(rec.path)
+    return swarms, paths
+
+
+@pytest.mark.slow
+def test_a_tiled_archive_is_the_oracle_archive(tmp_path):
+    (tiled, oracle), paths = _recorded_pair(tmp_path)
+    a, b = ({**_files(p, 'agents'), **_files(p, 'fluid')} for p in paths)
+    quiver = [n for n in a if 'quiver_' in n]
+    assert quiver
+    for name in [n for n in a if n.startswith('agents')] + quiver:
+        assert a[name] == b[name], name
+    runs = [planktos.load_run(str(p)) for p in paths]
+    assert runs[0].meta['fluid']['quiver_grid'] == \
+        runs[1].meta['fluid']['quiver_grid'] == [20, 11]
+    stats = [r.dump_stats() for r in runs]
+    for key in ('vmax', 'vort_absmax'):
+        np.testing.assert_array_equal(stats[0][key], stats[1][key])
+    np.testing.assert_allclose(stats[0]['means'], stats[1]['means'],
+                               rtol=1e-13, atol=1e-15)
+    # Written into each archive, the tiled one's on the stored tile.
+    assert [r.meta['fluid']['vorticity'] for r in runs] == ['archive']*2
+    for swrm, p in zip((tiled, oracle), paths):
+        swrm.envir.flow.vorticity_path = p / 'fluid'
+    for t in (0.1, 0.3, 0.45):
+        np.testing.assert_array_equal(
+            tiled.envir.flow.materialize_tiled(
+                tiled.envir.flow.get_stored_vorticity(t)),
+            oracle.envir.flow.get_stored_vorticity(t))
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize('fluid', ['vort', 'quiver'])
+def test_frames_served_from_a_tiled_archive_are_the_oracle_frames(tmp_path,
+                                                                  fluid):
+    swarms, _ = _recorded_pair(tmp_path)
+    tiled, oracle = (_movie(s, fluid) for s in swarms)
+    assert tiled == oracle
+
+
+def test_the_fingerprint_names_the_tiling_only_when_tiled(tmp_path):
+    (tiled, oracle), paths = _recorded_pair(tmp_path, steps=2)
+    grids = [dict(np.load(p / 'grid.npz')) for p in paths]
+    np.testing.assert_array_equal(grids[0]['tiling'], [3, 2])
+    assert 'tiling' not in grids[1]
+    np.testing.assert_array_equal(grids[0]['L'], grids[1]['L'])
+    np.testing.assert_array_equal(grids[0]['flow_points_0'],
+                                  T.dyadic_points(2)[0])
+    env = [planktos.load_run(str(p)).meta['provenance']['environment']
+           for p in paths]
+    assert env[0]['tiling'] == {'x': 3, 'y': 2, 'tile_ibmesh': True,
+                                'tile_L': [1.0, 0.5]}
+    assert 'tiling' not in env[1]
+
+
+def test_a_tiled_archive_refuses_an_untiled_environment(tmp_path):
+    _, (path, _) = _recorded_pair(tmp_path, steps=2)
+    flow, fp = T.dyadic_flow(2, TIMES)
+    untiled = T.oracle_envir(flow, fp, (3, 2), TIMES, INUM=True)
+    with pytest.raises(ValueError, match='tiling: recorded in the archive'):
+        planktos.load_run(str(path)).check_against(untiled)
+
+
+def _vertex_cylinder(tmp_path):
+    pts = _cylinder((0.5, 0.25), 0.15)[:, 0]
+    path = tmp_path / 'cylinder.vertex'
+    path.write_text('{}\n'.format(len(pts)) +
+                    ''.join('{!r} {!r}\n'.format(*map(float, p)) for p in pts))
+    return str(path)
+
+
+def _ib2d_tiled(tmp_path, INUM):
+    '''The IB2d dyadic series with a cylinder mesh, both from files, tiled.'''
+    envir = _ib2d_dyadic(tmp_path, INUM)
+    envir.read_IB2d_mesh_data(_vertex_cylinder(tmp_path), periodic=True)
+    envir.tile_domain(3, 2)
+    return envir
+
+
+@pytest.mark.slow
+def test_a_restored_tiled_run_continues_as_the_oracle_run(tmp_path):
+    counts, split, steps = (3, 2), 15, 35
+    tiled = _ib2d_tiled(tmp_path, INUM=3)
+    base = tiled.ibmesh[:len(tiled.ibmesh)//6]
+    swrm = _swarm(tiled, n=60, seed=9, cov=5e-3)
+    with tiled.record(str(tmp_path / 'run'), **RECORD):
+        for _ in range(split):
+            swrm.move(0.05, silent=True)
+    rebuilt, (resumed,) = planktos.load_run(str(tmp_path / 'run')).restore()
+
+    whole = _ib2d_dyadic(tmp_path / 'whole', INUM=True)
+    oracle = T.fluid_envir(
+        [T.tile_field(f, counts) for f in whole.flow.get_raw_loaded_data()],
+        T.tile_points(whole.flow.flow_points, counts), whole.flow.flow_times,
+        INUM=True)
+    T.set_mesh(oracle, T.tile_mesh_copies(base, T.DYADIC_L[:2], counts))
+    assert rebuilt.tiling == counts and rebuilt.L == oracle.L
+    np.testing.assert_array_equal(rebuilt.ibmesh, oracle.ibmesh)
+
+    expected = _history(_swarm(oracle, n=60, seed=9, cov=5e-3), steps, 0.05)
+    _assert_same_history(_history(resumed, steps - split, 0.05),
+                         expected[split:])
+    assert (np.array([s[3] for s in expected]) >= len(base)).any()
+
+
+@pytest.mark.slow
+def test_a_tiled_run_appended_after_restore_is_the_run_recorded_whole(tmp_path):
+    def run(name, split=None):
+        envir = _ib2d_tiled(tmp_path, INUM=None)
+        swrm = _swarm(envir, n=30, seed=4, cov=5e-3)
+        path = str(tmp_path / name)
+        with envir.record(path, **RECORD):
+            for _ in range(split or 12):
+                swrm.move(0.05, silent=True)
+        if split is not None:
+            rebuilt, (swrm,) = planktos.load_run(path).restore()
+            with rebuilt.record(path, **RECORD):
+                for _ in range(12 - split):
+                    swrm.move(0.05, silent=True)
+        return Path(path)
+
+    whole, joined = run('whole'), run('joined', split=5)
+    a, b = (_files(p, '.') for p in (whole, joined))
+    assert sorted(a) == sorted(b)
+    assert not [n for n in a if a[n] != b[n] and n != 'meta.json']
+
+
+def test_restoring_a_tiled_run_whose_fluid_was_arrays_leaves_it_untiled(
+        tmp_path):
+    flow, _ = T.dyadic_flow(2, TIMES)
+    envir = planktos.Environment(Lx=1, Ly=0.5, x_bndry='periodic',
+                                 y_bndry='periodic', flow=flow,
+                                 flow_times=TIMES, periodic_dim=True)
+    envir.tile_domain(3, 2)
+    swrm = _swarm(envir, n=10)
+    path = tmp_path / 'run'
+    with envir.record(str(path), fluid=None):
+        swrm.move(0.05, silent=True)
+    with pytest.warns(UserWarning, match=r'tiled \(3, 2\), and has not been '):
+        rebuilt, _ = planktos.load_run(str(path)).restore()
+    assert rebuilt.tiling == (1, 1) and rebuilt.L == [1.0, 0.5]

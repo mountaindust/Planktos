@@ -11,7 +11,8 @@ This module owns the on-disk format::
     run_archive/
       meta.json                 written once, never rewritten
       grid.npz                  the fingerprint: dimension, L, flow_points,
-                                flow_times, periodic_dim
+                                flow_times, periodic_dim, and tiling when
+                                the domain is tiled
       agents/
         swarm00.json            name, N, D, first_capture
         times_0000.npy          (rows,) shared across swarms
@@ -779,7 +780,8 @@ class RunArchive:
         The run is picked up where it left off: same positions, same properties,
         same random stream, same clock. Nothing about the fluid or the mesh is
         deserialized -- the loader calls the archive recorded are replayed, so
-        the data is re-read from wherever it lives.
+        the data is re-read from wherever it lives, and a tiled run's
+        ``tile_domain`` call is replayed after them.
 
         ``capture=j`` rebuilds at capture *j* rather than at the end of the run.
         Only what the recording stored per capture comes from *j*; the rest --
@@ -923,6 +925,11 @@ class RunArchive:
             raise ValueError(
                 '{} records no domain size, so no Environment can be rebuilt '
                 'from it.'.format(self.path))
+        # A tiled run is rebuilt on its stored tile and tiled last, as it was
+        #   made: tile_domain refuses every load after it.
+        tiling = env.get('tiling')
+        if tiling is not None:
+            L = tiling['tile_L']
         kwargs = {'Lx': L[0], 'Ly': L[1]}
         if len(L) == 3:
             kwargs['Lz'] = L[2]
@@ -943,12 +950,27 @@ class RunArchive:
         mesh = prov.get('ibmesh')
         mesh_first = mesh is not None and mesh.get('loaded_before') == 'flow'
         if mesh_first:
-            self._replay(envir, mesh, 'ibmesh', modifiers=False)
+            mesh_replayed = self._replay(envir, mesh, 'ibmesh', modifiers=False)
         replayed = self._replay(envir, prov.get('fluid'), 'fluid')
         if mesh_first:
             self._replay_modifiers(envir, mesh)
         else:
-            self._replay(envir, mesh, 'ibmesh')
+            mesh_replayed = self._replay(envir, mesh, 'ibmesh')
+        if tiling is not None:
+            if replayed and mesh_replayed:
+                envir.tile_domain(*(tiling[a] for a in 'xyz' if a in tiling),
+                                  tile_ibmesh=tiling['tile_ibmesh'])
+            else:
+                # Left untiled so that what could not be replayed can still be
+                #   set; the fingerprint cannot match until it is tiled.
+                replayed = False
+                warnings.warn(
+                    'the recorded run was tiled {}, and has not been tiled '
+                    'here because its fluid or mesh could not be replayed. Set '
+                    'them, then call tile_domain({}, tile_ibmesh={}).'.format(
+                        tuple(tiling[a] for a in 'xyz' if a in tiling),
+                        ', '.join(str(tiling[a]) for a in 'xyz' if a in tiling),
+                        tiling['tile_ibmesh']), UserWarning)
         if replayed:
             # The fingerprint is what says the rebuilt world is the same world.
             #   Skipped where the fluid could not be replayed at all, since the

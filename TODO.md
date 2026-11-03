@@ -360,7 +360,13 @@ replace.
    `tile_flow` on `FluidData`, until T5's prose pass.
    **T3 done:** `Swarm.plot`, `plot_all`/`animate` (through `FrameSource`),
    `_quiver_strides`, `plot_flow` and `plot_2D_vort` draw across the tiled domain,
-   pixel-identical to the materialized oracle's plots. Next is T4. For T5: the
+   pixel-identical to the materialized oracle's plots.
+   **T4 done:** the stored quiver on the tiled grid, `environment['tiling']` in the
+   provenance, the fingerprint's `tiling` key, and `restore()` replaying
+   `tile_domain` — tested against the materialized oracle's archive, its frames and
+   its uninterrupted run, plus a byte-identical append. An untiled archive is
+   unchanged byte for byte (the baseline), so one written before this work restores
+   as before. Next is T5. For T5: the
    docstrings of `flow[i]`, `flow(t)`, `get_vorticity`, `get_dudt`, `calculate_DuDt`,
    `mag_grad` and `get_raw_loaded_data` do not yet say they return the stored tile
    (§9.1, "Elsewhere").

@@ -324,7 +324,7 @@ def _import_swarm_class(dotted):
 #   eliminate it.
 
 def build_fingerprint(dimension, L, flow_points=None, flow_times=None,
-                      periodic_dim=None):
+                      periodic_dim=None, tiling=None):
     '''Assemble the arrays that identify a fluid dataset and domain.
 
     These are what goes into ``grid.npz``. ``periodic_dim`` is part of it
@@ -346,6 +346,10 @@ def build_fingerprint(dimension, L, flow_points=None, flow_times=None,
         window -- see FluidData's guard on that)
     periodic_dim : bool or sequence of bool, optional
         broadcast to one flag per dimension
+    tiling : sequence of int, optional
+        tiles per axis, for a tiled domain; ``L`` is then the tiled length and
+        ``flow_points`` the stored tile's grid. None adds no key, which is what
+        an untiled environment gives.
 
     Returns
     -------
@@ -385,6 +389,11 @@ def build_fingerprint(dimension, L, flow_points=None, flow_times=None,
     if flow_times is not None:
         arrays['flow_times'] = np.asarray(flow_times, dtype=np.float64)
 
+    # Only when tiled: compare_fingerprints reports a key on one side alone as
+    #   a mismatch, so an untiled grid.npz stays as it was and still matches.
+    if tiling is not None:
+        arrays['tiling'] = np.asarray(tiling, dtype=np.int64)
+
     return arrays
 
 
@@ -417,6 +426,9 @@ def fingerprint_summary(arrays):
     else:
         summary['n_dumps'] = 0
         summary['time_span'] = None
+
+    if 'tiling' in arrays:
+        summary['tiling'] = [int(v) for v in arrays['tiling']]
 
     return summary
 
@@ -479,12 +491,14 @@ def fingerprint_of(envir):
     '''
 
     dimension = len(envir.L)
+    tiling = envir._tiling
     if envir.flow is None:
-        return build_fingerprint(dimension, envir.L)
+        return build_fingerprint(dimension, envir.L, tiling=tiling)
     return build_fingerprint(dimension, envir.L,
                              flow_points=envir.flow.flow_points,
                              flow_times=envir.flow.flow_times,
-                             periodic_dim=envir.flow.periodic_dim)
+                             periodic_dim=envir.flow.periodic_dim,
+                             tiling=tiling)
 
 
 def _describe_source(provenance):

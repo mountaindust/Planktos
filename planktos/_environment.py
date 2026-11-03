@@ -241,6 +241,7 @@ class Environment:
         # Tile counts once tile_domain has run. Set first: the flow and ibmesh
         #   setters below consult it.
         self._tiling = None
+        self._tiling_record = None
 
         # Save domain size, units
         if Lz is None:
@@ -2260,6 +2261,12 @@ class Environment:
         if self.flow is not None:
             self._warn_on_tiling_seams(counts)
 
+        # What a run archive records and restore() replays: the call, and the
+        #   stored tile's L, which an analytic flow generator builds its grid
+        #   over and the Environment is constructed with.
+        self._tiling_record = dict(zip('xyz', counts),
+                                   tile_ibmesh=bool(tile_ibmesh),
+                                   tile_L=[float(v) for v in self.L])
         self._ibmesh = mesh
         # A new list: the loaders set self.L = self.flow.L, so an in-place
         #   edit would tile the fluid's own L.
@@ -2406,8 +2413,9 @@ class Environment:
             captures held in memory before a chunk is written; a hard kill
             loses at most these.
         quiver_shape : tuple of 2 int, default=(60, 60)
-            target arrow grid for a stored quiver, fixed for the run; used only
-            when ``fluid`` includes ``'quiver'``. A render that would draw
+            target arrow grid for a stored quiver across the (tiled) domain,
+            fixed for the run; used only when ``fluid`` includes ``'quiver'``.
+            A render that would draw
             denser arrows uses this grid, with a warning.
         plot_all : dict, optional
             keyword arguments for ``Swarm.plot_all``, rendered when a ``with``

@@ -1313,8 +1313,11 @@ class _FluidWriter:
 
         # .npy rather than vtk: a subsample chosen at record time is not a
         #   quantity any solver writes or any other tool would want.
-        M, N = self.plan.quiver_strides
-        arrows = np.stack([np.asarray(f)[::M, ::N] for f in field])
+        # On the grid across the tiled domain when tiled, so the stored arrows
+        #   are the ones a render draws.
+        arrows = np.stack([self.flow.tiled_strided(np.asarray(f),
+                                                   self.plan.quiver_strides)
+                           for f in field])
         _save_npy(self.dir / _quiver_name(t_idx), arrows)
 
 
@@ -1372,10 +1375,13 @@ def _plan_fluid(envir, fluid, quiver_shape):
         #   ndarray's shape instead of its values -- right for a data array, and
         #   useless for a two-element parameter.
         quiver_shape = tuple(int(v) for v in quiver_shape)
-        strides = _quiver_strides(flow.flow_points, quiver_shape)
+        # Counted across the tiled domain when tiled, as Swarm._quiver_strides
+        #   counts, so quiver_shape means arrows over the whole domain.
+        points = flow.tiled_points
+        strides = _quiver_strides(points, quiver_shape)
         meta['quiver_shape'] = quiver_shape
         meta['quiver_strides'] = strides
-        meta['quiver_grid'] = [len(flow.flow_points[d][::strides[d]])
+        meta['quiver_grid'] = [len(points[d][::strides[d]])
                                for d in range(len(strides))]
 
     state, directory, write = 'recomputed', None, False
@@ -1857,9 +1863,13 @@ def _check_plot_all(plot_all, swarms):
 
 
 def _environment_record(envir):
-    '''The Environment's own parameters, as ``meta.json`` records them.'''
+    '''The Environment's own parameters, as ``meta.json`` records them.
 
-    return {'L': [float(v) for v in envir.L],
+    ``L`` is the tiled length once the domain is tiled, and ``tiling`` -- the
+    tile_domain call and the stored tile's ``tile_L`` -- is present only then.
+    '''
+
+    record = {'L': [float(v) for v in envir.L],
             'units': envir.units,
             'bndry': [list(b) for b in envir.bndry],
             'rho': _provenance.jsonable(envir.rho),
@@ -1880,6 +1890,9 @@ def _environment_record(envir):
             #   were any can, which is what lets a reboot say they are missing
             #   only when they are.
             'has_plot_structs': bool(envir.plot_structs)}
+    if envir._tiling is not None:
+        record['tiling'] = dict(envir._tiling_record)
+    return record
 
 
 # How _restorable_state's keys are named in a warning.

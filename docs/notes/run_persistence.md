@@ -3054,9 +3054,13 @@ criterion, and confirmed by the user the same day.)*
 - Vorticity on disk stays the stored tile, whether written beside the source or into
   the archive. That is smaller than a materialized run's, and replay replicates it for
   display. The stamps are unaffected, since the field is unchanged.
-- `provenance['environment']['tiling'] = {'x', 'y', 'z', 'tile_ibmesh'}`, present
-  only when tiled. `restore()` replays `tile_domain` after the fluid and mesh calls
-  and before `check_against`. "Last operation" makes that position always right.
+- `provenance['environment']['tiling'] = {'x', 'y', 'z', 'tile_ibmesh', 'tile_L'}`,
+  present only when tiled (`z` only in 3D). `tile_L` is the stored tile's `L`, which
+  `restore()` constructs the Environment with, since an analytic generator builds its
+  grid over it. `restore()` replays `tile_domain` after the fluid and mesh calls and
+  before `check_against`. "Last operation" makes that position always right. When the
+  fluid or mesh cannot be replayed (arrays given to `Environment()`), it warns and
+  leaves the domain untiled, so that they can still be set and then tiled.
 - **The fingerprint gains a `tiling` key only when tiled.** `compare_fingerprints`
   reports a key present on one side as a mismatch. Writing it unconditionally would
   make every existing archive stop matching, while writing it only when tiled leaves
