@@ -6,13 +6,7 @@ the convex hull algorithm and demonstrates how the domain can be tiled.
 
 This example loads the vtk fluid velocity field AND loads vertex data describing
 a 3D cylinder, creating an ibmesh out of it using a convex hull algorithm. \
-Agents should not be able to move through the cylinder boundaries.
-
-!!! THIS EXAMPLE DOES NOT CURRENTLY RUN TO COMPLETION !!!
-The tile_domain call below raises NotImplementedError: tiling is temporarily
-unavailable while the fluid-data interface is reworked. It returns as a
-position-wrapping implementation covering 2D and 3D. Delete this notice and
-re-run when that lands. See docs/notes/run_persistence.md.'''
+Agents should not be able to move through the cylinder boundaries.'''
 
 import planktos
 
@@ -31,18 +25,24 @@ envir.read_IBAMR3d_vtk_data('../tests/IBAMR_test_data', d_start=3, d_finish=None
 #   points. This way, we don't end up with a cylinder without a top on it!
 envir.read_3D_vertex_data_to_convex_hull('../tests/IBAMR_test_data/mesh_db.vtk')
 # Plot to see what we have:
-print(f'Flow shape is {envir.flow.fshape}.')
+print(f'Domain size is {envir.L}.')
 envir.plot_flow()
 
 # This data was generated with periodic boundary conditions in the x and y
 #   directions, simulating an infinite array of cylinders. This means that we
 #   can tile our environment if we like, getting a bigger domain for the agents!
 #   In this case, let's tile the environment to a 3x3 grid with respect to its
-#   original size.
+#   original size. Tiling comes last, after the fluid and the mesh are loaded.
+#   This data was resampled onto a rectilinear grid, so its opposite edges do
+#   not match exactly, and tile_domain warns with the size of the mismatch
+#   (here about 0.1% of the flow speed).
 envir.tile_domain(3,3)
 
 # Now we can see the effect - notice that the cylinder mesh got tiled too!!
-print(f'Flow shape is now {envir.flow.fshape}.')
+#   The fluid data is not copied: envir.flow still holds the one stored tile,
+#   and agent positions are wrapped onto it.
+print(f'Domain size is now {envir.L}; the stored fluid grid is still '
+      f'{envir.flow.fshape[1:]}.')
 envir.plot_flow()
 
 # Let's add a Swarm with 100 agents all positioned somewhat behind the 

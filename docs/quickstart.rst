@@ -182,7 +182,8 @@ time-dependent 2D or 3D fluid velocity data specified on a regular mesh. ASCII
 vtk format is supported, as well as one single-time ASCII vtu files from COMSOL 
 and NetCDF. A few analytical 1D flow fields are also available and can be 
 generated in either 2D or 3D environments; these include Brinkman flow, two layer 
-channel flow, and canopy flow. Flow fields can also be tiled. Mesh data 
+channel flow, and canopy flow. A periodic domain can also be tiled, with its
+immersed mesh, without copying the fluid data. Mesh data 
 must be time-invariant in 3D but can be time-varying in 2D. They are loaded via 
 IB2d/IBAMR-style vertex data (2D) or via stl file in 3D. An stl file that is a
 straight extrusion, as a 2D simulation's geometry usually is, can also be used

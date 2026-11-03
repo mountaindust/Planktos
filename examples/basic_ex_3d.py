@@ -21,12 +21,11 @@ envir.set_brinkman_flow(alpha=66, h_p=1.5, U=1, dpdx=1, res=101)
 
 # If you decide later you want a bigger spatial domain (or you loaded fluid data
 #   with periodic boundary conditions but want a bigger domain than the CFD
-#   data was generated on), you can tile the environment in the x and y
-#   directions using the tile_domain method (this also works in 2D).
-#   NOTE: tile_domain currently raises NotImplementedError -- tiling is
-#   temporarily unavailable while the fluid-data interface is reworked, and
-#   returns as a position-wrapping implementation for 2D and 3D. See
-#   docs/notes/run_persistence.md.
+#   data was generated on), you can tile the environment along any axis using
+#   the tile_domain method, e.g. envir.tile_domain(x=2, y=3, z=1) -- z exists in
+#   3D only, and this also works in 2D. The fluid data is not copied, and the
+#   immersed mesh is copied into every tile unless you pass tile_ibmesh=False.
+#   Tile last: after loading the fluid and the mesh, before creating swarms.
 
 # 3D visualization is a hard problem in general and requires advanced libraries
 #   specifically built for that purpose (e.g., VTK). While Planktos can read

@@ -1,6 +1,6 @@
 '''Tiling off changes nothing: every untiled output, bitwise, against the branch point.
 
-Scaffolding for the ``tiling`` branch (run_persistence.md 9.4.1), **deleted in the
+Scaffolding for the ``tiling`` branch (run_persistence.md 9.3), **deleted in the
 commit that merges it back into ``dyload``** -- after that there is no "before" left
 to compare against.
 

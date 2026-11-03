@@ -291,7 +291,8 @@ class FluidData:
 
         Returns
         -------
-        list of ndarrays, one per velocity component, each (i,j,[k])
+        list of ndarrays, one per velocity component, each (i,j,[k]) on
+        ``flow_points``: the stored tile when tiled
 
         Raises
         ------
@@ -324,7 +325,8 @@ class FluidData:
         component's interpolant in time, which indexes by time index like an
         ``(t,i,j,[k])`` array. Raises ``TypeError`` while a window of data
         slides (``is_windowed``), since a time index would then point into the
-        window rather than the dataset.
+        window rather than the dataset. Either is on ``flow_points``, the
+        stored tile when tiled.
         '''
         if not self.is_windowed:
             return self._flow[pos]
@@ -354,8 +356,9 @@ class FluidData:
     def get_raw_loaded_data(self):
         '''The ndarrays the interpolants are built on, one per component.
 
-        Under dynamic loading, only the window held in memory. Linear
-        interpolants return their data by reference; cubic ones rebuild it.
+        Under dynamic loading, only the window held in memory; when tiled,
+        only the stored tile. Linear interpolants return their data by
+        reference; cubic ones rebuild it.
         '''
         # Static flow is stored as arrays; time-varying flow as splines of
         #   either class, so this branches on flow_times, not the spline type.
@@ -887,7 +890,8 @@ class FluidData:
         Returns
         -------
         ndarray (i,j) in 2D, the out-of-plane component; a tuple of three
-        (i,j,k) ndarrays in 3D
+        (i,j,k) ndarrays in 3D. On ``flow_points``: the stored tile when
+        tiled.
 
         Raises
         ------
@@ -1124,7 +1128,8 @@ class FluidData:
 
         Returns
         -------
-        list of ndarrays, one per velocity component, each (i,j,[k])
+        list of ndarrays, one per velocity component, each (i,j,[k]) on
+        ``flow_points``: the stored tile when tiled
 
         Raises
         ------
@@ -1193,7 +1198,8 @@ class FluidData:
 
         Returns
         -------
-        list of ndarrays, one per velocity component, each (i,j,[k])
+        list of ndarrays, one per velocity component, each (i,j,[k]) on
+        ``flow_points``: the stored tile when tiled
 
         Raises
         ------

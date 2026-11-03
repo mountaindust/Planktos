@@ -4,14 +4,16 @@ The materialized "oracle" is built in ``_tiling_harness``, independently of the
 code under test: fluid concatenated tile by tile, the grid extended point by point,
 mesh copies translated in the documented order. Equality is bitwise, on the
 dyadic geometry where every node and tile offset is exactly representable, with
-the fluid periodic on every tiled axis (run_persistence.md 9.4.2).
+the fluid periodic on every tiled axis.
 
 The first section checks the oracle itself, against untiled code: that it is the
 field it claims to be, and that wrapping a position onto the stored tile
 reproduces it exactly. Then come mesh copying (_geom.tile_mesh), tile_domain and
 the refusals around it, and last the tiled runs against the oracle: interpolation,
 trajectories in every temporal regime, derived fields, FTLE, means, and immersed
-meshes -- the array of cylinders, a moving mesh, a 3D mesh.
+meshes -- the array of cylinders, a moving mesh, a 3D mesh. Then plots, pixel for
+pixel against the oracle's, and archives: their contents, the frames served from
+them, restore and append.
 '''
 
 import copy
@@ -556,8 +558,10 @@ def test_tiling_warns_where_periodic_edges_differ():
     flow[1] = flow[1].copy()
     flow[1][5, -1, 3] += 0.01
     envir = T.fluid_envir(flow, fp, TIMES)
-    with pytest.warns(UserWarning, match='along x, where the fluid is flagged '
-                                         'periodic but its opposite edges differ'):
+    share = '{:.2g}%'.format(1/max(np.abs(f).max() for f in flow))
+    with pytest.warns(UserWarning, match=r'along x \({}\), where the fluid is '
+                      'flagged periodic but its opposite edges differ'.format(
+                          share)):
         envir.tile_domain(3, 2)
 
 

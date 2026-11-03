@@ -453,12 +453,12 @@ def test_an_in_ram_run_gives_the_numbers_the_released_line_gives(tmp_path, rev):
 #           nothing breaks: the tutorials, run exactly as written             #
 # --------------------------------------------------------------------------- #
 
-# Only the examples that need no downloaded data. ex_IBAMR_ibmesh.py is
-# excluded because it calls tile_domain, which raises NotImplementedError by
-# design on this branch (run_persistence.md 9.3) -- its own header says so.
+# Only the examples that need no downloaded data. ex_IBAMR_ibmesh.py reads
+# the committed tests/IBAMR_test_data.
 SELF_CONTAINED_EXAMPLES = [
     'basic_ex_2d.py',
     'basic_ex_3d.py',
+    'ex_IBAMR_ibmesh.py',
     'ex_agent_behavior.py',
     'ex_ind_var.py',
     'ex_ode_gen.py',
@@ -487,6 +487,9 @@ def test_a_self_contained_example_runs_to_completion(script, tmp_path):
     work = tmp_path / 'examples'
     shutil.copytree(REPO / 'examples', work,
                     ignore=shutil.ignore_patterns('*.mp4', 'results'))
+    # Read as ../tests/IBAMR_test_data, relative to the examples directory.
+    shutil.copytree(REPO / 'tests' / 'IBAMR_test_data',
+                    tmp_path / 'tests' / 'IBAMR_test_data')
     proc = run_script(work / script, cwd=work)
     assert proc.returncode == 0, \
         'examples/{} failed:\n{}\n{}'.format(script, proc.stdout[-3000:],

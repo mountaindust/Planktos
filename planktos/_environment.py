@@ -2298,22 +2298,27 @@ class Environment:
         if not flagged:
             return
         # Close rather than equal, since a solver writing both edges of a
-        #   periodic grid may differ in the last bits.
-        mismatched = set()
+        #   periodic grid may differ in the last bits. The largest jump is
+        #   reported against the largest velocity component, so the size of
+        #   the seam can be judged.
+        jump = {}
+        scale = 0.0
         for _, comps in self.flow.iter_resident_dumps():
             for c in comps:
-                scale = np.abs(c).max()
+                cmax = np.abs(c).max()
+                scale = max(scale, cmax)
                 for d in flagged:
-                    if d not in mismatched and not np.allclose(
-                            np.take(c, 0, axis=d), np.take(c, -1, axis=d),
-                            rtol=1e-9, atol=1e-12*scale):
-                        mismatched.add(d)
-        if mismatched:
+                    lo, hi = np.take(c, 0, axis=d), np.take(c, -1, axis=d)
+                    if not np.allclose(lo, hi, rtol=1e-9, atol=1e-12*cmax):
+                        jump[d] = max(jump.get(d, 0.0), np.abs(lo - hi).max())
+        if jump:
             warnings.warn(
                 "Tiling along {}, where the fluid is flagged periodic but its "
-                "opposite edges differ: the tiled field jumps at each seam "
-                "there.".format(', '.join('xyz'[d] for d in sorted(mismatched))),
-                UserWarning)
+                "opposite edges differ, by up to the percentage shown of the "
+                "largest velocity component: the tiled field jumps by that much "
+                "at each seam there.".format(', '.join(
+                    '{} ({:.2g}%)'.format('xyz'[d], 100*jump[d]/scale)
+                    for d in sorted(jump))), UserWarning)
 
 
     #######################################################################
@@ -2967,7 +2972,8 @@ class Environment:
         Gradient is calculated via second order accurate central differences
         (using numpy) with second order accuracy at the boundaries and saved in
         case it is needed again. A periodic dimension is differenced across the
-        wrap instead, since the field continues past the edge there.'''
+        wrap instead, since the field continues past the edge there. Stored on
+        ``flow.flow_points``, the stored tile when tiled.'''
 
         TIME_DEP = self.flow.flow_times is not None
         if not TIME_DEP:
@@ -3796,7 +3802,8 @@ class Environment:
         Returns
         -------
         ndarray (i,j) in 2D, the out-of-plane component; a tuple of three
-        (i,j,k) ndarrays in 3D
+        (i,j,k) ndarrays in 3D. On ``flow.flow_points``: the stored tile when
+        tiled.
         '''
 
         if t_indx is not None:
@@ -3811,7 +3818,7 @@ class Environment:
 
     def save_2D_vorticity(self, path, name, time_history=True, flow_times=False):
         '''Save the vorticity of a 2D fluid velocity field as one or more vtk 
-        files (one for each time point).
+        files (one for each time point). A tiled domain writes its stored tile.
 
         Parameters
         ----------
@@ -3861,7 +3868,7 @@ class Environment:
 
     def save_fluid(self, path, name, time_history=True, flow_times=False):
         '''Save the fluid velocity field as one or more vtk files (one for each 
-        time point).
+        time point). A tiled domain writes its stored tile.
 
         Parameters
         ----------
@@ -3934,7 +3941,8 @@ class Environment:
 
         Returns
         -------
-        list of ndarrays, one per velocity component
+        list of ndarrays, one per velocity component, on ``flow.flow_points``:
+        the stored tile when tiled
         '''
 
         if t_indx is None and time is None:
@@ -3968,7 +3976,8 @@ class Environment:
 
         Returns
         -------
-        list of ndarrays, one per velocity component
+        list of ndarrays, one per velocity component, on ``flow.flow_points``:
+        the stored tile when tiled
         '''
 
         if self.flow.flow_times is None:

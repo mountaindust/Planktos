@@ -1,7 +1,7 @@
 '''Everything an untiled run produces, saved for a bitwise comparison across revisions.
 
 Run by ``test_tiling_baseline.py``, once against the working tree and once against
-the commit the ``tiling`` branch started from (run_persistence.md 9.4.1). It is
+the commit the ``tiling`` branch started from (run_persistence.md 9.3). It is
 copied into the root of the checkout under test and run from there, so that
 ``import planktos`` finds that checkout's package:
 

@@ -40,6 +40,18 @@ object with a time instead.
 To interpolate in *space*, at agent positions, use
 ``Environment.interpolate_flow``.
 
+Tiled domains
+-------------
+
+After ``Environment.tile_domain``, the Environment's ``L`` spans the tiled
+domain, but the FluidData still holds one stored tile: ``flow_points``,
+``fshape`` and every field it returns -- ``flow(t)``, ``flow[i]``,
+``get_vorticity``, ``get_dudt``, ``calculate_DuDt`` and the rest -- describe
+that tile. ``Environment.interpolate_flow`` wraps agent positions onto it.
+``tiling`` gives the tile counts, ``tiled_points`` the grid across the tiled
+domain, and ``materialize_tiled`` replicates a field onto that grid, at the
+memory cost of the whole tiled field.
+
 .. _inum-tradeoff:
 
 Dynamic loading and the ``INUM`` argument

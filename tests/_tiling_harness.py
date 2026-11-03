@@ -1,6 +1,6 @@
 '''Ground truth for the tiling tests: rendered pixels, and the materialized oracle.
 
-Two roles (run_persistence.md 9.4):
+Two roles:
 
 1. **Pixel capture.** ``plot_all`` saves movies through
    ``matplotlib.animation.FFMpegWriter`` and ``Swarm.plot`` / ``plot_flow`` /

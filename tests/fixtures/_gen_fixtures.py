@@ -206,8 +206,8 @@ def write_ib2d_fluid_with_vorticity(outdir=HERE / 'ib2d_fluid_vort_min'):
     return outdir
 
 
-# 2D IB2d fluid series on a DYADIC grid, for the tiling tests (run_persistence.md
-# 9.4). 32 x 16 points written at spacing 1/32 become, once Planktos wraps the
+# 2D IB2d fluid series on a DYADIC grid, for the tiling tests
+# (tests/test_tiling.py). 32 x 16 points written at spacing 1/32 become, once Planktos wraps the
 # endpoint back on, a 33 x 17 field over a 1 x 0.5 domain: non-square, a different
 # count per axis, and every node and tile offset exactly representable, so a tiled
 # run and the same data materialized to the tiled size do bit-identical arithmetic.
