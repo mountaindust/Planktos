@@ -105,9 +105,10 @@ for ii in range(50):
 #   real time. The flow structures here are worth a good look, so let's slow
 #   things down to 0.075 simulated seconds per second of video (about 13x slow
 #   motion) at 3 fps.
-# Frames can only show states that the simulation actually captured, so
-#   playback_rate/fps must be at least dt: here that caps fps at 0.075/0.025 =
-#   3. Planktos warns and clamps if you ask for more. Note what that means --
+# Frames can only show states that the simulation actually captured, so a new
+#   state in every frame needs playback_rate/fps of at least dt: here that is
+#   fps of at most 0.075/0.025 = 3. Ask for more and Planktos warns and repeats
+#   states across frames, keeping the playback speed. Note what that means --
 #   smoother slow motion requires a smaller dt, not a higher fps.
 # Also, since this fluid velocity field is non-trivial, let's plot the vorticity
 #   behind the agents to better see what is going on! Just set the fluid

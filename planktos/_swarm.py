@@ -2562,9 +2562,9 @@ class Swarm:
         Frames are laid down at a fixed interval of *simulated* time,
         dt_frame = playback_rate/fps, and each one shows the recorded state
         nearest to it. The first and last states are always included, so the
-        animation spans the whole run. Frames cannot be produced in between
-        recorded states, so a dt_frame finer than the interval between them is
-        clamped to one frame per state, with a warning.
+        animation spans the whole run. A dt_frame finer than the interval
+        between recorded states repeats states across frames, with a warning,
+        so the movie still plays at playback_rate.
 
         Parameters
         ----------
@@ -2618,17 +2618,18 @@ class Swarm:
         frames = np.where(frame_times-times[hi-1] <= times[hi]-frame_times,
                           hi-1, hi)
 
-        unique_frames = np.unique(frames)
-        # the tolerance keeps a deliberately exact choice (playback_rate/fps
-        # meant to equal dt) from tripping the clamp on floating point roundoff
-        if dt_frame < dt_state*(1-1e-9) or len(unique_frames) < len(frames):
-            warnings.warn("Cannot draw a frame every {:.3g} s of simulated ".format(dt_frame)+
-                "time: states were only recorded every {:.3g} s. ".format(dt_state)+
-                "Using one frame per recorded state, which plays at {:.3g} ".format(dt_state*fps)+
-                "rather than {:.3g} simulated s per s of video; ".format(playback_rate)+
-                "an fps of {:.3g} or less gives the rate you asked for.".format(playback_rate/dt_state),
+        # a frame time between two recorded states shows the nearer one, so
+        # frames finer than the recording repeat states. that keeps both fps
+        # and playback_rate, with motion stepping once per recorded state.
+        if len(np.unique(frames)) < len(frames):
+            warnings.warn("Some frames repeat a recorded state: a frame every "
+                "{:.3g} s of simulated time is finer than the {:.3g} s ".format(dt_frame, dt_state)+
+                "between recorded states, so each state is held for about "
+                "{:.3g} frames and motion steps rather than flows. ".format(dt_state/dt_frame)+
+                "For smooth motion at this playback_rate, record a state at least "
+                "every {:.3g} s (a smaller dt, or a smaller capture_interval); ".format(dt_frame)+
+                "an fps of {:.3g} or less avoids repeated frames.".format(playback_rate/dt_state),
                 stacklevel=3)
-            frames = unique_frames
         elif np.max(np.abs(np.diff(times[frames])-dt_frame), initial=0) > dt_frame/6:
             # frames land on recorded states, so their spacing jitters by up to
             # one recording interval whenever dt_frame is not a whole multiple
@@ -2686,8 +2687,8 @@ class Swarm:
             with fps this fixes the simulated time between frames,
             dt_frame = playback_rate/fps, and each frame shows the recorded
             state nearest to it in time. A dt_frame shorter than the interval
-            between recorded states is clamped to one frame per state, with a
-            warning.
+            between recorded states shows each state for several frames, with
+            a warning.
         dist : {'density' (default), 'cov', float, 'hist'}
             whether to plot Gaussian kernel density estimation or histogram.
             Options are:

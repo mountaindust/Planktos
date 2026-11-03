@@ -113,24 +113,31 @@ def test_the_timestep_need_not_have_been_constant():
 #          the failure mode: asking for frames between recorded states        #
 # --------------------------------------------------------------------------- #
 
-def test_finer_than_the_recording_interval_clamps_and_warns():
-    with pytest.warns(UserWarning, match='one frame per recorded state'):
-        frames = _run(0.025, 20)._select_frames(fps=60, playback_rate=1)
-    # clamped to every recorded state, and not one repeated
-    assert np.array_equal(frames, np.arange(21))
+def test_finer_than_the_recording_interval_repeats_states_and_warns():
+    swrm = _run(0.025, 20)
+    with pytest.warns(UserWarning, match='Some frames repeat a recorded state'):
+        frames = swrm._select_frames(fps=60, playback_rate=1)
+    # a frame per 1/60 s over the 0.5 s run, each the nearest state: every state
+    # shown, in order, the movie still lasting 0.5 s at 60 fps
+    times = np.append(swrm.envir.time_history, swrm.envir.time)
+    assert len(frames) == 31
+    assert np.array_equal(np.unique(frames), np.arange(21))
+    assert np.all(np.diff(frames) >= 0)
+    frame_times = np.arange(31) / 60
+    assert np.all(np.abs(times[frames] - frame_times) <= 0.0125 + 1e-12)
 
 
-def test_clamp_warning_reports_the_achieved_rate_and_the_usable_fps():
+def test_repeat_warning_reports_the_hold_and_the_usable_fps():
     with pytest.warns(UserWarning) as record:
         _run(0.025, 20)._select_frames(fps=60, playback_rate=1)
     msg = str(record[0].message)
-    assert '1.5' in msg     # achieved playback rate: dt_state*fps = 0.025*60
-    assert '40' in msg      # usable fps at the requested rate: 1/0.025
+    assert '1.5 frames' in msg      # each state held dt_state/dt_frame = 0.025*60
+    assert 'fps of 40' in msg       # usable fps at the requested rate: 1/0.025
 
 
-def test_frame_interval_equal_to_the_recording_interval_is_not_clamped():
+def test_frame_interval_equal_to_the_recording_interval_repeats_nothing():
     # the exact-fit case, and one where playback_rate/fps is inexact in binary
-    # (0.075/3 != 0.025 to the last bit) -- roundoff must not trip the clamp
+    # (0.075/3 != 0.025 to the last bit) -- roundoff must not repeat a state
     swrm = _run(0.025, 48)
     for fps, rate in ((40, 1), (3, 0.075)):
         with warnings.catch_warnings():

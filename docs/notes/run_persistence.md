@@ -2007,9 +2007,12 @@ lever: at `dt = 1e-3`, real-time playback demanded `fps = 1000`, while the defau
 **Constraints that survive into archive-backed rendering:**
 
 - **`Δt_frame < Δt_capture` is the one failure mode.** Frames cannot be produced between
-  captured states. Clamp to every captured state and **warn with the numbers**,
-  including the achieved rate `Δt_capture × fps`.
-- **`fps ≤ playback_rate / Δt_capture`** follows. With capture-every-step,
+  captured states, so states **repeat across frames**, keeping both `fps` and
+  `playback_rate`, and a warning gives the numbers: how many frames each state is held
+  for, the capture interval smooth motion needs, and the largest `fps` that repeats
+  nothing. *(Decided by the user 2026-11-03, replacing a clamp to one frame per state,
+  which kept `fps` but played the movie faster than `playback_rate`.)*
+- **`fps ≤ playback_rate / Δt_capture`** is what avoids repeats. With capture-every-step,
   `Δt_capture = dt`, so **slow motion and smoothness trade off unless the capture
   interval is small**: at `dt = 0.025` captured every step, real time reaches 40 fps but
   10× slow motion caps at 4 fps. Document as: *smooth slow motion needs fine capture.*
@@ -2050,16 +2053,16 @@ lever: at `dt = 1e-3`, real-time playback demanded `fps = 1000`, while the defau
   precisely the case the jitter warning exists to flag, so the friendlier-looking
   default would have shipped a warning on the runs people actually have.
 - **Both warnings are computed from the selection itself, not from a nominal `dt`**,
-  because `dt` may vary between `move()` calls. The clamp fires when `Δt_frame <
-  Δt_capture` *or* when two frames would land on the same recorded state; the jitter
-  warning fires when achieved spacing departs from `Δt_frame` by more than a sixth.
-- **Roundoff tolerance on the clamp is load-bearing.** `playback_rate/fps` is a division
+  because `dt` may vary between `move()` calls. The repeat warning fires when two
+  frames land on the same recorded state; the jitter warning fires otherwise, when
+  achieved spacing departs from `Δt_frame` by more than a sixth.
+- **Roundoff must not repeat a state.** `playback_rate/fps` is a division
   and `time_history` accumulates `dt` by repeated addition (0.3 arrives as
   0.30000000000000004), so an exact choice like `playback_rate=0.075, fps=3` at
-  `dt=0.025` compares as *just* under the recording interval. Without the `1e-9` relative
-  slack it would warn and clamp on every such call — i.e. on the examples, which are
-  written that way. Pinned by
-  `test_frame_interval_equal_to_the_recording_interval_is_not_clamped`.
+  `dt=0.025` compares as *just* under the recording interval. Nearest-state selection
+  still picks every state once there, so the examples, which are written that way, draw
+  no warning. Pinned by
+  `test_frame_interval_equal_to_the_recording_interval_repeats_nothing`.
 - **The first and last recorded states are always frames**, so the movie spans the run
   even when the span is not a whole multiple of `Δt_frame`.
 - **On-screen playback honors the same numbers.** `FuncAnimation`'s `interval` is

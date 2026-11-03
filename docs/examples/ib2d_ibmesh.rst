@@ -116,11 +116,11 @@ a still partway through the simulation is shown below. ::
     swrm.plot_all(movie_filename='channel_flow_ibmesh.mp4', fps=3,
                   playback_rate=0.075, fluid='vort')
 
-Frames can only show states the simulation actually captured, so
-playback_rate/fps must be at least dt -- here 0.075/3 = 0.025, exactly the
-timestep. Ask for more and Planktos warns and clamps to one frame per timestep.
-The practical consequence is worth remembering: smoother slow motion requires a
-smaller dt, not a higher fps.
+Frames can only show states the simulation actually captured, so a new state
+in every frame needs playback_rate/fps of at least dt -- here 0.075/3 = 0.025,
+exactly the timestep. Ask for more and Planktos warns and repeats states across
+frames, keeping the playback speed. The practical consequence is worth
+remembering: smoother slow motion requires a smaller dt, not a higher fps.
 
 Creating movies is another bottleneck in Planktos. Every frame has to be
 generated individually and then saved, and the fluid vorticity is

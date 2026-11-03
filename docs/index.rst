@@ -37,8 +37,9 @@ collective and emergent behavior, including interaction with immersed structures
 Functionality includes:
 
 * Arbitrary agent behavior utilizing ODE, SDE, or just a coded algorithm
-* Loading time dependent CFD-generated velocity fields from VTK or NetCDF 
-  formatted data files
+* Loading time dependent CFD-generated velocity fields from VTK (including
+  OpenFOAM exports), COMSOL or NetCDF data files -- whole, or streamed from
+  storage via a window of time points when a dataset is too large for memory
 * Loading immersed STL-formatted mesh structures or vertex points. These mesh 
   structures can be time-varying in 2D, and static in either 2D or 3D.
 * Agent interaction with immersed boundary meshes as solid structures
@@ -46,6 +47,10 @@ Functionality includes:
 * Data visualization as images or animations with kernel density estimation
 * Velocity field analysis with respect to deterministic agent behavior via the
   finite-time Lyapunov exponent.
+* Recording a run to disk as it proceeds, plotting it afterwards without
+  re-reading the fluid data, and restarting it from where it left off.
+* Tiling a periodic domain, with its immersed mesh, in 2D or 3D, without copying
+  the fluid data.
 
 If you use this software in your project, please cite the following paper: 
 
