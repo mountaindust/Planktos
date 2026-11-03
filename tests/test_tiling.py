@@ -19,6 +19,8 @@ import shutil
 import warnings
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+from matplotlib.collections import QuadMesh
 import numpy as np
 import pytest
 
@@ -342,11 +344,13 @@ class _MemoryDumps(fluid.FluidData):
 
 
 def _pair(dim, counts, regime='static', mesh=None, ibmesh_times=None,
-          bndry='periodic'):
+          bndry='periodic', windowed_oracle=False):
     '''A tiled environment and its oracle, over the dyadic flow.
 
     ``regime`` is 'static', 'cubic', 'linear' or 'window'. A windowed run is
-    set against an oracle holding everything, splined linearly as it is.
+    set against an oracle holding everything, splined linearly as it is, or
+    with ``windowed_oracle`` one sliding the same window over the
+    materialized dumps.
     '''
 
     times = None if regime == 'static' else TIMES
@@ -358,6 +362,9 @@ def _pair(dim, counts, regime='static', mesh=None, ibmesh_times=None,
         tiled.flow = _MemoryDumps(flow, fp, times, INUM)
     oracle = T.oracle_envir(flow, fp, counts, times,
                             True if regime == 'window' else INUM, bndry=bndry)
+    if regime == 'window' and windowed_oracle:
+        oracle.flow = _MemoryDumps([T.tile_field(f, counts) for f in flow],
+                                   T.tile_points(fp, counts), times, INUM)
     if mesh is not None:
         T.set_mesh(tiled, mesh, ibmesh_times)
         T.set_mesh(oracle, T.tile_mesh_copies(mesh, T.DYADIC_L[:dim], counts),
@@ -808,3 +815,152 @@ def test_a_3d_mesh_tiled_is_the_oracle_bitwise():
         runs.append(_history(_swarm(envir, n=60, seed=4, cov=5e-3), 20, 0.05))
     _assert_same_history(*runs)
     assert (np.array([s[3] for s in runs[0]]) >= 0).any()
+
+
+# --------------------------------------------------------------------------- #
+#                  a tiled plot is the oracle's, pixel for pixel              #
+# --------------------------------------------------------------------------- #
+
+FRAMES = [0, 3, 7, 10]
+MOVING = (np.array([[[[0.3, 0.1], [0.4, 0.3]], [[0.6, 0.1], [0.7, 0.3]]],
+                    [[[0.3, 0.1], [0.5, 0.3]], [[0.6, 0.1], [0.8, 0.3]]],
+                    [[[0.3, 0.1], [0.6, 0.3]], [[0.6, 0.1], [0.9, 0.3]]]]),
+          np.array([0.0, 0.4, 0.8]))
+BOX = np.array([[0.4, 0.2], [0.6, 0.2], [0.6, 0.3], [0.4, 0.3], [0.4, 0.2]])
+
+
+def _run_pair(dim, counts, regime, mesh=None, ibmesh_times=None, steps=10):
+    '''A tiled environment and its oracle, each with a swarm run ``steps``.
+
+    A windowed oracle is windowed too: the arrow scale is the largest velocity
+    among the dumps loaded so far, which a window and the whole series differ in.
+    '''
+    swarms = []
+    for envir in _pair(dim, counts, regime, mesh, ibmesh_times,
+                       windowed_oracle=True):
+        swrm = _swarm(envir, n=60, seed=8, cov=5e-3)
+        for _ in range(steps):
+            swrm.move(0.05, silent=True)
+        swarms.append(swrm)
+    return swarms
+
+
+def _shown(fn):
+    with warnings.catch_warnings():
+        # A windowed backdrop with no recording re-reads dumps, and says so.
+        warnings.simplefilter('ignore', UserWarning)
+        with T.capture_shown() as shown:
+            fn()
+    assert shown
+    return shown
+
+
+def _movie(swrm, fluid):
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', UserWarning)
+        with T.capture_movie_frames() as frames:
+            swrm.plot_all(movie_filename='unused.mp4', frames=FRAMES,
+                          fluid=fluid)
+    assert len(frames) == len(FRAMES)
+    return frames
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize('counts', T.TILINGS_2D)
+@pytest.mark.parametrize('regime', ['static', 'cubic'])
+@pytest.mark.parametrize('fluid', [None, 'vort', 'quiver'])
+def test_swarm_plot_is_the_oracle_plot(counts, regime, fluid):
+    swarms = _run_pair(2, counts, regime, mesh=_cylinder((0.5, 0.25), 0.15))
+    for t in ([None] if regime == 'static' else [None, 0.2]):
+        tiled, oracle = (_shown(lambda: s.plot(t=t, fluid=fluid,
+                                               blocking=False))
+                         for s in swarms)
+        assert tiled == oracle
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize('counts', T.TILINGS_2D)
+@pytest.mark.parametrize('regime', ['cubic', 'window'])
+@pytest.mark.parametrize('fluid', [None, 'vort', 'quiver'])
+def test_plot_all_frames_are_the_oracle_frames(counts, regime, fluid):
+    swarms = _run_pair(2, counts, regime, mesh=_cylinder((0.5, 0.25), 0.15))
+    tiled, oracle = (_movie(s, fluid) for s in swarms)
+    assert tiled == oracle
+    assert len({f.digest for f in tiled}) == len(FRAMES)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize('fluid', ['vort', 'quiver'])
+def test_plot_all_frames_with_a_moving_mesh_are_the_oracle_frames(fluid):
+    swarms = _run_pair(2, (3, 2), 'cubic', *MOVING)
+    tiled, oracle = (_movie(s, fluid) for s in swarms)
+    assert tiled == oracle
+
+
+@pytest.mark.slow
+def test_a_3d_swarm_plot_is_the_oracle_plot():
+    box = H.extruded_polygon(BOX, 0.05, 0.2)
+    swarms = _run_pair(3, (1, 2, 3), 'static', mesh=box, steps=3)
+    tiled, oracle = (_shown(lambda: s.plot(blocking=False)) for s in swarms)
+    assert tiled == oracle
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize('dim, counts, regime, time', [
+    (2, (3, 2), 'static', None), (2, (5, 1), 'cubic', 0.3),
+    (2, (3, 2), 'cubic', None), (3, (3, 2, 1), 'static', None),
+    (3, (1, 2, 3), 'cubic', 0.3)])
+def test_plot_flow_is_the_oracle_plot(dim, counts, regime, time):
+    # With time None a time-varying fluid animates; its first frame is shown.
+    tiled, oracle = (_shown(lambda: e.plot_flow(time=time, downsamp=3))
+                     for e in _pair(dim, counts, regime))
+    assert tiled == oracle
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize('counts, regime, t', [
+    ((3, 2), 'static', None), ((5, 1), 'cubic', 0.3), ((3, 2), 'cubic', None)])
+def test_plot_2d_vort_is_the_oracle_plot(counts, regime, t):
+    tiled, oracle = (_shown(lambda: e.plot_2D_vort(t=t, clip=2))
+                     for e in _pair(2, counts, regime))
+    assert tiled == oracle
+
+
+@pytest.mark.slow
+def test_plot_flow_and_vorticity_with_a_moving_mesh_are_the_oracle_plots():
+    pair = _pair(2, (3, 2), 'cubic', *MOVING)
+    for plot in (lambda e: e.plot_flow(time=0.5, downsamp=2),
+                 lambda e: e.plot_2D_vort(t=0.5)):
+        tiled, oracle = (_shown(lambda: plot(e)) for e in pair)
+        assert tiled == oracle
+
+
+@pytest.mark.slow
+def test_a_non_periodic_backdrop_spans_the_tiled_domain(monkeypatch):
+    # The oracle does not apply, so check what was drawn: one mesh over the
+    # tiled grid, reading the stored field through the wrap.
+    flow, fp = T.dyadic_flow(2)
+    flow = [f + 0.3*np.linspace(0, 1, len(fp[0]))[:, None] for f in flow]
+    envir = T.fluid_envir(flow, fp, periodic_dim=False)
+    with pytest.warns(UserWarning, match='not flagged periodic'):
+        envir.tile_domain(3, 2)
+    swrm = _swarm(envir, n=20)
+    swrm.move(0.05, silent=True)
+    drawn = {}
+
+    def show(*args, **kwargs):
+        ax = plt.gcf().axes[0]
+        drawn['mesh'] = [c for c in ax.collections if isinstance(c, QuadMesh)]
+        drawn['xlim'] = ax.get_xlim()
+        plt.close('all')
+
+    monkeypatch.setattr(plt, 'show', show)
+    swrm.plot(fluid='vort', blocking=False)
+    assert len(drawn['mesh']) == 1
+    coords = drawn['mesh'][0].get_coordinates()
+    assert coords.shape[:2] == (33, 97)
+    assert coords[0, -1, 0] == 3.0 and coords[-1, 0, 1] == 1.0
+    np.testing.assert_array_equal(
+        np.asarray(drawn['mesh'][0].get_array()).reshape(33, 97),
+        envir.flow.materialize_tiled(envir.flow.get_vorticity()).T)
+    assert drawn['xlim'] == (0, 3.0)

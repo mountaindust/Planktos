@@ -173,6 +173,8 @@ def dyadic_flow(dim, times=None):
 
     Every component varies along every axis (and in time when ``times`` is
     given), so a transposed axis, a wrong tile offset or a time slip shows.
+    Every component has a nonzero spatial mean, so a plot's printed fluid means
+    are values rather than roundoff, which no two summation orders share.
 
     Returns
     -------
@@ -192,9 +194,9 @@ def dyadic_flow(dim, times=None):
         z = phase[2] if dim == 3 else 0.0
         comps[0].append(0.4 + 0.2*np.sin(x + 0.3*t)*np.cos(y) + 0.05*np.cos(z)
                         + 0.1*t)
-        comps[1].append(0.15*np.cos(x + t)*np.sin(y) + 0.05*np.sin(z))
+        comps[1].append(0.08 + 0.15*np.cos(x + t)*np.sin(y) + 0.05*np.sin(z))
         if dim == 3:
-            comps[2].append(0.1*np.sin(x)*np.cos(y + 0.5*t)*np.cos(z))
+            comps[2].append(0.03 + 0.1*np.sin(x)*np.cos(y + 0.5*t)*np.cos(z))
     flow = []
     for c in comps:
         arr = np.stack(c) if times is not None else c[0]

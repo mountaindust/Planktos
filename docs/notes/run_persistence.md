@@ -2994,7 +2994,9 @@ non-resident dumps dropped (they reload on demand, as a never-loaded dump alread
 This reproduces the materialized value to roundoff, not bitwise, since the sum runs in a
 different order. Only the plot statistics text and the archive's per-capture
 statistics read it, at two significant figures, so the difference never reaches the
-physics or a plotted digit. *(Matching the materialized mean is what criterion 2 asks.
+physics, and reaches a plotted digit only for a component whose mean is zero: there
+each side prints its own roundoff (found at T3: `9.1e-19` tiled, `2.5e-19`
+materialized), which an untiled plot already does. *(Matching the materialized mean is what criterion 2 asks.
 The alternative was the stored tile's own mean, which differs by the endpoint-weighting
 term, roughly 2% of the fluctuation on a 33-point grid. Settled 2026-11-02 by the
 criterion, and confirmed by the user the same day.)*

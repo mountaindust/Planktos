@@ -2249,7 +2249,7 @@ class Swarm:
             if fluid == 'vort' and self.envir.flow is not None:
                 vort = source.vorticity(time)
                 norm = _vorticity_norm(vort, source.vort_clip)
-                ax.pcolormesh(self.envir.flow.flow_points[0], self.envir.flow.flow_points[1],
+                ax.pcolormesh(self.envir.flow.tiled_points[0], self.envir.flow.tiled_points[1],
                               vort.T, shading='gouraud', cmap='RdBu',
                               norm=norm, alpha=0.9, antialiased=True)
             elif fluid == 'quiver' and self.envir.flow is not None:
@@ -2260,7 +2260,7 @@ class Swarm:
                 # the run had got when plotting began.
                 max_mag = source.quiver_scale
                 u, v = source.quiver(time)
-                ax.quiver(self.envir.flow.flow_points[0][::M], self.envir.flow.flow_points[1][::N],
+                ax.quiver(self.envir.flow.tiled_points[0][::M], self.envir.flow.tiled_points[1][::N],
                           u.T, v.T, scale=max_mag*5, alpha=0.2)
 
             # ibmesh (if moving and not a current time - otherwise, done already)
@@ -2532,7 +2532,7 @@ class Swarm:
         '''Grid downsampling factors giving a legible arrow density.
 
         About 4.15 arrows per inch of axis, so it depends on the figure size and
-        the axis extent. Where a plot draws arrows stored by a recording, the
+        the axis extent; strides count points of the tiled grid. Where a plot draws arrows stored by a recording, the
         grid was fixed at record time instead and this is what it is compared
         against (see ``_frames.FrameSource.resolve_strides``).
 
@@ -2547,7 +2547,7 @@ class Swarm:
         height_inch = fig_size[1]*(ax_pos[1,1]-ax_pos[0,1])
         x_num = round(4.15*wdth_inch)
         y_num = round(4.15*height_inch)
-        points = self.envir.flow.flow_points
+        points = self.envir.flow.tiled_points
         # At least 1: more arrows than grid points cannot be drawn, and a
         #   stride of zero raises inside the slice.
         return (max(1, int(round(len(points[0])/x_num))),
@@ -2804,13 +2804,14 @@ class Swarm:
                 # grows it, so where the scale ends up depends on how much of
                 # the run was drawn. An archive supplies a global limit instead.
                 norm = _vorticity_norm(np.zeros(1), source.vort_clip)
-                fld = ax.pcolormesh(self.envir.flow.flow_points[0], self.envir.flow.flow_points[1],
-                           np.zeros(self.envir.flow.spatial_shape).T, shading='gouraud',
+                points = self.envir.flow.tiled_points
+                fld = ax.pcolormesh(points[0], points[1],
+                           np.zeros((len(points[0]), len(points[1]))).T, shading='gouraud',
                            cmap='RdBu', norm=norm, alpha=0.9)
             elif fluid == 'quiver' and self.envir.flow is not None:
                 M, N = source.resolve_strides(self._quiver_strides(fig, ax))
-                x_pts = self.envir.flow.flow_points[0][::M]
-                y_pts = self.envir.flow.flow_points[1][::N]
+                x_pts = self.envir.flow.tiled_points[0][::M]
+                y_pts = self.envir.flow.tiled_points[1][::N]
                 fld = ax.quiver(x_pts, y_pts, np.zeros((len(y_pts),len(x_pts))),
                                 np.zeros((len(y_pts),len(x_pts))), 
                                 scale=source.quiver_scale*5, alpha=0.2)

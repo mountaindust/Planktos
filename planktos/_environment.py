@@ -4302,16 +4302,19 @@ class Environment:
             assert downsamp>0, "downsamp must be a positive int (min 1)"
             M = downsamp
 
+        # Every M-th point of the grid, across the tiled domain when tiled.
+        pts = [fp[::M] for fp in self.flow.tiled_points]
+        def arrows(field):
+            return [self.flow.tiled_strided(f, (M,)*len(self.L)) for f in field]
+
         def animate(n, quiver, kwargs):
             time = self.flow.flow_times[n]
             time_text.set_text('time = {:.2f}'.format(time))
             if len(self.L) == 2:
-                quiver.set_UVC(self.flow(time)[0][::M,::M].T,
-                               self.flow(time)[1][::M,::M].T)
+                u, v = arrows(self.flow(time))
+                quiver.set_UVC(u.T, v.T)
             else:
-                quiver = ax.quiver(x,y,z,self.flow(time)[0][::M,::M,::M],
-                                         self.flow(time)[1][::M,::M,::M],
-                                         self.flow(time)[2][::M,::M,::M], **kwargs)
+                quiver = ax.quiver(x,y,z,*arrows(self.flow(time)), **kwargs)
                 fig.canvas.draw()
             return [quiver, time_text]
         
@@ -4319,12 +4322,10 @@ class Environment:
             time = self.flow.flow_times[n]
             time_text.set_text('time = {:.2f}'.format(time))
             if len(self.L) == 2:
-                quiver.set_UVC(self.flow(time)[0][::M,::M].T,
-                               self.flow(time)[1][::M,::M].T)
+                u, v = arrows(self.flow(time))
+                quiver.set_UVC(u.T, v.T)
             else:
-                quiver = ax.quiver(x,y,z,self.flow(time)[0][::M,::M,::M],
-                                         self.flow(time)[1][::M,::M,::M],
-                                         self.flow(time)[2][::M,::M,::M], **kwargs)
+                quiver = ax.quiver(x,y,z,*arrows(self.flow(time)), **kwargs)
                 fig.canvas.draw()
             ibmesh = self.interpolate_temporal_mesh(time=self.flow.flow_times[n])
             mesh_col.set_segments(ibmesh)
@@ -4360,15 +4361,12 @@ class Environment:
             max_mag = np.linalg.norm(np.array([max_u,max_v]))
             if self.flow.flow_times is None:
                 # Single-time plot of time-invarient flow
-                ax.quiver(self.flow.flow_points[0][::M], self.flow.flow_points[1][::M],
-                          self.flow[0][::M,::M].T, self.flow[1][::M,::M].T, 
-                          scale=max_mag*5, **kwargs)
+                u, v = arrows(self.flow)
+                ax.quiver(pts[0], pts[1], u.T, v.T, scale=max_mag*5, **kwargs)
             elif time is not None:
                 # Single-time plot with time specified
-                ax.quiver(self.flow.flow_points[0][::M], self.flow.flow_points[1][::M],
-                            self.flow(time)[0][::M,::M].T,
-                            self.flow(time)[1][::M,::M].T, 
-                            scale=max_mag*5, **kwargs)
+                u, v = arrows(self.flow(time))
+                ax.quiver(pts[0], pts[1], u.T, v.T, scale=max_mag*5, **kwargs)
                 # Check for moving immersed boundary
                 if mesh_col is not None and self.ibmesh.ndim == 4:
                         ibmesh = self.interpolate_temporal_mesh(time=time)
@@ -4376,36 +4374,26 @@ class Environment:
             else:
                 # Animation plot
                 # create quiver object
-                quiver = ax.quiver(self.flow.flow_points[0][::M], self.flow.flow_points[1][::M], 
-                                   self.flow(self.flow.flow_times[0])[0][::M,::M].T,
-                                   self.flow(self.flow.flow_times[0])[1][::M,::M].T, 
+                u, v = arrows(self.flow(self.flow.flow_times[0]))
+                quiver = ax.quiver(pts[0], pts[1], u.T, v.T,
                                    scale=max_mag*5, **kwargs)
                 # textual info
                 time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
                                     fontsize=12)
         ########## 3D Plot #########        
         else:
-            x, y, z = np.meshgrid(self.flow.flow_points[0][::M], self.flow.flow_points[1][::M], 
-                                  self.flow.flow_points[2][::M], indexing='ij')
+            x, y, z = np.meshgrid(*pts, indexing='ij')
             max_u, max_v, max_w = self.flow.fmax
             max_mag = np.linalg.norm(np.array([max_u,max_v,max_w]))
             if self.flow.flow_times is None:
                 # Single-time plot of time-invarient flow
-                ax.quiver(x,y,z,self.flow[0][::M,::M,::M],
-                                self.flow[1][::M,::M,::M],
-                                self.flow[2][::M,::M,::M], 
-                                **kwargs)
+                ax.quiver(x,y,z,*arrows(self.flow), **kwargs)
             elif time is not None:
                 # Single-time plot with time specified
-                    ax.quiver(x,y,z,self.flow(time)[0][::M,::M,::M],
-                                    self.flow(time)[1][::M,::M,::M],
-                                    self.flow(time)[2][::M,::M,::M],
-                                    **kwargs)
+                    ax.quiver(x,y,z,*arrows(self.flow(time)), **kwargs)
             else:
                 # Animation plot
-                quiver = ax.quiver(x,y,z,self.flow(self.flow.flow_times[0])[0][::M,::M,::M],
-                                         self.flow(self.flow.flow_times[0])[1][::M,::M,::M],
-                                         self.flow(self.flow.flow_times[0])[2][::M,::M,::M],
+                quiver = ax.quiver(x,y,z,*arrows(self.flow(self.flow.flow_times[0])),
                                          **kwargs)
                 # textual info
                 time_text = ax.text2D(0.02, 1, 'time = {:.2f}'.format(
@@ -4445,7 +4433,7 @@ class Environment:
         assert len(self.L) == 2, "Flow field must be 2D!"
 
         def animate(n, pc, time_text):
-            vort = self.get_vorticity(t_n=n)
+            vort = self.flow.materialize_tiled(self.get_vorticity(t_n=n))
             time_text.set_text('time = {:.3f}'.format(self.flow.flow_times[n]))
             pc.set_array(vort.T)
             pc.changed()
@@ -4455,7 +4443,7 @@ class Environment:
             return [pc, time_text]
         
         def animate_mvib(n, pc, mesh_col, time_text):
-            vort = self.get_vorticity(t_n=n)
+            vort = self.flow.materialize_tiled(self.get_vorticity(t_n=n))
             time_text.set_text('time = {:.3f}'.format(self.flow.flow_times[n]))
             ibmesh = self.interpolate_temporal_mesh(time=self.flow.flow_times[n])
             mesh_col.set_segments(ibmesh)
@@ -4488,6 +4476,9 @@ class Environment:
         ax, mesh_col = self._plot_setup(fig, nohist=True)
         ax.set_aspect('equal')
 
+        # The grid across the tiled domain when tiled; vorticity is replicated
+        #   onto it.
+        pts = self.flow.tiled_points
         if clip is not None:
             norm = colors.Normalize(-abs(clip),abs(clip),clip=True)
         else:
@@ -4495,8 +4486,8 @@ class Environment:
 
         if self.flow.flow_times is None:
             # Single-time plot from single-time flow
-            vort = self.get_vorticity()
-            pc = ax.pcolormesh(self.flow.flow_points[0], self.flow.flow_points[1],
+            vort = self.flow.materialize_tiled(self.get_vorticity())
+            pc = ax.pcolormesh(pts[0], pts[1],
                           vort.T, shading='gouraud', cmap='RdBu', norm=norm)
             axbbox = ax.get_position().get_points()
             cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])
@@ -4505,8 +4496,8 @@ class Environment:
             if mesh_col is not None and self.ibmesh.ndim == 4:
                 ibmesh = self.interpolate_temporal_mesh(time=t)
                 mesh_col.set_segments(ibmesh)
-            vort = self.get_vorticity(time=t)
-            pc = ax.pcolormesh(self.flow.flow_points[0], self.flow.flow_points[1],
+            vort = self.flow.materialize_tiled(self.get_vorticity(time=t))
+            pc = ax.pcolormesh(pts[0], pts[1],
                           vort.T, shading='gouraud', cmap='RdBu', norm=norm)
             ax.text(0.02, 0.95, 'time = {:.3f}'.format(t), transform=ax.transAxes, fontsize=12)
             axbbox = ax.get_position().get_points()
@@ -4516,8 +4507,8 @@ class Environment:
             # Animation plot
             # create pcolormesh object
             # vort = self.get_vorticity(t_n=0)
-            pc = ax.pcolormesh([self.flow.flow_points[0]], self.flow.flow_points[1],
-                           np.zeros(self.flow.spatial_shape).T, shading='gouraud',
+            pc = ax.pcolormesh([pts[0]], pts[1],
+                           np.zeros((len(pts[0]), len(pts[1]))).T, shading='gouraud',
                            cmap='RdBu', norm=norm)
             axbbox = ax.get_position().get_points()
             cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])

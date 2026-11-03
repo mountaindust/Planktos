@@ -810,7 +810,7 @@ class FluidData:
 
         Equal to ``materialize_tiled(field)`` sliced by ``strides``, without
         building the tiled field. Its coordinates are
-        ``tiled_points[d][::strides[d]]``.
+        ``tiled_points[d][::strides[d]]``. A view of ``field`` when untiled.
 
         Parameters
         ----------
@@ -824,6 +824,9 @@ class FluidData:
         '''
 
         lead = field.ndim - len(self.flow_points)
+        if self._tiling is None:
+            return field[(slice(None),)*lead + tuple(slice(None, None, s)
+                                                     for s in strides)]
         for d, s in enumerate(strides):
             field = np.take(field, self._tiled_index(d)[::s], axis=lead+d)
         return field

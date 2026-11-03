@@ -356,8 +356,14 @@ replace.
    tile along every tiled axis (the user's decision, §9.1).
    **T2 done:** `tile_domain`, `tiling`, the guards (`ibmesh` is a property), the
    two-step wrap, `FluidData`'s tiling helpers and weighted means, FTLE's default
-   grid, the seam warnings. Next is T3. `CLAUDE.md` still describes tiling as
-   raising, and lists `tile_flow` on `FluidData`, until T5's prose pass.
+   grid, the seam warnings. `CLAUDE.md` still describes tiling as raising, and lists
+   `tile_flow` on `FluidData`, until T5's prose pass.
+   **T3 done:** `Swarm.plot`, `plot_all`/`animate` (through `FrameSource`),
+   `_quiver_strides`, `plot_flow` and `plot_2D_vort` draw across the tiled domain,
+   pixel-identical to the materialized oracle's plots. Next is T4. For T5: the
+   docstrings of `flow[i]`, `flow(t)`, `get_vorticity`, `get_dudt`, `calculate_DuDt`,
+   `mag_grad` and `get_raw_loaded_data` do not yet say they return the stored tile
+   (§9.1, "Elsewhere").
    Exports (`save_fluid` / `save_2D_vorticity`) write the stored tile — the user's
    decision, §9.1. `Environment.extend` is now a separate pass (Deferred, below).
    Tiling also **unblocks the prose-docs sweep** and the paused docs stash.

@@ -371,19 +371,22 @@ class FrameSource:
     ####################   the fluid   ####################
 
     def vorticity(self, time):
-        '''The vorticity field to draw at ``time``.
+        '''The vorticity field to draw at ``time``, across the tiled domain
+        when tiled.
 
         Taken by time rather than by state index: the fluid's own time base is
         the dump cadence, and a plot of the present has no state index.
         '''
 
         if self.flow.flow_times is None:
-            return self.flow.get_vorticity()
-        if self._vorticity_from == 'dumps':
+            vort = self.flow.get_vorticity()
+        elif self._vorticity_from == 'dumps':
             # Blended with the weights the velocity itself uses, so this is the
             #   curl of the field in use.
-            return self.flow.get_stored_vorticity(time)
-        return self.flow.get_vorticity(time=time)
+            vort = self.flow.get_stored_vorticity(time)
+        else:
+            vort = self.flow.get_vorticity(time=time)
+        return self.flow.materialize_tiled(vort)
 
 
     def quiver(self, time):
@@ -393,7 +396,8 @@ class FrameSource:
 
         Returns
         -------
-        tuple of two ndarrays, each indexed [x,y] on the strided grid
+        tuple of two ndarrays, each indexed [x,y] on the strided grid, which
+        spans the tiled domain when tiled
         '''
 
         if self._quiver_from == 'dumps':
@@ -406,8 +410,8 @@ class FrameSource:
             field = self.flow
         else:
             field = self.flow(time)
-        M, N = self.strides
-        return field[0][::M, ::N], field[1][::M, ::N]
+        return (self.flow.tiled_strided(field[0], self.strides),
+                self.flow.tiled_strided(field[1], self.strides))
 
 
     def _quiver_dump(self, t_idx):
