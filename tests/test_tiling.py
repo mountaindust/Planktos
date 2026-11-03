@@ -547,10 +547,46 @@ def test_tiling_while_recording_is_refused(tmp_path):
 
 
 def test_tiling_warns_where_the_fluid_is_not_flagged_periodic():
+    # Periodic data left unflagged: no jump, but one-sided differencing.
     flow, fp = T.dyadic_flow(2)
     envir = T.fluid_envir(flow, fp, periodic_dim=(True, False))
-    with pytest.warns(UserWarning, match='along y, where the fluid is not flagged'):
+    with pytest.warns(UserWarning) as record:
         envir.tile_domain(3, 2)
+    assert len(record) == 1
+    message = str(record[0].message)
+    assert message.startswith('Tiling along y, where the fluid is not flagged '
+                              'periodic (periodic_dim): its opposite edges match')
+    assert 'jumps' not in message
+
+
+def test_tiling_warns_of_the_jump_where_unflagged_edges_differ():
+    flow, fp = T.dyadic_flow(2)
+    flow = [f.copy() for f in flow]
+    flow[0][-1, 4] += 0.02
+    envir = T.fluid_envir(flow, fp, periodic_dim=False)
+    share = '{:.2g}%'.format(2/max(np.abs(f).max() for f in flow))
+    with pytest.warns(UserWarning) as record:
+        envir.tile_domain(3, 2)
+    messages = sorted(str(r.message) for r in record)
+    assert len(messages) == 2
+    assert messages[0].startswith(
+        'Tiling along x ({}), where the fluid is not flagged periodic '
+        '(periodic_dim) and its opposite edges differ'.format(share))
+    assert messages[1].startswith('Tiling along y, where the fluid is not '
+                                  'flagged periodic (periodic_dim): its '
+                                  'opposite edges match')
+
+
+@pytest.mark.parametrize('L', [(2.0, 1.0), (2.0, 1.0, 0.5)])
+def test_tiling_an_analytic_flow_along_its_uniform_axes_draws_no_warning(L):
+    # Brinkman flow is unflagged but does not vary along x (or y in 3D).
+    kwargs = dict(zip(('Lx', 'Ly', 'Lz'), L))
+    envir = planktos.Environment(rho=1000, mu=1000, **kwargs)
+    envir.set_brinkman_flow(alpha=66, h_p=0.3*L[-1], U=1, dpdx=1, res=11)
+    counts = (3, 1) if len(L) == 2 else (3, 2, 1)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        _tile(envir, counts)
 
 
 def test_tiling_warns_where_periodic_edges_differ():

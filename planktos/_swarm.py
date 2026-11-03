@@ -2532,9 +2532,10 @@ class Swarm:
         '''Grid downsampling factors giving a legible arrow density.
 
         About 4.15 arrows per inch of axis, so it depends on the figure size and
-        the axis extent; strides count points of the tiled grid. Where a plot draws arrows stored by a recording, the
-        grid was fixed at record time instead and this is what it is compared
-        against (see ``_frames.FrameSource.resolve_strides``).
+        the axis extent; strides count points of the tiled grid. Where a plot
+        draws arrows stored by a recording, the grid was fixed at record time
+        instead and this is what it is compared against (see
+        ``_frames.FrameSource.resolve_strides``).
 
         Returns
         -------

@@ -2968,10 +2968,13 @@ the whole `tiling` × `periodic_dim` interaction:
 **Non-periodic data** (decision 4): inside each tile the field is exactly the stored
 field, so the seams carry whatever jump separates the data's opposite edges, and
 derivatives there are one-sided. `master` instead ramped across the first cell of each
-new tile. `tile_domain` **warns**, naming the axes, when a tiled axis is not flagged
-periodic or when its opposite edges differ in the resident data, giving that jump as a
-share of the largest velocity component. The changelog records
-the seam change, since it shifts results near seams for non-periodic data.
+new tile. `tile_domain` **warns**, naming the axes and judged from the resident data,
+where a tiled axis's opposite edges differ, giving that jump as a share of the largest
+velocity component; and where an axis not flagged periodic has matching edges but a field
+that varies along it, since it is still differenced one-sided at each seam. An analytic
+flow, unflagged but uniform along its tiled axes, draws neither (user's choice
+2026-11-03). The changelog records the seam change, since it shifts results near seams
+for non-periodic data.
 
 **The virtual tiled grid.** Along a tiled axis with `N` stored points the tiled grid has
 `k(N-1)+1` points: coordinates `fp[1:] + n·fp[-1]` appended per tile, and virtual
@@ -3147,8 +3150,8 @@ To roundoff: the means (§9.1), and single evaluations on a non-dyadic grid
 - **A windowed plot's arrow scale is `fmax` over the dumps loaded so far**, so a windowed
   run is compared with a windowed oracle there. That is a windowed-versus-resident
   difference, not a tiling one.
-- **The IBAMR test data's opposite edges differ by about 0.1% of the flow speed** (it was
-  resampled onto a rectilinear grid), as large as the step between neighbouring nodes.
+- **The IBAMR test data's opposite edges differ by about 0.1% of the flow speed**, as
+  large as the step between neighbouring nodes (the cause was not investigated).
   The seam warning therefore reports the jump as a share of the largest velocity
   component, so a user can judge it.
 

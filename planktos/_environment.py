@@ -2204,9 +2204,10 @@ class Environment:
         tiled domain. Once tiled, loading or assigning a fluid or a mesh, or
         moving the mesh, raises ValueError. Tiling all ones does nothing.
 
-        A tiled axis along which the fluid is not flagged periodic
-        (``flow.periodic_dim``), or whose opposite edges differ, draws a
-        warning: the field jumps at each seam there.
+        A tiled axis whose opposite edges differ draws a warning giving the
+        jump at each seam. So does one not flagged periodic
+        (``flow.periodic_dim``) along which the field varies, since the field
+        is differenced one-sided at each seam there.
 
         Parameters
         ----------
@@ -2281,44 +2282,66 @@ class Environment:
 
 
     def _warn_on_tiling_seams(self, counts):
-        '''Warn, naming the axes, where tiling makes the fluid jump at a seam:
-        along a tiled axis not flagged periodic, or one whose opposite edges
-        differ in the data held in memory.'''
+        '''Warn, naming the axes, where tiling makes the fluid jump at a seam
+        or difference one-sided up to it, judged from the data held in memory.
 
-        unflagged = [d for d, k in enumerate(counts)
-                     if k > 1 and not self.flow.periodic_dim[d]]
-        flagged = [d for d, k in enumerate(counts)
-                   if k > 1 and self.flow.periodic_dim[d]]
-        if unflagged:
-            warnings.warn(
-                "Tiling along {}, where the fluid is not flagged periodic "
-                "(periodic_dim): the tiled field jumps at each seam there, and "
-                "is differenced one-sided up to it.".format(
-                    ', '.join('xyz'[d] for d in unflagged)), UserWarning)
-        if not flagged:
-            return
+        A tiled axis whose opposite edges differ jumps at each seam, and the
+        largest jump is reported as a share of the largest velocity component.
+        Along one not flagged periodic the field is also differenced one-sided
+        at each seam, which is said wherever the field varies along that axis.
+        '''
+
+        tiled = [d for d, k in enumerate(counts) if k > 1]
         # Close rather than equal, since a solver writing both edges of a
-        #   periodic grid may differ in the last bits. The largest jump is
-        #   reported against the largest velocity component, so the size of
-        #   the seam can be judged.
+        #   periodic grid may differ in the last bits.
         jump = {}
+        varies = set()
         scale = 0.0
         for _, comps in self.flow.iter_resident_dumps():
             for c in comps:
                 cmax = np.abs(c).max()
                 scale = max(scale, cmax)
-                for d in flagged:
-                    lo, hi = np.take(c, 0, axis=d), np.take(c, -1, axis=d)
-                    if not np.allclose(lo, hi, rtol=1e-9, atol=1e-12*cmax):
+                tol = dict(rtol=1e-9, atol=1e-12*cmax)
+                for d in tiled:
+                    lo, hi = np.take(c, [0], axis=d), np.take(c, [-1], axis=d)
+                    if not np.allclose(lo, hi, **tol):
                         jump[d] = max(jump.get(d, 0.0), np.abs(lo - hi).max())
-        if jump:
+                    if d not in varies and not np.allclose(c, lo, **tol):
+                        varies.add(d)
+
+        def named(axes, share):
+            return ', '.join('{} ({:.2g}%)'.format('xyz'[d], 100*jump[d]/scale)
+                             if share else 'xyz'[d] for d in axes)
+
+        periodic = self.flow.periodic_dim
+        flagged = [d for d in sorted(jump) if periodic[d]]
+        unflagged = [d for d in sorted(jump) if not periodic[d]]
+        # Edges that match on an unflagged axis still difference one-sided,
+        #   which matters only where the field changes along the axis.
+        one_sided = [d for d in tiled
+                     if not periodic[d] and d not in jump and d in varies]
+        if flagged:
             warnings.warn(
                 "Tiling along {}, where the fluid is flagged periodic but its "
                 "opposite edges differ, by up to the percentage shown of the "
                 "largest velocity component: the tiled field jumps by that much "
-                "at each seam there.".format(', '.join(
-                    '{} ({:.2g}%)'.format('xyz'[d], 100*jump[d]/scale)
-                    for d in sorted(jump))), UserWarning)
+                "at each seam there.".format(named(flagged, True)), UserWarning)
+        if unflagged:
+            warnings.warn(
+                "Tiling along {}, where the fluid is not flagged periodic "
+                "(periodic_dim) and its opposite edges differ, by up to the "
+                "percentage shown of the largest velocity component: the tiled "
+                "field jumps by that much at each seam there, and is "
+                "differenced one-sided up to it.".format(named(unflagged, True)),
+                UserWarning)
+        if one_sided:
+            warnings.warn(
+                "Tiling along {}, where the fluid is not flagged periodic "
+                "(periodic_dim): its opposite edges match, but it is "
+                "differenced one-sided up to each seam there. Flag the axis "
+                "periodic if the data is.".format(named(one_sided, False)),
+                UserWarning)
+
 
 
     #######################################################################
@@ -2420,8 +2443,8 @@ class Environment:
         quiver_shape : tuple of 2 int, default=(60, 60)
             target arrow grid for a stored quiver across the (tiled) domain,
             fixed for the run; used only when ``fluid`` includes ``'quiver'``.
-            A render that would draw
-            denser arrows uses this grid, with a warning.
+            A render that would draw denser arrows uses this grid, with a
+            warning.
         plot_all : dict, optional
             keyword arguments for ``Swarm.plot_all``, rendered when a ``with``
             block ends::
