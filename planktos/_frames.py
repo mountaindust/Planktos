@@ -250,6 +250,18 @@ class FrameSource:
         return self.swarm.velocities if n >= len(hist) else hist[n]
 
 
+    def props(self, n):
+        '''The props DataFrame in force at state ``n``.
+
+        The current props where no property history is being kept.
+        '''
+
+        hist = self.swarm.props_history
+        if hist is None or n >= len(hist):
+            return self.swarm.props
+        return hist[n]
+
+
     def stats(self, n, DIM3):
         '''The statistics a frame prints, live or from what was recorded.
 
@@ -298,6 +310,22 @@ class FrameSource:
         return series[capture]
 
 
+    def _has_live_velocities(self):
+        '''True where ``vel_history`` covers the states being drawn.'''
+
+        return len(self.swarm.vel_history) >= len(self.swarm.pos_history)
+
+
+    def _stored_stats(self):
+        '''The recorded speed statistics, where live ones are not to be had.'''
+
+        if self._has_live_velocities() or self.run is None:
+            return None
+        if self.swarm_index is None:
+            return None
+        return self.run.agent_stats(self.swarm_index)
+
+
     def _archive_capture(self, n):
         '''Which of the archive's captures state ``n`` is, or None where it is
         not one.
@@ -340,35 +368,58 @@ class FrameSource:
         return row if row >= 0 else None
 
 
-    def _has_live_velocities(self):
-        '''True where ``vel_history`` covers the states being drawn.'''
+    ####################   the fluid   ####################
 
-        return len(self.swarm.vel_history) >= len(self.swarm.pos_history)
+    def resolve_strides(self, figure_strides):
+        '''Settle the quiver downsampling factors for this figure.
 
+        The figure's own choice, except where the arrows come off disk: the
+        grid they were stored on was fixed when recording started, and a figure
+        that wanted a noticeably denser one is told so.
 
-    def _stored_stats(self):
-        '''The recorded speed statistics, where live ones are not to be had.'''
-
-        if self._has_live_velocities() or self.run is None:
-            return None
-        if self.swarm_index is None:
-            return None
-        return self.run.agent_stats(self.swarm_index)
-
-
-    def props(self, n):
-        '''The props DataFrame in force at state ``n``.
-
-        The current props where no property history is being kept.
+        Called once at figure setup; :meth:`quiver` uses the result.
         '''
 
-        hist = self.swarm.props_history
-        if hist is None or n >= len(hist):
-            return self.swarm.props
-        return hist[n]
+        if self.strides is None:
+            self.strides = tuple(int(s) for s in figure_strides)
+            return self.strides
+        # 1.5x, since rounding an arrow count against a grid lands a stride off
+        #   by one routinely.
+        if any(stored > 1.5*wanted for stored, wanted
+               in zip(self.strides, figure_strides)):
+            warnings.warn(
+                'this figure would draw arrows every {} grid points, but the '
+                'archive stores them every {} -- the quiver grid is fixed when '
+                'recording starts, since the figure size does not exist then. '
+                'Re-record with a larger quiver_shape for a denser one, or '
+                'plot a smaller figure.'.format(tuple(figure_strides),
+                                                self.strides), UserWarning)
+        return self.strides
 
 
-    ####################   the fluid   ####################
+    def warn_if_restreaming(self, frame_times):
+        '''Warn when drawing these frames will re-read the fluid dataset.'''
+
+        # Only an unrecorded run reaches this; with a recording, a backdrop it
+        #   lacks is refused up front.
+
+        if not self._restream:
+            return
+        lo, hi = float(np.min(frame_times)), float(np.max(frame_times))
+        times = self.flow.flow_times
+        first, last = _dump_span(times, lo, hi)
+        spanned = last - first + 1
+        window = int(self.flow.INUM) + 1
+        if spanned <= window:
+            return
+        warnings.warn(
+            'drawing the fluid over {:g} to {:g} will re-read about {} of this '
+            'dataset\'s {} dumps, because it is being loaded dynamically and '
+            'only {} are in memory at a time. Recording the run '
+            '(envir.record(...)) writes what a plot needs as the run proceeds, '
+            'and a plot then costs no fluid reads at '
+            'all.'.format(lo, hi, spanned, len(times), window), UserWarning)
+
 
     def vorticity(self, time):
         '''The vorticity field to draw at ``time``, across the tiled domain
@@ -427,57 +478,6 @@ class FrameSource:
             del self._quiver_cache[max(self._quiver_cache,
                                        key=lambda k: abs(k - t_idx))]
         return arrows
-
-
-    def resolve_strides(self, figure_strides):
-        '''Settle the quiver downsampling factors for this figure.
-
-        The figure's own choice, except where the arrows come off disk: the
-        grid they were stored on was fixed when recording started, and a figure
-        that wanted a noticeably denser one is told so.
-
-        Called once at figure setup; :meth:`quiver` uses the result.
-        '''
-
-        if self.strides is None:
-            self.strides = tuple(int(s) for s in figure_strides)
-            return self.strides
-        # 1.5x, since rounding an arrow count against a grid lands a stride off
-        #   by one routinely.
-        if any(stored > 1.5*wanted for stored, wanted
-               in zip(self.strides, figure_strides)):
-            warnings.warn(
-                'this figure would draw arrows every {} grid points, but the '
-                'archive stores them every {} -- the quiver grid is fixed when '
-                'recording starts, since the figure size does not exist then. '
-                'Re-record with a larger quiver_shape for a denser one, or '
-                'plot a smaller figure.'.format(tuple(figure_strides),
-                                                self.strides), UserWarning)
-        return self.strides
-
-
-    def warn_if_restreaming(self, frame_times):
-        '''Warn when drawing these frames will re-read the fluid dataset.'''
-
-        # Only an unrecorded run reaches this; with a recording, a backdrop it
-        #   lacks is refused up front.
-
-        if not self._restream:
-            return
-        lo, hi = float(np.min(frame_times)), float(np.max(frame_times))
-        times = self.flow.flow_times
-        first, last = _dump_span(times, lo, hi)
-        spanned = last - first + 1
-        window = int(self.flow.INUM) + 1
-        if spanned <= window:
-            return
-        warnings.warn(
-            'drawing the fluid over {:g} to {:g} will re-read about {} of this '
-            'dataset\'s {} dumps, because it is being loaded dynamically and '
-            'only {} are in memory at a time. Recording the run '
-            '(envir.record(...)) writes what a plot needs as the run proceeds, '
-            'and a plot then costs no fluid reads at '
-            'all.'.format(lo, hi, spanned, len(times), window), UserWarning)
 
 
 

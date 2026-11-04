@@ -32,6 +32,9 @@ __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
+
+####################   arguments as JSON   ####################
+
 # How deep to descend into nested containers before giving up and recording a
 #   marker. Loader arguments are flat in practice; the limit is what stops a
 #   self-referential one from recursing forever.
@@ -122,6 +125,8 @@ def jsonable(value, _depth=0):
         return {'callable': getattr(value, '__name__', None) or _short_repr(value)}
     return _marker(type(value).__name__, value)
 
+
+####################   the decorators   ####################
 
 def records_provenance(slot, preceded_by=None, order_against=None,
                        describes=None):
