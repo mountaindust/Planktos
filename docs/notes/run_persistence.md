@@ -2739,7 +2739,7 @@ seconds assumption, in `docs/quickstart.rst`. **[done]** the `RunArchive` / `loa
 API page (§2.7), `docs/api/RunArchive.rst`, which also carries the `.mkv` guidance for
 long runs, what the archive stores, and what it refuses.
 
-⚠️ **Also owed: the interpolation-cost numbers in Appendix C belong in `docs/api`.**
+**[done 2026-11-02, `docs/api/FluidData.rst`]** **The interpolation-cost numbers in Appendix C belong in `docs/api`.**
 They answer "what does `INUM` cost me", which is a user's question, not an internal
 one, and they currently sit in a dev note. Write them as a **self-contained** table —
 the three datasets side by side, what was compared against what, and the standing

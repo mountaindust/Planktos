@@ -96,53 +96,50 @@ goes from O(Δt\ :sup:`4`) to O(Δt\ :sup:`2`), and ∂u/∂t becomes a piecewis
 constant step function. That last one propagates: ``get_dudt`` feeds the
 material derivative, which feeds the inertial-particle motion models.
 
-Measured on a 2D IB2d dataset (149 dumps, 129×193 grid, dump interval 10\
-:sup:`-3` s), building both schemes on every second dump and testing against the
-dumps withheld:
+It has been measured on three datasets. In each, both schemes were built on
+every second dump and tested at the dumps left out, so the errors are at twice
+the dump interval:
 
-- **In the temporally smooth bulk of the flow**, both schemes achieve their
-  theoretical convergence orders -- about 4 for cubic against about 2 for
-  linear. Cubic is decisively better there, and its advantage grows the more
-  often you dump.
-- **Where the flow is temporally rough**, neither scheme converges at its
-  nominal rate and the two are close to each other. There the sampling of the
-  data, not the interpolation scheme, is what limits accuracy.
-- **Ensemble statistics were essentially unaffected.** Advecting 1936 tracers
-  under each scheme, individual trajectories decorrelate -- as they will under
-  any perturbation, since the flow separates neighbouring particles
-  exponentially -- but mean and spread of position and of net displacement, and
-  the 10th, 50th and 90th percentiles of displacement, all agreed to within
-  0.6%, most to within 0.3%.
+=======================  ===========  ==========  ===============  =================
+Dataset                  Grid         Dumps,      Velocity error,  Ensemble
+                                      interval    linear / cubic   statistics agree
+=======================  ===========  ==========  ===============  =================
+2D IB2d flow             129×193      149,        1.3% / 0.5%      within 0.6%
+                                      0.001 s
+2D OpenFOAM sea fan,     801×801      40,         5.5% / 1.5%      within 0.1%
+~20 dumps per pulse                   0.1 s
+3D OpenFOAM, 10 dumps    68×68×180    17,         9.5% / 1.1%      within 0.35%
+per pulse                             0.125 s
+=======================  ===========  ==========  ===============  =================
 
-The same comparison on a **3D OpenFOAM dataset** (17 dumps, 68×68×180 grid, a
-pulsed flow of period 1.25 s sampled every 0.125 s) reaches the same practical
-conclusion by a different route. There the dump interval is coarse relative to
-the flow's own timescale -- ten samples per pulse cycle, and the withholding
-study necessarily halves that to five -- so both schemes carry much larger
-errors, and cubic's advantage is correspondingly wider: linear 9.5% of the rms
-speed against cubic's 1.1%. Yet advecting 512 tracers under each scheme, the same
-ensemble statistics agreed to within 0.35%.
+Velocity error is the rms error as a percentage of the rms speed. The ensemble
+column compares the mean and spread of the positions of advected tracers under
+each scheme (1936, 2025 and 512 tracers respectively); individual trajectories
+separate, as they do under any perturbation of a flow that separates
+neighbouring particles, but the ensemble does not move.
+
+**Absolute errors do not transfer between datasets; convergence orders do.** An
+error figure is a property of a dump interval against a particular flow's own
+timescales. The orders are what to carry to your data: where a flow is smooth in
+time, linear converges at about 2 and cubic at about 4 to 5 (median point: 1.7
+and 4.8 on the IB2d flow, 1.9 and 4.9 on the sea fan; the 3D export has too few
+evenly spaced dumps to fit one), and where a flow is rough in time neither scheme
+reaches its order and the two come close. The widely spaced datasets show the
+*wider* gap between schemes, so widely spaced dumps are exactly when cubic is
+worth keeping.
+
+The memory saving is the point of the exercise: streaming the sea fan with
+``INUM=4`` held 41 MB, against 1604 MB with the whole series splined cubically.
 
 The practical reading: for **dispersal and other ensemble statistics**, dynamic
-loading is unlikely to change your answer -- this now holds across two datasets,
-two dimensionalities, and two very different sampling regimes. For anything that
-depends on the smoothness of the velocity field or on ∂u/∂t -- inertial particles
-in particular -- prefer ``INUM=None`` when the data fits, and be aware of the
-tradeoff when it does not. That preference matters most when your dumps are
-widely spaced relative to your flow's timescales, which is exactly when cubic's
-advantage is largest.
+loading is unlikely to change your answer. For anything that depends on the
+smoothness of the velocity field or on ∂u/∂t -- inertial particles in particular
+-- prefer ``INUM=None`` when the data fits, and be aware of the tradeoff when it
+does not.
 
-.. note::
-   Absolute error figures are a property of a given dump interval relative to a
-   given flow's own timescales, and do not transfer between datasets. The
-   convergence orders do. If your dumps are more widely spaced relative to your
-   flow's timescales, expect a larger error from both schemes -- though not
-   necessarily a smaller gap between them, since the 3D dataset above is the more
-   coarsely sampled of the two and shows the *wider* gap. The orders quoted here
-   are the 2D ones; the 3D dataset has too few equally spaced dumps to fit a
-   convergence order at all. Both measurements are reproducible, with
-   ``tests/manual/quantify_temporal_interp.py`` and
-   ``tests/manual/vet_dynamic_loading_3d.py`` respectively.
+The measurements are reproducible with ``tests/manual/quantify_temporal_interp.py``,
+``tests/manual/quantify_seafan_interp.py`` and
+``tests/manual/vet_dynamic_loading_3d.py``.
 
 FluidData
 ---------

@@ -113,7 +113,7 @@ ThreadPoolExecutor). A *process* pool is recommended for moving boundaries, whic
 is precisely the expensive case where parallelism pays off; thread pools and
 cheap static-mesh problems can actually be slower than serial because of
 per-agent dispatch overhead, so benchmark for your problem (see
-tests/bench_ib_parallel.py). If you do not set pool (pool=None, the default), the
+tests/manual/bench_ib_parallel.py). If you do not set pool (pool=None, the default), the
 check runs serially.
 
 With a process pool, guard the script body with ``if __name__ == '__main__':`` so

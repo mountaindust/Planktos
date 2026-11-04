@@ -133,7 +133,9 @@ making a movie with every one of those time steps as a frame -- and fps and
 playback_rate see to that automatically, since only the states needed for the
 requested frames are ever drawn. If you want a specific set of steps instead,
 the frames parameter of plot_all takes an explicit list of time step indices
-and overrides the fps/playback_rate selection.
+and overrides the fps/playback_rate selection. For long runs, recording with
+Environment.record writes what a movie needs from the fluid as the run proceeds,
+so the movie then computes nothing of it -- see :doc:`../api/RunArchive`.
 
 .. image:: ../_static/ib2d_cyl_agents.png
 

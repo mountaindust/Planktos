@@ -51,7 +51,8 @@ changing the covariance, running the simulation, and plotting. ::
         swrm.move(0.1)
 
 This is a lot of time steps, so to speed things up a bit, we could plot just
-every 5th step. plot_all wants an iterable of integers telling it which
+every 5th step. By default plot_all chooses its frames from fps and
+playback_rate, but it also accepts an iterable of integers telling it which
 steps to plot. There is a list of all *past* simulation times recorded in
 the envir.time_history. So the total number of simulation times is given
 by the length of this list plus one. ::
