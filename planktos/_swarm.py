@@ -79,15 +79,10 @@ def _heading_angles(swarm, source, n, props, velocities, sel=None):
 def _vorticity_norm(vort, clip=None, norm=None):
     '''Colour limits for the RdBu vorticity backdrop, symmetric about zero.
 
-    RdBu is a diverging colormap, white at its midpoint, so limits that are not
-    symmetric put zero somewhere other than white and tint the whole quiescent
-    background red or blue. Rescaling to each frame's own extremes then makes
-    that tint change frame to frame, which is what made vorticity movies flash.
-
-    So limits are symmetric, and over a movie they only ever grow: pass the
-    previous norm back in and a later, quieter frame cannot shrink the scale and
-    re-tint everything. An explicit clip fixes them outright and is never
-    rescaled.
+    With ``clip``, the limits are (-clip, clip) and values beyond them are
+    clipped. Otherwise they are plus and minus the largest finite ``|vort|``, or
+    (-1, 1) for a field that is zero everywhere. A ``norm`` passed in is grown
+    in place to those limits, and left as it is if it already spans them.
 
     Parameters
     ----------
@@ -103,6 +98,9 @@ def _vorticity_norm(vort, clip=None, norm=None):
     matplotlib Normalize
     '''
 
+    # RdBu is white at its midpoint, so symmetric limits keep a still fluid
+    #   white. Growing the norm handed back each frame, rather than rescaling to
+    #   the frame, holds the colours of a movie steady once a scale is reached.
     if clip is not None:
         return colors.Normalize(-abs(clip), abs(clip), clip=True)
     finite = np.abs(np.asarray(vort)[np.isfinite(vort)])
@@ -363,30 +361,21 @@ class Swarm:
     '''
 
     def __init_subclass__(cls, **kwargs):
-        '''Warn when a subclass replaces move() instead of extending it.
+        '''Warn, at class definition, when a subclass overrides move() without
+        calling Swarm.move.
 
-        move() is the harness, not the behavior: it records the position,
-        velocity and property histories, applies boundary conditions,
-        recomputes velocity and acceleration by finite difference, and advances
-        the Environment's time. Agent behavior belongs in apply_agent_model and
-        post-step bookkeeping in after_move, both of which move() calls at the
-        right moment. A subclass that replaces move() outright silently loses
-        all of that, and the damage is quiet -- agents keep moving, but nothing
-        is recorded and no boundary is enforced.
-
-        Overriding in order to *extend* -- say, to change a default and then
-        call super().move(...) -- keeps the harness intact and is fine, so it
-        passes without a warning. Whether the override delegates is judged by
-        looking for a reference to super or to move in its code, which an
-        unusual spelling could slip past. That is the safe direction to be
-        wrong in: this only ever warns, so a miss costs a warning that might
-        have helped, never a working subclass that stops importing.
+        move() records the histories, applies boundary conditions, recomputes
+        velocity and acceleration, and advances time. Agent behavior belongs in
+        apply_agent_model, and post-step work in after_move. An override that
+        calls super().move(...) passes without a warning.
         '''
 
         super().__init_subclass__(**kwargs)
         move = cls.__dict__.get('move')
         if move is None:
             return
+        # An override counts as delegating if its code names super or move. An
+        #   unusual spelling can slip past this, which costs only the warning.
         code = getattr(move, '__code__', None)
         if code is not None and ('super' in code.co_names or
                                  'move' in code.co_names):
@@ -1164,10 +1153,8 @@ class Swarm:
             moves every Swarm in the Environment and then advances the time.
         '''
 
-        # A time of None marks an Environment left in an error state by a
-        #   time step that raised partway through (see the except clause
-        #   below). Everything the agents currently hold is a half-applied
-        #   step, so there is nothing sensible to move on from.
+        # envir.time is None after a step that raised partway through (the
+        #   except clause below), so the agents hold a half-applied step.
         if self.envir.time is None:
             raise RuntimeError(
                 "Cannot move: this Swarm/Environment is in an error state. A "
@@ -1238,27 +1225,15 @@ class Swarm:
                 self.apply_boundary_conditions(dt, ib_collisions=ib_collisions)
                 self.after_move(dt)
             except BaseException as err:
-                # Boundary conditions are applied one agent at a time, so this
-                #   leaves the step applied to some agents and not others. The
-                #   partial state is left alone -- it is what there is to debug
-                #   -- but two things are done to make it legible. First,
-                #   record the time this step started, so that time_history
-                #   matches the pos_history entry appended above and the
-                #   histories stay a consistent record. Second, set the time to
-                #   None, which marks everything current as untrustworthy and
-                #   is what move() refuses to run on.
-                # BaseException rather than Exception: interrupting a long run
-                #   with Ctrl-C is the most common way one ends, and a
-                #   KeyboardInterrupt lands here exactly as an error does,
-                #   leaving the same half-applied step. The state is marked the
-                #   same way for both; only the reporting differs, because an
-                #   interrupt has to keep propagating as itself instead of
-                #   being wrapped into something an outer "except Exception"
-                #   would swallow.
+                # Boundary conditions are applied one agent at a time, so the
+                #   step now holds for some agents and not others; that state is
+                #   left for inspection. time_history gets the step's start
+                #   time, matching the pos_history entry appended above, and
+                #   envir.time becomes None, which move() refuses to run on.
+                # BaseException, so a Ctrl-C marks the state too. An interrupt
+                #   is re-raised as itself, an error as a RuntimeError.
                 if keep_state:
-                    # Only when this step appended to pos_history above --
-                    #   otherwise this closes the histories off *inconsistently*,
-                    #   which is the exact thing it exists to prevent.
+                    # keep_state gated the pos_history append above, too
                     self.envir.time_history.append(self.envir.time)
                 self.envir.time = None
                 if not isinstance(err, Exception):

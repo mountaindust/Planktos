@@ -66,12 +66,10 @@ asserted. That was the branch's stated remaining reason to exist.
 **Where the work goes next, in priority order:**
 
 Items 1, 2, 4 and 6 are closed, and **item 3's docstring pass is complete
-(2026-10-22)** — only its navigability pass is left, best decided after item 7.
+(2026-10-22)** — only its navigability pass is left.
 
-**Tiling, item 5, is done and merged (2026-11-03).** Item 7 (merging `master` in)
-did not depend on it in either direction. The three `_swarm.py` conflict hunks tiling rewrites resolve
-to "keep `dyload`" either way, since `master`'s side there uses the old fluid API. Then
-item 3's navigability pass and the §7 prose pass, which tiling unblocks (its
+**Tiling, item 5, is done and merged (2026-11-03)**, and so is item 7, the `master`
+merge (2026-11-03). Left: item 3's navigability pass and the §7 prose pass (its
 Appendix C table is done, 2026-11-02, in `docs/api/FluidData.rst`). (a), the
 stored-vorticity check, was done 2026-10-29.
 
@@ -209,8 +207,8 @@ first means one prose pass. The changelog's tiling lines were rewritten at T5.
    `_archive_format.py` — with `RunArchive`'s methods regrouped by section.
    **2026-11-03:** `_frames.py` regrouped (public accessors ahead of their helpers;
    `resolve_strides` and `warn_if_restreaming` ahead of the per-frame fluid calls) and
-   `_provenance.py` given two banners. Left: `_environment.py` and `_swarm.py`, after
-   item 7.
+   `_provenance.py` given two banners. Left: `_environment.py` and `_swarm.py`, now
+   unblocked by the `master` merge.
 
    **Three standing exclusions:** `archive.py`'s module docstring (it is the on-disk
    format spec, rendered for users by `docs/api/RunArchive.rst` — check it for stray
@@ -353,33 +351,14 @@ first means one prose pass. The changelog's tiling lines were rewritten at T5.
    record of what moved and what deliberately did not. **The next release is meant to be
    `1.1.0`, with no `1.0.4`**, and the queue is frozen (2026-11-03): fixes go out with
    1.1.0.
-7. 🟡 **Merge `master` into `dyload` before 1.1.0 ships** *(found 2026-10-16)*. Four
-   `master` commits have never come across: the 1.0.3 ports `bf7112c` and `1c5334c`,
-   `a1c2128` (docs repo link) and `9148c00` (a `_dataio` docstring). The ports are
-   hand-written versions of fixes that already live here in another shape, so a dry run
-   (`git merge-tree --write-tree dyload master`) conflicts in six files: `_swarm.py`
-   (9 hunks, 277 lines), `tests/test_swarm_lifecycle.py` (3, 286), `changelog.txt`
-   (2, 74), and one each in `_environment.py` (`regenerate_flow_data`, removed here),
-   `_dataio.py` and `__init__.py` (the version). Resolution is mostly keeping this
-   branch's version of a fix it already has, but read each `master` hunk rather than
-   trusting that — the hazard under Phase 0 applies. Also fold `master`'s
-   `tests/test_plot_helpers.py` into `test_frame_selection.py` (see the 1.0.3 notes in
-   the cherry-pick queue). Its own session; until it lands, fix text here rather than
-   on `master` (item 3).
-
-   **Follow-up owed right after the merge** — held back only because editing it first
-   would add a conflict, since both branches added it identically in the 1.0.3 port:
-   - [ ] `calculate_FTLE`'s normalization comment ("Normalize by the time actually
-     integrated, not by T") says T where it means T − t0 (the docstring has it right
-     since `c80f407`), and quotes the "0.34–0.72 of truth" measurement. State what the
-     division does and drop the measurement.
-   - [ ] `Swarm.__init_subclass__`'s docstring argues its design at length (why `move()`
-     is the harness, how the delegation check can be wrong and why that direction is
-     safe). Cut it to what it warns about and when; the reasoning goes to comments.
-   - [ ] `_swarm._vorticity_norm`'s docstring tells the flashing-backdrop story
-     ("which is what made vorticity movies flash"). State the limits it returns.
-   - [ ] `Swarm.move`'s error-state comments (the `time is None` guard and the
-     `except BaseException` block) are long; trim them to what the code does.
+7. ✅ **`master` merged into `dyload` — done 2026-11-03** (`cffa279`). The 1.0.3 ports,
+   the docs repo link and the `_dataio` docstring came across. Every code and test
+   conflict resolved to this branch's version of a fix it already had; the released
+   changelog sections now match `master` exactly; `master`'s `tests/test_plot_helpers.py`
+   was dropped, since all ten of its tests already exist here. The four follow-ups the
+   merge was holding back — `calculate_FTLE`'s normalization comments, the
+   `__init_subclass__` and `_vorticity_norm` docstrings, `move()`'s error-state
+   comments — were done right after it.
 
 **The run archive, in detail.** The go/no-go was **decided 2026-08-11 in favor of
 building it**: plotting is a measured bottleneck on our own runs, and it is cheapest to
