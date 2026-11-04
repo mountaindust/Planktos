@@ -12,9 +12,9 @@ Temporal interpolation of dynamically-loaded data is **linear in time**
 (`fCubicSpline`). See the design-history section at the bottom for the cubic→linear
 story.
 
-**Suite: 1440 passed / 49 skipped (`pytest`, ~1 min), 1488 / 1 (`pytest --runslow
+**Suite: 1588 passed / 95 skipped (`pytest`, ~1½ min), 1682 / 1 (`pytest --runslow
 --runexamples`, ~4½ min).** No failures, **and no xfails: the pre-release list is
-empty.** *(Measured 2026-10-30.)*
+empty.** *(Measured 2026-11-03.)*
 
 **The pre-release list is empty (2026-09-03).** `tests/test_data_streaming/` — the
 adversarial suite written from `run_persistence.md`, covering the streaming story end
@@ -65,13 +65,36 @@ asserted. That was the branch's stated remaining reason to exist.
 
 **Where the work goes next, in priority order:**
 
-Items 1, 2, 4 and 6 are closed, and **item 3's docstring pass is complete
-(2026-10-22)** — only its navigability pass is left.
+**▶️ START HERE — what is left before 1.1.0 *(as of 2026-11-03)*.** Items 1, 2 and
+4–7 below are closed: tiling (5) and the `master` merge (7) both landed 2026-11-03, and
+everything is pushed to `origin/dyload`. The cherry-pick queue is retired (fixes ship
+with 1.1.0). In suggested order:
 
-**Tiling, item 5, is done and merged (2026-11-03)**, and so is item 7, the `master`
-merge (2026-11-03). Left: item 3's navigability pass and the §7 prose pass (its
-Appendix C table is done, 2026-11-02, in `docs/api/FluidData.rst`). (a), the
-stored-vorticity check, was done 2026-10-29.
+1. **Navigability pass on `_environment.py` and `_swarm.py`** (item 3's last part —
+   the method there, and its cautions: moves and edits in separate commits, so a move
+   diff reviews as pure motion). The merge unblocked both. `fluid.py`, `archive.py`,
+   `_frames.py` and `_provenance.py` are done.
+2. **The §7 prose and examples pass** (`docs/notes/run_persistence.md` §7). Most of
+   the prose landed with the docs rst pass below. What is owed:
+   - **the mid-run arrival example** (§7 "Examples", specified in §8.1) — agents
+     released into a running simulation, against a 2D immersed boundary, recorded;
+   - **a runnable record / `load_run` / `restore` example.** No script in `examples/`
+     records a run, reloads one or restores one (nor uses `INUM`); only fragments in
+     `docs/api/RunArchive.rst` and a prose paragraph in the quickstart. Proposed
+     2026-11-03: a self-contained `ex_record_and_restore.py` on Brinkman flow, so CI
+     runs it (add it to `SELF_CONTAINED_EXAMPLES` in
+     `tests/test_data_streaming/test_stream_a_inram.py`), with a `docs/examples/`
+     page. The mid-run example could double as this, since it is recorded anyway.
+     Ask the user which.
+3. **Two docs items for the user:** whether to cut `docs/api/RunArchive.rst` to a
+   narrative (decision (1) under the docs pass below), and `README.md:106`, which
+   still says `pip uninstall .` (should be `pip uninstall planktos`, as the quickstart
+   now says). `README.md` is also the last place the "Sweep the prose docs for the
+   master-era fluid API" item under "Documentation" may still apply.
+4. **Release check:** `__version__` in `planktos/__init__.py` → `1.1.0`, a read
+   through the 1.1.0 section of `changelog.txt`, both test flags, the docs build and
+   codespell. Version bump and changelog are the user's call — surface, don't do
+   silently.
 
 ▶️ **Docs rst pass — started 2026-11-02, resumed 2026-11-03** once tiling merged. A
 check of the rst pages under `docs/` (`index.rst`, `quickstart.rst`, `api/*.rst`,
@@ -80,9 +103,8 @@ merged into it: the quickstart's tiling sentence and examples paragraph, and a t
 bullet in `index.rst`. The user's planned example-script updates may still need
 describing.
 - **Where it is:** committed 2026-11-03 (`index.rst`/`quickstart.rst` with the
-  `plot_all` repeat change, the rest after), and the stash dropped. Left open: the two
-  decisions below, and a runnable record / `load_run` / `restore` example — no script
-  in `examples/` shows one.
+  `plot_all` repeat change, the rest after), and the stash dropped. What it left open
+  is in the START HERE list above.
 - **What it did.** Corrections: the quickstart overview's master-era list of
   readers and "flow fields can also be tiled"; "cubic spline in time" (cubic only when
   resident); `fps` frames limited per *recorded state*, not per timestep; `pip
@@ -1358,13 +1380,9 @@ Inherited blockers from the overhaul's notes:
   since `INUM` is met first through the `Environment` reader methods. Sphinx builds
   clean.
 - [ ] **Sweep the prose docs for the master-era fluid API.** `docs/quickstart.rst`
-  and `README.md` still frame fluid handling as `Environment`-level. The 1.0.1
-  merge fixed the two that were outright wrong (`get_2D_vorticity` → `get_vorticity`,
-  and the claim that flow can be "extended"), but the overall framing still assumes
-  master's API. Worth a pass once the fluid API stops moving — **held until tiling
-  merges into `dyload`** (it is built), since tiling is exactly what this prose would
-  describe. The new
-  `docs/api/FluidData.rst` covers the reference side in the meantime.
+  is done (the docs rst pass, 2026-11-03). **Only `README.md` is left**: check whether
+  it still frames fluid handling as `Environment`-level, alongside its
+  `pip uninstall .` line (START HERE item 3).
 - [x] **`INUM` and the linear-vs-cubic tradeoff — DONE.** In `docs/api/FluidData.rst`
   (anchor `inum-tradeoff`): the `INUM` table, why linear in time is permanent rather
   than a placeholder, what it costs, and the practical reading (ensemble statistics
@@ -1372,7 +1390,7 @@ Inherited blockers from the overhaul's notes:
   fits). Per Phase 1 (C) it quotes the **convergence orders and the ensemble result,
   not the bare rms ratio**, and states that absolute errors do not transfer between
   datasets while the orders do. The 3D OpenFOAM numbers from Phase 2 are on the page
-  too; the 2D sea-fan numbers are not yet (`run_persistence.md` §7).
+  too, and since 2026-11-02 the 2D sea-fan numbers as well.
 
 ## Inherited follow-ups from the mvbnd overhaul (non-blocking) 🟢
 
