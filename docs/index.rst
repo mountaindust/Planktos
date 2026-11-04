@@ -16,6 +16,8 @@ Welcome to Planktos' documentation!
 **Agent-based modeling of small organisms within fluid flows around immersed
 structures.**
 
+The Planktos library can be found on GitHub at `https://github.com/mountaindust/Planktos <https://github.com/mountaindust/Planktos>`_.
+
 Planktos simulates point-particle organisms small enough that their effect on the
 surrounding fluid is negligible (such as plankton, larvae, tiny insects) as they
 move through 2D or 3D fluid velocity fields, including flow around immersed

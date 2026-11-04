@@ -1371,7 +1371,7 @@ def write_vtk_point_data(path, title, data, cycle=None, time=None):
 def write_vtk_2D_rectilinear_grid_scalars(path, title, data, grid_points,
                                           cycle=None, time=None, binary=True,
                                           sep='_', header=None):
-    '''Write scalar data to an ascii VTK Rectilinear Grid file (e.g. vorticity). 
+    '''Write scalar data to a VTK Rectilinear Grid file (e.g. vorticity). 
     Expects data to be on a 2D rectilinear grid. Uses the pyvista library. 
     
     The call signature is formatted for easy looping over many time points, 
