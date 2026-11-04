@@ -103,8 +103,8 @@ describing.
   docstrings, and its on-disk layout tree has drifted (missing `_acc`, `_ang`, props
   and checkpoint files; the `archive` module docstring has the complete one, which no
   page renders). Proposed: cut it to a ~150–200 line narrative and drop the tree.
-  (2) Whether the `pip uninstall` fix goes in the cherry-pick queue — `master`'s
-  quickstart has the same line.
+  (2) ✅ Settled 2026-11-03: no cherry-pick queue, so the `pip uninstall` fix ships
+  with 1.1.0. `README.md:106` still says `pip uninstall .`.
 
 ✅ **Settled 2026-11-02: 1.1.0 waits for tiling.** Shipping first would have meant
 prose and a changelog calling tiling unavailable, rewritten when it returned; tiling
@@ -207,6 +207,10 @@ first means one prose pass. The changelog's tiling lines were rewritten at T5.
    underscored; `archive.py` split three ways — reading stays in `archive.py`,
    writing moved to `_recording.py`, shared format and fingerprint to
    `_archive_format.py` — with `RunArchive`'s methods regrouped by section.
+   **2026-11-03:** `_frames.py` regrouped (public accessors ahead of their helpers;
+   `resolve_strides` and `warn_if_restreaming` ahead of the per-frame fluid calls) and
+   `_provenance.py` given two banners. Left: `_environment.py` and `_swarm.py`, after
+   item 7.
 
    **Three standing exclusions:** `archive.py`'s module docstring (it is the on-disk
    format spec, rendered for users by `docs/api/RunArchive.rst` — check it for stray
@@ -347,7 +351,8 @@ first means one prose pass. The changelog's tiling lines were rewritten at T5.
 6. ✅ **The 1.0.3 decision — settled (2026-08-19).** The patch release was cut from
    `master` and tagged `v1.0.3`; the cherry-pick queue at the bottom of this file is the
    record of what moved and what deliberately did not. **The next release is meant to be
-   `1.1.0`, with no `1.0.4`** — see that queue for the one thing that would change it.
+   `1.1.0`, with no `1.0.4`**, and the queue is frozen (2026-11-03): fixes go out with
+   1.1.0.
 7. 🟡 **Merge `master` into `dyload` before 1.1.0 ships** *(found 2026-10-16)*. Four
    `master` commits have never come across: the 1.0.3 ports `bf7112c` and `1c5334c`,
    `a1c2128` (docs repo link) and `9148c00` (a `_dataio` docstring). The ports are
@@ -405,8 +410,8 @@ full reasoning.
 **Also merged since:** `master`'s 1.0.1 documentation release and its 1.0.2 bug
 fixes. No dyload-specific behavior changed by either. **`v1.0.3` is released and
 tagged** (2026-08-19), and **the next release is meant to be `1.1.0`, not a `1.0.4`**.
-Master-applicable fixes made here are still logged in the cherry-pick queue at the bottom
-of this file, against the chance that enough accumulates to be worth cutting one.
+Fixes made here ship with 1.1.0; the cherry-pick queue at the bottom of this file was
+frozen on 2026-11-03 and is no longer kept up.
 
 Priority key: 🔴 do first · 🟡 next · 🟢 later · ⚪ deferred / low priority.
 
@@ -1679,6 +1684,9 @@ above.)*
 ---
 
 ## Candidates for a patch release (cherry-pick queue) ✅ 1.0.3 RELEASED AND TAGGED
+
+⛔ **Frozen 2026-11-03 — no longer maintained.** 1.1.0 is close, so fixes ship with it
+and nothing new is logged here. What follows is history, kept for its porting notes.
 
 ✅ **Ported to `master` and shipped: `v1.0.3` is tagged (2026-08-19, at `a1c2128`).**
 Five of the six entries below are in it — the `move()`/`_ibc` work, the `move()` override

@@ -42,15 +42,12 @@ number and the changelog** — these are easy to forget. Be proactive about it:
   `master`'s `__version__` equals its newest tag, the next change landing there needs
   a bump first.
 - *(As of 2026-10-30: `dyload` is developing `1.1.0`; the newest release is `1.0.3`.)*
-- **A fix made here that is not dyload-specific goes under the development version,**
-  since the released ones are closed: in `changelog.txt` *and* in the
-  **cherry-pick queue at the bottom of `TODO.md`**. Check portability with
-  `git diff master -- <file>` before assuming it applies — `_swarm.py` in
-  particular has diverged a long way.
-- *(Plan as of 2026-10-30.)* **The next release is `1.1.0`, with no `1.0.4`.** That queue is
-  a holding pen in case the plan changes, not a release in preparation: log fixes
-  there, but **do not propose cherry-picking them to `master`.** The user will ask
-  if the list ever grows long enough to be worth a patch release.
+- **A fix made here goes under the development version in `changelog.txt`,** since
+  the released ones are closed — including a fix `master` would also need.
+- *(Decided 2026-11-03.)* **The next release is `1.1.0`, with no `1.0.4`, and there is
+  no cherry-pick queue.** Fixes reach users with 1.1.0. Do not log fixes for porting
+  to `master` or propose cherry-picking them; the frozen queue at the bottom of
+  `TODO.md` is history.
 - `changelog.txt` is hand-maintained, terse, and grouped by version. When a
   change is user-facing, prompt to add an entry under the appropriate version.
 - When work looks release-worthy (or a user-facing change lands) but the version
@@ -482,8 +479,8 @@ that makes results *more correct* ships even when it changes numbers users have 
 published — including in a patch release, and including where the change is small. Do
 not propose keeping a known-wrong result for compatibility, and do not pin a defect with
 a regression test "to make the change visible": that leaves a lock encoding the bug.
-Test the correct answer instead, and record the size of the shift in the changelog and
-the cherry-pick queue so users can tell whether it reaches them. (Decided 2026-08-13,
+Test the correct answer instead, and record the size of the shift in the changelog so
+users can tell whether it reaches them. (Decided 2026-08-13,
 over the periodic-gradient fixes.)
 
 Treat the following as load-bearing:
