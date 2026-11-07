@@ -1,12 +1,14 @@
 Run archives
 ============
 
-A **run archive** streams agent state to disk as the run proceeds --
-the mirror image of what dynamic fluid loading does for the velocity field. 
+A **run archive** streams agent state to disk as the run proceeds. 
 Planktos otherwise holds an entire run in memory and can only write it out at
-the end.
+the end -- if the simulation crashes, the data is lost. It also allows for 
+plotting a dynamically loaded run without re-reading the fluid dataset, and for 
+running simulations that would not fit in RAM (including the option of a 
+capture_interval that keeps state every *k*-th step rather than every step).
 
-Start one with ``Environment.record`` and read it back with ``planktos.load_run``::
+Start recording with ``Environment.record`` and read the data back with ``planktos.load_run``::
 
     import planktos
 
@@ -18,8 +20,8 @@ Start one with ``Environment.record`` and read it back with ``planktos.load_run`
         for _ in range(10000):
             swrm.move(0.001)
 
-The loop is an ordinary Planktos loop, unchanged: captures fire automatically on
-every environmental time step. The ``fluid`` argument says what a later *plot*
+The simulation loop is the same either way, and data capture fires automatically 
+on every time step. The ``fluid`` argument of record says what a later *plot*
 will need from the velocity field, so that replaying the run never streams the
 dataset a second time -- see `The fluid half`_.
 
@@ -27,38 +29,17 @@ Author: Christopher Strickland
 
 Email: cstric12@utk.edu
 
-What an archive is good for
----------------------------
-
-**Crash survival.** The format is valid with nothing having run at the end. 
-Metadata is written when recording starts, every file appears atomically, and 
-the reader reconstructs the timeline by scanning what is on disk. The most a 
-kill can cost is the captures buffered since the last chunk.
-
-**Analysis of a finished run, without re-running it**, in this session or a
-later one, through ``planktos.load_run``.
-
-**Plotting a dynamically loaded run for free.** What a plot needs to know about
-the fluid is written as the run proceeds, so drawing it afterwards reads none of
-the dataset again -- see `Plotting a recorded run`_.
-
-**Simulations larger than RAM.** Reading one capture touches only the chunk it 
-lives in, making simulations larger than RAM possible. Also, 
-``capture_interval`` keeps state every *k*-th step rather than every step, both 
-in the archive and in ``pos_history`` / ``vel_history`` / ``time_history``.
-
 Recording
 ---------
 
-The full signature is documented with the class that carries it:
-:meth:`planktos.Environment.record`. Every parameter is fixed when recording
-starts.
+The full signature of the simulation is documented when recording starts, so 
+environmental parameters must remain fixed from that point on.
 
 ``Environment.record`` returns a handle which is also a context manager.
 **Recording starts as soon as the call returns**, not when a ``with`` block is
-entered -- the ``with`` form only adds the guaranteed stop. A bare
-``envir.record(path)`` therefore records from that moment on, which is what you
-want in a notebook, where a ``with`` block cannot span cells::
+entered -- the ``with`` form only adds the guaranteed stop and cleanup at the 
+end. A bare ``envir.record(path)`` therefore records from that moment on, which 
+is what you want in a notebook where a ``with`` block cannot span cells::
 
     rec = envir.record('run_archive/')
     for _ in range(200):
@@ -76,14 +57,13 @@ Where the data goes
 ~~~~~~~~~~~~~~~~~~~
 
 **Recording into a non-empty directory does not overwrite it.** The archive goes
-to a timestamped sibling instead -- ``run_archive/`` becomes
-``run_archive_20260825143052/`` -- with a warning naming the path actually
-chosen. Read it back from the handle's ``.path`` rather than from the path you
+to a timestamped sibling instead: ``run_archive/`` becomes
+``run_archive_20260825143052/``, with a warning naming the new path. Read it 
+back from the handle's ``.path`` rather than from the path you
 asked for, or a later ``load_run('run_archive/')`` will quietly open the
-*previous* run.
-
-**Unless the run continues that archive**, which is the one case where the
-directory is written into as it stands -- see `Continuing an archive`_.
+*previous* run. **An exception is when the run continues the existing archive,** 
+the one case where the directory is written into as it stands -- see
+`Continuing an archive`_.
 
 What is refused
 ~~~~~~~~~~~~~~~
@@ -95,98 +75,73 @@ or loading new fluid partway through would leave the archive describing a run
 that no longer exists. So does a second ``record()`` on the same Environment,
 since there is one recorder per Environment by construction.
 
-One more, specific to dynamically loaded fluid: **start recording before the
+Specific to dynamically loaded fluid: **start recording before the
 fluid window has moved.** Dumps the sliding window has already passed are gone
 and are never re-reported, so a recording started mid-run would have holes in
-its fluid series. ``record()`` refuses at that point rather than at render time
--- before the run instead of after it. Either start before the loop, or load
-with ``INUM=None``.
+its fluid series. ``record()`` refuses at that point rather than at render time.
 
 The fluid half
 --------------
 
-An archive stores what a later plot needs to know about the **fluid**, so that
-replaying a run never re-streams the dataset a second time. Under dynamic
-loading, redrawing a finished run used to cost a full second pass over ~100 GB;
-it now costs nothing.
+An archive stores what a later plot needs to know about the fluid so that
+plotting a run doesn't re-stream the dataset a second time. Three things are 
+stored:
 
-Three things are stored, each on its own terms.
-
-**Per-dump statistics, always.** The spatial mean of each velocity component,
+**Per-dump fluid statistics.** The spatial mean of each velocity component,
 the per-component extrema, and (in 2D, when vorticity was asked for) the largest
 absolute vorticity in each dump. A handful of floats per dump, written in 2D and
 3D alike, since the statistics box on a plot shows the component means in every
 case. Read them with ``RunArchive.dump_stats()``. ``NaN`` marks a dump the run
-never loaded, which under a sliding window is an honest answer and not a gap to
-be filled -- reduce over them with ``np.nanmax``, not ``np.max``.
+never loaded -- reduce over them with ``np.nanmax``, not ``np.max``.
 
-**Vorticity is not cached -- it is sourced.** Which of three things happens is
-decided by whether the fluid is being dynamically loaded and by whether the
-source already ships the field:
+**Vorticity, conditional on the source.** What happens is decided by whether the 
+fluid is being dynamically loaded and by whether the source already has the 
+vorticity:
 
-============================  ===================================  ==============
-Regime                        During the run                       At render
-============================  ===================================  ==============
-whole field in memory         nothing is written                   recomputed from
-                                                                   the velocity
-windowed, source has it       nothing is written                   read from the
-                                                                   source
-windowed, source has not      one file per dump, as it lands       read back
-============================  ===================================  ==============
+================================  ================================  ==============
+Regime                            During the run                       At render
+================================  ================================  ==============
+whole field in memory             nothing is written                recomputed from
+                                                                    the velocity
+windowed, source has it           nothing is written                read from the
+                                                                    source
+windowed, source doesn't have it  one file per dump, as it lands    read back
+================================  ================================  ==============
 
 With the whole field resident, recomputing the curl is *cheaper* than reading it
-back, so writing would cost about a gigabyte per five hundred dumps for negative
-performance. With a window sliding, the velocity a render would need is no longer
-in memory, so recomputing drags a full reload behind it -- and reads twice the
-bytes to do it, since velocity is a vector and 2D vorticity a scalar.
+back. With a window sliding, the velocity a render would need is no longer
+in memory, so recomputing drags a full reload behind it. Either way the answer 
+is **exactly** the curl of the velocity actually in use, not a second 
+approximation stacked on the first.
 
-Either way the answer is **exactly** the curl of the velocity actually in use,
-not a second approximation stacked on the first. Under linear splining a field
-evaluates as a weighted sum of two adjacent dumps and the curl is linear, so
-blending per-dump vorticity with the same two weights gives the curl of the
-blend.
+Written velocity goes into the source's fluid directory, in the source's own 
+naming -- ``Omega.0042.vtk`` beside ``u.0042.vtk`` -- so a later
+run, ParaView, etc. can read it with no knowledge of Planktos. If that directory 
+cannot be written, ``fluid/`` in the archive directory is used instead, and 
+``meta.json`` records which happened. Written files are stamped with a vtk header 
+line reading ``Planktos <version> vorticity <digest>``, where the digest is of 
+the field the file holds. A later recording whose field differs -- another 
+``vel_conv``, ``vec_name`` or ``periodic_dim``, or changed source data -- 
+rewrites the series and warns that it is doing so. A recording that relied on 
+the old files then refuses to draw its vorticity backdrop rather than draw the 
+new field. A file without the stamp, such as the solver's own, is never 
+overwritten. A source carrying the field for only *part* of the dump range is 
+not used; Planktos warns and writes a complete series of its own rather than 
+potentially mixing two results.
 
-**Where written vorticity goes.** Into the source's *own* fluid directory, in
-the source's own naming -- ``Omega.0042.vtk`` beside ``u.0042.vtk`` -- so a later
-run, ParaView, or the solver's own tooling reads it with no knowledge of
-Planktos, and the source becomes indistinguishable from one whose solver had
-printed vorticity all along. If that directory cannot be written, which for a
-read-only mount or a shared dataset is normal, the archive's own ``fluid/`` is
-used instead, and ``meta.json`` records which happened.
-
-**A written file is stamped.** Its vtk header line reads ``Planktos <version>
-vorticity <digest>``, where the digest is of the field the file holds. A later
-recording whose field differs -- another ``vel_conv``, ``vec_name`` or
-``periodic_dim``, or changed source data -- rewrites the series and warns that
-it is doing so. A recording that relied on the old files then refuses to draw its
-vorticity backdrop rather than draw the new field. A file without the stamp, such
-as the solver's own, is never overwritten.
-
-A source carrying the field for only *part* of the dump range is not used at all.
-Serving one dump's field for another's is a plausible-looking wrong answer, so
-Planktos warns and writes a complete series of its own rather than mixing the
-two.
-
-**Quiver is opt-in.** ``fluid='quiver'``, or ``fluid=('vort', 'quiver')``.
-Vorticity is what almost every plot draws, and a quiver is a second
-full-cadence array on disk for a backdrop most runs never use. What is stored is
-the downsampled velocity, on a grid fixed by ``quiver_shape`` at record time --
-``plot_all`` normally derives its arrow density from the figure size and axis
-extent, neither of which exists while a simulation is running. Read one dump's
-arrows with ``RunArchive.quiver(t_idx)``.
+**Quiver, opt-in.** ``fluid='quiver'``, or ``fluid=('vort', 'quiver')``.
+The downsampled velocity is stored on a grid fixed by ``quiver_shape`` at record 
+time. Read one dump's arrows with ``RunArchive.quiver(t_idx)``.
 
 .. note::
    All of this beyond the statistics is **2D only**. ``fluid=`` is forced to
-   ``None`` in 3D, where Planktos draws no fluid backdrop at all, and on a
-   flow-free environment, which has no field to derive anything from. Neither is
-   an error and neither warns, because in neither is there anything else the
-   argument could have meant.
+   ``None`` in 3D, where Planktos draws no fluid backdrop at all (and on a
+   flow-free environment).
 
 Plotting a recorded run
 -----------------------
 
-An Environment remembers the archive it recorded to, and keeps remembering after
-the recording stops. So the ordinary loop needs nothing added to it::
+An Environment remembers the archive it recorded to::
 
     with envir.record('run_archive/', fluid='vort'):
         for _ in range(steps):
@@ -194,23 +149,15 @@ the recording stops. So the ordinary loop needs nothing added to it::
 
     swrm.plot_all(movie_filename='out.mkv', fluid='vort')
 
-**A whole movie of a dynamically loaded run then reads no fluid data at all.**
-Drawn without a recording it costs a second streaming pass over the entire
-dataset, which is the cost the archive exists to remove.
-
 Three consequences worth knowing:
 
-**A backdrop the archive does not hold is refused.** There is deliberately no
-fallback, because the only fallback is re-reading the whole dataset to draw a
-picture of it. Record with ``fluid=('vort','quiver')`` to keep the choice open.
+**A backdrop the archive does not hold is refused.** 
 This applies only where it has to: with the whole field in memory the curl is
 derived from it and the arrows subsampled from it, which is free and exact.
 
 **Vorticity colour limits cover the whole run.** Without a limit fixed up front
-they grow with each frame drawn, so where they end up depends on how much of the
-run was drawn and two plots of one run do not agree. The archive's largest
-absolute vorticity fixes them before the first frame. An explicit ``clip`` is
-still used as given.
+they grow with each frame drawn. The archive's largest absolute vorticity fixes 
+them before the first frame. An explicit ``clip`` is still used as given.
 
 **Plotting without a recording still works**, and warns once with an estimate of
 what it will re-read. Nothing about the old workflow breaks.
@@ -231,12 +178,11 @@ renders when a ``with`` block ends::
         for _ in range(steps):
             swrm.move(dt)
 
-It renders when the run raises, since a crash is unexpected and the movie is
-diagnostic, but not on a ``KeyboardInterrupt``, which is a request to stop
-*now*. Both still flush. A failure inside the render is warned about rather than
-allowed to mask the run's own exception, and the archive is complete either way.
-Only for a recording covering one swarm, since ``plot_all`` is a ``Swarm``
-method; that is refused at ``record()`` rather than at the end of the run.
+It also renders when the run crashes, since the movie could be diagnostic, but 
+not on a ``KeyboardInterrupt``. Both still flush. A failure inside the render is 
+warned about rather than allowed to mask the run's own exception, and the 
+archive is complete either way. This is only for a recording covering one swarm, 
+since ``plot_all`` is a ``Swarm`` method.
 
 .. note::
    Use ``.mkv`` for long or unattended runs. A hard kill leaves an ``.mp4``
@@ -265,35 +211,23 @@ A worked read
     run.times                       # capture times: the archive's time base
     run.swarms                      # [('organism', 0)]
 
-    pos = run.positions(0)          # a CaptureSeries, read on demand
+    pos = run.positions(0)          # a CaptureSeries for Swarm 0, read on demand
     pos[run.capture_at(3.4)]        # where the agents were nearest t=3.4
     pos[10:20]                      # a span of captures
-    pos.asarray()                   # the whole thing, if it fits in memory
+    pos.asarray()                   # the whole thing
 
-Indexing a ``CaptureSeries`` reads only the chunks that index touches, and hands
+Indexing a ``CaptureSeries`` reads only the chunks that index touches and hands
 back an ordinary masked array. A masked row means that agent is not in the
 domain -- either because it left, or because the swarm had not joined the run
 yet.
 
-Two rules worth knowing before you rely on the wrong one:
-
-**Resolve by time, not by index into someone else's list.** A swarm added
-mid-run starts at a nonzero capture, and a recording started after ``t=0`` has
-its capture 0 partway into the run. Matching on ``run.times`` is right in every
-one of those cases; assuming archive index *j* equals history index *j* is right
-only in the common one, and fails silently when it is not.
-
-**Agent state is snapped, never interpolated.** ``capture_at`` returns the index
-of the nearest capture and nothing blends between them. Interpolating positions
-across a domain wrap or an immersed-boundary slide would invent trajectories
-that never happened. Temporal interpolation belongs to the fluid, where the
-field is smooth -- see :doc:`FluidData`.
-
-**Swarms are addressed by index; names are a convenience.** The default
-``Swarm`` name is ``'organism'`` for every swarm, so two swarms in one
-Environment collide by name by default. ``run.positions('organism')`` raises
-when the name is not unique rather than picking one, and ``run.swarms`` lists
-name and index together so the collision is visible.
+A swarm addedmid-run starts at a nonzero capture, and a recording started after 
+``t=0`` has its capture 0 partway into the run. Matching on ``run.times`` is 
+right in every one of those cases. ``capture_at`` returns the index
+of the nearest capture and nothing blends between them (no interpolation). 
+Swarms should be addressed by index, not by name -- the default ``Swarm`` name 
+is ``'organism'`` for every swarm, so two swarms in one Environment collide by 
+name by default.
 
 Restarting a run
 ----------------
@@ -307,32 +241,14 @@ Restarting a run
     for _ in range(more_steps):     # carries on as if nothing had happened
         swrm.move(dt)
 
-Same positions, same properties, same random stream, same clock. Nothing about
-the fluid or the mesh is deserialized: the loader calls the archive recorded are
-replayed, so the data is re-read from wherever it lives -- which means **the
-fluid files have to still be there**.
-
-``pos_history`` and ``vel_history`` are filled from the archive, and
-``Environment.time_history`` with them. Pass ``history=False`` to skip that on a
-long run; the physics is identical either way, but ``plot_all`` then has a
-single frame to draw and the agent statistics count against the restored state
-rather than the original swarm.
-
-Three things fail differently, on purpose:
-
-* **A fluid or mesh that cannot be replayed is an error.** Its files have moved,
-  or the call was made with an array argument, whose contents a provenance
-  record does not store.
-* **A** ``Swarm`` **subclass that cannot be imported is an error.**
-  ``apply_agent_model`` *is* the behavior of the run, so restoring a plain
-  ``Swarm`` in its place would silently be a different simulation. Put the class
-  on the import path and try again.
-* **A lost** ``plot_structs`` **is a warning.** Those are function handles and
-  cannot be recorded; a run that had them is restored without them, and said so.
+The fluid files and all subclasses have to still be there and ``pos_history`` 
+and ``vel_history`` are filled from the archive, ``Environment.time_history`` 
+with them. Pass ``history=False`` to skip that on a long run; the physics is 
+identical either way, but ``plot_all`` then has a single frame to draw and the 
+agent statistics count against the restored state rather than the original swarm.
 
 A fluid handed to ``Environment(flow=[...])`` as arrays has no loader call to
-replay. That warns rather than failing, and the Environment comes back without
-fluid for you to set yourself.
+replay, so the Environment comes back withoutfluid for you to set yourself.
 
 Restarting partway through
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -344,30 +260,15 @@ back from the end::
     run = planktos.load_run('run_archive/')
     envir, (swrm,) = run.restore(capture=run.capture_at(17.0))
 
-Only what the recording stored per capture comes from *j*. Everything else is
-the run's **final** state -- ``shared_props`` and the random stream among them
--- so the continuation is stochastically different from the original run past
-*j*, not a bit-identical rerun of it. A notice printed at the call says which is
-which::
+Only what the recording stored per capture comes from capture *j*. Everything 
+else is the run's **final** state -- ``shared_props`` and the random stream 
+among them -- so the continuation is stochastically different from the original 
+run past *j*, not a bit-identical rerun of it. A notice printed at the call says 
+which is which::
 
     Restoring at capture 340 of 1200 (t=17). Recorded per capture: positions.
     Taken from the end of the run instead: velocities, shared_props -- if any
     of them varied during the run, this resumes with their final values.
-
-``store=`` is what moves each of them out of the substituted list:
-``'velocities'``, ``'props'`` and ``'shared_props'`` are each kept per capture
-when named. Velocities never reach the default Brownian model, which does not
-read an agent's own velocity, but ``motion.inertial_particles`` does; a ramping
-``shared_props['mu']`` reaches every model there is, and is the case
-``'shared_props'`` exists for -- it is O(run length) whatever the swarm size,
-where the per-agent ``'props'`` series is O(agents x run length).
-
-``shared_props`` is an ordinary mutable dict, so a key may appear or vanish
-mid-run. The series masks the captures a key was not there for, and
-``restore(capture=j)`` hands back exactly the keys the dict held at *j* --
-never one the run had already deleted. A key whose value **changes shape**
-mid-run cannot be stacked into a series at all, and is refused by name when it
-happens rather than written in a form that will not read back.
 
 A swarm that had not joined the run by capture *j* did not exist then, and is
 left out of the returned list with a warning rather than handed back with every
@@ -384,21 +285,6 @@ than starting a second one beside it::
         for _ in range(more_steps):
             swrm.move(dt)
 
-The trigger is a checkable fact, not a remembered one: **the archive's last
-capture is exactly where the Environment now is.** Restoring leaves the clock
-there, which is why the ordinary resume works with no extra argument -- and so
-does the notebook shape of the same thing, where ``stop_recording()``, a look at
-the data, and a second ``record()`` become one continuous archive.
-
-It fails safe in both directions. Running a few steps between restoring and
-recording moves the clock off the last capture, so a separate archive is written
-rather than a series with a hole in it. And ``store``, ``chunk_size``,
-``capture_interval`` and the ``fluid`` quantities must match what the archive
-records: a mismatch is **refused**, since quietly starting a second archive when
-the clock says you are continuing this one is the confusing outcome. An archive
-that lines up in time but describes a different domain or fluid is not a
-continuation at all, and is left alone with a warning.
-
 Nothing already written is rewritten except the tail chunk, which is the one
 piece that has to grow. A run recorded, stopped, restored and appended gives an
 archive **byte-identical** to the same run recorded in one go.
@@ -406,14 +292,7 @@ archive **byte-identical** to the same run recorded in one go.
 Validation
 ~~~~~~~~~~
 
-See ``RunArchive.check_against(envir)``. Reloading the fluid at a different
-``INUM`` -- or resident, which is the cheap thing to do now that a render does
-not stream it -- is not a difference: ``INUM`` says how much of the dataset is
-held at once and nothing about what the dataset is.
-
-To be plain about what it cannot catch: two runs on the same mesh at the same
-cadence fingerprint identically, and nothing cheap detects a dataset regenerated
-in place at the same path.
+See ``RunArchive.check_against(envir)``.
 
 What is on disk
 ---------------
@@ -447,10 +326,5 @@ Planktos::
 
 ``meta.json`` holds only what is known when recording starts and never changes.
 Anything that accumulates during the run lives in the files that accumulate with
-it, which is what lets the metadata be a single write that is never touched
-again -- including when a swarm joins an hour into the run.
-
-Agent captures are **chunked** rather than written one file per capture: a
-10 000-step run would otherwise make 10 000 files, which is punishing on 
-filesystems. Chunk indices are parsed as integers and sorted numerically, 
-never lexically.
+it. Agent captures are **chunked** rather than written one file per capture to 
+reduce the number of files on disk.
