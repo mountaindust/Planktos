@@ -1,6 +1,6 @@
 #! /usr/bin/env python3
 '''
-This example/tutorial builds on the ex_ib2d_sticky. Its
+This example/tutorial builds on 08_ib2d_sticky. Its
 primary purpose is to show off the moving boundaries functionality of Planktos. 
 This example/tutorial also implements the sticky boundary
 condition option. 
@@ -16,8 +16,9 @@ This example loads data generated from an IB2d jellyfish example for the generat
 fluid velocity field AND loads the lag points data, creating an ibmesh out of it by
 attaching nearby points. 
 
-In the ex_ib2d_ibmesh, agents cannot move through the cylinder or the channel boundaries.
-In this example, the agents can move through the moving jellyfish mesh.
+In 06_ib2d_ibmesh, agents cannot move through the cylinder or the channel boundaries.
+Here they cannot move through the moving jellyfish mesh either: an agent that hits it
+sticks and is removed from the simulation.
 '''
 
 from concurrent.futures import ProcessPoolExecutor
@@ -30,15 +31,15 @@ import numpy.ma as ma
 
 if __name__ == '__main__':
 
-    # Let's begin by loading the same fluid and mesh as used in ex_ib2d_ibmesh.py
+    # Let's begin by loading the jellyfish fluid data.
     envir = planktos.Environment(ibmesh_color= 'magenta') #choose color of the ibmesh in plots to be magenta
     envir.read_IB2d_fluid_data('ib2d_jellyfish_data', 1.25e-5  , 1600)
 
-    #In the ex_ib2d_ibmesh we read in the vertex data to get an immersed mesh. 
+    #In the 06_ib2d_ibmesh we read in the vertex data to get an immersed mesh. 
     #   This approach does not work for moving boundaries, 
     #   so we will read in the lag points data instead.
     #   We also need to manually remove any indices corresponding to lag points which are connected to wrong points. 
-    #   See the documentation for read_IB2d_mesh_data in _swarm.py for more detail about brk_idx_list and other option. 
+    #   See the docstring of Environment.read_IB2d_mesh_data for more detail about brk_idx_list and other options.
     envir.read_IB2d_mesh_data('ib2d_jellyfish_data', dt=1.25e-5  , print_dump=1600, brk_idx_list=[241])
 
     # In this example, we are going to create agents that stick to immersed
@@ -85,13 +86,13 @@ if __name__ == '__main__':
             self.props.loc[self.ib_collision_idx >= 0, 'stick'] = True
             self.positions[self.ib_collision_idx >= 0] = ma.masked
 
-    # Now we create the Swarm similar to ex_ib2d_sticky.py.
+    # Now we create the Swarm similar to 08_ib2d_sticky.py.
     # We will set store_prop_history=True because we want to keep track of agent 
     #   property changes through time. We will also set the default ib condition to 
     #   'sticky'. We could alternatively pass it in each time to the move method 
     #   below.
     #We will also set the initial conditions to be random positions near the jellyfish 
-    #   in order to the moving boundary functionality.
+    #   in order to show off the moving boundary functionality.
             
     N=50 #number of particles
     #create Nx2 array of random initial positions near the jellyfish
@@ -107,8 +108,8 @@ if __name__ == '__main__':
     swrm.shared_props['mu'] = [0.2,0.1]
     # We also need to initialize our new agent properties. We'll set stick to False 
     #   starting out, so that none of them will be stuck at the beginning
-    swrm.props['stick'] = np.full(N, False) # creates a length 100 array of False
-    # An equivalent way to do this: swrm.add_prop('stick', np.full(100, False), shared=False)
+    swrm.props['stick'] = np.full(N, False) # creates a length N array of False
+    # An equivalent way to do this: swrm.add_prop('stick', np.full(N, False), shared=False)
 
     # Now we move the swarm. We'll use the 'sticky' option for immersed boundary
     #   collisions instead of the default sliding option. This means that 
@@ -130,12 +131,12 @@ if __name__ == '__main__':
     #   solves an ODE / root-find per agent). Thread pools, and cheap static-mesh
     #   problems, can actually be SLOWER than serial due to per-agent dispatch
     #   overhead -- so benchmark for your problem before relying on it (see
-    #   tests/bench_ib_parallel.py).
+    #   tests/manual/bench_ib_parallel.py).
     #
     # IMPORTANT: with a process pool, guard the script body with 
     #   `if __name__ == '__main__':` so that on spawn-based platforms (Windows/macOS) 
     #   the worker processes do not re-run this whole script. Include any lines that 
-    #   load data or spawm processes. ALSO: shut down the pool when finished 
+    #   load data or spawn processes. ALSO: shut down the pool when finished 
     #   (swrm.pool.shutdown()) to avoid dangling processes, or create the pool in a 
     #   `with` block so it gets done automatically.
     # ---------------------------------------------------------------------------
@@ -144,7 +145,7 @@ if __name__ == '__main__':
         swrm.pool = pool
         for ii in range(42):
             swrm.move(0.025, ib_collisions='sticky')
-            # if np.any(swrm.ib_collision_idx): # uncomment to display whenever something is getting stuck!
+            # if np.any(swrm.ib_collision_idx >= 0): # uncomment to display whenever something is getting stuck!
             #     swrm.plot()
         
     # 0.15 simulated seconds per second of video: roughly 7x slow motion, so the

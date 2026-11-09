@@ -160,7 +160,8 @@ swrm.shared_props['cov'] = swrm.shared_props['cov'] * 0.01
 #   the actual agents selected are random.
 num_agents = swrm.N
 num_not_biased = round(num_agents*.2)
-idx_not_biased = np.random.choice(np.arange(num_agents), num_not_biased)
+idx_not_biased = np.random.choice(np.arange(num_agents), num_not_biased,
+                                  replace=False)
 bias_bool = [False if n in idx_not_biased else True for n in range(num_agents)]
 swrm.props['bias'] = bias_bool
 

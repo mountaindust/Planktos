@@ -4,7 +4,7 @@ Importing 3D data and tiling (IBAMR VTK via VisIt)
 This example is very similar to the previous one, but in 3D with data that is 
 available in the tests folder. It also demonstrates the utility of the convex 
 hull algorithm and demonstrates how the domain can be tiled. The script for this 
-example can be found in the examples folder under the name ex_IBAMR_ibmesh.py. 
+example can be found in the examples folder under the name 07_IBAMR_ibmesh.py. 
 The data was generated in IBAMR. [1]_ [2]_ ::
 
     import planktos

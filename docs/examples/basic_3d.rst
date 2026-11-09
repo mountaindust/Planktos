@@ -40,7 +40,7 @@ are only available in 2D. ::
 
 .. image:: ../_static/basic_ex_3d_envir.png
 
-Now let's repeat the steps from basic_ex_2d.py, creating a default Swarm,
+Now let's repeat the steps from 01_basic_2d.py, creating a default Swarm,
 changing the covariance, running the simulation, and plotting. ::
 
     swrm = planktos.Swarm(envir=envir)

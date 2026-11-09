@@ -2,7 +2,7 @@ Basic 2D example
 ----------------
 
 This example (along with all tutorial comments) can be found in 
-examples/basic_ex_2d.py.
+examples/01_basic_2d.py.
 
 If Planktos is properly installed according to the quickstart instructions, 
 loading the library is as easy as::
@@ -93,7 +93,7 @@ for 24 seconds with a step size of 0.1 seconds each time, we use::
 We can see where we ended up with swrm.plot(), or we can plot a particular time 
 by calling Swarm.plot(time), e.g. Swarm.plot(19.1). Or we can just plot 
 everything as a movie with swrm.plot_all(). Run the corresponding example, 
-basic_ex_2d.py in the examples folder to see this animation!
+01_basic_2d.py in the examples folder to see this animation!
 
 Like many functions in Planktos, plot_all has a lot of options as well. For 
 example, you can generate an mp4 instead of viewing the movie directly by 
@@ -104,9 +104,9 @@ over time, or swrm.save_pos_to_vtk if you want to visualize the swarm in
 something like VisIt.
 
 Finally, for the ultimate in interactive usage, open an ipython session and 
-run the basic_ex_2d.py example using the magic command %run::
+run the 01_basic_2d.py example using the magic command %run::
 
-    %run basic_ex_2d.py
+    %run 01_basic_2d.py
 
 After it finishes running, you can interact with both the envir and swrm objects 
 we just created by directly calling functions on them! This can be a useful way 

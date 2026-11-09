@@ -1217,7 +1217,7 @@ specified as R5c)*. It is the one deliberate exception to §2.11.1's rule, and t
 that nothing needs it:
 
 - **Planktos never reads one.** Every consumer — the `after_move` overrides in
-  `ex_ib2d_sticky.py`, `ex_ib2d_mvbnd_sticky.py`, `ex_sticky_seafan_3d.py` — reads it
+  `08_ib2d_sticky.py`, `09_ib2d_mvbnd_sticky.py`, `10_sticky_seafan_3d.py` — reads it
   inside the step that produced it, and `Swarm._apply_ib_result` rewrites every processed
   agent's entry each step, so nothing carries over.
 - **A resume does not need it.** The first `move()` overwrites it before any `after_move`
@@ -1249,7 +1249,7 @@ cannot be:
 | ✅ **`char_L`, `U`** | `motion.inertial_particles` asserts both are set, so an **inertial-particle run cannot be restarted at all** — it raises before it moves. `Environment.calc_re` is dead for the same reason | two floats into `provenance['environment']` |
 | ✅ **`nu`**, in the `Environment(nu=…)`-only construction | `rho` and `mu` are both `None` there, and only those two were recorded, so `nu` was lost silently. Every other construction recovers it as `mu/rho` | record `nu` beside them |
 | ✅ `ibmesh_color` | cosmetic; the rebuilt mesh draws in the default colour | one string, recorded **as resolved** (`'k'` in 2D, `'dimgrey'` in 3D) so the reader never repeats the default |
-| `plot_structs`, `plot_structs_args` | the extra structures a plot draws (e.g. `ex_poisson_search.py`'s target circle) are gone | **unfixable in principle** — they are functions. The reader should say so rather than appear to have restored them |
+| `plot_structs`, `plot_structs_args` | the extra structures a plot draws (e.g. `12_poisson_search.py`'s target circle) are gone | **unfixable in principle** — they are functions. The reader should say so rather than appear to have restored them |
 
 `g` is a constant, the FTLE fields and `mag_grad`/`mag_grad_time` are recomputable
 outputs, and `swarms` is rebuilt — none of those are gaps.
@@ -1394,7 +1394,7 @@ is free, and the format already carries a `dtype` field for exactly this (§2.4)
 |---|---|---|
 | checkpoint props (O(N), once) | **csv**, pandas' default float format | human-readable and exact. `%.17g` is unnecessary: the default writer already emits shortest-round-trip repr, verified over 52 004 values including 1e±300. The lossy half was `read_csv`, so **readers must pass `float_precision='round_trip'`** |
 | `props_history` (O(N·T), opt-in) | **csv per chunk**, written atomically like every other file | one file per chunk rather than one per column, which the file-count argument in §2.3 demands. csv also beats naive binary on strings, since numpy's fixed-width unicode is 4 bytes per character |
-| any column whose stacked shape is > 1-D | **spills to its own `.npy`** | a props column may hold ndarrays — `ex_ind_var.py` gives every agent a 2×2 covariance, and `get_prop` is built on `np.stack(col.array)`. Such a column renders to csv as a **broken multi-line row**, so csv cannot be the only container. `np.stack` turns any column into a uniform `(N, …)` array, which is exactly a `.npy`. A typical run spills nothing |
+| any column whose stacked shape is > 1-D | **spills to its own `.npy`** | a props column may hold ndarrays — `03_ind_var.py` gives every agent a 2×2 covariance, and `get_prop` is built on `np.stack(col.array)`. Such a column renders to csv as a **broken multi-line row**, so csv cannot be the only container. `np.stack` turns any column into a uniform `(N, …)` array, which is exactly a `.npy`. A typical run spills nothing |
 
 ⚠️ **Not `np.savez` and not `to_pickle`**, both of which round-trip perfectly and are
 disqualified on the same ground: an object column requires `allow_pickle=True` on read,
@@ -2070,10 +2070,10 @@ lever: at `dt = 1e-3`, real-time playback demanded `fps = 1000`, while the defau
 - **Tests:** `tests/test_frame_selection.py`, 19 closed-form tests, no rendering, in the
   fast run (~0.2 s). Each drives a real, tiny run. `test_plotting_smoke.py`'s movie test
   is parametrized over `fps`, `playback_rate`, and explicit `frames`.
-- **Examples updated at the call sites**: `ex_ib2d_ibmesh.py` and `ex_ib2d_sticky.py`
-  `playback_rate=0.075`, `ex_ib2d_mvbnd_sticky.py` `0.15`, `ex_ind_var.py` `2`,
-  `ex_sticky_seafan_3d.py` `2` — each the old `dt × fps` product, so their movies are
-  unchanged. The two Vicsek examples needed no edit. `ex_ib2d_ibmesh.py`'s prose about
+- **Examples updated at the call sites**: `06_ib2d_ibmesh.py` and `08_ib2d_sticky.py`
+  `playback_rate=0.075`, `09_ib2d_mvbnd_sticky.py` `0.15`, `03_ind_var.py` `2`,
+  `10_sticky_seafan_3d.py` `2` — each the old `dt × fps` product, so their movies are
+  unchanged. The two Vicsek examples needed no edit. `06_ib2d_ibmesh.py`'s prose about
   "one frame per time step" was rewritten, along with the same passage in
   `docs/examples/ib2d_ibmesh.rst`; `docs/quickstart.rst` gained the model and its `dt`
   ceiling.
@@ -2759,16 +2759,16 @@ land first; otherwise the example carries the recipe and §8.1 cites it.
 
 The call sites are done (§4.1 "As built") — each example names its
 playback rate explicitly, chosen to be the old `dt × fps` product, and the stale "one
-frame per time step" prose in `ex_ib2d_ibmesh.py` and its docs page is rewritten. What
+frame per time step" prose in `06_ib2d_ibmesh.py` and its docs page is rewritten. What
 remains is the wider prose pass. Current effective playback rates show the footgun's
 fingerprint — a 27× spread with no evident intent:
 
 | Example | `dt` | `fps` | Effective rate |
 |---|---|---|---|
-| `ex_ib2d_ibmesh.py` | 0.025 | 3 | 0.075 — 13× slow motion |
-| `ex_ib2d_sticky.py` | 0.025 | 3 | 0.075 — 13× slow motion |
-| `ex_ib2d_mvbnd_sticky.py` | 0.025 | 6 | 0.15 — 6.7× slow motion |
-| `ex_ind_var.py` | 0.1 | 20 | 2.0 — 2× fast forward |
+| `06_ib2d_ibmesh.py` | 0.025 | 3 | 0.075 — 13× slow motion |
+| `08_ib2d_sticky.py` | 0.025 | 3 | 0.075 — 13× slow motion |
+| `09_ib2d_mvbnd_sticky.py` | 0.025 | 6 | 0.15 — 6.7× slow motion |
+| `03_ind_var.py` | 0.1 | 20 | 2.0 — 2× fast forward |
 
 Under the old scheme `Δt_frame = dt` identically, so the effective rate was just
 `dt × fps` — users could only choose `fps`, and the playback rate fell out wherever it
@@ -3077,7 +3077,7 @@ criterion, and confirmed by the user the same day.)*
 takes the stored count and spaces it over `L`, diluting resolution by `k`.
 `envir.flow[0]`, `flow(t)`, `get_vorticity`, `get_dudt`, `calculate_DuDt`, `mag_grad`
 and `get_raw_loaded_data` return the stored tile, which is correct for interpolation;
-their docstrings say so. `ex_IBAMR_ibmesh.py`, which printed `fshape` as "Flow shape is
+their docstrings say so. `07_IBAMR_ibmesh.py`, which printed `fshape` as "Flow shape is
 now…", prints the domain size instead.
 
 **Exports write the stored tile** (decided by the user 2026-11-02). `save_fluid` and
@@ -3115,8 +3115,8 @@ numpy 2.4.6). So the tiled interpolation path never actually worked — no test 
 long as it did. Meanwhile the subclass corrupted ordinary numpy operations on flow data.
 
 **Materialization was considered as a 2D-only stopgap and dropped (2026-07-31)** because
-the tiling consumers in the tree (`examples/ex_IBAMR_ibmesh.py`,
-`examples/ex_sticky_seafan_3d.py`, the tiling discussion in `examples/basic_ex_3d.py`)
+the tiling consumers in the tree (`examples/07_IBAMR_ibmesh.py`,
+`examples/10_sticky_seafan_3d.py`, the tiling discussion in `examples/02_basic_3d.py`)
 are all 3D, and because a throwaway 2D materializer would contradict the rule in §9.1.
 The materialized environment survives only as the **test oracle** of §9.3, built in
 test code.
@@ -3168,8 +3168,8 @@ agent state, accessors, means, archive files, restore, exports and rendered pixe
 passed at every step. Because untiled archives came out byte-identical, one written
 before this work restores as before.
 
-**The examples:** `ex_IBAMR_ibmesh.py` is back in the streaming suite's self-contained
-list and runs end to end. `ex_sticky_seafan_3d.py` needs `Velocity2to1_8mmps.vtu`, which
+**The examples:** `07_IBAMR_ibmesh.py` is back in the streaming suite's self-contained
+list and runs end to end. `10_sticky_seafan_3d.py` needs `Velocity2to1_8mmps.vtu`, which
 is not on the development machine *(2026-11-03)*, so it has not been run. Its cylinder
 has to lie strictly inside the domain along x; the STL loader's shift by the fluid's
 lower-left corner should place it there.

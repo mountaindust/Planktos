@@ -32,8 +32,9 @@ envir = planktos.Environment()
 # In the case of this example, dt=5.0e-5 and print_dump=1000. This means that 
 #   each time you go from one vtk file to the next, it represents a time step
 #   of length 5.0e-5*1000 = 0.05.
-# As of now, Planktos only supports reading in ascii vtk files (not binary or 
-#    xml), though others may be supported in the future.
+# IB2d writes legacy .vtk files, which is what read_IB2d_fluid_data reads. Other
+#   sources have their own Environment readers, e.g. read_vtkxml_fluid_data for
+#   .vti/.vtr series and read_IBAMR3d_vtk_data (see 07_IBAMR_ibmesh.py).
 
 # Read in ib2d vtk data with dt=5.0e-5, print_dump=1000. The data points on the
 #   right and upper boundaries (periodic with the left and lower boundaries)
@@ -83,7 +84,7 @@ print('Moving swarm...')
 for ii in range(50):
     swrm.move(0.025)
 
-# Note that things went a little slower than in basic_ex_2d.py. Planktos 
+# Note that things went a little slower than in 01_basic_2d.py. Planktos 
 #   automatically checks if any agent crossed any immersed boundary element
 #   after each time step. Even in this simple example, the number of mesh 
 #   elements is typically large (and the number of agents can be too). Even 
@@ -91,10 +92,9 @@ for ii in range(50):
 #   how far the agent travelled in a given time step, this is still an expensive 
 #   search-and-check, and if there is a boundary crossing, we have to 
 #   recursively check for further crossings of different sorts after the 
-#   vector projection of the sliding collision. For now, these are just things 
-#   to keep in mind... in the future, we may parallelize this part of the code
-#   in one way or another, or rewrite all the vector algebra in C to try and
-#   make it go faster.
+#   vector projection of the sliding collision. The collision checks can be
+#   spread across a pool of worker processes by setting swrm.pool;
+#   09_ib2d_mvbnd_sticky.py shows how, and when it pays off.
 
 # This time, instead of viewing the results directly, let's output them to an
 #   mp4. Planktos will create a movie if you just pass a filename with an

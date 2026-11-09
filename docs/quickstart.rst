@@ -112,7 +112,7 @@ Either way, uninstall with: ::
     pip uninstall planktos
 
 **Once you have installed, verify that things work** by trying to run 
-basic_ex_2d.py in the examples folder. If it crashes, see the Dependencies 
+01_basic_2d.py in the examples folder. If it crashes, see the Dependencies 
 section above for troubleshooting.
 
 Getting started
@@ -129,23 +129,23 @@ A suggested BibTeX entry is included in the file
 :download:`Planktos.bib <../Planktos.bib>`.
 
 There are several working examples in the examples folder. Start with
-basic_ex_2d.py and basic_ex_3d.py, which are annotated minimal simulations.
-ex_ind_var.py demonstrates individual variation between agents, and
-ex_agent_behavior.py, ex_ode_gen.py, ex_vicsek_model_2d.py, and
-ex_vicsek_model_3d.py demonstrate subclassing of the apply_agent_model method
-for user-defined agent behavior. ex_poisson_search.py implements an intermittent
+01_basic_2d.py and 02_basic_3d.py, which are annotated minimal simulations.
+03_ind_var.py demonstrates individual variation between agents, and
+04_agent_behavior.py, 05_ode_gen.py, 13_vicsek_model_2d.py, and
+14_vicsek_model_3d.py demonstrate subclassing of the apply_agent_model method
+for user-defined agent behavior. 12_poisson_search.py implements an intermittent
 search strategy via Poisson process state switching.
 
 Several examples show how to import vertex data (from IB2d and IBAMR),
 automatically create immersed boundaries out of this data, and then simulate
 agent movement with these meshes as solid boundaries which the agents respect:
-ex_ib2d_ibmesh.py and ex_ib2d_sticky.py in 2D, ex_IBAMR_ibmesh.py using VTK data
+06_ib2d_ibmesh.py and 08_ib2d_sticky.py in 2D, 07_IBAMR_ibmesh.py using VTK data
 obtained from IBAMR (pulled from the tests/IBAMR_test_data folder), and
-ex_sticky_seafan_3d.py in 3D. In particular, ex_ib2d_mvbnd_sticky.py is the
+10_sticky_seafan_3d.py in 3D. In particular, 09_ib2d_mvbnd_sticky.py is the
 showcase for **2D moving immersed boundaries**; it requires externally
 downloaded data, so see the file header for the link. Finally,
-ex_produce_ftle_2d.py demonstrates FTLE computation. ex_IBAMR_ibmesh.py and
-ex_sticky_seafan_3d.py also demonstrate domain tiling, which builds an array of
+11_produce_ftle_2d.py demonstrates FTLE computation. 07_IBAMR_ibmesh.py and
+10_sticky_seafan_3d.py also demonstrate domain tiling, which builds an array of
 cylinders out of one.
 
 More examples will be added as functionality is added. To run any of these

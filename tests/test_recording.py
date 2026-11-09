@@ -899,7 +899,7 @@ def _checkpointed_run(tmp_path, steps=5, chunk_size=3, n=6):
     swrm = _swarm(envir, n=n)
     swrm.add_prop('sensitivity', np.linspace(0.1, 0.9, n))
     swrm.add_prop('tag', ['a', 'b', 'c'] * (n // 3))
-    # A column of matrices: ex_ind_var.py gives every agent its own covariance
+    # A column of matrices: 03_ind_var.py gives every agent its own covariance
     # this way, and Swarm.get_prop is built on np.stack for it.
     swrm.add_prop('percov', [np.eye(2) * 0.01 * (i + 1) for i in range(n)])
     with envir.record(tmp_path / 'run', chunk_size=chunk_size) as rec:
@@ -943,7 +943,7 @@ def test_the_checkpoint_carries_every_piece_of_swarm_state(tmp_path):
 
 def test_a_props_column_of_arrays_survives_the_checkpoint(tmp_path):
     # Such a column renders to csv as a broken multi-line row, so it goes to the
-    # npz instead. ex_ind_var.py's per-agent covariance is this case.
+    # npz instead. 03_ind_var.py's per-agent covariance is this case.
     rec, envir, swrm = _checkpointed_run(tmp_path)
     manifest = json.loads(
         (rec.path / 'agents' / 'checkpoint00_meta.json').read_text())

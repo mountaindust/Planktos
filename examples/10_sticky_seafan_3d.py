@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 '''
-This example builds on the ex_ib2d_sticky example by going to 3D and building an
-array of cylinders out of a single cylinder (through tiling). The CDF simulation 
+This example builds on the 08_ib2d_sticky example by going to 3D and building an
+array of cylinders out of a single cylinder (through tiling). The CFD simulation 
 was carried out in COMSOL using a thin domain in the x-direction with periodic 
 boundary condition. The fluid and cylinder mesh is tiled in this direction within 
 Planktos and the cylinders are made to be sticky in order to learn something 
@@ -29,7 +29,7 @@ envir.read_stl_mesh_data('comsol_data/seafan_cylinder.stl')
 #   and z-dimensions are roughly the same.
 envir.tile_domain(x=13)
 
-# See ex_ib2d_sticky for details about this "sticky" behavior!
+# See 08_ib2d_sticky for details about this "sticky" behavior!
 class permstick(planktos.Swarm):
     def apply_agent_model(self, dt):
         stick = self.get_prop('stick')
@@ -45,7 +45,7 @@ class permstick(planktos.Swarm):
 # Set the swarm size
 SWARM_SIZE = 1000
 
-# Now we create the swarm similar to ex_ib2d_sticky.py. Can possibly do this 
+# Now we create the swarm similar to 08_ib2d_sticky.py. Can possibly do this 
 #   in a loop to get aggregate results.
 
 # for trial in range(100):
@@ -71,7 +71,7 @@ swrm.shared_props['cov'] *= 0.25
 swrm.props['stick'] = np.full(SWARM_SIZE, False) # creates a length 1000 array of False
 swrm.props['color'] = np.full(SWARM_SIZE, swrm.shared_props['color'])
 
-# Move the swarm similar to as in ex_ib2d_sticky.
+# Move the swarm similar to as in 08_ib2d_sticky.
 for ii in range(120): # 1 minute w/ half second timesteps
     swrm.move(0.5, ib_collisions='sticky')
 

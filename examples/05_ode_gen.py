@@ -40,7 +40,7 @@ def my_ode_generator(swarm):
         '''
 
         #Let's create equations of motion defining tracer particles plus a bias
-        #   toward the mean position of the swarm, similar to ex_agent_behavior.
+        #   toward the mean position of the swarm, similar to 04_agent_behavior.
         #   We won't use the acceleration equations, so we will concatenate on
         #   zeros.
 
@@ -61,7 +61,7 @@ def my_ode_generator(swarm):
     # the generator then returns the ODE function
     return ODEs
 
-# Now we follow ex_agent_behavior and override apply_agent_model with this new
+# Now we follow 04_agent_behavior and override apply_agent_model with this new
 #   behavior!
 
 class myswarm(planktos.Swarm):

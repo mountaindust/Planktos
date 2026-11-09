@@ -7,7 +7,7 @@ https://drive.google.com/drive/folders/104ekG8cEJYuvk6NR8pTGn4wEISILUcuH?usp=sha
 Put it into the ib2d_data folder in the example directory, and you should be 
 good to go!
 
-Once you have the data, this example can be found in ex_ib2d_ibmesh.py. It loads 
+Once you have the data, this example can be found in 06_ib2d_ibmesh.py. It loads 
 data generated from the `IB2d <https://github.com/nickabattista/IB2d>`_ 
 Example_Channel_Flow/Example_Flow_Around_Cylinder 
 example for the generated fluid velocity field and the .vertex data, 

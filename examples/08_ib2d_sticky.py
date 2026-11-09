@@ -1,6 +1,6 @@
 #! /usr/bin/env python3
 '''
-This example/tutorial builds on the ex_agent_behavior and ex_ib2d_ibmesh. Its
+This example/tutorial builds on 04_agent_behavior and 06_ib2d_ibmesh. Its
 primary purpose is both to show off the functionality of the sticky boundary
 condition option and to showcase more ideas for how you can control agent 
 behavior with dynamically updating agent properties.
@@ -15,7 +15,7 @@ good to go!
 import numpy as np
 import planktos
 
-# Let's begin by loading the same fluid and mesh as used in ex_ib2d_ibmesh.py
+# Let's begin by loading the same fluid and mesh as used in 06_ib2d_ibmesh.py
 envir = planktos.Environment()
 envir.read_IB2d_fluid_data('ib2d_data', 5.0e-5, 1000)
 envir.read_IB2d_mesh_data('ib2d_data/channel.vertex', method='proximity')
@@ -61,7 +61,7 @@ class permstick(planktos.Swarm):
         # Let's also color the agents that get stuck!
         self.props.loc[self.ib_collision_idx >= 0, 'color'] = 'yellow'
 
-# Now we create the Swarm similar to ex_ib2d_ibmesh.py.
+# Now we create the Swarm similar to 06_ib2d_ibmesh.py.
 # We will set store_prop_history=True because we want to keep track of agent 
 #   property changes through time. We will also set the default ib condition to 
 #   'sticky'. We could alternatively pass it in each time to the move method 
@@ -96,11 +96,11 @@ for ii in range(50):
     
 
 # 0.075 simulated seconds per second of video (about 13x slow motion), matching
-#   ex_ib2d_ibmesh.py. At dt=0.025 that caps fps at 3; see that example.
+#   06_ib2d_ibmesh.py. At dt=0.025 that caps fps at 3; see that example.
 swrm.plot_all(movie_filename='channel_flow_sticky.mp4', fps=3, playback_rate=0.075,
               fluid='vort', plot_heading=False)
 
-# Compare the result to that of ex_ib2d_ibmesh.py.
+# Compare the result to that of 06_ib2d_ibmesh.py.
 
 # Note that you can make use of the for-loop to update the Swarm object in all 
 #   kinds of ways, or just to collect data about the Swarm dynamically. For 

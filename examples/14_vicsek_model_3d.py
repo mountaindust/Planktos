@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 '''
 This example is a 3D version of the 2D Vicsek model [1]_ of collective behavior 
-(flocking and schooling) implemented in ex_vicsek_model.py. It is a preliminary 
+(flocking and schooling) implemented in 13_vicsek_model_2d.py. It is a preliminary 
 study for future wind tunnel experiments.
 
 The fluid velocity data will be made available on request. Running this example 

@@ -453,25 +453,25 @@ def test_an_in_ram_run_gives_the_numbers_the_released_line_gives(tmp_path, rev):
 #           nothing breaks: the tutorials, run exactly as written             #
 # --------------------------------------------------------------------------- #
 
-# Only the examples that need no downloaded data. ex_IBAMR_ibmesh.py reads
+# Only the examples that need no downloaded data. 07_IBAMR_ibmesh.py reads
 # the committed tests/IBAMR_test_data.
 SELF_CONTAINED_EXAMPLES = [
-    'basic_ex_2d.py',
-    'basic_ex_3d.py',
-    'ex_IBAMR_ibmesh.py',
-    'ex_agent_behavior.py',
-    'ex_ind_var.py',
-    'ex_ode_gen.py',
-    'ex_poisson_search.py',
-    'ex_vicsek_model_2d.py',
-    'ex_vicsek_model_3d.py',
+    '01_basic_2d.py',
+    '02_basic_3d.py',
+    '07_IBAMR_ibmesh.py',
+    '04_agent_behavior.py',
+    '03_ind_var.py',
+    '05_ode_gen.py',
+    '12_poisson_search.py',
+    '13_vicsek_model_2d.py',
+    '14_vicsek_model_3d.py',
 ]
 
 # These need the dumps of examples/ib2d_data, which are gitignored.
 DATA_EXAMPLES = [
-    'ex_produce_ftle_2d.py',
-    'ex_ib2d_ibmesh.py',
-    'ex_ib2d_sticky.py',
+    '11_produce_ftle_2d.py',
+    '06_ib2d_ibmesh.py',
+    '08_ib2d_sticky.py',
 ]
 
 
@@ -479,7 +479,7 @@ DATA_EXAMPLES = [
 @pytest.mark.parametrize('script', SELF_CONTAINED_EXAMPLES)
 def test_a_self_contained_example_runs_to_completion(script, tmp_path):
     # This example's mesh is an STL, which needs the optional numpy-stl.
-    if script == 'ex_vicsek_model_3d.py':
+    if script == '14_vicsek_model_3d.py':
         pytest.importorskip('stl.mesh')
     # Run as written, in a subprocess, from a copy of examples/ so that any
     # movie or figure lands in the temporary directory. Agg makes plt.show a

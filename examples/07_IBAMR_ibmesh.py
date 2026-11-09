@@ -1,6 +1,6 @@
 #! /usr/bin/env python3
 '''
-This example is very similar to ex_ib2d_ibmesh.py, but in 3D and with data 
+This example is very similar to 06_ib2d_ibmesh.py, but in 3D and with data 
 that is available without external download. It also demonstrates the utility of 
 the convex hull algorithm and demonstrates how the domain can be tiled.
 

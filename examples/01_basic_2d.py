@@ -84,7 +84,7 @@ swrm.plot_all(plot_heading=False) # turn off agent headings since this is Browni
 
 # Finally, for the ultimate in interactive usage, open an ipython session and 
 #   run this example using the magic command %run:
-#   %run basic_ex_2d.py
+#   %run 01_basic_2d.py
 # After it finishes running, you can interact with both the envir and swrm 
 #   objects we just created by directly calling functions on them! This can be a
 #   useful way to see what kind of commands are available too. For instance,
