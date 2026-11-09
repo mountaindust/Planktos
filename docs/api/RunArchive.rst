@@ -5,8 +5,8 @@ A **run archive** streams agent state to disk as the run proceeds.
 Planktos otherwise holds an entire run in memory and can only write it out at
 the end -- if the simulation crashes, the data is lost. It also allows for 
 plotting a dynamically loaded run without re-reading the fluid dataset, and for 
-running simulations that would not fit in RAM (including the option of a 
-capture_interval that keeps state every *k*-th step rather than every step).
+running simulations that would not fit in RAM (including the option of a
+``capture_interval`` that keeps state every *k*-th step rather than every step).
 
 Start recording with ``Environment.record`` and read the data back with ``planktos.load_run``::
 
@@ -114,7 +114,7 @@ in memory, so recomputing drags a full reload behind it. Either way the answer
 is **exactly** the curl of the velocity actually in use, not a second 
 approximation stacked on the first.
 
-Written velocity goes into the source's fluid directory, in the source's own 
+Written vorticity goes into the source's fluid directory, in the source's own 
 naming -- ``Omega.0042.vtk`` beside ``u.0042.vtk`` -- so a later
 run, ParaView, etc. can read it with no knowledge of Planktos. If that directory 
 cannot be written, ``fluid/`` in the archive directory is used instead, and 
@@ -221,7 +221,7 @@ back an ordinary masked array. A masked row means that agent is not in the
 domain -- either because it left, or because the swarm had not joined the run
 yet.
 
-A swarm addedmid-run starts at a nonzero capture, and a recording started after 
+A swarm added mid-run starts at a nonzero capture, and a recording started after 
 ``t=0`` has its capture 0 partway into the run. Matching on ``run.times`` is 
 right in every one of those cases. ``capture_at`` returns the index
 of the nearest capture and nothing blends between them (no interpolation). 
@@ -241,14 +241,14 @@ Restarting a run
     for _ in range(more_steps):     # carries on as if nothing had happened
         swrm.move(dt)
 
-The fluid files and all subclasses have to still be there and ``pos_history`` 
-and ``vel_history`` are filled from the archive, ``Environment.time_history`` 
-with them. Pass ``history=False`` to skip that on a long run; the physics is 
+The fluid files have to still be where they were, and any ``Swarm`` subclass
+the run used has to be importable. ``pos_history`` and ``vel_history`` are
+filled from the archive, and ``Environment.time_history`` with them. Pass ``history=False`` to skip that on a long run; the physics is 
 identical either way, but ``plot_all`` then has a single frame to draw and the 
 agent statistics count against the restored state rather than the original swarm.
 
 A fluid handed to ``Environment(flow=[...])`` as arrays has no loader call to
-replay, so the Environment comes back withoutfluid for you to set yourself.
+replay, so the Environment comes back without fluid for you to set yourself.
 
 Restarting partway through
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
