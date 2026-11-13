@@ -555,39 +555,6 @@ class Environment:
 
 
 
-    @_provenance.note_modifier('_ibmesh_provenance')
-    def shift_ibmesh_to_match_LLC(self):
-        '''Translate the ibmesh by the offset the fluid's loader applied.
-
-        Fluid loaders move their data so that its lower-left corner is at the
-        origin, recording the original corner as ``flow.fluid_domain_LLC``. A
-        mesh loaded after the fluid is moved with it; call this after loading
-        the fluid when the mesh was loaded first. Called on a mesh that was
-        already moved, it moves it a second time. Works on static and moving
-        meshes.
-
-        Raises
-        ------
-        RuntimeError
-            if no fluid or no mesh is loaded, or the fluid records no
-            fluid_domain_LLC
-        '''
-
-        self._refuse_once_tiled('move the immersed mesh')
-        if self.flow is None:
-            raise RuntimeError("No fluid velocity field loaded.")
-        if self.flow.fluid_domain_LLC is None:
-            raise RuntimeError("The loaded fluid was not translated, so there "
-                               "is no shift to match: it records no original "
-                               "lower-left corner (fluid_domain_LLC).")
-        if self.ibmesh is None:
-            raise RuntimeError("No immersed boundary mesh loaded.")
-        # The coordinate axis is the last one in every ibmesh layout -- (N,2,2),
-        #   (N,3,3) and moving (T,N,2,2) -- hence the ellipsis.
-        for ii in range(len(self.flow.fluid_domain_LLC)):
-            self.ibmesh[...,ii] -= self.flow.fluid_domain_LLC[ii]
-
-
     #######################################################################
     #####                        FLUID SETTERS                        #####
     #######################################################################
@@ -1204,6 +1171,29 @@ class Environment:
             flow_times = None
 
         return flow_points, flow_times
+
+
+    def _reset_flow_variables(self, incl_rho_mu_U=False):
+        '''To be used when the fluid flow changes. Resets all the helper
+        parameters and reports new domain.'''
+
+        self.h_p = None
+        self.plot_structs = []
+        self.plot_structs_args = []
+        self._reset_flow_deriv()
+        if incl_rho_mu_U:
+            self.mu = None
+            self.rho = None
+            self.U = None
+        print("Fluid updated. Planktos domain size is now {}.".format(self.L))
+
+
+
+    def _reset_flow_deriv(self):
+        '''Reset properties that are derived from the flow velocity.'''
+
+        self.mag_grad = None
+        self.mag_grad_time = None
 
 
     #######################################################################
@@ -2180,6 +2170,39 @@ class Environment:
 
 
 
+    @_provenance.note_modifier('_ibmesh_provenance')
+    def shift_ibmesh_to_match_LLC(self):
+        '''Translate the ibmesh by the offset the fluid's loader applied.
+
+        Fluid loaders move their data so that its lower-left corner is at the
+        origin, recording the original corner as ``flow.fluid_domain_LLC``. A
+        mesh loaded after the fluid is moved with it; call this after loading
+        the fluid when the mesh was loaded first. Called on a mesh that was
+        already moved, it moves it a second time. Works on static and moving
+        meshes.
+
+        Raises
+        ------
+        RuntimeError
+            if no fluid or no mesh is loaded, or the fluid records no
+            fluid_domain_LLC
+        '''
+
+        self._refuse_once_tiled('move the immersed mesh')
+        if self.flow is None:
+            raise RuntimeError("No fluid velocity field loaded.")
+        if self.flow.fluid_domain_LLC is None:
+            raise RuntimeError("The loaded fluid was not translated, so there "
+                               "is no shift to match: it records no original "
+                               "lower-left corner (fluid_domain_LLC).")
+        if self.ibmesh is None:
+            raise RuntimeError("No immersed boundary mesh loaded.")
+        # The coordinate axis is the last one in every ibmesh layout -- (N,2,2),
+        #   (N,3,3) and moving (T,N,2,2) -- hence the ellipsis.
+        for ii in range(len(self.flow.fluid_domain_LLC)):
+            self.ibmesh[...,ii] -= self.flow.fluid_domain_LLC[ii]
+
+
     #######################################################################
     #####                    DOMAIN MANIPULATIONS                     #####
     #######################################################################
@@ -2338,6 +2361,108 @@ class Environment:
 
 
 
+    def _refuse_once_tiled(self, action):
+        '''Raise ValueError if tile_domain has run. ``action`` completes
+        "Cannot ..." in the message.'''
+
+        if getattr(self, '_tiling', None) is not None:
+            raise ValueError(
+                "Cannot {} after tile_domain{}: tiling is the last operation on "
+                "the domain. Load the fluid and the mesh first, then "
+                "tile.".format(action, self._tiling))
+
+
+    def set_boundary_conditions(self, x_bndry, y_bndry, z_bndry=None):
+        '''Check and set the agent boundary conditions, self.bndry.
+
+        Parameters
+        ----------
+        x_bndry, y_bndry, z_bndry : str or pair of str
+            one of 'zero', 'noflux' or 'periodic' for both sides of that axis,
+            or a pair (low side, high side). None gives the default: 'zero' for
+            x and y, 'noflux' for z. The z entry is set in 2D too, where agents
+            ignore it.
+
+        Raises
+        ------
+        NameError
+            for a condition not among the three above
+        '''
+
+        supprted_conds = ['zero', 'noflux', 'periodic']
+        default_conds_x = ('zero', 'zero')
+        default_conds_y = ('zero', 'zero')
+        default_conds_z = ('noflux', 'noflux')
+
+        self.bndry = []
+
+        if x_bndry is None:
+            # default boundary conditions
+            self.bndry.append(default_conds_x)
+        elif isinstance(x_bndry, str):
+            if x_bndry not in supprted_conds:
+                self.bndry = [default_conds_x, default_conds_y, default_conds_z]
+                raise NameError("X boundary condition {} not implemented.".format(x_bndry))
+            self.bndry.append([x_bndry, x_bndry])
+        else:
+            try:
+                iter(x_bndry)
+            except TypeError:
+                print("x_bndry must be either an iterable or a string.")
+                self.bndry = [default_conds_x, default_conds_y, default_conds_z]
+                raise
+            else:
+                if x_bndry[0] not in supprted_conds or x_bndry[1] not in supprted_conds:
+                    self.bndry = [default_conds_x, default_conds_y, default_conds_z]
+                    raise NameError("x boundary condition {} not implemented.".format(x_bndry))
+                else:
+                    self.bndry.append(x_bndry)
+
+        if y_bndry is None:
+            # default boundary conditions
+            self.bndry.append(default_conds_y)
+        elif isinstance(y_bndry, str):
+            if y_bndry not in supprted_conds:
+                self.bndry += [default_conds_y, default_conds_z]
+                raise NameError("Y boundary condition {} not implemented.".format(y_bndry))
+            self.bndry.append([y_bndry, y_bndry])
+        else:
+            try:
+                iter(y_bndry)
+            except TypeError:
+                print("y_bndry must be either an iterable or a string.")
+                self.bndry += [default_conds_y, default_conds_z]
+                raise
+            else:
+                if y_bndry[0] not in supprted_conds or y_bndry[1] not in supprted_conds:
+                    self.bndry += [default_conds_y, default_conds_z]
+                    raise NameError("y boundary condition {} not implemented.".format(y_bndry))
+                else:
+                    self.bndry.append(y_bndry)
+
+        if z_bndry is None:
+            # default boundary conditions
+            self.bndry.append(default_conds_z)
+        elif isinstance(z_bndry, str):
+            if z_bndry not in supprted_conds:
+                self.bndry.append(default_conds_z)
+                raise NameError("Z boundary condition {} not implemented.".format(z_bndry))
+            self.bndry.append([z_bndry, z_bndry])
+        else:
+            try:
+                iter(z_bndry)
+            except TypeError:
+                self.bndry.append(default_conds_z)
+                print("z_bndry must be either an iterable or a string.")
+                raise
+            else:
+                if z_bndry[0] not in supprted_conds or z_bndry[1] not in supprted_conds:
+                    self.bndry.append(default_conds_z)
+                    raise NameError("z boundary condition {} not implemented.".format(z_bndry))
+                else:
+                    self.bndry.append(z_bndry)
+
+
     #######################################################################
     #####                       SWARM FUNCTIONS                       #####
     #######################################################################
@@ -2367,6 +2492,347 @@ class Environment:
         else:
             return planktos.Swarm(swarm_size, self, **kwargs)
             
+
+
+    def move_swarms(self, dt=1.0, ib_collisions='default',
+                    silent=False):
+        '''Move all Swarms in the Environment together over one time step.
+
+        Every Swarm's apply_agent_model runs before any Swarm's positions
+        change, so a model reading another Swarm's positions or velocities sees
+        them as they were at the start of the step. Boundary conditions then
+        apply to every Swarm, and after that every after_move runs, seeing all
+        Swarms where the step ended. Changes a model makes to props or
+        shared_props are visible at once to models that run after it, in the
+        order of Environment.swarms.
+
+        Parameters
+        ----------
+        dt : float, default=1.0
+            length of time step to move all agents
+        ib_collisions : {'default', None, 'sliding', 'sticky'}
+            Type of interaction with immersed boundaries, for every Swarm. If
+            'default', each Swarm uses its own ib_condition. If None, turn off
+            all interaction with immersed boundaries. In sliding collisions,
+            conduct recursive vector projection until the length of the original
+            vector is exhausted. In sticky collisions, just return the point of
+            intersection.
+        silent : bool, default=False
+            If True, suppress printing the updated time.
+        '''
+
+        if self.swarms:
+            self.swarms[0]._refuse_if_failed()
+
+        # Asked once so that every swarm's history append and this
+        #   time_history append are gated on one answer.
+        keep_state = self._records_this_step()
+
+        # Each stage runs for every swarm before the next begins: every
+        #   apply_agent_model sees all swarms as they were at the start of the
+        #   step, and every after_move sees them all where the step ended. The
+        #   result is the same whatever order the swarms are in.
+        steps = [(s, s._propose_step(dt, ib_collisions)) for s in self.swarms]
+        for s, step in steps:
+            s._commit_step(step, dt, keep_state)
+        planktos._swarm._settle_steps(self, steps, dt, keep_state)
+
+        # update time
+        if keep_state:
+            self.time_history.append(self.time)
+        self.time += dt
+        if not silent:
+            print('time = {}'.format(np.round(self.time,11)))
+
+        # One environmental time step has completed, with every swarm moved.
+        #   This and the end of Swarm.move (when it advances the time itself)
+        #   are the only two places that mean that, and so the only two that
+        #   fire a capture.
+        self._notify_step_complete()
+
+
+    #######################################################################
+    #####                       HELPER FUNCTIONS                      #####
+    #######################################################################
+
+
+    def reset(self, rm_swarms=False):
+        '''Resets environment to time=0. Swarm history will be lost, and all
+        Swarms will maintain their last position and velocities.
+        If rm_swarms=True, remove all Swarms.
+
+        Raises
+        ------
+        RuntimeError
+            if a recording is active
+        '''
+
+        self._refuse_while_recording()
+        self.time = 0.0
+        self._step_count = 0
+        self._capture_phase = 0
+        self.time_history = []
+        if rm_swarms:
+            self.swarms = []
+        else:
+            for sw in self.swarms:
+                # every history goes, not just positions: they are indexed
+                #   together (full_vel_history lines up with full_pos_history),
+                #   so clearing one and keeping the others leaves them
+                #   misaligned for the rest of the session.
+                sw.pos_history = []
+                sw.vel_history = []
+                if sw.props_history is not None:
+                    sw.props_history = []
+
+
+
+    def define_pic_grid(self, positions, dx, dy, dz=None, return_neighbors=True):
+        '''Creates a grid across the domain with cells of size dx by dy for use 
+        in a particle-in-cell method. dx and dy should divide the domain evenly 
+        in their respective directions and represent the furthest away one needs 
+        to look from any individual agent in order to get all neighbor 
+        interactions (e.g., a characteristic distance).
+
+        Returns a dictionary of cells in which keys are (i,j) tuples indexing 
+        the cells starting at zero from the origin, and the values they point to 
+        are lists of agent indices whose positions are within that cell.
+
+        If return_neighbors is True, will also return a dictionary of cell 
+        indices in which the values are of agents located either within that 
+        cell OR in a neighboring cell. Neighbor cells are the 8 cells vertically 
+        or horizontally adjacent or diagonally adjacent (in 2D). Adjacency on the 
+        boundaries of the domain depends upon the environment boundary condition: 
+        zero or no-flux will treat the edge of the environment as a hard 
+        boundary while periodic will wrap around to find neighboring cells.
+
+        Parameters
+        ----------
+        positions : Nx2 or Nx3 ndarray
+            ndarray of agent positions (e.g., Swarm.positions)
+        dx : float
+            length of grid cell in the x-direction
+        dy : float
+            length of grid cell in the y-direction
+        dz : float, optional
+            length of grid cell in the z-direction
+        return_neighbors : bool, default=True
+            if True, return both a dictionary a dictionary of cells -> agent 
+            indices located inside cell AND a dictionary of cells -> agent 
+            indices in both cell and neighboring cells
+
+        Returns
+        -------
+        cells dictionary, or tuple of two dictionaries (cells, neighbors)
+        '''
+
+        if dz is not None:
+            DIM3 = True
+        else:
+            DIM3 = False
+
+        Nx = round(self.L[0]/dx)
+        Ny = round(self.L[1]/dy)
+        if DIM3: Nz = round(self.L[2]/dz)
+
+        assert np.isclose(Nx*dx,self.L[0]), "dx does not divide domain evenly."
+        assert np.isclose(Ny*dy,self.L[1]), "dy does not divide domain evenly."
+        if DIM3:
+            assert np.isclose(Nz*dz,self.L[2]), "dz does not divide domain evenly."
+
+        # Nx2 array of agent position indices
+        if DIM3:
+            pos_ind = (positions//np.array([dx,dy,dz])).astype(int)
+        else:
+            pos_ind = (positions//np.array([dx,dy])).astype(int)
+
+        # Form a dictionary of cells
+        cells = {}
+        for ii in range(positions.shape[0]):
+            if tuple(pos_ind[ii,:]) in cells:
+                cells[tuple(pos_ind[ii,:])].append(ii)
+            else:
+                cells[tuple(pos_ind[ii,:])] = [ii]
+
+        if return_neighbors:
+            # Form a dictionary of all agents in the cell OR neighbors
+            neigh = {}
+            if not DIM3:
+                for x in range(Nx):
+                    for y in range(Ny):
+                        if (x,y) in cells:
+                            nearby_agents = []
+                            # get list of adjacent cells depending on BC
+                            idx_list = []
+                            # x-1 column
+                            if x-1<0 and self.bndry[0][0] == 'periodic':
+                                if y-1<0 and self.bndry[1][0] == 'periodic':
+                                    idx_list.append((Nx-1,Ny-1))
+                                elif y-1>=0:
+                                    idx_list.append((Nx-1,y-1))
+                                idx_list.append((Nx-1,y))
+                                if y+1==Ny and self.bndry[1][1] == 'periodic':
+                                    idx_list.append((Nx-1,0))
+                                elif y+1!=Ny:
+                                    idx_list.append((Nx-1,y+1))
+                            elif x-1>=0:
+                                if y-1<0 and self.bndry[1][0] == 'periodic':
+                                    idx_list.append((x-1,Ny-1))
+                                elif y-1>=0:
+                                    idx_list.append((x-1,y-1))
+                                idx_list.append((x-1,y))
+                                if y+1==Ny and self.bndry[1][1] == 'periodic':
+                                    idx_list.append((x-1,0))
+                                elif y+1!=Ny:
+                                    idx_list.append((x-1,y+1))
+                            # x column
+                            if y-1<0 and self.bndry[1][0] == 'periodic':
+                                idx_list.append((x,Ny-1))
+                            elif y-1>=0:
+                                idx_list.append((x,y-1))
+                            idx_list.append((x,y))
+                            if y+1==Ny and self.bndry[1][1] == 'periodic':
+                                idx_list.append((x,0))
+                            elif y+1!=Ny:
+                                idx_list.append((x,y+1))
+                            # x+1 column
+                            if x+1==Nx and self.bndry[0][1] == 'periodic':
+                                if y-1<0 and self.bndry[1][0] == 'periodic':
+                                    idx_list.append((0,Ny-1))
+                                elif y-1>=0:
+                                    idx_list.append((0,y-1))
+                                idx_list.append((0,y))
+                                if y+1==Ny and self.bndry[1][1] == 'periodic':
+                                    idx_list.append((0,0))
+                                elif y+1!=Ny:
+                                    idx_list.append((0,y+1))
+                            elif x+1!=Nx:
+                                if y-1<0 and self.bndry[1][0] == 'periodic':
+                                    idx_list.append((x+1,Ny-1))
+                                elif y-1>=0:
+                                    idx_list.append((x+1,y-1))
+                                idx_list.append((x+1,y))
+                                if y+1==Ny and self.bndry[1][1] == 'periodic':
+                                    idx_list.append((x+1,0))
+                                elif y+1!=Ny:
+                                    idx_list.append((x+1,y+1))
+
+                            for idx in idx_list:
+                                if idx in cells:
+                                    nearby_agents += cells[idx]
+                            neigh[(x,y)] = nearby_agents
+            # 3D
+            else:
+                if self.bndry[0][0] == 'periodic':
+                    x_list = [Nx-1]; xstrt = 1
+                else:
+                    x_list = []; xstrt = 0
+                x_list += list(range(Nx))
+                if self.bndry[0][1] == 'periodic':
+                    x_list.append(0); xend = len(x_list)-1
+                else:
+                    xend = len(x_list)
+
+                if self.bndry[1][0] == 'periodic':
+                    y_list = [Ny-1]; ystrt = 1
+                else:
+                    y_list = []; ystrt = 0
+                y_list += list(range(Ny))
+                if self.bndry[1][1] == 'periodic':
+                    y_list.append(0); yend = len(y_list)-1
+                else:
+                    yend = len(y_list)
+
+                if self.bndry[2][0] == 'periodic':
+                    z_list = [Nz-1]; zstrt = 1
+                else:
+                    z_list = []; zstrt = 0
+                z_list += list(range(Nz))
+                if self.bndry[2][1] == 'periodic':
+                    z_list.append(0); zend = len(z_list)-1
+                else:
+                    zend = len(z_list)
+
+                for xid in range(xstrt,xend):
+                    for yid in range(ystrt,yend):
+                        for zid in range(zstrt,zend):
+                            if (x_list[xid],y_list[yid],z_list[zid]) in cells:
+                                nearby_agents = []
+                                # get list of adjacent cells depending on BC
+                                idx_list = []
+                                # x-1
+                                if xid-1>=0:
+                                    if yid-1>=0:
+                                        if zid-1>=0:
+                                            idx_list.append((x_list[xid-1],y_list[yid-1],z_list[zid-1]))
+                                        idx_list.append((x_list[xid-1],y_list[yid-1],z_list[zid]))
+                                        if zid+1<len(z_list):
+                                            idx_list.append((x_list[xid-1],y_list[yid-1],z_list[zid+1]))
+                                    
+                                    if zid-1>=0:
+                                        idx_list.append((x_list[xid-1],y_list[yid],z_list[zid-1]))
+                                    idx_list.append((x_list[xid-1],y_list[yid],z_list[zid]))
+                                    if zid+1<len(z_list):
+                                        idx_list.append((x_list[xid-1],y_list[yid],z_list[zid+1]))
+
+                                    if yid+1<len(y_list):
+                                        if zid-1>=0:
+                                            idx_list.append((x_list[xid-1],y_list[yid+1],z_list[zid-1]))
+                                        idx_list.append((x_list[xid-1],y_list[yid+1],z_list[zid]))
+                                        if zid+1<len(z_list):
+                                            idx_list.append((x_list[xid-1],y_list[yid+1],z_list[zid+1]))
+
+                                # x
+                                if yid-1>=0:
+                                    if zid-1>=0:
+                                        idx_list.append((x_list[xid],y_list[yid-1],z_list[zid-1]))
+                                    idx_list.append((x_list[xid],y_list[yid-1],z_list[zid]))
+                                    if zid+1<len(z_list):
+                                        idx_list.append((x_list[xid],y_list[yid-1],z_list[zid+1]))
+                                
+                                if zid-1>=0:
+                                    idx_list.append((x_list[xid],y_list[yid],z_list[zid-1]))
+                                idx_list.append((x_list[xid],y_list[yid],z_list[zid]))
+                                if zid+1<len(z_list):
+                                    idx_list.append((x_list[xid],y_list[yid],z_list[zid+1]))
+
+                                if yid+1<len(y_list):
+                                    if zid-1>=0:
+                                        idx_list.append((x_list[xid],y_list[yid+1],z_list[zid-1]))
+                                    idx_list.append((x_list[xid],y_list[yid+1],z_list[zid]))
+                                    if zid+1<len(z_list):
+                                        idx_list.append((x_list[xid],y_list[yid+1],z_list[zid+1]))
+
+                                # x+1
+                                if xid+1<len(x_list):
+                                    if yid-1>=0:
+                                        if zid-1>=0:
+                                            idx_list.append((x_list[xid+1],y_list[yid-1],z_list[zid-1]))
+                                        idx_list.append((x_list[xid+1],y_list[yid-1],z_list[zid]))
+                                        if zid+1<len(z_list):
+                                            idx_list.append((x_list[xid+1],y_list[yid-1],z_list[zid+1]))
+                                    
+                                    if zid-1>=0:
+                                        idx_list.append((x_list[xid+1],y_list[yid],z_list[zid-1]))
+                                    idx_list.append((x_list[xid+1],y_list[yid],z_list[zid]))
+                                    if zid+1<len(z_list):
+                                        idx_list.append((x_list[xid+1],y_list[yid],z_list[zid+1]))
+
+                                    if yid+1<len(y_list):
+                                        if zid-1>=0:
+                                            idx_list.append((x_list[xid+1],y_list[yid+1],z_list[zid-1]))
+                                        idx_list.append((x_list[xid+1],y_list[yid+1],z_list[zid]))
+                                        if zid+1<len(z_list):
+                                            idx_list.append((x_list[xid+1],y_list[yid+1],z_list[zid+1]))
+
+                                for idx in idx_list:
+                                    if idx in cells:
+                                        nearby_agents += cells[idx]
+                                neigh[(x_list[xid],y_list[yid],z_list[zid])] = nearby_agents
+
+            return cells, neigh
+        return cells 
+
 
 
     #######################################################################
@@ -2623,165 +3089,6 @@ class Environment:
                 "Call envir.stop_recording() first to proceed.".format(self._recorder.path))
 
 
-    def _refuse_once_tiled(self, action):
-        '''Raise ValueError if tile_domain has run. ``action`` completes
-        "Cannot ..." in the message.'''
-
-        if getattr(self, '_tiling', None) is not None:
-            raise ValueError(
-                "Cannot {} after tile_domain{}: tiling is the last operation on "
-                "the domain. Load the fluid and the mesh first, then "
-                "tile.".format(action, self._tiling))
-
-
-    def move_swarms(self, dt=1.0, ib_collisions='default',
-                    silent=False):
-        '''Move all Swarms in the Environment together over one time step.
-
-        Every Swarm's apply_agent_model runs before any Swarm's positions
-        change, so a model reading another Swarm's positions or velocities sees
-        them as they were at the start of the step. Boundary conditions then
-        apply to every Swarm, and after that every after_move runs, seeing all
-        Swarms where the step ended. Changes a model makes to props or
-        shared_props are visible at once to models that run after it, in the
-        order of Environment.swarms.
-
-        Parameters
-        ----------
-        dt : float, default=1.0
-            length of time step to move all agents
-        ib_collisions : {'default', None, 'sliding', 'sticky'}
-            Type of interaction with immersed boundaries, for every Swarm. If
-            'default', each Swarm uses its own ib_condition. If None, turn off
-            all interaction with immersed boundaries. In sliding collisions,
-            conduct recursive vector projection until the length of the original
-            vector is exhausted. In sticky collisions, just return the point of
-            intersection.
-        silent : bool, default=False
-            If True, suppress printing the updated time.
-        '''
-
-        if self.swarms:
-            self.swarms[0]._refuse_if_failed()
-
-        # Asked once so that every swarm's history append and this
-        #   time_history append are gated on one answer.
-        keep_state = self._records_this_step()
-
-        # Each stage runs for every swarm before the next begins: every
-        #   apply_agent_model sees all swarms as they were at the start of the
-        #   step, and every after_move sees them all where the step ended. The
-        #   result is the same whatever order the swarms are in.
-        steps = [(s, s._propose_step(dt, ib_collisions)) for s in self.swarms]
-        for s, step in steps:
-            s._commit_step(step, dt, keep_state)
-        planktos._swarm._settle_steps(self, steps, dt, keep_state)
-
-        # update time
-        if keep_state:
-            self.time_history.append(self.time)
-        self.time += dt
-        if not silent:
-            print('time = {}'.format(np.round(self.time,11)))
-
-        # One environmental time step has completed, with every swarm moved.
-        #   This and the end of Swarm.move (when it advances the time itself)
-        #   are the only two places that mean that, and so the only two that
-        #   fire a capture.
-        self._notify_step_complete()
-
-
-    def set_boundary_conditions(self, x_bndry, y_bndry, z_bndry=None):
-        '''Check and set the agent boundary conditions, self.bndry.
-
-        Parameters
-        ----------
-        x_bndry, y_bndry, z_bndry : str or pair of str
-            one of 'zero', 'noflux' or 'periodic' for both sides of that axis,
-            or a pair (low side, high side). None gives the default: 'zero' for
-            x and y, 'noflux' for z. The z entry is set in 2D too, where agents
-            ignore it.
-
-        Raises
-        ------
-        NameError
-            for a condition not among the three above
-        '''
-
-        supprted_conds = ['zero', 'noflux', 'periodic']
-        default_conds_x = ('zero', 'zero')
-        default_conds_y = ('zero', 'zero')
-        default_conds_z = ('noflux', 'noflux')
-
-        self.bndry = []
-
-        if x_bndry is None:
-            # default boundary conditions
-            self.bndry.append(default_conds_x)
-        elif isinstance(x_bndry, str):
-            if x_bndry not in supprted_conds:
-                self.bndry = [default_conds_x, default_conds_y, default_conds_z]
-                raise NameError("X boundary condition {} not implemented.".format(x_bndry))
-            self.bndry.append([x_bndry, x_bndry])
-        else:
-            try:
-                iter(x_bndry)
-            except TypeError:
-                print("x_bndry must be either an iterable or a string.")
-                self.bndry = [default_conds_x, default_conds_y, default_conds_z]
-                raise
-            else:
-                if x_bndry[0] not in supprted_conds or x_bndry[1] not in supprted_conds:
-                    self.bndry = [default_conds_x, default_conds_y, default_conds_z]
-                    raise NameError("x boundary condition {} not implemented.".format(x_bndry))
-                else:
-                    self.bndry.append(x_bndry)
-
-        if y_bndry is None:
-            # default boundary conditions
-            self.bndry.append(default_conds_y)
-        elif isinstance(y_bndry, str):
-            if y_bndry not in supprted_conds:
-                self.bndry += [default_conds_y, default_conds_z]
-                raise NameError("Y boundary condition {} not implemented.".format(y_bndry))
-            self.bndry.append([y_bndry, y_bndry])
-        else:
-            try:
-                iter(y_bndry)
-            except TypeError:
-                print("y_bndry must be either an iterable or a string.")
-                self.bndry += [default_conds_y, default_conds_z]
-                raise
-            else:
-                if y_bndry[0] not in supprted_conds or y_bndry[1] not in supprted_conds:
-                    self.bndry += [default_conds_y, default_conds_z]
-                    raise NameError("y boundary condition {} not implemented.".format(y_bndry))
-                else:
-                    self.bndry.append(y_bndry)
-
-        if z_bndry is None:
-            # default boundary conditions
-            self.bndry.append(default_conds_z)
-        elif isinstance(z_bndry, str):
-            if z_bndry not in supprted_conds:
-                self.bndry.append(default_conds_z)
-                raise NameError("Z boundary condition {} not implemented.".format(z_bndry))
-            self.bndry.append([z_bndry, z_bndry])
-        else:
-            try:
-                iter(z_bndry)
-            except TypeError:
-                self.bndry.append(default_conds_z)
-                print("z_bndry must be either an iterable or a string.")
-                raise
-            else:
-                if z_bndry[0] not in supprted_conds or z_bndry[1] not in supprted_conds:
-                    self.bndry.append(default_conds_z)
-                    raise NameError("z boundary condition {} not implemented.".format(z_bndry))
-                else:
-                    self.bndry.append(z_bndry)
-
-
     #######################################################################
     #####                FLUID AND MESH INTERPOLATION                 #####
     #######################################################################
@@ -3016,251 +3323,108 @@ class Environment:
 
 
 
-    def define_pic_grid(self, positions, dx, dy, dz=None, return_neighbors=True):
-        '''Creates a grid across the domain with cells of size dx by dy for use 
-        in a particle-in-cell method. dx and dy should divide the domain evenly 
-        in their respective directions and represent the furthest away one needs 
-        to look from any individual agent in order to get all neighbor 
-        interactions (e.g., a characteristic distance).
+    def get_vorticity(self, t_indx=None, time=None, t_n=None):
+        '''Calculate the vorticity of the fluid velocity field at a given time.
 
-        Returns a dictionary of cells in which keys are (i,j) tuples indexing 
-        the cells starting at zero from the origin, and the values they point to 
-        are lists of agent indices whose positions are within that cell.
-
-        If return_neighbors is True, will also return a dictionary of cell 
-        indices in which the values are of agents located either within that 
-        cell OR in a neighboring cell. Neighbor cells are the 8 cells vertically 
-        or horizontally adjacent or diagonally adjacent (in 2D). Adjacency on the 
-        boundaries of the domain depends upon the environment boundary condition: 
-        zero or no-flux will treat the edge of the environment as a hard 
-        boundary while periodic will wrap around to find neighboring cells.
+        With no time argument, the vorticity is at the current time. If more
+        than one is given, the first in the order below is used.
 
         Parameters
         ----------
-        positions : Nx2 or Nx3 ndarray
-            ndarray of agent positions (e.g., Swarm.positions)
-        dx : float
-            length of grid cell in the x-direction
-        dy : float
-            length of grid cell in the y-direction
-        dz : float, optional
-            length of grid cell in the z-direction
-        return_neighbors : bool, default=True
-            if True, return both a dictionary a dictionary of cells -> agent 
-            indices located inside cell AND a dictionary of cells -> agent 
-            indices in both cell and neighboring cells
+        t_indx : int, optional
+            index into self.time_history
+        time : float, optional
+            the time
+        t_n : int, optional
+            index into self.flow.flow_times
 
         Returns
         -------
-        cells dictionary, or tuple of two dictionaries (cells, neighbors)
+        ndarray (i,j) in 2D, the out-of-plane component; a tuple of three
+        (i,j,k) ndarrays in 3D. On ``flow.flow_points``: the stored tile when
+        tiled.
         '''
 
-        if dz is not None:
-            DIM3 = True
-        else:
-            DIM3 = False
+        if t_indx is not None:
+            time = self.time_history[t_indx]
+        elif t_indx is None and time is None and t_n is None:
+            if self.flow.flow_times is not None:
+                time = self.time
 
-        Nx = round(self.L[0]/dx)
-        Ny = round(self.L[1]/dy)
-        if DIM3: Nz = round(self.L[2]/dz)
+        return self.flow.get_vorticity(time, t_n)
 
-        assert np.isclose(Nx*dx,self.L[0]), "dx does not divide domain evenly."
-        assert np.isclose(Ny*dy,self.L[1]), "dy does not divide domain evenly."
-        if DIM3:
-            assert np.isclose(Nz*dz,self.L[2]), "dz does not divide domain evenly."
 
-        # Nx2 array of agent position indices
-        if DIM3:
-            pos_ind = (positions//np.array([dx,dy,dz])).astype(int)
-        else:
-            pos_ind = (positions//np.array([dx,dy])).astype(int)
 
-        # Form a dictionary of cells
-        cells = {}
-        for ii in range(positions.shape[0]):
-            if tuple(pos_ind[ii,:]) in cells:
-                cells[tuple(pos_ind[ii,:])].append(ii)
-            else:
-                cells[tuple(pos_ind[ii,:])] = [ii]
+    def get_dudt(self, t_indx=None, time=None):
+        '''Return the derivative of the fluid velocity with respect to time,
+        by default at the current time. See FluidData.get_dudt for how it is
+        computed under each interpolation in time.
 
-        if return_neighbors:
-            # Form a dictionary of all agents in the cell OR neighbors
-            neigh = {}
-            if not DIM3:
-                for x in range(Nx):
-                    for y in range(Ny):
-                        if (x,y) in cells:
-                            nearby_agents = []
-                            # get list of adjacent cells depending on BC
-                            idx_list = []
-                            # x-1 column
-                            if x-1<0 and self.bndry[0][0] == 'periodic':
-                                if y-1<0 and self.bndry[1][0] == 'periodic':
-                                    idx_list.append((Nx-1,Ny-1))
-                                elif y-1>=0:
-                                    idx_list.append((Nx-1,y-1))
-                                idx_list.append((Nx-1,y))
-                                if y+1==Ny and self.bndry[1][1] == 'periodic':
-                                    idx_list.append((Nx-1,0))
-                                elif y+1!=Ny:
-                                    idx_list.append((Nx-1,y+1))
-                            elif x-1>=0:
-                                if y-1<0 and self.bndry[1][0] == 'periodic':
-                                    idx_list.append((x-1,Ny-1))
-                                elif y-1>=0:
-                                    idx_list.append((x-1,y-1))
-                                idx_list.append((x-1,y))
-                                if y+1==Ny and self.bndry[1][1] == 'periodic':
-                                    idx_list.append((x-1,0))
-                                elif y+1!=Ny:
-                                    idx_list.append((x-1,y+1))
-                            # x column
-                            if y-1<0 and self.bndry[1][0] == 'periodic':
-                                idx_list.append((x,Ny-1))
-                            elif y-1>=0:
-                                idx_list.append((x,y-1))
-                            idx_list.append((x,y))
-                            if y+1==Ny and self.bndry[1][1] == 'periodic':
-                                idx_list.append((x,0))
-                            elif y+1!=Ny:
-                                idx_list.append((x,y+1))
-                            # x+1 column
-                            if x+1==Nx and self.bndry[0][1] == 'periodic':
-                                if y-1<0 and self.bndry[1][0] == 'periodic':
-                                    idx_list.append((0,Ny-1))
-                                elif y-1>=0:
-                                    idx_list.append((0,y-1))
-                                idx_list.append((0,y))
-                                if y+1==Ny and self.bndry[1][1] == 'periodic':
-                                    idx_list.append((0,0))
-                                elif y+1!=Ny:
-                                    idx_list.append((0,y+1))
-                            elif x+1!=Nx:
-                                if y-1<0 and self.bndry[1][0] == 'periodic':
-                                    idx_list.append((x+1,Ny-1))
-                                elif y-1>=0:
-                                    idx_list.append((x+1,y-1))
-                                idx_list.append((x+1,y))
-                                if y+1==Ny and self.bndry[1][1] == 'periodic':
-                                    idx_list.append((x+1,0))
-                                elif y+1!=Ny:
-                                    idx_list.append((x+1,y+1))
+        Parameters
+        ----------
+        t_indx : int, optional
+            evaluate at self.time_history[t_indx]; takes precedence over time
+        time : float, optional
+            evaluate at this time
 
-                            for idx in idx_list:
-                                if idx in cells:
-                                    nearby_agents += cells[idx]
-                            neigh[(x,y)] = nearby_agents
-            # 3D
-            else:
-                if self.bndry[0][0] == 'periodic':
-                    x_list = [Nx-1]; xstrt = 1
-                else:
-                    x_list = []; xstrt = 0
-                x_list += list(range(Nx))
-                if self.bndry[0][1] == 'periodic':
-                    x_list.append(0); xend = len(x_list)-1
-                else:
-                    xend = len(x_list)
+        Returns
+        -------
+        list of ndarrays, one per velocity component, on ``flow.flow_points``:
+        the stored tile when tiled
+        '''
 
-                if self.bndry[1][0] == 'periodic':
-                    y_list = [Ny-1]; ystrt = 1
-                else:
-                    y_list = []; ystrt = 0
-                y_list += list(range(Ny))
-                if self.bndry[1][1] == 'periodic':
-                    y_list.append(0); yend = len(y_list)-1
-                else:
-                    yend = len(y_list)
+        if t_indx is None and time is None:
+            time = self.time
+        elif t_indx is not None:
+            time = self.time_history[t_indx]
 
-                if self.bndry[2][0] == 'periodic':
-                    z_list = [Nz-1]; zstrt = 1
-                else:
-                    z_list = []; zstrt = 0
-                z_list += list(range(Nz))
-                if self.bndry[2][1] == 'periodic':
-                    z_list.append(0); zend = len(z_list)-1
-                else:
-                    zend = len(z_list)
+        return self.flow.get_dudt(time)
 
-                for xid in range(xstrt,xend):
-                    for yid in range(ystrt,yend):
-                        for zid in range(zstrt,zend):
-                            if (x_list[xid],y_list[yid],z_list[zid]) in cells:
-                                nearby_agents = []
-                                # get list of adjacent cells depending on BC
-                                idx_list = []
-                                # x-1
-                                if xid-1>=0:
-                                    if yid-1>=0:
-                                        if zid-1>=0:
-                                            idx_list.append((x_list[xid-1],y_list[yid-1],z_list[zid-1]))
-                                        idx_list.append((x_list[xid-1],y_list[yid-1],z_list[zid]))
-                                        if zid+1<len(z_list):
-                                            idx_list.append((x_list[xid-1],y_list[yid-1],z_list[zid+1]))
-                                    
-                                    if zid-1>=0:
-                                        idx_list.append((x_list[xid-1],y_list[yid],z_list[zid-1]))
-                                    idx_list.append((x_list[xid-1],y_list[yid],z_list[zid]))
-                                    if zid+1<len(z_list):
-                                        idx_list.append((x_list[xid-1],y_list[yid],z_list[zid+1]))
 
-                                    if yid+1<len(y_list):
-                                        if zid-1>=0:
-                                            idx_list.append((x_list[xid-1],y_list[yid+1],z_list[zid-1]))
-                                        idx_list.append((x_list[xid-1],y_list[yid+1],z_list[zid]))
-                                        if zid+1<len(z_list):
-                                            idx_list.append((x_list[xid-1],y_list[yid+1],z_list[zid+1]))
 
-                                # x
-                                if yid-1>=0:
-                                    if zid-1>=0:
-                                        idx_list.append((x_list[xid],y_list[yid-1],z_list[zid-1]))
-                                    idx_list.append((x_list[xid],y_list[yid-1],z_list[zid]))
-                                    if zid+1<len(z_list):
-                                        idx_list.append((x_list[xid],y_list[yid-1],z_list[zid+1]))
-                                
-                                if zid-1>=0:
-                                    idx_list.append((x_list[xid],y_list[yid],z_list[zid-1]))
-                                idx_list.append((x_list[xid],y_list[yid],z_list[zid]))
-                                if zid+1<len(z_list):
-                                    idx_list.append((x_list[xid],y_list[yid],z_list[zid+1]))
+    def calculate_DuDt(self, t_indx=None, time=None):
+        '''Return the material derivative of the fluid velocity, by default at
+        the current time. Time arguments do not apply to time-invariant flow.
 
-                                if yid+1<len(y_list):
-                                    if zid-1>=0:
-                                        idx_list.append((x_list[xid],y_list[yid+1],z_list[zid-1]))
-                                    idx_list.append((x_list[xid],y_list[yid+1],z_list[zid]))
-                                    if zid+1<len(z_list):
-                                        idx_list.append((x_list[xid],y_list[yid+1],z_list[zid+1]))
+        .. math::
 
-                                # x+1
-                                if xid+1<len(x_list):
-                                    if yid-1>=0:
-                                        if zid-1>=0:
-                                            idx_list.append((x_list[xid+1],y_list[yid-1],z_list[zid-1]))
-                                        idx_list.append((x_list[xid+1],y_list[yid-1],z_list[zid]))
-                                        if zid+1<len(z_list):
-                                            idx_list.append((x_list[xid+1],y_list[yid-1],z_list[zid+1]))
-                                    
-                                    if zid-1>=0:
-                                        idx_list.append((x_list[xid+1],y_list[yid],z_list[zid-1]))
-                                    idx_list.append((x_list[xid+1],y_list[yid],z_list[zid]))
-                                    if zid+1<len(z_list):
-                                        idx_list.append((x_list[xid+1],y_list[yid],z_list[zid+1]))
+            \\frac{D\\mathbf{u}}{Dt} = \\mathbf{u}_t +
+            (\\nabla\\mathbf{u})\\mathbf{u}
 
-                                    if yid+1<len(y_list):
-                                        if zid-1>=0:
-                                            idx_list.append((x_list[xid+1],y_list[yid+1],z_list[zid-1]))
-                                        idx_list.append((x_list[xid+1],y_list[yid+1],z_list[zid]))
-                                        if zid+1<len(z_list):
-                                            idx_list.append((x_list[xid+1],y_list[yid+1],z_list[zid+1]))
+        Spatial gradients are second-order central differences, second-order
+        at the boundaries too, and across the wrap on periodic axes. See
+        FluidData.calculate_DuDt.
 
-                                for idx in idx_list:
-                                    if idx in cells:
-                                        nearby_agents += cells[idx]
-                                neigh[(x_list[xid],y_list[yid],z_list[zid])] = nearby_agents
+        Parameters
+        ----------
+        t_indx : int, optional
+            evaluate at self.time_history[t_indx]; takes precedence over time
+        time : float, optional
+            evaluate at this time
 
-            return cells, neigh
-        return cells 
+        Returns
+        -------
+        list of ndarrays, one per velocity component, on ``flow.flow_points``:
+        the stored tile when tiled
+        '''
+
+        if self.flow.flow_times is None:
+            # Time-invariant flow is the same at every time.
+            return self.flow.calculate_DuDt()
+        if t_indx is None and time is None:
+            time = self.time
+        elif t_indx is not None:
+            time = self.time_history[t_indx]
+
+        return self.flow.calculate_DuDt(time)
+
+
+    @property
+    def Re(self):
+        '''Return the Reynolds number at the current time. Must have set 
+        self.U, self.char_L and self.nu. Reynolds number is U*char_L/nu.'''
+
+        return self.U*self.char_L/self.nu
 
 
 
@@ -3797,38 +3961,6 @@ class Environment:
 
 
 
-    def get_vorticity(self, t_indx=None, time=None, t_n=None):
-        '''Calculate the vorticity of the fluid velocity field at a given time.
-
-        With no time argument, the vorticity is at the current time. If more
-        than one is given, the first in the order below is used.
-
-        Parameters
-        ----------
-        t_indx : int, optional
-            index into self.time_history
-        time : float, optional
-            the time
-        t_n : int, optional
-            index into self.flow.flow_times
-
-        Returns
-        -------
-        ndarray (i,j) in 2D, the out-of-plane component; a tuple of three
-        (i,j,k) ndarrays in 3D. On ``flow.flow_points``: the stored tile when
-        tiled.
-        '''
-
-        if t_indx is not None:
-            time = self.time_history[t_indx]
-        elif t_indx is None and time is None and t_n is None:
-            if self.flow.flow_times is not None:
-                time = self.time
-
-        return self.flow.get_vorticity(time, t_n)
-
-
-
     def save_2D_vorticity(self, path, name, time_history=True, flow_times=False):
         '''Save the vorticity of a 2D fluid velocity field as one or more vtk 
         files (one for each time point). A tiled domain writes its stored tile.
@@ -3929,138 +4061,6 @@ class Environment:
             flow = self.interpolate_temporal_flow(time=self.time)
             _dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, flow_points, cycle, self.time)
 
-
-
-    @property
-    def Re(self):
-        '''Return the Reynolds number at the current time. Must have set 
-        self.U, self.char_L and self.nu. Reynolds number is U*char_L/nu.'''
-
-        return self.U*self.char_L/self.nu
-
-
-
-    def get_dudt(self, t_indx=None, time=None):
-        '''Return the derivative of the fluid velocity with respect to time,
-        by default at the current time. See FluidData.get_dudt for how it is
-        computed under each interpolation in time.
-
-        Parameters
-        ----------
-        t_indx : int, optional
-            evaluate at self.time_history[t_indx]; takes precedence over time
-        time : float, optional
-            evaluate at this time
-
-        Returns
-        -------
-        list of ndarrays, one per velocity component, on ``flow.flow_points``:
-        the stored tile when tiled
-        '''
-
-        if t_indx is None and time is None:
-            time = self.time
-        elif t_indx is not None:
-            time = self.time_history[t_indx]
-
-        return self.flow.get_dudt(time)
-
-
-
-    def calculate_DuDt(self, t_indx=None, time=None):
-        '''Return the material derivative of the fluid velocity, by default at
-        the current time. Time arguments do not apply to time-invariant flow.
-
-        .. math::
-
-            \\frac{D\\mathbf{u}}{Dt} = \\mathbf{u}_t +
-            (\\nabla\\mathbf{u})\\mathbf{u}
-
-        Spatial gradients are second-order central differences, second-order
-        at the boundaries too, and across the wrap on periodic axes. See
-        FluidData.calculate_DuDt.
-
-        Parameters
-        ----------
-        t_indx : int, optional
-            evaluate at self.time_history[t_indx]; takes precedence over time
-        time : float, optional
-            evaluate at this time
-
-        Returns
-        -------
-        list of ndarrays, one per velocity component, on ``flow.flow_points``:
-        the stored tile when tiled
-        '''
-
-        if self.flow.flow_times is None:
-            # Time-invariant flow is the same at every time.
-            return self.flow.calculate_DuDt()
-        if t_indx is None and time is None:
-            time = self.time
-        elif t_indx is not None:
-            time = self.time_history[t_indx]
-
-        return self.flow.calculate_DuDt(time)
-
-
-    #######################################################################
-    #####                       HELPER FUNCTIONS                      #####
-    #######################################################################
-
-
-    def reset(self, rm_swarms=False):
-        '''Resets environment to time=0. Swarm history will be lost, and all
-        Swarms will maintain their last position and velocities.
-        If rm_swarms=True, remove all Swarms.
-
-        Raises
-        ------
-        RuntimeError
-            if a recording is active
-        '''
-
-        self._refuse_while_recording()
-        self.time = 0.0
-        self._step_count = 0
-        self._capture_phase = 0
-        self.time_history = []
-        if rm_swarms:
-            self.swarms = []
-        else:
-            for sw in self.swarms:
-                # every history goes, not just positions: they are indexed
-                #   together (full_vel_history lines up with full_pos_history),
-                #   so clearing one and keeping the others leaves them
-                #   misaligned for the rest of the session.
-                sw.pos_history = []
-                sw.vel_history = []
-                if sw.props_history is not None:
-                    sw.props_history = []
-
-
-
-    def _reset_flow_variables(self, incl_rho_mu_U=False):
-        '''To be used when the fluid flow changes. Resets all the helper
-        parameters and reports new domain.'''
-
-        self.h_p = None
-        self.plot_structs = []
-        self.plot_structs_args = []
-        self._reset_flow_deriv()
-        if incl_rho_mu_U:
-            self.mu = None
-            self.rho = None
-            self.U = None
-        print("Fluid updated. Planktos domain size is now {}.".format(self.L))
-
-
-
-    def _reset_flow_deriv(self):
-        '''Reset properties that are derived from the flow velocity.'''
-
-        self.mag_grad = None
-        self.mag_grad_time = None
 
 
     #######################################################################
