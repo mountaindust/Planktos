@@ -241,17 +241,34 @@ expensive moving-boundary case; for cheap static-mesh collisions the per-agent
 dispatch overhead can outweigh the work, so benchmark before relying on it.
 
 Multiple agent species (Swarms) may share a single Environment. Advance them
-together with ``Environment.move_swarms``, which moves every Swarm before
-incrementing the environment time; calling ``Swarm.move`` directly raises once
-there is more than one Swarm, since a single Swarm cannot advance the
-environment clock while the others stand still. Each Swarm keeps its own
-agent model, properties, and history, so different species can use entirely
-different behaviors. Two caveats: there is no built-in mechanism for agents in
-one Swarm to sense or interact with agents in another (a subclass can reach the
-other Swarms through ``self.envir.swarms`` and implement this itself), and
-plotting multiple Swarms together on the same axes is not yet implemented -- each
-Swarm plots on its own. See `issue #49
-<https://github.com/mountaindust/Planktos/issues/49>`_.
+together with ``Environment.move_swarms``; calling ``Swarm.move`` directly raises
+once there is more than one Swarm, since a single Swarm cannot advance the
+environment clock while the others stand still. ``move_swarms`` moves the Swarms
+simultaneously: every Swarm's agent model sees the others as they were at the
+start of the time step, and every ``after_move`` sees them all where the step
+ended. Each Swarm keeps its own agent model, properties, history and immersed
+boundary condition, so different species can use entirely different behaviors,
+and a new Swarm can join a running simulation at any time, its history starting
+when it does. There is no built-in mechanism for agents in one Swarm to sense or
+interact with agents in another; a subclass can reach the other Swarms through
+``self.envir.swarms`` and implement this itself. Each Swarm plots on its own --
+plotting multiple Swarms together on the same axes is not yet implemented (see
+`issue #49 <https://github.com/mountaindust/Planktos/issues/49>`_), and
+``Environment.record(plot_all=...)`` needs a recording of a single Swarm.
+Recording captures every Swarm by default. When reading a recording back, address
+Swarms by index, as every Swarm has the same default name, and note that
+``restore`` can rebuild a Swarm subclass only if it can import it, so define
+subclasses in a module rather than in the script that runs the simulation.
+
+The number of agents in a Swarm is fixed when it is created, but which of them
+are in the domain can change. ``Swarm.retire`` takes agents out of the domain,
+as leaving through a boundary does -- e.g. agents captured by an immersed
+structure -- and ``Swarm.release`` brings agents that are out of the domain back
+in at given positions. Together they model a population that changes, such as a
+continuous inflow through a boundary: create the Swarm with as many agents as
+are ever in the domain at once, retire the ones that have not arrived yet, and
+release rows as agents arrive, reusing the rows of agents that have left. Call
+both from ``after_move`` when recording.
 
 Beyond simulation, some analysis tools are available. Vorticity of the velocity
 field can be computed, saved, and plotted via ``Environment.get_vorticity``,

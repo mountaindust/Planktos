@@ -79,10 +79,8 @@ with 1.1.0). In suggested order:
    - ✅ **mid-run arrivals — settled 2026-11-13 as API plus docs, not an example.**
      `Swarm.release`/`Swarm.retire` are built (a fixed-size pool whose membership
      changes, §8.1), `move_swarms` now moves all swarms simultaneously, and two
-     multi-swarm bugs were fixed. Owed: a short **"Multiple swarms" docs section**
-     stating what is supported — `move_swarms` and its update order, per-swarm
-     plots, addressing swarms by index, swarms joining mid-run, the pool idiom, and
-     that a restored Swarm subclass must be importable.
+     multi-swarm bugs were fixed. The quickstart's multiple-Swarms paragraph now
+     states what is supported, with a second paragraph on `retire`/`release`.
    - ✅ **a runnable record / `load_run` / `restore` example — done 2026-11-13.**
      The user chose to make recording basic functionality, taught in the second
      example: `02_basic_3d.py` became `examples/02_recording_and_3d.py` (record with
