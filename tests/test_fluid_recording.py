@@ -992,7 +992,7 @@ def test_a_recording_whose_vorticity_was_rewritten_refuses_to_draw_it(tmp_path):
 
 
 def test_replacing_another_versions_series_names_that_version(
-        tmp_path, capsys, monkeypatch):
+        tmp_path, monkeypatch):
     src = tmp_path / 'src'
     shutil.copytree(VTIXML_FIXTURE, src)
     monkeypatch.setattr(planktos, '__version__', '0.9.0')
@@ -1000,10 +1000,19 @@ def test_replacing_another_versions_series_names_that_version(
     monkeypatch.undo()
     assert {v for v, _ in _stamps(src).values()} == {'0.9.0'}
 
-    with pytest.warns(UserWarning, match='rewriting the vorticity'):
+    with pytest.warns(UserWarning, match=r'rewriting the vorticity in .* '
+                      r'\(written by Planktos 0\.9\.0\)'):
         _vtixml_run(src, tmp_path / 'second', vel_conv=2.0)
-    assert 'written by Planktos 0.9.0' in capsys.readouterr().out
     assert {v for v, _ in _stamps(src).values()} == {planktos.__version__}
+
+
+def test_replacing_this_versions_series_does_not_name_a_version(tmp_path):
+    src = tmp_path / 'src'
+    shutil.copytree(VTIXML_FIXTURE, src)
+    _vtixml_run(src, tmp_path / 'first')
+    with pytest.warns(UserWarning, match='rewriting the vorticity') as caught:
+        _vtixml_run(src, tmp_path / 'second', vel_conv=2.0)
+    assert not any('written by Planktos' in str(w.message) for w in caught)
 
 
 def test_ib2d_does_not_take_a_series_planktos_wrote_for_its_own(tmp_path):

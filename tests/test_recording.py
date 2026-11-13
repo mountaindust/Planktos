@@ -668,7 +668,7 @@ def test_record_names_the_directory_it_actually_records_to(tmp_path, capsys):
         rec = envir.record(tmp_path / 'run')
     rec.stop()
     printed = capsys.readouterr().out
-    assert 'Recording to {}.'.format(rec.path) in printed
+    assert 'Recording positions to {}.'.format(rec.path) in printed
     assert rec.path != tmp_path / 'run'
 
 
@@ -1707,10 +1707,10 @@ def test_restore_at_a_capture_says_what_it_could_not_take_from_there(capsys,
         at_end = capsys.readouterr().out
     finally:
         run.close()
-    assert 'Restoring at capture 1 of 4 (t=0.1)' in out
-    assert 'Recorded per capture: positions' in out
-    # The default store keeps neither, so both come from the end state.
-    assert 'velocities' in out and 'shared_props' in out
+    assert 'Restoring at capture 1 of 0-3 (t=0.1)' in out
+    # The default store keeps none of these, so all come from the end state.
+    assert ('taking velocities, props, shared_props from the end of the run'
+            in out)
     # Nothing is substituted at the last capture: the checkpoint is that state.
     assert 'velocities' not in at_end and 'shared_props' not in at_end
 
@@ -1946,8 +1946,8 @@ def test_the_notice_stops_substituting_what_the_series_now_records(capsys,
     finally:
         run.close()
     out = capsys.readouterr().out
-    assert 'Recorded per capture: positions, shared_props' in out
-    assert 'Taken from the end of the run instead: velocities, props' in out
+    assert 'taking velocities, props from the end of the run' in out
+    assert 'shared_props' not in out
 def test_the_series_sidecar_lands_on_the_chunk_boundary(tmp_path):
     # A regression lock: the sidecar was written only by flush() and close(),
     # so a hard kill lost the whole of it while every chunk file survived --

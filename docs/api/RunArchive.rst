@@ -266,9 +266,7 @@ among them -- so the continuation is stochastically different from the original
 run past *j*, not a bit-identical rerun of it. A notice printed at the call says 
 which is which::
 
-    Restoring at capture 340 of 1200 (t=17). Recorded per capture: positions.
-    Taken from the end of the run instead: velocities, shared_props -- if any
-    of them varied during the run, this resumes with their final values.
+    Restoring at capture 340 of 0-1199 (t=17), taking velocities, props, shared_props from the end of the run.
 
 A swarm that had not joined the run by capture *j* did not exist then, and is
 left out of the returned list with a warning rather than handed back with every

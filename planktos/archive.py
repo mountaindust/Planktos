@@ -834,9 +834,8 @@ class RunArchive:
         at_capture = capture is not None
         j = self._resolve_capture(capture)
         if at_capture:
-            # Printed rather than warned, in the shape of record()'s store=
-            #   notice: it is a statement of what this rebuild could and could
-            #   not take from capture j, not a suspicion that anything is wrong.
+            # Printed rather than warned: it says what this rebuild could not
+            #   take from capture j, not that anything is wrong.
             print(self._restore_notice(j))
 
         envir = self._restore_environment()
@@ -895,24 +894,17 @@ class RunArchive:
         run.
         '''
 
-        recorded = [name for name in ('positions', 'velocities',
-                                      'accelerations', 'props', 'shared_props')
-                    if name in self.store]
-        head = ('Restoring at capture {} of {} (t={:g}). Recorded per capture: '
-                '{}.'.format(capture, len(self.times), self.times[capture],
-                             ', '.join(recorded)))
-        if capture == len(self.times) - 1:
-            return (head + ' That is the end of the run, so nothing else is'
-                    ' being substituted for it.')
+        head = 'Restoring at capture {} of 0-{} (t={:g})'.format(
+            capture, len(self.times) - 1, self.times[capture])
+        # At the last capture the checkpoint is capture j, so nothing is
+        #   substituted.
         substituted = [name for name in ('velocities', 'props',
                                          'shared_props')
                        if name not in self.store]
-        tail = ('if it varied during the run, this resumes with its final value'
-                if len(substituted) == 1 else
-                'if any of them varied during the run, this resumes with their '
-                'final values')
-        return '{} Taken from the end of the run instead: {} -- {}.'.format(
-            head, ', '.join(substituted), tail)
+        if capture == len(self.times) - 1 or not substituted:
+            return head + '.'
+        return '{}, taking {} from the end of the run.'.format(
+            head, ', '.join(substituted))
 
 
     def _restore_environment(self):

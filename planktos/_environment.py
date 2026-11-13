@@ -2553,19 +2553,11 @@ class Environment:
         #   directory redirects to a timestamped sibling.
         self._archive_path = self._recorder.path
 
-        # Printed rather than warned: these are notices about what the archive
-        #   will hold, not suspicions that something is wrong. Said at the
-        #   start, because the cost of each arrives much later.
-        notice = ("Recording to {}. A restore rebuilds the environment as it "
-                  "is now, so hold its domain, boundary conditions, fluid and "
-                  "mesh fixed until recording stops.".format(self._archive_path))
-        if 'velocities' not in store:
-            notice += (" Storing {}; velocity history will not be kept -- "
-                       "plots and statistics are served from the recorded "
-                       "summaries. To keep per-agent velocities for later "
-                       "analysis, pass store=('positions','velocities')."
-                       .format(', '.join(store)))
-        print(notice)
+        # Printed rather than warned: it says what is happening, not that
+        #   anything is wrong.
+        print('{} {} to {}.'.format(
+            'Appending' if self._recorder.appending else 'Recording',
+            ', '.join(store), self._archive_path))
         return self._recorder
 
 

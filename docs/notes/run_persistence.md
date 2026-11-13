@@ -2417,16 +2417,15 @@ comes from the checkpoint, i.e. the run's **final** state:
 | `velocities`, specifically | | irrelevant to the default Brownian model, which never reads an agent's own velocity; **`motion.inertial_particles` does** |
 | everything else | end state | `accelerations` is recomputed on the first step; `ib_condition` and the class do not vary |
 
-**R5a — `restore(capture=j)`.** Winds the state back and **prints what was and was not
-recorded**, in the shape of the `store=` notice, so the caller can judge whether anything
+**R5a — `restore(capture=j)`.** Winds the state back and **prints what was taken from
+the end of the run instead of capture *j***, so the caller can judge whether anything
 time-varying is among the substitutions:
 
-    Restoring at capture 340 of 1200 (t=17). Recorded per capture: positions.
-    Taken from the end of the run instead: velocities, shared_props -- if any
-    of them varied during the run, this resumes with their final values.
+    Restoring at capture 340 of 0-1199 (t=17), taking velocities, props, shared_props from the end of the run.
 
-`capture=None` is unchanged and stays silent. The substitution sentence is dropped at the
-last capture, where the checkpoint *is* capture *j*.
+`capture=None` is unchanged and stays silent. The substitution clause is dropped at the
+last capture, where the checkpoint *is* capture *j*. *(Shortened 2026-11-13 from a
+two-sentence notice that also listed what was recorded.)*
 
 ⚠️ **A swarm that had not joined the run by capture *j* is left out of the returned
 list**, with a warning. Its series is front-padded with fully masked rows, so restoring it

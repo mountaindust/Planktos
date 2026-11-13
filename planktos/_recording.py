@@ -1296,16 +1296,14 @@ class _FluidWriter:
         if self._warned_stale:
             return
         self._warned_stale = True
+        written_by = ('' if version == planktos.__version__ else
+                      ' (written by Planktos {})'.format(version))
         warnings.warn(
-            "rewriting the vorticity in {}: those files were computed from a "
+            "rewriting the vorticity in {}{}: those files were computed from a "
             "different velocity field (another vel_conv, vec_name or "
             "periodic_dim, or changed source data). A recording that relied on "
             "them can no longer draw its vorticity backdrop.".format(
-                self._vort_dir), UserWarning)
-        if version != planktos.__version__:
-            print("The vorticity files being replaced were written by Planktos "
-                  "{}; this is Planktos {}.".format(version,
-                                                    planktos.__version__))
+                self._vort_dir, written_by), UserWarning)
 
 
     def _write_quiver(self, t_idx, field):
