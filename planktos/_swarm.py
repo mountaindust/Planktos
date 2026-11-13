@@ -875,207 +875,6 @@ class Swarm:
 
 
 
-    @property
-    def full_pos_history(self):
-        '''History of self.positions, including present time.'''
-        return [*self.pos_history, self.positions]
-    
-
-
-    @property
-    def full_vel_history(self):
-        '''History of self.velocities, including present time.'''
-        return [*self.vel_history, self.velocities]
-
-
-
-    @property
-    def full_props_history(self):
-        '''History of self.props, including present time.'''
-        if self.props_history is not None:
-            return [*self.props_history, self.props]
-        else:
-            return None
-
-
-
-    @property
-    def N(self):
-        '''Return the number of agents based on the number of entries in
-        self.positions'''
-        return self.positions.shape[0]
-
-
-
-    def save_data(self, path, name, pos_fmt='%.18e'):
-        '''Save the full position history (with mask and time stamps) along with 
-        current velocity and acceleration to csv files. Save shared_props to a 
-        npz file and save props to json.
-
-        The output format for the position csv is the same as for the 
-        save_pos_to_csv method.
-        
-        shared_props is saved as an npz file since it is likely to contain some 
-        mixture of scalars and arrays, but does not vary between the agents so 
-        is less likely to be loaded outside of Python. props is saved to json 
-        since it is likely to contain a variety of types of data, may need to be 
-        loaded outside of Python, and json will be human readable.
-
-        props_history is not saved.
-
-        Parameters
-        ----------
-        path : str
-            directory for storing data
-        name : str 
-            prefix name for data files
-        pos_fmt : str format, default='%.18e'
-            format and precision for storing position, vel, and accel data
-
-        See Also
-        --------
-        save_pos_to_csv
-        save_pos_to_vtk
-        '''
-
-        path = Path(path)
-        if not path.is_dir():
-            os.makedirs(path)
-
-        self.save_pos_to_csv(str(path/name), pos_fmt, sv_vel=True, sv_accel=True)
-
-        props_file = path/(name+'_props.json')
-        self.props.to_json(str(props_file))
-        shared_props_file = path/(name+'_shared_props.npz')
-        np.savez(str(shared_props_file), **self.shared_props)
-
-
-
-    def save_pos_to_csv(self, filename, fmt='%.18e', sv_vel=False, sv_accel=False):
-        '''Save the full position history including present time, with mask and 
-        time stamps, to a csv.
-
-        The output format for the position csv will be as follows:
-
-        * The first row contains cycle and time information. The cycle is given, 
-          and then each time stamp is repeated D times, where D is the spatial 
-          dimension of the system.
-        * Each subsequent row corresponds to a different agent in the Swarm.
-        * Reading across the columns of an agent row: first, a boolean is given
-          showing the state of the mask for that time step. Agents are masked
-          when they have exited the domain. Then, the position vector is given
-          as a group of D columns for the x, y, (and z) direction. Each set
-          of 1+D columns then corresponds to a different cycle/time, as 
-          labeled by the values in the first row.
-
-        The result is a csv that is N+1 by (1+D)*T, where N is the number of 
-        agents, D is the dimension of the system, and T is the number of 
-        times recorded.
-
-        Parameters
-        ----------
-        filename : str 
-            path/name of the file to save the data to
-        fmt : str format, default='%.18e'
-            fmt argument to be passed to numpy.savetxt for format and precision 
-            of numerical data
-        sv_vel : bool, default=False
-            whether or not to save the current time velocity data
-        sv_accel : bool, default=False
-            whether or not to save the current time acceleration data
-
-        See Also
-        --------
-        save_data
-        save_pos_to_vtk
-        '''
-        if filename[-4:] != '.csv':
-            filename = filename + '.csv'
-
-        full_time = [*self.envir.time_history, self.envir.time]
-        time_row = np.concatenate([[ii]+[jj]*self.positions.shape[1] 
-                   for ii,jj in zip(range(len(full_time)), full_time)])
-
-        fmtlist = ['%u'] + [fmt]*self.positions.shape[1]
-
-        np.savetxt(filename, np.vstack((time_row, 
-                   np.column_stack([mat for pos in self.full_pos_history for mat in (ma.getmaskarray(pos[:,0]), pos.data)]))),
-                   fmt=fmtlist*len(full_time), delimiter=',')
-
-        if sv_vel:
-            vel_filename = filename[:-4] + '_vel.csv'
-            np.savetxt(vel_filename, 
-                   np.column_stack((self.velocities[:,0].mask, self.velocities.data)),
-                   fmt=fmtlist, delimiter=',')
-        if sv_accel:
-            accel_filename = filename[:-4] + '_accel.csv'
-            np.savetxt(accel_filename, 
-                   np.column_stack((self.accelerations[:,0].mask, self.accelerations.data)),
-                   fmt=fmtlist, delimiter=',')
-
-
-    
-    def save_pos_to_vtk(self, path, name, all=True):
-        '''Save position data to vtk as point data (PolyData).
-        A different file will be created for each time step in the history, or
-        just one file of the current positions will be created if the all 
-        argument is False.
-
-        Parameters
-        ----------
-        path : str 
-            location to save the data
-        name : str 
-            name of dataset
-        all : bool 
-            if True, save the entire history including the current time. 
-            If false, save only the current time.
-
-        See Also
-        --------
-        save_data
-        save_pos_to_csv
-        '''
-        if len(self.envir.L) == 2:
-            DIM2 = True
-        else:
-            DIM2 = False
-
-        if not all or len(self.envir.time_history) == 0:
-            if DIM2:
-                data = np.zeros((self.positions[~ma.getmaskarray(self.positions[:,0]),:].shape[0],3))
-                data[:,:2] = self.positions[~ma.getmaskarray(self.positions[:,0]),:]
-                _dataio.write_vtk_point_data(path, name, data)
-            else:
-                _dataio.write_vtk_point_data(path, name, self.positions[~ma.getmaskarray(self.positions[:,0]),:])
-        else:
-            for cyc, time in enumerate(self.envir.time_history):
-                # ma.getmaskarray (not .mask) is required: an unmasked history
-                # entry has .mask == nomask (scalar), and ~nomask would index in
-                # a new axis rather than select the unmasked rows.
-                unmasked = self.pos_history[cyc][
-                    ~ma.getmaskarray(self.pos_history[cyc][:,0]),:]
-                if DIM2:
-                    data = np.zeros((unmasked.shape[0],3))
-                    data[:,:2] = unmasked
-                    _dataio.write_vtk_point_data(path, name, data,
-                                                 cycle=cyc, time=time)
-                else:
-                    _dataio.write_vtk_point_data(path, name, unmasked,
-                                                 cycle=cyc, time=time)
-            cyc = len(self.envir.time_history)
-            if DIM2:
-                data = np.zeros((self.positions[~ma.getmaskarray(self.positions[:,0]),:].shape[0],3))
-                data[:,:2] = self.positions[~ma.getmaskarray(self.positions[:,0]),:]
-                _dataio.write_vtk_point_data(path, name, data, cycle=cyc,
-                                             time=self.envir.time)
-            else:
-                _dataio.write_vtk_point_data(path, name, 
-                    self.positions[~ma.getmaskarray(self.positions[:,0]),:],
-                    cycle=cyc, time=self.envir.time)
-
-
-
     def _change_envir(self, envir):
         '''Manages a change from one Environment to another.
 
@@ -1141,43 +940,89 @@ class Swarm:
 
 
 
-    def calc_re(self, u, diam=None):
-        '''Calculate and return the Reynolds number as experienced by a swarm 
-        with characteristic length 'diam' in a fluid moving with velocity u. All 
-        other parameters will be pulled from the Environment's attributes. 
-        
-        If diam is not specified, this method will look for it in the 
-        shared_props dictionary of this Swarm.
+    @property
+    def full_pos_history(self):
+        '''History of self.positions, including present time.'''
+        return [*self.pos_history, self.positions]
+    
+
+
+    @property
+    def full_vel_history(self):
+        '''History of self.velocities, including present time.'''
+        return [*self.vel_history, self.velocities]
+
+
+
+    @property
+    def full_props_history(self):
+        '''History of self.props, including present time.'''
+        if self.props_history is not None:
+            return [*self.props_history, self.props]
+        else:
+            return None
+
+
+
+    @property
+    def N(self):
+        '''Return the number of agents based on the number of entries in
+        self.positions'''
+        return self.positions.shape[0]
+
+
+
+    def get_prop(self, prop_name):
+        '''Return the property requested as either a scalar (if shared) or a 
+        numpy array, ready for use in vectorized operations (left-most index
+        specifies the agent).
         
         Parameters
         ----------
-        u : float
-            characteristic fluid speed, m/s
-        diam : float, optional
-            characteristic length scale of a single agent, m
+        prop_name : str
+            name of the property to return
 
         Returns
         -------
-        float
-            Reynolds number
-
-        Raises
-        ------
-        RuntimeError
-            if diam is neither given nor in shared_props, or the Environment
-            has neither rho and mu nor nu
+        property : float or ndarray
         '''
 
-        if diam is None:
-            if 'diam' not in self.shared_props:
-                raise RuntimeError("calc_re needs diam, given as an argument "
-                                   "or as shared_props['diam'].")
-            diam = self.shared_props['diam']
-        if self.envir.rho is not None and self.envir.mu is not None:
-            return self.envir.rho*u*diam/self.envir.mu
-        if self.envir.nu is not None:
-            return u*diam/self.envir.nu
-        raise RuntimeError("calc_re needs the Environment's rho and mu, or nu.")
+        if prop_name in self.props:
+            if prop_name in self.shared_props:
+                warnings.warn('Property {} exists '.format(prop_name)+
+                'in both props and shared_props. Using the props version.')
+            return np.stack(self.props[prop_name].array, axis=0).squeeze()
+        elif prop_name in self.shared_props:
+            return self.shared_props[prop_name]
+        else:
+            raise KeyError('Property {} not found.'.format(prop_name))
+
+
+
+    def add_prop(self, prop_name, value, shared=False):
+        '''Add a property, removing any property of the same name from the
+        other store.
+
+        Parameters
+        ----------
+        prop_name : str
+            name of the property to add
+        value : any
+            value to set the property at; for a per-agent property, one value
+            per agent
+        shared : bool, default=False
+            if True, value is shared by all agents and goes in shared_props. If
+            False, value has one entry per agent and becomes a column of the
+            props DataFrame.
+        '''
+        if shared:
+            self.shared_props[prop_name] = value
+            if prop_name in self.props:
+                del self.props[prop_name]
+        else:
+            self.props[prop_name] = value
+            if prop_name in self.shared_props:
+                del self.shared_props[prop_name]
 
 
 
@@ -1273,96 +1118,6 @@ class Swarm:
                 "time and the capture hook rides that advance. Use "
                 "envir.move_swarms(dt) to move every swarm and advance the "
                 "time together.", UserWarning)
-
-
-    ####################   the stages of a time step   ####################
-    # move() runs these for one Swarm and Environment.move_swarms runs each
-    #   across every Swarm before starting the next, so that every
-    #   apply_agent_model sees all swarms as they were at the start of the step
-    #   and every after_move sees them all where the step ended.
-    # _settle_steps (top of this module) is called as Stage 3: it applies
-    #   boundary conditions to every Swarm, immersed-boundary collisions
-    #   included, and then runs every after_move.
-
-    def _refuse_if_failed(self):
-        '''Raise RuntimeError if an earlier step failed partway through.'''
-
-        # envir.time is None after a step that raised partway through (see
-        #   _settle_steps), so the agents hold a half-applied step.
-        if self.envir.time is None:
-            raise RuntimeError(
-                "Cannot move: this Swarm/Environment is in an error state. A "
-                "previous time step raised or was interrupted while boundary "
-                "conditions were being applied, so agent positions, "
-                "velocities, accelerations "
-                "and ib_collision_idx hold a step that was applied to some "
-                "agents but not others -- some may be inside an immersed "
-                "boundary. envir.time was set to None to mark this.\n"
-                "The recorded histories are complete and consistent up to and "
-                "including the failed step. To back that step out and carry "
-                "on, pop the last entry off each:\n"
-                "    envir.time = envir.time_history.pop()\n"
-                "    swrm.positions = swrm.pos_history.pop()\n"
-                "    swrm.velocities = swrm.vel_history.pop()")
-
-
-    def _propose_step(self, dt, ib_collisions):
-        '''Stage 1: run apply_agent_model without assigning its result.
-
-        Returns
-        -------
-        dict
-            the step in progress: the state it starts from, the proposed
-            positions (None when every agent is out of the domain), and the
-            resolved ib_collisions
-        '''
-
-        if ib_collisions == 'default':
-            ib_collisions = self.ib_condition
-
-        # Saved to put in the history...
-        old_positions = self.positions.copy()
-        old_velocities = self.velocities.copy()
-        # ...and handed to the boundary stage as this step's movement start
-        #   point. It reads this rather than pos_history[-1] so that the
-        #   physics does not depend on the recording; see __init__.
-        self._prev_positions = old_positions
-        # Copied before the model runs, since apply_agent_model may change props.
-        old_props = (self.props.copy() if self.props_history is not None
-                     else None)
-
-        new_positions = None
-        if not np.all(self.positions.mask):
-            # Marks the model as running, for release() to refuse.
-            self._proposing = True
-            try:
-                new_positions = self.apply_agent_model(dt)
-            finally:
-                self._proposing = False
-
-        return {'old_positions': old_positions,
-                'old_velocities': old_velocities, 'old_props': old_props,
-                'new_positions': new_positions, 'ib_collisions': ib_collisions}
-
-
-    def _commit_step(self, step, dt, keep_state):
-        '''Stage 2: assign the proposed positions, append the step's starting
-        state to the histories, and difference velocities and accelerations.'''
-
-        if step['new_positions'] is not None:
-            # The hardened mask keeps agents that have left out of the domain,
-            #   whatever the model returned for them.
-            self.positions[:,:] = step['new_positions']
-
-        if keep_state:
-            self.pos_history.append(step['old_positions'])
-            self.vel_history.append(step['old_velocities'])
-            if self.props_history is not None:
-                self.props_history.append(step['old_props'])
-
-        self.velocities[:,:] = (self.positions - step['old_positions'])/dt
-        self.accelerations[:,:] = (self.velocities - step['old_velocities'])/dt
-
 
 
     def apply_agent_model(self, dt):
@@ -1468,6 +1223,96 @@ class Swarm:
             length of time step
         '''
         pass
+
+
+
+    ####################   the stages of a time step   ####################
+    # move() runs these for one Swarm and Environment.move_swarms runs each
+    #   across every Swarm before starting the next, so that every
+    #   apply_agent_model sees all swarms as they were at the start of the step
+    #   and every after_move sees them all where the step ended.
+    # _settle_steps (top of this module) is called as Stage 3: it applies
+    #   boundary conditions to every Swarm, immersed-boundary collisions
+    #   included, and then runs every after_move.
+
+    def _refuse_if_failed(self):
+        '''Raise RuntimeError if an earlier step failed partway through.'''
+
+        # envir.time is None after a step that raised partway through (see
+        #   _settle_steps), so the agents hold a half-applied step.
+        if self.envir.time is None:
+            raise RuntimeError(
+                "Cannot move: this Swarm/Environment is in an error state. A "
+                "previous time step raised or was interrupted while boundary "
+                "conditions were being applied, so agent positions, "
+                "velocities, accelerations "
+                "and ib_collision_idx hold a step that was applied to some "
+                "agents but not others -- some may be inside an immersed "
+                "boundary. envir.time was set to None to mark this.\n"
+                "The recorded histories are complete and consistent up to and "
+                "including the failed step. To back that step out and carry "
+                "on, pop the last entry off each:\n"
+                "    envir.time = envir.time_history.pop()\n"
+                "    swrm.positions = swrm.pos_history.pop()\n"
+                "    swrm.velocities = swrm.vel_history.pop()")
+
+
+    def _propose_step(self, dt, ib_collisions):
+        '''Stage 1: run apply_agent_model without assigning its result.
+
+        Returns
+        -------
+        dict
+            the step in progress: the state it starts from, the proposed
+            positions (None when every agent is out of the domain), and the
+            resolved ib_collisions
+        '''
+
+        if ib_collisions == 'default':
+            ib_collisions = self.ib_condition
+
+        # Saved to put in the history...
+        old_positions = self.positions.copy()
+        old_velocities = self.velocities.copy()
+        # ...and handed to the boundary stage as this step's movement start
+        #   point. It reads this rather than pos_history[-1] so that the
+        #   physics does not depend on the recording; see __init__.
+        self._prev_positions = old_positions
+        # Copied before the model runs, since apply_agent_model may change props.
+        old_props = (self.props.copy() if self.props_history is not None
+                     else None)
+
+        new_positions = None
+        if not np.all(self.positions.mask):
+            # Marks the model as running, for release() to refuse.
+            self._proposing = True
+            try:
+                new_positions = self.apply_agent_model(dt)
+            finally:
+                self._proposing = False
+
+        return {'old_positions': old_positions,
+                'old_velocities': old_velocities, 'old_props': old_props,
+                'new_positions': new_positions, 'ib_collisions': ib_collisions}
+
+
+    def _commit_step(self, step, dt, keep_state):
+        '''Stage 2: assign the proposed positions, append the step's starting
+        state to the histories, and difference velocities and accelerations.'''
+
+        if step['new_positions'] is not None:
+            # The hardened mask keeps agents that have left out of the domain,
+            #   whatever the model returned for them.
+            self.positions[:,:] = step['new_positions']
+
+        if keep_state:
+            self.pos_history.append(step['old_positions'])
+            self.vel_history.append(step['old_velocities'])
+            if self.props_history is not None:
+                self.props_history.append(step['old_props'])
+
+        self.velocities[:,:] = (self.positions - step['old_positions'])/dt
+        self.accelerations[:,:] = (self.velocities - step['old_velocities'])/dt
 
 
 
@@ -1598,60 +1443,6 @@ class Swarm:
 
 
 
-    def get_prop(self, prop_name):
-        '''Return the property requested as either a scalar (if shared) or a 
-        numpy array, ready for use in vectorized operations (left-most index
-        specifies the agent).
-        
-        Parameters
-        ----------
-        prop_name : str
-            name of the property to return
-
-        Returns
-        -------
-        property : float or ndarray
-        '''
-
-        if prop_name in self.props:
-            if prop_name in self.shared_props:
-                warnings.warn('Property {} exists '.format(prop_name)+
-                'in both props and shared_props. Using the props version.')
-            return np.stack(self.props[prop_name].array, axis=0).squeeze()
-        elif prop_name in self.shared_props:
-            return self.shared_props[prop_name]
-        else:
-            raise KeyError('Property {} not found.'.format(prop_name))
-
-
-
-    def add_prop(self, prop_name, value, shared=False):
-        '''Add a property, removing any property of the same name from the
-        other store.
-
-        Parameters
-        ----------
-        prop_name : str
-            name of the property to add
-        value : any
-            value to set the property at; for a per-agent property, one value
-            per agent
-        shared : bool, default=False
-            if True, value is shared by all agents and goes in shared_props. If
-            False, value has one entry per agent and becomes a column of the
-            props DataFrame.
-        '''
-        if shared:
-            self.shared_props[prop_name] = value
-            if prop_name in self.props:
-                del self.props[prop_name]
-        else:
-            self.props[prop_name] = value
-            if prop_name in self.shared_props:
-                del self.shared_props[prop_name]
-
-
-
     def get_fluid_drift(self, time=None, positions=None):
         '''Return fluid-based drift for all agents via interpolation.
 
@@ -1727,6 +1518,45 @@ class Swarm:
 
 
 
+    def get_DuDt(self, time=None, positions=None):
+        '''Return the material derivative with respect to time of the fluid 
+        velocity at all agent positions (or at provided positions) via linear 
+        interpolation of the material gradient.
+        
+        Current swarm position is used unless alternative positions are explicitly
+        passed in.
+        
+        In the returned 2D ndarray, each row corresponds to an agent (in the
+        same order as listed in self.positions) and each column is a dimension.
+
+        Parameters
+        ----------
+        time : float, optional
+            time at which to return the data. defaults to the current 
+            environment time
+        positions : ndarray, optional
+            positions at which to return the data. defaults to the locations of 
+            the swarm agents, self.positions
+
+        Returns
+        -------
+        ndarray with shape NxD, where N is the number of agents and D the 
+            spatial dimension
+        '''
+
+        if positions is None:
+            positions = self.positions
+
+        if time is None:
+            time = self.envir.time         
+
+        # Interpolate at agent positions and return
+        return self.envir.interpolate_flow(positions, 
+                                           self.envir.calculate_DuDt(time=time), 
+                                           method='linear')
+
+
+
     def get_fluid_mag_gradient(self, positions=None):
         '''Return the gradient of the magnitude of the fluid velocity at all
         agent positions (or at provided positions) via linear interpolation of 
@@ -1772,42 +1602,43 @@ class Swarm:
 
 
 
-    def get_DuDt(self, time=None, positions=None):
-        '''Return the material derivative with respect to time of the fluid 
-        velocity at all agent positions (or at provided positions) via linear 
-        interpolation of the material gradient.
+    def calc_re(self, u, diam=None):
+        '''Calculate and return the Reynolds number as experienced by a swarm 
+        with characteristic length 'diam' in a fluid moving with velocity u. All 
+        other parameters will be pulled from the Environment's attributes. 
         
-        Current swarm position is used unless alternative positions are explicitly
-        passed in.
+        If diam is not specified, this method will look for it in the 
+        shared_props dictionary of this Swarm.
         
-        In the returned 2D ndarray, each row corresponds to an agent (in the
-        same order as listed in self.positions) and each column is a dimension.
-
         Parameters
         ----------
-        time : float, optional
-            time at which to return the data. defaults to the current 
-            environment time
-        positions : ndarray, optional
-            positions at which to return the data. defaults to the locations of 
-            the swarm agents, self.positions
+        u : float
+            characteristic fluid speed, m/s
+        diam : float, optional
+            characteristic length scale of a single agent, m
 
         Returns
         -------
-        ndarray with shape NxD, where N is the number of agents and D the 
-            spatial dimension
+        float
+            Reynolds number
+
+        Raises
+        ------
+        RuntimeError
+            if diam is neither given nor in shared_props, or the Environment
+            has neither rho and mu nor nu
         '''
 
-        if positions is None:
-            positions = self.positions
-
-        if time is None:
-            time = self.envir.time         
-
-        # Interpolate at agent positions and return
-        return self.envir.interpolate_flow(positions, 
-                                           self.envir.calculate_DuDt(time=time), 
-                                           method='linear')
+        if diam is None:
+            if 'diam' not in self.shared_props:
+                raise RuntimeError("calc_re needs diam, given as an argument "
+                                   "or as shared_props['diam'].")
+            diam = self.shared_props['diam']
+        if self.envir.rho is not None and self.envir.mu is not None:
+            return self.envir.rho*u*diam/self.envir.mu
+        if self.envir.nu is not None:
+            return u*diam/self.envir.nu
+        raise RuntimeError("calc_re needs the Environment's rho and mu, or nu.")
 
 
 
@@ -2174,6 +2005,175 @@ class Swarm:
         ##### All BC applied to first exit. Conduct recursion if necessary #####
         if mult_idx is not None:
             self._domain_BC_loop(dt, ib_collisions, idx_array=mult_idx)
+
+
+    def save_data(self, path, name, pos_fmt='%.18e'):
+        '''Save the full position history (with mask and time stamps) along with 
+        current velocity and acceleration to csv files. Save shared_props to a 
+        npz file and save props to json.
+
+        The output format for the position csv is the same as for the 
+        save_pos_to_csv method.
+        
+        shared_props is saved as an npz file since it is likely to contain some 
+        mixture of scalars and arrays, but does not vary between the agents so 
+        is less likely to be loaded outside of Python. props is saved to json 
+        since it is likely to contain a variety of types of data, may need to be 
+        loaded outside of Python, and json will be human readable.
+
+        props_history is not saved.
+
+        Parameters
+        ----------
+        path : str
+            directory for storing data
+        name : str 
+            prefix name for data files
+        pos_fmt : str format, default='%.18e'
+            format and precision for storing position, vel, and accel data
+
+        See Also
+        --------
+        save_pos_to_csv
+        save_pos_to_vtk
+        '''
+
+        path = Path(path)
+        if not path.is_dir():
+            os.makedirs(path)
+
+        self.save_pos_to_csv(str(path/name), pos_fmt, sv_vel=True, sv_accel=True)
+
+        props_file = path/(name+'_props.json')
+        self.props.to_json(str(props_file))
+        shared_props_file = path/(name+'_shared_props.npz')
+        np.savez(str(shared_props_file), **self.shared_props)
+
+
+
+    def save_pos_to_csv(self, filename, fmt='%.18e', sv_vel=False, sv_accel=False):
+        '''Save the full position history including present time, with mask and 
+        time stamps, to a csv.
+
+        The output format for the position csv will be as follows:
+
+        * The first row contains cycle and time information. The cycle is given, 
+          and then each time stamp is repeated D times, where D is the spatial 
+          dimension of the system.
+        * Each subsequent row corresponds to a different agent in the Swarm.
+        * Reading across the columns of an agent row: first, a boolean is given
+          showing the state of the mask for that time step. Agents are masked
+          when they have exited the domain. Then, the position vector is given
+          as a group of D columns for the x, y, (and z) direction. Each set
+          of 1+D columns then corresponds to a different cycle/time, as 
+          labeled by the values in the first row.
+
+        The result is a csv that is N+1 by (1+D)*T, where N is the number of 
+        agents, D is the dimension of the system, and T is the number of 
+        times recorded.
+
+        Parameters
+        ----------
+        filename : str 
+            path/name of the file to save the data to
+        fmt : str format, default='%.18e'
+            fmt argument to be passed to numpy.savetxt for format and precision 
+            of numerical data
+        sv_vel : bool, default=False
+            whether or not to save the current time velocity data
+        sv_accel : bool, default=False
+            whether or not to save the current time acceleration data
+
+        See Also
+        --------
+        save_data
+        save_pos_to_vtk
+        '''
+        if filename[-4:] != '.csv':
+            filename = filename + '.csv'
+
+        full_time = [*self.envir.time_history, self.envir.time]
+        time_row = np.concatenate([[ii]+[jj]*self.positions.shape[1] 
+                   for ii,jj in zip(range(len(full_time)), full_time)])
+
+        fmtlist = ['%u'] + [fmt]*self.positions.shape[1]
+
+        np.savetxt(filename, np.vstack((time_row, 
+                   np.column_stack([mat for pos in self.full_pos_history for mat in (ma.getmaskarray(pos[:,0]), pos.data)]))),
+                   fmt=fmtlist*len(full_time), delimiter=',')
+
+        if sv_vel:
+            vel_filename = filename[:-4] + '_vel.csv'
+            np.savetxt(vel_filename, 
+                   np.column_stack((self.velocities[:,0].mask, self.velocities.data)),
+                   fmt=fmtlist, delimiter=',')
+        if sv_accel:
+            accel_filename = filename[:-4] + '_accel.csv'
+            np.savetxt(accel_filename, 
+                   np.column_stack((self.accelerations[:,0].mask, self.accelerations.data)),
+                   fmt=fmtlist, delimiter=',')
+
+
+    
+    def save_pos_to_vtk(self, path, name, all=True):
+        '''Save position data to vtk as point data (PolyData).
+        A different file will be created for each time step in the history, or
+        just one file of the current positions will be created if the all 
+        argument is False.
+
+        Parameters
+        ----------
+        path : str 
+            location to save the data
+        name : str 
+            name of dataset
+        all : bool 
+            if True, save the entire history including the current time. 
+            If false, save only the current time.
+
+        See Also
+        --------
+        save_data
+        save_pos_to_csv
+        '''
+        if len(self.envir.L) == 2:
+            DIM2 = True
+        else:
+            DIM2 = False
+
+        if not all or len(self.envir.time_history) == 0:
+            if DIM2:
+                data = np.zeros((self.positions[~ma.getmaskarray(self.positions[:,0]),:].shape[0],3))
+                data[:,:2] = self.positions[~ma.getmaskarray(self.positions[:,0]),:]
+                _dataio.write_vtk_point_data(path, name, data)
+            else:
+                _dataio.write_vtk_point_data(path, name, self.positions[~ma.getmaskarray(self.positions[:,0]),:])
+        else:
+            for cyc, time in enumerate(self.envir.time_history):
+                # ma.getmaskarray (not .mask) is required: an unmasked history
+                # entry has .mask == nomask (scalar), and ~nomask would index in
+                # a new axis rather than select the unmasked rows.
+                unmasked = self.pos_history[cyc][
+                    ~ma.getmaskarray(self.pos_history[cyc][:,0]),:]
+                if DIM2:
+                    data = np.zeros((unmasked.shape[0],3))
+                    data[:,:2] = unmasked
+                    _dataio.write_vtk_point_data(path, name, data,
+                                                 cycle=cyc, time=time)
+                else:
+                    _dataio.write_vtk_point_data(path, name, unmasked,
+                                                 cycle=cyc, time=time)
+            cyc = len(self.envir.time_history)
+            if DIM2:
+                data = np.zeros((self.positions[~ma.getmaskarray(self.positions[:,0]),:].shape[0],3))
+                data[:,:2] = self.positions[~ma.getmaskarray(self.positions[:,0]),:]
+                _dataio.write_vtk_point_data(path, name, data, cycle=cyc,
+                                             time=self.envir.time)
+            else:
+                _dataio.write_vtk_point_data(path, name, 
+                    self.positions[~ma.getmaskarray(self.positions[:,0]),:],
+                    cycle=cyc, time=self.envir.time)
+
 
 
     #######################################################################
