@@ -19,6 +19,7 @@ Streaming out data to disk as an archive and both plotting and restoring from th
 - Fluid loaders warn and carry on when a dump the time series declares is missing
 - tile_domain warns where tiled fluid is discontinuous at a seam
 - Environment.extend was removed.
+- Bug fix: Environment.move_swarms uses each Swarm's ib_condition instead of forcing 'sliding'.
 - Bug fix: adding a Swarm to a different Environment (add_swarm or init_swarms) now removes it from its previous one.
 - Bug fix: plot_all(fluid='vort') raised over a time-invariant flow.
 - Bug fix: Swarm.plot at a past time with a moving immersed boundary mesh raised AttributeError.

@@ -283,6 +283,12 @@ than starting a second one beside it::
         for _ in range(more_steps):
             swrm.move(dt)
 
+A recording continues an archive when the Environment's time, world and every
+recorded swarm's positions are exactly those of its last capture -- which is
+where ``restore()`` leaves them, and where ``stop_recording()`` followed by a
+second ``record()`` finds them. Otherwise the directory counts as holding a
+different run, and the new recording goes to a timestamped sibling.
+
 Nothing already written is rewritten except the tail chunk, which is the one
 piece that has to grow. A run recorded, stopped, restored and appended gives an
 archive **byte-identical** to the same run recorded in one go.

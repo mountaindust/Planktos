@@ -825,10 +825,11 @@ class RunArchive:
 
         Recording a restored run **continues the archive it came from**, since
         restoring leaves the clock exactly at that archive's last capture and
-        that is what ``record()`` checks. The resumed stretch is appended to the
-        same directory rather than written beside it, provided ``store``,
-        ``chunk_size`` and ``capture_interval`` match what the archive records
-        and the fingerprint still describes this Environment.
+        that is what ``record()`` checks, along with the swarms' positions. The
+        resumed stretch is appended to the same directory rather than written
+        beside it, provided ``store``, ``chunk_size`` and ``capture_interval``
+        match what the archive records and the fingerprint still describes this
+        Environment.
         """
 
         at_capture = capture is not None

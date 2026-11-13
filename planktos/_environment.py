@@ -2404,8 +2404,9 @@ class Environment:
             went.
 
             The exception is an archive this run continues: one whose last
-            capture is at this Environment's current time, which is where
-            ``RunArchive.restore()`` leaves the clock. The recording is then
+            capture is at this Environment's current time, with every recorded
+            swarm exactly where that capture has it, which is where
+            ``RunArchive.restore()`` leaves them. The recording is then
             appended to it. ``store``, ``chunk_size``, ``capture_interval`` and
             the recorded fluid quantities must match the archive's, and every
             swarm it holds must still be recorded, or this raises ValueError.
@@ -2639,7 +2640,7 @@ class Environment:
                 "tile.".format(action, self._tiling))
 
 
-    def move_swarms(self, dt=1.0, ib_collisions='sliding', 
+    def move_swarms(self, dt=1.0, ib_collisions='default',
                     silent=False):
         '''Move all Swarms in the Environment.
 
@@ -2647,11 +2648,12 @@ class Environment:
         ----------
         dt : float, default=1.0
             length of time step to move all agents
-        ib_collisions : {None, 'sliding' (default), 'sticky'}
-            Type of interaction with immersed boundaries. If None, turn off all 
-            interaction with immersed boundaries. In sliding collisions, 
-            conduct recursive vector projection until the length of the original 
-            vector is exhausted. In sticky collisions, just return the point of 
+        ib_collisions : {'default', None, 'sliding', 'sticky'}
+            Type of interaction with immersed boundaries, for every Swarm. If
+            'default', each Swarm uses its own ib_condition. If None, turn off
+            all interaction with immersed boundaries. In sliding collisions,
+            conduct recursive vector projection until the length of the original
+            vector is exhausted. In sticky collisions, just return the point of
             intersection.
         silent : bool, default=False
             If True, suppress printing the updated time.

@@ -125,12 +125,14 @@ def _fluid_request(meta):
     return {k: v for k, v in meta.items() if k not in _FLUID_DERIVED}
 
 
-def _appendable(path, envir, store, chunk_size, capture_interval, fluid_meta):
+def _appendable(path, envir, swarms, store, chunk_size, capture_interval,
+                fluid_meta):
     """The archive at ``path`` if this recording continues it, else None.
 
     Appending is decided from a checkable fact rather than a remembered one:
-    **the archive's last capture is exactly where the Environment now is**, and
-    the recording is being made the same way.
+    **the archive's last capture is exactly where the Environment and its
+    swarms now are** -- same time, same world, same agent positions -- and the
+    recording is being made the same way.
 
     Returns
     -------
@@ -187,6 +189,17 @@ def _appendable(path, envir, store, chunk_size, capture_interval, fluid_meta):
         archive.close()
         return None
 
+    # The time and the world can match a run that only began here: a fresh
+    #   run at t=0 meets an archive whose run died before its first step. The
+    #   agents tell them apart, since a restore or a stop-and-record leaves
+    #   every swarm exactly at the last capture. A swarm the archive holds but
+    #   this call does not record is RunRecorder's refusal, not a mismatch.
+    for index in (i for _, i in archive.swarms if i < len(swarms)):
+        if not _same_positions(swarms[index].positions,
+                               archive.positions(index)[-1]):
+            archive.close()
+            return None
+
     recorded = archive.meta.get('capture_interval')
     problems = []
     # meta.json is not rewritten, so what this call asks of the fluid has to be
@@ -222,6 +235,20 @@ def _appendable(path, envir, store, chunk_size, capture_interval, fluid_meta):
         return None
 
     return archive
+
+
+def _same_positions(live, captured):
+    '''Whether a live positions array is exactly a captured one: the same
+    shape, the same agents in the domain, and bitwise the same coordinates
+    for those agents.'''
+
+    if live.shape != captured.shape:
+        return False
+    live_mask = ma.getmaskarray(live)
+    if not np.array_equal(live_mask, ma.getmaskarray(captured)):
+        return False
+    return np.array_equal(ma.getdata(live)[~live_mask],
+                          ma.getdata(captured)[~live_mask])
 
 
 
@@ -1594,8 +1621,8 @@ class RunRecorder:
         # Decided from state rather than from a remembered restore, and
         #   before the writer exists, since it is what settles where the writer
         #   writes at all.
-        append = _appendable(path, envir, self._store, chunk_size,
-                             capture_interval, record_meta['fluid'])
+        append = _appendable(path, envir, self._swarms, self._store,
+                             chunk_size, capture_interval, record_meta['fluid'])
         self.appending = append is not None
         seed_fluid = None if append is None else append.dump_stats()
         if self.appending and plan is not None:

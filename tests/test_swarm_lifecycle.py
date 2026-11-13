@@ -251,6 +251,35 @@ def test_move_swarms_keeps_every_history_in_step():
         np.arctan2(s.vel_history[2][:, 1], s.vel_history[2][:, 0])
 
 
+def test_move_swarms_uses_each_swarms_own_ib_condition():
+    # move_swarms passed ib_collisions='sliding' to every Swarm, so a Swarm
+    #   created with ib_condition='sticky' slid along the wall instead.
+    # A vertical wall at x=0.5; drift (0.4, 0.2) over dt=1 from (0.3, 0.3)
+    #   strikes it at y=0.4. Sticky stops there; sliding projects the remaining
+    #   (0.2, 0.1) onto the wall and ends at y=0.5.
+    def walled():
+        envir = _envir('noflux')
+        envir.ibmesh = np.array([[[0.5, 0.0], [0.5, 1.0]]])
+        envir.max_meshpt_dist = 1.0
+        sticky = _drift_swarm(envir, [[0.3, 0.3]], mu=(0.4, 0.2))
+        sticky.ib_condition = 'sticky'
+        sliding = _drift_swarm(envir, [[0.3, 0.3]], mu=(0.4, 0.2))
+        return envir, sticky, sliding
+
+    envir, sticky, sliding = walled()
+    envir.move_swarms(1.0, silent=True)
+    assert sticky.positions[0, 1] == pytest.approx(0.4, abs=1e-4)
+    assert sliding.positions[0, 1] == pytest.approx(0.5, abs=1e-4)
+    for s in (sticky, sliding):
+        assert s.positions[0, 0] == pytest.approx(0.5, abs=1e-4)
+        assert s.positions[0, 0] < 0.5
+
+    # An explicit argument still applies to every Swarm.
+    envir, sticky, sliding = walled()
+    envir.move_swarms(1.0, ib_collisions='sliding', silent=True)
+    assert sticky.positions[0, 1] == pytest.approx(0.5, abs=1e-4)
+
+
 def test_a_single_swarm_still_moves_itself():
     # the guard keys on there being more than one Swarm, so the ordinary
     #   one-Swarm workflow is untouched

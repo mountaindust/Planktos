@@ -2326,21 +2326,56 @@ def test_an_archive_of_a_different_world_is_left_alone_not_continued(tmp_path):
     assert second.path != rec.path
 
 
-def test_a_swarm_of_a_different_size_cannot_continue_an_archive(tmp_path):
-    # The chunk files are written at a fixed shape.
+def test_a_swarm_not_at_the_last_capture_starts_a_new_archive(tmp_path):
+    # The chunk files are written at a fixed shape, and a swarm that is not
+    # where the archive left it is a different run: either way the archive is
+    # left alone and the recording goes to a timestamped sibling.
     envir = _fluid_envir(tmp_path)
     swrm = _seeded_swarm(envir)
     with envir.record(tmp_path / 'run', chunk_size=3) as rec:
         for _ in range(3):
             swrm.move(0.01, silent=True)
-    run = planktos.load_run(rec.path)
+    for replacement in (np.full((4, 2), 1.0),           # a different size
+                        None):                          # same size, moved
+        run = planktos.load_run(rec.path)
+        try:
+            rebuilt, (resumed,) = run.restore()
+        finally:
+            run.close()
+        if replacement is None:
+            replacement = ma.getdata(resumed.positions) + 1e-3
+        resumed.positions = ma.masked_array(replacement)
+        with pytest.warns(UserWarning, match='already holds data'):
+            second = rebuilt.record(rec.path, chunk_size=3)
+        second.stop()
+        assert not second.appending and second.path != rec.path
+
+
+def test_a_fresh_run_is_not_appended_to_one_that_died_at_its_start(tmp_path):
+    # A run that failed before its first step leaves an archive holding one
+    # capture at t=0. A fresh run starting at t=0 in the same world matched the
+    # time and fingerprint, was appended to it, and its capture 0 was the dead
+    # run's starting positions.
+    envir = _envir()
+    planktos.Swarm(swarm_size=4, envir=envir, seed=1)
+    with pytest.raises(RuntimeError):
+        with envir.record(tmp_path / 'run'):
+            raise RuntimeError('the model failed on its first step')
+
+    envir = _envir()
+    swrm = planktos.Swarm(swarm_size=4, envir=envir, seed=2)
+    start = swrm.positions.copy()
+    with pytest.warns(UserWarning, match='already holds data'):
+        rec = envir.record(tmp_path / 'run')
     try:
-        rebuilt, (resumed,) = run.restore()
+        assert not rec.appending
+        assert rec.path != tmp_path / 'run'
+        for _ in range(2):
+            swrm.move(0.1, silent=True)
     finally:
-        run.close()
-    resumed.positions = ma.masked_array(np.full((4, 2), 1.0))
-    with pytest.raises(ValueError, match='cannot be continued'):
-        rebuilt.record(rec.path, chunk_size=3)
+        rec.stop()
+    with planktos.load_run(rec.path) as run:
+        np.testing.assert_array_equal(run.positions(0)[0], start)
 
 
 def test_a_second_append_continues_the_first(tmp_path):
