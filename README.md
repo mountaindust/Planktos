@@ -99,11 +99,10 @@ pip install -e .
 ```
 
 Planktos can then be imported like any other Python package from any directory. 
-Either approach also allows you to uninstall with the same command (from the 
-Planktos directory):
+Either way, uninstall with:
 
 ```
-pip uninstall .
+pip uninstall planktos
 ```
 
 ### Running Directly From Source (no install)

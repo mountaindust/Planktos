@@ -90,11 +90,10 @@ with 1.1.0). In suggested order:
      Analytic flows are always resident, so a self-contained one needs a time series
      on disk (written by the script, or the committed fixtures); otherwise it depends
      on the downloaded IB2d data and CI skips it.
-3. **Two docs items for the user:** whether to cut `docs/api/RunArchive.rst` to a
-   narrative (decision (1) under the docs pass below), and `README.md:106`, which
-   still says `pip uninstall .` (should be `pip uninstall planktos`, as the quickstart
-   now says). `README.md` is also the last place the "Sweep the prose docs for the
-   master-era fluid API" item under "Documentation" may still apply.
+3. ✅ **Two docs items — done 2026-11-13.** `docs/api/RunArchive.rst` was reworked
+   by the user (commits `20408b4`, `9db48ad`); `README.md` now says
+   `pip uninstall planktos`, and names no fluid API, so the master-era sweep has
+   nothing left there.
 4. **Release check:** `__version__` in `planktos/__init__.py` → `1.1.0`, a read
    through the 1.1.0 section of `changelog.txt`, both test flags, the docs build and
    codespell. Version bump and changelog are the user's call — surface, don't do
@@ -122,7 +121,8 @@ describing.
   done here and in `run_persistence.md` §7.
 - **Checked and fine:** a fresh Sphinx build gave zero warnings before and after, and
   every API name and signature the pages use exists as described.
-- **Two decisions still open for the user:** (1) **`api/RunArchive.rst`** is 456 lines
+- **Two decisions, both settled:** (1) ✅ settled by the user's own rework of the page
+  (2026-11). What was proposed: **`api/RunArchive.rst`** is 456 lines
   of manual largely duplicating `Environment.record`'s and `RunArchive.restore`'s
   docstrings, and its on-disk layout tree has drifted (missing `_acc`, `_ang`, props
   and checkpoint files; the `archive` module docstring has the complete one, which no
