@@ -233,6 +233,7 @@ class Environment:
     >>> envir = planktos.Environment(Lx=5, Ly=3)
     '''
 
+
     def __init__(self, Lx=10, Ly=10, Lz=None,
                  x_bndry='zero', y_bndry='zero', z_bndry='noflux', flow=None,
                  flow_times=None, periodic_dim=False, rho=None, mu=None, nu=None,
@@ -427,6 +428,10 @@ class Environment:
         self.FTLE_backward = None # whether the stored FTLE field is backward-time
 
 
+    #######################################################################
+    #####                         PROPERTIES                          #####
+    #######################################################################
+
 
     @property
     def mu(self):
@@ -552,7 +557,6 @@ class Environment:
         raise ValueError(
             "A {}D fluid is incompatible with this {}D immersed boundary "
             "mesh.".format(flow.ndim, mesh_dim))
-
 
 
     #######################################################################
@@ -1188,7 +1192,6 @@ class Environment:
         print("Fluid updated. Planktos domain size is now {}.".format(self.L))
 
 
-
     def _reset_flow_deriv(self):
         '''Reset properties that are derived from the flow velocity.'''
 
@@ -1724,7 +1727,6 @@ class Environment:
         self._reset_flow_variables()
         
 
-
     #######################################################################
     #####                        MESH READERS                         #####
     #####       NOTE: ibmesh must be converted to np.float64!         #####
@@ -2204,7 +2206,7 @@ class Environment:
 
 
     #######################################################################
-    #####                    DOMAIN MANIPULATIONS                     #####
+    #####               DOMAIN AND BOUNDARY CONDITIONS                #####
     #######################################################################
 
 
@@ -2297,7 +2299,6 @@ class Environment:
               counts, self.L))
 
 
-
     def _warn_on_tiling_seams(self, counts):
         '''Warn, naming the axes, where tiling makes the fluid jump at a seam
         or difference one-sided up to it, judged from the data held in memory.
@@ -2360,7 +2361,6 @@ class Environment:
                 UserWarning)
 
 
-
     def _refuse_once_tiled(self, action):
         '''Raise ValueError if tile_domain has run. ``action`` completes
         "Cannot ..." in the message.'''
@@ -2370,6 +2370,7 @@ class Environment:
                 "Cannot {} after tile_domain{}: tiling is the last operation on "
                 "the domain. Load the fluid and the mesh first, then "
                 "tile.".format(action, self._tiling))
+
 
 
     def set_boundary_conditions(self, x_bndry, y_bndry, z_bndry=None):
@@ -2550,10 +2551,6 @@ class Environment:
         #   fire a capture.
         self._notify_step_complete()
 
-
-    #######################################################################
-    #####                       HELPER FUNCTIONS                      #####
-    #######################################################################
 
 
     def reset(self, rm_swarms=False):
@@ -2834,10 +2831,10 @@ class Environment:
         return cells 
 
 
-
     #######################################################################
     #####                      RUN RECORDING                          #####
     #######################################################################
+
 
     def record(self, path, *, fluid='vort', swarms=None,
                store=('positions',), capture_interval=1,
@@ -3022,12 +3019,14 @@ class Environment:
         return self._recorder
 
 
+
     def flush_recording(self):
         '''Write buffered captures to disk, and keep recording; e.g. before
         plotting partway through a run. A no-op if nothing is recording.'''
 
         if self._recorder is not None:
             self._recorder.flush()
+
 
 
     def stop_recording(self):
@@ -3043,6 +3042,7 @@ class Environment:
 
         if self._recorder is not None:
             self._recorder.stop()
+
 
 
     def _records_this_step(self):
@@ -3960,6 +3960,10 @@ class Environment:
         return self.swarms.pop(), time_list, last_time
 
 
+    #######################################################################
+    #####                         SAVING DATA                         #####
+    #######################################################################
+
 
     def save_2D_vorticity(self, path, name, time_history=True, flow_times=False):
         '''Save the vorticity of a 2D fluid velocity field as one or more vtk 
@@ -4060,7 +4064,6 @@ class Environment:
         if time_history or not flow_times:
             flow = self.interpolate_temporal_flow(time=self.time)
             _dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, flow_points, cycle, self.time)
-
 
 
     #######################################################################
