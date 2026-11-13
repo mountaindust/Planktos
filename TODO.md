@@ -70,10 +70,9 @@ asserted. That was the branch's stated remaining reason to exist.
 everything is pushed to `origin/dyload`. The cherry-pick queue is retired (fixes ship
 with 1.1.0). In suggested order:
 
-1. **Navigability pass on `_environment.py` and `_swarm.py`** (item 3's last part —
-   the method there, and its cautions: moves and edits in separate commits, so a move
-   diff reviews as pure motion). The merge unblocked both. `fluid.py`, `archive.py`,
-   `_frames.py` and `_provenance.py` are done.
+1. ✅ **Navigability pass — done 2026-11-13.** `_swarm.py` (`2204c46` move only,
+   `27a4fda` banners) and `_environment.py` (`f51fb6a` move only, `f61171f`
+   banners), after `fluid.py`, `archive.py`, `_frames.py` and `_provenance.py`.
 2. **The §7 prose and examples pass** (`docs/notes/run_persistence.md` §7). Most of
    the prose landed with the docs rst pass below. What is owed:
    - ✅ **mid-run arrivals — settled 2026-11-13 as API plus docs, not an example.**
@@ -86,10 +85,12 @@ with 1.1.0). In suggested order:
      example: `02_basic_3d.py` became `examples/02_recording_and_3d.py` (record with
      `plot_all=`, read back, restore, append), self-contained so CI runs it, with its
      docs page renamed to `docs/examples/recording_and_3d.rst`.
-   - **an `INUM` example.** Still no script in `examples/` loads fluid dynamically.
-     Analytic flows are always resident, so a self-contained one needs a time series
-     on disk (written by the script, or the committed fixtures); otherwise it depends
-     on the downloaded IB2d data and CI skips it.
+   - ✅ **`INUM` — settled 2026-11-13 as a comment, not an example.** Dynamic
+     loading pays off mainly for highly resolved 3D data (e.g. around a moving
+     boundary), which no example has yet. `06_ib2d_ibmesh.py` and its docs page
+     describe `INUM` where the fluid is loaded, with a line to try on that data and
+     a pointer to recording; verified to run on the downloaded IB2d data, recorded
+     and rendered. Revisit with a real example when such a 3D dataset exists.
 3. ✅ **Two docs items — done 2026-11-13.** `docs/api/RunArchive.rst` was reworked
    by the user (commits `20408b4`, `9db48ad`); `README.md` now says
    `pip uninstall planktos`, and names no fluid API, so the master-era sweep has
@@ -233,8 +234,9 @@ first means one prose pass. The changelog's tiling lines were rewritten at T5.
    `_archive_format.py` — with `RunArchive`'s methods regrouped by section.
    **2026-11-03:** `_frames.py` regrouped (public accessors ahead of their helpers;
    `resolve_strides` and `warn_if_restreaming` ahead of the per-frame fluid calls) and
-   `_provenance.py` given two banners. Left: `_environment.py` and `_swarm.py`, now
-   unblocked by the `master` merge.
+   `_provenance.py` given two banners. **2026-11-13:** `_swarm.py` and
+   `_environment.py` regrouped, each as a move-only commit followed by a banner
+   commit. **The navigability pass is complete.**
 
    **Three standing exclusions:** `archive.py`'s module docstring (it is the on-disk
    format spec, rendered for users by `docs/api/RunArchive.rst` — check it for stray

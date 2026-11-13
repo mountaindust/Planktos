@@ -41,6 +41,21 @@ envir = planktos.Environment()
 #   will automatically be added in to complete the domain.
 envir.read_IB2d_fluid_data('ib2d_data', 5.0e-5, 1000)
 
+# By default, all of the fluid data is loaded into memory at once and
+#   interpolated in time with a cubic spline. Time-varying fluid data can be
+#   far larger than this example -- especially in 3D, and especially when it is
+#   highly resolved -- and then it may not fit in memory. The INUM argument
+#   (also accepted by read_IBAMR3d_vtk_data, read_openfoam_vtk_data and
+#   read_vtkxml_fluid_data) loads the data dynamically instead: with INUM=4,
+#   only 5 consecutive time points are held at once, and the window moves
+#   forward as the simulation does. Interpolation in time is then linear rather
+#   than cubic, which costs some accuracy between time points; the FluidData
+#   documentation measures how much. To try it here:
+#       envir.read_IB2d_fluid_data('ib2d_data', 5.0e-5, 1000, INUM=4)
+#   With dynamically loaded fluid, record the run (see 02_recording_and_3d.py)
+#   so that plot_all can draw the vorticity without reading the whole dataset a
+#   second time.
+
 # Now we read in the vertex data to get an immersed mesh. These data include 
 #   points for two lines (the sides of the channel) and a circle representing 
 #   the cylinder. Since the geometry is fairly simple, we should be able to 
