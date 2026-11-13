@@ -28,6 +28,7 @@ __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
+
 _ANGLE_FALLBACK = ("Using velocity for heading markers at past times: the props "
                    "'angle' column only describes the present unless a "
                    "property history is kept (store_prop_history=True).")
@@ -436,6 +437,11 @@ class Swarm:
     >>> swrm = Swarm(envir=envir)
 
     '''
+
+    #######################################################################
+    #####                        CONSTRUCTION                         #####
+    #######################################################################
+
 
     def __init_subclass__(cls, **kwargs):
         '''Warn, at class definition, when a subclass overrides move() without
@@ -939,6 +945,10 @@ class Swarm:
         envir.swarms.append(self)
 
 
+    #######################################################################
+    #####                    STATE AND PROPERTIES                     #####
+    #######################################################################
+
 
     @property
     def full_pos_history(self):
@@ -1024,6 +1034,10 @@ class Swarm:
             if prop_name in self.shared_props:
                 del self.shared_props[prop_name]
 
+
+    #######################################################################
+    #####                  AGENT MOVING AND MASKING                   #####
+    #######################################################################
 
 
     def move(self, dt=1.0, ib_collisions='default', 
@@ -1118,6 +1132,7 @@ class Swarm:
                 "time and the capture hook rides that advance. Use "
                 "envir.move_swarms(dt) to move every swarm and advance the "
                 "time together.", UserWarning)
+
 
 
     def apply_agent_model(self, dt):
@@ -1225,7 +1240,6 @@ class Swarm:
         pass
 
 
-
     ####################   the stages of a time step   ####################
     # move() runs these for one Swarm and Environment.move_swarms runs each
     #   across every Swarm before starting the next, so that every
@@ -1315,6 +1329,7 @@ class Swarm:
         self.accelerations[:,:] = (self.velocities - step['old_velocities'])/dt
 
 
+    ##################   retiring and releasing agents   ##################
 
     def retire(self, idx):
         '''Take agents out of the domain, as leaving through a boundary does.
@@ -1441,6 +1456,10 @@ class Swarm:
                 rows.tolist()))
         return rows
 
+
+    #######################################################################
+    #####                  FLUID AND IB INTERACTION                   #####
+    #######################################################################
 
 
     def get_fluid_drift(self, time=None, positions=None):
@@ -1827,7 +1846,6 @@ class Swarm:
             self.ib_collision_idx[idx] = -1
 
 
-
     def _domain_BC_loop(self, dt, ib_collisions, idx_array=None):
         '''Loop over domain boundaries enforcing boundary conditions. Only 
         agents in idx_array will be checked, or all unmasked agents if idx_array 
@@ -2005,6 +2023,11 @@ class Swarm:
         ##### All BC applied to first exit. Conduct recursion if necessary #####
         if mult_idx is not None:
             self._domain_BC_loop(dt, ib_collisions, idx_array=mult_idx)
+
+
+    #######################################################################
+    #####                         SAVING DATA                         #####
+    #######################################################################
 
 
     def save_data(self, path, name, pos_fmt='%.18e'):
