@@ -129,7 +129,7 @@ A suggested BibTeX entry is included in the file
 :download:`Planktos.bib <../Planktos.bib>`.
 
 There are several working examples in the examples folder. Start with
-01_basic_2d.py and 02_basic_3d.py, which are annotated minimal simulations.
+01_basic_2d.py and 02_recording_and_3d.py, which are annotated minimal simulations.
 03_ind_var.py demonstrates individual variation between agents, and
 04_agent_behavior.py, 05_ode_gen.py, 13_vicsek_model_2d.py, and
 14_vicsek_model_3d.py demonstrate subclassing of the apply_agent_model method

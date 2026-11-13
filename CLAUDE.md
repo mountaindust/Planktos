@@ -372,7 +372,7 @@ swrm.plot_all(movie_filename='out.mp4')     # visualize
 ```
 
 See `examples/` for runnable scripts (start with `01_basic_2d.py`,
-`02_basic_3d.py`). `09_ib2d_mvbnd_sticky.py` is the **2D moving-boundary**
+`02_recording_and_3d.py`). `09_ib2d_mvbnd_sticky.py` is the **2D moving-boundary**
 showcase (needs external data — see the file header for the download link).
 
 ### Plotting: 2D is the real thing, 3D is a stand-in

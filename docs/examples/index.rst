@@ -10,7 +10,7 @@ started.
     :caption: Contents:
     
     Basic 2D example <basic_2d>
-    Basic 3D example <basic_3d>
+    Recording a run, in 3D <recording_and_3d>
     Specifying agent behavior <agent_behavior>
     Importing VTK and vertex data <ib2d_ibmesh>
     Importing 3D data and tiling <IBAMR_ibmesh>

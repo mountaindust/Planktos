@@ -78,14 +78,15 @@ with 1.1.0). In suggested order:
    the prose landed with the docs rst pass below. What is owed:
    - **the mid-run arrival example** (§7 "Examples", specified in §8.1) — agents
      released into a running simulation, against a 2D immersed boundary, recorded;
-   - **a runnable record / `load_run` / `restore` example.** No script in `examples/`
-     records a run, reloads one or restores one (nor uses `INUM`); only fragments in
-     `docs/api/RunArchive.rst` and a prose paragraph in the quickstart. Proposed
-     2026-11-03: a self-contained `ex_record_and_restore.py` on Brinkman flow, so CI
-     runs it (add it to `SELF_CONTAINED_EXAMPLES` in
-     `tests/test_data_streaming/test_stream_a_inram.py`), with a `docs/examples/`
-     page. The mid-run example could double as this, since it is recorded anyway.
-     Ask the user which.
+   - ✅ **a runnable record / `load_run` / `restore` example — done 2026-11-13.**
+     The user chose to make recording basic functionality, taught in the second
+     example: `02_basic_3d.py` became `examples/02_recording_and_3d.py` (record with
+     `plot_all=`, read back, restore, append), self-contained so CI runs it, with its
+     docs page renamed to `docs/examples/recording_and_3d.rst`.
+   - **an `INUM` example.** Still no script in `examples/` loads fluid dynamically.
+     Analytic flows are always resident, so a self-contained one needs a time series
+     on disk (written by the script, or the committed fixtures); otherwise it depends
+     on the downloaded IB2d data and CI skips it.
 3. **Two docs items for the user:** whether to cut `docs/api/RunArchive.rst` to a
    narrative (decision (1) under the docs pass below), and `README.md:106`, which
    still says `pip uninstall .` (should be `pip uninstall planktos`, as the quickstart

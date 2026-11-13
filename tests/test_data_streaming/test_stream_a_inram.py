@@ -457,7 +457,7 @@ def test_an_in_ram_run_gives_the_numbers_the_released_line_gives(tmp_path, rev):
 # the committed tests/IBAMR_test_data.
 SELF_CONTAINED_EXAMPLES = [
     '01_basic_2d.py',
-    '02_basic_3d.py',
+    '02_recording_and_3d.py',
     '07_IBAMR_ibmesh.py',
     '04_agent_behavior.py',
     '03_ind_var.py',

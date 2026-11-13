@@ -3115,7 +3115,7 @@ long as it did. Meanwhile the subclass corrupted ordinary numpy operations on fl
 
 **Materialization was considered as a 2D-only stopgap and dropped (2026-07-31)** because
 the tiling consumers in the tree (`examples/07_IBAMR_ibmesh.py`,
-`examples/10_sticky_seafan_3d.py`, the tiling discussion in `examples/02_basic_3d.py`)
+`examples/10_sticky_seafan_3d.py`, the tiling discussion in `examples/02_recording_and_3d.py`)
 are all 3D, and because a throwaway 2D materializer would contradict the rule in §9.1.
 The materialized environment survives only as the **test oracle** of §9.3, built in
 test code.
