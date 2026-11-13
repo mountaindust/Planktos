@@ -76,8 +76,13 @@ with 1.1.0). In suggested order:
    `_frames.py` and `_provenance.py` are done.
 2. **The §7 prose and examples pass** (`docs/notes/run_persistence.md` §7). Most of
    the prose landed with the docs rst pass below. What is owed:
-   - **the mid-run arrival example** (§7 "Examples", specified in §8.1) — agents
-     released into a running simulation, against a 2D immersed boundary, recorded;
+   - ✅ **mid-run arrivals — settled 2026-11-13 as API plus docs, not an example.**
+     `Swarm.release`/`Swarm.retire` are built (a fixed-size pool whose membership
+     changes, §8.1), `move_swarms` now moves all swarms simultaneously, and two
+     multi-swarm bugs were fixed. Owed: a short **"Multiple swarms" docs section**
+     stating what is supported — `move_swarms` and its update order, per-swarm
+     plots, addressing swarms by index, swarms joining mid-run, the pool idiom, and
+     that a restored Swarm subclass must be importable.
    - ✅ **a runnable record / `load_run` / `restore` example — done 2026-11-13.**
      The user chose to make recording basic functionality, taught in the second
      example: `02_basic_3d.py` became `examples/02_recording_and_3d.py` (record with

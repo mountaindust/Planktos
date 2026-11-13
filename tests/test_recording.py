@@ -2351,6 +2351,73 @@ def test_a_swarm_not_at_the_last_capture_starts_a_new_archive(tmp_path):
         assert not second.appending and second.path != rec.path
 
 
+class _Arrivals(planktos.Swarm):
+    '''From after_move: retires any agent past x=4, then releases the lowest
+    held-back row at (1, 2.5). A fixed-size pool with arrivals and departures.'''
+
+    def after_move(self, dt):
+        held = ma.getmaskarray(self.positions).all(axis=1)
+        far = np.flatnonzero(~held & (ma.getdata(self.positions)[:, 0] > 4))
+        if len(far):
+            self.retire(far)
+        held = ma.getmaskarray(self.positions).all(axis=1)
+        if held.any():
+            self.release(np.flatnonzero(held)[0], [1.0, 2.5])
+
+
+def _arrivals_run(tmp_path, name, steps, src):
+    # A fluid loaded from disk, since restore() replays the loader.
+    envir = _fluid_envir(tmp_path, src=src)
+    swrm = _Arrivals(swarm_size=5, envir=envir, seed=1,
+                     init=np.full((5, 2), 1.0))
+    swrm.shared_props['cov'] = np.zeros((2, 2))
+    swrm.shared_props['mu'] = np.array([20.0, 0.0])    # one unit per step
+    swrm.retire(slice(1, None))
+    rec = envir.record(tmp_path / name, store=('positions', 'velocities'),
+                       chunk_size=3)
+    for _ in range(steps):
+        swrm.move(0.05, silent=True)
+    rec.stop()
+    return rec, envir, swrm
+
+
+def test_a_pool_with_arrivals_records_restores_and_appends(tmp_path):
+    # Released and retired from after_move, a pool's archive holds exactly the
+    # states the histories do, and a restored run continued into the same
+    # archive matches one recorded whole -- with no change to the format.
+    src = _fluid_source(tmp_path)
+    rec, envir, swrm = _arrivals_run(tmp_path, 'run', 8, src)
+    # agents both arrived and departed, so rows were reused
+    assert ma.getmaskarray(ma.stack(swrm.full_pos_history)).any()
+    assert not ma.getmaskarray(swrm.positions)[0].any()
+    with planktos.load_run(rec.path) as run:
+        np.testing.assert_array_equal(
+            ma.filled(run.positions(0).asarray(), np.nan),
+            ma.filled(ma.stack(swrm.full_pos_history), np.nan))
+        np.testing.assert_array_equal(
+            ma.filled(run.velocities(0).asarray(), np.nan),
+            ma.filled(ma.stack(swrm.full_vel_history), np.nan))
+        rebuilt, (resumed,) = run.restore()
+    assert type(resumed) is _Arrivals
+    with rebuilt.record(rec.path, store=('positions', 'velocities'),
+                        chunk_size=3) as again:
+        assert again.appending
+        for _ in range(4):
+            resumed.move(0.05, silent=True)
+
+    whole, _, _ = _arrivals_run(tmp_path, 'whole', 12, src)
+    with planktos.load_run(rec.path) as a, planktos.load_run(whole.path) as b:
+        for series in ('positions', 'velocities'):
+            np.testing.assert_array_equal(
+                ma.filled(a.array(series).asarray(), np.nan),
+                ma.filled(b.array(series).asarray(), np.nan))
+    # Every state of the restored pool resolves for a plot, without drawing.
+    source = _frames.FrameSource(resumed)
+    for n in range(source.n_states):
+        source.positions(n)
+        source.stats(n, DIM3=False)
+
+
 def test_a_fresh_run_is_not_appended_to_one_that_died_at_its_start(tmp_path):
     # A run that failed before its first step leaves an archive holding one
     # capture at t=0. A fresh run starting at t=0 in the same world matched the

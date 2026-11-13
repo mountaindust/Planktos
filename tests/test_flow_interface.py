@@ -353,23 +353,14 @@ def test_calc_basic_stats_counts_against_the_population_it_started_with():
     # alternative would be to redefine the statistic per model.
     envir, _, _ = _linear_2d()
     swrm = planktos.Swarm(swarm_size=6, envir=envir, seed=1)
-    held = ma.getmaskarray(swrm.positions).copy()
-    held[2:] = True
-    # Two agents in the domain, four held back. The mask is hardened, so a
-    # fresh array is how a row is held out and later brought back in.
-    for name in ('positions', 'velocities', 'accelerations'):
-        setattr(swrm, name, ma.masked_array(
-            ma.getdata(getattr(swrm, name)), mask=held))
+    start = ma.getdata(swrm.positions).copy()
+    swrm.retire(slice(2, None))       # two agents in the domain, four held back
     assert swrm._calc_basic_stats(DIM3=False)[0] == pytest.approx(100.0)
 
     swrm.pos_history = [ma.copy(swrm.positions)]
     envir.time_history = [0.0]
     envir.time = 0.1
-    released = held.copy()
-    released[2:4] = False
-    for name in ('positions', 'velocities', 'accelerations'):
-        setattr(swrm, name, ma.masked_array(
-            ma.getdata(getattr(swrm, name)), mask=released))
+    swrm.release([2, 3], start[2:4])
     assert swrm._calc_basic_stats(DIM3=False)[0] == pytest.approx(200.0)
 
 

@@ -2746,15 +2746,10 @@ caveat that the absolute errors are a property of a cadence against a flow while
 convergence orders are what transfer — so that someone reading the table needs no
 background from these notes to act on it.
 
-**Examples.** ⚠️ **One new example is owed: agents arriving mid-run** — the fixed-*N*
-pool with masked-until-released agents, specified in §8.1. It is the answer to a question
-that has actually been asked (a predator's capture rate against a continuous influx),
-the mechanism is not discoverable from the docstrings, and the one line that makes it
-work — rebuild the masked array rather than assign into `.mask`, because the mask is
-hardened — is exactly the kind of thing an example exists to show. Write it against a
-2D immersed boundary so the capture count is the point, and record it, since the archive
-handles the pool with no format change. Build it with §8.1's `release`/`retire` if those
-land first; otherwise the example carries the recipe and §8.1 cites it.
+**Examples.** ~~One new example is owed: agents arriving mid-run.~~ **Settled
+2026-11-13:** not an example. `Swarm.release`/`Swarm.retire` (§8.1) are built, so the
+mechanism is discoverable from their docstrings, and the docs get a short "Multiple
+swarms" section stating what is supported, the pool idiom included.
 
 The call sites are done (§4.1 "As built") — each example names its
 playback rate explicitly, chosen to be the old `dt × fps` product, and the stale "one
@@ -2799,8 +2794,8 @@ residue (§8).
   only this residue — which needs its own pass, because live `plot_all` and
   `_calc_basic_stats` would then have nothing to read without an archive.
 - **`save_*` re-expressed as archive exports** (§2.10) — deliberately not first-pass.
-- **`Swarm.release` / `Swarm.retire`** — the open-system idiom, specified in §8.1 below
-  and not built.
+- ~~**`Swarm.release` / `Swarm.retire`**~~ — **built** 2026-11-13, as specified in §8.1
+  below.
 
 ---
 
@@ -2827,12 +2822,15 @@ released one per step and read back correctly.
 
 Two things make it worth wrapping in an API rather than leaving as a recipe:
 
-- ⚠️ **The mask is hardened** (`Swarm.__setattr__`), so `arr.mask[i] = False` silently
-  does nothing. Bringing a row back into the domain means building a fresh masked array
-  and assigning it through `setattr`, which re-hardens it. That is the whole trick, and
-  it is documented nowhere.
-- The three arrays must be released together, or `move()`'s finite differences read a
-  masked velocity against an unmasked position.
+- ⚠️ **The mask is hardened** (`Swarm.__setattr__`), so that `move()` assigning a
+  model's plain-ndarray output cannot unmask agents that have left. Masking through
+  assignment (`arr[i] = ma.masked`) still works. Writing `arr.mask[i] = False` does
+  unmask a row *(corrected 2026-11-13: this section first said it silently did
+  nothing)*, but it raises `TypeError` while the mask is still the scalar `nomask`, so
+  `release` builds fresh masked arrays and assigns them through `setattr` instead.
+- The three arrays must be released together. Unmasking only `positions` leaves the
+  agent's velocity and acceleration masked for good — the hardened mask keeps every
+  later differenced value out — with nothing to say so.
 
 *The shape:*
 

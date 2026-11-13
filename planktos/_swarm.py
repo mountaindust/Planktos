@@ -1333,7 +1333,12 @@ class Swarm:
 
         new_positions = None
         if not np.all(self.positions.mask):
-            new_positions = self.apply_agent_model(dt)
+            # Marks the model as running, for release() to refuse.
+            self._proposing = True
+            try:
+                new_positions = self.apply_agent_model(dt)
+            finally:
+                self._proposing = False
 
         return {'old_positions': old_positions,
                 'old_velocities': old_velocities, 'old_props': old_props,
@@ -1463,6 +1468,133 @@ class Swarm:
             length of time step
         '''
         pass
+
+
+
+    def retire(self, idx):
+        '''Take agents out of the domain, as leaving through a boundary does.
+
+        Masks the agents' positions, velocities and accelerations together, so
+        they are no longer moved and count as gone in plots and statistics,
+        e.g. agents captured by a structure inside the domain. Agents already
+        out of the domain are left as they are. :meth:`release` brings agents
+        back.
+
+        While the Environment is recording, call this from after_move: the
+        archive keeps the state each time step ends in, so a change made
+        between steps reaches the archive one capture later than pos_history.
+
+        Parameters
+        ----------
+        idx : int, slice, or array of int or bool
+            the agents to retire
+        '''
+
+        rows = self._agent_rows(idx)
+        # Masking through assignment is what a hardened mask allows.
+        for name in ('positions', 'velocities', 'accelerations'):
+            getattr(self, name)[rows] = ma.masked
+
+
+
+    def release(self, idx, positions, velocities=None):
+        '''Bring agents that are out of the domain back into it.
+
+        The agents' positions, velocities and accelerations are unmasked
+        together, with positions set as given. Velocities default to the fluid
+        velocity at those positions (zero without a fluid), as when a Swarm is
+        created, and accelerations start at zero. Props are left as they are,
+        so reset any that describe a new organism.
+
+        With :meth:`retire`, this lets a Swarm of fixed size model a
+        population that changes, such as organisms arriving through a
+        boundary: create the Swarm with as many agents as are ever in the
+        domain at once, retire the ones that have not arrived yet, and release
+        rows as agents arrive, including rows whose agents have since left.
+
+        Nothing checks that a position is outside an immersed structure. While
+        the Environment is recording, call this from after_move (see
+        :meth:`retire`).
+
+        Parameters
+        ----------
+        idx : int, slice, or array of int or bool
+            the agents to release; each must be out of the domain
+        positions : array
+            (n, D) positions for the n agents idx names, inside the domain
+        velocities : array, optional
+            (n, D) starting velocities; defaults to the fluid velocity at
+            positions
+
+        Raises
+        ------
+        ValueError
+            if an agent idx names is already in the domain, a position lies
+            outside the domain, an array's shape does not match idx, or idx
+            names an agent twice
+        RuntimeError
+            if called from apply_agent_model, since the positions it returns
+            are assigned afterwards and would overwrite the release
+        '''
+
+        if getattr(self, '_proposing', False):
+            raise RuntimeError(
+                'release cannot be called from apply_agent_model: the positions '
+                'it returns are assigned afterwards, over the released agents. '
+                'Call it from after_move.')
+        rows = self._agent_rows(idx)
+        D = len(self.envir.L)
+
+        new_pos = np.atleast_2d(np.asarray(positions, dtype=float))
+        if new_pos.shape != (len(rows), D):
+            raise ValueError('positions has shape {}; releasing {} agent(s) in '
+                             '{}D needs shape {}'.format(
+                                 new_pos.shape, len(rows), D, (len(rows), D)))
+        present = ~ma.getmaskarray(self.positions)[rows].all(axis=1)
+        if present.any():
+            raise ValueError('agent(s) {} are already in the domain'.format(
+                rows[present].tolist()))
+        L = np.asarray(self.envir.L, dtype=float)
+        outside = ~np.all((new_pos >= 0) & (new_pos <= L), axis=1)
+        if outside.any():
+            raise ValueError('the position(s) given for agent(s) {} lie '
+                             'outside the domain, which is [0, L] with L={}'
+                             .format(rows[outside].tolist(), L.tolist()))
+
+        if velocities is not None:
+            new_vel = np.atleast_2d(np.asarray(velocities, dtype=float))
+            if new_vel.shape != new_pos.shape:
+                raise ValueError('velocities has shape {}; expected {}'.format(
+                    new_vel.shape, new_pos.shape))
+        elif self.envir.flow is not None:
+            new_vel = np.asarray(self.get_fluid_drift(positions=new_pos),
+                                 dtype=float)
+        else:
+            new_vel = np.zeros_like(new_pos)
+
+        for name, values in (('positions', new_pos), ('velocities', new_vel),
+                             ('accelerations', np.zeros_like(new_pos))):
+            arr = getattr(self, name)
+            data = ma.getdata(arr).copy()
+            mask = ma.getmaskarray(arr).copy()
+            data[rows] = values
+            mask[rows] = False
+            # Built afresh and assigned, since a hardened mask cannot be
+            #   unmasked through assignment; __setattr__ hardens the new one.
+            setattr(self, name, ma.masked_array(data, mask=mask))
+        self.ib_collision_idx[rows] = -1
+
+
+
+    def _agent_rows(self, idx):
+        '''The agent indices idx names, as a 1-D int array; ValueError if it
+        names one twice, IndexError if one is out of range.'''
+
+        rows = np.atleast_1d(np.arange(self.N)[idx])
+        if len(np.unique(rows)) != len(rows):
+            raise ValueError('idx names an agent more than once: {}'.format(
+                rows.tolist()))
+        return rows
 
 
 

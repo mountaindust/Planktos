@@ -391,6 +391,120 @@ def test_a_failed_move_swarms_step_leaves_every_history_consistent():
         envir.move_swarms(0.5, silent=True)
 
 
+# --------------------------------------------------------------------------- #
+#                      agents leaving and entering mid-run                     #
+# --------------------------------------------------------------------------- #
+# retire/release: a fixed-size Swarm whose membership changes. A masked row is
+# an agent out of the domain; the mask is hardened, so release rebuilds the
+# arrays rather than assigning into them.
+
+def _masked_rows(arr):
+    return ma.getmaskarray(arr).all(axis=1).tolist()
+
+
+def test_retire_masks_positions_velocities_and_accelerations_together():
+    envir = _envir('noflux', L=10.0)
+    swrm = _drift_swarm(envir, [[2., 2.], [3., 3.], [4., 4.]], mu=(1., 0.))
+    swrm.retire(1)          # works while the mask is still a single False
+    for arr in (swrm.positions, swrm.velocities, swrm.accelerations):
+        assert _masked_rows(arr) == [False, True, False]
+    swrm.retire([1, 2])     # an agent already out is left as it is
+    for _ in range(2):
+        swrm.move(1.0, silent=True)
+    assert _masked_rows(swrm.positions) == [False, True, True]
+    np.testing.assert_array_equal(ma.getdata(swrm.positions)[1], [3., 3.])
+
+
+def test_a_released_agent_moves_with_velocities_and_accelerations_unmasked():
+    # Unmasking only the positions would leave the velocity and acceleration
+    # masked for good, since the hardened mask keeps the differenced values out.
+    envir = _envir('noflux', L=10.0)
+    swrm = _drift_swarm(envir, [[2., 2.], [3., 3.]], mu=(1., 0.))
+    swrm.retire(1)
+    swrm.move(1.0, silent=True)
+    swrm.release(1, [5., 5.])
+    for arr in (swrm.positions, swrm.velocities, swrm.accelerations):
+        assert _masked_rows(arr) == [False, False]
+    np.testing.assert_array_equal(swrm.velocities[1], [0., 0.])   # still fluid
+    np.testing.assert_array_equal(swrm.accelerations[1], [0., 0.])
+    for _ in range(2):
+        swrm.move(1.0, silent=True)
+    np.testing.assert_allclose(swrm.positions[1], [7., 5.])
+    np.testing.assert_allclose(swrm.velocities[1], [1., 0.])
+    np.testing.assert_allclose(swrm.accelerations[1], [0., 0.])
+    assert not ma.getmaskarray(swrm.velocities).any()
+
+
+def test_release_starts_agents_at_the_fluid_velocity_unless_given_one():
+    envir = planktos.Environment(Lx=10, Ly=10,
+                                 flow=[np.full((3, 3), 0.5), np.zeros((3, 3))])
+    swrm = planktos.Swarm(swarm_size=3, envir=envir, seed=1)
+    swrm.retire([0, 1, 2])
+    swrm.release([0, 2], [[1., 1.], [2., 2.]])
+    np.testing.assert_allclose(swrm.velocities[[0, 2]], [[0.5, 0.], [0.5, 0.]])
+    swrm.release(1, [3., 3.], velocities=[0., 2.])
+    np.testing.assert_allclose(swrm.velocities[1], [0., 2.])
+
+
+def test_release_refuses_what_it_cannot_do():
+    envir = _envir('noflux', L=10.0)
+    swrm = _drift_swarm(envir, [[2., 2.], [3., 3.], [4., 4.]])
+    swrm.retire([1, 2])
+    with pytest.raises(ValueError, match=r'\[0\] are already in the domain'):
+        swrm.release([0, 1], [[1., 1.], [1., 1.]])
+    with pytest.raises(ValueError, match='outside the domain'):
+        swrm.release(1, [11., 1.])
+    with pytest.raises(ValueError, match='shape'):
+        swrm.release([1, 2], [1., 1.])
+    with pytest.raises(ValueError, match='more than once'):
+        swrm.release([1, 1], [[1., 1.], [2., 2.]])
+    # nothing was released by any of them
+    assert _masked_rows(swrm.positions) == [False, True, True]
+
+
+class _ReleasesInItsModel(planktos.Swarm):
+    def apply_agent_model(self, dt):
+        self.release(1, [5., 5.])
+        return self.positions
+
+
+def test_release_refuses_to_run_inside_apply_agent_model():
+    envir = _envir('noflux', L=10.0)
+    swrm = _ReleasesInItsModel(swarm_size=2, envir=envir, seed=1,
+                               init=np.array([[2., 2.], [3., 3.]]))
+    swrm.retire(1)
+    with pytest.raises(RuntimeError, match='after_move'):
+        swrm.move(1.0, silent=True)
+    swrm.release(1, [5., 5.])        # outside the model it works again
+
+
+class _Inflow(planktos.Swarm):
+    '''Drifts right; every row that has left through the right edge comes back
+    in at the left edge, one row per step, from after_move.'''
+    def after_move(self, dt):
+        gone = np.flatnonzero(ma.getmaskarray(self.positions).all(axis=1))
+        if len(gone):
+            self.release(gone[0], [0.05, 0.5])
+            self.props.loc[gone[0], 'arrived'] = self.envir.time + dt
+
+
+def test_a_fixed_size_swarm_recycles_agents_that_left_into_an_inflow():
+    envir = planktos.Environment(Lx=1, Ly=1, x_bndry='zero', y_bndry='noflux',
+                                 flow=[np.zeros((3, 3)), np.zeros((3, 3))])
+    swrm = _Inflow(swarm_size=4, envir=envir, seed=1,
+                   init=np.array([[0.1, 0.5], [0.35, 0.5], [0.6, 0.5],
+                                  [0.85, 0.5]]))
+    swrm.shared_props['cov'] = np.zeros((2, 2))
+    swrm.shared_props['mu'] = np.array([0.25, 0.])
+    swrm.add_prop('arrived', np.zeros(4))
+    for _ in range(12):
+        swrm.move(1.0, silent=True)
+        # one agent leaves the right edge and one row comes in per step
+        assert not ma.getmaskarray(swrm.positions).any()
+    assert (swrm.props['arrived'] > 0).all()
+    assert len(swrm.pos_history) == len(swrm.vel_history) == 12
+
+
 def test_a_single_swarm_still_moves_itself():
     # the guard keys on there being more than one Swarm, so the ordinary
     #   one-Swarm workflow is untouched
