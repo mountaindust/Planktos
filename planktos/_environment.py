@@ -320,12 +320,6 @@ class Environment:
         #   whenever nothing is recording.
         self._capture_interval = 1
         self._capture_phase = 0
-        # True while move_swarms is looping over the swarms. Swarm.move uses it
-        #   to tell its own update_time=False calls apart from a user's, and
-        #   warns about the latter: captures fire on the environment's time
-        #   advance, so a caller who advances the time by hand instead produces
-        #   a step the archive never sees.
-        self._in_move_swarms = False
 
         if flow is not None:
             # Arrays handed over in process have no call to replay: the data
@@ -2642,7 +2636,15 @@ class Environment:
 
     def move_swarms(self, dt=1.0, ib_collisions='default',
                     silent=False):
-        '''Move all Swarms in the Environment.
+        '''Move all Swarms in the Environment together over one time step.
+
+        Every Swarm's apply_agent_model runs before any Swarm's positions
+        change, so a model reading another Swarm's positions or velocities sees
+        them as they were at the start of the step. Boundary conditions then
+        apply to every Swarm, and after that every after_move runs, seeing all
+        Swarms where the step ended. Changes a model makes to props or
+        shared_props are visible at once to models that run after it, in the
+        order of Environment.swarms.
 
         Parameters
         ----------
@@ -2659,18 +2661,21 @@ class Environment:
             If True, suppress printing the updated time.
         '''
 
-        # Asked before the loop so that every swarm's history append and this
-        #   time_history append are gated on one answer (the counter does not
-        #   move until the step completes, so each swarm would compute the same
-        #   value anyway -- but sharing it makes that structural).
+        if self.swarms:
+            self.swarms[0]._refuse_if_failed()
+
+        # Asked once so that every swarm's history append and this
+        #   time_history append are gated on one answer.
         keep_state = self._records_this_step()
 
-        self._in_move_swarms = True
-        try:
-            for s in self.swarms:
-                s.move(dt, ib_collisions, update_time=False)
-        finally:
-            self._in_move_swarms = False
+        # Each stage runs for every swarm before the next begins: every
+        #   apply_agent_model sees all swarms as they were at the start of the
+        #   step, and every after_move sees them all where the step ended. The
+        #   result is the same whatever order the swarms are in.
+        steps = [(s, s._propose_step(dt, ib_collisions)) for s in self.swarms]
+        for s, step in steps:
+            s._commit_step(step, dt, keep_state)
+        planktos._swarm._settle_steps(self, steps, dt, keep_state)
 
         # update time
         if keep_state:

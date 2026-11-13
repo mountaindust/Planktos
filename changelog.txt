@@ -11,6 +11,7 @@ Streaming out data to disk as an archive and both plotting and restoring from th
 - read_comsol_vtu_data reads time-varying COMSOL .vtu exports, interpolating in time between them.
 - read_stl_mesh_data loads an extruded STL into a 2D environment as its 2D outline.
 - Swarm.move now raises when the Environment holds more than one Swarm; use Environment.move_swarms.
+- Environment.move_swarms moves all Swarms simultaneously: models see each other at the start of the step, and after_move sees where it ended.
 - plot_all: new playback_rate (simulated seconds per second of video) sets movie speed. Defaults to 1, real time, changing existing movies.
 - Bug fix: read_IB2d_mesh_data's add_idx_list is now 1-based, as documented and as brk_idx_list is.
 - Bug fix: vorticity, the material derivative and the fluid-speed gradient difference across the wrap on periodic dimensions; changes values in the outermost grid ring.

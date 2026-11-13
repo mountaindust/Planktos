@@ -386,6 +386,20 @@ for _ in range(30):
     s2.move(0.1, silent=True)
 out['ibmesh'] = np.ma.filled(s2.positions, np.nan)
 
+# two swarms moved together, neither reading the other
+e4 = planktos.Environment(rho=1000, mu=1000)
+e4.set_brinkman_flow(alpha=66, h_p=1.5, U=1, dpdx=1, res=51)
+e4.read_IB2d_mesh_data(os.path.join(FIXTURES, 'mesh_min', 'box.vertex'),
+                       method='adjacent')
+p4 = planktos.Swarm(swarm_size=25, envir=e4, seed=11)
+q4 = planktos.Swarm(swarm_size=15, envir=e4, seed=12)
+for s in (p4, q4):
+    s.shared_props['cov'] = s.shared_props['cov'] * 0.2
+for _ in range(20):
+    e4.move_swarms(0.1, silent=True)
+out['two_swarms_first'] = np.ma.filled(p4.positions, np.nan)
+out['two_swarms_second'] = np.ma.filled(q4.positions, np.nan)
+
 # 3D, loaded from vtk
 e3 = planktos.Environment(x_bndry='periodic', y_bndry='periodic',
                           z_bndry='periodic')

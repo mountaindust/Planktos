@@ -280,6 +280,117 @@ def test_move_swarms_uses_each_swarms_own_ib_condition():
     assert sticky.positions[0, 1] == pytest.approx(0.5, abs=1e-4)
 
 
+class _Chaser(planktos.Swarm):
+    '''Steps a fixed distance toward the mean position of the swarm named by
+    self._target, and logs what it saw of that swarm in each model call and
+    each after_move.'''
+    def apply_agent_model(self, dt):
+        seen = self._target.positions.copy()
+        self._seen_in_model.append(seen)
+        toward = seen.mean(axis=0) - self.positions
+        return self.positions + 0.1 * toward
+
+    def after_move(self, dt):
+        self._seen_after.append(self._target.positions.copy())
+
+
+def _chasers(order):
+    '''Two swarms that each chase the other, added in the given order.'''
+    envir = _envir('noflux', L=10.0)
+    made = {}
+    for name in order:
+        init = [[2., 2.], [3., 2.]] if name == 'a' else [[8., 7.], [7., 8.]]
+        made[name] = _Chaser(swarm_size=2, envir=envir, seed=1,
+                             init=np.array(init))
+        made[name]._seen_in_model, made[name]._seen_after = [], []
+    made['a']._target, made['b']._target = made['b'], made['a']
+    return envir, made['a'], made['b']
+
+
+def test_move_swarms_moves_interacting_swarms_simultaneously():
+    # Every model sees the other swarm as it was at the start of the step, so
+    # the run is the same whichever swarm comes first in envir.swarms.
+    runs = {}
+    for order in ('ab', 'ba'):
+        envir, a, b = _chasers(order)
+        starts = []
+        for _ in range(4):
+            starts.append((a.positions.copy(), b.positions.copy()))
+            envir.move_swarms(1.0, silent=True)
+        for k, (a0, b0) in enumerate(starts):
+            np.testing.assert_array_equal(a._seen_in_model[k], b0)
+            np.testing.assert_array_equal(b._seen_in_model[k], a0)
+        runs[order] = (np.stack(a.full_pos_history), np.stack(b.full_pos_history))
+    np.testing.assert_array_equal(runs['ab'][0], runs['ba'][0])
+    np.testing.assert_array_equal(runs['ab'][1], runs['ba'][1])
+
+
+def test_every_after_move_sees_every_swarm_where_the_step_ended():
+    envir, a, b = _chasers('ab')
+    for _ in range(3):
+        envir.move_swarms(1.0, silent=True)
+        np.testing.assert_array_equal(a._seen_after[-1], b.positions)
+        np.testing.assert_array_equal(b._seen_after[-1], a.positions)
+
+
+def test_non_interacting_swarms_move_together_exactly_as_each_does_alone():
+    # Each swarm draws from its own random stream and reads the fluid at the
+    # same time, so moving it beside others changes nothing about it.
+    def world():
+        envir = planktos.Environment(rho=1000, mu=1000)
+        envir.set_brinkman_flow(alpha=66, h_p=1.5, U=1, dpdx=1, res=21)
+        envir.ibmesh = np.array([[[5.0, 2.0], [5.0, 8.0]]])
+        envir.max_meshpt_dist = 6.0
+        return envir
+
+    def add(envir, which):
+        seed, ib = {'a': (1, 'sliding'), 'b': (2, 'sticky')}[which]
+        s = planktos.Swarm(swarm_size=10, envir=envir, seed=seed,
+                           ib_condition=ib, init=np.full((10, 2), 4.0) + seed)
+        s.shared_props['cov'] = s.shared_props['cov'] * 0.5
+        return s
+
+    together = world()
+    pair = [add(together, w) for w in 'ab']
+    for _ in range(15):
+        together.move_swarms(0.2, silent=True)
+    for which, moved_with in zip('ab', pair):
+        alone_envir = world()
+        alone = add(alone_envir, which)
+        for _ in range(15):
+            alone.move(0.2, silent=True)
+        np.testing.assert_array_equal(np.stack(moved_with.full_pos_history),
+                                      np.stack(alone.full_pos_history))
+        np.testing.assert_array_equal(moved_with.ib_collision_idx,
+                                      alone.ib_collision_idx)
+
+
+class _FailsAfterMove(planktos.Swarm):
+    '''Its after_move raises from the second step on.'''
+    def after_move(self, dt):
+        if len(self.pos_history) > 1:
+            raise ValueError('a bug in after_move')
+
+
+def test_a_failed_move_swarms_step_leaves_every_history_consistent():
+    # Every swarm commits its step before any boundary condition or after_move
+    # runs, so a failure in the last swarm still leaves all histories one entry
+    # longer, matching time_history.
+    envir = _envir('noflux')
+    a = _drift_swarm(envir, [[0.2, 0.2]], mu=(0.1, 0.))
+    b = _drift_swarm(envir, [[0.5, 0.5]], mu=(0.1, 0.))
+    c = _FailsAfterMove(swarm_size=1, envir=envir, seed=1,
+                        init=np.array([[0.7, 0.7]]))
+    envir.move_swarms(0.5, silent=True)
+    with pytest.raises(RuntimeError, match='after_move raised'):
+        envir.move_swarms(0.5, silent=True)
+    assert envir.time is None
+    for s in (a, b, c):
+        assert len(s.pos_history) == len(s.vel_history) == len(envir.time_history) == 2
+    with pytest.raises(RuntimeError, match='error state'):
+        envir.move_swarms(0.5, silent=True)
+
+
 def test_a_single_swarm_still_moves_itself():
     # the guard keys on there being more than one Swarm, so the ordinary
     #   one-Swarm workflow is untouched

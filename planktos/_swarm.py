@@ -116,6 +116,83 @@ def _vorticity_norm(vort, clip=None, norm=None):
     return norm
 
 
+def _settle_steps(envir, steps, dt, keep_state):
+    '''Stage 3 of a time step: apply boundary conditions to every Swarm, then
+    run every after_move.
+
+    Parameters
+    ----------
+    envir : Environment
+    steps : list of (Swarm, dict)
+        each Swarm with the step Swarm._propose_step returned for it, already
+        committed
+    dt : float
+    keep_state : bool
+        whether this step's starting state went into the histories
+
+    Raises
+    ------
+    RuntimeError
+        if a boundary condition or after_move raises, after marking the
+        Environment's time None; a KeyboardInterrupt is re-raised as itself
+    '''
+
+    # Decided before any boundary condition runs, so that a swarm the step
+    #   carries entirely out of the domain still gets its after_move.
+    moving = [(s, step) for s, step in steps if not np.all(s.positions.mask)]
+    try:
+        for s, step in moving:
+            s.apply_boundary_conditions(dt, ib_collisions=step['ib_collisions'])
+        for s, _ in moving:
+            s.after_move(dt)
+    except BaseException as err:
+        # Boundary conditions are applied one agent at a time, so the step now
+        #   holds for some agents and not others; that state is left for
+        #   inspection. Every swarm's histories were appended at commit, before
+        #   anything here ran, so time_history gets the step's start time to
+        #   match them, and envir.time becomes None, which move() and
+        #   move_swarms() refuse to run on.
+        # BaseException, so a Ctrl-C marks the state too. An interrupt is
+        #   re-raised as itself, an error as a RuntimeError.
+        if keep_state:
+            envir.time_history.append(envir.time)
+        envir.time = None
+        if not isinstance(err, Exception):
+            print("\nInterrupted partway through applying boundary "
+                  "conditions or after_move, after agent positions had "
+                  "already been updated. The step was applied to some "
+                  "agents and not others, so positions, velocities, "
+                  "accelerations and ib_collision_idx are all "
+                  "unreliable and agents may be sitting inside an "
+                  "immersed boundary. They are left as they are so the "
+                  "state can be inspected.\n"
+                  "envir.time has been set to None to mark this, and "
+                  "no further moves are permitted until it is restored. "
+                  "The histories were closed off consistently. To back "
+                  "the step out and carry on:\n"
+                  "    envir.time = envir.time_history.pop()\n"
+                  "    swrm.positions = swrm.pos_history.pop()\n"
+                  "    swrm.velocities = swrm.vel_history.pop()")
+            raise
+        raise RuntimeError(
+            "Boundary conditions or after_move raised partway through this time "
+            "step, after agent positions had already been updated. "
+            "The step was applied to some agents and not others, so "
+            "positions, velocities, accelerations and "
+            "ib_collision_idx are all unreliable and agents may be "
+            "sitting inside an immersed boundary. They are left as "
+            "they are so the failure can be inspected.\n"
+            "envir.time has been set to None to mark this state, and "
+            "no further moves are permitted until it is restored. The "
+            "histories were closed off consistently: time_history now "
+            "matches pos_history, both ending with the state as it "
+            "was when this step began. To back the step out and carry "
+            "on, pop the last entry off each:\n"
+            "    envir.time = envir.time_history.pop()\n"
+            "    swrm.positions = swrm.pos_history.pop()\n"
+            "    swrm.velocities = swrm.vel_history.pop()") from err
+
+
 class Swarm:
     '''
     Fundamental Planktos object describing a group of similar agents.
@@ -1128,10 +1205,9 @@ class Swarm:
             vector is exhausted. In sticky collisions, just return the point of 
             intersection.
         update_time : bool, default=True
-            whether or not to update the Environment's time by dt. This exists
-            for Environment.move_swarms, which moves every Swarm with
-            update_time=False and then advances the time once for all of them.
-            There is no reason for a user to pass False.
+            whether or not to update the Environment's time by dt. There is no
+            reason for a user to pass False, and while recording it warns,
+            since a step that does not advance the time is not captured.
         silent : bool, default=False
             If True, suppress printing the updated time.
 
@@ -1153,8 +1229,66 @@ class Swarm:
             moves every Swarm in the Environment and then advances the time.
         '''
 
-        # envir.time is None after a step that raised partway through (the
-        #   except clause below), so the agents hold a half-applied step.
+        self._refuse_if_failed()
+
+        # One Swarm cannot advance the environment clock while the others
+        #   stand still: their histories would fall out of step with
+        #   time_history, and with each other.
+        if update_time and len(self.envir.swarms) > 1:
+            raise RuntimeError(
+                "This Environment holds {} Swarms, so no single Swarm can "
+                "advance its time. Call\n"
+                "    envir.move_swarms(dt)\n"
+                "instead, which moves every Swarm and then advances the time "
+                "once for all of them.".format(len(self.envir.swarms)))
+
+        # Is the state this step begins from one of the ones kept? Asked once,
+        #   here, and used for every history append and for the matching
+        #   time_history append at the end.
+        keep_state = self.envir._records_this_step()
+
+        # The same three stages Environment.move_swarms runs across all of its
+        #   swarms; here there is only the one.
+        step = self._propose_step(dt, ib_collisions)
+        self._commit_step(step, dt, keep_state)
+        _settle_steps(self.envir, [(self, step)], dt, keep_state)
+
+        # Record new time
+        if update_time:
+            if keep_state:
+                self.envir.time_history.append(self.envir.time)
+            self.envir.time += dt
+            if not silent:
+                print('time = {}'.format(np.round(self.envir.time,11)))
+            # The environment has advanced one step, with every swarm moved
+            #   (there is only one, or this would have raised above).
+            self.envir._notify_step_complete()
+        elif self.envir._recorder is not None:
+            # update_time=False means the caller intends to advance the clock
+            #   by hand, and a hand-rolled advance fires no hook -- so the step
+            #   happens but the archive never sees it.
+            warnings.warn(
+                "move(update_time=False) while recording: this step will not "
+                "be captured, because nothing here advances the environment "
+                "time and the capture hook rides that advance. Use "
+                "envir.move_swarms(dt) to move every swarm and advance the "
+                "time together.", UserWarning)
+
+
+    ####################   the stages of a time step   ####################
+    # move() runs these for one Swarm and Environment.move_swarms runs each
+    #   across every Swarm before starting the next, so that every
+    #   apply_agent_model sees all swarms as they were at the start of the step
+    #   and every after_move sees them all where the step ended.
+    # _settle_steps (top of this module) is called as Stage 3: it applies
+    #   boundary conditions to every Swarm, immersed-boundary collisions
+    #   included, and then runs every after_move.
+
+    def _refuse_if_failed(self):
+        '''Raise RuntimeError if an earlier step failed partway through.'''
+
+        # envir.time is None after a step that raised partway through (see
+        #   _settle_steps), so the agents hold a half-applied step.
         if self.envir.time is None:
             raise RuntimeError(
                 "Cannot move: this Swarm/Environment is in an error state. A "
@@ -1171,127 +1305,58 @@ class Swarm:
                 "    swrm.positions = swrm.pos_history.pop()\n"
                 "    swrm.velocities = swrm.vel_history.pop()")
 
-        # One Swarm cannot advance the environment clock while the others
-        #   stand still: their histories would fall out of step with
-        #   time_history, and with each other.
-        if update_time and len(self.envir.swarms) > 1:
-            raise RuntimeError(
-                "This Environment holds {} Swarms, so no single Swarm can "
-                "advance its time. Call\n"
-                "    envir.move_swarms(dt)\n"
-                "instead, which moves every Swarm and then advances the time "
-                "once for all of them.".format(len(self.envir.swarms)))
+
+    def _propose_step(self, dt, ib_collisions):
+        '''Stage 1: run apply_agent_model without assigning its result.
+
+        Returns
+        -------
+        dict
+            the step in progress: the state it starts from, the proposed
+            positions (None when every agent is out of the domain), and the
+            resolved ib_collisions
+        '''
 
         if ib_collisions == 'default':
             ib_collisions = self.ib_condition
 
-        # Is the state this step begins from one of the ones kept? Asked once,
-        #   here, and used for every history append below and for the matching
-        #   time_history append at the end.
-        keep_state = self.envir._records_this_step()
-
-        # Save current position to put in the history
+        # Saved to put in the history...
         old_positions = self.positions.copy()
         old_velocities = self.velocities.copy()
-
-        # ...and hand the same array to the boundary stage as this step's
-        #   movement start point. It reads this rather than pos_history[-1] so
-        #   that the physics does not depend on the recording; see __init__.
+        # ...and handed to the boundary stage as this step's movement start
+        #   point. It reads this rather than pos_history[-1] so that the
+        #   physics does not depend on the recording; see __init__.
         self._prev_positions = old_positions
+        # Copied before the model runs, since apply_agent_model may change props.
+        old_props = (self.props.copy() if self.props_history is not None
+                     else None)
 
-        # Conditionally save props to put in the history too
-        if self.props_history is not None:
-            old_props = self.props.copy()
-
-        # Check that something is left in the domain to move, and move it.
+        new_positions = None
         if not np.all(self.positions.mask):
-            # Update positions, preserving mask
-            self.positions[:,:] = self.apply_agent_model(dt)
+            new_positions = self.apply_agent_model(dt)
 
-        # Update history
+        return {'old_positions': old_positions,
+                'old_velocities': old_velocities, 'old_props': old_props,
+                'new_positions': new_positions, 'ib_collisions': ib_collisions}
+
+
+    def _commit_step(self, step, dt, keep_state):
+        '''Stage 2: assign the proposed positions, append the step's starting
+        state to the histories, and difference velocities and accelerations.'''
+
+        if step['new_positions'] is not None:
+            # The hardened mask keeps agents that have left out of the domain,
+            #   whatever the model returned for them.
+            self.positions[:,:] = step['new_positions']
+
         if keep_state:
-            self.pos_history.append(old_positions)
-            self.vel_history.append(old_velocities)
+            self.pos_history.append(step['old_positions'])
+            self.vel_history.append(step['old_velocities'])
             if self.props_history is not None:
-                self.props_history.append(old_props)
-        
-        # Update velocity and acceleration of swarm
-        self.velocities[:,:] = (self.positions - old_positions)/dt
-        self.accelerations[:,:] = (self.velocities - old_velocities)/dt
+                self.props_history.append(step['old_props'])
 
-        # Apply boundary conditions (if anything was moving)
-        if not np.all(self.positions.mask):
-            try:
-                self.apply_boundary_conditions(dt, ib_collisions=ib_collisions)
-                self.after_move(dt)
-            except BaseException as err:
-                # Boundary conditions are applied one agent at a time, so the
-                #   step now holds for some agents and not others; that state is
-                #   left for inspection. time_history gets the step's start
-                #   time, matching the pos_history entry appended above, and
-                #   envir.time becomes None, which move() refuses to run on.
-                # BaseException, so a Ctrl-C marks the state too. An interrupt
-                #   is re-raised as itself, an error as a RuntimeError.
-                if keep_state:
-                    # keep_state gated the pos_history append above, too
-                    self.envir.time_history.append(self.envir.time)
-                self.envir.time = None
-                if not isinstance(err, Exception):
-                    print("\nInterrupted partway through applying boundary "
-                          "conditions or after_move, after agent positions had "
-                          "already been updated. The step was applied to some "
-                          "agents and not others, so positions, velocities, "
-                          "accelerations and ib_collision_idx are all "
-                          "unreliable and agents may be sitting inside an "
-                          "immersed boundary. They are left as they are so the "
-                          "state can be inspected.\n"
-                          "envir.time has been set to None to mark this, and "
-                          "no further moves are permitted until it is restored. "
-                          "The histories were closed off consistently. To back "
-                          "the step out and carry on:\n"
-                          "    envir.time = envir.time_history.pop()\n"
-                          "    swrm.positions = swrm.pos_history.pop()\n"
-                          "    swrm.velocities = swrm.vel_history.pop()")
-                    raise
-                raise RuntimeError(
-                    "Boundary conditions or after_move raised partway through this time "
-                    "step, after agent positions had already been updated. "
-                    "The step was applied to some agents and not others, so "
-                    "positions, velocities, accelerations and "
-                    "ib_collision_idx are all unreliable and agents may be "
-                    "sitting inside an immersed boundary. They are left as "
-                    "they are so the failure can be inspected.\n"
-                    "envir.time has been set to None to mark this state, and "
-                    "no further moves are permitted until it is restored. The "
-                    "histories were closed off consistently: time_history now "
-                    "matches pos_history, both ending with the state as it "
-                    "was when this step began. To back the step out and carry "
-                    "on, pop the last entry off each:\n"
-                    "    envir.time = envir.time_history.pop()\n"
-                    "    swrm.positions = swrm.pos_history.pop()\n"
-                    "    swrm.velocities = swrm.vel_history.pop()") from err
-
-        # Record new time
-        if update_time:
-            if keep_state:
-                self.envir.time_history.append(self.envir.time)
-            self.envir.time += dt
-            if not silent:
-                print('time = {}'.format(np.round(self.envir.time,11)))
-            # The environment has advanced one step, with every swarm moved
-            #   (there is only one, or this would have raised above).
-            self.envir._notify_step_complete()
-        elif not self.envir._in_move_swarms and self.envir._recorder is not None:
-            # update_time=False exists for move_swarms to call. Reached any
-            #   other way it means the caller intends to advance the clock by
-            #   hand, and a hand-rolled advance fires no hook -- so the step
-            #   happens but the archive never sees it.
-            warnings.warn(
-                "move(update_time=False) while recording: this step will not "
-                "be captured, because nothing here advances the environment "
-                "time and the capture hook rides that advance. Use "
-                "envir.move_swarms(dt) to move every swarm and advance the "
-                "time together.", UserWarning)
+        self.velocities[:,:] = (self.positions - step['old_positions'])/dt
+        self.accelerations[:,:] = (self.velocities - step['old_velocities'])/dt
 
 
 
