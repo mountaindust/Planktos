@@ -25,12 +25,15 @@ Priority key: 🔴 do first · 🟡 next · 🟢 later · ⚪ deferred / low pri
 1. 🔴 **Document cleanup** *(started 2026-11-13)*. `TODO.md` cut to what is open;
    `docs/notes/run_persistence.md` deleted, with its deferred items moved below and
    the references to it in `CLAUDE.md`, source comments and test docs repointed.
-2. 🔴 **Release check:** `__version__` in `planktos/__init__.py` → `1.1.0`; a read
-   through the 1.1.0 section of `changelog.txt`; `pytest --runslow --runexamples`; a
-   fresh docs build; `codespell README.md docs/ planktos/ examples/`. Then tag, and
-   merge to `master`. Version bump and changelog are the user's call — surface, don't
-   do silently.
-   - **The version-bump commit carries `Closes #58, closes #59`** (decided
+2. 🔴 **Release:** merge `dyload` into `master` with `--no-ff`, push, then tag
+   `v1.1.0` on the merge commit by creating the GitHub release. `__version__` has
+   been `1.1.0` since 26dc2d9.
+   - *Done 2026-11-14, at 26bbfb2:* changelog read through;
+     `pytest --runslow --runexamples` (1716 passed, 1 skipped, no xfails, every
+     example run including the sea fan); fresh docs build with no warnings;
+     codespell clean over the tracked tree. Rerun the suite if code lands before
+     the tag.
+   - **The release-prep commit carries `Closes #58, closes #59`** (decided
      2026-11-13): dynamic loading and memory-free tiling are what those issues ask
      for. GitHub closes them when that commit reaches `master`, i.e. at the merge.
 
