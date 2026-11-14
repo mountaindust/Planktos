@@ -106,14 +106,13 @@ install Planktos in "editable" mode (requires pip version >= 21.1): ::
 
     pip install -e .
 
-Planktos can then be imported like any other Python package from any directory. 
-Either approach also allows you to uninstall with the same command (from the 
-Planktos directory): ::
+Planktos can then be imported like any other Python package from any directory.
+Either way, uninstall with: ::
 
-    pip uninstall .
+    pip uninstall planktos
 
 **Once you have installed, verify that things work** by trying to run 
-basic_ex_2d.py in the examples folder. If it crashes, see the Dependencies 
+01_basic_2d.py in the examples folder. If it crashes, see the Dependencies 
 section above for troubleshooting.
 
 Getting started
@@ -130,22 +129,24 @@ A suggested BibTeX entry is included in the file
 :download:`Planktos.bib <../Planktos.bib>`.
 
 There are several working examples in the examples folder. Start with
-basic_ex_2d.py and basic_ex_3d.py, which are annotated minimal simulations.
-ex_ind_var.py demonstrates individual variation between agents, and
-ex_agent_behavior.py, ex_ode_gen.py, ex_vicsek_model_2d.py, and
-ex_vicsek_model_3d.py demonstrate subclassing of the apply_agent_model method
-for user-defined agent behavior. ex_poisson_search.py implements an intermittent
+01_basic_2d.py and 02_recording_and_3d.py, which are annotated minimal simulations.
+03_ind_var.py demonstrates individual variation between agents, and
+04_agent_behavior.py, 05_ode_gen.py, 13_vicsek_model_2d.py, and
+14_vicsek_model_3d.py demonstrate subclassing of the apply_agent_model method
+for user-defined agent behavior. 12_poisson_search.py implements an intermittent
 search strategy via Poisson process state switching.
 
 Several examples show how to import vertex data (from IB2d and IBAMR),
 automatically create immersed boundaries out of this data, and then simulate
 agent movement with these meshes as solid boundaries which the agents respect:
-ex_ib2d_ibmesh.py and ex_ib2d_sticky.py in 2D, ex_IBAMR_ibmesh.py using VTK data
+06_ib2d_ibmesh.py and 08_ib2d_sticky.py in 2D, 07_IBAMR_ibmesh.py using VTK data
 obtained from IBAMR (pulled from the tests/IBAMR_test_data folder), and
-ex_sticky_seafan_3d.py in 3D. In particular, ex_ib2d_mvbnd_sticky.py is the
+10_sticky_seafan_3d.py in 3D. In particular, 09_ib2d_mvbnd_sticky.py is the
 showcase for **2D moving immersed boundaries**; it requires externally
 downloaded data, so see the file header for the link. Finally,
-ex_produce_ftle_2d.py demonstrates FTLE computation.
+11_produce_ftle_2d.py demonstrates FTLE computation. 07_IBAMR_ibmesh.py and
+10_sticky_seafan_3d.py also demonstrate domain tiling, which builds an array of
+cylinders out of one.
 
 More examples will be added as functionality is added. To run any of these
 examples, change your working directory to the examples directory and then run
@@ -177,23 +178,36 @@ Research that utilizes this framework can be seen in:
 Overview
 --------
 
-Currently, Planktos has built-in capabilities to load either time-independent or 
-time-dependent 2D or 3D fluid velocity data specified on a regular mesh. ASCII 
-vtk format is supported, as well as one single-time ASCII vtu files from COMSOL 
-and NetCDF. A few analytical 1D flow fields are also available and can be 
-generated in either 2D or 3D environments; these include Brinkman flow, two layer 
-channel flow, and canopy flow. Flow fields can also be extended and tiled in simple 
-ways as appropriate. Mesh data must be time-invariant in 3D but can be time-varying 
-in 2D. They are loaded via IB2d/IBAMR-style vertex data (2D) or via stl file in 3D. 
+Currently, Planktos has built-in capabilities to load either time-independent or
+time-dependent 2D or 3D fluid velocity data specified on a rectilinear grid. It
+reads legacy VTK as written by IB2d and IBAMR, OpenFOAM's VTK exports
+(``foamToVTK``), VTK XML image and rectilinear-grid series (``.vti``/``.vtr``,
+with or without a ParaView ``.pvd`` index), COMSOL exports (VTK XML ``.vtu``, or
+COMSOL's text grid format), and NetCDF.
+A few analytical 1D flow fields are also available and can be
+generated in either 2D or 3D environments; these include Brinkman flow, two layer
+channel flow, and canopy flow. A periodic domain can also be tiled, with its
+immersed mesh, without copying the fluid data. Mesh data must be time-invariant
+in 3D but can be time-varying in 2D. They are loaded via
+IB2d/IBAMR-style vertex data (2D) or via stl file in 3D. An stl file that is a
+straight extrusion, as a 2D simulation's geometry usually is, can also be used
+with 2D fluid data: it is reduced to the outline it was extruded from.
 More (open source) formats may be considered if requested. Mesh data should never 
 intersect any of the domain boundaries. This will not be checked, but is essential
 for correct performance.
 
+Time-dependent fluid data, 3D especially, is often too large to hold in memory.
+Every fluid reader therefore takes an ``INUM`` argument. By default the whole
+dataset is loaded; an integer instead keeps only a sliding window of time points
+in memory and loads more from storage as the simulation advances. The price is
+interpolation in time, which becomes linear rather than cubic -- see
+:ref:`inum-tradeoff` for the tradeoff and what it was measured to cost.
+
 For agents, there is support for individual variation though a pandas Dataframe 
 property of the Swarm class (Swarm.props). Individual agents have access to the 
 local flow field through interpolation of the spatial-temporal fluid velocity grid. 
-Specifically, Planktos implements a cubic spline in time with linear interpolation 
-in space. In addition to more custom behavior, an Ito SDE solver 
+Specifically, Planktos interpolates linearly in space, and in time with a cubic
+spline when the whole dataset is in memory or linearly when it is streamed. In addition to more custom behavior, an Ito SDE solver 
 (Euler-Maruyama method) is included for movement specified as an SDE of the type 
 
 .. math::
@@ -228,20 +242,38 @@ expensive moving-boundary case; for cheap static-mesh collisions the per-agent
 dispatch overhead can outweigh the work, so benchmark before relying on it.
 
 Multiple agent species (Swarms) may share a single Environment. Advance them
-together with ``Environment.move_swarms``, which moves every Swarm before
-incrementing the environment time; calling ``Swarm.move`` directly on a single
-Swarm will warn you that the others were not advanced. Each Swarm keeps its own
-agent model, properties, and history, so different species can use entirely
-different behaviors. Two caveats: there is no built-in mechanism for agents in
-one Swarm to sense or interact with agents in another (a subclass can reach the
-other Swarms through ``self.envir.swarms`` and implement this itself), and
-plotting multiple Swarms together on the same axes is not yet implemented -- each
-Swarm plots on its own. See `issue #49
-<https://github.com/mountaindust/Planktos/issues/49>`_.
+together with ``Environment.move_swarms``; calling ``Swarm.move`` directly raises
+once there is more than one Swarm, since a single Swarm cannot advance the
+environment clock while the others stand still. ``move_swarms`` moves the Swarms
+simultaneously: every Swarm's agent model sees the others as they were at the
+start of the time step, and every ``after_move`` sees them all where the step
+ended. Each Swarm keeps its own agent model, properties, history and immersed
+boundary condition, so different species can use entirely different behaviors,
+and a new Swarm can join a running simulation at any time, its history starting
+when it does. There is no built-in mechanism for agents in one Swarm to sense or
+interact with agents in another; a subclass can reach the other Swarms through
+``self.envir.swarms`` and implement this itself. Each Swarm plots on its own --
+plotting multiple Swarms together on the same axes is not yet implemented (see
+`issue #49 <https://github.com/mountaindust/Planktos/issues/49>`_), and
+``Environment.record(plot_all=...)`` needs a recording of a single Swarm.
+Recording captures every Swarm by default. When reading a recording back, address
+Swarms by index, as every Swarm has the same default name, and note that
+``restore`` can rebuild a Swarm subclass only if it can import it, so define
+subclasses in a module rather than in the script that runs the simulation.
 
-Beyond simulation, some analysis tools are available. 2D vorticity of the
-velocity field can be computed, saved, and plotted via
-``Environment.get_2D_vorticity``, ``save_2D_vorticity``, and ``plot_2D_vort``.
+The number of agents in a Swarm is fixed when it is created, but which of them
+are in the domain can change. ``Swarm.retire`` takes agents out of the domain,
+as leaving through a boundary does -- e.g. agents captured by an immersed
+structure -- and ``Swarm.release`` brings agents that are out of the domain back
+in at given positions. Together they model a population that changes, such as a
+continuous inflow through a boundary: create the Swarm with as many agents as
+are ever in the domain at once, retire the ones that have not arrived yet, and
+release rows as agents arrive, reusing the rows of agents that have left. Call
+both from ``after_move`` when recording.
+
+Beyond simulation, some analysis tools are available. Vorticity of the velocity
+field can be computed, saved, and plotted via ``Environment.get_vorticity``,
+``save_2D_vorticity``, and ``plot_2D_vort``.
 Finite-time Lyapunov exponent fields are computed with
 ``Environment.calculate_FTLE`` and drawn with ``plot_2D_FTLE``. Forward-time FTLE
 can be calculated for tracer particles, for user-supplied equations of motion
@@ -251,6 +283,27 @@ tracer particles only. FTLE calculations respect static immersed boundaries, but
 moving meshes are not supported.
 
 Single-time and animation plotting of results is available in 2D and 3D.
+``Swarm.plot_all`` animates a completed run, saving it to a movie file if given
+a filename. Its timing is set by two independent quantities: ``fps``, the frames
+per second of the video (how *smooth* it is), and ``playback_rate``, the seconds
+of simulated time per second of video (how *fast* it plays). The default
+``playback_rate=1`` is real time, taking simulated time to be in seconds as it
+is throughout Planktos. Frames are placed ``playback_rate/fps`` apart in
+simulated time, each showing the recorded state nearest to it. When
+``playback_rate/fps`` is smaller than the time between recorded states
+(the timestep ``dt``, unless a recording keeps only every *k*-th step), states
+repeat across frames, with a warning: the movie keeps its speed, but its motion
+steps once per recorded state. Smooth slow motion therefore calls for a smaller
+``dt``, not a higher ``fps``. Passing an explicit list of state indices as
+``frames`` overrides this selection.
+
+A run can also be streamed to disk as it proceeds, with ``Environment.record``.
+``planktos.load_run`` reads the result back, in the same session or a later
+one, and ``RunArchive.restore`` rebuilds the Environment and Swarms from it to
+continue the run where it left off. Both ``Swarm.plot`` and ``Swarm.plot_all``
+draw the fluid of a recorded run from what the recording wrote, so plotting a
+dynamically loaded run does not stream the dataset a second time; nothing needs
+adding to the plotting call. See :doc:`api/RunArchive`.
 
 .. [1] Haller, G. and Sapsis, T. (2008). Where do inertial particles go in
    fluid flows? Physica D: Nonlinear Phenomena, 237(5), 573-583.
@@ -259,7 +312,7 @@ Workflow
 --------
 
 This is outlined in more detail within the tutorial examples, but briefly, the 
-following workflow is used to create simulatinos in Planktos:
+following workflow is used to create simulations in Planktos:
 1. Create an Environment object and load the fluid velocity data and any 
 immersed mesh structures into it. Specify boundary conditions. Verify everything 
 looks correct by plotting the environment.
@@ -274,6 +327,6 @@ update agent states in any way necessary for the model. If such an update requir
 knowledge of the agents' final position after boundary interactions, the after_move 
 method can be used, which is called only after everything else within the timestep 
 has been done.
-3. Create a Swarm object from your class and call it's move method in a loop to 
-run the simulation.
+3. Create a Swarm object from your class and call its move method in a loop to
+run the simulation, inside ``with envir.record(...)`` to stream it to disk.
 4. Plot the results or export the data to examine elsewhere.

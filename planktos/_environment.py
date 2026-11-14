@@ -28,7 +28,7 @@ from mpl_toolkits import mplot3d
 from matplotlib.collections import LineCollection
 
 import planktos
-from . import _dataio, _geom, fluid, motion
+from . import _dataio, _geom, _provenance, _recording, fluid, motion
 
 if _dataio.NETCDF:
     from cftime import date2num
@@ -39,18 +39,17 @@ __copyright__ = "Copyright 2017, Christopher Strickland"
 
 class Environment:
     '''
-    Rectangular environment containing fluid info, immersed meshs, and Swarms.
+    Rectangular environment containing fluid info, immersed meshes, and Swarms.
 
     The Environment class does much of the heavy lifting of Planktos. It loads 
     and contains information about the fluid velocity field, the dimensions of 
     the physical environment being simulated, boundary conditions for the agents, 
     the agent Swarms that are in the environment, any immersed meshes, and all 
     simulation time information. Additionally, it provides functions for 
-    manipulating the fluid velocity field in certain ways (e.g. extending,  
-    tiling, and interpolating), calculating vorticity and FTLE, viewing info 
-    about the fluid itself, and calling the move function on all Swarms 
-    contained in the environment. It is essential to any Planktos simulation 
-    and typically the first Planktos object you create.
+    calculating vorticity and FTLE, plotting the fluid environment, and 
+    calling the move function on all Swarms contained in the environment. It 
+    is essential to any Planktos simulation and typically the first Planktos 
+    object you create.
 
     Parameters
     ----------
@@ -77,23 +76,27 @@ class Environment:
         This only needs to be specified if you already have a fluid velocity field 
         loaded as a list of numpy arrays and wish to add it to the environment 
         directly. Otherwise, the fluid velocity field will be assumed to be zero 
-        everywhere until something is loaded or created via a method of this class. 
+        everywhere until something is loaded or created via a method of this class 
+        or by assigning a FluidData object to the flow attribute of this class. 
         If you specify a fluid velocity field here, it should be of the following 
         format:  
         [x-vel field ndarray ([t],i,j,[k]), y-vel field ndarray ([t],i,j,[k]),
         z-vel field ndarray if 3D].
         Note! i is x index, j is y index, with the value of x and y increasing
-        as the index increases. It is assumed that the flow mesh is equally 
-        spaced and includes values on the domain boundary. A keyword argument 
-        'flow_points' must also be specified as a tuple (len==dimension) of 1D 
-        arrays specifying the mesh points along each direction. If the velocity 
-        field is time varying, the argument 'flow_points' must also be 
-        given, which should in this case be an iterable of times at which the
-        fluid velocity is specified (as indexed by t in the first dimension of 
-        each of the fluid ndarrays).
-    flow_times : [float, float] or increasing iterable of floats, optional
-        [tstart, tend] or iterable of times at which the fluid velocity 
+        as the index increases. The velocity field mesh will be inferred from 
+        the shape of the ndarrays under the assumption that the mesh is regular
+        and includes values on the domain boundary. If the velocity field is time 
+        varying, the parameter 'flow_times' must also be given as an iterable of
+        times at which the fluid velocity is specified (as indexed by t in the 
+        first dimension of each of the fluid ndarrays).
+    flow_times : (float, float) or increasing iterable of floats, optional
+        (tstart, tend) or iterable of times at which the fluid velocity
         is specified or scalar dt; required if flow is time-dependent.
+    periodic_dim : bool or tuple of bool, default=False
+        whether the fluid data (passed via flow) is periodic in each spatial
+        dimension. Governs how the flow is interpolated at the domain edges and
+        is independent of the agent boundary conditions (x_bndry/y_bndry/z_bndry).
+        Only applies to the flow= path; the data loaders set this themselves.
     rho : float, optional
         fluid density of environment, kg/m**3 (optional, m here meaning length units).
         Auto-calculated if mu and nu are provided.
@@ -122,7 +125,11 @@ class Environment:
     Attributes
     ----------
     L : list of floats
-        length of the domain [x, y, [z]] in the stated units
+        length of the domain [x, y, [z]] in the stated units; the tiled length
+        once the domain is tiled
+    tiling : tuple of int
+        number of tiles along each axis, set by tile_domain; all ones when
+        untiled
     units : str
         A place to remind yourself of the spatial units you are working in. Note 
         that none of the methods of this class use this attribute in any way, 
@@ -135,23 +142,16 @@ class Environment:
         current environment time
     time_history : list of floats
         list of past time states
-    flow : list of ndarrays or fCubicSpline objects
-        [x-vel field ndarray ([t],i,j,[k]), y-vel field ndarray ([t],i,j,[k]),
-            z-vel field ndarray (if 3D)]. i is x index, j is y index, with the 
-            value of x and y increasing as the index increases. Arrays get 
-            replaced by fCubicSpline objects (if the fluid velocity is 
-            temporally varying) when they are first needed.
-    flow_times : ndarray of floats or None
-        if specified, the time stamp for each index t in the flow arrays (time 
-        varying fluid velocity fields only)
-    flow_points : tuple (len==dimension) of 1D ndarrays
-        points defining the spatial grid for the fluid velocity data
-    fluid_domain_LLC : tuple (len==dimension) of floats
-        original lower-left corner of domain (if from data)
-    tiling : tuple (x,y) of floats 
-        how much tiling was done in the x and y direction
-    orig_L : tuple (Lx,Ly) of floats
-        length of the domain in x and y direction (Lx,Ly) before tiling occurred
+    flow : FluidData or None
+        the fluid velocity field and its interpolation in time; None until a
+        fluid is set, and agents then see zero velocity. Assigning a fluid, as
+        every fluid loader does, raises RuntimeError while recording, and
+        ValueError if the loaded ibmesh cannot be put in the fluid's dimension;
+        either way the Environment is left unchanged. A 3D triangle mesh can
+        be used with a 2D fluid only if it is a 2D shape extruded straight
+        along the out-of-plane axis (the geometry of a 2D simulation usually
+        is); the mesh is then replaced by that 2D shape. Assigning a fluid
+        after tile_domain raises ValueError.
     h_p : float
         height of porous region in analytic flows, e.g. Brinkman
     g : float
@@ -170,17 +170,20 @@ class Environment:
     netcdf : netCDF4 Dataset object
         only present if a netCDF file has been loaded for reading
     ibmesh : ndarray
-        This is either an Nx2x2 array (2D, line mesh) or an Nx3x3 array (3D, 
-        triangular mesh) specifying internal mesh structures that agents will 
-        treat as solid barriers. Each value of the first index into the array 
-        specifies a mesh element, and each 1x2 or 1x3 contained in that index 
-        is a point in space (so, two for a line, three for a triangle). Avoid 
-        mesh structures that intersect with a periodic boundary - behavior 
-        related to this is not implemented.
-    max_meshpt_dist : float
-        maximum length of a static mesh segment in ibmesh, typically determined 
-        automatically. This is used in search algorithms to winnow down the 
-        number of mesh elements to search for intersections of movement.
+        This is either an Nx2x2 array (2D, line mesh) or an Nx3x3 array (3D,
+        triangular mesh) specifying internal mesh structures that agents will
+        treat as solid barriers. Each value of the first index into the array
+        specifies a mesh element, and each 1x2 or 1x3 contained in that index
+        is a point in space (so, two for a line, three for a triangle). A
+        moving 2D mesh is TxNx2x2, one Nx2x2 mesh per time in ibmesh_times.
+        Avoid mesh structures that intersect with a periodic boundary - behavior
+        related to this is not implemented. Assigning a mesh after tile_domain
+        raises ValueError.
+    max_meshpt_dist : float or None
+        maximum length of a static mesh segment in ibmesh, typically determined
+        automatically. This is used in search algorithms to winnow down the
+        number of mesh elements to search for intersections of movement. None
+        for a moving mesh.
     ibmesh_times : ndarray of floats or None
         if specified, the time stamp for each index t in the ibmesh (time 
         varying meshes only)
@@ -210,14 +213,12 @@ class Environment:
         integration time for FTLE
     FTLE_grid_dim : tuple of int
         grid dimension for the FTLE calculation (x,y,[z])
+    FTLE_backward : bool
+        whether the stored FTLE fields are backward-time
     mag_grad : ndarray
         acts as a cache for the gradient of magnitude of the fluid velocity
     mag_grad_time : float
         simulation time at which magnitude gradient above was calculated
-    DuDt : list of ndarrays
-        material derivative cache
-    DuDt_time : float
-        simulation time at which material derivative was calculated
 
     Examples
     --------
@@ -232,10 +233,16 @@ class Environment:
     >>> envir = planktos.Environment(Lx=5, Ly=3)
     '''
 
+
     def __init__(self, Lx=10, Ly=10, Lz=None,
                  x_bndry='zero', y_bndry='zero', z_bndry='noflux', flow=None,
-                 flow_times=None, rho=None, mu=None, nu=None, char_L=None, 
-                 U=None, init_swarms=None, units='m', ibmesh_color=None):
+                 flow_times=None, periodic_dim=False, rho=None, mu=None, nu=None,
+                 char_L=None, U=None, init_swarms=None, units='m', ibmesh_color=None):
+
+        # Tile counts once tile_domain has run. Set first: the flow and ibmesh
+        #   setters below consult it.
+        self._tiling = None
+        self._tiling_record = None
 
         # Save domain size, units
         if Lz is None:
@@ -249,16 +256,8 @@ class Environment:
         self.set_boundary_conditions(x_bndry, y_bndry, z_bndry)
 
         ##### Fluid velocity field variables #####
-        self.flow_times = None
-        self.flow_points = None # tuple (len==dim) of 1D arrays specifying the mesh
-        self.fluid_domain_LLC = None # original lower-left corner, if fluid comes from data
-        self.tiling = None # (x,y) tiling amount
-        self.orig_L = None # (Lx,Ly) before tiling/extending
         self.mag_grad = None
         self.mag_grad_time = None
-        self.DuDt = None
-        self.DuDt_time = None
-        self.flow = flow
 
         if flow is not None:
             try:
@@ -273,35 +272,86 @@ class Environment:
             if Lz is not None:
                 # 3D flow
                 assert len(flow) == 3, 'Must specify flow in x, y and z direction'
-                if max([len(f.shape) for f in flow]) > 3:
+                assert flow[0].shape[0] == flow[1].shape[0] == flow[2].shape[0]
+                if len(flow[0].shape)==4:
                     # time-dependent flow
-                    assert flow[0].shape[0] == flow[1].shape[0] == flow[2].shape[0]
                     assert flow_times is not None, "Must provide flow_times"
-                    self._set_flow_variables(flow_times)
                 else:
-                    self._set_flow_variables()
+                    assert flow_times is None, "flow_times provided but fluid data is not time varying"
             else:
                 # 2D flow
-                if max([len(f.shape) for f in flow]) > 2:
+                assert flow[0].shape[0] == flow[1].shape[0]
+                if len(flow[0].shape) == 3:
                     # time-dependent flow
-                    assert flow[0].shape[0] == flow[1].shape[0]
                     assert flow_times is not None, "Must provide flow_times"
-                    self._set_flow_variables(flow_times)
                 else:
-                    self._set_flow_variables()
+                    assert flow_times is None, "flow_times provided but fluid data is not time varying"
+            flow_points, flow_times = self._get_flow_variables(flow[0].shape,
+                                                               flow_times)
+            self.flow = fluid.FluidData(flow, flow_points, flow_times,
+                                        periodic_dim=periodic_dim)
+        else:
+            self.flow = None
+
+        ##### Provenance -- what produced the fluid and the ibmesh #####
+
+        # These record the loader call behind each, so that a run archive can
+        #   say what it was recorded against and, eventually, rebuild an
+        #   environment without serializing the fluid. Loaders fill them in
+        #   themselves (see planktos/_provenance.py); anything set by direct
+        #   assignment -- envir.ibmesh = mesh, and the flow= path just below --
+        #   leaves None or a record that says plainly it cannot be replayed.
+        self._fluid_provenance = None
+        self._ibmesh_provenance = None
+        self._netcdf_provenance = None
+
+        # The active RunRecorder, or None. The time-advance hook finds it here,
+        #   which is why there can only be one per Environment.
+        self._recorder = None
+        # Where this environment last recorded to. Outlives the recorder, so
+        #   that a plot of a finished run reads what that run wrote about the
+        #   fluid rather than reading the fluid again.
+        self._archive_path = None
+        # Which step is being taken. Under a capture schedule len(time_history)
+        #   counts kept states, not steps, so the environment counts steps
+        #   itself, and both trigger sites ask it the same question.
+        self._step_count = 0
+        # Capture every k-th step, counting from the step recording began at.
+        #   k == 1 makes the predicate below always true, which is the state
+        #   whenever nothing is recording.
+        self._capture_interval = 1
+        self._capture_phase = 0
+
+        if flow is not None:
+            # Arrays handed over in process have no call to replay: the data
+            #   came from the caller's own memory, not from a file this could
+            #   name. Record the shapes so an archive can still be validated
+            #   against them, and mark the loader null rather than inventing
+            #   one -- a reader must be able to tell this case from a real
+            #   loader call.
+            self._fluid_provenance = {
+                'loader': None,
+                'note': 'arrays supplied directly to Environment()',
+                'kwargs': {'flow': _provenance.jsonable(flow),
+                           'flow_times': _provenance.jsonable(flow_times),
+                           'periodic_dim': _provenance.jsonable(periodic_dim)}}
 
         ##### swarm list #####
 
-        if init_swarms is None:
-            self.swarms = []
-        else:
-            if isinstance(init_swarms, list):
-                self.swarms = init_swarms
-            else:
-                self.swarms = [init_swarms]
-            # reset each Swarm's environment
-            for sw in self.swarms:
-                sw.envir = self
+        self.swarms = []
+        if init_swarms is not None:
+            if not isinstance(init_swarms, list):
+                init_swarms = [init_swarms]
+            for sw in init_swarms:
+                if getattr(sw, 'envir', None) is None:
+                    # A Swarm still being constructed, which builds its default
+                    #   Environment this way: nothing to leave or project yet.
+                    sw.envir = self
+                    self.swarms.append(sw)
+                else:
+                    # As add_swarm does: leave the old Environment, fit this
+                    #   one's dimension, and join this one's list.
+                    sw._change_envir(self)
 
         ##### Fluid Variables #####
 
@@ -378,19 +428,9 @@ class Environment:
         self.FTLE_backward = None # whether the stored FTLE field is backward-time
 
 
-
-    @property
-    def fluid_domain_LLC(self):
-        return self._fluid_domain_LLC
-
-    @fluid_domain_LLC.setter
-    def fluid_domain_LLC(self, LLC):
-        if LLC is not None and self.ibmesh is not None:
-            # move any ibmesh to match the LLC shift
-            for ii in range(len(LLC)):
-                self.ibmesh[:,:,ii] -= LLC[ii]
-        self._fluid_domain_LLC = LLC
-
+    #######################################################################
+    #####                         PROPERTIES                          #####
+    #######################################################################
 
 
     @property
@@ -407,7 +447,6 @@ class Environment:
         elif self.rho is not None and self.nu is not None:
             warnings.warn("Both nu and rho are already set. "+
                 "Skipping auto-update, please verify all values for consistency!")
-
         
 
     @property
@@ -426,7 +465,6 @@ class Environment:
                 "Skipping auto-update, please verify all values for consistency!")
 
 
-
     @property
     def rho(self):
         return self._rho
@@ -443,12 +481,92 @@ class Environment:
                 "Skipping auto-update, please verify all values for consistency!")
 
 
+    @property
+    def flow(self):
+        return self._flow
+
+    @flow.setter
+    def flow(self, new_flow):
+        # Every fluid entry point assigns here, so this is where an ibmesh
+        #   loaded before the fluid is fitted to it, or the fluid refused. The
+        #   fit is computed before anything is stored, so a refusal leaves the
+        #   Environment as it was. __init__ assigns the flow before ibmesh
+        #   exists, hence getattr.
+        self._refuse_once_tiled('assign a fluid')
+        if getattr(self, '_recorder', None) is not None:
+            self._refuse_while_recording()
+        mesh = getattr(self, 'ibmesh', None)
+        if new_flow is not None and mesh is not None:
+            fitted = self._fit_ibmesh(mesh, new_flow)
+            if fitted is not mesh:
+                self.ibmesh = fitted
+                self.max_meshpt_dist = _geom.max_edge_length(fitted)
+        self._flow = new_flow
+
+
+    @property
+    def ibmesh(self):
+        return self._ibmesh
+
+    @ibmesh.setter
+    def ibmesh(self, mesh):
+        # Every mesh loader assigns here, as does a direct assignment; the
+        #   tiled mesh is the one thing written past it, by tile_domain.
+        self._refuse_once_tiled('assign an immersed mesh')
+        self._ibmesh = mesh
+
+
+    @property
+    def tiling(self):
+        return (1,)*len(self.L) if self._tiling is None else self._tiling
+
+
+    def _fit_ibmesh(self, mesh, flow):
+        '''Return an immersed mesh in the spatial dimension of a fluid.
+
+        A mesh already in that dimension is returned unchanged, as the same
+        object. A static 3D triangle mesh meeting a 2D fluid is reduced to 2D
+        segments when it is a straight extrusion along the axis the fluid
+        dropped -- z for fluid that was never 3D.
+
+        Parameters
+        ----------
+        mesh : ndarray
+            an ibmesh, static or moving
+        flow : FluidData
+
+        Raises
+        ------
+        ValueError
+            if the mesh cannot be put in the fluid's dimension
+        '''
+
+        mesh_dim = mesh.shape[-1]
+        if mesh_dim == flow.ndim:
+            return mesh
+        if mesh_dim == 3 and flow.ndim == 2 and mesh.ndim == 3:
+            axis = flow._flat[0] if flow._flat else 2
+            try:
+                return _geom.flatten_extruded_mesh(mesh, axis)
+            except ValueError as err:
+                raise ValueError(
+                    "A 2D fluid is incompatible with this 3D immersed boundary "
+                    "mesh: {}. Only a mesh extruded straight along {}, as a 2D "
+                    "simulation's geometry is, has a single 2D "
+                    "cross-section.".format(err, 'xyz'[axis])) from None
+        raise ValueError(
+            "A {}D fluid is incompatible with this {}D immersed boundary "
+            "mesh.".format(flow.ndim, mesh_dim))
+
+
     #######################################################################
     #####                        FLUID SETTERS                        #####
     #######################################################################
 
 
-    def set_brinkman_flow(self, alpha, h_p, U, dpdx, res=101, tspan=None):
+    @_provenance.records_provenance('_fluid_provenance', describes='flow')
+    def set_brinkman_flow(self, alpha, h_p, U, dpdx, res=101, tspan=None,
+                          periodic_dim=False):
         r'''Get a fully developed Brinkman flow with a porous region.
 
         This method sets the environment fluid velocity as a 1D Brinkman flow 
@@ -482,10 +600,14 @@ class Environment:
             resolution of the flow; that is, number of points at which to 
             resolve the flow, including boundaries
         tspan : [float, float] or iterable of floats, optional
-            corresponds to [tstart, tend] (start time and end time with an 
-            evenly spaced time mesh) or an iterable of times at which flow is 
-            specified in the case of a time-varying flow field. if not specified 
+            corresponds to [tstart, tend] (start time and end time with an
+            evenly spaced time mesh) or an iterable of times at which flow is
+            specified in the case of a time-varying flow field. if not specified
             and U/dpdx are iterable, dt=1 will be used with a start time of zero.
+        periodic_dim : bool or tuple of bool, default=False
+            whether the generated flow is periodic in each spatial dimension
+            (governs interpolation at the domain edges; independent of the agent
+            boundary conditions).
 
         Examples
         --------
@@ -528,6 +650,9 @@ class Environment:
         set_two_layer_channel_flow
         set_canopy_flow
         '''
+        self._refuse_once_tiled('load a fluid')
+        self._refuse_while_recording()
+
 
         ##### Parse parameters #####
         if tspan is not None and not hasattr(U, '__iter__'):
@@ -608,42 +733,49 @@ class Environment:
             if len(flow.shape) == 2:
                 # no time; (y,x) -> (x,y) coordinates
                 flow = flow.T
-                self.flow = [flow, np.zeros_like(flow)] #x-direction, y-direction
-                self._set_flow_variables()
+                flow_points, flow_times = self._get_flow_variables(flow.shape)
+                self.flow = fluid.FluidData([flow, np.zeros_like(flow)],
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
             else:
                 #time-dependent; (t,y,x)-> (t,x,y) coordinates
                 flow = np.transpose(flow, axes=(0, 2, 1))
-                self.flow = [flow, np.zeros_like(flow)]
                 if tspan is None:
-                    self._set_flow_variables(tspan=1)
+                    flow_points, flow_times = self._get_flow_variables(flow.shape, tspan=1)
                 else:
-                    self._set_flow_variables(tspan=tspan)
+                    flow_points, flow_times = self._get_flow_variables(flow.shape, tspan=tspan)
+                self.flow = fluid.FluidData([flow, np.zeros_like(flow)],
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
+                
         else:
             # 3D
             if len(flow.shape) == 2:
                 # (z,x) -> (x,y,z) coordinates
                 flow = np.broadcast_to(flow, (res, res, res)) #(y,z,x)
                 flow = np.transpose(flow, axes=(2, 0, 1)) #(x,y,z)
-                self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
-
-                self._set_flow_variables()
-
+                flow_points, flow_times = self._get_flow_variables(flow.shape)
+                self.flow = fluid.FluidData([flow, np.zeros_like(flow), np.zeros_like(flow)],
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
             else:
                 # (t,z,x) -> (t,z,y,x) coordinates
                 flow = np.broadcast_to(flow, (res,flow.shape[0],res,res)) #(y,t,z,x)
                 flow = np.transpose(flow, axes=(1, 3, 0, 2)) #(t,x,y,z)
-                self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
-
                 if tspan is None:
-                    self._set_flow_variables(tspan=1)
+                    flow_points, flow_times = self._get_flow_variables(flow.shape, tspan=1)
                 else:
-                    self._set_flow_variables(tspan=tspan)
+                    flow_points, flow_times = self._get_flow_variables(flow.shape, tspan=tspan)
+                self.flow = fluid.FluidData([flow, np.zeros_like(flow), np.zeros_like(flow)],
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
         self._reset_flow_variables()
         self.h_p = h_p
 
 
 
-    def set_two_layer_channel_flow(self, a, h_p, Cd, S, res=101):
+    @_provenance.records_provenance('_fluid_provenance', describes='flow')
+    def set_two_layer_channel_flow(self, a, h_p, Cd, S, res=101, periodic_dim=False):
         '''Apply wide-channel flow with vegetation layer according to the
         two-layer model described in Defina and Bixio (2005), 
         "Vegetated Open Channel Flow" [3]_. 
@@ -663,8 +795,12 @@ class Environment:
             drag coefficient, assumed uniform (unitless)
         S : float 
             bottom slope (unitless, 0-1 with 0 being no slope, resulting in no flow)
-        res : int 
+        res : int
             number of points at which to resolve the flow, including boundaries
+        periodic_dim : bool or tuple of bool, default=False
+            whether the generated flow is periodic in each spatial dimension
+            (governs interpolation at the domain edges; independent of the agent
+            boundary conditions).
 
         See Also
         --------
@@ -673,13 +809,16 @@ class Environment:
 
         Notes
         -----
-        In addition to self.flow, this will set self.h_p = a
+        In addition to self.flow, this will set self.h_p = h_p
 
         References
         ----------
         .. [3] A. Defina and A.C. Bixio, (2005). "Mean flow and turbulence in 
            vegetated open channel flow," Water Resources Research, 41(7).
         '''
+        self._refuse_once_tiled('load a fluid')
+        self._refuse_while_recording()
+
         # Get channel height
         H = self.L[-1]
         # Get empirical length scale, Meijer and Van Valezen (1999)
@@ -723,25 +862,30 @@ class Environment:
         # get flow velocity profile for surface layer
         u[h_p_index:] = u_star/chi*np.log((y_mesh[h_p_index:]-d)/z_0)
 
+        flow_points, flow_times = self._get_flow_variables((res,)*len(self.L))
+
         # broadcast to flow
         if len(self.L) == 2:
             # 2D
-            self.flow = [np.broadcast_to(u,(res,res)), np.zeros((res,res))]
+            self.flow = fluid.FluidData([np.broadcast_to(u,(res,res)), np.zeros((res,res))],
+                                        flow_points, flow_times,
+                                        periodic_dim=periodic_dim)
         else:
             # 3D
-            self.flow = [np.broadcast_to(u,(res,res,res)), np.zeros((res,res,res)),
-                         np.zeros((res,res,res))]
+            self.flow = fluid.FluidData([np.broadcast_to(u,(res,res,res)),
+                                         np.zeros((res,res,res)), np.zeros((res,res,res))],
+                                         flow_points, flow_times,
+                                         periodic_dim=periodic_dim)
 
         # housekeeping
-        self._set_flow_variables()
         self._reset_flow_variables()
-        self.fluid_domain_LLC = None
         self.h_p = h_p
 
 
 
+    @_provenance.records_provenance('_fluid_provenance', describes='flow')
     def set_canopy_flow(self, h, a, u_star=None, U_h=None, beta=0.3, C=0.25,
-                        res=101, tspan=None):
+                        res=101, tspan=None, periodic_dim=False):
         '''
         Apply flow within and above a uniform homogeneous canopy according to 
         the model described in Finnigan and Belcher (2004), "Flow over a hill 
@@ -768,12 +912,16 @@ class Environment:
         beta : float, default=0.3
             mass flux through the canopy (u_star/U_h)
         C : float, default=0.25
-            drag coefficient of indivudal canopy elements
+            drag coefficient of individual canopy elements
         res : int
             number of points at which to resolve the flow, including boundaries
         tspan : [float, float] or iterable of floats, optional
             [tstart, tend] or iterable of times at which flow is specified
             if None and u_star, U_h, and/or beta are iterable, dt=1 will be used.
+        periodic_dim : bool or tuple of bool, default=False
+            whether the generated flow is periodic in each spatial dimension
+            (governs interpolation at the domain edges; independent of the agent
+            boundary conditions).
 
         See Also
         --------
@@ -791,6 +939,20 @@ class Environment:
             Society, 130(596), 1-29.
 
         '''
+        self._refuse_once_tiled('load a fluid')
+        self._refuse_while_recording()
+
+        def zero_nonfinite(value):
+            """inf, -inf and nan -> zero, for scalars and arrays alike.
+
+            A zero flow parameter means no wind (u_star == 0 or U_h == 0), so a
+            ratio that divides by one is zero.
+            """
+
+            cleaned = np.where(np.isfinite(value), value, 0.0)
+            # np.where gives a 0-d array for scalar input; [()] unwraps that
+            #   back to a scalar and is a no-op for anything with a shape.
+            return cleaned[()]
 
         ##### Parse parameters #####
         # Make sure that at least two of the three flow parameters have been specified
@@ -855,25 +1017,20 @@ class Environment:
         # calculate canopy mixing length and print
         if beta is None:
             with np.errstate(divide='ignore', invalid='ignore'):
-                beta = u_star/U_h
                 # U_h==0 and/or u_star==0 implies no flow
-                beta[beta == np.inf] = 0
-                beta[beta == -np.inf] = 0
-                beta[beta == np.nan] = 0
+                beta = zero_nonfinite(u_star/U_h)
         l = 2*beta**3*L_c
         print("Canopy mixing length, l = {} m".format(l))
 
         if u_star is not None:
             if U_h is not None:
-                assert np.isclose(U_h*beta, u_star), "Flow not set: the relation U_h=u_star/beta must be satisfied."
+                # np.all: time-varying parameters give one comparison per time.
+                assert np.all(np.isclose(U_h*beta, u_star)), "Flow not set: the relation u_star = U_h*beta must be satisfied, and for time-varying parameters it must hold at every time point."
             else:
                 # calculate mean wind speed at top of the canopy
                 with np.errstate(divide='ignore', invalid='ignore'):
-                    U_h = u_star/beta
                     # beta==0 and/or u_star==0 implies no flow
-                    U_h[U_h == np.inf] = 0
-                    U_h[U_h == -np.inf] = 0
-                    U_h[U_h == np.nan] = 0
+                    U_h = zero_nonfinite(u_star/beta)
                 print("Mean wind speed at canopy top, U_h = {} {}/s".format(U_h, self.units))
         else:
             assert U_h is not None, "Flow not set: One of u_star or U_h must be specified."
@@ -884,22 +1041,20 @@ class Environment:
         kappa = 0.4 # von Karman's constant
         d = l/kappa
 
+        # Both profile branches need these two ratios, and both divide by a
+        #   parameter the caller is allowed to set to zero.
+        with np.errstate(divide='ignore', invalid='ignore'):
+            beta_l = zero_nonfinite(beta/l)
+            kappa_beta = zero_nonfinite(kappa/beta)
+
         # calculate vertical wind profile at given resolution
         if iter_length is None:
             U_B = np.zeros_like(zmesh)
-            U_B[zmesh<=0] = U_h*np.exp(beta*zmesh[zmesh<=0]/l)
-            U_B[zmesh>0] = u_star/kappa*np.log((zmesh[zmesh>0]+d)/(d*np.exp(-kappa/beta)))
-        else:
+            U_B[zmesh<=0] = U_h*np.exp(beta_l*zmesh[zmesh<=0])
             with np.errstate(divide='ignore', invalid='ignore'):
-                beta_l = beta/l
-                kappa_beta = kappa/beta
-                if type(beta_l) is np.ndarray:
-                    beta_l[beta_l == np.inf] = 0
-                    kappa_beta[kappa_beta == np.inf] = 0
-                    beta_l[beta_l == -np.inf] = 0
-                    kappa_beta[kappa_beta == -np.inf] = 0
-                    beta_l[beta_l == np.nan] = 0
-                    kappa_beta[kappa_beta == np.nan] = 0
+                U_B[zmesh>0] = u_star/kappa*np.log(
+                    (zmesh[zmesh>0]+d)/(d*np.exp(-kappa_beta)))
+        else:
             U_B = np.zeros((iter_length,len(zmesh)))
             U_B[:,zmesh<=0] = np.tile(U_h,(len(zmesh[zmesh<=0]),1)).T*np.exp(
                             np.outer(beta_l,zmesh[zmesh<=0]))
@@ -908,82 +1063,140 @@ class Environment:
                             np.add.outer(d,zmesh[zmesh>0])/z_0_mat)
             # each row is a different time point, and z is across columns
 
+        # The log profile above the canopy divides by the displacement height d,
+        #   which is zero when the canopy mixing length is -- so beta == 0 (or a
+        #   U_h of zero, which produces it) leaves the model with no roughness
+        #   length and no defined profile.
+        if not np.all(np.isfinite(U_B)):
+            raise ValueError(
+                "Canopy flow is undefined for these parameters: the wind "
+                "profile came out non-finite. The usual cause is a canopy "
+                "mixing length of zero (beta={}, l={}), which leaves the "
+                "logarithmic profile above the canopy with no roughness length "
+                "to scale against.".format(beta, l))
+
         # broadcast to flow
         if iter_length is None:
             # time independent
             if len(self.L) == 2:
                 # 2D
+                flow_points, flow_times = self._get_flow_variables((res,res))
                 flow = np.broadcast_to(U_B,(res,res))
-                self.flow = [flow, np.zeros_like(flow)]
+                self.flow = fluid.FluidData([flow, np.zeros_like(flow)],
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
             else:
                 # 3D
+                flow_points, flow_times = self._get_flow_variables((res,res,res))
                 flow = np.broadcast_to(U_B,(res,res,res))
-                self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
-            self._set_flow_variables()
+                self.flow = fluid.FluidData([flow, np.zeros_like(flow), np.zeros_like(flow)],
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
         else:
             # time dependent
+            if tspan is None:
+                tspan = 1
             if len(self.L) == 2:
                 # 2D
                 # broadcast from (t,y) -> (x,t,y)
                 flow = np.broadcast_to(U_B, (res, iter_length, res))
                 # transpose: (x,t,y) -> (t,x,y)
                 flow = np.transpose(flow, axes=(1, 0, 2))
-                self.flow = [flow, np.zeros_like(flow)]
+                flow_points, flow_times = self._get_flow_variables(flow.shape,tspan)
+                self.flow = fluid.FluidData([flow, np.zeros_like(flow)],
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
             else:
                 # 3D
                 # broadcast from (t,y) -> (x,y,t,z)
                 flow = np.broadcast_to(U_B, (res, res, iter_length, res))
                 # transpose: (x,y,t,z) -> (t,x,y,z)
                 flow = np.transpose(flow, axes=(2,0,1,3))
-                self.flow = [flow, np.zeros_like(flow), np.zeros_like(flow)]
-            if tspan is None:
-                self._set_flow_variables(tspan=1)
-            else:
-                self._set_flow_variables(tspan=tspan)
+                flow_points, flow_times = self._get_flow_variables(flow.shape,tspan)
+                self.flow = fluid.FluidData([flow, np.zeros_like(flow), np.zeros_like(flow)],
+                                            flow_points, flow_times,
+                                            periodic_dim=periodic_dim)
 
 
         # housekeeping
         self._reset_flow_variables()
-        self.fluid_domain_LLC = None
         self.h_p = h
 
 
 
-    def _set_flow_variables(self, tspan=None):
-        '''Store points at which flow is specified, and time information.
+    def _get_flow_variables(self, fshape, tspan=None):
+        '''Return the grid and time stamps for flow data of shape fshape.
 
         Parameters
         ----------
-            tspan : float, floats [tstart, tend], or iterable, optional
-                times at which flow is specified or scalar dt. Required if flow 
-                is time-dependent; None will be interpreted as non time-dependent 
-                flow.
+        fshape : tuple of int
+            shape of one velocity component, ([t], x, y, [z])
+        tspan : float, (float, float), or iterable of floats, optional
+            None for time-invariant flow, whose fshape has no time axis.
+            Otherwise the first axis of fshape is time, and tspan is dt (times
+            from 0), (tstart, tend) (evenly spaced), or one time per time point.
+
+        Returns
+        -------
+        flow_points : tuple of ndarray
+            for each spatial axis, evenly spaced points from 0 to that axis's L
+        flow_times : ndarray or None
         '''
 
         # Get points defining the spatial grid for flow data. flow_points[i] is
         #   the coordinate array for spatial axis i over domain length L[i] -- the
-        #   same convention the data loaders use and that interpolate_flow,
-        #   get_2D_vorticity, and plotting assume. Spatial axes are all of the
-        #   flow shape for static flow, or all but the leading time axis when the
-        #   flow is time-dependent.
-        spatial_shape = self.flow[0].shape if tspan is None \
-            else self.flow[0].shape[1:]
-        points = [np.linspace(0, self.L[dim], mesh_size)
-                  for dim, mesh_size in enumerate(spatial_shape)]
-        self.flow_points = tuple(points)
+        #   convention the data loaders, interpolate_flow, get_vorticity, and
+        #   plotting assume. Spatial axes are all of fshape for static flow, or
+        #   all but the leading time axis when the flow is time-dependent.
+        points = []
+        if tspan is None:
+            # no time-dependent flow
+            spatial_shape = fshape
+        else:
+            # time-dependent flow: the first axis is time
+            spatial_shape = fshape[1:]
+            tlen = fshape[0]
+        for dim, mesh_size in enumerate(spatial_shape):
+            points.append(np.linspace(0, self.L[dim], mesh_size))
+        flow_points = tuple(points)
 
         # set time
         if tspan is not None:
             if not hasattr(tspan, '__iter__'):
-                # set flow_times based off zero
-                self.flow_times = np.arange(0, tspan*self.flow[0].shape[0], tspan)
+                # tspan is dt: tlen times from zero, counted by an integer
+                #   range so that the count is exact.
+                flow_times = tspan*np.arange(tlen)
             elif len(tspan) == 2:
-                self.flow_times = np.linspace(tspan[0], tspan[1], self.flow[0].shape[0])
+                flow_times = np.linspace(tspan[0], tspan[1], tlen)
             else:
-                assert len(tspan) == self.flow[0].shape[0]
-                self.flow_times = np.array(tspan)
+                assert len(tspan) == tlen
+                flow_times = np.array(tspan)
         else:
-            self.flow_times = None
+            flow_times = None
+
+        return flow_points, flow_times
+
+
+    def _reset_flow_variables(self, incl_rho_mu_U=False):
+        '''To be used when the fluid flow changes. Resets all the helper
+        parameters and reports new domain.'''
+
+        self.h_p = None
+        self.plot_structs = []
+        self.plot_structs_args = []
+        self._reset_flow_deriv()
+        if incl_rho_mu_U:
+            self.mu = None
+            self.rho = None
+            self.U = None
+        print("Fluid updated. Planktos domain size is now {}.".format(self.L))
+
+
+    def _reset_flow_deriv(self):
+        '''Reset properties that are derived from the flow velocity.'''
+
+        self.mag_grad = None
+        self.mag_grad_time = None
 
 
     #######################################################################
@@ -991,12 +1204,17 @@ class Environment:
     #######################################################################
 
 
-    def read_IB2d_fluid_data(self, path, dt, print_dump, d_start=0, d_finish=None):
+    @_provenance.records_provenance('_fluid_provenance', describes='flow')
+    def read_IB2d_fluid_data(self, path, dt, print_dump, d_start=None,
+                             d_finish=None, INUM=None):
         '''Reads in vtk flow velocity data generated by IB2d and sets environment
-        variables accordingly.
+        variables accordingly. Time will be shifted to start at t=0 regardless of
+        d_start; give read_IB2d_mesh_data the same d_start so that a moving
+        mesh starts at the same dump.
 
         Can read in vector data with filenames u.####.vtk or scalar data
-        with filenames uX.####.vtk and uY.####.vtk.
+        with filenames uX.####.vtk and uY.####.vtk. IB2d data is periodic in
+        both directions, and is interpolated as such.
 
         IB2d is an Immersed Boundary (IB) code for solving fully coupled
         fluid-structure interaction models in Python and MATLAB. The code is 
@@ -1010,158 +1228,282 @@ class Environment:
             dt in input2d
         print_dump : int
             print_dump in input2d
-        d_start : int, default=0
-            number of first vtk dump to read in
+        d_start : int, optional
+            number of first vtk dump to read in, or None (default) for the first
+            dump on disk
         d_finish : int, optional
-            number of last vtk dump to read in, or None to read to end
-        auto_regrid : bool, default=True
-            IB2d always has periodic BC and returns a VTK with fluid specified 
-            at the center of the mesh cells. Regrid based on this information to
-            make the fluid periodic within Planktos and to fill out the domain.
+            number of last vtk dump to read in, or None (default) for the last
+        INUM : int >= 2, True, or None (default)
+            max number of splined intervals held at any one time; the number of
+            time points held is 1+INUM, and INUM must be at least 2. None splines
+            the entire dataset at once and cubically in time; True holds the
+            entire dataset too but splines it linearly; an int streams a sliding
+            window from storage and splines that linearly. Use an int only
+            when the dataset will not fit in memory: streaming it is slower.
         '''
+        self._refuse_once_tiled('load a fluid')
+        self._refuse_while_recording()
 
-        ##### Parse parameters and read in data #####
 
-        path = Path(path)
-        if not path.is_dir(): 
-            raise FileNotFoundError("Directory {} not found!".format(str(path)))
-
-        #infer d_finish
-        file_names = [x.name for x in path.iterdir() if x.is_file()]
-        if 'u.' in [x[:2] for x in file_names]:
-            u_nums = sorted([int(f[2:6]) for f in file_names if f[:2] == 'u.'])
-            if d_finish is None:
-                d_finish = u_nums[-1]
-            vector_data = True
-        else:
-            assert 'uX.' in [x[:3] for x in file_names],\
-                "Could not find u.####.vtk or uX.####.vtk files in {}.".format(str(path))
-            u_nums = sorted([int(f[3:7]) for f in file_names if f[:3] == 'uX.'])
-            if d_finish is None:
-                d_finish = u_nums[-1]
-            vector_data = False
-
-        # Save time data
-        if d_start != d_finish:
-            self.flow_times = np.arange(d_start,d_finish+1)*print_dump*dt
-            # shift time so that flow starts at t=0
-            self.flow_times -= self.flow_times[0]
-        else:
-            self.flow_times = None
-
-        path = str(path) # Get string for passing into functions
-
-        ### Load fluid data ###
-        print('Reading vtk fluid data...')
-        self.flow, x, y = fluid._read_IB2d_dumpfiles(path, d_start, d_finish, 
-                                                    vector_data)
-        print('Done!')
-
-        # shift domain to quadrant 1
-        self.flow_points = (x-x[0], y-y[0])
-        self.fluid_domain_LLC = (x[0], y[0])
-
-        ### Convert environment dimensions and add back the periodic gridpoints ###
-        # IB2d always has periodic BC and returns a VTK with fluid specified 
-        #     at grid points but lacking the grid points at the end of the 
-        #     domain (since it's a duplicate). Make the fluid periodic within 
-        #     Planktos and to fill out the domain by adding back these last points
-        self.L = [self.flow_points[dim][-1] for dim in range(2)]
-        self.flow, self.flow_points, self.L = fluid._wrap_flow(
-            self.flow, self.flow_points, periodic_dim=(True, True))
+        self.flow = fluid.IB2dData(path, dt, print_dump, d_start, d_finish, INUM)
+        self.L = self.flow.L
         self._reset_flow_variables()
 
 
 
-    def read_IBAMR3d_vtk_data(self, path, d_start=0, d_finish=None,
-                              vel_conv=None, grid_conv=None):
+    @_provenance.records_provenance('_fluid_provenance', describes='flow')
+    def read_IBAMR3d_vtk_data(self, path, title='IBAMR_db_', d_start=0, 
+                              d_finish=None, INUM=None, 
+                              periodic_dim=(True, True, False), vel_conv=None):
         '''Reads in one or more vtk Rectilinear Grid Vector files. If path
         refers to a single file, the resulting flow will be time invariant.
-        Otherwise, this method will assume that files are named IBAMR_db_###.vtk 
+        Otherwise, this method will assume that files are named <title>###.vtk 
         where ### is the dump number, and that the mesh is the same in each vtk.
         Also, imported times will be translated backward so that the first time 
         loaded corresponds to a Planktos environment time of 0.0.
 
-        All environment variables will be reset.
+        Sets L to the fluid's domain and clears h_p, plot_structs and the
+        cached speed gradient; swarms, time, the immersed mesh and the fluid
+        properties are kept.
 
         Parameters
         ----------
         path : string
             path to vtk data, incl. file extension if a single file
+        title : string, optional
+            The name of each vtk before the dump number. Defaults to
+            ``IBAMR_db_``.
         d_start : int, default=0
             vtk dump number to start with.
         d_finish : int, optional
             vtk dump number to end with. If None, end with last one.
+        INUM : int >= 2, True, or None (default)
+            max number of splined intervals held at any one time; the number of
+            time points held is 1+INUM, and INUM must be at least 2. None splines
+            the entire dataset at once and cubically in time; True holds the
+            entire dataset too but splines it linearly; an int streams a sliding
+            window from storage and splines that linearly. Use an int only
+            when the dataset will not fit in memory: streaming it is slower.
+        periodic_dim : bool or tuple of 3 bool, default=(True, True, False)
+            True if that spatial dimension is periodic, otherwise False
         vel_conv : float, optional
-            scalar to multiply the velocity by in order to convert units
-        grid_conv : float, optional
-            scalar to multiply the grid by in order to convert units
+            scalar to multiply the velocity by in order to convert units to 
+            match the spatial grid units
         '''
+        self._refuse_once_tiled('load a fluid')
+        self._refuse_while_recording()
 
-        self.flow, mesh, self.flow_times = fluid._read_IBAMR3d_vtkfiles(path,
-                                                d_start, d_finish, 
-                                                vel_conv, grid_conv)
-        # shift domain to quadrant 1
-        self.flow_points = (mesh[0]-mesh[0][0], mesh[1]-mesh[1][0],
-                            mesh[2]-mesh[2][0])
 
-        ### Convert environment dimensions and reset simulation time ###
-        self.L = [self.flow_points[dim][-1] for dim in range(3)]
+        self.flow = fluid.VTK3dData(path, title, d_start, d_finish, INUM,
+                                    periodic_dim, vel_conv)
+        self.L = self.flow.L
         self._reset_flow_variables()
-        # record the original lower left corner (can be useful for later imports)
-        self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
 
 
 
-    def read_comsol_vtu_data(self, filename, vel_conv=None, grid_conv=None):
-        '''Reads in vtu flow data from a single source and sets environment
-        variables accordingly. The resulting flow will be time invariant.
-        It is assumed this data is on a regular grid and that a grid section
-        is included in the data.
+    @_provenance.records_provenance('_fluid_provenance', describes='flow')
+    def read_openfoam_vtk_data(self, path, INUM=None,
+                               periodic_dim=(False, False, False),
+                               vel_conv=None, require_boundary=True):
+        '''Reads in fluid velocity data from an OpenFOAM VTK export, as written
+        by ``foamToVTK``: a ``.vtm.series`` index naming one ``.vtm`` manifest
+        per timestep, each naming an ``internal.vtu`` of volume data plus a
+        ``.vtp`` per boundary patch. Imported times will be translated backward
+        so that the first time loaded corresponds to a Planktos environment time
+        of 0.0.
 
-        FOR NOW, THIS IS TIME INVARIANT ONLY.
+        OpenFOAM gives the velocity at cell centers, inset half a cell from the
+        domain boundary, so the boundary patches are spliced onto the six faces
+        of the interior to recover the full domain. The resulting grid is
+        rectilinear but not uniform: the outermost interval in each direction is
+        half-width.
 
-        All environment variables will be reset.
+        The mesh is read from the first dump and must be a complete
+        tensor-product grid, or this raises; a ``snappyHexMesh`` refinement,
+        for one, is not. Later dumps are reordered onto it, the second is
+        checked against it cell by cell, and a changed cell count raises on any
+        dump.
+
+        Dumps the series index declares but which are not on disk are skipped
+        with a warning. Without the index, the timeline is rebuilt from the
+        ``.vtm`` manifests, then from the ``TimeValue`` in each
+        ``internal.vtu``, then from unit time steps; each fallback warns and is
+        recorded on the flow as ``dump_source`` and ``time_source``.
+
+        Sets L to the fluid's domain and clears h_p, plot_structs and the
+        cached speed gradient; swarms, time, the immersed mesh and the fluid
+        properties are kept.
+
+        Parameters
+        ----------
+        path : string
+            path to the directory holding the ``.vtm.series`` index (typically
+            the ``VTK`` directory foamToVTK writes), or to the index file itself
+        INUM : int >= 2, True, or None (default)
+            max number of splined intervals held at any one time; the number of
+            time points held is 1+INUM, and INUM must be at least 2. None splines
+            the entire dataset at once and cubically in time; True holds the
+            entire dataset too but splines it linearly; an int streams a sliding
+            window from storage and splines that linearly. Use an int only
+            when the dataset will not fit in memory: streaming it is slower.
+        periodic_dim : bool or tuple of 3 bool, default=(False, False, False)
+            True if that spatial dimension is periodic, otherwise False
+        vel_conv : float, optional
+            scalar to multiply the velocity by in order to convert units to
+            match the spatial grid units
+        require_boundary : bool, default=True
+            whether to require a boundary patch on each of the six domain faces.
+            True raises when one is missing; False extrapolates the interior out
+            to each uncovered face instead, with a warning, and still uses the
+            patches that exist.
+        '''
+        self._refuse_once_tiled('load a fluid')
+        self._refuse_while_recording()
+
+
+        self.flow = fluid.OpenFOAMData(path, INUM, periodic_dim, vel_conv,
+                                       require_boundary)
+        self.L = self.flow.L
+        self._reset_flow_variables()
+
+
+
+    @_provenance.records_provenance('_fluid_provenance', describes='flow')
+    def read_vtkxml_fluid_data(self, path, INUM=None,
+                               periodic_dim=(False, False, False),
+                               vel_conv=None, vec_name=None,
+                               time_from_name=None, dt=None):
+        '''Reads in fluid velocity point data from VTK XML ImageData (``.vti``)
+        or RectilinearGrid (``.vtr``) files, such as solver output resampled
+        onto a Cartesian grid.
+
+        Times come from a ParaView collection (``.pvd``) indexing the series if
+        there is one; failing that, from the ``TimeValue`` in each file, then
+        from the filenames through ``time_from_name``, and finally from unit
+        time steps, with a warning. ``dt`` gives the interval between dumps
+        directly instead. Times are translated so that the first dump
+        corresponds to a Planktos environment time of 0.0. A single ``.vti``
+        file gives time-invariant flow, for which INUM and dt are ignored.
+
+        A grid one point thick in a dimension is read as 2D data on the others,
+        with the velocity component along that dimension dropped. Dumps the
+        collection declares but which are not on disk are skipped with a
+        warning.
+
+        Sets L to the fluid's domain and clears h_p, plot_structs and the
+        cached speed gradient; swarms, time, the immersed mesh and the fluid
+        properties are kept.
+
+        Parameters
+        ----------
+        path : string
+            a directory holding a ``.pvd`` collection or ``.vti``/``.vtr``
+            files, the ``.pvd`` itself, or a single dump file
+        INUM : int >= 2, True, or None (default)
+            max number of splined intervals held at any one time; the number of
+            time points held is 1+INUM, and INUM must be at least 2. None splines
+            the entire dataset at once and cubically in time; True holds the
+            entire dataset too but splines it linearly; an int streams a sliding
+            window from storage and splines that linearly. Use an int only
+            when the dataset will not fit in memory: streaming it is slower.
+        periodic_dim : bool or tuple of 3 bool, default=(False, False, False)
+            True if that spatial dimension is periodic, otherwise False
+        vel_conv : float, optional
+            scalar to multiply the velocity by in order to convert units to
+            match the spatial grid units
+        vec_name : string, optional
+            name of the velocity point-data array. Defaults to the array each
+            file declares as its active vectors.
+        time_from_name : string, optional
+            regular expression whose first group is a dump's time within its
+            filename, such as ``r'_t([0-9.]+)[.]vti$'``. Used for dump files
+            that have no collection and carry no ``TimeValue``.
+        dt : float, optional
+            interval between consecutive dumps. Each dump's time is ``dt`` times
+            its position in the series, counting any dump a collection declares
+            but which is absent. Times the files carry must agree with it.
+        '''
+        self._refuse_once_tiled('load a fluid')
+        self._refuse_while_recording()
+
+
+        self.flow = fluid.VTKXMLData(path, INUM, periodic_dim, vel_conv,
+                                     vec_name, time_from_name, dt)
+        self.L = self.flow.L
+        self._reset_flow_variables()
+
+
+
+    @_provenance.records_provenance('_fluid_provenance', describes='flow')
+    def read_comsol_vtu_data(self, filename, periodic_dim=(False, False, False),
+                             res=101, linear_interp=False, vel_conv=None,
+                             grid_conv=None):
+        '''Reads fluid velocity data exported from COMSOL Multiphysics, in
+        either of two formats, told apart by the file's contents:
+
+        - **VTK XML (.vtu)**, holding the velocity at every time point on the
+          FEM mesh, which is regridded onto a regular grid with res points in
+          each dimension (see :class:`~planktos.fluid.ComsolVTUData`). Times are
+          shifted so that the first is at a Planktos environment time of 0.0.
+        - **COMSOL's text grid export**, which COMSOL may also name .vtu,
+          holding the velocity at one time on a regular grid, which is read as
+          it is (see :class:`~planktos.fluid.ComsolGridData`). If its points
+          are cell centers, call :meth:`center_cell_regrid` next.
+
+        The whole export is held in memory. Sets L to the fluid's domain and
+        clears h_p, plot_structs and the cached speed gradient; swarms, time,
+        the immersed mesh and the fluid properties are kept.
 
         Parameters
         ----------
         filename : string
             filename of data to read, incl. file extension
+        periodic_dim : bool or tuple of 3 bool, default=(False, False, False)
+            True if that spatial dimension is periodic, otherwise False
+        res : int, default=101
+            number of points at which to resolve the flow in each dimension;
+            VTK XML only
+        linear_interp : bool, default=False
+            whether to interpolate in time linearly (True) or with a cubic
+            spline (False); VTK XML only
         vel_conv : float, optional
             scalar to multiply the velocity by in order to convert units
         grid_conv : float, optional
-            scalar to multiply the grid by in order to convert units
+            scalar to multiply the grid by in order to convert units; text grid
+            only
+
+        Raises
+        ------
+        FileNotFoundError
+            if filename is not a file
+        ValueError
+            if grid_conv is given for a VTK XML file
         '''
-        path = Path(filename)
-        if not path.is_file(): 
+        self._refuse_once_tiled('load a fluid')
+        self._refuse_while_recording()
+
+        if not Path(filename).is_file():
             raise FileNotFoundError("File {} not found!".format(str(filename)))
+        # COMSOL's text exports open with '%' header lines; a VTK XML file
+        #   opens with '<'.
+        with open(filename, 'rb') as f:
+            text_grid = f.read(256).lstrip().startswith(b'%')
 
-        data, mesh = _dataio.read_vtu_mesh_velocity(filename)
-
-        if vel_conv is not None:
-            print("Converting vel units by a factor of {}.".format(vel_conv))
-            for ii, d in enumerate(data):
-                data[ii] = d*vel_conv
-        if grid_conv is not None:
-            print("Converting grid units by a factor of {}.".format(grid_conv))
-            for ii, m in enumerate(mesh):
-                mesh[ii] = m*grid_conv
-
-        self.flow = data
-        self.flow_times = None
-
-        # shift domain to quadrant 1
-        self.flow_points = (mesh[0]-mesh[0][0], mesh[1]-mesh[1][0],
-                            mesh[2]-mesh[2][0])
-
-        ### Convert environment dimensions and reset simulation time ###
-        self.L = [self.flow_points[dim][-1] for dim in range(3)]
+        if text_grid:
+            self.flow = fluid.ComsolGridData(filename, periodic_dim, vel_conv,
+                                             grid_conv)
+        else:
+            if grid_conv is not None:
+                raise ValueError('grid_conv applies to COMSOL text grid exports '
+                                 'only, and {} is not one.'.format(filename))
+            self.flow = fluid.ComsolVTUData(filename, periodic_dim, res,
+                                            linear_interp, vel_conv)
+        self.L = self.flow.L
         self._reset_flow_variables()
-        # record the original lower left corner (can be useful for later imports)
-        self.fluid_domain_LLC = (mesh[0][0], mesh[1][0], mesh[2][0])
 
 
 
+    @_provenance.records_provenance('_netcdf_provenance')
     def load_NetCDF(self, filename):
         '''Load a NetCDF file into the netcdf attribute of the Environment. 
         Does not automatically read in any data.
@@ -1173,6 +1515,9 @@ class Environment:
         See the documentation/tutorial for netCDF4 on ways to read the metadata
         for the loaded Dataset. See read_NetCDF_flow for reading in data from a 
         loaded NetCDF dataset.
+
+        Note: dynamic loading of fluid data is not currently supported for 
+        NetCDF format.
 
         Parameters
         ----------
@@ -1191,11 +1536,17 @@ class Environment:
 
 
 
+    @_provenance.records_provenance('_fluid_provenance',
+                                preceded_by='_netcdf_provenance',
+                                describes='flow')
     def read_NetCDF_flow(self, flow_x, flow_y=None, flow_z=None, vec_idx=None, 
                          dim_reorder=None, x_name=None, y_name=None, z_name=None, 
                          time_name=None, conv_time=False):
         '''Read NetCDF fluid data into the environment. Must first have loaded a 
         NetCDF dataset with load_NetCDF.
+
+        Note: dynamic loading of fluid data is not currently supported for 
+        NetCDF format.
 
         The default expectation is that the x, y, and z components of the fluid 
         velocity data are specified in separate Variables. If that is not the 
@@ -1210,10 +1561,11 @@ class Environment:
         them. Otherwise, strings must be specified for x_name, y_name, and 
         z_name giving the Variable names. The same goes for the time mesh data.
 
-        **Blurb about time conversion**
+        Times are taken as stored in the time variable, not translated to start
+        at 0.0. Set conv_time to convert datetime values to numbers (see Notes).
 
-        If the coordinate variables have a Unit attribute, this will be loaded 
-        as the environment's units.
+        If the x coordinate variable has a units attribute, it becomes the
+        environment's units.
 
         Parameters
         ----------
@@ -1237,9 +1589,10 @@ class Environment:
             then no adjustment is necessary. Otherwise, this must be specified 
             as a tuple or list which contains a permutation of [0,1,..,N-1] 
             where N is the number of spatial-temporal dimensions and the numbers 
-            correspond to where each dimension of the NetCDF variable should go 
-            in the Planktos ordering. If the NetCDF variable has a dimension 
-            specifying the component of the fluid velocity, ignore it and do not 
+            correspond to where each dimension of the NetCDF variable should go
+            in the Planktos ordering, e.g. [0, 2, 1] for a variable stored as
+            (time, y, x). If the NetCDF variable has a dimension
+            specifying the component of the fluid velocity, ignore it and do not
             include it in the permutation list.
         x_name : string, optional
             Variable name (or path, if the variable is inside a group) for the 
@@ -1283,11 +1636,18 @@ class Environment:
         ‘julian’, ‘all_leap’, ‘366_day’. Default is None which means the 
         calendar associated with the first input datetime instance will be used.
         '''
+        self._refuse_once_tiled('load a fluid')
+        self._refuse_while_recording()
+
         
         if flow_y is None:
             assert vec_idx is not None, "vec_idx must be specified if there is only one fluid variable"
 
-        # Get the flow data, permuting the axes as necessary
+        # Get the flow data, permuting the axes as necessary. dim_reorder[i] is
+        #   where NetCDF axis i goes; np.transpose takes, for each output
+        #   axis, the input axis that lands there, which is the inverse.
+        if dim_reorder is not None:
+            axes = np.argsort(dim_reorder)
         flow = []
         if vec_idx is None:
             if dim_reorder is None:
@@ -1296,10 +1656,10 @@ class Environment:
                 if flow_z is not None:
                     flow.append(self.netcdf[flow_z][:])
             else:
-                flow.append(np.transpose(self.netcdf[flow_x][:], dim_reorder))
-                flow.append(np.transpose(self.netcdf[flow_y][:], dim_reorder))
+                flow.append(np.transpose(self.netcdf[flow_x][:], axes))
+                flow.append(np.transpose(self.netcdf[flow_y][:], axes))
                 if flow_z is not None:
-                    flow.append(np.transpose(self.netcdf[flow_z][:], dim_reorder))
+                    flow.append(np.transpose(self.netcdf[flow_z][:], axes))
         else:
             dim = self.netcdf[flow_x].shape[vec_idx]
             full_flow = np.moveaxis(self.netcdf[flow_x][:], vec_idx, 0)
@@ -1308,7 +1668,7 @@ class Environment:
                     flow.append(full_flow[d,...])
             else:
                 for d in range(dim):
-                    flow.append(np.transpose(full_flow[d,...], dim_reorder))
+                    flow.append(np.transpose(full_flow[d,...], axes))
 
         # Detect time dependence and spatial dimension
         ts_dim = len(flow[0].shape)
@@ -1334,7 +1694,8 @@ class Environment:
             if vec_idx is None:
                 dim_idx_reorder = dim_reorder
             else:
-                dim_idx_reorder = list(dim_reorder).insert(vec_idx, 99)
+                dim_idx_reorder = list(dim_reorder)
+                dim_idx_reorder.insert(vec_idx, 99)
             dim_order = []
             for d in range(len(dim_reorder)):
                 for idx, val in enumerate(dim_idx_reorder):
@@ -1372,296 +1733,102 @@ class Environment:
                                       calendar=self.netcdf[time_name].calendar)
             else:
                 flow_times = self.netcdf[time_name][:]
+        else:
+            flow_times = None
         
-        # Set environment variables and reset LLC to origin
-        self.flow = flow
+        # Reset LLC to origin
+        if s_dim == 2:
+            flow_points = (flow_points_x-flow_points_x[0],
+                           flow_points_y-flow_points_y[0])
+        else:
+            flow_points = (flow_points_x-flow_points_x[0],
+                           flow_points_y-flow_points_y[0],
+                           flow_points_z-flow_points_z[0])
+        if s_dim == 2:
+            fluid_domain_LLC = (flow_points_x[0], flow_points_y[0])
+        else:
+            fluid_domain_LLC = (flow_points_x[0], flow_points_y[0], flow_points_z[0])
+        # Assigned before anything else on the Environment changes, since
+        #   assigning the flow can refuse it (see the flow setter).
+        self.flow = fluid.FluidData(flow, flow_points, flow_times, INUM=None,
+                                    periodic_dim=False,
+                                    fluid_domain_LLC=fluid_domain_LLC)
         if s_units is not None:
             self.units = s_units
-        if s_dim == 2:
-            self.flow_points = (flow_points_x-flow_points_x[0], 
-                                flow_points_y-flow_points_y[0])
-        else:
-            self.flow_points = (flow_points_x-flow_points_x[0], 
-                                flow_points_y-flow_points_y[0],
-                                flow_points_z-flow_points_z[0])
-        self.L = [self.flow_points[dim][-1] for dim in range(s_dim)]
-        if time_dep:
-            self.flow_times = flow_times
+        self.L = [flow_points[dim][-1] for dim in range(s_dim)]
         self._reset_flow_variables()
-        if s_dim == 2:
-            self.fluid_domain_LLC = (flow_points_x[0], flow_points_y[0])
-        else:
-            self.fluid_domain_LLC = (flow_points_x[0], flow_points_y[0], flow_points_z[0])
 
 
 
+    @_provenance.note_modifier('_fluid_provenance')
     def center_cell_regrid(self, periodic_dim=(False, False, False)):
-        '''Re-grids data that was specified at the center of cells instead of
-        at the corners.
+        '''Extend fluid data given at cell centers out to the domain boundary.
 
-        NOTE! This needs to be called *before* any immersed meshes are loaded.
-        It will NOT look for and properly shift these meshes.
-        
-        Software has a tendency to output data files where the fluid mesh is 
-        specified at the center of cells rather than at the corners. This will 
-        be readily apparent if Planktos loads your fluid velocity data and 
-        reports spatial dimensions one dx, dy, and dz smaller than you were 
-        expecting. To fix this, Planktos will interpolate/extrapolate the fluid 
-        velocity mesh using the default method to get additional grid points on 
-        the edge of the domain.
+        Data exported at cell centers stops half a cell short of each face, so
+        the loaded domain is one cell narrower in each direction than the
+        simulation's. This adds a grid plane half a cell out at both ends of
+        every axis and extends the field to it -- linearly, or across the wrap
+        on a periodic axis. The grid's lower-left corner stays at the origin,
+        ``flow.fluid_domain_LLC`` moves out by the half cell, and L becomes the
+        extended domain.
 
-        Periodicity can be enforced in specified dimensions.
+        Call it before loading an immersed mesh, which is placed using the
+        fluid's lower-left corner.
 
         Parameters
         ----------
-        periodic_dim : list-like of 2 or 3 bool, default=(True, True, False)
-            True if that spatial dimension is periodic, otherwise False.
-            The 3rd entry will be ignored in the 2D case.
+        periodic_dim : bool or sequence of bool, default=(False, False, False)
+            whether each spatial axis is periodic, or every axis; entries past
+            the fluid's dimension are ignored. This also becomes the fluid's
+            periodic_dim.
+
+        Raises
+        ------
+        ValueError
+            if no fluid is loaded, an immersed mesh is loaded, or the fluid is
+            dynamically loaded, so that only a window of it is in memory
         '''
-        
-        # Detect cell width in each dimension based on the first two coordinates 
-        #   in each spatial dimension
-        dx = self.flow_points[0][1] - self.flow_points[0][0]
-        dy = self.flow_points[1][1] - self.flow_points[1][0]
-        if len(self.L) > 2:
-            dz = self.flow_points[2][1] - self.flow_points[2][0]
-            DIM3 = True
+        self._refuse_once_tiled('change the fluid')
+        self._refuse_while_recording()
+        flow = self.flow
+        if flow is None:
+            raise ValueError('no fluid is loaded.')
+        if self.ibmesh is not None:
+            raise ValueError(
+                'an immersed mesh is loaded, and it was placed using the '
+                "fluid's lower-left corner, which this would move. Call "
+                'center_cell_regrid before loading the mesh.')
+        if flow.is_windowed:
+            raise ValueError(
+                'this fluid is dynamically loaded, so only a window of it is '
+                'in memory to regrid.')
+
+        ndim = len(flow.flow_points)
+        if isinstance(periodic_dim, (bool, np.bool_)):
+            periodic_dim = (bool(periodic_dim),)*ndim
         else:
-            DIM3 = False
-
-        ### Create a list of positions at which we need to extrapolate the ###
-        ###   velocity field                                               ###
-        x_ends = [-dx/2, self.flow_points[0][-1]+dx/2]
-        y_ends = [-dy/2, self.flow_points[1][-1]+dy/2]
-        bndry_list = []
-        if not DIM3:
-            # edges
-            bndry_list += [[x, y_ends[0]] for x in self.flow_points[0]]
-            bndry_list += [[x, y_ends[1]] for x in self.flow_points[0]]
-            bndry_list += [[x_ends[0], y] for y in self.flow_points[1]]
-            bndry_list += [[x_ends[1], y] for y in self.flow_points[1]]
-            # points
-            bndry_list += [[x_ends[0],y_ends[0]],[x_ends[0],y_ends[1]],
-                           [x_ends[1],y_ends[0]],[x_ends[1],y_ends[1]]]
+            periodic_dim = tuple(bool(p) for p in periodic_dim)[:ndim]
+        data, points = fluid._center_cell_regrid(
+            flow.get_raw_loaded_data(), flow.flow_points,
+            periodic_dim=list(periodic_dim))
+        # The regridded points start half a cell below the old origin; moving
+        #   them back to the origin moves the recorded corner out instead.
+        old_LLC = (flow.fluid_domain_LLC if flow.fluid_domain_LLC is not None
+                   else (0.0,)*ndim)
+        LLC = tuple(o + p[0] for o, p in zip(old_LLC, points))
+        # A resident time-varying fluid keeps its interpolation in time: cubic
+        #   under INUM=None, linear under any other INUM.
+        if flow.flow_times is None or flow.INUM is None:
+            INUM = None
         else:
-            z_ends = [-dz/2, self.flow_points[2][-1]+dz/2]
-            # sides
-            bndry_list += [[x,y,z_ends[0]] for x in self.flow_points[0] for y in self.flow_points[1]]
-            bndry_list += [[x,y,z_ends[1]] for x in self.flow_points[0] for y in self.flow_points[1]]
-            bndry_list += [[x,y_ends[0],z] for x in self.flow_points[0] for z in self.flow_points[2]]
-            bndry_list += [[x,y_ends[1],z] for x in self.flow_points[0] for z in self.flow_points[2]]
-            bndry_list += [[x_ends[0],y,z] for y in self.flow_points[1] for z in self.flow_points[2]]
-            bndry_list += [[x_ends[1],y,z] for y in self.flow_points[1] for z in self.flow_points[2]]
-            # edges
-            bndry_list += [[x, y_ends[0], z_ends[0]] for x in self.flow_points[0]]
-            bndry_list += [[x, y_ends[0], z_ends[1]] for x in self.flow_points[0]]
-            bndry_list += [[x, y_ends[1], z_ends[0]] for x in self.flow_points[0]]
-            bndry_list += [[x, y_ends[1], z_ends[1]] for x in self.flow_points[0]]
-            bndry_list += [[x_ends[0], y, z_ends[0]] for y in self.flow_points[1]]
-            bndry_list += [[x_ends[0], y, z_ends[1]] for y in self.flow_points[1]]
-            bndry_list += [[x_ends[1], y, z_ends[0]] for y in self.flow_points[1]]
-            bndry_list += [[x_ends[1], y, z_ends[1]] for y in self.flow_points[1]]
-            bndry_list += [[x_ends[0], y_ends[0], z] for z in self.flow_points[2]]
-            bndry_list += [[x_ends[0], y_ends[1], z] for z in self.flow_points[2]]
-            bndry_list += [[x_ends[1], y_ends[0], z] for z in self.flow_points[2]]
-            bndry_list += [[x_ends[1], y_ends[1], z] for z in self.flow_points[2]]
-            # points
-            bndry_list += [[x_ends[0],y_ends[0],z_ends[0]],
-                           [x_ends[0],y_ends[0],z_ends[1]],
-                           [x_ends[0],y_ends[1],z_ends[0]],
-                           [x_ends[1],y_ends[0],z_ends[1]],
-                           [x_ends[0],y_ends[1],z_ends[1]],
-                           [x_ends[1],y_ends[0],z_ends[1]],
-                           [x_ends[1],y_ends[1],z_ends[0]],
-                           [x_ends[1],y_ends[1],z_ends[1]]]
-
-        ### Include periodicity, if applicable, by extending out the fluid field ###
-        flowshape = np.array(self.flow[0].shape)
-        idx = []
-        if len(self.flow[0].shape) == len(self.L):
-            # non time-varying flow
-            startdim = 0
-        else:
-            startdim = 1
-        for ii in range(2):
-            if periodic_dim[ii]:
-                flowshape[startdim+ii] += 2
-                idx.append([1,flowshape[startdim+ii]-1])
-            else:
-                idx.append([0,flowshape[startdim+ii]])
-        if DIM3:
-            if periodic_dim[2]:
-                flowshape[startdim+2] += 2
-                idx.append([1,flowshape[startdim+2]-1])
-            else:
-                idx.append([0,flowshape[startdim+2]])
-        
-        if DIM3:
-            flow = [np.zeros(flowshape) for ii in range(3)]
-            flow_points = []
-            for ii in range(3):
-                flow[ii][...,idx[0][0]:idx[0][1],idx[1][0]:idx[1][1],idx[2][0]:idx[2][1]] = self.flow[ii]
-            if periodic_dim[0]:
-                for ii in range(3):
-                    flow[ii][...,0,:,:] = flow[ii][...,-2,:,:]
-                    flow[ii][...,-1,:,:] = flow[ii][...,1,:,:]
-                flow_points.append(np.insert(self.flow_points[0], # what
-                                             [0,len(self.flow_points[0])], # loc
-                                             [-dx,self.flow_points[0][-1]+dx])) # vals
-            else:
-                flow_points.append(self.flow_points[0])
-            if periodic_dim[1]:
-                for ii in range(3):
-                    flow[ii][...,0,:] = flow[ii][...,-2,:]
-                    flow[ii][...,-1,:] = flow[ii][...,1,:]
-                flow_points.append(np.insert(self.flow_points[1],
-                                             [0,len(self.flow_points[1])],
-                                             [-dy,self.flow_points[1][-1]+dy]))
-            else:
-                flow_points.append(self.flow_points[1])
-            if periodic_dim[2]:
-                for ii in range(3):
-                    flow[ii][...,0] = flow[ii][...,-2]
-                    flow[ii][...,-1] = flow[ii][...,1]
-                flow_points.append(np.insert(self.flow_points[2],
-                                             [0,len(self.flow_points[2])],
-                                             [-dz,self.flow_points[2][-1]+dz]))
-            else:
-                flow_points.append(self.flow_points[2])
-        else:
-            flow = [np.zeros(flowshape) for ii in range(2)]
-            flow_points = []
-            for ii in range(2):
-                flow[ii][...,idx[0][0]:idx[0][1],idx[1][0]:idx[1][1]] = self.flow[ii]
-            if periodic_dim[0]:
-                for ii in range(2):
-                    flow[ii][...,0,:] = flow[ii][...,-2,:]
-                    flow[ii][...,-1,:] = flow[ii][...,1,:]
-                flow_points.append(np.insert(self.flow_points[0], # what
-                                             [0,len(self.flow_points[0])], # loc
-                                             [-dx,self.flow_points[0][-1]+dx])) # vals
-            else:
-                flow_points.append(self.flow_points[0])
-            if periodic_dim[1]:
-                for ii in range(2):
-                    flow[ii][...,0] = flow[ii][...,-2]
-                    flow[ii][...,-1] = flow[ii][...,1]
-                flow_points.append(np.insert(self.flow_points[1],
-                                             [0,len(self.flow_points[1])],
-                                             [-dy,self.flow_points[1][-1]+dy]))
-            else:
-                flow_points.append(self.flow_points[1])
-
-        ### Interpolate the new points ###
-        if startdim == 0:
-            # non time-varying flow
-            new_vecs = self.interpolate_flow(bndry_list, flow, flow_points)
-        else:
-            new_vecs = []
-            for t_idx in range(self.flow[0].shape[0]):
-                this_flow = [flow[ii][t_idx,...] for ii in range(len(flow))]
-                new_vecs.append(self.interpolate_flow(bndry_list, this_flow, flow_points))
-
-        ### Incorporate the new points into the fluid field and mesh ###
-        if DIM3:
-            intervals = [dx,dy,dz]
-        else:
-            intervals = [dx,dy]
-        flow_points = [np.insert(self.flow_points[ii]+interval/2,
-                                 [0,len(self.flow_points[ii])],
-                                 [0,self.flow_points[ii][-1]+interval])
-                                 for ii,interval in enumerate(intervals)]
-        flowshape = np.array(self.flow[0].shape)
-        if startdim == 0:
-            flowshape += 2
-        else:
-            flowshape[1:] += 2
-        shp = [len(points) for points in self.flow_points]
-
-        def bndry_add3d(fshape, shp, this_vecs):
-            f = [np.zeros(fshape) for ii in range(3)]
-            for dim in range(3):
-                # sides
-                f[dim][1:-1,1:-1,0] = np.reshape(this_vecs[:shp[0]*shp[1],dim],(shp[0],shp[1]))
-                s = shp[0]*shp[1]
-                f[dim][1:-1,1:-1,-1] = np.reshape(this_vecs[s:s+shp[0]*shp[1],dim],(shp[0],shp[1]))
-                s += shp[0]*shp[1]
-                f[dim][1:-1,0,1:-1] = np.reshape(this_vecs[s:s+shp[0]*shp[2],dim],(shp[0],shp[2]))
-                s += shp[0]*shp[2]
-                f[dim][1:-1,-1,1:-1] = np.reshape(this_vecs[s:s+shp[0]*shp[2],dim],(shp[0],shp[2]))
-                s += shp[0]*shp[2]
-                f[dim][0,1:-1,1:-1] = np.reshape(this_vecs[s:s+shp[1]*shp[2],dim],(shp[1],shp[2]))
-                s += shp[1]*shp[2]
-                f[dim][-1,1:-1,1:-1] = np.reshape(this_vecs[s:s+shp[1]*shp[2],dim],(shp[1],shp[2]))
-                s += shp[1]*shp[2]
-                # edges
-                f[dim][1:-1,0,0] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
-                f[dim][1:-1,0,-1] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
-                f[dim][1:-1,-1,0] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
-                f[dim][1:-1,-1,-1] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
-                f[dim][0,1:-1,0] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
-                f[dim][0,1:-1,-1] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
-                f[dim][-1,1:-1,0] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
-                f[dim][-1,1:-1,-1] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
-                f[dim][0,0,1:-1] = this_vecs[s:s+shp[2],dim]; s+=shp[2]
-                f[dim][0,-1,1:-1] = this_vecs[s:s+shp[2],dim]; s+=shp[2]
-                f[dim][-1,0,1:-1] = this_vecs[s:s+shp[2],dim]; s+=shp[2]
-                f[dim][-1,-1,1:-1] = this_vecs[s:s+shp[2],dim]; s+=shp[2]
-                # points
-                f[dim][0,0,0] = this_vecs[s,dim]
-                f[dim][0,0,-1] = this_vecs[s+1,dim]
-                f[dim][0,-1,0] = this_vecs[s+2,dim]
-                f[dim][-1,0,0] = this_vecs[s+3,dim]
-                f[dim][0,-1,-1] = this_vecs[s+4,dim]
-                f[dim][-1,0,-1] = this_vecs[s+5,dim]
-                f[dim][-1,-1,0] = this_vecs[s+6,dim]
-                f[dim][-1,-1,-1] = this_vecs[s+7,dim]
-            return f
-
-        def bndry_add2d(fshape, shp, this_vecs):
-            f = [np.zeros(fshape) for ii in range(2)]
-            for dim in range(2):
-                s=0
-                # edges
-                f[dim][1:-1,0] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
-                f[dim][1:-1,-1] = this_vecs[s:s+shp[0],dim]; s+=shp[0]
-                f[dim][0,1:-1] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
-                f[dim][-1,1:-1] = this_vecs[s:s+shp[1],dim]; s+=shp[1]
-                # points
-                f[dim][0,0] = this_vecs[s,dim]
-                f[dim][0,-1] = this_vecs[s+1,dim]
-                f[dim][-1,0] = this_vecs[s+2,dim]
-                f[dim][-1,-1] = this_vecs[s+3,dim]
-            return f
-
-        if DIM3 and startdim == 0:
-            # time invariant, 3D
-            flow = bndry_add3d(flowshape, shp, new_vecs)
-        elif DIM3 and startdim == 1:
-            flow = [np.zeros(flowshape) for ii in range(3)]
-            for n, this_vecs in enumerate(new_vecs):
-                f = bndry_add3d(flowshape[1:], shp, this_vecs)
-                flow[0][n,...]=f[0]; flow[1][n,...]=f[1]; flow[2][n,...]=f[2]
-        elif not DIM3 and startdim == 0:
-            flow = bndry_add2d(flowshape, shp, new_vecs)
-        else:
-            flow = [np.zeros(flowshape) for ii in range(2)]
-            for n, this_vecs in enumerate(new_vecs):
-                f = bndry_add2d(flowshape[1:], shp, this_vecs)
-                flow[0][n,...]=f[0]; flow[1][n,...]=f[1]
-
-        ### Add back the original fluid data ###
-        for dim in range(len(flow)):
-            if DIM3:
-                flow[dim][...,1:-1,1:-1,1:-1] = self.flow[dim]
-            else:
-                flow[dim][...,1:-1,1:-1] = self.flow[dim]
-
-        ### Replace fluid and update domain ###
-        self.flow_points = tuple(flow_points)
-        self.flow = flow
-        self.L = [self.flow_points[d][-1] for d in range(len(flow_points))]
-        self.fluid_domain_LLC = tuple(np.array(self.fluid_domain_LLC)-np.array(intervals)*0.5)
+            INUM = True
+        regridded = fluid.FluidData(data, tuple(p - p[0] for p in points),
+                                    flow.flow_times, INUM=INUM,
+                                    periodic_dim=periodic_dim,
+                                    fluid_domain_LLC=LLC)
+        regridded._flat = flow._flat
+        self.flow = regridded
+        self.L = [p[-1] for p in regridded.flow_points]
         self._reset_flow_variables()
 
 
@@ -1671,13 +1838,24 @@ class Environment:
     #######################################################################
 
 
+    @_provenance.records_provenance('_ibmesh_provenance', order_against='flow',
+                                    describes='ibmesh')
     def read_stl_mesh_data(self, filename, unit_conv=None):
         '''Reads in 3D mesh data from an ascii or binary stl file. Must have
         the numpy-stl library installed. It is assumed that the coordinate
         system of the stl mesh matches the coordinate system of the flow field.
-        Thus, the mesh will be translated using the flow LLC if necessary.
-        
-        Avoid mesh structures that intersect with a periodic boundary; behavior 
+        With a fluid already loaded, the mesh is translated by the offset its
+        loader applied (``flow.fluid_domain_LLC``); loaded before the fluid, it
+        is not, and shift_ibmesh_to_match_LLC applies that offset afterwards.
+
+        With a 2D fluid loaded, the mesh must be a 2D shape extruded straight
+        along the out-of-plane axis, as the geometry of a 2D simulation usually
+        is. That axis is z, or, for a 2D fluid read from a 3D grid one point
+        thick in some other axis, that axis. The mesh is replaced by the 2D
+        shape; any other mesh raises ValueError. A mesh loaded before any fluid
+        stays 3D until a 2D fluid is assigned, which does the same.
+
+        Avoid mesh structures that intersect with a periodic boundary; behavior
         related to this is not implemented.
 
         Parameters
@@ -1688,21 +1866,33 @@ class Environment:
             scalar to multiply the mesh by in order to convert units
         '''
 
+        self._refuse_once_tiled('change the immersed mesh')
+
         path = Path(filename)
-        if not path.is_file(): 
+        if not path.is_file():
             raise FileNotFoundError("File {} not found!".format(filename))
 
-        ibmesh, self.max_meshpt_dist = _dataio.read_stl_mesh(filename, unit_conv)
+        ibmesh, max_meshpt_dist = _dataio.read_stl_mesh(filename, unit_conv)
+        ibmesh = ibmesh.astype(np.float64)
 
-        # shift coordinates to match any shift that happened in flow data
-        if self.fluid_domain_LLC is not None:
-            for ii in range(3):
-                ibmesh[:,:,ii] -= self.fluid_domain_LLC[ii]
-        
-        self.ibmesh = ibmesh.astype(np.float64)
+        if self.flow is not None:
+            fitted = self._fit_ibmesh(ibmesh, self.flow)
+            if fitted is not ibmesh:
+                ibmesh = fitted
+                max_meshpt_dist = _geom.max_edge_length(ibmesh)
+            # shift coordinates to match any shift that happened in flow data
+            if self.flow.fluid_domain_LLC is not None:
+                for ii in range(ibmesh.shape[-1]):
+                    ibmesh[..., ii] -= self.flow.fluid_domain_LLC[ii]
+
+        self.ibmesh = ibmesh
+        self.max_meshpt_dist = max_meshpt_dist
+        self.ibmesh_times = None
 
 
 
+    @_provenance.records_provenance('_ibmesh_provenance', order_against='flow',
+                                    describes='ibmesh')
     def read_IB2d_mesh_data(self, path, dt=None, print_dump=None, d_start=0, d_finish=None, 
                                 brk_idx_list=(), add_idx_list=None, periodic=False, 
                                 method='adjacent', res_factor=0.501, res=None):
@@ -1719,24 +1909,26 @@ class Environment:
         to associated vertex pairs as mesh elements. See the options for method 
         below.
 
-        In all cases, avoid mesh structures that intersect with a periodic 
-        boundary; behavior related to this is not implemented.
+        In all cases, avoid mesh structures that intersect with a periodic
+        boundary; behavior related to this is not implemented. The mesh is 2D,
+        so a 3D fluid already loaded raises ValueError.
 
         Parameters
         ----------
-        path or filename : str
-            path to directory with vtk data if importing a moving immersed boundary; 
+        path : str
+            path to directory with vtk data if importing a moving immersed boundary;
             otherwise, in the case of a static mesh, a single vtk or vertex file 
             to load (including file extension).
 
         Parameters for moving immersed boundaries
         -----------------------------------------
         dt : float
-            dt in input2d
+            dt in input2d; required for a moving mesh
         print_dump : int
-            print_dump in input2d
+            print_dump in input2d; required for a moving mesh
         d_start : int, default=0
-            number of first vtk dump to read in
+            number of first vtk dump to read in. Mesh times start at 0.0 at this
+            dump, so give read_IB2d_fluid_data the same d_start.
         d_finish : int, optional
             number of last vtk dump to read in, or None to read to end
         brk_idx_list : iterable of int, optional
@@ -1748,9 +1940,10 @@ class Environment:
             the indices of the vertices that are not connected with their 
             predecessor using Python convention (indexing starts at 0).
         add_idx_list : iterable of 2-tuple of int, optional
-            If additional line segments should be added between non-successive 
-            vertices, list index pairs of the vertices that should be connected 
-            using the MATLAB convention that indexing starts at 1.
+            If additional line segments should be added between non-successive
+            vertices, list index pairs of the vertices that should be connected
+            using the MATLAB convention that indexing starts at 1. An index
+            outside 1 to the number of vertices raises ValueError.
         periodic : bool (default: False)
             Whether or not the last vertex point should be considered adjacent 
             to the first.
@@ -1783,6 +1976,14 @@ class Environment:
             case of the 'proximity' method
         '''
 
+        self._refuse_once_tiled('change the immersed mesh')
+
+        # Every mesh this reads is 2D.
+        if self.flow is not None and self.flow.ndim != 2:
+            raise ValueError(
+                "A {}D fluid is incompatible with a 2D immersed boundary "
+                "mesh.".format(self.flow.ndim))
+
         path = Path(path)
 
         def _read_single_file(path_obj):
@@ -1797,22 +1998,29 @@ class Environment:
             return points
 
         def _shift_to_fluid_frame(pts):
-            '''Match any translation the fluid loaders applied to the fluid.
-
-            The loaders move fluid data so that its lower-left corner sits at the
-            origin, recording the original corner in fluid_domain_LLC. Mesh
-            coordinates come out of their files in that original frame, so they
-            have to follow, or mesh and fluid end up offset from one another --
-            silently, since nothing about it raises.
-
-            Every branch below goes through this. Two of them used to inline the
-            shift and two did not, which is exactly the kind of omission a shared
-            helper makes impossible.
-            '''
-            if self.fluid_domain_LLC is not None:
+            '''Translate pts by the offset the fluid's loader applied
+            (fluid_domain_LLC), if a fluid is loaded. Mesh files are in the
+            fluid's original frame. Every branch below goes through this.'''
+            if self.flow is not None and self.flow.fluid_domain_LLC is not None:
                 for ii in range(2):
-                    pts[:,ii] -= self.fluid_domain_LLC[ii]
+                    pts[:,ii] -= self.flow.fluid_domain_LLC[ii]
             return pts
+
+        def _added_pairs(n_vertices):
+            '''add_idx_list as 0-based index pairs, checked against the number
+            of vertices.'''
+            if add_idx_list is None:
+                return []
+            pairs = []
+            for pair in add_idx_list:
+                if len(pair) != 2 or not all(1 <= idx <= n_vertices
+                                             for idx in pair):
+                    raise ValueError(
+                        "add_idx_list entry {} must be a pair of vertex "
+                        "indices from 1 to {} (indexing starts at 1, as for "
+                        "brk_idx_list).".format(pair, n_vertices))
+                pairs.append((pair[0]-1, pair[1]-1))
+            return pairs
 
         ####### Moving immersed boundary data #######
         if path.is_dir(): 
@@ -1848,6 +2056,7 @@ class Environment:
             ### Convert to T x N x 2 x 2 array of mesh elements
 
             ibmesh = []
+            added = _added_pairs(len(mesh_list[0]))
 
             for t in range(len(mesh_list)):
                 ibmesh.append([])
@@ -1856,9 +2065,8 @@ class Environment:
                         ibmesh[t].append([mesh_list[t][n,:],mesh_list[t][n+1,:]])
                 if periodic:
                     ibmesh[t].append([mesh_list[t][-1,:],mesh_list[t][0,:]])
-                if add_idx_list is not None:
-                    for tup in add_idx_list:
-                        ibmesh[t].append([mesh_list[t][tup[0],:],mesh_list[t][tup[1],:]])
+                for i0, i1 in added:
+                    ibmesh[t].append([mesh_list[t][i0,:],mesh_list[t][i1,:]])
 
             print('Done! Visually check structure with plot_envir().')
 
@@ -1868,12 +2076,13 @@ class Environment:
                 self.ibmesh_times = np.arange(d_start,d_finish+1,dtype=np.float64)*print_dump*dt
                 # shift time so that ibmesh starts at t=0
                 self.ibmesh_times -= self.ibmesh_times[0]
+                # A moving mesh's element lengths change, so it has no maximum.
+                self.max_meshpt_dist = None
             else:
                 self.ibmesh = np.array(ibmesh[0], dtype=np.float64) # squash t dimension
                 self.ibmesh_times = None
+                self.max_meshpt_dist = _geom.max_edge_length(self.ibmesh)
 
-            # Do not set maximum distance between mesh points - it changes.
-        
         
         ####### Static immersed boundary data #######
         elif path.is_file():
@@ -1885,17 +2094,17 @@ class Environment:
                 for n in range(vertices.shape[0]-1):
                     if n+1 not in brk_idx_list:
                         ibmesh.append([vertices[n,:],vertices[n+1,:]])
-                if add_idx_list is not None:
-                    for tup in add_idx_list:
-                        ibmesh.append([vertices[tup[0],:],vertices[tup[1],:]])
+                for i0, i1 in _added_pairs(vertices.shape[0]):
+                    ibmesh.append([vertices[i0,:],vertices[i1,:]])
                 self.ibmesh = np.array(ibmesh, dtype=np.float64)
                 print('Done! Visually check structure with plot_envir().')
             
             ### proximity method
             elif method == 'proximity':
                 if res is None:
-                    assert self.flow_points is not None, "Must import flow data first!"
-                    dists = np.concatenate([self.flow_points[ii][2:-1]-self.flow_points[ii][1:-2]
+                    assert self.flow is not None, "Must import flow data first!"
+                    dists = np.concatenate([self.flow.flow_points[ii][2:-1]
+                                            -self.flow.flow_points[ii][1:-2]
                                             for ii in range(2)])
                     Eulerian_res = dists.min()
                 else:
@@ -1925,6 +2134,7 @@ class Environment:
             # Set maximum distance between mesh points.
             self.max_meshpt_dist = np.linalg.norm(self.ibmesh[:,0,:]
                                                   -self.ibmesh[:,1,:],axis=1).max()
+            self.ibmesh_times = None
         
         
         ####### Neither a directory nor a filename #######
@@ -1933,6 +2143,7 @@ class Environment:
 
 
 
+    @_provenance.note_modifier('_ibmesh_provenance')
     def add_vertices_to_static_2D_ibmesh(self):
         '''Methods for auto-connecting mesh vertices into line segments may
         result in line segments that cross each other away from vertex points.
@@ -1946,6 +2157,8 @@ class Environment:
         extraneous mesh elements and/or using a different routine for connecting 
         vertices.
         '''
+
+        self._refuse_once_tiled('change the immersed mesh')
 
         if self.ibmesh is None:
             print("No ibmesh found!")
@@ -2024,11 +2237,17 @@ class Environment:
 
 
 
+    @_provenance.records_provenance('_ibmesh_provenance', order_against='flow',
+                                    describes='ibmesh')
     def read_3D_vertex_data_to_convex_hull(self, filename):
-        '''Reads in static 3D vertex data from a vtk file or a vertex file and 
-        applies ConvexHull triangulation to get a complete, static boundary. 
+        '''Reads in static 3D vertex data from a vtk file or a vertex file and
+        applies ConvexHull triangulation to get a complete, static boundary.
         This uses Qhull through Scipy under the hood http://www.qhull.org/.
+        With a fluid already loaded, the hull is fitted and translated to it as
+        read_stl_mesh_data describes.
         '''
+
+        self._refuse_once_tiled('change the immersed mesh')
 
         path = Path(filename)
         if not path.is_file(): 
@@ -2041,328 +2260,239 @@ class Environment:
         else:
             raise RuntimeError("File extension for {} not recognized.".format(filename))
 
-        # set dimension
-        DIM = 3
-
-        # shift to first quadrant
-
         hull = ConvexHull(points)
-        if self.fluid_domain_LLC is not None:
-            for ii in range(DIM):
-                points[:,ii] -= self.fluid_domain_LLC[ii]
-        self.ibmesh = points[hull.simplices].astype(np.float64)
-        max_len = np.concatenate(tuple(
-                  np.linalg.norm(self.ibmesh[:,ii,:]-self.ibmesh[:,(ii+1)%DIM,:], axis=1)
-                  for ii  in range(DIM)
-                  )).max()
-        self.max_meshpt_dist = max_len
+        ibmesh = points[hull.simplices].astype(np.float64)
 
+        if self.flow is not None:
+            # A 2D fluid takes the hull's cross-section, as for an stl mesh.
+            ibmesh = self._fit_ibmesh(ibmesh, self.flow)
+            # shift to match any shift that happened in flow data
+            if self.flow.fluid_domain_LLC is not None:
+                for ii in range(ibmesh.shape[-1]):
+                    ibmesh[..., ii] -= self.flow.fluid_domain_LLC[ii]
+
+        self.ibmesh = ibmesh
+        self.max_meshpt_dist = _geom.max_edge_length(ibmesh)
+        self.ibmesh_times = None
+
+
+
+    @_provenance.note_modifier('_ibmesh_provenance')
+    def shift_ibmesh_to_match_LLC(self):
+        '''Translate the ibmesh by the offset the fluid's loader applied.
+
+        Fluid loaders move their data so that its lower-left corner is at the
+        origin, recording the original corner as ``flow.fluid_domain_LLC``. A
+        mesh loaded after the fluid is moved with it; call this after loading
+        the fluid when the mesh was loaded first. Called on a mesh that was
+        already moved, it moves it a second time. Works on static and moving
+        meshes.
+
+        Raises
+        ------
+        RuntimeError
+            if no fluid or no mesh is loaded, or the fluid records no
+            fluid_domain_LLC
+        '''
+
+        self._refuse_once_tiled('move the immersed mesh')
+        if self.flow is None:
+            raise RuntimeError("No fluid velocity field loaded.")
+        if self.flow.fluid_domain_LLC is None:
+            raise RuntimeError("The loaded fluid was not translated, so there "
+                               "is no shift to match: it records no original "
+                               "lower-left corner (fluid_domain_LLC).")
+        if self.ibmesh is None:
+            raise RuntimeError("No immersed boundary mesh loaded.")
+        # The coordinate axis is the last one in every ibmesh layout -- (N,2,2),
+        #   (N,3,3) and moving (T,N,2,2) -- hence the ellipsis.
+        for ii in range(len(self.flow.fluid_domain_LLC)):
+            self.ibmesh[...,ii] -= self.flow.fluid_domain_LLC[ii]
 
 
     #######################################################################
-    #####                    DOMAIN MANIPULATIONS                     #####
+    #####               DOMAIN AND BOUNDARY CONDITIONS                #####
     #######################################################################
 
 
-    def tile_flow(self, x=2, y=1):
-        '''Tile fluid flow and immersed meshes a number of times in the x and/or 
-        y directions. While obviously this works best if the fluid is periodic 
-        in the direction(s) being tiled, this will not be enforced. Instead, it 
-        will just be assumed that the domain edges are equivalent, and only the
-        right/upper domain edge will be used in tiling.
+    def tile_domain(self, x=1, y=1, z=None, tile_ibmesh=True):
+        '''Repeat the domain a number of times along each axis.
+
+        The fluid is extended periodically without copying its data: ``L``
+        becomes the tiled length, while ``flow.flow_points``, ``flow.fshape``
+        and every field the fluid returns stay one stored tile, and positions
+        are wrapped onto that tile when the fluid is interpolated.
+
+        Tile last: after loading the fluid and the mesh, before the run starts,
+        and before creating swarms whose initial positions should span the
+        tiled domain. Once tiled, loading or assigning a fluid or a mesh, or
+        moving the mesh, raises ValueError. Tiling all ones does nothing.
+
+        A tiled axis whose opposite edges differ draws a warning giving the
+        jump at each seam. So does one not flagged periodic
+        (``flow.periodic_dim``) along which the field varies, since the field
+        is differenced one-sided at each seam there.
 
         Parameters
         ----------
-        x : int, default=2
-            number of tiles in the x direction (counting the one already there)
+        x : int, default=1
+            number of tiles along x, counting the stored one
         y : int, default=1
-            number of tiles in the y direction (counting the one already there)
+            number of tiles along y, counting the stored one
+        z : int, optional
+            number of tiles along z, counting the stored one; 3D only
+        tile_ibmesh : bool, default=True
+            copy the immersed mesh into every tile. Copies are ordered with x
+            slowest and the stored tile first, so element ``t*N + e`` is element
+            ``e`` of copy ``t`` and ``ib_collision_idx % N`` is the stored
+            element. Collision checks cost in proportion to the number of
+            copies. Along each tiled axis the mesh must lie strictly inside the
+            stored domain. False leaves the mesh as loaded.
+
+        Raises
+        ------
+        ValueError
+            for a count that is not an int >= 1, for z in 2D, if the domain is
+            already tiled or the run has started (time_history is not empty),
+            or if tile_ibmesh is True and the mesh touches or crosses the
+            domain boundary along a tiled axis. Nothing is changed.
+        RuntimeError
+            while recording
         '''
 
-        DIM3 = len(self.L) == 3
-        TIME_DEP = len(self.flow[0].shape) != len(self.L)
+        if z is not None and len(self.L) == 2:
+            raise ValueError("z applies only to a 3D domain; this one is 2D.")
+        counts = (x, y) if len(self.L) == 2 else (x, y, 1 if z is None else z)
+        if any(int(k) != k or k < 1 for k in counts):
+            raise ValueError("Tile counts must be integers of at least 1; got "
+                             "{}.".format(tuple(counts)))
+        counts = tuple(int(k) for k in counts)
+        if all(k == 1 for k in counts):
+            return
 
-        if x is None:
-            x = 1
-        if y is None:
-            y = 1
-        if DIM3:
-            tile_num = (x,y,1)
-        else:
-            tile_num = (x,y)
+        self._refuse_while_recording()
+        if self._tiling is not None:
+            raise ValueError("The domain is already tiled {}; tile_domain can "
+                             "be called only once.".format(self._tiling))
+        if len(self.time_history) > 0:
+            raise ValueError("Tile the domain before the run starts; this one "
+                             "has taken {} steps. reset() rewinds it.".format(
+                                 len(self.time_history)))
 
-        if not TIME_DEP:
-            # no time dependence
-            flow_shape = self.flow[0].shape
-            new_flow_shape = np.array(flow_shape)
-            # get new dimensions
-            for dim in range(len(flow_shape)):
-                new_flow_shape[dim] += (flow_shape[dim]-1)*(tile_num[dim]-1)
+        # Everything that can refuse runs before anything is changed.
+        mesh = self.ibmesh
+        if tile_ibmesh and mesh is not None:
+            mesh = _geom.tile_mesh(mesh, self.L, counts)
+        if self.flow is not None:
+            self._warn_on_tiling_seams(counts)
 
-            for n, flow in enumerate(self.flow):
-                new_flow = np.zeros(new_flow_shape)
-                # copy bottom-left corner
-                new_flow[0,0,...] = flow[0,0,...]
-                # tile first row/column
-                if DIM3:
-                    r_tile_num = (x,1)
-                    c_tile_num = (y,1)
-                else:
-                    r_tile_num = x
-                    c_tile_num = y
-                new_flow[1:,0,...] = np.tile(flow[1:,0,...], r_tile_num)
-                new_flow[0,1:,...] = np.tile(flow[0,1:,...], c_tile_num)
-                # tile interior
-                new_flow[1:,1:,...] = np.tile(flow[1:,1:,...], tile_num)
-                self.flow[n] = new_flow
-        else:
-            # time dependent flow
-            tile_num_time = [1]+list(tile_num) # prepend a 1; do not tile time
-            flow_shape = self.flow[0].shape
-            new_flow_shape = np.array(flow_shape)
-            # get new dimensions
-            for dim in range(1,len(flow_shape)):
-                new_flow_shape[dim] += (flow_shape[dim]-1)*(tile_num_time[dim]-1)
-
-            for n, flow in enumerate(self.flow):
-                new_flow = np.zeros(new_flow_shape)
-                # copy bottom-left corner
-                new_flow[:,0,0,...] = flow[:,0,0,...]
-                # tile first row/column
-                if DIM3:
-                    r_tile_num = (1,x,1)
-                    c_tile_num = (1,y,1)
-                else:
-                    r_tile_num = (1,x)
-                    c_tile_num = (1,y)
-                new_flow[:,1:,0,...] = np.tile(flow[:,1:,0,...], r_tile_num)
-                new_flow[:,0,1:,...] = np.tile(flow[:,0,1:,...], c_tile_num)
-                # tile interior
-                new_flow[:,1:,1:,...] = np.tile(flow[:,1:,1:,...], tile_num_time)
-                self.flow[n] = new_flow
-            
-        # update environment dimensions and Eulerian meshes
-        new_points = []
-        self.orig_L = tuple(self.L[:2])
-        for n in range(2):
-            self.L[n] *= tile_num[n]
-            new_points.append(np.concatenate([self.flow_points[n]]+
-                [x*self.flow_points[n][-1]+self.flow_points[n][1:] for
-                x in range(1,tile_num[n])]))
-        if DIM3:
-            new_points.append(self.flow_points[2])
-        self.flow_points = tuple(new_points)
-        self.tiling = (x,y)
-
-        # tile Lagrangian meshes
-        if self.ibmesh is not None:
-            newmeshs = [self.ibmesh]
-            for ii in range(self.tiling[0]):
-                for jj in range(self.tiling[1]):
-                    new_mesh = np.array(self.ibmesh)
-                    new_mesh[:,:,0] += self.orig_L[0]*ii
-                    new_mesh[:,:,1] += self.orig_L[1]*jj
-                    newmeshs.append(new_mesh)
-            self.ibmesh = np.concatenate(newmeshs).astype(np.float64)
-        print("Fluid tiled. Planktos domain size is now {}.".format(self.L))
+        # What a run archive records and restore() replays: the call, and the
+        #   stored tile's L, which an analytic flow generator builds its grid
+        #   over and the Environment is constructed with.
+        self._tiling_record = dict(zip('xyz', counts),
+                                   tile_ibmesh=bool(tile_ibmesh),
+                                   tile_L=[float(v) for v in self.L])
+        self._ibmesh = mesh
+        # A new list: the loaders set self.L = self.flow.L, so an in-place
+        #   edit would tile the fluid's own L.
+        self.L = [L*k for L, k in zip(self.L, counts)]
+        self._tiling = counts
+        if self.flow is not None:
+            self.flow._set_tiling(counts)
         self._reset_flow_deriv()
+        print("Domain tiled {}. Planktos domain size is now {}.".format(
+              counts, self.L))
 
 
+    def _warn_on_tiling_seams(self, counts):
+        '''Warn, naming the axes, where tiling makes the fluid jump at a seam
+        or difference one-sided up to it, judged from the data held in memory.
 
-    def extend(self, x_minus=0, x_plus=0, y_minus=0, y_plus=0):
-        '''Duplicate the boundary of the fluid flow a number of times in 
-        the x (+ or -) and/or y (+ or -) directions, thus extending the domain
-        with constant fluid velocity. Good for extending domains with resolved
-        fluid flow before/after and on the sides of a structure.
-
-        Parameters
-        ----------
-        x_minus : int
-            number of times to duplicate bndry in the x- direction
-        x_plus : int
-            number of times to duplicate bndry in the x+ direction
-        y_minus : int
-            number of times to duplicate bndry in the y- direction
-        y_plus : int
-            number of times to duplicate bndry in the y+ direction
+        A tiled axis whose opposite edges differ jumps at each seam, and the
+        largest jump is reported as a share of the largest velocity component.
+        Along one not flagged periodic the field is also differenced one-sided
+        at each seam, which is said wherever the field varies along that axis.
         '''
 
-        DIM3 = len(self.L) == 3
-        TIME_DEP = len(self.flow[0].shape) != len(self.L)
+        tiled = [d for d, k in enumerate(counts) if k > 1]
+        # Close rather than equal, since a solver writing both edges of a
+        #   periodic grid may differ in the last bits.
+        jump = {}
+        varies = set()
+        scale = 0.0
+        for _, comps in self.flow.iter_resident_dumps():
+            for c in comps:
+                cmax = np.abs(c).max()
+                scale = max(scale, cmax)
+                tol = dict(rtol=1e-9, atol=1e-12*cmax)
+                for d in tiled:
+                    lo, hi = np.take(c, [0], axis=d), np.take(c, [-1], axis=d)
+                    if not np.allclose(lo, hi, **tol):
+                        jump[d] = max(jump.get(d, 0.0), np.abs(lo - hi).max())
+                    if d not in varies and not np.allclose(c, lo, **tol):
+                        varies.add(d)
 
-        assert x_minus>=0 and x_plus>=0 and y_minus>=0 and y_plus>=0,\
-            "arguments must be nonnegative"
+        def named(axes, share):
+            return ', '.join('{} ({:.2g}%)'.format('xyz'[d], 100*jump[d]/scale)
+                             if share else 'xyz'[d] for d in axes)
 
-        res_x = np.max(self.flow_points[0][1:]-self.flow_points[0][:-1])
-        res_y = np.max(self.flow_points[1][1:]-self.flow_points[1][:-1])
-        if not TIME_DEP:
-            for dim in range(len(self.L)):
-                # first, extend in x direction
-                if x_minus+x_plus > 0:
-                    self.flow[dim] = np.concatenate(tuple(
-                        np.array([self.flow[dim][0,...]]) for ii in range(x_minus)
-                        ) + (self.flow[dim][:],) + tuple(
-                        np.array([self.flow[dim][-1,...]]) for jj in range(x_plus)
-                        ), axis=0)
-                # next, extend in y direction. This requires a shuffling
-                #   (transpose) of dimensions...
-                if DIM3 and y_minus+y_plus > 0:
-                    self.flow[dim] = np.concatenate(tuple(
-                        np.array([self.flow[dim][:,0,:]]).transpose(1,0,2)
-                        for ii in range(y_minus)
-                        ) + (self.flow[dim][:],) + tuple(
-                        np.array([self.flow[dim][:,-1,:]]).transpose(1,0,2)
-                        for jj in range(y_plus)
-                        ), axis=1)
-                elif y_minus+y_plus > 0:
-                    self.flow[dim] = np.concatenate(tuple(
-                        np.array([self.flow[dim][:,0]]).T
-                        for ii in range(y_minus)
-                        ) + (self.flow[dim][:],) + tuple(
-                        np.array([self.flow[dim][:,-1]]).T
-                        for jj in range(y_plus)
-                        ), axis=1)
-
-        else:
-            for dim in range(len(self.L)):
-                if DIM3:
-                    # first, extend in x direction
-                    if x_minus+x_plus > 0:
-                        self.flow[dim] = np.concatenate(tuple(
-                            np.array([self.flow[dim][:,0,...]]).transpose(1,0,2,3) 
-                            for ii in range(x_minus)
-                            ) + (self.flow[dim][:],) + tuple(
-                            np.array([self.flow[dim][:,-1,...]]).transpose(1,0,2,3) 
-                            for jj in range(x_plus)
-                            ), axis=1)
-                    # next, extend in y direction
-                    if y_minus+y_plus > 0:
-                        self.flow[dim] = np.concatenate(tuple(
-                            np.array([self.flow[dim][:,:,0,:]]).transpose(1,2,0,3)
-                            for ii in range(y_minus)
-                            ) + (self.flow[dim][:],) + tuple(
-                            np.array([self.flow[dim][:,:,-1,:]]).transpose(1,2,0,3)
-                            for jj in range(y_plus)
-                            ), axis=2)
-                else:
-                    # first, extend in x direction
-                    if x_minus+x_plus > 0:
-                        self.flow[dim] = np.concatenate(tuple(
-                            np.array([self.flow[dim][:,0,:]]).transpose(1,0,2) 
-                            for ii in range(x_minus)
-                            ) + (self.flow[dim][:],) + tuple(
-                            np.array([self.flow[dim][:,-1,:]]).transpose(1,0,2) 
-                            for jj in range(x_plus)
-                            ), axis=1)
-                    # next, extend in y direction
-                    if y_minus+y_plus > 0:
-                        self.flow[dim] = np.concatenate(tuple(
-                            np.array([self.flow[dim][:,:,0]]).tranpsose(1,2,0)
-                            for ii in range(y_minus)
-                            ) + (self.flow[dim][:],) + tuple(
-                            np.array([self.flow[dim][:,:,-1]]).transpose(1,2,0)
-                            for jj in range(y_plus)
-                            ), axis=2)
-
-        # update environment dimensions and meshes
-        new_points = []
-        self.orig_L = tuple(self.L[:2])
-        self.L[0] += res_x*(x_minus+x_plus)
-        self.L[1] += res_y*(y_minus+y_plus)
-        if x_minus+x_plus > 0:
-            new_points.append(np.concatenate(
-                [self.flow_points[0][0]-res_x*np.arange(x_minus,0,-1)]+
-                [self.flow_points[0]]+
-                [self.flow_points[0][-1]+res_x*np.arange(1,x_plus+1)]))
-        else:
-            new_points.append(self.flow_points[0])
-        if y_minus+y_plus > 0:
-            new_points.append(np.concatenate(
-                [self.flow_points[1][0]-res_y*np.arange(y_minus,0,-1)]+
-                [self.flow_points[1]]+
-                [self.flow_points[1][-1]+res_y*np.arange(1,y_plus+1)]))
-        else:
-            new_points.append(self.flow_points[1])
-
-        if DIM3:
-            new_points.append(self.flow_points[2])
-            # shift domain to quadrant 1
-            self.flow_points = (new_points[0]-new_points[0][0], new_points[1]-new_points[1][0],
-                                new_points[2]-new_points[2][0])
-            # update environment dimensions
-            self.L = [self.flow_points[dim][-1] for dim in range(3)]
-        else:
-            # 2D shifting and environment updating
-            self.flow_points = (new_points[0]-new_points[0][0], new_points[1]-new_points[1][0])
-            self.L = [self.flow_points[dim][-1] for dim in range(2)]
-
-        self._reset_flow_deriv()
+        periodic = self.flow.periodic_dim
+        flagged = [d for d in sorted(jump) if periodic[d]]
+        unflagged = [d for d in sorted(jump) if not periodic[d]]
+        # Edges that match on an unflagged axis still difference one-sided,
+        #   which matters only where the field changes along the axis.
+        one_sided = [d for d in tiled
+                     if not periodic[d] and d not in jump and d in varies]
+        if flagged:
+            warnings.warn(
+                "Tiling along {}, where the fluid is flagged periodic but its "
+                "opposite edges differ, by up to the percentage shown of the "
+                "largest velocity component: the tiled field jumps by that much "
+                "at each seam there.".format(named(flagged, True)), UserWarning)
+        if unflagged:
+            warnings.warn(
+                "Tiling along {}, where the fluid is not flagged periodic "
+                "(periodic_dim) and its opposite edges differ, by up to the "
+                "percentage shown of the largest velocity component: the tiled "
+                "field jumps by that much at each seam there, and is "
+                "differenced one-sided up to it.".format(named(unflagged, True)),
+                UserWarning)
+        if one_sided:
+            warnings.warn(
+                "Tiling along {}, where the fluid is not flagged periodic "
+                "(periodic_dim): its opposite edges match, but it is "
+                "differenced one-sided up to each seam there. Flag the axis "
+                "periodic if the data is.".format(named(one_sided, False)),
+                UserWarning)
 
 
-    #######################################################################
-    #####                       SWARM FUNCTIONS                       #####
-    #######################################################################
+    def _refuse_once_tiled(self, action):
+        '''Raise ValueError if tile_domain has run. ``action`` completes
+        "Cannot ..." in the message.'''
 
-
-    def add_swarm(self, swarm_size=100, **kwargs):
-        ''' Adds a Swarm into this Environment.
-
-        Parameters
-        ----------
-        swarm_size : Swarm object or int (size of swarm), default=100
-            If a Swarm object is given, all following parameters will be ignored 
-            (since the object is already initialized)
-        init : string
-            Method for initializing positions. See Swarm class for options.
-        seed : int
-            Seed for random number generator
-        kwargs
-            keyword arguments to be set as Swarm properties (see Swarm class for 
-            details)
-        '''
-
-        if isinstance(swarm_size, planktos.Swarm):
-            swarm_size._change_envir(self)
-        else:
-            return planktos.Swarm(swarm_size, self, **kwargs)
-            
-
-
-    def move_swarms(self, dt=1.0, ib_collisions='sliding', 
-                    silent=False):
-        '''Move all Swarms in the Environment.
-
-        Parameters
-        ----------
-        dt : float
-            length of time step to move all agents
-        params : any, optional
-            parameters to pass along to apply_agent_model, if necessary
-        ib_collisions : {None, 'sliding' (default), 'sticky'}
-            Type of interaction with immersed boundaries. If None, turn off all 
-            interaction with immersed boundaries. In sliding collisions, 
-            conduct recursive vector projection until the length of the original 
-            vector is exhausted. In sticky collisions, just return the point of 
-            intersection.
-        silent : bool, default=False
-            If True, suppress printing the updated time.
-        '''
-
-        for s in self.swarms:
-            s.move(dt, ib_collisions, update_time=False)
-
-        # update time
-        self.time_history.append(self.time)
-        self.time += dt
-        if not silent:
-            print('time = {}'.format(np.round(self.time,11)))
+        if getattr(self, '_tiling', None) is not None:
+            raise ValueError(
+                "Cannot {} after tile_domain{}: tiling is the last operation on "
+                "the domain. Load the fluid and the mesh first, then "
+                "tile.".format(action, self._tiling))
 
 
 
     def set_boundary_conditions(self, x_bndry, y_bndry, z_bndry=None):
-        '''Check and set boundary conditions. Set Z-dimension only if
-        zdim is not None. Each boundary condition must be either a list or an
-        iterable of length 2.
+        '''Check and set the agent boundary conditions, self.bndry.
+
+        Parameters
+        ----------
+        x_bndry, y_bndry, z_bndry : str or pair of str
+            one of 'zero', 'noflux' or 'periodic' for both sides of that axis,
+            or a pair (low side, high side). None gives the default: 'zero' for
+            x and y, 'noflux' for z. The z entry is set in 2D too, where agents
+            ignore it.
+
+        Raises
+        ------
+        NameError
+            for a condition not among the three above
         '''
 
         supprted_conds = ['zero', 'noflux', 'periodic']
@@ -2440,201 +2570,122 @@ class Environment:
 
 
     #######################################################################
-    #####                FLUID AND MESH INTERPOLATION                 #####
+    #####                       SWARM FUNCTIONS                       #####
     #######################################################################
 
 
-    def interpolate_temporal_flow(self, t_index=None, time=None):
-        '''Interpolate flow in time using a cubic spline. Defaults to 
-        interpolating at the current time, given by self.time.
+    def add_swarm(self, swarm_size=100, **kwargs):
+        '''Adds a Swarm to this Environment.
 
         Parameters
         ----------
-        t_indx : int
-            Interpolate at a time referred to by self.envir.time_history[t_indx]
-        time : float
-            Interpolate at a specific time
+        swarm_size : Swarm or int, default=100
+            a Swarm to move here, which leaves its previous Environment and is
+            projected to 2D if this Environment is 2D; or the number of agents
+            in a new Swarm
+        **kwargs
+            passed to the Swarm constructor for a new Swarm, e.g. init, seed or
+            shared_props (see Swarm). Ignored when swarm_size is a Swarm.
 
         Returns
         -------
-            interpolated flow field as a list of ndarrays
+        Swarm or None
+            the new Swarm, or None when swarm_size is a Swarm
         '''
 
-        # If fCubicSplines do not exist, create them.
-        if self.flow is None:
-            raise RuntimeError("Cannot temporally interpolate None flow.")
-        if not all([type(f) == fluid.fCubicSpline for f in self.flow]):
-            self.flow = fluid.create_temporal_interpolations(self.flow_times, self.flow)
-
-        if t_index is None and time is None:
-            time = self.time
-        elif t_index is not None:
-            time = self.time_history[t_index]
-
-        # Enforce constant extrapolation
-        if time <= self.flow_times[0]:
-            return [f[0, ...] for f in self.flow]
-        elif time >= self.flow_times[-1]:
-            return [f[-1, ...] for f in self.flow]
+        if isinstance(swarm_size, planktos.Swarm):
+            swarm_size._change_envir(self)
         else:
-            # interpolate
-            return [f(time) for f in self.flow]
+            return planktos.Swarm(swarm_size, self, **kwargs)
+            
 
 
+    def move_swarms(self, dt=1.0, ib_collisions='default',
+                    silent=False):
+        '''Move all Swarms in the Environment together over one time step.
 
-    def interpolate_flow(self, positions, flow=None, flow_points=None, 
-                         time=None, method='linear'):
-        '''Spatially interpolate the fluid velocity field (or another flow field) 
-        at the supplied positions. If flow is None and self.flow is time-varying,
-        the flow field will be interpolated in time first, using the current 
-        environmental time, or a different time if provided.
+        Every Swarm's apply_agent_model runs before any Swarm's positions
+        change, so a model reading another Swarm's positions or velocities sees
+        them as they were at the start of the step. Boundary conditions then
+        apply to every Swarm, and after that every after_move runs, seeing all
+        Swarms where the step ended. Changes a model makes to props or
+        shared_props are visible at once to models that run after it, in the
+        order of Environment.swarms.
 
         Parameters
         ----------
-        positions : array
-            NxD locations at which to interpolate the flow field, where D is the 
-            dimension of the system.
-        flow : list-like of arrays, optional
-            The fluid velocity data, with each array representing one spatial 
-            component of the velocity vector. The first dimension of each array 
-            is time if the fluid velocity field is time varying. If None, the 
-            environmental flow field is used. Interpolated in time if necessary.
-        flow_points : list-like of 1-D arrays, optional
-            The set of coordinates along each dimension that defines the mesh 
-            grid for the fluid velocity field. If None, the environmental flow 
-            points is used.
-        time : float, optional
-            if None, the present time. Otherwise, the flow field will be
-            interpolated to the time given based on the Environment flow_times.
-            This is only supported for environmental flow fields (not ones 
-            passed in as an argument).
-        method : string, default='linear'
-            spatial interpolation method to be passed to 
-            scipy.interpolate.interpn. Anything but splinef2d is supported.
-
+        dt : float, default=1.0
+            length of time step to move all agents
+        ib_collisions : {'default', None, 'sliding', 'sticky'}
+            Type of interaction with immersed boundaries, for every Swarm. If
+            'default', each Swarm uses its own ib_condition. If None, turn off
+            all interaction with immersed boundaries. In sliding collisions,
+            conduct recursive vector projection until the length of the original
+            vector is exhausted. In sticky collisions, just return the point of
+            intersection.
+        silent : bool, default=False
+            If True, suppress printing the updated time.
         '''
 
-        if flow is None:
-            if len(self.flow[0].shape) == len(self.L):
-                # non time-varying flow
-                flow = self.flow
-            else:
-                flow = self.interpolate_temporal_flow(time=time)
+        if self.swarms:
+            self.swarms[0]._refuse_if_failed()
 
-        if flow_points is None:
-            flow_points = self.flow_points
-        
-        if method == 'splinef2d':
-            raise RuntimeError('Extrapolation is not supported in splinef2d.'+
-                               ' This is needed for RK4 solvers, and so is not'+
-                               ' a supported method in interpolate_flow.')
+        # Asked once so that every swarm's history append and this
+        #   time_history append are gated on one answer.
+        keep_state = self._records_this_step()
 
-        x_vel = interpolate.interpn(flow_points, flow[0],
-                                    positions, method=method, 
-                                    bounds_error=False, fill_value=None)
-        y_vel = interpolate.interpn(flow_points, flow[1],
-                                    positions, method=method, 
-                                    bounds_error=False, fill_value=None)
-        if len(flow) == 3:
-            z_vel = interpolate.interpn(flow_points, flow[2],
-                                        positions, method=method, 
-                                        bounds_error=False, fill_value=None)
-            return np.array([x_vel, y_vel, z_vel]).T
-        else:
-            return np.array([x_vel, y_vel]).T
+        # Each stage runs for every swarm before the next begins: every
+        #   apply_agent_model sees all swarms as they were at the start of the
+        #   step, and every after_move sees them all where the step ended. The
+        #   result is the same whatever order the swarms are in.
+        steps = [(s, s._propose_step(dt, ib_collisions)) for s in self.swarms]
+        for s, step in steps:
+            s._commit_step(step, dt, keep_state)
+        planktos._swarm._settle_steps(self, steps, dt, keep_state)
+
+        # update time
+        if keep_state:
+            self.time_history.append(self.time)
+        self.time += dt
+        if not silent:
+            print('time = {}'.format(np.round(self.time,11)))
+
+        # One environmental time step has completed, with every swarm moved.
+        #   This and the end of Swarm.move (when it advances the time itself)
+        #   are the only two places that mean that, and so the only two that
+        #   fire a capture.
+        self._notify_step_complete()
 
 
 
-    def interpolate_temporal_mesh(self, time=None, t_index=None):
-        '''Linearly interpolate mesh vertices in time. Defaults to interpolating 
-        at the current time, given by self.time.
-        
-        Parameters
-        ----------
-        t_index : int
-            Interpolate at a time referred to by self.envir.time_history[t_indx]
-        time : float
-            Interpolate at a specific time
+    def reset(self, rm_swarms=False):
+        '''Resets environment to time=0. Swarm history will be lost, and all
+        Swarms will maintain their last position and velocities.
+        If rm_swarms=True, remove all Swarms.
 
-        Returns
-        -------
-            interpolated mesh as an ndarray
+        Raises
+        ------
+        RuntimeError
+            if a recording is active
         '''
 
-        if self.ibmesh is None or self.ibmesh.ndim < 4:
-            raise RuntimeError("Cannot temporally interpolate None or static flow.")
-
-        if t_index is None and time is None:
-            time = self.time
-        elif t_index is not None:
-            time = self.time_history[t_index]
-
-        # Enforce constant extrapolation
-        if time <= self.ibmesh_times[0]:
-            return self.ibmesh[0,...]
-        elif time >= self.ibmesh_times[-1]:
-            return self.ibmesh[-1,...]
+        self._refuse_while_recording()
+        self.time = 0.0
+        self._step_count = 0
+        self._capture_phase = 0
+        self.time_history = []
+        if rm_swarms:
+            self.swarms = []
         else:
-            loc = np.searchsorted(self.ibmesh_times, time)
-            # could be equal to val on right, but not on left.
-            if time == self.ibmesh_times[loc]:
-                return self.ibmesh[loc,...]
-            else:
-                # interpolate and return
-                t = (time - self.ibmesh_times[loc-1])/\
-                    (self.ibmesh_times[loc] - self.ibmesh_times[loc-1])
-                return (1-t)*self.ibmesh[loc-1,...] + t*self.ibmesh[loc,...]
-
-
-    #######################################################################
-    #####                 CALCULATIONS AND ANALYSIS                   #####
-    #######################################################################
-
-
-    def get_mean_fluid_speed(self):
-        '''Return the mean fluid speed at the current time, temporally
-        interpolating the flow field if necessary.'''
-
-        DIM3 = (len(self.L) == 3)
-
-        if (not DIM3 and len(self.flow[0].shape) == 2) or \
-            (DIM3 and len(self.flow[0].shape) == 3):
-            # temporally constant flow
-            flow_now = self.flow
-        else:
-            # temporal flow. interpolate in time, and then in space.
-            flow_now = self.interpolate_temporal_flow()
-
-        if DIM3:
-            fluid_speed = np.sqrt(flow_now[0]**2+flow_now[1]**2+flow_now[2]**2)
-        else:
-            fluid_speed = np.sqrt(flow_now[0]**2+flow_now[1]**2)
-
-        return np.mean(fluid_speed)
-
-
-
-    def calculate_mag_gradient(self):
-        '''Calculate and store the gradient of the magnitude of the fluid velocity 
-        at the current time, along with the time at which it was calculated. 
-        Gradient is calculated via second order accurate central differences 
-        (using numpy) with second order accuracy at the boundaries and saved in 
-        case it is needed again.'''
-
-        TIME_DEP = len(self.flow[0].shape) != len(self.L)
-        if not TIME_DEP:
-            flow_grad = np.gradient(np.sqrt(
-                            np.sum(np.array(self.flow)**2, axis=0)
-                            ), *self.flow_points, edge_order=2)
-        else:
-            # first, interpolate flow in time. Then calculate gradient.
-            flow_grad = np.gradient(
-                            np.sqrt(np.sum(
-                            np.array(self.interpolate_temporal_flow())**2,
-                            axis=0)), *self.flow_points, edge_order=2)
-        # save the newly calculate gradient
-        self.mag_grad = flow_grad
-        self.mag_grad_time = self.time
+            for sw in self.swarms:
+                # every history goes, not just positions: they are indexed
+                #   together (full_vel_history lines up with full_pos_history),
+                #   so clearing one and keeping the others leaves them
+                #   misaligned for the rest of the session.
+                sw.pos_history = []
+                sw.vel_history = []
+                if sw.props_history is not None:
+                    sw.props_history = []
 
 
 
@@ -2885,12 +2936,608 @@ class Environment:
         return cells 
 
 
+    #######################################################################
+    #####                      RUN RECORDING                          #####
+    #######################################################################
+
+
+    def record(self, path, *, fluid='vort', swarms=None,
+               store=('positions',), capture_interval=1,
+               chunk_size=100, quiver_shape=_recording.QUIVER_SHAPE,
+               plot_all=None):
+        '''Start recording the run to an archive directory, and return the handle.
+
+        Recording starts with this call, and from then on a capture is taken at
+        every environmental time step, with no change to the run loop. A
+        ``with`` block stops recording when it ends::
+
+            with envir.record('run_archive/'):
+                for _ in range(steps):
+                    swrm.move(dt)
+
+        Without one, call :meth:`stop_recording`.
+
+        Parameters
+        ----------
+        path : str or Path
+            directory to record into, created if missing. If it exists and is
+            not empty, the archive goes to a timestamped sibling instead, with
+            a warning naming it; the handle's ``.path`` says where the data
+            went.
+
+            The exception is an archive this run continues: one whose last
+            capture is at this Environment's current time, with every recorded
+            swarm exactly where that capture has it, which is where
+            ``RunArchive.restore()`` leaves them. The recording is then
+            appended to it. ``store``, ``chunk_size``, ``capture_interval`` and
+            the recorded fluid quantities must match the archive's, and every
+            swarm it holds must still be recorded, or this raises ValueError.
+        fluid : {'vort', 'quiver', tuple of both, None}, default='vort'
+            which fluid backdrops a later ``Swarm.plot_all`` must be able to
+            draw without reading the fluid again. ``'vort'`` writes per-dump
+            vorticity only when the source does not provide it and the field
+            is not held in memory, so it often writes nothing. Set to None in
+            3D, where no backdrop is drawn, and when the environment has no
+            fluid.
+        swarms : list of Swarm, optional
+            which swarms to capture. Defaults to every swarm in the
+            environment, including any added later.
+        store : tuple of str, default=('positions',)
+            what to keep at every capture; must include ``'positions'``.
+
+            - ``'velocities'``, ``'accelerations'``: the per-agent arrays.
+              Without velocities, the agent-speed statistics and 2D headings
+              that plots use are still recorded, but per-agent velocity at a
+              past time is not, and cannot be recovered from positions for an
+              agent that collided or wrapped.
+            - ``'props'``: the whole props DataFrame, as csv, with any column
+              of per-agent ndarrays written beside it.
+            - ``'shared_props'``: the shared_props dict. Without it, restoring
+              at an earlier capture resumes with the run's final shared_props.
+        capture_interval : int, default=1
+            capture every *k*-th step. ``time_history``, ``pos_history`` and
+            ``vel_history`` keep only the captured states too, so the run looks
+            like one taken with a time step *k* times as long. This sets the
+            data kept, not a movie's frame rate, which ``Swarm.plot_all`` sets
+            afterwards. A non-integer is truncated, with a warning.
+        chunk_size : int, default=100
+            captures held in memory before a chunk is written; a hard kill
+            loses at most these.
+        quiver_shape : tuple of 2 int, default=(60, 60)
+            target arrow grid for a stored quiver across the (tiled) domain,
+            fixed for the run; used only when ``fluid`` includes ``'quiver'``.
+            A render that would draw denser arrows uses this grid, with a
+            warning.
+        plot_all : dict, optional
+            keyword arguments for ``Swarm.plot_all``, rendered when a ``with``
+            block ends::
+
+                with envir.record('run/', plot_all=dict(movie_filename='out.mkv',
+                                                        fluid='vort')):
+                    ...
+
+            Renders on a clean exit and when the run raised, but not after a
+            ``KeyboardInterrupt``; a failed render warns, and the run's own
+            exception still propagates. Needs a recording of exactly one swarm.
+
+        Returns
+        -------
+        RunRecorder
+            usable as a context manager; ``.path`` is the directory written to
+
+        Raises
+        ------
+        RuntimeError
+            if this Environment is already recording, or its fluid is
+            dynamically loaded and the window has moved past the first dump
+        ValueError
+            for a ``store`` entry that is unknown or a missing
+            ``'positions'``, a ``capture_interval`` below 1, ``plot_all`` with
+            more than one swarm, or a continued archive configured differently
+            (see ``path``)
+        TypeError
+            if ``plot_all`` is not a dict
+
+        Notes
+        -----
+        **Hold the environment fixed while recording.** The archive records
+        the domain, boundary conditions, fluid properties, fluid and mesh as
+        they are when recording starts, and ``RunArchive.restore()`` rebuilds
+        them from that record. Loading fluid and :meth:`reset` raise while
+        recording; :meth:`stop_recording` warns about any other change.
+
+        **Start recording before the fluid window has moved.** Under dynamic
+        loading, per-dump fluid quantities are written as each dump arrives,
+        and dumps the window has passed are not read again, so this raises once
+        the window has moved. Start before the run loop, or load with
+        ``INUM=None``.
+
+        **Where vorticity is written.** When it has to be written, vorticity
+        goes in the source's own fluid directory in the source's own naming,
+        e.g. ``Omega.0042.vtk`` beside ``u.0042.vtk``, where ParaView and the
+        solver's tools can read it. Each file is stamped in its header with a
+        digest of its field; a stamped file computed from a different field
+        (another ``vel_conv``, say) is rewritten, with a warning, and a file
+        without the stamp is never overwritten. If that directory is not
+        writable, the archive's ``fluid/`` directory is used instead, and
+        ``meta.json`` records which. The per-dump component means and extrema
+        that plots need are always in the archive.
+
+        See Also
+        --------
+        flush_recording : write buffered captures without stopping
+        stop_recording : flush and unhook
+        '''
+
+        if self._recorder is not None:
+            raise RuntimeError(
+                "This Environment is already recording to {}, and there is "
+                "one recorder per Environment. Call envir.stop_recording() "
+                "first.".format(self._recorder.path))
+
+        # Under a sliding window, dumps the window has already passed are gone
+        #   and are never re-reported, so a recording started after it moved
+        #   would have holes in its fluid series -- which would be refused at
+        #   render time, i.e. after the run instead of before it.
+        if self.flow is not None and self.flow.is_windowed:
+            bnds = self.flow.loaded_idx_bnds
+            if bnds[0] != 0:
+                raise RuntimeError(
+                    "Cannot start recording: the fluid is being loaded "
+                    "dynamically and its window has already moved past the "
+                    "first dump (it now covers indices {}-{}). Dumps the "
+                    "window has passed are gone, so the archive's fluid series "
+                    "would have holes in it.\n"
+                    "Either start recording before the run loop, or load the "
+                    "fluid with INUM=None so that all of it stays in "
+                    "memory.".format(*bnds))
+
+        if capture_interval < 1:
+            raise ValueError('capture_interval must be at least 1')
+        if int(capture_interval) != capture_interval:
+            warnings.warn("capture_interval={} is not a whole number of "
+                          "steps; capturing every {} steps.".format(
+                              capture_interval, int(capture_interval)))
+
+        # Captures are counted from the step recording starts at, so that they
+        #   are evenly spaced even when recording begins mid-run.
+        self._capture_interval = int(capture_interval)
+        self._capture_phase = self._step_count
+        try:
+            self._recorder = _recording.RunRecorder(
+                self, path, swarms=swarms, store=store, chunk_size=chunk_size,
+                fluid=fluid, quiver_shape=quiver_shape, plot_all=plot_all,
+                capture_interval=self._capture_interval)
+        except BaseException:
+            # Nothing is recording, so nothing may be gated.
+            self._capture_interval = 1
+            raise
+        # The resolved path, not the one asked for: recording into a non-empty
+        #   directory redirects to a timestamped sibling.
+        self._archive_path = self._recorder.path
+
+        # Printed rather than warned: it says what is happening, not that
+        #   anything is wrong.
+        print('{} {} to {}.'.format(
+            'Appending' if self._recorder.appending else 'Recording',
+            ', '.join(store), self._archive_path))
+        return self._recorder
+
+
+
+    def flush_recording(self):
+        '''Write buffered captures to disk, and keep recording; e.g. before
+        plotting partway through a run. A no-op if nothing is recording.'''
+
+        if self._recorder is not None:
+            self._recorder.flush()
+
+
+
+    def stop_recording(self):
+        '''Flush and unhook. Idempotent, and a no-op if nothing is recording.
+
+        Warns, naming what changed, if the domain, boundary conditions, fluid
+        properties, fluid or mesh differ from when recording started, since
+        ``RunArchive.restore()`` rebuilds them as they were then.
+
+        The archive on disk is readable whether or not this is called; without
+        it, the captures since the last chunk was written are lost.
+        '''
+
+        if self._recorder is not None:
+            self._recorder.stop()
+
+
+
+    def _records_this_step(self):
+        '''Whether the state of the step now being taken is kept, in the
+        histories and in the archive alike. Always True unless recording with
+        a capture_interval above 1.'''
+
+        # One answer gates both the history appends and the archive capture,
+        #   which is what makes capture j exactly full_pos_history[j].
+        return (self._step_count - self._capture_phase) % self._capture_interval == 0
+
+
+    def _notify_step_complete(self):
+        '''Count a completed environmental time step, and capture it if it is
+        kept. Called at the end of :meth:`move_swarms`, and of ``Swarm.move``
+        when it advances the time itself.'''
+
+        # The counter advances first, so the predicate is asked about the state
+        #   the step just produced. Swarm.move asks it at the start of a step,
+        #   about the state that step began from: the two ends of a step, and
+        #   the same set of states.
+        self._step_count += 1
+        if self._recorder is not None and self._records_this_step():
+            self._recorder._capture()
+
+
+    def _refuse_while_recording(self):
+        '''Raise RuntimeError if a recording is active.
+
+        Called by the operations that would invalidate an archive already being
+        written: reset(), which rewinds the clock; every fluid setter and the
+        flow setter, which replace the grid and timeline the archive fixed when
+        it started; and moving a recorded swarm out of the environment, which
+        the format cannot express.
+        '''
+
+        if self._recorder is not None:
+            raise RuntimeError(
+                "This is not allowed while recording to {}. An archive fixes "
+                "the domain, the fluid grid, and the timeline when recording "
+                "starts; resetting the clock, loading new fluid, or moving a "
+                "swarm out partway through would leave it describing a run "
+                "that no longer exists.\n"
+                "Call envir.stop_recording() first to proceed.".format(self._recorder.path))
+
+
+    #######################################################################
+    #####                FLUID AND MESH INTERPOLATION                 #####
+    #######################################################################
+
+
+    def interpolate_temporal_flow(self, t_index=None, time=None):
+        '''Interpolate the flow in time, cubically or linearly as the fluid's
+        INUM sets (see FluidData). Defaults to the current time, self.time.
+
+        Parameters
+        ----------
+        t_index : int, optional
+            interpolate at self.time_history[t_index]; takes precedence over
+            time
+        time : float, optional
+            interpolate at this time
+
+        Returns
+        -------
+        list of ndarrays, one per velocity component
+
+        Raises
+        ------
+        RuntimeError
+            if there is no flow, or it is time-invariant
+        '''
+
+        if self.flow is None:
+            raise RuntimeError("Cannot temporally interpolate None flow.")
+        if self.flow.flow_times is None:
+            raise RuntimeError("Cannot temporally interpolate steady-state flow.")
+
+        if t_index is None and time is None:
+            time = self.time
+        elif t_index is not None:
+            time = self.time_history[t_index]
+
+        return self.flow(time)
+
+
+
+    def interpolate_flow(self, positions, flow=None, flow_points=None, 
+                         time=None, method='linear'):
+        '''Spatially interpolate the fluid velocity field (or another flow field) 
+        at the supplied positions. If flow is None and self.flow is time-varying,
+        the flow field will be interpolated in time first, using the current 
+        environmental time, or a different time if provided.
+
+        Assumes the edge of the fluid grid in all dimensions lies on the domain 
+        boundary, and that the lower-left corner of the domain is always the 
+        origin.
+
+        Parameters
+        ----------
+        positions : array
+            NxD locations at which to interpolate the flow field, where D is the 
+            dimension of the system.
+        flow : list-like of arrays, optional
+            The fluid velocity data, with each array representing one spatial 
+            component of the velocity vector. The first dimension of each array 
+            is time if the fluid velocity field is time varying. If None, the 
+            environmental flow field is used. Interpolated in time if necessary.
+        flow_points : list-like of 1-D arrays, optional
+            The set of coordinates along each dimension that defines the mesh
+            grid for the fluid velocity field. If None, the environmental flow
+            points is used. If flow is passed in on a grid other than the
+            environmental one, its coordinates must be passed in here too.
+        time : float, optional
+            if None, the present time. Otherwise, the flow field will be
+            interpolated to the time given based on the Environment flow_times.
+            This is only supported for environmental flow fields (not ones 
+            passed in as an argument).
+        method : string, default='linear'
+            spatial interpolation method to be passed to 
+            scipy.interpolate.interpn. Anything but splinef2d is supported.
+
+        '''
+
+        if method == 'splinef2d':
+            raise RuntimeError('Extrapolation is not supported in splinef2d.'+
+                               ' This is needed for RK4 solvers, and so is not'+
+                               ' a supported method in interpolate_flow.')
+        
+        if flow is None:
+            if self.flow.flow_times is None:
+                # non time-varying flow
+                flow = self.flow
+            else:
+                # time-varying flow
+                flow = self.interpolate_temporal_flow(time=time)
+
+        if flow_points is None:
+            flow_points = self.flow.flow_points
+
+        # Treat potential periodicity in fluid domain
+        if self._tiling is not None:
+            # A tiled axis wraps by the tiled extent first, exactly as
+            #   interpolating the materialized tiled field would, and then onto
+            #   the stored tile, which makes the two agree for every position,
+            #   outside the domain included. Other axes are treated as below.
+            mod_positions = np.array(positions)
+            for n, k in enumerate(self._tiling):
+                L_tile = flow_points[n][-1]
+                if k > 1:
+                    mod_positions[:,n] = positions[:,n] % (L_tile*k) % L_tile
+                elif self.flow.periodic_dim[n]:
+                    mod_positions[:,n] = positions[:,n] % L_tile
+        elif any(self.flow.periodic_dim):
+            mod_positions = np.array(positions)
+            for n,dim_bool in enumerate(self.flow.periodic_dim):
+                if dim_bool:
+                    # Assumes left side is 0, and domain edge == fluid grid edge.
+                    # Wrap against the grid actually being interpolated on -- the
+                    # environment's, unless a different one was passed in.
+                    mod_positions[:,n] = positions[:,n] % flow_points[n][-1]
+        else:
+            mod_positions = positions
+        
+        # interpolate positions not outside periodic bounds
+        x_vel = interpolate.interpn(flow_points, flow[0],
+                                    mod_positions, method=method, 
+                                    bounds_error=False, fill_value=None)
+        y_vel = interpolate.interpn(flow_points, flow[1],
+                                    mod_positions, method=method, 
+                                    bounds_error=False, fill_value=None)
+        if len(flow) == 3:
+            z_vel = interpolate.interpn(flow_points, flow[2],
+                                        mod_positions, method=method, 
+                                        bounds_error=False, fill_value=None)
+            return np.array([x_vel, y_vel, z_vel]).T
+        else:
+            return np.array([x_vel, y_vel]).T
+
+
+
+    def interpolate_temporal_mesh(self, time=None, t_index=None):
+        '''Linearly interpolate mesh vertices in time. Defaults to interpolating 
+        at the current time, given by self.time.
+        
+        Parameters
+        ----------
+        time : float, optional
+            interpolate at this time
+        t_index : int, optional
+            interpolate at self.time_history[t_index]; takes precedence over
+            time
+
+        Returns
+        -------
+        ndarray
+            the mesh at that time, Nx2x2; constant outside ibmesh_times
+        '''
+
+        if self.ibmesh is None or self.ibmesh.ndim < 4:
+            raise RuntimeError("Cannot temporally interpolate None or static mesh.")
+
+        if t_index is None and time is None:
+            time = self.time
+        elif t_index is not None:
+            time = self.time_history[t_index]
+
+        # Enforce constant extrapolation
+        if time <= self.ibmesh_times[0]:
+            return self.ibmesh[0,...]
+        elif time >= self.ibmesh_times[-1]:
+            return self.ibmesh[-1,...]
+        else:
+            loc = np.searchsorted(self.ibmesh_times, time)
+            # could be equal to val on right, but not on left.
+            if time == self.ibmesh_times[loc]:
+                return self.ibmesh[loc,...]
+            else:
+                # interpolate and return
+                t = (time - self.ibmesh_times[loc-1])/\
+                    (self.ibmesh_times[loc] - self.ibmesh_times[loc-1])
+                return (1-t)*self.ibmesh[loc-1,...] + t*self.ibmesh[loc,...]
+
+
+    #######################################################################
+    #####                 CALCULATIONS AND ANALYSIS                   #####
+    #######################################################################
+
+
+    def get_mean_fluid_speed(self):
+        '''Return the mean fluid speed at the current time, temporally
+        interpolating the flow field if necessary.'''
+
+        DIM3 = (len(self.L) == 3)
+
+        if self.flow.flow_times is None:
+            # temporally constant flow
+            flow_now = self.flow
+        else:
+            # temporal flow. interpolate in time, and then in space.
+            flow_now = self.interpolate_temporal_flow()
+
+        comps = [flow_now[n] for n in range(3 if DIM3 else 2)]
+        fluid_speed = np.sqrt(sum(c**2 for c in comps))
+
+        if self._tiling is not None:
+            # the mean over the tiled grid
+            return self.flow._tiled_mean(fluid_speed)
+        return np.mean(fluid_speed)
+
+
+
+    def calculate_mag_gradient(self):
+        '''Calculate and store the gradient of the magnitude of the fluid velocity
+        at the current time, along with the time at which it was calculated.
+        Gradient is calculated via second order accurate central differences
+        (using numpy) with second order accuracy at the boundaries and saved in
+        case it is needed again. A periodic dimension is differenced across the
+        wrap instead, since the field continues past the edge there. Stored on
+        ``flow.flow_points``, the stored tile when tiled.'''
+
+        TIME_DEP = self.flow.flow_times is not None
+        if not TIME_DEP:
+            speed = np.sqrt(np.sum(np.array(self.flow)**2, axis=0))
+        else:
+            # first, interpolate flow in time. Then calculate gradient.
+            speed = np.sqrt(np.sum(
+                        np.array(self.interpolate_temporal_flow())**2, axis=0))
+        # Per axis, since periodicity is per axis: a periodic axis is
+        #   differenced across the wrap.
+        flow_grad = [fluid._spatial_gradient(speed, self.flow.flow_points[d], d,
+                                             self.flow.periodic_dim[d],
+                                             edge_order=2)
+                     for d in range(len(self.flow.flow_points))]
+        # save the newly calculate gradient
+        self.mag_grad = flow_grad
+        self.mag_grad_time = self.time
+
+
+
+    def get_vorticity(self, t_indx=None, time=None, t_n=None):
+        '''Calculate the vorticity of the fluid velocity field at a given time.
+
+        With no time argument, the vorticity is at the current time. If more
+        than one is given, the first in the order below is used.
+
+        Parameters
+        ----------
+        t_indx : int, optional
+            index into self.time_history
+        time : float, optional
+            the time
+        t_n : int, optional
+            index into self.flow.flow_times
+
+        Returns
+        -------
+        ndarray (i,j) in 2D, the out-of-plane component; a tuple of three
+        (i,j,k) ndarrays in 3D. On ``flow.flow_points``: the stored tile when
+        tiled.
+        '''
+
+        if t_indx is not None:
+            time = self.time_history[t_indx]
+        elif t_indx is None and time is None and t_n is None:
+            if self.flow.flow_times is not None:
+                time = self.time
+
+        return self.flow.get_vorticity(time, t_n)
+
+
+
+    def get_dudt(self, t_indx=None, time=None):
+        '''Return the derivative of the fluid velocity with respect to time,
+        by default at the current time. See FluidData.get_dudt for how it is
+        computed under each interpolation in time.
+
+        Parameters
+        ----------
+        t_indx : int, optional
+            evaluate at self.time_history[t_indx]; takes precedence over time
+        time : float, optional
+            evaluate at this time
+
+        Returns
+        -------
+        list of ndarrays, one per velocity component, on ``flow.flow_points``:
+        the stored tile when tiled
+        '''
+
+        if t_indx is None and time is None:
+            time = self.time
+        elif t_indx is not None:
+            time = self.time_history[t_indx]
+
+        return self.flow.get_dudt(time)
+
+
+
+    def calculate_DuDt(self, t_indx=None, time=None):
+        '''Return the material derivative of the fluid velocity, by default at
+        the current time. Time arguments do not apply to time-invariant flow.
+
+        .. math::
+
+            \\frac{D\\mathbf{u}}{Dt} = \\mathbf{u}_t +
+            (\\nabla\\mathbf{u})\\mathbf{u}
+
+        Spatial gradients are second-order central differences, second-order
+        at the boundaries too, and across the wrap on periodic axes. See
+        FluidData.calculate_DuDt.
+
+        Parameters
+        ----------
+        t_indx : int, optional
+            evaluate at self.time_history[t_indx]; takes precedence over time
+        time : float, optional
+            evaluate at this time
+
+        Returns
+        -------
+        list of ndarrays, one per velocity component, on ``flow.flow_points``:
+        the stored tile when tiled
+        '''
+
+        if self.flow.flow_times is None:
+            # Time-invariant flow is the same at every time.
+            return self.flow.calculate_DuDt()
+        if t_indx is None and time is None:
+            time = self.time
+        elif t_indx is not None:
+            time = self.time_history[t_indx]
+
+        return self.flow.calculate_DuDt(time)
+
+
+    @property
+    def Re(self):
+        '''Return the Reynolds number at the current time. Must have set 
+        self.U, self.char_L and self.nu. Reynolds number is U*char_L/nu.'''
+
+        return self.U*self.char_L/self.nu
+
+
 
     def calculate_FTLE(self, grid_dim=None, testdir=None, t0=0, T=0.1, dt=0.001,
                        ode_gen=None, props=None, t_bound=None, swrm=None,
                        backward=False):
-        '''Calculate the FTLE field at the given time(s) t0 with integration 
-        length T on a discrete grid with given dimensions. The calculation will 
+        '''Calculate the FTLE field over the integration from time t0 to time T
+        on a discrete grid with given dimensions. The calculation will
         be conducted with respect to the fluid velocity field loaded in this 
         environment and either tracer particle movement (default), an ode specifying
         deterministic equations of motion, or other arbitrary particle movement 
@@ -2901,9 +3548,11 @@ class Environment:
         - Environment.FTLE_largest
         - Environment.FTLE_smallest
         - Environment.FTLE_loc
+        - Environment.FTLE_loc_end
         - Environment.FTLE_t0
         - Environment.FTLE_T
         - Environment.FTLE_grid_dim
+        - Environment.FTLE_backward
 
         All FTLE calculations will be done using a Swarm object. This means that:
         
@@ -2919,11 +3568,22 @@ class Environment:
         If both ode and swrm arguments are None, the default is to calculate the 
         FTLE based on massless tracer particles.
 
+        **Points whose neighbors leave the domain early.** The FTLE at a grid
+        point is found by central differences against its immediate neighbors.
+        Where one of them leaves the domain before T, the point's FTLE is taken
+        over the shorter interval from t0 to the last time its whole stencil
+        was present, and normalized by that interval rather than by T - t0. A
+        field containing such points is therefore not computed over one uniform
+        integration time; the returned last_time array identifies them. A point
+        is masked only when no stencil can be formed: when both neighbors in
+        some direction are gone, or when the one that remains is the point
+        itself.
+
         Parameters
         ----------
         grid_dim : tuple of int 
             size of the grid in each dimension (x, y, [z]). Defaults to the 
-            fluid grid.
+            fluid grid, across the tiled domain when tiled.
         testdir : str
             grid points can heuristically be removed from the interior of 
             immersed structures. To accomplish this, a line will be drawn from 
@@ -2933,16 +3593,12 @@ class Environment:
             will be drawn in (e.g. 'x1' for positive x-direction, 'y0' for 
             negative y-direction). If None, do not perform this check and use 
             all gridpoints.
-        t0 : float, optional
-            start time for calculating FTLE. If None, default 
-            behavior is to set t0=0.
-            TODO: Iterable to calculate at many times. Default then becomes 
-            t0=0 for time invariant flows and calculate FTLE at all times 
-            the flow field was specified at (self.flow_times) 
-            for time varying flows?
+        t0 : float, default=0
+            start time of the integration
         T : float, default=0.1
-            integration time. Default is 1, but longer is better (up to a point),
-            unless smallest FTLE is desired and agents are leaving the domain...
+            end time of the integration, which must be greater than t0. A
+            longer integration is better (up to a point), unless the smallest
+            FTLE is wanted and agents are leaving the domain.
         dt : float, default=0.001
             if solving ode or tracer particles, this is the time step for 
             checking boundary conditions. If passing in a Swarm object, 
@@ -2991,7 +3647,18 @@ class Environment:
             list of dt integration steps
         ndarray
             array the same size as the point grid giving the last time
-            in the integration before each point exited the domain
+            in the integration before each point exited the domain. Where this
+            is less than T, that point (and any point using it as a stencil
+            neighbor) reports the FTLE over the shorter window -- see the
+            discussion of early exits above.
+
+        Raises
+        ------
+        ValueError
+            if T is not greater than t0
+        NotImplementedError
+            for backward=True with ode_gen or swrm, and for a moving immersed
+            boundary mesh
         '''
 
         ###########################################################
@@ -3023,7 +3690,7 @@ class Environment:
                 "mesh, or compute FTLE on a fluid-only copy of the environment.")
 
         if grid_dim is None:
-            grid_dim = tuple(len(pts) for pts in self.flow_points)
+            grid_dim = tuple(len(pts) for pts in self.flow.tiled_points)
 
         if len(grid_dim) == 3:
             print("Warning: FTLE has not been well tested for 3D cases!")
@@ -3120,9 +3787,12 @@ class Environment:
                           current_time, dt))
                     raise
 
-                # Save current position to put in the history
+                # Save current position to put in the history, and hand the
+                #   same array to the boundary stage below as this step's
+                #   movement start point (see Swarm.__init__).
                 old_positions = s.positions.copy()
                 old_velocities = s.velocities.copy()
+                s._prev_positions = old_positions
 
                 # pull solution into Swarm object's position/velocity attributes
                 if ode_gen is None:
@@ -3178,10 +3848,15 @@ class Environment:
             self.time = t0
             self.time_history = []
 
+            # This loop advances self.time itself rather than through
+            #   _notify_step_complete, so a recording captures none of it.
             while self.time < T:
-                # Save current position to put in the history
+                # Save current position to put in the history, and hand the
+                #   same array to the boundary stage below as this step's
+                #   movement start point (see Swarm.__init__).
                 old_positions = s.positions.copy()
                 old_velocities = s.velocities.copy()
+                s._prev_positions = old_positions
                 # Conditionally save props to put in the history too
                 if s.props_history is not None:
                     old_props = s.props.copy()
@@ -3260,11 +3935,6 @@ class Environment:
         grid_loc_iter = np.ndindex(last_time.shape)
         for grid_loc in grid_loc_iter:
 
-            ### DEBUG ###
-            # flat_loc = np.ravel_multi_index((grid_loc[0],grid_loc[1]),grid_dim)
-            # start_pos = s.pos_history[0][flat_loc,:]
-            # if 0.96 < start_pos[0] < 0.98 and 0.15 < start_pos[1] < 0.18:
-            #     import pdb; pdb.set_trace()
             # if the central point is masked, skip this calculation.
             #  (inside a structure or non-repairable edge point)
             if last_time.mask[grid_loc]:
@@ -3315,17 +3985,13 @@ class Environment:
             t_calc = last_time[tuple(neigh_list.T)].min()
             t_idx = time_list.index(t_calc)
 
-            # The flow map below is therefore measured over t_calc - t0, which
-            # is shorter than T wherever a stencil point left the domain early.
-            # That elapsed time -- not T -- is what normalizes the stretching
-            # into a rate; see the FTLE division at the end of this loop.
+            # The flow map below spans t0 to t_calc, which ends before T wherever
+            # a stencil point left the domain early. The FTLE divides by this.
             elapsed = t_calc - t0
             if not elapsed > 0:
-                # Should be unreachable: points with last_time == t0 were masked
-                # before this loop, and masked stencil points are either dropped
-                # to a one-sided difference or cause the point to be masked. Guard
-                # anyway rather than emit an inf, and spell it "not > 0" so a NaN
-                # is caught too.
+                # Unreachable: points with last_time == t0 were masked before
+                # this loop, and a masked stencil point either gives a one-sided
+                # difference or masks this point. "not > 0" catches NaN too.
                 FTLE_largest[grid_loc] = ma.masked
                 FTLE_smallest[grid_loc] = ma.masked
                 continue
@@ -3370,13 +4036,8 @@ class Environment:
 
             ### CALCULATE FTLE ###
 
-            # Normalize by the time actually integrated, not by T. The two differ
-            # exactly where a stencil point left the domain early: the stretching
-            # in the numerator then accumulated over elapsed = t_calc - t0, and
-            # dividing it by the longer T would report a rate that is neither the
-            # rate over elapsed nor a valid FTLE over T. It under-reports, always
-            # in the same direction -- measured at 0.34-0.72 of truth on an
-            # analytic field whose FTLE is exact and uniform.
+            # The stretching accumulated over t0 to t_calc, as a rate over that
+            # same interval.
             w,_ = np.linalg.eigh(phi.T@phi)
             if w[-1] <= 0:
                 FTLE_largest[grid_loc] = ma.masked
@@ -3404,66 +4065,14 @@ class Environment:
         return self.swarms.pop(), time_list, last_time
 
 
-
-    def get_2D_vorticity(self, t_indx=None, time=None, t_n=None):
-        '''Calculuate the vorticity of the fluid velocity field at a given time.
-
-        If all time arguments are None but the flow is time-varying, the vorticity
-        at the current time will be returned. If more than one time argument is
-        specified, only the first will be used.
-
-        Parameters
-        ----------
-        t_indx : int
-            integer time index into self.envir.time_history[t_indx]
-        time : float
-            time
-        t_n : int
-            integer time index into self.flow_times[t_n]
-
-        Returns
-        -------
-        vorticity as an ndarray
-
-        '''
-        assert len(self.L) == 2, "Fluid velocity field must be 2D!"
-        if (t_indx is not None or time is not None or t_n is not None) and self.flow_times is None:
-            warnings.warn("Warning: flow is time invariant but time arg passed into get_2D_vorticity.",
-                          RuntimeWarning)
-
-        # Is the flow time-varying? (an extra leading time axis is present)
-        TIMEVAR = len(self.flow[0].shape) > len(self.L)
-
-        if TIMEVAR:
-            if t_indx is not None or time is not None:
-                flow = self.interpolate_temporal_flow(t_index=t_indx, time=time)
-                v_x = flow[0]
-                v_y = flow[1]
-            elif t_n is not None:
-                v_x = self.flow[0][t_n]
-                v_y = self.flow[1][t_n]
-            else:
-                flow = self.interpolate_temporal_flow()
-                v_x = flow[0]
-                v_y = flow[1]
-        else:
-            v_x = self.flow[0]
-            v_y = self.flow[1]
-
-        # Vorticity = d(v_y)/dx - d(v_x)/dy. Use np.gradient over the grid
-        #   coordinates: second-order central differences in the interior and
-        #   one-sided differences at the edges. This matches dyload's
-        #   FluidData.get_vorticity and replaces a per-grid-point Python loop.
-        dvydx = np.gradient(v_y, self.flow_points[0], axis=0)
-        dvxdy = np.gradient(v_x, self.flow_points[1], axis=1)
-
-        return dvydx - dvxdy
-
+    #######################################################################
+    #####                         SAVING DATA                         #####
+    #######################################################################
 
 
     def save_2D_vorticity(self, path, name, time_history=True, flow_times=False):
         '''Save the vorticity of a 2D fluid velocity field as one or more vtk 
-        files (one for each time point).
+        files (one for each time point). A tiled domain writes its stored tile.
 
         Parameters
         ----------
@@ -3479,19 +4088,21 @@ class Environment:
             velocity data is explicitly specified.
         '''
 
-        # Static flow: a single file, no temporal interpolation. (Mirrors the
-        # flow_times-is-None guard used elsewhere; interpolate_temporal_flow and
-        # the time-varying vorticity accessors assume a time axis.)
-        if self.flow_times is None:
-            vort = self.get_2D_vorticity()
+        # The writer expects coordinate arrays (flow_points), not domain lengths.
+        flow_points = self.flow.flow_points
+
+        # Static flow: a single file, no temporal interpolation. (The time-varying
+        # vorticity accessors assume a time axis and error when flow_times is None.)
+        if self.flow.flow_times is None:
+            vort = self.get_vorticity()
             _dataio.write_vtk_2D_rectilinear_grid_scalars(
-                path, name, vort, self.flow_points, None, self.time)
+                path, name, vort, flow_points, None, self.time)
             return
 
         if time_history:
             for cyc, time in enumerate(self.time_history):
-                vort = self.get_2D_vorticity(t_indx=cyc)
-                _dataio.write_vtk_2D_rectilinear_grid_scalars(path, name, vort, self.flow_points, cyc, time)
+                vort = self.get_vorticity(t_indx=cyc)
+                _dataio.write_vtk_2D_rectilinear_grid_scalars(path, name, vort, flow_points, cyc, time)
             cycle = len(self.time_history)
         else:
             cycle = None
@@ -3500,18 +4111,18 @@ class Environment:
                 out_name = 'omega'
             else:
                 out_name = name
-            for cyc, time in enumerate(self.flow_times):
-                vort = self.get_2D_vorticity(t_n=cyc)
-                _dataio.write_vtk_2D_rectilinear_grid_scalars(path, out_name, vort, self.flow_points, cyc, time)
+            for cyc, time in enumerate(self.flow.flow_times):
+                vort = self.get_vorticity(t_n=cyc)
+                _dataio.write_vtk_2D_rectilinear_grid_scalars(path, out_name, vort, flow_points, cyc, time)
         if time_history or not flow_times:
-            vort = self.get_2D_vorticity(time=self.time)
-            _dataio.write_vtk_2D_rectilinear_grid_scalars(path, name, vort, self.flow_points, cycle, self.time)
+            vort = self.get_vorticity(time=self.time)
+            _dataio.write_vtk_2D_rectilinear_grid_scalars(path, name, vort, flow_points, cycle, self.time)
 
 
 
     def save_fluid(self, path, name, time_history=True, flow_times=False):
         '''Save the fluid velocity field as one or more vtk files (one for each 
-        time point).
+        time point). A tiled domain writes its stored tile.
 
         Parameters
         ----------
@@ -3528,18 +4139,22 @@ class Environment:
             explicitly specified.
         '''
 
-        # Static flow: a single file written directly from self.flow, with no
-        # temporal interpolation (interpolate_temporal_flow assumes a time axis
-        # and errors when flow_times is None).
-        if self.flow_times is None:
+        # The writer expects coordinate arrays (flow_points), not domain lengths.
+        flow_points = self.flow.flow_points
+
+        # Static flow: a single file, no temporal interpolation
+        # (interpolate_temporal_flow assumes a time axis and errors when
+        # flow_times is None).
+        if self.flow.flow_times is None:
+            static_flow = [self.flow[n] for n in range(len(self.flow))]
             _dataio.write_vtk_rectilinear_grid_vectors(
-                path, name, self.flow, self.flow_points, None, self.time)
+                path, name, static_flow, flow_points, None, self.time)
             return
 
         if time_history:
             for cyc, time in enumerate(self.time_history):
                 flow = self.interpolate_temporal_flow(t_index=cyc)
-                _dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, self.flow_points, cyc, time)
+                _dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, flow_points, cyc, time)
             cycle = len(self.time_history)
         else:
             cycle = None
@@ -3548,181 +4163,12 @@ class Environment:
                 out_name = 'U'
             else:
                 out_name = name
-            for cyc, time in enumerate(self.flow_times):
+            for cyc, time in enumerate(self.flow.flow_times):
                 flow = self.interpolate_temporal_flow(time=time)
-                _dataio.write_vtk_rectilinear_grid_vectors(path, out_name, flow, self.flow_points, cyc, time)
+                _dataio.write_vtk_rectilinear_grid_vectors(path, out_name, flow, flow_points, cyc, time)
         if time_history or not flow_times:
             flow = self.interpolate_temporal_flow(time=self.time)
-            _dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, self.flow_points, cycle, self.time)
-
-
-
-    @property
-    def Re(self):
-        '''Return the Reynolds number at the current time. Must have set 
-        self.U, self.char_L and self.nu. Reynolds number is U*char_L/nu.'''
-
-        return self.U*self.char_L/self.nu
-
-
-
-    def dudt(self, t_indx=None, time=None):
-        '''Return the derivative of the fluid velocity with respect to time.
-        Defaults to interpolating at the current time, given by self.time.
-
-        Parameters
-        ----------
-        t_indx : int, optional
-            Interpolate at a time referred to by self.envir.time_history[t_indx]
-        time : float, optional
-            Interpolate at a specific time. default is current time.
-
-        Returns
-        -------
-        List of ndarrays
-        '''
-
-        DIM3 = (len(self.L) == 3)
-
-        if t_indx is None and time is None:
-            time = self.time
-        elif t_indx is not None:
-            time = self.time_history[t_indx]
-
-        if (not DIM3 and len(self.flow[0].shape) == 2) or \
-            (DIM3 and len(self.flow[0].shape) == 3):
-            # temporally constant flow
-            return [np.zeros_like(f) for f in self.flow]
-        else:
-            # temporal flow.
-            # Create temporary PPoly objects for dudt.
-            if not all([type(f) == fluid.fCubicSpline for f in self.flow]):
-                self.flow = fluid.create_temporal_interpolations(self.flow_times, self.flow)
-            dudt_list = []
-            for ppoly in self.flow:
-                dfdt = ppoly.derivative()
-                dudt_list.append(dfdt(time))
-            return dudt_list
-
-
-
-    def calculate_DuDt(self, t_indx=None, time=None):
-        '''Calculate and store material derivative of the fluid velocity with 
-        respect to time. Defaults to interpolating at the current time, given by 
-        self.time. Gradient is calculated via second order accurate central 
-        differences (using numpy) with second order accuracy at the boundaries.
-        The material derivative is saved in case it is needed again.
-
-        The material derivative is given by
-        .. math::
-        \\frac{D\\mathbf{u}}{Dt} = \\mathbf{u}_t + 
-        (\\nabla\\mathbf{u})\\mathbf{u}
-        
-        Parameters
-        ----------
-        t_indx : int, optional
-            Interpolate at a time referred to by self.envir.time_history[t_indx]
-        time : float, optional
-            Interpolate at a specific time. default is current time.
-        '''
-
-        DIM3 = (len(self.L) == 3)
-
-        TIME_DEP = len(self.flow[0].shape) != len(self.L)
-
-        if DIM3:
-            axis_tuple = (1,2,3)
-        else:
-            axis_tuple = (1,2)
-
-        if not TIME_DEP:
-            flow = self.flow
-        else:
-            # first, interpolate flow in time.
-            flow = self.interpolate_temporal_flow(t_index=t_indx, time=time)
-            
-        flow_grad = np.gradient(np.array(flow),
-                    *self.flow_points, edge_order=2, axis=axis_tuple)
-
-        # Take dot product
-        DuDt = []
-        for g,f in zip(flow_grad,flow):
-            DuDt.append(g*f)
-        DuDt = np.sum(DuDt, axis=0)
-
-        # Add dudt
-        DuDt += np.array(self.dudt(t_indx, time))
-
-        self.DuDt = [u for u in DuDt]
-        if t_indx is None and time is None:
-            self.DuDt_time = self.time
-        elif t_indx is not None:
-            self.DuDt_time = self.time_history[t_indx]
-        else:
-            self.DuDt_time = time
-
-
-    #######################################################################
-    #####                       HELPER FUNCTIONS                      #####
-    #######################################################################
-
-
-    def reset(self, rm_swarms=False):
-        '''Resets environment to time=0. Swarm history will be lost, and all
-        Swarms will maintain their last position and velocities. 
-        If rm_swarms=True, remove all Swarms.'''
-
-        self.time = 0.0
-        self.time_history = []
-        if rm_swarms:
-            self.swarms = []
-        else:
-            for sw in self.swarms:
-                # every history goes, not just positions: they are indexed
-                #   together (full_vel_history lines up with full_pos_history),
-                #   so clearing one and keeping the others leaves them
-                #   misaligned for the rest of the session.
-                sw.pos_history = []
-                sw.vel_history = []
-                if sw.props_history is not None:
-                    sw.props_history = []
-
-
-
-    def regenerate_flow_data(self):
-        '''Regenerates the original fluid velocity data from temporal spline 
-        objects.
-        '''
-        for n, flow in enumerate(self.flow):
-            self.flow[n] = flow.regenerate_data()
-
-
-
-    def _reset_flow_variables(self, incl_rho_mu_U=False):
-        '''To be used when the fluid flow changes. Resets all the helper
-        parameters and reports new domain.'''
-
-        self.h_p = None
-        self.tiling = None
-        self.orig_L = None
-        self.plot_structs = []
-        self.plot_structs_args = []
-        self._reset_flow_deriv()
-        if incl_rho_mu_U:
-            self.mu = None
-            self.rho = None
-            self.U = None
-        print("Fluid updated. Planktos domain size is now {}.".format(self.L))
-
-
-
-    def _reset_flow_deriv(self):
-        '''Reset properties that are derived from the flow velocity.'''
-
-        self.mag_grad = None
-        self.mag_grad_time = None
-        self.DuDt = None
-        self.DuDt_time = None
+            _dataio.write_vtk_rectilinear_grid_vectors(path, name, flow, flow_points, cycle, self.time)
 
 
     #######################################################################
@@ -3796,9 +4242,11 @@ class Environment:
                     axHisty.set_position([left, bottom, width, height])
 
 
-            # add a grassy porous layer background (if porous layer present)
+            # add a grassy porous layer background (if porous layer present).
+            #   A private fixed-seed generator draws it, so the picture is the
+            #   same every time and numpy's global random state is untouched.
             if self.h_p is not None:
-                grass = np.random.rand(80)*self.L[0]
+                grass = np.random.default_rng(0).random(80)*self.L[0]
                 for g in grass:
                     ax.axvline(x=g, ymax=self.h_p/self.L[1], color='.5', zorder=0.5)
 
@@ -3888,9 +4336,10 @@ class Environment:
             ax.set_ylabel('Y')
             ax.set_zlabel('Z')
 
-            # add a grassy porous layer background (if porous layer present)
+            # add a grassy porous layer background (if porous layer present).
+            #   A private fixed-seed generator, as in 2D.
             if self.h_p is not None:
-                grass = np.random.rand(120,2)
+                grass = np.random.default_rng(0).random((120,2))
                 grass[:,0] *= self.L[0]
                 grass[:,1] *= self.L[1]
                 for g in grass:
@@ -3963,38 +4412,26 @@ class Environment:
 
 
 
-    def plot_flow(self, t=None, downsamp=5, interval=500, figsize=None, **kwargs):
-        '''Plot the velocity field of the fluid at a given time t or at all
-        times if t is None. If t is not in self.flow_times, the nearest time
-        will be shown without interpolation.
+    def plot_flow(self, time=None, downsamp=5, interval=500, figsize=None, **kwargs):
+        '''Plot the velocity field of the fluid at a given time, or animate it
+        over every time in flow_times if time is None.
 
         For densely sampled velocity fields, specify an int for downsamp to plot
         every nth vector in each direction.
 
         For time dependent velocity fields, interval is the delay between plotting
         of each time's flow data, in milliseconds. Defaults to 500.
-        
+
         Extra keyword arguments will be passed to pyplot's quiver.
 
-        2D arrow lengths are scaled based on the maximum of all the data over 
-        all times.
+        2D arrow lengths are scaled by the largest velocity components among
+        the dumps loaded so far: the whole dataset, unless INUM is an int. An
+        animation of a dynamically loaded fluid reads every dump.
         '''
 
         if self.flow is None:
             self.plot_envir(figsize=figsize)
             return
-
-        # Locate the flow field that will need plotting, or None if not
-        #   time-dependent or we are going to plot all of them.
-        if t is not None and self.flow_times is not None:
-            loc = np.searchsorted(self.flow_times, t)
-            if loc == len(self.flow_times):
-                loc = -1
-            elif t < self.flow_times[loc]:
-                if (self.flow_times[loc]-t) > (t-self.flow_times[loc-1]):
-                    loc -= 1
-        else:
-            loc = None
 
         if downsamp is None:
             M = 1
@@ -4003,29 +4440,32 @@ class Environment:
             assert downsamp>0, "downsamp must be a positive int (min 1)"
             M = downsamp
 
+        # Every M-th point of the grid, across the tiled domain when tiled.
+        pts = [fp[::M] for fp in self.flow.tiled_points]
+        def arrows(field):
+            return [self.flow.tiled_strided(f, (M,)*len(self.L)) for f in field]
+
         def animate(n, quiver, kwargs):
-            time_text.set_text('time = {:.2f}'.format(self.flow_times[n]))
+            time = self.flow.flow_times[n]
+            time_text.set_text('time = {:.2f}'.format(time))
             if len(self.L) == 2:
-                quiver.set_UVC(self.flow[0][n][::M,::M].T,
-                               self.flow[1][n][::M,::M].T)
+                u, v = arrows(self.flow(time))
+                quiver.set_UVC(u.T, v.T)
             else:
-                quiver = ax.quiver(x,y,z,self.flow[0][n][::M,::M,::M],
-                                         self.flow[1][n][::M,::M,::M],
-                                         self.flow[2][n][::M,::M,::M], **kwargs)
+                quiver = ax.quiver(x,y,z,*arrows(self.flow(time)), **kwargs)
                 fig.canvas.draw()
             return [quiver, time_text]
         
         def animate_mvib(n, quiver, mesh_col, kwargs):
-            time_text.set_text('time = {:.2f}'.format(self.flow_times[n]))
+            time = self.flow.flow_times[n]
+            time_text.set_text('time = {:.2f}'.format(time))
             if len(self.L) == 2:
-                quiver.set_UVC(self.flow[0][n][::M,::M].T,
-                               self.flow[1][n][::M,::M].T)
+                u, v = arrows(self.flow(time))
+                quiver.set_UVC(u.T, v.T)
             else:
-                quiver = ax.quiver(x,y,z,self.flow[0][n][::M,::M,::M],
-                                         self.flow[1][n][::M,::M,::M],
-                                         self.flow[2][n][::M,::M,::M], **kwargs)
+                quiver = ax.quiver(x,y,z,*arrows(self.flow(time)), **kwargs)
                 fig.canvas.draw()
-            ibmesh = self.interpolate_temporal_mesh(time=self.flow_times[n])
+            ibmesh = self.interpolate_temporal_mesh(time=self.flow.flow_times[n])
             mesh_col.set_segments(ibmesh)
             return [quiver, mesh_col, time_text]
 
@@ -4055,76 +4495,62 @@ class Environment:
 
         ########## 2D Plot #########
         if len(self.L) == 2:
-            max_u = self.flow[0].max(); max_v = self.flow[1].max()
+            max_u, max_v = self.flow.fmax
             max_mag = np.linalg.norm(np.array([max_u,max_v]))
-            if len(self.L) == len(self.flow[0].shape) or t is not None:
-                # Single-time plot.
-                if loc is None:
-                    ax.quiver(self.flow_points[0][::M], self.flow_points[1][::M],
-                              self.flow[0][::M,::M].T, self.flow[1][::M,::M].T, 
-                              scale=max_mag*5, **kwargs)
-                else:
-                    ax.quiver(self.flow_points[0][::M], self.flow_points[1][::M],
-                              self.flow[0][loc][::M,::M].T,
-                              self.flow[1][loc][::M,::M].T, 
-                              scale=max_mag*5, **kwargs)
+            if self.flow.flow_times is None:
+                # Single-time plot of time-invarient flow
+                u, v = arrows(self.flow)
+                ax.quiver(pts[0], pts[1], u.T, v.T, scale=max_mag*5, **kwargs)
+            elif time is not None:
+                # Single-time plot with time specified
+                u, v = arrows(self.flow(time))
+                ax.quiver(pts[0], pts[1], u.T, v.T, scale=max_mag*5, **kwargs)
                 # Check for moving immersed boundary
                 if mesh_col is not None and self.ibmesh.ndim == 4:
-                        ibmesh = self.interpolate_temporal_mesh(time=t)
+                        ibmesh = self.interpolate_temporal_mesh(time=time)
                         mesh_col.set_segments(ibmesh)
             else:
                 # Animation plot
                 # create quiver object
-                quiver = ax.quiver(self.flow_points[0][::M], self.flow_points[1][::M], 
-                                   self.flow[0][0][::M,::M].T,
-                                   self.flow[1][0][::M,::M].T, 
+                u, v = arrows(self.flow(self.flow.flow_times[0]))
+                quiver = ax.quiver(pts[0], pts[1], u.T, v.T,
                                    scale=max_mag*5, **kwargs)
                 # textual info
                 time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
                                     fontsize=12)
         ########## 3D Plot #########        
         else:
-            x, y, z = np.meshgrid(self.flow_points[0][::M], self.flow_points[1][::M], 
-                                  self.flow_points[2][::M], indexing='ij')
-            max_u = self.flow[0].max(); max_v = self.flow[1].max()
-            max_w = self.flow[2].max()
+            x, y, z = np.meshgrid(*pts, indexing='ij')
+            max_u, max_v, max_w = self.flow.fmax
             max_mag = np.linalg.norm(np.array([max_u,max_v,max_w]))
-            if len(self.L) == len(self.flow[0].shape) or t is not None:
-                # Single-time plot.
-                if loc is None:
-                    ax.quiver(x,y,z,self.flow[0][::M,::M,::M],
-                                    self.flow[1][::M,::M,::M],
-                                    self.flow[2][::M,::M,::M], 
-                                    **kwargs)
-                else:
-                    ax.quiver(x,y,z,self.flow[0][loc][::M,::M,::M],
-                                    self.flow[1][loc][::M,::M,::M],
-                                    self.flow[2][loc][::M,::M,::M],
-                                    **kwargs)
+            if self.flow.flow_times is None:
+                # Single-time plot of time-invarient flow
+                ax.quiver(x,y,z,*arrows(self.flow), **kwargs)
+            elif time is not None:
+                # Single-time plot with time specified
+                    ax.quiver(x,y,z,*arrows(self.flow(time)), **kwargs)
             else:
                 # Animation plot
-                quiver = ax.quiver(x,y,z,self.flow[0][0][::M,::M,::M],
-                                         self.flow[1][0][::M,::M,::M],
-                                         self.flow[2][0][::M,::M,::M],
+                quiver = ax.quiver(x,y,z,*arrows(self.flow(self.flow.flow_times[0])),
                                          **kwargs)
                 # textual info
                 time_text = ax.text2D(0.02, 1, 'time = {:.2f}'.format(
-                                  self.flow_times[0]),
+                                  self.flow.flow_times[0]),
                                   transform=ax.transAxes, animated=True,
                                   verticalalignment='top', fontsize=12)
 
-        if len(self.L) < len(self.flow[0].shape) and t is None:
-            frames = range(len(self.flow_times))
+        if self.flow.flow_times is not None and time is None:
+            frames = range(len(self.flow.flow_times))
             if mesh_col is not None and self.ibmesh.ndim == 4:
                 anim = animation.FuncAnimation(fig, animate_mvib, frames=frames,
                                             fargs=(quiver,mesh_col,kwargs),
                                             interval=interval, repeat=False,
-                                            blit=True, save_count=len(frames))
+                                            blit=True)
             else:
                 anim = animation.FuncAnimation(fig, animate, frames=frames,
                                             fargs=(quiver,kwargs),
                                             interval=interval, repeat=False,
-                                            blit=True, save_count=len(frames))
+                                            blit=True)
 
         plt.show()
 
@@ -4145,8 +4571,8 @@ class Environment:
         assert len(self.L) == 2, "Flow field must be 2D!"
 
         def animate(n, pc, time_text):
-            vort = self.get_2D_vorticity(t_n=n)
-            time_text.set_text('time = {:.3f}'.format(self.flow_times[n]))
+            vort = self.flow.materialize_tiled(self.get_vorticity(t_n=n))
+            time_text.set_text('time = {:.3f}'.format(self.flow.flow_times[n]))
             pc.set_array(vort.T)
             pc.changed()
             pc.autoscale()
@@ -4155,9 +4581,9 @@ class Environment:
             return [pc, time_text]
         
         def animate_mvib(n, pc, mesh_col, time_text):
-            vort = self.get_2D_vorticity(t_n=n)
-            time_text.set_text('time = {:.3f}'.format(self.flow_times[n]))
-            ibmesh = self.interpolate_temporal_mesh(time=self.flow_times[n])
+            vort = self.flow.materialize_tiled(self.get_vorticity(t_n=n))
+            time_text.set_text('time = {:.3f}'.format(self.flow.flow_times[n]))
+            ibmesh = self.interpolate_temporal_mesh(time=self.flow.flow_times[n])
             mesh_col.set_segments(ibmesh)
             pc.set_array(vort.T)
             pc.changed()
@@ -4188,15 +4614,18 @@ class Environment:
         ax, mesh_col = self._plot_setup(fig, nohist=True)
         ax.set_aspect('equal')
 
+        # The grid across the tiled domain when tiled; vorticity is replicated
+        #   onto it.
+        pts = self.flow.tiled_points
         if clip is not None:
             norm = colors.Normalize(-abs(clip),abs(clip),clip=True)
         else:
             norm = None
 
-        if len(self.L) == len(self.flow[0].shape):
+        if self.flow.flow_times is None:
             # Single-time plot from single-time flow
-            vort = self.get_2D_vorticity()
-            pc = ax.pcolormesh(self.flow_points[0], self.flow_points[1],
+            vort = self.flow.materialize_tiled(self.get_vorticity())
+            pc = ax.pcolormesh(pts[0], pts[1],
                           vort.T, shading='gouraud', cmap='RdBu', norm=norm)
             axbbox = ax.get_position().get_points()
             cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])
@@ -4205,8 +4634,8 @@ class Environment:
             if mesh_col is not None and self.ibmesh.ndim == 4:
                 ibmesh = self.interpolate_temporal_mesh(time=t)
                 mesh_col.set_segments(ibmesh)
-            vort = self.get_2D_vorticity(time=t)
-            pc = ax.pcolormesh(self.flow_points[0], self.flow_points[1],
+            vort = self.flow.materialize_tiled(self.get_vorticity(time=t))
+            pc = ax.pcolormesh(pts[0], pts[1],
                           vort.T, shading='gouraud', cmap='RdBu', norm=norm)
             ax.text(0.02, 0.95, 'time = {:.3f}'.format(t), transform=ax.transAxes, fontsize=12)
             axbbox = ax.get_position().get_points()
@@ -4215,9 +4644,9 @@ class Environment:
         else:
             # Animation plot
             # create pcolormesh object
-            # vort = self.get_2D_vorticity(t_n=0)
-            pc = ax.pcolormesh([self.flow_points[0]], self.flow_points[1], 
-                           np.zeros(self.flow[0].shape[1:]).T, shading='gouraud',
+            # vort = self.get_vorticity(t_n=0)
+            pc = ax.pcolormesh([pts[0]], pts[1],
+                           np.zeros((len(pts[0]), len(pts[1]))).T, shading='gouraud',
                            cmap='RdBu', norm=norm)
             axbbox = ax.get_position().get_points()
             cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])
@@ -4225,7 +4654,7 @@ class Environment:
             # textual info
             time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
                                 fontsize=12)
-            frames = range(len(self.flow_times))
+            frames = range(len(self.flow.flow_times))
             if mesh_col is not None and self.ibmesh.ndim == 4:
                 anim = animation.FuncAnimation(fig, animate_mvib, frames=frames,
                                             fargs=(pc,mesh_col,time_text),
@@ -4335,5 +4764,4 @@ class Environment:
         cbaxes = fig.add_axes([axbbox[1,0]+0.01, axbbox[0,1], 0.02, axbbox[1,1]-axbbox[0,1]])
         plt.colorbar(pcm, cax=cbaxes)
         plt.show()
-
 

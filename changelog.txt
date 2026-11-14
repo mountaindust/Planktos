@@ -1,3 +1,41 @@
+1.1.0
+-----------------------
+Dynamic loading of 2D and 3D fluid velocity data, for highly-resolved fluids where RAM is a constraint. 
+Streaming out data to disk as an archive and both plotting and restoring from the archive.
+- Environment.flow is now a FluidData object; fluid methods (get_vorticity, get_dudt, …) moved onto it.
+- New Environment.record streams agent state to a run archive on disk as a run proceeds, optionally keeping every k-th step.
+- New planktos.load_run opens a run archive to read saved data, or to rebuild the Environment and Swarms (random stream included) and resume
+- Plots and movies draw the fluid from the recorded archive.
+- tile_flow is now Environment.tile_domain and tiles (incl. z, with or w/o ibmesh) without copying the fluid data.
+- New Environment.read_openfoam_vtk_data reads OpenFOAM VTK exports (foamToVTK)
+- read_comsol_vtu_data reads time-varying COMSOL .vtu exports, interpolating in time between them.
+- read_stl_mesh_data loads an extruded STL into a 2D environment as its 2D outline.
+- Swarm.move now raises when the Environment holds more than one Swarm; use Environment.move_swarms.
+- Environment.move_swarms moves all Swarms simultaneously: models see each other at the start of the step, and after_move sees where it ended.
+- New Swarm.retire and Swarm.release take agents out of the domain and bring them back, e.g. for capture or a continuous inflow.
+- plot_all: new playback_rate (simulated seconds per second of video) sets movie speed. Defaults to 1, real time, changing existing movies.
+- Bug fix: read_IB2d_mesh_data's add_idx_list is now 1-based, as documented and as brk_idx_list is.
+- Bug fix: vorticity, the material derivative and the fluid-speed gradient difference across the wrap on periodic dimensions; changes values in the outermost grid ring.
+- Plots now show mean agent speed and its spread instead of mean and max fluid speed; plotting no longer loads fluid data for statistics.
+- read_IB2d_fluid_data starts at the first dump on disk by default
+- Fluid loaders warn and carry on when a dump the time series declares is missing
+- tile_domain warns where tiled fluid is discontinuous at a seam
+- Environment.extend was removed.
+- Bug fix: Environment.move_swarms uses each Swarm's ib_condition instead of forcing 'sliding'.
+- Bug fix: adding a Swarm to a different Environment (add_swarm or init_swarms) now removes it from its previous one.
+- Bug fix: plot_all(fluid='vort') raised over a time-invariant flow.
+- Bug fix: Swarm.plot at a past time with a moving immersed boundary mesh raised AttributeError.
+- Bug fix: read_NetCDF_flow accepts dim_reorder alongside vec_idx, and any axis permutation rather than only swaps.
+- Bug fix: set_canopy_flow accepts scalar u_star/U_h/beta, gives zero flow for zero wind, and checks u_star = U_h*beta at every time.
+- Bug fix: 2D COMSOL vtu data now loads.
+- Bug fix: plot_all(writer_kwargs=...) encodes movies at fps unless writer_kwargs sets its own.
+- Bug fix: % remaining now counts from the first state that has agents.
+- Bug fix: plot_all raised KeyError in 2D for a swarm with per-agent colors
+- Bug fix: motion.highRe_massive_drift divided drag by mass twice; its drag was 1/m times the correct value.
+- Porous-layer plots are now the same every time, and no longer use numpy's global random state.
+- other minor bug fixes
+
+
 1.0.3
 -----------------------
 Bug fixes, plus adds a link to the repo the on documentation landing page.

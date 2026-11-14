@@ -169,7 +169,7 @@ def test_3d_mixed_bc_applies_per_dimension():
 
 
 def test_2d_mixed_bc_periodic_x_noflux_y():
-    # The TODO's explicit example: periodic in x, noflux in y.
+    # Periodic in x, noflux in y.
     envir = planktos.Environment(Lx=1, Ly=1,
                                  x_bndry=('periodic', 'periodic'),
                                  y_bndry=('noflux', 'noflux'),
@@ -217,6 +217,307 @@ def test_move_swarms_and_reset():
     assert len(a.full_pos_history) == 1               # just the (reset) current positions
 
 
+def test_bare_move_refuses_when_the_environment_holds_more_than_one_swarm():
+    # One Swarm cannot advance the environment clock while the others stand
+    #   still. This used to warn and then freeze the others by appending to
+    #   pos_history alone, which left vel_history and props_history behind for
+    #   the rest of the session.
+    envir = planktos.Environment()
+    a = envir.add_swarm(swarm_size=3)
+    envir.add_swarm(swarm_size=3)
+    with pytest.raises(RuntimeError, match='move_swarms'):
+        a.move(0.5)
+    # nothing was moved, recorded, or advanced on the way to the raise
+    assert envir.time == 0.0
+    assert envir.time_history == []
+    assert all(len(s.pos_history) == 0 for s in envir.swarms)
+
+
+def test_move_swarms_keeps_every_history_in_step():
+    # The freeze-append that used to run here grew pos_history without
+    #   vel_history, so full_vel_history fell out of alignment with
+    #   full_pos_history and every consumer pairing the two read the wrong
+    #   entry or raised.
+    envir = planktos.Environment()
+    a = envir.add_swarm(swarm_size=3)
+    b = envir.add_swarm(swarm_size=3)
+    for _ in range(3):
+        envir.move_swarms(0.5)
+    for s in (a, b):
+        assert len(s.pos_history) == len(s.vel_history) == len(envir.time_history)
+        assert len(s.full_pos_history) == len(s.full_vel_history)
+        # the two consumers that pair the histories by index
+        s._calc_basic_stats(False, t_indx=2)
+        np.arctan2(s.vel_history[2][:, 1], s.vel_history[2][:, 0])
+
+
+def test_move_swarms_uses_each_swarms_own_ib_condition():
+    # move_swarms passed ib_collisions='sliding' to every Swarm, so a Swarm
+    #   created with ib_condition='sticky' slid along the wall instead.
+    # A vertical wall at x=0.5; drift (0.4, 0.2) over dt=1 from (0.3, 0.3)
+    #   strikes it at y=0.4. Sticky stops there; sliding projects the remaining
+    #   (0.2, 0.1) onto the wall and ends at y=0.5.
+    def walled():
+        envir = _envir('noflux')
+        envir.ibmesh = np.array([[[0.5, 0.0], [0.5, 1.0]]])
+        envir.max_meshpt_dist = 1.0
+        sticky = _drift_swarm(envir, [[0.3, 0.3]], mu=(0.4, 0.2))
+        sticky.ib_condition = 'sticky'
+        sliding = _drift_swarm(envir, [[0.3, 0.3]], mu=(0.4, 0.2))
+        return envir, sticky, sliding
+
+    envir, sticky, sliding = walled()
+    envir.move_swarms(1.0, silent=True)
+    assert sticky.positions[0, 1] == pytest.approx(0.4, abs=1e-4)
+    assert sliding.positions[0, 1] == pytest.approx(0.5, abs=1e-4)
+    for s in (sticky, sliding):
+        assert s.positions[0, 0] == pytest.approx(0.5, abs=1e-4)
+        assert s.positions[0, 0] < 0.5
+
+    # An explicit argument still applies to every Swarm.
+    envir, sticky, sliding = walled()
+    envir.move_swarms(1.0, ib_collisions='sliding', silent=True)
+    assert sticky.positions[0, 1] == pytest.approx(0.5, abs=1e-4)
+
+
+class _Chaser(planktos.Swarm):
+    '''Steps a fixed distance toward the mean position of the swarm named by
+    self._target, and logs what it saw of that swarm in each model call and
+    each after_move.'''
+    def apply_agent_model(self, dt):
+        seen = self._target.positions.copy()
+        self._seen_in_model.append(seen)
+        toward = seen.mean(axis=0) - self.positions
+        return self.positions + 0.1 * toward
+
+    def after_move(self, dt):
+        self._seen_after.append(self._target.positions.copy())
+
+
+def _chasers(order):
+    '''Two swarms that each chase the other, added in the given order.'''
+    envir = _envir('noflux', L=10.0)
+    made = {}
+    for name in order:
+        init = [[2., 2.], [3., 2.]] if name == 'a' else [[8., 7.], [7., 8.]]
+        made[name] = _Chaser(swarm_size=2, envir=envir, seed=1,
+                             init=np.array(init))
+        made[name]._seen_in_model, made[name]._seen_after = [], []
+    made['a']._target, made['b']._target = made['b'], made['a']
+    return envir, made['a'], made['b']
+
+
+def test_move_swarms_moves_interacting_swarms_simultaneously():
+    # Every model sees the other swarm as it was at the start of the step, so
+    # the run is the same whichever swarm comes first in envir.swarms.
+    runs = {}
+    for order in ('ab', 'ba'):
+        envir, a, b = _chasers(order)
+        starts = []
+        for _ in range(4):
+            starts.append((a.positions.copy(), b.positions.copy()))
+            envir.move_swarms(1.0, silent=True)
+        for k, (a0, b0) in enumerate(starts):
+            np.testing.assert_array_equal(a._seen_in_model[k], b0)
+            np.testing.assert_array_equal(b._seen_in_model[k], a0)
+        runs[order] = (np.stack(a.full_pos_history), np.stack(b.full_pos_history))
+    np.testing.assert_array_equal(runs['ab'][0], runs['ba'][0])
+    np.testing.assert_array_equal(runs['ab'][1], runs['ba'][1])
+
+
+def test_every_after_move_sees_every_swarm_where_the_step_ended():
+    envir, a, b = _chasers('ab')
+    for _ in range(3):
+        envir.move_swarms(1.0, silent=True)
+        np.testing.assert_array_equal(a._seen_after[-1], b.positions)
+        np.testing.assert_array_equal(b._seen_after[-1], a.positions)
+
+
+def test_non_interacting_swarms_move_together_exactly_as_each_does_alone():
+    # Each swarm draws from its own random stream and reads the fluid at the
+    # same time, so moving it beside others changes nothing about it.
+    def world():
+        envir = planktos.Environment(rho=1000, mu=1000)
+        envir.set_brinkman_flow(alpha=66, h_p=1.5, U=1, dpdx=1, res=21)
+        envir.ibmesh = np.array([[[5.0, 2.0], [5.0, 8.0]]])
+        envir.max_meshpt_dist = 6.0
+        return envir
+
+    def add(envir, which):
+        seed, ib = {'a': (1, 'sliding'), 'b': (2, 'sticky')}[which]
+        s = planktos.Swarm(swarm_size=10, envir=envir, seed=seed,
+                           ib_condition=ib, init=np.full((10, 2), 4.0) + seed)
+        s.shared_props['cov'] = s.shared_props['cov'] * 0.5
+        return s
+
+    together = world()
+    pair = [add(together, w) for w in 'ab']
+    for _ in range(15):
+        together.move_swarms(0.2, silent=True)
+    for which, moved_with in zip('ab', pair):
+        alone_envir = world()
+        alone = add(alone_envir, which)
+        for _ in range(15):
+            alone.move(0.2, silent=True)
+        np.testing.assert_array_equal(np.stack(moved_with.full_pos_history),
+                                      np.stack(alone.full_pos_history))
+        np.testing.assert_array_equal(moved_with.ib_collision_idx,
+                                      alone.ib_collision_idx)
+
+
+class _FailsAfterMove(planktos.Swarm):
+    '''Its after_move raises from the second step on.'''
+    def after_move(self, dt):
+        if len(self.pos_history) > 1:
+            raise ValueError('a bug in after_move')
+
+
+def test_a_failed_move_swarms_step_leaves_every_history_consistent():
+    # Every swarm commits its step before any boundary condition or after_move
+    # runs, so a failure in the last swarm still leaves all histories one entry
+    # longer, matching time_history.
+    envir = _envir('noflux')
+    a = _drift_swarm(envir, [[0.2, 0.2]], mu=(0.1, 0.))
+    b = _drift_swarm(envir, [[0.5, 0.5]], mu=(0.1, 0.))
+    c = _FailsAfterMove(swarm_size=1, envir=envir, seed=1,
+                        init=np.array([[0.7, 0.7]]))
+    envir.move_swarms(0.5, silent=True)
+    with pytest.raises(RuntimeError, match='after_move raised'):
+        envir.move_swarms(0.5, silent=True)
+    assert envir.time is None
+    for s in (a, b, c):
+        assert len(s.pos_history) == len(s.vel_history) == len(envir.time_history) == 2
+    with pytest.raises(RuntimeError, match='error state'):
+        envir.move_swarms(0.5, silent=True)
+
+
+# --------------------------------------------------------------------------- #
+#                      agents leaving and entering mid-run                     #
+# --------------------------------------------------------------------------- #
+# retire/release: a fixed-size Swarm whose membership changes. A masked row is
+# an agent out of the domain; the mask is hardened, so release rebuilds the
+# arrays rather than assigning into them.
+
+def _masked_rows(arr):
+    return ma.getmaskarray(arr).all(axis=1).tolist()
+
+
+def test_retire_masks_positions_velocities_and_accelerations_together():
+    envir = _envir('noflux', L=10.0)
+    swrm = _drift_swarm(envir, [[2., 2.], [3., 3.], [4., 4.]], mu=(1., 0.))
+    swrm.retire(1)          # works while the mask is still a single False
+    for arr in (swrm.positions, swrm.velocities, swrm.accelerations):
+        assert _masked_rows(arr) == [False, True, False]
+    swrm.retire([1, 2])     # an agent already out is left as it is
+    for _ in range(2):
+        swrm.move(1.0, silent=True)
+    assert _masked_rows(swrm.positions) == [False, True, True]
+    np.testing.assert_array_equal(ma.getdata(swrm.positions)[1], [3., 3.])
+
+
+def test_a_released_agent_moves_with_velocities_and_accelerations_unmasked():
+    # Unmasking only the positions would leave the velocity and acceleration
+    # masked for good, since the hardened mask keeps the differenced values out.
+    envir = _envir('noflux', L=10.0)
+    swrm = _drift_swarm(envir, [[2., 2.], [3., 3.]], mu=(1., 0.))
+    swrm.retire(1)
+    swrm.move(1.0, silent=True)
+    swrm.release(1, [5., 5.])
+    for arr in (swrm.positions, swrm.velocities, swrm.accelerations):
+        assert _masked_rows(arr) == [False, False]
+    np.testing.assert_array_equal(swrm.velocities[1], [0., 0.])   # still fluid
+    np.testing.assert_array_equal(swrm.accelerations[1], [0., 0.])
+    for _ in range(2):
+        swrm.move(1.0, silent=True)
+    np.testing.assert_allclose(swrm.positions[1], [7., 5.])
+    np.testing.assert_allclose(swrm.velocities[1], [1., 0.])
+    np.testing.assert_allclose(swrm.accelerations[1], [0., 0.])
+    assert not ma.getmaskarray(swrm.velocities).any()
+
+
+def test_release_starts_agents_at_the_fluid_velocity_unless_given_one():
+    envir = planktos.Environment(Lx=10, Ly=10,
+                                 flow=[np.full((3, 3), 0.5), np.zeros((3, 3))])
+    swrm = planktos.Swarm(swarm_size=3, envir=envir, seed=1)
+    swrm.retire([0, 1, 2])
+    swrm.release([0, 2], [[1., 1.], [2., 2.]])
+    np.testing.assert_allclose(swrm.velocities[[0, 2]], [[0.5, 0.], [0.5, 0.]])
+    swrm.release(1, [3., 3.], velocities=[0., 2.])
+    np.testing.assert_allclose(swrm.velocities[1], [0., 2.])
+
+
+def test_release_refuses_what_it_cannot_do():
+    envir = _envir('noflux', L=10.0)
+    swrm = _drift_swarm(envir, [[2., 2.], [3., 3.], [4., 4.]])
+    swrm.retire([1, 2])
+    with pytest.raises(ValueError, match=r'\[0\] are already in the domain'):
+        swrm.release([0, 1], [[1., 1.], [1., 1.]])
+    with pytest.raises(ValueError, match='outside the domain'):
+        swrm.release(1, [11., 1.])
+    with pytest.raises(ValueError, match='shape'):
+        swrm.release([1, 2], [1., 1.])
+    with pytest.raises(ValueError, match='more than once'):
+        swrm.release([1, 1], [[1., 1.], [2., 2.]])
+    # nothing was released by any of them
+    assert _masked_rows(swrm.positions) == [False, True, True]
+
+
+class _ReleasesInItsModel(planktos.Swarm):
+    def apply_agent_model(self, dt):
+        self.release(1, [5., 5.])
+        return self.positions
+
+
+def test_release_refuses_to_run_inside_apply_agent_model():
+    envir = _envir('noflux', L=10.0)
+    swrm = _ReleasesInItsModel(swarm_size=2, envir=envir, seed=1,
+                               init=np.array([[2., 2.], [3., 3.]]))
+    swrm.retire(1)
+    with pytest.raises(RuntimeError, match='after_move'):
+        swrm.move(1.0, silent=True)
+    swrm.release(1, [5., 5.])        # outside the model it works again
+
+
+class _Inflow(planktos.Swarm):
+    '''Drifts right; every row that has left through the right edge comes back
+    in at the left edge, one row per step, from after_move.'''
+    def after_move(self, dt):
+        gone = np.flatnonzero(ma.getmaskarray(self.positions).all(axis=1))
+        if len(gone):
+            self.release(gone[0], [0.05, 0.5])
+            self.props.loc[gone[0], 'arrived'] = self.envir.time + dt
+
+
+def test_a_fixed_size_swarm_recycles_agents_that_left_into_an_inflow():
+    envir = planktos.Environment(Lx=1, Ly=1, x_bndry='zero', y_bndry='noflux',
+                                 flow=[np.zeros((3, 3)), np.zeros((3, 3))])
+    swrm = _Inflow(swarm_size=4, envir=envir, seed=1,
+                   init=np.array([[0.1, 0.5], [0.35, 0.5], [0.6, 0.5],
+                                  [0.85, 0.5]]))
+    swrm.shared_props['cov'] = np.zeros((2, 2))
+    swrm.shared_props['mu'] = np.array([0.25, 0.])
+    swrm.add_prop('arrived', np.zeros(4))
+    for _ in range(12):
+        swrm.move(1.0, silent=True)
+        # one agent leaves the right edge and one row comes in per step
+        assert not ma.getmaskarray(swrm.positions).any()
+    assert (swrm.props['arrived'] > 0).all()
+    assert len(swrm.pos_history) == len(swrm.vel_history) == 12
+
+
+def test_a_single_swarm_still_moves_itself():
+    # the guard keys on there being more than one Swarm, so the ordinary
+    #   one-Swarm workflow is untouched
+    envir = planktos.Environment()
+    swrm = envir.add_swarm(swarm_size=3)
+    for _ in range(3):
+        swrm.move(0.5)
+    assert envir.time == pytest.approx(1.5)
+    assert len(swrm.pos_history) == len(swrm.vel_history) == 3
+
+
+# --------------------------------------------------------------------------- #
+#                    a time step that fails partway through                   #
 # --------------------------------------------------------------------------- #
 # Boundary conditions are applied one agent at a time, so an exception out of
 # the collision code leaves the step applied to some agents and not others.
@@ -331,6 +632,23 @@ def test_error_state_blocks_moves_until_it_is_backed_out(monkeypatch):
     assert len(swrm.pos_history) == len(envir.time_history) == 3
 
 
+def test_frame_selection_in_the_error_state_plots_history_only(monkeypatch):
+    envir, swrm = _wall_swarm()
+    for _ in range(2):
+        swrm.move(0.5, silent=True)
+    _fail_on_third_agent(monkeypatch)
+    with pytest.raises(RuntimeError):
+        swrm.move(0.5, silent=True)
+
+    with pytest.warns(UserWarning, match='failed partway through'):
+        frames = swrm._select_frames(fps=2, playback_rate=1)
+
+    # every frame is a recorded state; the incomplete step (drawn at index
+    # len(pos_history)) must never appear.
+    assert frames.max() == len(swrm.pos_history) - 1
+    assert len(swrm.pos_history) == len(envir.time_history)
+
+
 def test_reset_clears_every_history_not_just_positions():
     # reset() used to clear pos_history alone, leaving vel_history (and
     # props_history) behind. The lists are indexed together -- full_vel_history
@@ -370,3 +688,242 @@ def test_reset_leaves_props_history_off_when_it_was_never_on():
     swrm.move(0.1, silent=True)
     envir.reset()
     assert swrm.props_history is None
+
+
+# --------------------------------------------------------------------------- #
+#        the movement start point is control state, not the recording          #
+# --------------------------------------------------------------------------- #
+# apply_boundary_conditions tests the segment (start -> end) against every mesh
+# element to decide whether an agent crossed a boundary. That start point used
+# to be read out of pos_history[-1], which is a recording -- so anything that
+# changed what got recorded, or how often, would have silently changed the
+# physics. It now comes from Swarm._prev_positions, set by whichever loop just
+# moved the agents.
+
+
+class _HistoryHostileSwarm(planktos.Swarm):
+    '''Poisons the position history immediately before the boundary stage.
+
+    Every recorded entry becomes NaN while keeping the list's length and
+    structure, so anything still reading a start point out of the recording
+    gets NaN and produces a different trajectory -- while anything reading
+    _prev_positions is untouched.
+    '''
+    def apply_boundary_conditions(self, dt, **kwargs):
+        self.pos_history = [np.full_like(p, np.nan) for p in self.pos_history]
+        return super().apply_boundary_conditions(dt, **kwargs)
+
+
+def _wall_envir():
+    envir = planktos.Environment(Lx=10, Ly=10, x_bndry='noflux', y_bndry='noflux',
+                                 flow=[np.zeros((5, 5)), np.zeros((5, 5))])
+    # a vertical wall at x = 5, meshed finely enough to catch every crossing
+    M, y = 20, np.linspace(0.5, 9.5, 21)
+    mesh = np.zeros((M, 2, 2))
+    mesh[:, 0, 0] = mesh[:, 1, 0] = 5.0
+    mesh[:, 0, 1], mesh[:, 1, 1] = y[:-1], y[1:]
+    envir.ibmesh = mesh
+    envir.max_meshpt_dist = float(
+        np.linalg.norm(mesh[:, 0, :] - mesh[:, 1, :], axis=1).max())
+    return envir
+
+
+def _drive_into_wall(cls, ib_collisions='sliding'):
+    '''Four agents with fixed drift, driven into the wall for 6 steps.
+
+    The trajectory is collected here, step by step, from the live positions
+    attribute -- deliberately not from pos_history, which the hostile subclass
+    poisons. Reading the answer out of the recording is exactly the coupling
+    under test.
+    '''
+    envir = _wall_envir()
+    init = np.array([[4.0, 3.0], [4.0, 7.0], [2.0, 5.0], [4.5, 4.0]])
+    swrm = cls(swarm_size=4, envir=envir, init=init, seed=1)
+    swrm.shared_props['cov'] = np.zeros((2, 2))
+    swrm.shared_props['mu'] = np.array([1.0, 0.2])
+    traj = [np.ma.filled(swrm.positions, np.nan)]
+    hits = []
+    for _ in range(6):
+        swrm.move(1.0, ib_collisions=ib_collisions, silent=True)
+        traj.append(np.ma.filled(swrm.positions, np.nan))
+        hits.append(np.asarray(swrm.ib_collision_idx).copy())
+    return np.stack(traj), np.stack(hits)
+
+
+@pytest.mark.parametrize('ib_collisions', ['sliding', 'sticky'])
+def test_collisions_do_not_read_the_position_history(ib_collisions):
+    # Destroying the recording cannot change the physics.
+    control, control_hits = _drive_into_wall(planktos.Swarm, ib_collisions)
+    hostile, hostile_hits = _drive_into_wall(_HistoryHostileSwarm, ib_collisions)
+    assert np.isfinite(control).all(), 'control run should not produce NaN'
+    assert np.array_equal(control, hostile), (
+        'trajectory changed when pos_history was poisoned, so the collision '
+        'path is still reading its movement start point out of the recording')
+    assert np.array_equal(control_hits, hostile_hits)
+    # the test only means something if the wall was actually reached
+    assert (control_hits >= 0).any(), 'no collision was detected; test proves nothing'
+    assert (control[-1, :, 0] < 5.0 + 1e-12).all(), 'an agent got through the wall'
+
+
+def test_prev_positions_is_the_history_entry_while_capture_is_every_step():
+    # At capture_interval=1 the two are the same object. This is the invariant
+    # that catches one append site being gated by the capture schedule and the
+    # other not.
+    envir = _wall_envir()
+    swrm = planktos.Swarm(swarm_size=3, envir=envir,
+                          init=np.array([[4.0, 3.0], [4.0, 5.0], [4.0, 7.0]]),
+                          seed=1)
+    swrm.shared_props['cov'] = np.zeros((2, 2))
+    swrm.shared_props['mu'] = np.array([1.0, 0.0])
+    for _ in range(4):
+        swrm.move(1.0, silent=True)
+        assert swrm._prev_positions is swrm.pos_history[-1]
+
+
+def test_prev_positions_is_set_before_the_first_step():
+    # apply_boundary_conditions can be reached on step 1, when pos_history is
+    # still empty, so the attribute has to exist from construction.
+    envir = _wall_envir()
+    init = np.array([[4.0, 5.0], [1.0, 1.0]])
+    swrm = planktos.Swarm(swarm_size=2, envir=envir, init=init, seed=1)
+    assert np.array_equal(np.ma.getdata(swrm._prev_positions), init)
+    assert swrm.pos_history == []
+
+
+def test_ftle_sets_the_start_point_in_its_own_move_loops():
+    # calculate_FTLE inlines its own move loops rather than calling move(), so
+    # both of them are edit sites for this decoupling. A miss shows up as an
+    # AttributeError or a wrong field, not as a warning.
+    L, n, a = 10.0, 21, 0.4
+    x = np.linspace(0, L, n)
+    X, Y = np.meshgrid(x, x, indexing='ij')
+    envir = planktos.Environment(Lx=L, Ly=L, flow=[a * (X - L / 2), -a * (Y - L / 2)])
+    envir.calculate_FTLE(grid_dim=(8, 8), T=0.5, dt=0.05)     # RK45 loop
+    assert np.isfinite(np.ma.filled(envir.FTLE_largest, np.nan)).any()
+
+    envir2 = planktos.Environment(Lx=L, Ly=L, flow=[a * (X - L / 2), -a * (Y - L / 2)])
+    swrm = planktos.Swarm(swarm_size=4, envir=envir2, seed=3)
+    swrm.shared_props['cov'] = np.zeros((2, 2))
+    envir2.calculate_FTLE(grid_dim=(8, 8), T=0.5, dt=0.05, swrm=swrm)  # discrete loop
+    assert np.isfinite(np.ma.filled(envir2.FTLE_largest, np.nan)).any()
+
+
+# --------------------------------------------------------------------------- #
+#                  moving a Swarm from one Environment to another             #
+# --------------------------------------------------------------------------- #
+# Environment.add_swarm accepts a Swarm object as well as a size, which is how
+# a Swarm built on its own is put into the Environment it belongs in, and how
+# calculate_FTLE adds its working copy. It used to append to the new
+# Environment without removing the swarm from the old one, leaving it in both.
+
+def test_a_swarm_built_on_its_own_can_be_added_to_an_environment_after_the_fact():
+    # The documented way round: create the two separately, then join them. A
+    # Swarm with no Environment gets a default one, which it must then leave.
+    envir = planktos.Environment(Lx=20, Ly=20)
+    swrm = planktos.Swarm(swarm_size=5, init=np.full((5, 2), 3.0))
+    default = swrm.envir
+    assert default is not envir
+    assert len(default.swarms) == 1
+
+    envir.add_swarm(swrm)
+
+    assert swrm.envir is envir
+    assert envir.swarms == [swrm]
+    assert default.swarms == [], 'the swarm is still in its default Environment'
+
+
+def test_moving_a_swarm_between_environments_leaves_the_first_one():
+    a = planktos.Environment()
+    b = planktos.Environment()
+    swrm = planktos.Swarm(swarm_size=3, envir=a, seed=1)
+
+    b.add_swarm(swrm)
+
+    assert swrm.envir is b
+    assert [s is swrm for s in b.swarms] == [True]
+    assert a.swarms == []
+
+
+def test_the_old_environment_stops_moving_a_swarm_that_left():
+    # The visible consequence of being in both lists: move_swarms on the old
+    # Environment went on moving a swarm that had left it.
+    a = planktos.Environment()
+    b = planktos.Environment()
+    swrm = planktos.Swarm(swarm_size=3, envir=a, seed=1)
+    swrm.shared_props['cov'] = np.zeros((2, 2))
+    b.add_swarm(swrm)
+
+    a.move_swarms(0.1, silent=True)
+    assert len(swrm.pos_history) == 0, 'the old Environment still moved it'
+    assert a.time == pytest.approx(0.1), 'but its own clock still advances'
+
+    b.move_swarms(0.1, silent=True)
+    assert len(swrm.pos_history) == 1
+
+
+def test_init_swarms_moves_swarms_as_add_swarm_does():
+    # Regression: Environment(init_swarms=...) set each swarm's envir directly,
+    # so a swarm from another Environment stayed in that one's list too and
+    # went on being moved by it; and the caller's list became this one's.
+    a = planktos.Environment()
+    one = planktos.Swarm(swarm_size=3, envir=a, seed=1)
+    two = planktos.Swarm(swarm_size=3, envir=a, seed=2)
+    given = [one, two]
+
+    b = planktos.Environment(init_swarms=given)
+
+    assert a.swarms == []
+    assert b.swarms == [one, two] and b.swarms is not given
+    assert one.envir is b and two.envir is b
+    a.move_swarms(0.1, silent=True)
+    assert len(one.pos_history) == 0, 'the old Environment still moved it'
+
+    c = planktos.Environment(init_swarms=one)       # a single Swarm, not a list
+    assert c.swarms == [one] and b.swarms == [two]
+
+
+def test_init_swarms_projects_a_3d_swarm_into_a_2d_environment():
+    swrm = planktos.Swarm(swarm_size=3, envir=planktos.Environment(Lz=10), seed=1)
+    envir = planktos.Environment(init_swarms=swrm)
+    assert swrm.positions.shape == (3, 2)
+
+
+def test_ftle_with_a_user_swarm_still_works_during_a_recording(tmp_path):
+    # calculate_FTLE adds a shallow copy of the caller's Swarm to this same
+    # Environment and pops it again. The copy is not in envir.swarms to begin
+    # with, so nothing is removed and the recording is untouched -- computing an
+    # FTLE field partway through a recording must not be refused.
+    L, a, n = 10.0, 0.4, 21
+    x = np.linspace(0, L, n)
+    X, Y = np.meshgrid(x, x, indexing='ij')
+    envir = planktos.Environment(Lx=L, Ly=L,
+                                 flow=[a * (X - L / 2), -a * (Y - L / 2)])
+    swrm = planktos.Swarm(swarm_size=4, envir=envir, seed=3)
+    swrm.shared_props['cov'] = np.zeros((2, 2))
+
+    with envir.record(tmp_path / 'run'):
+        swrm.move(0.1, silent=True)
+        envir.calculate_FTLE(grid_dim=(6, 6), T=0.3, dt=0.05, swrm=swrm)
+        swrm.move(0.1, silent=True)
+
+    assert envir.swarms == [swrm], 'the FTLE working copy was not cleaned up'
+
+
+def test_moving_a_recorded_swarm_out_while_recording_raises(tmp_path):
+    # A swarm leaving mid-recording cannot be expressed in the archive: rows
+    # are padded at the front for a late arrival, and there is no counterpart
+    # for a departure.
+    a = planktos.Environment(Lx=10, Ly=10,
+                             flow=[np.zeros((3, 3)), np.zeros((3, 3))])
+    b = planktos.Environment(Lx=10, Ly=10)
+    swrm = planktos.Swarm(swarm_size=3, envir=a, seed=1)
+    swrm.shared_props['cov'] = np.zeros((2, 2))
+
+    with a.record(tmp_path / 'run'):
+        swrm.move(0.1, silent=True)
+        with pytest.raises(RuntimeError, match='not allowed while recording'):
+            b.add_swarm(swrm)
+        assert [s is swrm for s in a.swarms] == [True], \
+            'the swarm must not have been half-moved'
+    b.add_swarm(swrm)                     # fine once the recording has stopped
+    assert a.swarms == []

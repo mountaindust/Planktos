@@ -12,9 +12,11 @@ Provides
 __author__ = "W. Christopher Strickland"
 __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2025, Christopher Strickland"
-__version__ = '1.0.3'
+__version__ = '1.1.0'
 
 from ._environment import Environment
 from ._swarm import Swarm
+from .fluid import FluidData
+from .archive import load_run, RunArchive
 
 __all__ = [s for s in dir() if not s.startswith('_')]

@@ -3,7 +3,7 @@ Moving immersed boundaries (sticky, IB2d)
 
 This example shows off the moving immersed boundary functionality of Planktos
 (2D), and combines it with the sticky boundary condition. It can be found in
-ex_ib2d_mvbnd_sticky.py. Agents are released near a swimming jellyfish; whenever
+09_ib2d_mvbnd_sticky.py. Agents are released near a swimming jellyfish; whenever
 an agent contacts the (moving) jellyfish mesh it sticks permanently and is
 removed from the plot.
 
@@ -34,7 +34,7 @@ print_dump (here dt=1.25e-5 and print_dump=1600). ::
     envir.read_IB2d_fluid_data('ib2d_jellyfish_data', 1.25e-5, 1600)
 
 The mesh is where moving boundaries differ from the static case. In the static
-ex_ib2d_ibmesh.py example we read a single .vertex file and connected nearby
+06_ib2d_ibmesh.py example we read a single .vertex file and connected nearby
 points with the 'proximity' method. That approach does not work for a moving
 boundary, where the mesh geometry changes every time step. Instead, we read the
 Lagrangian point data directly: read_IB2d_mesh_data is pointed at the data
@@ -113,7 +113,7 @@ ThreadPoolExecutor). A *process* pool is recommended for moving boundaries, whic
 is precisely the expensive case where parallelism pays off; thread pools and
 cheap static-mesh problems can actually be slower than serial because of
 per-agent dispatch overhead, so benchmark for your problem (see
-tests/bench_ib_parallel.py). If you do not set pool (pool=None, the default), the
+tests/manual/bench_ib_parallel.py). If you do not set pool (pool=None, the default), the
 check runs serially.
 
 With a process pool, guard the script body with ``if __name__ == '__main__':`` so
@@ -126,10 +126,13 @@ handles the shutdown automatically. ::
         for ii in range(42):
             swrm.move(0.025, ib_collisions='sticky')
 
-Finally, we render the result, plotting fluid vorticity behind the agents. ::
+Finally, we render the result, plotting fluid vorticity behind the agents. The
+playback rate of 0.15 seconds of simulated time per second of video is roughly
+7x slow motion, which keeps the jellyfish stroke and the vortices it sheds
+legible; at dt=0.025, that permits up to 6 fps. ::
 
-    swrm.plot_all(movie_filename='mvbnd_sticky.mp4', fps=6, fluid='vort',
-                  plot_heading=False)
+    swrm.plot_all(movie_filename='mvbnd_sticky.mp4', fps=6, playback_rate=0.15,
+                  fluid='vort', plot_heading=False)
 
 Running the example script produces the mvbnd_sticky.mp4 movie, in which agents
 that contact the swimming jellyfish stick to it and drop out of the simulation.

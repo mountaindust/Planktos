@@ -16,8 +16,10 @@ traveled, and idx indexes the struck element (None for a single element).
 '''
 
 import numpy as np
+import pytest
 
 from planktos import _geom
+import _ib_harness as H
 
 
 # --------------------------------------------------------------------------- #
@@ -258,3 +260,69 @@ def test_dist_point_to_plane_known_values():
 def test_dist_point_to_plane_on_plane_is_zero():
     Q0 = np.array([1., 2., 3.]); n = np.array([0., 1., 0.])
     assert np.isclose(_geom.dist_point_to_plane(np.array([9., 2., -4.]), n, Q0), 0.0)
+
+
+# --------------------------------------------------------------------------- #
+#                 flattening a straight extrusion to its outline              #
+# --------------------------------------------------------------------------- #
+# The outline must come back *exactly*, not approximately: flattening copies
+# coordinates rather than computing them, and the collision code finds a joint
+# between two segments by the endpoint they share.
+
+SQUARE = [(0.0, 0.0), (2.0, 0.0), (2.0, 1.0), (0.0, 1.0)]
+# A sloped side and coordinates that are not round in binary.
+TRIANGLE = [(0.1, 0.2), (1.3, 0.2), (0.1, 0.7)]
+
+
+def _edges(segs):
+    '''The outline as a set of undirected edges, compared exactly.'''
+    return {frozenset(map(tuple, seg)) for seg in np.asarray(segs)}
+
+
+@pytest.mark.parametrize('poly', [SQUARE, TRIANGLE])
+def test_flatten_recovers_the_extruded_outline_exactly(poly):
+    tris = H.extruded_polygon(poly, 0.25, 0.75)
+    segs = _geom.flatten_extruded_mesh(tris)
+    assert segs.shape == (len(poly), 2, 2)
+    assert _edges(segs) == _edges(H.closed_polygon(poly))
+
+
+@pytest.mark.parametrize('axis', [0, 1, 2])
+def test_flatten_drops_the_axis_it_is_given(axis):
+    tris = H.extruded_polygon(TRIANGLE, -1.0, 3.0, axis=axis)
+    segs = _geom.flatten_extruded_mesh(tris, axis=axis)
+    assert _edges(segs) == _edges(H.closed_polygon(TRIANGLE))
+
+
+def test_flatten_refuses_a_mesh_that_is_not_an_extrusion_along_the_axis():
+    # A triangular prism along z is not one along x: its sloped wall is slanted
+    # with respect to x.
+    tris = H.extruded_polygon(TRIANGLE, 0.0, 1.0, axis=2)
+    with pytest.raises(ValueError, match='not parallel to the x-axis'):
+        _geom.flatten_extruded_mesh(tris, axis=0)
+
+
+def test_flatten_refuses_slanted_walls():
+    tet = np.array([[0., 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]])
+    tris = tet[[[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]]]
+    with pytest.raises(ValueError, match='not parallel to the z-axis'):
+        _geom.flatten_extruded_mesh(tris)
+
+
+def test_flatten_refuses_vertices_at_more_than_two_levels():
+    stacked = np.concatenate((H.extruded_polygon(SQUARE, 0.0, 1.0),
+                              H.extruded_polygon(SQUARE, 1.0, 2.0)))
+    with pytest.raises(ValueError, match='3 distinct z-coordinates'):
+        _geom.flatten_extruded_mesh(stacked)
+
+
+def test_flatten_refuses_a_flat_sheet():
+    sheet = np.array([[[0., 0, 0], [1, 0, 0], [0, 1, 0]]])
+    with pytest.raises(ValueError, match='1 distinct z-coordinates'):
+        _geom.flatten_extruded_mesh(sheet)
+
+
+def test_max_edge_length_of_segments_and_triangles():
+    assert _geom.max_edge_length(H.closed_polygon(SQUARE)) == 2.0
+    tris = np.array([[[0., 0, 0], [3, 0, 0], [0, 4, 0]]])
+    assert _geom.max_edge_length(tris) == 5.0

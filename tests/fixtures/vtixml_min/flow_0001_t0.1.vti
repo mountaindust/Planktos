@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<VTKFile type="ImageData" version="0.1" byte_order="LittleEndian" header_type="UInt32" compressor="vtkZLibDataCompressor">
+  <ImageData WholeExtent="0 5 0 4 0 0" Origin="-1 0.5 0.25" Spacing="0.5 0.25 1" Direction="1 0 0 0 1 0 0 0 1">
+    <FieldData>
+      <DataArray type="Float64" Name="TimeValue" NumberOfTuples="1" format="binary" RangeMin="0.1" RangeMax="0.1">
+        AQAAAACAAAAIAAAADgAAAA==eF6bNRMEdtoDABV6BJA=
+      </DataArray>
+    </FieldData>
+  <Piece Extent="0 5 0 4 0 0">
+    <PointData Scalars="p" Vectors="U">
+      <DataArray type="Float32" Name="U" NumberOfComponents="3" format="binary" RangeMin="4.001249804785752" RangeMax="16.500303027529466">
+        AQAAAACAAABoAQAAXwAAAA==eF47e+aMLQNDgwMDEJwFsycgsRcgsTcgsQ8gsS/gYD9AYn9AYjM4ItgcSGwBHGwJJLYCElsDiW2AxLbAwXZAYnsgsQOQ2BFI7AQc7AwkdgESuwKJ3YDEbgGzAcGoYo4=
+        <InformationKey name="L2_NORM_RANGE" location="vtkDataArray" length="2">
+          <Value index="0">
+            4.0012498048
+          </Value>
+          <Value index="1">
+            16.500303028
+          </Value>
+        </InformationKey>
+      </DataArray>
+      <DataArray type="Float32" Name="p" format="binary" RangeMin="-0.10000000149011612" RangeMax="0.15000000596046448">
+        AQAAAACAAAB4AAAAIgAAAA==eF47e+bM3rNnfPYyAAGQtj175oztrJmSdmdpLA4Ajr08Ww==
+      </DataArray>
+    </PointData>
+    <CellData>
+    </CellData>
+  </Piece>
+  </ImageData>
+</VTKFile>

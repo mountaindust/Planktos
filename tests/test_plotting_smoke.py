@@ -44,7 +44,7 @@ def _envir_2d():
     x = y = np.linspace(0, 10, 11)
     Y = np.meshgrid(x, y, indexing='ij')[1]
     envir = planktos.Environment(Lx=10, Ly=10, flow=[0.1 * Y, np.zeros_like(Y)])
-    envir.flow_points = (x, y)                 # shear flow, for quiver/vorticity
+    envir.flow.flow_points = (x, y)                 # shear flow, for quiver/vorticity
     return envir
 
 
@@ -53,7 +53,7 @@ def _envir_3d():
     Y = np.meshgrid(x, y, z, indexing='ij')[1]
     envir = planktos.Environment(Lx=10, Ly=10, Lz=10,
                                  flow=[0.1 * Y, np.zeros_like(Y), np.zeros_like(Y)])
-    envir.flow_points = (x, y, z)
+    envir.flow.flow_points = (x, y, z)
     return envir
 
 
@@ -116,6 +116,43 @@ def test_swarm_plot_2d_variants_save_file(tmp_path, kw):
     assert out.is_file()
 
 
+def test_swarm_plot_at_a_past_time_with_a_moving_mesh(tmp_path):
+    # Regression: this reached for Swarm.interpolate_temporal_mesh, which is a
+    # method on Environment, so it raised AttributeError rather than drawing.
+    envir = _envir_2d()
+    envir.read_IB2d_mesh_data(str(Path(__file__).parent / 'fixtures' /
+                                  'lagspts_min'), dt=0.1, print_dump=1, d_start=0)
+    swrm = _spread_swarm(envir, n=10)
+    out = tmp_path / 'past.png'
+    swrm.plot(t=0.1, filename=str(out), blocking=False)
+    assert out.is_file()
+
+
+@pytest.mark.parametrize('dim', [2, 3])
+def test_porous_layer_backdrop_is_reproducible_and_leaves_global_rng_alone(
+        tmp_path, dim):
+    # Regression: the porous layer's grass was drawn from numpy's global random
+    # state, so every render differed and plotting advanced that state -- which
+    # changes the run of a user model that draws from np.random.
+    kw = {} if dim == 2 else {'Lz': 10}
+    envir = planktos.Environment(rho=1000, mu=1000, **kw)
+    envir.set_brinkman_flow(alpha=66, h_p=1.5, U=1, dpdx=1, res=21)
+    assert envir.h_p is not None
+    swrm = _spread_swarm(envir, n=5)
+    np.random.seed(123)
+    before = np.random.get_state()
+    renders = []
+    for k in range(2):
+        out = tmp_path / 'grass{}.png'.format(k)
+        swrm.plot(filename=str(out), blocking=False)
+        plt.close('all')
+        renders.append(out.read_bytes())
+    after = np.random.get_state()
+    np.testing.assert_array_equal(before[1], after[1])
+    assert before[2:] == after[2:]
+    assert renders[0] == renders[1]
+
+
 def test_swarm_plot_3d_saves_file(tmp_path):
     swrm = _spread_swarm(_envir_3d())
     out = tmp_path / 'plot3d.png'
@@ -124,9 +161,16 @@ def test_swarm_plot_3d_saves_file(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which('ffmpeg') is None, reason="ffmpeg not on PATH")
-def test_swarm_plot_all_movie_saves_file(tmp_path):
+@pytest.mark.parametrize('kw', [
+    {'fps': 5},                             # dt_frame = 0.2 s, every other step
+    {'fps': 10, 'playback_rate': 1},        # dt_frame = 0.1 s, every step
+    {'frames': [0, 2]},                     # explicit frames still override
+])
+def test_swarm_plot_all_movie_saves_file(tmp_path, kw):
     # The animation/movie path (uses ffmpeg). Kept small so the default run stays fast.
+    # Frame selection itself is pinned in test_frame_selection.py; this only
+    # checks that each way of specifying frames reaches the writer.
     swrm = _spread_swarm(_envir_2d(), n=10)
     out = tmp_path / 'movie.mp4'
-    swrm.plot_all(movie_filename=str(out), fps=5)
+    swrm.plot_all(movie_filename=str(out), **kw)
     assert out.is_file()

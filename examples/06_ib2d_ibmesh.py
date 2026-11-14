@@ -1,0 +1,146 @@
+#! /usr/bin/env python3
+'''
+This example/tutorial is meant to demonstrate how to load vtk and vertex data 
+from IB2d into Planktos.
+
+NOTE: IN ORDER TO RUN THIS EXAMPLE, YOU MUST HAVE THE REQUIRED DATA!
+It can be downloaded from: 
+https://drive.google.com/drive/folders/104ekG8cEJYuvk6NR8pTGn4wEISILUcuH?usp=sharing
+Put it into the ib2d_data folder in this example directory, and you should be 
+good to go!
+
+Once you have the data, this example loads data generated from the IB2d 
+Example_Channel_Flow/Example_Flow_Around_Cylinder example for the generated 
+fluid velocity field AND loads the .vertex data, creating an ibmesh out of it by
+attaching nearby points. Agents cannot move through the cylinder or the channel 
+boundaries.
+'''
+
+import planktos
+
+# As before, we begin by creating a default environment. It does not matter what 
+#   the dimensions are - when we load the vtk data, it will automatically 
+#   change shape to adjust to the data!
+envir = planktos.Environment()
+
+# When reading in VTK data, it really helps to have access to the input2d file 
+#   that generated the data. You need to know two basic things:
+#       1) the time step that was taken to generate the data. this is located near 
+#       the top of the input2d file.
+#       2) the print_dump value, which tells ib2d how often to print out data. It 
+#       can be found in the PRINTING INFORMATION section of the input2d file.
+# In the case of this example, dt=5.0e-5 and print_dump=1000. This means that 
+#   each time you go from one vtk file to the next, it represents a time step
+#   of length 5.0e-5*1000 = 0.05.
+# IB2d writes legacy .vtk files, which is what read_IB2d_fluid_data reads. Other
+#   sources have their own Environment readers, e.g. read_vtkxml_fluid_data for
+#   .vti/.vtr series and read_IBAMR3d_vtk_data (see 07_IBAMR_ibmesh.py).
+
+# Read in ib2d vtk data with dt=5.0e-5, print_dump=1000. The data points on the
+#   right and upper boundaries (periodic with the left and lower boundaries)
+#   will automatically be added in to complete the domain.
+envir.read_IB2d_fluid_data('ib2d_data', 5.0e-5, 1000)
+
+# By default, all of the fluid data is loaded into memory at once and
+#   interpolated in time with a cubic spline. Time-varying fluid data can be
+#   far larger than this example -- especially in 3D, and especially when it is
+#   highly resolved -- and then it may not fit in memory. The INUM argument
+#   (also accepted by read_IBAMR3d_vtk_data, read_openfoam_vtk_data and
+#   read_vtkxml_fluid_data) loads the data dynamically instead: with INUM=4,
+#   only 5 consecutive time points are held at once, and the window moves
+#   forward as the simulation does. Interpolation in time is then linear rather
+#   than cubic, which costs some accuracy between time points; the FluidData
+#   documentation measures how much. To try it here:
+#       envir.read_IB2d_fluid_data('ib2d_data', 5.0e-5, 1000, INUM=4)
+#   With dynamically loaded fluid, record the run (see 02_recording_and_3d.py)
+#   so that plot_all can draw the vorticity without reading the whole dataset a
+#   second time.
+
+# Now we read in the vertex data to get an immersed mesh. These data include 
+#   points for two lines (the sides of the channel) and a circle representing 
+#   the cylinder. Since the geometry is fairly simple, we should be able to 
+#   create mesh structures out of these points by associating nearby points 
+#   within a radius. That is, if two points are within a certain distance of 
+#   each other, we draw a line between them. This is what the
+#   read_IB2d_mesh_data function does under the 'proximity' method, with a
+#   default radius of approx. half the resolution of the Eulerian, fluid
+#   velocity mesh.
+envir.read_IB2d_mesh_data('ib2d_data/channel.vertex', method='proximity')
+
+# For more complex vertex structures, this may attach too many points, causing 
+#   problems. You can try to adjust the radius, but if the structure has concave 
+#   features, this over-attachement can be unavoidable. In that case, try using
+#   add_vertices_to_static_2D_ibmesh, which simply adds a vertex wherever mesh lines are
+#   crossing. It may not be ideal, but it's often good enough in a pinch! One 
+#   thing you absolutely don't want are mesh lines crossing without a vertex 
+#   at every crossing point. This can cause issues with the algorithm that 
+#   handles agent-mesh collisions, resulting in agents finding their way through
+#   the mesh. You can check things are correct by viewing just the environment 
+#   boundaries and the mesh structures with the following command:
+envir.plot_envir()
+
+# Now we add a Swarm to our Environment.
+# Let's use the default number of agents (100), but place them all in the same
+#   point, just to the left of the cylinder and in the middle of the channel.
+#   The length of the domain in each direction can be obtained via the envir.L
+#   attribute, so we'll use that to pass an (x,y) point to our Swarm 
+#   constructor as an init parameter. This tells the constructor to put all the
+#   agents at that one point. You can also pass in a list of points to 
+#   explicitly specify where all agents should begin individually.
+swrm = planktos.Swarm(envir=envir, init=(envir.L[0]*0.1,envir.L[1]*0.5), seed=1)
+
+# Once again, let's reduce the amount of jitter (variance). Remember that 
+#   variance is standard deviation squared, so for a standard deviation of 0.01
+#   (1 cm), we need a variance of 0.0001.
+swrm.shared_props['cov'] *= 0.0001
+
+# Now let's move the swarm with a time step of 0.025 sec, 50 times.
+print('Moving swarm...')
+for ii in range(50):
+    swrm.move(0.025)
+
+# Note that things went a little slower than in 01_basic_2d.py. Planktos 
+#   automatically checks if any agent crossed any immersed boundary element
+#   after each time step. Even in this simple example, the number of mesh 
+#   elements is typically large (and the number of agents can be too). Even 
+#   though we can reduce the number of mesh elements we check per agent given
+#   how far the agent travelled in a given time step, this is still an expensive 
+#   search-and-check, and if there is a boundary crossing, we have to 
+#   recursively check for further crossings of different sorts after the 
+#   vector projection of the sliding collision. The collision checks can be
+#   spread across a pool of worker processes by setting swrm.pool;
+#   09_ib2d_mvbnd_sticky.py shows how, and when it pays off.
+
+# This time, instead of viewing the results directly, let's output them to an
+#   mp4. Planktos will create a movie if you just pass a filename with an
+#   appropriate extension to the plot_all method of the swarm object. Two
+#   parameters control its timing: fps is how *smooth* the movie is (frames per
+#   second, as in any video), and playback_rate is how *fast* it plays --
+#   seconds of simulated time per second of video, where the default of 1 is
+#   real time. The flow structures here are worth a good look, so let's slow
+#   things down to 0.075 simulated seconds per second of video (about 13x slow
+#   motion) at 3 fps.
+# Frames can only show states that the simulation actually captured, so a new
+#   state in every frame needs playback_rate/fps of at least dt: here that is
+#   fps of at most 0.075/0.025 = 3. Ask for more and Planktos warns and repeats
+#   states across frames, keeping the playback speed. Note what that means --
+#   smoother slow motion requires a smaller dt, not a higher fps.
+# Also, since this fluid velocity field is non-trivial, let's plot the vorticity
+#   behind the agents to better see what is going on! Just set the fluid
+#   parameter of the function (this only works in 2D).
+swrm.plot_all(movie_filename='channel_flow_ibmesh.mp4', fps=3, playback_rate=0.075,
+              fluid='vort', plot_heading=False)
+
+# Creating movies is another bottleneck in Planktos. Every frame has to be 
+#   generated individually and then saved, and the fluid vorticity is 
+#   calculated on-the-fly, internally. In fact, if you have 2D fluid velocity 
+#   data but not the vorticity data, Planktos can calculate it for you and save 
+#   the vorticity data as vtk files, either at the original time points of the
+#   fluid data or interpolated to the simulation times. All this is to say:
+#   if you have a simulation with a lot of time steps, there's no reason to be
+#   making a movie with every one of those time steps as a frame! fps and
+#   playback_rate take care of this for you -- only the states needed for the
+#   frames you asked for are ever drawn, which is what keeps movie generation
+#   time and file size down. If you want a particular set of steps instead, the
+#   "frames" parameter of plot_all still takes an explicit list of time step
+#   indices and overrides the fps/playback_rate selection.

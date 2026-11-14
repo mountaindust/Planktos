@@ -1,9 +1,11 @@
 '''Tests for temporal interpolation of fluid data (planktos.fluid).
 
-create_temporal_interpolations replaces each flow array with an fCubicSpline (a
-CubicSpline subclass that also remembers the original data's shape and extrema).
-Cubic spline interpolation is exact for polynomials up to degree 3, so feeding it a
-known cubic-in-time gives a machine-precision known answer. Self-contained.
+On dyload each flow array is replaced with an fCubicSpline (a CubicSpline subclass
+that also remembers the original data's shape and extrema); FluidData.__init__ does
+this internally when given time-varying data (mvbnd's standalone
+create_temporal_interpolations helper was absorbed into FluidData). Cubic spline
+interpolation is exact for polynomials up to degree 3, so feeding it a known
+cubic-in-time gives a machine-precision known answer. Self-contained.
 '''
 
 import numpy as np
@@ -27,18 +29,34 @@ def cubic_flow():
     return t, flow, cubic
 
 
-def test_create_temporal_interpolations_builds_fcubicspline(cubic_flow):
+@pytest.mark.parametrize('t, want', [(1.0, 'hi'), (0.37, 'blend')])
+def test_linear_blend_does_not_round_float32_samples(t, want):
+    # Regression: the difference between two float32 samples was taken in
+    # float32, so the blend missed the second one by float32 round-off even at
+    # weight 1, and a windowed and an in-memory fluid disagreed at a dump's time.
+    samples = np.array([[1000.3], [0.1], [5.0]], dtype=np.float32)
+    spline = fluid.LinearSpline(np.array([0.0, 1.0, 2.0]), samples)
+    got = spline(t)
+    lo, hi = np.float64(samples[0, 0]), np.float64(samples[1, 0])
+    expected = hi if want == 'hi' else lo + (hi - lo)*t
+    assert got.dtype == np.float64
+    assert got[0] == expected
+
+
+def test_fluiddata_splines_time_varying_into_fcubicsplines(cubic_flow):
+    # FluidData replaces each time-varying flow component with an fCubicSpline
+    # (the dyload equivalent of mvbnd's create_temporal_interpolations).
     t, flow, _ = cubic_flow
-    data = [flow.copy(), flow.copy()]
-    out = fluid.create_temporal_interpolations(t.copy(), data)
-    assert out is data                                # replaced in place
-    assert all(isinstance(s, fluid.fCubicSpline) for s in out)
-    assert out[0].shape == flow.shape
+    nx, ny = flow.shape[1], flow.shape[2]
+    fpoints = (np.linspace(0.0, 1.0, nx), np.linspace(0.0, 1.0, ny))
+    fd = fluid.FluidData([flow.copy(), flow.copy()], fpoints, flow_times=t.copy())
+    assert all(isinstance(s, fluid.fCubicSpline) for s in fd._flow)
+    assert fd._flow[0].shape == flow.shape
 
 
 def test_spline_reproduces_known_cubic(cubic_flow):
     t, flow, cubic = cubic_flow
-    sp = fluid.create_temporal_interpolations(t.copy(), [flow.copy()])[0]
+    sp = fluid.fCubicSpline(t.copy(), flow.copy())
     for tt in (0.7, 2.3, 4.9):                        # off-node times
         assert np.allclose(sp(tt), cubic(tt), atol=1e-12)
 
@@ -50,11 +68,47 @@ def test_spline_interpolates_nodes_exactly(cubic_flow):
         assert np.allclose(sp(t[n]), flow[n])
 
 
-def test_spline_indexing(cubic_flow):
+# Both spline classes index the same way -- they differ in how they interpolate
+# between knots, not in what an index means -- so the contract is pinned for both.
+@pytest.mark.parametrize('cls', [fluid.fCubicSpline, fluid.LinearSpline])
+def test_spline_indexing(cubic_flow, cls):
     t, flow, _ = cubic_flow
-    sp = fluid.fCubicSpline(t, flow)
+    sp = cls(t.copy(), flow.copy())
     assert np.allclose(sp[2], flow[2])                # int index -> node value
     assert np.allclose(sp[1:4], flow[1:4])            # slice -> stacked nodes
+    assert np.allclose(sp[-1], flow[-1])              # negative int
+    assert np.allclose(sp[3, 0], flow[3, 0])          # tuple: time, then field
+    assert np.allclose(sp[1:3, 0], flow[1:3, 0])
+
+
+@pytest.mark.parametrize('cls', [fluid.fCubicSpline, fluid.LinearSpline])
+def test_spline_indexing_accepts_a_numpy_integer(cubic_flow, cls):
+    # A caller looping over np.arange, or unpacking np.searchsorted, hands over an
+    # np.int64. Testing `type(pos) == int` rejected it outright.
+    t, flow, _ = cubic_flow
+    sp = cls(t.copy(), flow.copy())
+    assert np.allclose(sp[np.int64(2)], flow[2])
+    assert np.allclose(sp[np.int64(2), 0], flow[2, 0])
+
+
+@pytest.mark.parametrize('cls', [fluid.fCubicSpline, fluid.LinearSpline])
+def test_spline_slices_resolve_negative_bounds(cubic_flow, cls):
+    # The worse half of the same defect: hand-rolled start/stop arithmetic ran a
+    # negative start up to len-1, so sp[-3:] returned len+3 wrapped entries
+    # rather than the last three -- silently, and with plausible-looking values.
+    t, flow, _ = cubic_flow
+    sp = cls(t.copy(), flow.copy())
+    for key in (slice(-3, None), slice(None, -2), slice(-4, -1),
+                slice(None, None, -1), slice(None, None, 2)):
+        assert np.allclose(sp[key], flow[key]), key
+
+
+@pytest.mark.parametrize('cls', [fluid.fCubicSpline, fluid.LinearSpline])
+def test_spline_refuses_an_index_it_cannot_honour(cubic_flow, cls):
+    t, flow, _ = cubic_flow
+    sp = cls(t.copy(), flow.copy())
+    with pytest.raises(IndexError, match=cls.__name__):
+        sp['nope']
 
 
 def test_spline_regenerates_original_data(cubic_flow):

@@ -9,18 +9,24 @@ Two tiers:
     COMSOL vtu (@vtu). These assert the loaded-flow contract and that domain
     boundary conditions are respected by a moving swarm.
 
-The fluid *save* path (save_fluid) is currently broken on modern pyvista and is
-pinned as a strict xfail.
+Also here: the scalar rectilinear / structured-points VTK round-trips, which are the I/O half of per-dump vorticity.
 '''
 
+import csv
+import json
+import re
+import shutil
+import warnings
 from pathlib import Path
 
 import numpy as np
 import numpy.ma as ma
 import pytest
+import pyvista as pv
 
 import planktos
 from planktos import _dataio
+import _ib_harness as H
 
 FIXTURES = Path(__file__).parent / 'fixtures'
 
@@ -44,6 +50,1201 @@ def test_moving_mesh_import():
 
 
 # --------------------------------------------------------------------------- #
+#              IB2d fluid import, scalar form (committed fixture)             #
+# --------------------------------------------------------------------------- #
+# IB2d writes velocity either as one vector file per dump (u.####.vtk) or as a
+# pair of scalar files (uX/uY.####.vtk). The vector form is covered end to end in
+# test_dynamic_loading.py; this pins the scalar branch, which is selected by a
+# different filename test in IB2dData and read through a different branch of
+# _dataio.read_vtk_Structured_Points.
+
+def test_ib2d_fluid_scalar_form_matches_vector_form():
+    from planktos import fluid
+    scalar = fluid.IB2dData(str(FIXTURES / 'ib2d_fluid_scalar_min'),
+                            dt=0.1, print_dump=10, d_start=0)
+    vector = fluid.IB2dData(str(FIXTURES / 'ib2d_fluid_min'),
+                            dt=0.1, print_dump=10, d_start=0, d_finish=2)
+    assert scalar.vector_data is False and vector.vector_data is True
+    assert scalar.fshape == vector.fshape == (3, 7, 6)
+    assert np.allclose(scalar.flow_times, vector.flow_times)
+    for q in (0.0, 1.5, 2.0):
+        for a, b in zip(scalar(q), vector(q)):
+            assert np.allclose(a, b)
+
+
+# --------------------------------------------------------------------------- #
+#                 TIME header scan (_dataio.read_vtk_time_only)               #
+# --------------------------------------------------------------------------- #
+# Exists so a dump series can be timestamped without being parsed: legacy VTK
+# puts FIELD FieldData right after DATASET, so TIME is in the first few hundred
+# bytes. That is what lets VTK3dData build the full timeline up front, which the
+# windowed path requires -- see tests/test_dynamic_loading.py.
+
+def test_read_vtk_time_only_matches_the_full_reader():
+    files = sorted((FIXTURES / 'vtk3d_min').glob('IBAMR_db_*.vtk'))
+    assert len(files) == 8
+    peeked = [_dataio.read_vtk_time_only(str(f)) for f in files]
+    full = [_dataio.read_vtk_Rectilinear_Grid_Vector(str(f))[2] for f in files]
+    assert peeked == [0., 1., 2., 3., 4., 5., 6., 7.]
+    assert np.allclose(peeked, full)
+
+
+def test_read_vtk_time_only_returns_none_when_absent():
+    # A file with no TIME field data. None means "not found in the header", which
+    # callers must treat as "fall back to a full read", not "no time exists".
+    assert _dataio.read_vtk_time_only(str(FIXTURES / 'lagspts_min' /
+                                          'lagsPts.0000.vtk')) is None
+
+
+def test_read_vtk_time_only_does_not_read_the_whole_file():
+    # The point of the function: cost is independent of file size. Scanning far
+    # less than the file still finds TIME, since it lives in the header.
+    f = str(FIXTURES / 'vtk3d_min' / 'IBAMR_db_003.vtk')
+    assert Path(f).stat().st_size > 512
+    assert _dataio.read_vtk_time_only(f, nbytes=512) == 3.0
+
+
+def test_read_vtk_time_only_rejects_a_truncated_value():
+    # If the scan window ends mid-number the value would be silently wrong, so a
+    # value line that is also the last line in the buffer is refused.
+    f = str(FIXTURES / 'vtk3d_min' / 'IBAMR_db_003.vtk')
+    with open(f, 'rb') as fh:
+        head = fh.read(4096).decode('utf-8', errors='ignore')
+    decl = next(i for i, ln in enumerate(head.splitlines())
+                if ln.split()[:1] == ['TIME'])
+    cutoff = len('\n'.join(head.splitlines()[:decl + 1])) + 2   # into the value line
+    assert _dataio.read_vtk_time_only(f, nbytes=cutoff) is None
+
+
+def _write_timed_vtk(path, t, binary, dtype=np.float64):
+    '''A small rectilinear-grid vector vtk stamped with CYCLE and TIME.'''
+    grid = pv.RectilinearGrid(np.linspace(0, 1, 4), np.linspace(0, 2, 3),
+                              np.linspace(0, 3, 2))
+    grid['vel'] = np.ones((grid.n_points, 3))
+    grid.set_active_vectors('vel')
+    grid.field_data['CYCLE'] = 7
+    grid.field_data['TIME'] = np.array([t], dtype=dtype)
+    grid.save(str(path), binary=binary)
+    return str(path)
+
+
+@pytest.mark.parametrize('binary', [False, True], ids=['ascii', 'binary'])
+@pytest.mark.parametrize('t, dtype', [
+    (0.3, np.float64),
+    (0.09, np.float64),   # its big-endian bytes contain 0x0a
+    (0.01, np.float32),   # likewise, as a 4-byte float
+])
+def test_read_vtk_time_only_reads_binary_files(tmp_path, binary, t, dtype):
+    # Regression: in a BINARY file the TIME value is raw bytes rather than text,
+    # and the scan returned None for every such file.
+    f = _write_timed_vtk(tmp_path / 'u.vtk', t, binary, dtype)
+    scanned = _dataio.read_vtk_time_only(f)
+    assert scanned == pytest.approx(t, rel=1e-7)
+    assert scanned == pytest.approx(_dataio.read_vtk_Rectilinear_Grid_Vector(f)[2],
+                                    rel=1e-7)
+
+
+def test_read_vtk_time_only_rejects_a_truncated_binary_value(tmp_path):
+    f = _write_timed_vtk(tmp_path / 'u.vtk', 0.3, binary=True)
+    with open(f, 'rb') as fh:
+        head = fh.read(4096)
+    decl = b'TIME 1 1 double\n'
+    end = head.index(decl) + len(decl)
+    assert _dataio.read_vtk_time_only(f, nbytes=end + 8) == 0.3
+    assert _dataio.read_vtk_time_only(f, nbytes=end + 7) is None
+
+
+def test_a_binary_series_is_timestamped_without_a_full_parse(tmp_path, monkeypatch):
+    # Regression: with the scan failing on binary files, VTK3dData fell back to a
+    # full parse of every dump just to build its timeline. Only the opening
+    # window should be read in full.
+    from planktos import fluid
+    for k in range(8):
+        _write_timed_vtk(tmp_path / 'IBAMR_db_{:03d}.vtk'.format(k), 0.5*k,
+                         binary=True)
+    real = _dataio.read_vtk_Rectilinear_Grid_Vector
+    calls = []
+    def spy(fname):
+        calls.append(fname)
+        return real(fname)
+    monkeypatch.setattr(fluid._dataio, 'read_vtk_Rectilinear_Grid_Vector', spy)
+
+    flow = fluid.VTK3dData(str(tmp_path), INUM=4)
+    assert np.allclose(flow.flow_times, 0.5*np.arange(8))
+    assert len(calls) == 5      # dumps 0-4, the opening window
+
+
+# --------------------------------------------------------------------------- #
+#        VTK XML multiblock series: .vtm.series, .vtm, and cell data          #
+# --------------------------------------------------------------------------- #
+# The readers behind the OpenFOAM finite-volume path. The fixture is a miniature
+# of the real OpenFOAM oral-arm export: a 4x4x5
+# uniform box of hexahedra carrying CELL data, per-timestep .vtm manifests naming
+# an interior .vtu plus inlet/outlet/walls .vtp patches, and a .vtm.series index.
+# Eight dumps are declared; two are absent (an interior hole at t=5 and an end
+# truncation at t=7), reproducing the truncated transfer the real data arrived in.
+# Fields are analytic: U = (t, x, t*z), vorticity = (z, y, x), p = t + y, with U
+# exactly zero on the no-slip walls.
+
+OF_DIR = FIXTURES / 'openfoam_min'
+OF_TIMES = [0., 1., 2., 3., 4., 5., 6., 7.]
+OF_ABSENT_TIMES = [5., 7.]
+# Interior cell centers -- inset half a cell from the domain, which is why the
+# boundary patches have to be spliced back on to recover the full extent.
+OF_XC = np.array([0.125, 0.375, 0.625, 0.875])
+OF_ZC = np.array([0.2, 0.6, 1.0, 1.4, 1.8])
+OF_DOMAIN = ((0., 1.), (0., 1.), (0., 2.))
+
+
+def _of_internal(num):
+    return _dataio.read_vtm_manifest(OF_DIR / f'case_min_{num}.vtm')[0]['internal']
+
+
+def test_read_vtm_series_declares_the_whole_timeline():
+    # The series is the timeline source for dynamic loading, so it has to report
+    # every declared dump -- including ones whose data never arrived. Filtering
+    # is the caller's policy; a reader that quietly dropped them would hide the
+    # gap instead of surfacing it.
+    files, times = _dataio.read_vtm_series(OF_DIR / 'case_min.vtm.series')
+    assert len(files) == 8
+    assert np.array_equal(times, OF_TIMES)
+    assert [f.name for f in files] == [f'case_min_{n}.vtm'
+                                       for n in (10, 20, 30, 40, 50, 60, 70, 80)]
+    # resolved relative to the series file, not the working directory
+    assert all(f.parent == OF_DIR for f in files)
+    assert sum(f.is_file() for f in files) == 8
+
+
+def test_read_vtm_series_reports_a_missing_time_as_nan(tmp_path):
+    # NaN rather than an exception, so a caller can fall back to the per-file
+    # TimeValue for just the entries the index failed to describe.
+    p = tmp_path / 'x.vtm.series'
+    p.write_text('{"file-series-version":"1.0","files":['
+                 '{"name":"a.vtm","time":1.5},{"name":"b.vtm"}]}')
+    files, times = _dataio.read_vtm_series(p)
+    assert [f.name for f in files] == ['a.vtm', 'b.vtm']
+    assert times[0] == 1.5 and np.isnan(times[1])
+
+
+def test_read_vtm_series_rejects_an_index_with_no_files(tmp_path):
+    p = tmp_path / 'x.vtm.series'
+    p.write_text('{"file-series-version":"1.0"}')
+    with pytest.raises(ValueError, match='files'):
+        _dataio.read_vtm_series(p)
+
+
+def test_read_vtm_manifest_flattens_the_block_nesting():
+    # inlet/outlet/walls sit inside a <Block name='boundary'>; the nesting
+    # carries nothing a loader needs, so it is flattened away.
+    datasets, time = _dataio.read_vtm_manifest(OF_DIR / 'case_min_10.vtm')
+    assert set(datasets) == {'internal', 'inlet', 'outlet', 'walls'}
+    assert time == 0.
+    assert datasets['internal'] == OF_DIR / 'case_min_10' / 'internal.vtu'
+    assert datasets['walls'] == (OF_DIR / 'case_min_10' / 'boundary' /
+                                 'walls.vtp')
+    assert all(p.is_file() for p in datasets.values())
+
+
+def test_read_vtm_manifest_time_agrees_with_the_series_index():
+    # Two independent declarations of the same timeline. They have to agree, or
+    # the fallback chain (series first, per-file TimeValue for gaps) would put a
+    # dump at a different time depending on which source answered.
+    files, times = _dataio.read_vtm_series(OF_DIR / 'case_min.vtm.series')
+    assert [_dataio.read_vtm_manifest(f)[1] for f in files] == list(times)
+
+
+def test_read_vtm_manifest_resolves_children_that_do_not_exist():
+    # The enabling case for gap tolerance: an absent dump still has a manifest,
+    # so its data path can be resolved and tested cheaply at construction rather
+    # than discovered at the window slide that needs it.
+    for num, t in zip((60, 80), OF_ABSENT_TIMES):
+        datasets, time = _dataio.read_vtm_manifest(
+            OF_DIR / f'case_min_{num}.vtm')
+        assert time == t
+        assert datasets['internal'].name == 'internal.vtu'
+        assert not datasets['internal'].is_file()
+
+
+def test_read_vtm_manifest_time_is_none_when_absent(tmp_path):
+    p = tmp_path / 'x.vtm'
+    p.write_text("<?xml version='1.0'?>\n<VTKFile type='vtkMultiBlockDataSet'>"
+                 "<vtkMultiBlockDataSet>"
+                 "<DataSet name='internal' file='d/internal.vtu' />"
+                 "</vtkMultiBlockDataSet></VTKFile>")
+    datasets, time = _dataio.read_vtm_manifest(p)
+    assert time is None
+    assert datasets == {'internal': tmp_path / 'd' / 'internal.vtu'}
+
+
+def test_read_vtkxml_cell_data_reads_centers_not_corners():
+    # Finite-volume fields live on cells. GetPoints() would return the 5x5x6=150
+    # hexahedron corners, which is the wrong lattice to interpolate a cell field
+    # on; the 4x4x5=80 cell centers are the right one.
+    centers, data, time = _dataio.read_vtkxml_cell_data(_of_internal(10))
+    assert centers.shape == (80, 3)
+    assert data['U'].shape == (80, 3)
+    assert time == 0.
+    for d, expected in ((0, OF_XC), (1, OF_XC), (2, OF_ZC)):
+        assert np.allclose(np.unique(np.round(centers[:, d], 9)), expected)
+    # inset half a cell: the centers do not reach the domain edges
+    for d, (lo, hi) in enumerate(OF_DOMAIN):
+        assert centers[:, d].min() > lo and centers[:, d].max() < hi
+
+
+def test_read_vtkxml_cell_data_cell_order_is_not_lexicographic():
+    # Pins the fixture property that makes reordering testable at all. The real
+    # export's cells are not lexicographic either, so a loader that reshapes
+    # without a permutation scrambles the field silently. If a regenerated
+    # fixture ever came out sorted, every downstream reordering test would start
+    # passing for the wrong reason -- this is what catches that.
+    centers, _, _ = _dataio.read_vtkxml_cell_data(_of_internal(10), arrays=())
+    order = np.lexsort((centers[:, 0], centers[:, 1], centers[:, 2]))
+    assert not np.array_equal(order, np.arange(len(centers)))
+
+
+def test_read_vtkxml_cell_data_returns_the_analytic_fields():
+    # Closed forms, evaluated in the file's own (scrambled) cell order -- so a
+    # reader that returned centers and data in mismatched orders would fail here.
+    for num, t in ((10, 0.), (40, 3.)):
+        centers, data, _ = _dataio.read_vtkxml_cell_data(
+            _of_internal(num), arrays=('U', 'vorticity', 'p'))
+        x, y, z = centers[:, 0], centers[:, 1], centers[:, 2]
+        assert np.allclose(data['U'], np.stack([np.full(80, t), x, t * z], 1))
+        assert np.allclose(data['vorticity'], np.stack([z, y, x], 1))
+        assert np.allclose(data['p'], t + y)
+        assert data['p'].shape == (80,)      # scalar stays 1D
+
+
+def test_read_vtkxml_cell_data_reads_only_the_requested_arrays():
+    # An unstructured-grid file repeats its whole mesh every timestep, so the
+    # fields that are not wanted are waste on top of waste. Velocity alone by
+    # default; vorticity is one argument away, since solvers often ship it and
+    # reading it beats regenerating it.
+    _, default, _ = _dataio.read_vtkxml_cell_data(_of_internal(10))
+    assert set(default) == {'U'}
+    _, both, _ = _dataio.read_vtkxml_cell_data(_of_internal(10),
+                                               arrays=('U', 'vorticity'))
+    assert set(both) == {'U', 'vorticity'}
+    assert np.array_equal(default['U'], both['U'])
+    _, every, _ = _dataio.read_vtkxml_cell_data(_of_internal(10), arrays=None)
+    assert set(every) == {'U', 'vorticity', 'p'}
+
+
+def test_read_vtkxml_cell_data_warns_for_an_array_the_file_lacks():
+    # Collaborators' export pipelines vary; asking for a field that is not there
+    # should say so by name rather than return a quietly incomplete result.
+    with pytest.warns(UserWarning, match='not found'):
+        _, data, _ = _dataio.read_vtkxml_cell_data(_of_internal(10),
+                                                   arrays=('U', 'nope'))
+    assert set(data) == {'U'}
+
+
+def test_read_vtkxml_cell_data_can_skip_the_cell_centers():
+    # The mesh is static across the series, so the lattice is established once
+    # and every later dump needs the field arrays only.
+    centers, data, _ = _dataio.read_vtkxml_cell_data(
+        _of_internal(20), load_cell_coordinates=False)
+    assert centers is None
+    assert data['U'].shape == (80, 3)
+
+
+def test_read_vtkxml_cell_data_reads_the_polydata_patches():
+    # The boundary patches are .vtp, not .vtu, and are what closes the half-cell
+    # inset. inlet/outlet must land on the domain's z faces and share the
+    # interior's in-plane lattice exactly, or the splice would need interpolation.
+    datasets, _ = _dataio.read_vtm_manifest(OF_DIR / 'case_min_40.vtm')
+    interior, _, _ = _dataio.read_vtkxml_cell_data(datasets['internal'],
+                                                   arrays=())
+    for name, plane in (('inlet', 0.), ('outlet', 2.)):
+        centers, data, time = _dataio.read_vtkxml_cell_data(datasets[name])
+        assert centers.shape == (16, 3) and time == 3.
+        assert np.allclose(np.unique(centers[:, 2]), [plane])
+        for d in (0, 1):
+            assert np.array_equal(np.unique(centers[:, d]),
+                                  np.unique(interior[:, d]))
+    # walls is one PolyData holding all four lateral planes, and is exactly zero
+    # (no-slip) -- which is what makes padding the shell with zeros exact.
+    centers, data, _ = _dataio.read_vtkxml_cell_data(datasets['walls'])
+    assert centers.shape == (4 * 4 * 5, 3)
+    assert not data['U'].any()
+
+
+def test_read_vtkxml_cell_data_raises_on_a_missing_file():
+    # vtk's XML readers report a missing file on stderr and hand back an empty
+    # dataset, which would surface much later as a confusing shape mismatch.
+    with pytest.raises(FileNotFoundError):
+        _dataio.read_vtkxml_cell_data(OF_DIR / 'case_min_60' / 'internal.vtu')
+
+
+def test_read_vtkxml_cell_data_rejects_an_unsupported_extension(tmp_path):
+    p = tmp_path / 'flow.vtk'
+    p.write_text('not xml')
+    with pytest.raises(ValueError, match='.vtu'):
+        _dataio.read_vtkxml_cell_data(p)
+
+
+# --------------------------------------------------------------------------- #
+#           TimeValue from a VTK XML header, without parsing the file         #
+# --------------------------------------------------------------------------- #
+# The .vtu/.vtp counterpart of read_vtk_time_only, and the time source of last
+# resort for an export with no index and no manifests. The saving is the whole
+# point: an unstructured export repeats its entire mesh in every dump (51 MB per
+# file in the reference dataset), so parsing the series to recover one float per
+# dump would read gigabytes to answer a question the headers already answer.
+
+def test_read_vtkxml_time_only_matches_the_full_read():
+    # Same answer as the full parse, on both container types.
+    for num, t in zip((10, 30, 70), (0., 2., 6.)):
+        f = _of_internal(num)
+        assert _dataio.read_vtkxml_time_only(f) == t
+        assert _dataio.read_vtkxml_cell_data(
+            f, arrays=(), load_cell_coordinates=False)[2] == t
+    patch = OF_DIR / 'case_min_30' / 'boundary' / 'inlet.vtp'
+    assert _dataio.read_vtkxml_time_only(patch) == 2.
+
+
+def test_read_vtkxml_time_only_reads_an_ascii_array(tmp_path):
+    # VTK writes TimeValue as ascii text in ascii data mode and as inline base64
+    # in binary mode. Both are ordinary output, so both are decoded.
+    import vtk
+    src = vtk.vtkXMLUnstructuredGridReader()
+    src.SetFileName(str(_of_internal(40)))
+    src.Update()
+    w = vtk.vtkXMLUnstructuredGridWriter()
+    w.SetFileName(str(tmp_path / 'ascii.vtu'))
+    w.SetInputData(src.GetOutput())
+    w.SetDataModeToAscii()
+    w.Write()
+    assert _dataio.read_vtkxml_time_only(tmp_path / 'ascii.vtu') == 3.
+
+
+def test_read_vtkxml_time_only_declines_a_compressed_array(tmp_path):
+    # A compressed inline array is not decoded here -- one slow path through the
+    # full reader beats a second, barely-exercised decoder for a single float.
+    # What matters is that declining reads as "unknown", never as a wrong time.
+    import vtk
+    src = vtk.vtkXMLUnstructuredGridReader()
+    src.SetFileName(str(_of_internal(40)))
+    src.Update()
+    w = vtk.vtkXMLUnstructuredGridWriter()
+    w.SetFileName(str(tmp_path / 'zlib.vtu'))
+    w.SetInputData(src.GetOutput())
+    w.SetDataModeToBinary()
+    w.SetCompressorTypeToZLib()
+    w.Write()
+    assert _dataio.read_vtkxml_time_only(tmp_path / 'zlib.vtu') is None
+    # ...and the fallback the loader takes does get it
+    assert _dataio.read_vtkxml_cell_data(
+        tmp_path / 'zlib.vtu', arrays=(), load_cell_coordinates=False)[2] == 3.
+
+
+def test_read_vtkxml_time_only_returns_none_rather_than_half_an_answer():
+    # A scan cut short by nbytes must report "unknown", not a truncated number.
+    f = _of_internal(20)
+    assert _dataio.read_vtkxml_time_only(f, nbytes=150) is None
+    assert _dataio.read_vtkxml_time_only(f, nbytes=4096) == 1.
+
+
+def test_read_vtkxml_time_only_returns_none_when_there_is_no_timevalue(tmp_path):
+    p = tmp_path / 'untimed.vtu'
+    p.write_text("<?xml version=\"1.0\"?>\n"
+                 "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" "
+                 "byte_order=\"LittleEndian\" header_type=\"UInt64\">\n"
+                 "  <UnstructuredGrid>\n"
+                 "    <Piece NumberOfPoints=\"0\" NumberOfCells=\"0\"/>\n"
+                 "  </UnstructuredGrid>\n</VTKFile>\n")
+    assert _dataio.read_vtkxml_time_only(p) is None
+
+
+# --------------------------------------------------------------------------- #
+#            OpenFOAM finite-volume ingestion (fluid.OpenFOAMData)            #
+# --------------------------------------------------------------------------- #
+# Assembly of the same fixture into a Planktos grid. Three things happen here
+# that no other loader does: the cells are reordered out of the file's scrambled
+# order onto a lattice, the boundary patches are spliced onto the six faces to
+# undo the half-cell inset, and dumps the series declares but which are absent
+# are dropped from the timeline.
+#
+# The fixture's 4x4x5 interior assembles to 6x6x7. Its analytic fields make the
+# result closed-form: U = (t, x, t*z) in the interior and on the inlet/outlet
+# caps, and exactly 0 on the four lateral walls.
+
+OF_GRID_X = np.array([0., 0.125, 0.375, 0.625, 0.875, 1.])
+OF_GRID_Z = np.array([0., 0.2, 0.6, 1.0, 1.4, 1.8, 2.])
+# t=5 and t=7 are absent, so the surviving timeline is 0,1,2,3,4,6
+OF_KEPT = [0., 1., 2., 3., 4., 6.]
+
+
+def _openfoam(**kwargs):
+    from planktos import fluid
+    with pytest.warns(UserWarning):        # absent dumps; uneven spacing
+        return fluid.OpenFOAMData(str(OF_DIR), **kwargs)
+
+
+def test_openfoam_dump_numbers_count_declared_dumps():
+    # Regression: dump_number was the index over the dumps on disk, so the
+    # vorticity files a recording writes beside the data were named for a
+    # different dump once a missing one arrived.
+    fd = _openfoam()
+    assert [fd.dump_number(i) for i in range(6)] == [0, 1, 2, 3, 4, 6]
+    assert fd.vorticity_filename(5) == 'Omega.0006.vtk'
+
+
+def test_openfoam_a_single_dump_ignores_INUM(tmp_path):
+    # Regression: an int INUM reached FluidData with no timeline and raised
+    # TypeError.
+    from planktos import fluid
+    series = tmp_path / 'one.vtm.series'
+    series.write_text(json.dumps({'files': [
+        {'name': str(OF_DIR / 'case_min_20.vtm'), 'time': 1.0}]}))
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', UserWarning)
+        fd = fluid.OpenFOAMData(str(series), INUM=4)
+    assert fd.flow_times is None and fd.INUM is None
+
+
+@pytest.mark.parametrize('single', ['file', 'range'])
+def test_vtk3d_a_single_dump_ignores_INUM(single):
+    # Regression: an int INUM reached FluidData with no timeline and raised
+    # TypeError.
+    from planktos import fluid
+    if single == 'file':
+        fd = fluid.VTK3dData(str(FIXTURES / 'vtk3d_min' / 'IBAMR_db_003.vtk'),
+                             INUM=4)
+    else:
+        fd = fluid.VTK3dData(str(FIXTURES / 'vtk3d_min'), d_start=3, d_finish=3,
+                             INUM=4)
+    assert fd.flow_times is None and fd.INUM is None
+    assert fd[0].shape == (5, 4, 3)
+
+
+def test_openfoam_grid_spans_the_full_domain():
+    # The point of the boundary splice. Raw cell centers would report the domain
+    # as 0.75 x 0.75 x 1.6 instead of the true 1 x 1 x 2, and every coordinate in
+    # it would be shifted by half a cell.
+    fd = _openfoam()
+    assert fd.fshape == (6, 6, 6, 7)                   # (t, nx+2, ny+2, nz+2)
+    assert np.allclose(fd.flow_points[0], OF_GRID_X)
+    assert np.allclose(fd.flow_points[1], OF_GRID_X)
+    assert np.allclose(fd.flow_points[2], OF_GRID_Z)
+    assert np.allclose(fd.L, [1., 1., 2.])
+    # rectilinear but NOT uniform: the outermost interval in each direction is
+    # the half-cell from the outermost cell center out to the domain edge
+    for d in (0, 1, 2):
+        dg = np.diff(fd.flow_points[d])
+        assert np.isclose(dg[0], dg[1]/2) and np.isclose(dg[-1], dg[1]/2)
+
+
+def test_openfoam_drops_absent_dumps_and_warns():
+    from planktos import fluid
+    with pytest.warns(UserWarning, match='not on disk'):
+        fd = fluid.OpenFOAMData(str(OF_DIR))
+    # densely indexed over the dumps that exist, so d_start/d_finish line up with
+    # flow_times and load_dumpfiles is never handed an absent filename
+    assert fd.d_start == 0 and fd.d_finish == 5
+    assert np.allclose(fd.flow_times, OF_KEPT)
+
+
+def test_openfoam_warns_about_the_uneven_spacing_a_gap_leaves():
+    # Separate from the missing-dump warning: interpolation error scales with the
+    # dump interval, so the user should be told which stretch is degraded.
+    from planktos import fluid
+    with pytest.warns(UserWarning, match='not evenly spaced'):
+        fluid.OpenFOAMData(str(OF_DIR))
+
+
+def test_openfoam_interior_is_reordered_onto_the_lattice():
+    # THE permutation test. The file's cell order is scrambled, so a loader that
+    # reshaped without reordering would produce a field that is wrong everywhere
+    # but still the right shape. u = t, v = x, w = t*z is asserted cell by cell.
+    fd = _openfoam()
+    X, _, Z = np.meshgrid(OF_GRID_X[1:-1], OF_GRID_X[1:-1], OF_GRID_Z[1:-1],
+                          indexing='ij')
+    for t in (0., 3.):
+        u, v, w = fd(t)
+        assert np.allclose(u[1:-1, 1:-1, 1:-1], t)
+        assert np.allclose(v[1:-1, 1:-1, 1:-1], X)
+        assert np.allclose(w[1:-1, 1:-1, 1:-1], t*Z)
+
+
+def test_openfoam_faces_carry_their_own_patch_data():
+    # Each face is filled from whatever patch covers it -- not assumed no-slip.
+    # The lateral walls are zero here because the data says so; the inlet/outlet
+    # caps carry the analytic field.
+    fd = _openfoam()
+    t = 3.
+    u, v, w = fd(t)
+    X, _ = np.meshgrid(OF_GRID_X[1:-1], OF_GRID_X[1:-1], indexing='ij')
+    # inlet at z=0 and outlet at z=2, on the interior x/y lattice
+    for k, zc in ((0, 0.), (-1, 2.)):
+        assert np.allclose(u[1:-1, 1:-1, k], t)
+        assert np.allclose(v[1:-1, 1:-1, k], X)
+        assert np.allclose(w[1:-1, 1:-1, k], t*zc)
+    # the four lateral walls
+    for comp in (u, v, w):
+        assert not comp[0, 1:-1, 1:-1].any()
+        assert not comp[-1, 1:-1, 1:-1].any()
+        assert not comp[1:-1, 0, 1:-1].any()
+        assert not comp[1:-1, -1, 1:-1].any()
+
+
+def _of_write(dataset, path):
+    '''Write a .vtu/.vtp the way the fixture generator does.
+
+    Binary, uncompressed, UInt64 headers -- pyvista's save() defaults to zlib
+    with UInt32, which read_vtkxml_time_only declines to decode. Matching the
+    generator keeps a rewritten fixture honest about its byte layout.
+    '''
+    import vtk
+    w = (vtk.vtkXMLUnstructuredGridWriter() if path.suffix == '.vtu'
+         else vtk.vtkXMLPolyDataWriter())
+    w.SetFileName(str(path))
+    w.SetInputData(dataset)
+    w.SetDataModeToBinary()
+    w.SetCompressorTypeToNone()
+    w.SetHeaderTypeToUInt64()
+    w.Write()
+
+
+def _of_set_patch_velocity(path, value, only=None):
+    '''Overwrite a boundary patch's U with a constant vector, in place.
+
+    only is an optional predicate on the (N,3) cell centers, for setting one
+    plane of a multi-plane patch -- walls.vtp holds all four lateral planes.
+    '''
+    import pyvista as pv
+    p = pv.read(path)
+    cen = np.asarray(p.cell_centers().points)
+    m = np.ones(p.n_cells, bool) if only is None else only(cen)
+    U = np.asarray(p.cell_data['U'], dtype=float).copy()
+    U[m] = np.asarray(value, dtype=float)
+    p.cell_data['U'] = U
+    _of_write(p, path)
+
+
+def test_openfoam_edges_and_corners_take_a_no_slip_zero_over_the_average():
+    # The 12 edges and 8 corners appear in no patch file and are filled from the
+    # faces meeting there; where those disagree, an exactly-zero velocity wins
+    # as no-slip. Every edge of this fixture touches one of the four no-slip
+    # lateral walls, so the whole shell comes out zero -- which means the
+    # averaging branch needs walls that are not zero. That is the next test.
+    fd = _openfoam()
+    u, v, w = fd(1.)
+    for comp in (u, v, w):
+        assert not comp[0, 1:-1, 0].any()            # x=0 wall meets z=0 inlet
+        assert not comp[-1, 1:-1, -1].any()          # x=1 wall meets z=2 outlet
+        assert not comp[0, 0, 1:-1].any()            # two walls meeting
+        for sx in (0, -1):
+            for sy in (0, -1):
+                for sz in (0, -1):
+                    assert comp[sx, sy, sz] == 0.
+
+
+def test_openfoam_edges_average_when_neither_face_is_no_slip(tmp_path):
+    # Give the walls a nonzero velocity and nothing meeting at an edge is
+    # no-slip any more, so the fill falls back to the average of the two faces.
+    from planktos import fluid
+    path = _of_variant(tmp_path)
+    wall = np.array([1., 2., 3.])
+    for num in (10, 20, 30, 40, 50, 70):
+        _of_set_patch_velocity(path / f'case_min_{num}' / 'boundary' / 'walls.vtp',
+                               wall)
+    with pytest.warns(UserWarning):
+        fd = fluid.OpenFOAMData(str(path))
+    t = 1.
+    u, v, w = fd(t)
+    # The x=0 edge at z=0 averages the wall against the inlet one cell inward,
+    # where the inlet carries (t, x_1, t*0).
+    inlet = np.array([t, OF_GRID_X[1], 0.])
+    for comp, k in ((u, 0), (v, 1), (w, 2)):
+        assert np.allclose(comp[0, 1:-1, 0], (wall[k] + inlet[k])/2)
+    # wall against wall: both nonzero and equal, so the average is that value
+    assert np.allclose(u[0, 0, 1:-1], wall[0])
+    # and the corner is now the mean of its three edges rather than zero
+    corner = np.array([u[0, 0, 0], v[0, 0, 0], w[0, 0, 0]])
+    assert corner.any()
+    edges = np.array([[c[1, 0, 0], c[0, 1, 0], c[0, 0, 1]] for c in (u, v, w)])
+    assert np.allclose(corner, edges.mean(axis=1))
+
+
+def test_openfoam_corner_takes_a_no_slip_edge_over_the_average(tmp_path):
+    # The corner rule needs a corner whose adjoining edges DISAGREE about
+    # no-slip, which neither of the two cases above provides: in the stock
+    # fixture all three are zero, and with every wall nonzero none of them is.
+    # Making only the x=0 plane nonzero gives a mixed corner.
+    from planktos import fluid
+    path = _of_variant(tmp_path)
+    for num in (10, 20, 30, 40, 50, 70):
+        _of_set_patch_velocity(
+            path / f'case_min_{num}' / 'boundary' / 'walls.vtp', [1., 2., 3.],
+            only=lambda cen: cen[:, 0] < 1e-9)       # the x = 0 plane alone
+    with pytest.warns(UserWarning):
+        fd = fluid.OpenFOAMData(str(path))
+    u, v, w = fd(1.)
+    # Of the three edges at the (0,0,0) corner: the one running in y averages
+    # the nonzero x=0 wall against the inlet, while the other two still meet a
+    # no-slip plane and are zero.
+    assert (u[0, 1, 0], v[0, 1, 0], w[0, 1, 0]) != (0., 0., 0.)
+    assert not any((u[1, 0, 0], v[1, 0, 0], w[1, 0, 0]))
+    assert not any((u[0, 0, 1], v[0, 0, 1], w[0, 0, 1]))
+    # so averaging the three would give something nonzero; no-slip wins instead
+    assert (u[0, 0, 0], v[0, 0, 0], w[0, 0, 0]) == (0., 0., 0.)
+
+
+def test_openfoam_warns_when_boundary_conditions_disagree_at_an_edge():
+    # A real discontinuity in the boundary conditions, not a data error -- but
+    # the user should be told, and told how it was resolved.
+    from planktos import fluid
+    with pytest.warns(UserWarning, match='disagree') as rec:
+        fluid.OpenFOAMData(str(OF_DIR))
+    msg = next(str(w.message) for w in rec if 'disagree' in str(w.message))
+    assert 'no-slip' in msg
+    # The count is cells where the rule CHANGED the answer -- exactly one side
+    # zero -- not every edge cell. The 4 edges running in x and the 4 running in
+    # y each put a wall against the inlet or outlet, so all their cells count
+    # (4 + 4 edges x 4 cells). The 4 running in z have a wall on both sides,
+    # which already averaged to zero, so they contribute nothing.
+    assert ' {} of those cells'.format(4*4 + 4*4) in msg
+
+
+def test_openfoam_rejects_a_mesh_that_is_not_a_lattice():
+    # Planktos interpolates on a tensor-product grid, and an unstructured
+    # container says nothing about the mesh inside it. Verified, not assumed.
+    from planktos import fluid
+    fd = _openfoam()
+    good = np.array([[x, y, z] for x in (0., 1.) for y in (0., 1.)
+                     for z in (0., 1.)])
+    fd._build_lattice(good)                     # 2x2x2, fine
+    bad = good.copy()
+    bad[0, 0] = 0.5                             # 3 x-levels, 8 cells: not 3*2*2
+    with pytest.raises(ValueError, match='not on a rectilinear grid'):
+        fd._build_lattice(bad)
+
+
+def _openfoam_manifest_without(tmp_path, drop):
+    '''A copy of the fixture series whose manifests omit one boundary patch.'''
+    lines = ["<?xml version='1.0'?>",
+             "<VTKFile type='vtkMultiBlockDataSet' version='1.0'>",
+             "  <vtkMultiBlockDataSet>"]
+    entries = []
+    for num in (10, 20, 30, 40, 50, 70):
+        datasets, time = _dataio.read_vtm_manifest(OF_DIR / f'case_min_{num}.vtm')
+        body = list(lines)
+        for name, path in datasets.items():
+            if name == drop:
+                continue
+            body.append(f"    <DataSet name='{name}' "
+                        f"file='{path.resolve().as_posix()}' />")
+        body += ["  </vtkMultiBlockDataSet>",
+                 "  <FieldData>",
+                 "    <DataArray type='Float32' Name='TimeValue' "
+                 "NumberOfTuples='1' format='ascii'>",
+                 f"{time}", "    </DataArray>", "  </FieldData>", "</VTKFile>"]
+        (tmp_path / f'case_min_{num}.vtm').write_text('\n'.join(body))
+        entries.append({'name': f'case_min_{num}.vtm', 'time': time})
+    import json
+    (tmp_path / 'case_min.vtm.series').write_text(json.dumps(
+        {'file-series-version': '1.0', 'files': entries}))
+    return tmp_path
+
+
+def test_openfoam_requires_a_patch_on_every_face(tmp_path):
+    # Without the walls patch the x and y faces have no data, so the domain would
+    # come out half a cell short in both -- an error nothing downstream could
+    # detect. Raise rather than hand back a quietly wrong domain.
+    from planktos import fluid
+    path = _openfoam_manifest_without(tmp_path, 'walls')
+    with pytest.raises(RuntimeError, match='No boundary patch covers'):
+        fluid.OpenFOAMData(str(path))
+
+
+# ---- require_boundary=False: extrapolate the faces that have no patch -------
+# The domain still has to come out the right size, and it is recovered from the
+# cell spacing rather than from a patch. What changes is where the values on
+# that face come from: the linear extension of the interior, not the boundary
+# condition the solver applied. Done per FACE, so a dataset missing one patch
+# keeps using the five it has.
+
+
+def test_openfoam_regrids_a_face_with_no_patch(tmp_path):
+    # Dropping inlet leaves the z- face uncovered. The domain must still span
+    # 0..2 in z -- the half-cell out from the first cell center at 0.2.
+    from planktos import fluid
+    path = _openfoam_manifest_without(tmp_path, 'inlet')
+    with pytest.warns(UserWarning, match='No boundary patch covers'):
+        fd = fluid.OpenFOAMData(str(path), require_boundary=False)
+    assert fd.fshape == (6, 6, 6, 7)
+    assert np.allclose(fd.flow_points[2], OF_GRID_Z)
+    assert np.allclose(fd.flow_points[0], OF_GRID_X)
+    assert np.allclose(fd.L, [1., 1., 2.])
+    # The walls still have their patch and are exactly zero (no-slip). The
+    # linear extension of the interior there is u = t, so this is what shows
+    # the regrid is per FACE and did not touch the faces that are covered.
+    u = fd(3.)[0]
+    assert not u[0, 1:-1, 1:-1].any()
+    assert not u[1:-1, -1, 1:-1].any()
+
+
+def test_openfoam_regridded_face_is_the_linear_extension(tmp_path):
+    # The fixture's field is linear (u = t, v = x, w = t*z), so extrapolating
+    # is exact and can be asserted in closed form. Here the inlet patch it
+    # replaces carried that same field, so the two happen to agree -- which is
+    # what makes this a clean check of the extrapolation itself.
+    from planktos import fluid
+    path = _openfoam_manifest_without(tmp_path, 'inlet')
+    with pytest.warns(UserWarning):
+        fd = fluid.OpenFOAMData(str(path), require_boundary=False)
+    t = 3.
+    u, v, w = fd(t)
+    X, _ = np.meshgrid(OF_GRID_X[1:-1], OF_GRID_X[1:-1], indexing='ij')
+    assert np.allclose(u[1:-1, 1:-1, 0], t)
+    assert np.allclose(v[1:-1, 1:-1, 0], X)
+    assert np.allclose(w[1:-1, 1:-1, 0], 0.)       # w = t*z, and z = 0 there
+
+
+def test_openfoam_regrid_does_not_displace_the_patches_it_does_have(tmp_path):
+    # Per face, not per dataset. Dropping walls uncovers the four lateral faces;
+    # inlet and outlet still have patches and must still be read from them. The
+    # walls are exactly zero (no-slip) and the linear extension is NOT zero, so
+    # this also shows the regridded faces really are extrapolated.
+    from planktos import fluid
+    path = _openfoam_manifest_without(tmp_path, 'walls')
+    with pytest.warns(UserWarning, match='No boundary patch covers'):
+        fd = fluid.OpenFOAMData(str(path), require_boundary=False)
+    t = 3.
+    u, v, w = fd(t)
+    # inlet/outlet still carry their patch data, on the interior x/y lattice
+    X, _ = np.meshgrid(OF_GRID_X[1:-1], OF_GRID_X[1:-1], indexing='ij')
+    for k, zc in ((0, 0.), (-1, 2.)):
+        assert np.allclose(u[1:-1, 1:-1, k], t)
+        assert np.allclose(v[1:-1, 1:-1, k], X)
+        assert np.allclose(w[1:-1, 1:-1, k], t*zc)
+    # the lateral faces are now the linear extension, u = t, NOT the wall's 0
+    assert np.allclose(u[0, 1:-1, 1:-1], t)
+    assert np.allclose(u[-1, 1:-1, 1:-1], t)
+    # v = x extrapolates to the domain edge in x
+    assert np.allclose(v[0, 1:-1, 1:-1], OF_GRID_X[0])
+    assert np.allclose(v[-1, 1:-1, 1:-1], OF_GRID_X[-1])
+
+
+def test_openfoam_regrid_still_raises_by_default(tmp_path):
+    # require_boundary defaults True, and the message now points at the option.
+    from planktos import fluid
+    path = _openfoam_manifest_without(tmp_path, 'inlet')
+    with pytest.raises(RuntimeError, match='require_boundary=False'):
+        fluid.OpenFOAMData(str(path))
+
+
+@pytest.mark.parametrize('INUM', [None, True, 4])
+def test_openfoam_regrid_holds_across_the_loading_modes(tmp_path, INUM):
+    # The regrid happens per dump inside _read_dump, so it has to survive
+    # streaming as well as a full load -- and give the same answer.
+    from planktos import fluid
+    path = _openfoam_manifest_without(tmp_path, 'walls')
+    with pytest.warns(UserWarning):
+        fd = fluid.OpenFOAMData(str(path), require_boundary=False, INUM=INUM)
+    t = 2.
+    u = fd(t)[0]
+    assert np.allclose(u[0, 1:-1, 1:-1], t)
+    assert np.allclose(u[1:-1, 1:-1, 1:-1], t)
+
+
+def test_openfoam_environment_reader():
+    envir = planktos.Environment()
+    with pytest.warns(UserWarning):
+        envir.read_openfoam_vtk_data(str(OF_DIR))
+    assert np.allclose(envir.L, [1., 1., 2.])
+    assert envir.flow.fshape == (6, 6, 6, 7)
+    # the fluid is reachable through the normal Environment interface, and
+    # reads back (u, v, w) = (t, x, t*z) at an interior point
+    got = envir.interpolate_flow(np.array([[0.5, 0.5, 1.0]]), time=2.0)
+    assert np.allclose(np.squeeze(got), [2.0, 0.5, 2.0])
+
+
+# --------------------------------------------------------------------------- #
+#          OpenFOAM: rebuilding the timeline from an incomplete export        #
+# --------------------------------------------------------------------------- #
+# The .vtm.series index, the .vtm manifests, and the internal.vtu TimeValue are
+# three independent declarations of the same timeline, so losing one of them
+# need not be fatal. The loader tries them in that order and then falls back to
+# unit steps.
+#
+# What is pinned here is the announcement as much as the recovery: a timeline
+# quietly rebuilt from a worse source is the shape of the VTK3dData frozen-fluid
+# bug, so every step past the first warns and records which source answered.
+#
+# Variants are derived from the committed fixture rather than committed
+# separately, so they cannot drift from what they are a damaged copy of.
+
+# Renaming the surviving dumps 10,20,30,40,50,70 -> 7,8,9,10,11,12 makes the
+# lexical and numeric orderings of the directory names disagree: sorted as text,
+# 10/11/12 come before 7/8/9. That is the real export's naming (case08_..._787
+# through case08_..._1034, unpadded), and the reason the glob sorts numerically.
+OF_RENUMBER = {10: 7, 20: 8, 30: 9, 40: 10, 50: 11, 70: 12}
+
+
+def _strip_timevalue(path):
+    '''Delete the FieldData block from a VTK XML file, in place.
+
+    The fixture writes inline base64 with no appended binary section, so the
+    file is ASCII throughout and the block can simply be cut out.
+    '''
+    path.write_text(re.sub(r'\s*<FieldData>.*?</FieldData>', '',
+                           path.read_text(), flags=re.DOTALL))
+
+
+def _set_manifest_time(path, t):
+    '''Rewrite the TimeValue a .vtm manifest declares.'''
+    path.write_text(re.sub(r"(Name='TimeValue'[^>]*>)\s*\S+\s*(</DataArray>)",
+                           r'\g<1>' + '\n{}\n'.format(t) + r'\g<2>',
+                           path.read_text()))
+
+
+def _of_variant(tmp_path, index=True, manifests=True, timevalue=True,
+                renumber=False):
+    '''A copy of the committed fixture with pieces of the export taken away.'''
+    root = tmp_path / 'VTK'
+    shutil.copytree(OF_DIR, root)
+    if not index:
+        for p in root.glob('*.vtm.series'):
+            p.unlink()
+    if not manifests:
+        for p in root.glob('*.vtm'):
+            p.unlink()
+    if not timevalue:
+        for p in list(root.rglob('*.vtu')) + list(root.rglob('*.vtp')):
+            _strip_timevalue(p)
+    if renumber:
+        # Only meaningful once the manifests are gone: they name the dump
+        # directories, so renaming those would break the paths they resolve.
+        assert not manifests and not index
+        for old, new in OF_RENUMBER.items():
+            (root / 'case_min_{}'.format(old)).rename(
+                root / 'case_min_{}'.format(new))
+    return root
+
+
+def _assert_fixture_field(fd, times):
+    '''The fixture's interior field is u = t, v = x, w = t*z.
+
+    Asserting it against the *original* dump times, indexed by position in the
+    rebuilt timeline, is what pins the dump ORDER: it is the one thing that
+    distinguishes a correctly ordered series from a scrambled one carrying the
+    same set of values.
+    '''
+    X, _, Z = np.meshgrid(OF_GRID_X[1:-1], OF_GRID_X[1:-1], OF_GRID_Z[1:-1],
+                          indexing='ij')
+    for k, t_orig in enumerate(times):
+        u, v, w = fd(fd.flow_times[k])
+        assert np.allclose(u[1:-1, 1:-1, 1:-1], t_orig)
+        assert np.allclose(v[1:-1, 1:-1, 1:-1], X)
+        assert np.allclose(w[1:-1, 1:-1, 1:-1], t_orig*Z)
+
+
+def test_openfoam_records_the_primary_source_when_the_export_is_whole():
+    # The baseline the fallbacks are measured against. No warning about the
+    # source, because nothing was lost.
+    fd = _openfoam()
+    assert fd.dump_source == 'series'
+    assert fd.time_source == 'the .vtm.series index'
+    assert fd.series_path.name == 'case_min.vtm.series'
+
+
+def test_openfoam_natural_sort_orders_unpadded_dump_numbers():
+    # The trap the directory glob is sorted against, in the real export's own
+    # names: unpadded, so 1008 sorts before 787 as text.
+    from planktos import fluid
+    names = ['case08_alpha2_1e8_{}'.format(n)
+             for n in (787, 800, 917, 1008, 1034)]
+    assert sorted(reversed(names)) != names            # lexically wrong...
+    assert sorted(reversed(names), key=fluid._natural_key) == names
+
+
+# ---- 1: no .vtm.series index -> the .vtm manifests --------------------------
+
+def test_openfoam_falls_back_to_the_manifests_when_the_index_is_gone(tmp_path):
+    from planktos import fluid
+    path = _of_variant(tmp_path, index=False)
+    with pytest.warns(UserWarning, match='No .vtm.series index'):
+        fd = fluid.OpenFOAMData(str(path))
+    assert fd.dump_source == 'manifests'
+    assert 'manifest' in fd.time_source
+    assert fd.series_path is None
+    # the same timeline and the same field the index would have produced
+    assert np.allclose(fd.flow_times, OF_KEPT)
+    _assert_fixture_field(fd, OF_KEPT)
+
+
+def test_openfoam_manifests_still_report_the_dumps_that_never_arrived(tmp_path):
+    # A manifest survives for each absent dump, so the gap is still declared and
+    # still warned about -- the fallback loses the index, not the record.
+    from planktos import fluid
+    path = _of_variant(tmp_path, index=False)
+    with pytest.warns(UserWarning, match='not on disk'):
+        fd = fluid.OpenFOAMData(str(path))
+    assert len(fd.flow_times) == 6
+
+
+def test_openfoam_fills_a_gap_in_the_index_from_the_manifests(tmp_path):
+    # A partial failure of the primary source: the index is there but does not
+    # time every entry. The manifest answers for just those entries, and says so.
+    from planktos import fluid
+    path = _of_variant(tmp_path)
+    series = path / 'case_min.vtm.series'
+    data = json.loads(series.read_text())
+    del data['files'][2]['time']                       # case_min_30, t = 2
+    series.write_text(json.dumps(data))
+    with pytest.warns(UserWarning, match='without a usable time'):
+        fd = fluid.OpenFOAMData(str(path))
+    assert fd.dump_source == 'series'
+    assert 'filling 1 gap' in fd.time_source
+    assert np.allclose(fd.flow_times, OF_KEPT)
+
+
+# ---- 2: no manifests either -> the dump directories -------------------------
+
+def test_openfoam_falls_back_to_the_dump_directories(tmp_path):
+    from planktos import fluid
+    path = _of_variant(tmp_path, index=False, manifests=False)
+    with pytest.warns(UserWarning, match='no .vtm manifests'):
+        fd = fluid.OpenFOAMData(str(path))
+    assert fd.dump_source == 'directories'
+    assert 'internal.vtu' in fd.time_source
+    assert np.allclose(fd.flow_times, OF_KEPT)
+    _assert_fixture_field(fd, OF_KEPT)
+
+
+def test_openfoam_directory_fallback_finds_the_boundary_patches(tmp_path):
+    # Without a manifest naming them, the patches are found by their position:
+    # the .vtp files in each dump's boundary/ subdirectory. They still have to
+    # splice on, or the domain would come out half a cell short in every
+    # direction -- so the recovered grid is the assertion.
+    from planktos import fluid
+    path = _of_variant(tmp_path, index=False, manifests=False)
+    with pytest.warns(UserWarning):
+        fd = fluid.OpenFOAMData(str(path))
+    assert fd.fshape == (6, 6, 6, 7)
+    assert np.allclose(fd.flow_points[0], OF_GRID_X)
+    assert np.allclose(fd.flow_points[2], OF_GRID_Z)
+    assert np.allclose(fd.L, [1., 1., 2.])
+    u, v, w = fd(3.)
+    for comp in (u, v, w):                             # the no-slip walls
+        assert not comp[0, 1:-1, 1:-1].any()
+        assert not comp[1:-1, -1, 1:-1].any()
+
+
+def test_openfoam_directory_fallback_cannot_know_a_dump_is_missing(tmp_path):
+    # Worth pinning because it is a real loss, not an oversight. The absent
+    # dumps are declared nowhere once the manifests are gone, so nothing can
+    # report them missing; the widened interval is the only remaining trace, and
+    # the uneven-spacing warning is the only thing that will mention it.
+    from planktos import fluid
+    path = _of_variant(tmp_path, index=False, manifests=False)
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter('always')
+        fd = fluid.OpenFOAMData(str(path))
+    msgs = [str(w.message) for w in rec]
+    assert not any('not on disk' in m for m in msgs)
+    assert any('not evenly spaced' in m for m in msgs)
+    assert np.allclose(fd.flow_times, OF_KEPT)
+
+
+# ---- 3: no time information anywhere -> unit steps --------------------------
+
+def test_openfoam_assumes_unit_steps_when_nothing_carries_a_time(tmp_path):
+    from planktos import fluid
+    path = _of_variant(tmp_path, index=False, manifests=False, timevalue=False,
+                       renumber=True)
+    with pytest.warns(UserWarning, match='assuming unit time steps'):
+        fd = fluid.OpenFOAMData(str(path))
+    assert fd.time_source == 'assumed unit steps'
+    assert np.allclose(fd.flow_times, np.arange(6))
+    # No uneven-spacing warning is possible here, and that is the point of the
+    # loud one: unit steps have silently closed the gap the real timeline had.
+
+
+def test_openfoam_untimed_dumps_are_ordered_numerically_not_lexically(tmp_path):
+    # THE ordering test, and the only place the numeric sort is load-bearing:
+    # with no times to sort by, the filename order IS the timeline. Sorted as
+    # text the six dumps would come out 10,11,12,7,8,9 -- so u, which reads back
+    # the dump's original time, would run 3,4,6,0,1,2 instead of 0,1,2,3,4,6.
+    from planktos import fluid
+    path = _of_variant(tmp_path, index=False, manifests=False, timevalue=False,
+                       renumber=True)
+    with pytest.warns(UserWarning):
+        fd = fluid.OpenFOAMData(str(path))
+    _assert_fixture_field(fd, OF_KEPT)
+
+
+def test_openfoam_refuses_a_series_that_is_only_partly_timed(tmp_path):
+    # Deliberately NOT the unit-step fallback. Overwriting a mostly-real
+    # timeline with indices would move every dump that did carry a time.
+    from planktos import fluid
+    path = _of_variant(tmp_path, index=False, manifests=False)
+    _strip_timevalue(path / 'case_min_30' / 'internal.vtu')
+    with pytest.raises(RuntimeError, match='rest are timed'):
+        fluid.OpenFOAMData(str(path))
+
+
+# ---- the chain's own guard rails --------------------------------------------
+
+def test_openfoam_rejects_a_timeline_that_does_not_advance(tmp_path):
+    # Both splines divide by the interval between successive times, so a repeat
+    # is not a degraded timeline but an unusable one.
+    from planktos import fluid
+    path = _of_variant(tmp_path, index=False)
+    _set_manifest_time(path / 'case_min_30.vtm', 1.0)  # already case_min_20's
+    with pytest.raises(RuntimeError, match='not strictly increasing'):
+        fluid.OpenFOAMData(str(path))
+
+
+def test_openfoam_reorders_globbed_dumps_by_their_recovered_times(tmp_path):
+    # For a globbed source the filename order was only ever a proxy; the times
+    # are the real thing, and disagreeing with the names is worth saying.
+    from planktos import fluid
+    path = _of_variant(tmp_path, index=False)
+    # t = 0 -> 5, so case_min_10 moves from the front of the series to between
+    # case_min_50 (t = 4) and case_min_70 (t = 6).
+    _set_manifest_time(path / 'case_min_10.vtm', 5.0)
+    with pytest.warns(UserWarning, match='not in time order'):
+        fd = fluid.OpenFOAMData(str(path))
+    assert np.allclose(fd.flow_times, [0., 1., 2., 3., 4., 5.])
+    # The field is baked into the files and does not move with the relabeling,
+    # so u still reads back each dump's ORIGINAL time -- which is what shows the
+    # dumps themselves were reordered, not merely their timestamps.
+    _assert_fixture_field(fd, [1., 2., 3., 4., 0., 6.])
+
+
+def test_openfoam_raises_when_there_is_nothing_to_read(tmp_path):
+    from planktos import fluid
+    (tmp_path / 'empty').mkdir()
+    with pytest.raises(FileNotFoundError, match='No .vtm.series index'):
+        fluid.OpenFOAMData(str(tmp_path / 'empty'))
+
+
+# --------------------------------------------------------------------------- #
+#              OpenFOAM: the mesh is assumed static across the series         #
+# --------------------------------------------------------------------------- #
+# The lattice and permutation are built once from the first dump, and every
+# later dump reshaped through them. A changed cell COUNT is caught on every
+# dump; a reordering at the SAME count is the dangerous one, since the reshape
+# succeeds and every value lands in the wrong place. The second dump is checked
+# against the mesh for it.
+#
+# Second dump only: checking every dump costs about 8% of a full load, and one
+# dump costs nothing extra. A reordering that first appears later goes uncaught.
+
+
+def _of_reorder(path, seed, drop=0):
+    '''Rewrite a .vtu/.vtp with its cells in a different order, in place.
+
+    Cell data is permuted with the cells, so the file describes exactly the same
+    physical field -- only the order it is stored in changes. That is the shape
+    of a series stitched together from two runs, and the case that a permutation
+    built once from the first dump silently gets wrong.
+
+    drop discards that many cells instead, giving the changed-count case.
+    '''
+    import pyvista as pv
+    src = pv.read(path)
+    n = src.n_cells
+    order = np.random.default_rng(seed).permutation(n)
+    if drop:
+        order = order[:-drop]
+
+    pts = np.asarray(src.points)
+    if path.suffix == '.vtu':
+        cells = src.cells.reshape(-1, 9)               # all hexahedra
+        out = pv.UnstructuredGrid(cells[order].ravel(),
+                                  np.full(len(order), pv.CellType.HEXAHEDRON),
+                                  pts)
+    else:
+        faces = src.faces.reshape(-1, 5)               # all quads
+        out = pv.PolyData(pts, faces[order].ravel())
+    for k in src.cell_data:
+        out.cell_data[k] = np.asarray(src.cell_data[k])[order]
+    _of_write(out, path)
+
+
+def test_openfoam_catches_a_reordered_second_dump(tmp_path):
+    # THE check. Same cells, same field, different storage order -- so the count
+    # check cannot see it and the reshape succeeds.
+    from planktos import fluid
+    path = _of_variant(tmp_path)
+    _of_reorder(path / 'case_min_20' / 'internal.vtu', seed=0)
+    with pytest.raises(RuntimeError, match='do not lie on the mesh'):
+        fluid.OpenFOAMData(str(path))
+
+
+def test_openfoam_catches_a_reordered_patch_on_the_second_dump(tmp_path):
+    # The patches carry their own permutation, built the same way, and are
+    # equally exposed.
+    from planktos import fluid
+    path = _of_variant(tmp_path)
+    _of_reorder(path / 'case_min_20' / 'boundary' / 'inlet.vtp', seed=1)
+    with pytest.raises(RuntimeError, match='do not lie on the mesh'):
+        fluid.OpenFOAMData(str(path))
+
+
+@pytest.mark.parametrize('INUM', [None, 4])
+def test_openfoam_the_mesh_check_runs_on_the_windowed_path_too(tmp_path, INUM):
+    # The check rides on the opening load, which is the whole series when it
+    # fits and dumps 0..INUM when it does not. Dump 1 is in both, so streaming
+    # must not skip it -- that would be the check quietly not running in the
+    # exact configuration this branch exists for.
+    from planktos import fluid
+    path = _of_variant(tmp_path)
+    _of_reorder(path / 'case_min_20' / 'internal.vtu', seed=0)
+    with pytest.raises(RuntimeError, match='do not lie on the mesh'):
+        fluid.OpenFOAMData(str(path), INUM=INUM)
+
+
+def test_openfoam_the_mesh_check_costs_one_read_not_one_per_dump(tmp_path):
+    # Cell coordinates are computed for dump 1 and no other. If a slide back to
+    # the start re-verified, or every dump did, the cost would be per-dump and
+    # the design decision silently undone.
+    from planktos import fluid
+    path = _of_variant(tmp_path)
+    fd = fluid.OpenFOAMData(str(path), INUM=4)
+    assert fd._mesh_verified
+    seen = []
+    real = _dataio.read_vtkxml_cell_data
+
+    def spy(filename, arrays=('U',), load_cell_coordinates=True):
+        seen.append(load_cell_coordinates)
+        return real(filename, arrays, load_cell_coordinates)
+
+    from planktos import fluid as fluid_mod
+    fluid_mod._dataio.read_vtkxml_cell_data = spy
+    try:
+        fd.update_spline(fd.flow_times[-1])            # slide to the end
+        fd.update_spline(fd.flow_times[0])             # and back to the start
+    finally:
+        fluid_mod._dataio.read_vtkxml_cell_data = real
+    assert len(seen) > 0 and not any(seen)
+
+
+def test_openfoam_a_changed_cell_count_raises_on_any_dump(tmp_path):
+    # Not limited to the second dump: it costs one comparison, so every dump
+    # gets it. case_min_30 is the third, past the coordinate check.
+    from planktos import fluid
+    path = _of_variant(tmp_path)
+    _of_reorder(path / 'case_min_30' / 'internal.vtu', seed=0, drop=1)
+    with pytest.raises(RuntimeError, match='cells; the mesh established'):
+        fluid.OpenFOAMData(str(path))
+
+
+def test_openfoam_a_changed_patch_cell_count_raises_on_any_dump(tmp_path):
+    # A patch is indexed by a selection built at construction, so a shorter one
+    # would take the wrong cells or raise a bare IndexError naming nothing.
+    from planktos import fluid
+    path = _of_variant(tmp_path)
+    _of_reorder(path / 'case_min_30' / 'boundary' / 'inlet.vtp', seed=1, drop=1)
+    with pytest.raises(RuntimeError, match='cells; the mesh established'):
+        fluid.OpenFOAMData(str(path))
+
+
+# --------------------------------------------------------------------------- #
 #            static immersed boundary import (committed fixture)              #
 # --------------------------------------------------------------------------- #
 
@@ -57,13 +1258,86 @@ def test_static_vertex_import_adjacent():
 
 
 def test_static_vertex_import_closed_with_add_idx():
-    # add_idx_list adds the closing segment (vertex 3 -> 0), giving all 4 sides.
-    # (The static 'adjacent' method, unlike the moving branch, ignores `periodic`.)
+    # add_idx_list adds the closing segment (vertex 4 -> 1, counting from 1),
+    # giving all 4 sides. (The static 'adjacent' method, unlike the moving
+    # branch, ignores `periodic`.)
     envir = planktos.Environment(Lx=10, Ly=10)
     envir.read_IB2d_mesh_data(str(FIXTURES / 'mesh_min' / 'box.vertex'),
-                              method='adjacent', add_idx_list=[(3, 0)])
+                              method='adjacent', add_idx_list=[(4, 1)])
     assert envir.ibmesh.shape == (4, 2, 2)
     assert np.allclose(envir.ibmesh[-1], [[2., 4.], [2., 2.]])   # last vertex -> first
+
+
+def test_moving_mesh_add_idx_counts_from_one_like_brk_idx():
+    # Closing the 4-vertex chain with add_idx_list=[(4, 1)] gives exactly the
+    # segment periodic=True adds.
+    added = planktos.Environment(Lx=10, Ly=10)
+    added.read_IB2d_mesh_data(str(FIXTURES / 'lagspts_min'), dt=0.1,
+                              print_dump=1, add_idx_list=[(4, 1)])
+    closed = planktos.Environment(Lx=10, Ly=10)
+    closed.read_IB2d_mesh_data(str(FIXTURES / 'lagspts_min'), dt=0.1,
+                               print_dump=1, periodic=True)
+    assert np.array_equal(added.ibmesh, closed.ibmesh)
+
+
+@pytest.mark.parametrize('pair', [(4, 0), (5, 1), (1, 2, 3)])
+@pytest.mark.parametrize('source', ['mesh_min/box.vertex', 'lagspts_min'])
+def test_add_idx_out_of_range_raises(source, pair):
+    # Indices count from 1, so a 0 left over from 0-based indexing is refused
+    # rather than read as the last vertex.
+    envir = planktos.Environment(Lx=10, Ly=10)
+    with pytest.raises(ValueError, match='add_idx_list'):
+        envir.read_IB2d_mesh_data(str(FIXTURES / source), dt=0.1, print_dump=1,
+                                  add_idx_list=[pair])
+
+
+# --------------------------------------------------------------------------- #
+#        the mesh bookkeeping each loader leaves behind (regression)          #
+# --------------------------------------------------------------------------- #
+# ibmesh_times marks a mesh as moving and max_meshpt_dist bounds a static
+# mesh's element length for the collision search. A loader that did not set
+# both left them describing the previous mesh.
+
+def _moving(envir):
+    envir.read_IB2d_mesh_data(str(FIXTURES / 'lagspts_min'), dt=0.1, print_dump=1)
+
+
+@pytest.mark.parametrize('load_static', [
+    lambda e: e.read_IB2d_mesh_data(str(FIXTURES / 'mesh_min' / 'box.vertex')),
+    lambda e: e.read_IB2d_mesh_data(str(FIXTURES / 'lagspts_min'), dt=0.1,
+                                    print_dump=1, d_start=1, d_finish=1),
+    lambda e: e.read_3D_vertex_data_to_convex_hull(
+        str(FIXTURES / 'mesh_min' / 'box.vertex')),
+], ids=['vertex', 'one-lagsPts-dump', 'hull'])
+def test_a_static_mesh_read_after_a_moving_one_is_static(load_static):
+    envir = planktos.Environment(Lx=10, Ly=10)
+    _moving(envir)
+    load_static(envir)
+    assert envir.ibmesh.ndim == 3
+    assert envir.ibmesh_times is None
+    lengths = np.linalg.norm(envir.ibmesh[:, 0] - envir.ibmesh[:, 1], axis=1)
+    assert np.isclose(envir.max_meshpt_dist, lengths.max())
+    # A stale ibmesh_times made calculate_FTLE refuse the mesh as moving.
+    envir.calculate_FTLE(grid_dim=(5, 5), T=0.1, dt=0.05)
+
+
+def test_a_moving_mesh_read_after_a_static_one_has_no_max_length():
+    envir = planktos.Environment(Lx=10, Ly=10)
+    envir.read_IB2d_mesh_data(str(FIXTURES / 'mesh_min' / 'box.vertex'))
+    _moving(envir)
+    assert envir.max_meshpt_dist is None
+
+
+def test_a_single_lagspts_dump_is_a_static_mesh_agents_can_move_around():
+    # d_start == d_finish squashes the time axis; the collision search then
+    # needs a maximum element length, which this branch never computed.
+    envir = planktos.Environment(Lx=10, Ly=10)
+    envir.read_IB2d_mesh_data(str(FIXTURES / 'lagspts_min'), dt=0.1,
+                              print_dump=1, d_start=0, d_finish=0)
+    assert envir.ibmesh.shape == (3, 2, 2)
+    assert np.isclose(envir.max_meshpt_dist, 1.0)
+    swrm = planktos.Swarm(5, envir, seed=1)
+    swrm.move(0.1)
 
 
 # --------------------------------------------------------------------------- #
@@ -74,9 +1348,12 @@ def test_static_vertex_import_closed_with_add_idx():
 # arrive in that original frame, so every import path has to subtract the same
 # offset or mesh and fluid end up silently offset from each other.
 #
-# read_IB2d_mesh_data has four branches and only two of them did it: the
-# 'proximity' and 'hull' static methods shifted, while the 'adjacent' static
-# method and the moving-mesh branch did not. All four now go through one helper.
+# Two bugs lived here. 'proximity' and 'hull' dereferenced self.flow with no
+# None check, so importing a mesh into a fluid-free environment raised
+# AttributeError -- even though that is a supported workflow (passing `res`
+# explicitly is how you say you have no fluid grid to infer the connection
+# radius from). And 'adjacent' and the moving-mesh branch never applied the
+# shift at all. All four now go through one helper.
 #
 # The shift is a no-op for IB2d data, whose grids start at the origin, which is
 # why the omission went unnoticed -- so these tests set fluid_domain_LLC
@@ -97,17 +1374,19 @@ STATIC_METHODS = {'adjacent': ({}, 3),                  # open chain of 4 vertic
 
 
 def _shifted_envir():
-    '''Environment recording a nonzero original fluid lower-left corner.'''
-    envir = planktos.Environment(Lx=10, Ly=10)
-    envir.fluid_domain_LLC = LLC
+    '''Environment whose fluid records a nonzero original lower-left corner.'''
+    g = np.linspace(0, 10, 11)
+    X, Y = np.meshgrid(g, g, indexing='ij')
+    envir = planktos.Environment(Lx=10, Ly=10, flow=[np.zeros_like(X), np.zeros_like(Y)])
+    envir.flow.fluid_domain_LLC = LLC
     return envir
 
 
 @pytest.mark.parametrize('method', sorted(STATIC_METHODS))
-def test_static_vertex_import_without_a_recorded_corner(method):
+def test_static_vertex_import_without_fluid(method):
     kwargs, n_seg = STATIC_METHODS[method]
     envir = planktos.Environment(Lx=10, Ly=10)
-    assert envir.fluid_domain_LLC is None
+    assert envir.flow is None
     envir.read_IB2d_mesh_data(str(FIXTURES / BOX), method=method, **kwargs)
     assert envir.ibmesh.shape == (n_seg, 2, 2)
     # unshifted: there is no fluid frame to shift into
@@ -149,6 +1428,125 @@ def test_moving_mesh_import_shifts_into_the_fluid_frame():
                        [[1., 0.], [1., 0.]])
 
 
+def test_static_vertex_import_proximity_without_res_still_requires_fluid():
+    # res=None means "infer the radius from the fluid grid", which genuinely
+    # needs a fluid. That guard is the one that should fire, with its message.
+    envir = planktos.Environment(Lx=10, Ly=10)
+    with pytest.raises(AssertionError, match='flow data'):
+        envir.read_IB2d_mesh_data(str(FIXTURES / BOX), method='proximity')
+
+
+# --------------------------------------------------------------------------- #
+#            shift_ibmesh_to_match_LLC -- the other load ordering              #
+# --------------------------------------------------------------------------- #
+# The loaders shift a mesh into the fluid's frame only if a fluid is already
+# present. Load the mesh first and there is nothing to shift into yet, so this
+# method exists to apply the shift after the fact. It is public API and had no
+# coverage and no callers.
+#
+# Regression: it indexed self.ibmesh[:,:,ii], which is the coordinate axis only
+# for a static mesh. A moving mesh is (T,N,2,2), where axis 2 is the *endpoint*
+# axis -- so it subtracted LLC[0] from both coordinates of every segment's first
+# endpoint and LLC[1] from both of the second, shearing each segment instead of
+# translating it. Silently: the shapes happen to line up in 2D.
+
+def _fluid_with_llc():
+    '''A FluidData recording a nonzero original lower-left corner.'''
+    g = np.linspace(0, 10, 11)
+    X, Y = np.meshgrid(g, g, indexing='ij')
+    donor = planktos.Environment(Lx=10, Ly=10,
+                                 flow=[np.zeros_like(X), np.zeros_like(Y)])
+    donor.flow.fluid_domain_LLC = LLC
+    return donor.flow
+
+
+def test_shift_ibmesh_to_match_LLC_static():
+    envir = planktos.Environment(Lx=10, Ly=10)
+    envir.read_IB2d_mesh_data(str(FIXTURES / BOX), method='adjacent')
+    before = envir.ibmesh.copy()
+    envir.flow = _fluid_with_llc()
+    envir.shift_ibmesh_to_match_LLC()
+    assert np.allclose(envir.ibmesh, before - np.array(LLC))
+
+
+def test_shift_ibmesh_to_match_LLC_moving_translates_rigidly():
+    envir = planktos.Environment(Lx=10, Ly=10)
+    envir.read_IB2d_mesh_data(str(FIXTURES / 'lagspts_min'), dt=0.1,
+                              print_dump=1, d_start=0)
+    before = envir.ibmesh.copy()
+    assert before.shape == (3, 3, 2, 2)
+    envir.flow = _fluid_with_llc()
+    envir.shift_ibmesh_to_match_LLC()
+
+    # every vertex moves by exactly -LLC, at every time
+    assert np.allclose(envir.ibmesh, before - np.array(LLC))
+    # and the segments keep their shape -- this is what shearing destroyed
+    assert np.allclose(envir.ibmesh[..., 1, :] - envir.ibmesh[..., 0, :],
+                       before[..., 1, :] - before[..., 0, :])
+
+
+def test_shift_ibmesh_to_match_LLC_3d():
+    # Static 3D triangles are (N,3,3). Built by hand to avoid the optional
+    # numpy-stl dependency; only the array layout matters here.
+    envir = planktos.Environment(Lx=10, Ly=10, Lz=10)
+    envir.ibmesh = np.array([[[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]],
+                             [[1., 0., 0.], [1., 1., 0.], [0., 1., 2.]]])
+    before = envir.ibmesh.copy()
+    g = np.linspace(0, 10, 6)
+    X, Y, Z = np.meshgrid(g, g, g, indexing='ij')
+    donor = planktos.Environment(Lx=10, Ly=10, Lz=10,
+                                 flow=[np.zeros_like(X), np.zeros_like(Y),
+                                       np.zeros_like(Z)])
+    donor.flow.fluid_domain_LLC = (1.0, 0.5, 0.25)
+    envir.flow = donor.flow
+    envir.shift_ibmesh_to_match_LLC()
+    assert np.allclose(envir.ibmesh, before - np.array([1.0, 0.5, 0.25]))
+
+
+@pytest.mark.parametrize('kind', ['static', 'moving'])
+def test_shift_ibmesh_to_match_LLC_matches_the_other_load_order(kind):
+    # The contract, stated as an equivalence: loading the fluid first (so the
+    # loader shifts the mesh) and loading the mesh first then calling this must
+    # produce the same mesh.
+    if kind == 'static':
+        args, kwargs = (str(FIXTURES / BOX),), {'method': 'adjacent'}
+    else:
+        args = (str(FIXTURES / 'lagspts_min'),)
+        kwargs = {'dt': 0.1, 'print_dump': 1, 'd_start': 0}
+
+    fluid_first = planktos.Environment(Lx=10, Ly=10)
+    fluid_first.flow = _fluid_with_llc()
+    fluid_first.read_IB2d_mesh_data(*args, **kwargs)
+
+    mesh_first = planktos.Environment(Lx=10, Ly=10)
+    mesh_first.read_IB2d_mesh_data(*args, **kwargs)
+    mesh_first.flow = _fluid_with_llc()
+    mesh_first.shift_ibmesh_to_match_LLC()
+
+    assert np.allclose(mesh_first.ibmesh, fluid_first.ibmesh)
+
+
+def test_shift_ibmesh_to_match_LLC_requires_a_mesh():
+    # Was a bare TypeError from subscripting None, unlike the two neighboring
+    # guards which say what is missing.
+    envir = planktos.Environment(Lx=10, Ly=10)
+    envir.flow = _fluid_with_llc()
+    assert envir.ibmesh is None
+    with pytest.raises(RuntimeError, match='mesh'):
+        envir.shift_ibmesh_to_match_LLC()
+
+
+def test_shift_ibmesh_to_match_LLC_requires_a_translated_fluid():
+    envir = planktos.Environment(Lx=10, Ly=10)
+    envir.read_IB2d_mesh_data(str(FIXTURES / 'mesh_min' / 'box.vertex'))
+    with pytest.raises(RuntimeError, match='No fluid'):
+        envir.shift_ibmesh_to_match_LLC()
+    envir.flow = _fluid_with_llc()
+    envir.flow.fluid_domain_LLC = None
+    with pytest.raises(RuntimeError, match='fluid_domain_LLC'):
+        envir.shift_ibmesh_to_match_LLC()
+
+
 # --------------------------------------------------------------------------- #
 #            IBAMR vtk fluid (in-repo data, vtk-gated)                        #
 # --------------------------------------------------------------------------- #
@@ -176,12 +1574,12 @@ def test_IBAMR_load_single_time():
     envir.set_boundary_conditions(('zero', 'zero'), ('zero', 'zero'), ('noflux', 'noflux'))
 
     assert len(envir.L) == 3 and len(envir.bndry) == 3
-    assert envir.flow_times is None
+    assert envir.flow.flow_times is None
     assert len(envir.flow) == 3 and len(envir.flow[0].shape) == 3
     assert envir.flow[0].shape == envir.flow[1].shape == envir.flow[2].shape
-    assert [envir.flow_points[d][0] for d in range(3)] == [0, 0, 0]
-    assert [envir.flow_points[d][-1] for d in range(3)] == envir.L
-    assert [envir.flow[0].shape[d] for d in range(3)] == [len(envir.flow_points[d]) for d in range(3)]
+    assert [envir.flow.flow_points[d][0] for d in range(3)] == [0, 0, 0]
+    assert [envir.flow.flow_points[d][-1] for d in range(3)] == envir.L
+    assert [envir.flow[0].shape[d] for d in range(3)] == [len(envir.flow.flow_points[d]) for d in range(3)]
     assert envir.h_p is None and envir.time == 0.0 and envir.time_history == []
 
     envir.add_swarm(init='random')
@@ -198,11 +1596,11 @@ def test_IBAMR_load_time_series():
     envir.read_IBAMR3d_vtk_data(IBAMR_PATH, d_start=3, d_finish=None)
     envir.set_boundary_conditions(('zero', 'zero'), ('zero', 'zero'), ('noflux', 'noflux'))
 
-    assert len(envir.flow_times) == 3
-    assert envir.flow_times[0] == 0 and envir.flow_times[1] == 2 and envir.flow_times[2] == 4
+    assert len(envir.flow.flow_times) == 3
+    assert envir.flow.flow_times[0] == 0 and envir.flow.flow_times[1] == 2 and envir.flow.flow_times[2] == 4
     assert len(envir.flow[0].shape) == 4                       # time + 3 space
-    assert envir.flow[0].shape[0] == len(envir.flow_times)
-    assert [envir.flow[0].shape[d] for d in range(1, 4)] == [len(envir.flow_points[d]) for d in range(3)]
+    assert envir.flow[0].shape[0] == len(envir.flow.flow_times)
+    assert [envir.flow[0].shape[d] for d in range(1, 4)] == [len(envir.flow.flow_points[d]) for d in range(3)]
 
     envir.add_swarm(init='random')
     sw = envir.swarms[0]
@@ -222,18 +1620,314 @@ def test_unstructured_grid_points_reader():
 #            COMSOL vtu fluid (external data, vtu-gated)                      #
 # --------------------------------------------------------------------------- #
 
+# Fixture: tests/fixtures/comsol_vtu_min, a COMSOL-shaped 2D export flat in z.
+# flow.vtu holds t = 0, 0.5, 1 and single.vtu t = 0.25, with u = 1 + t + x/2 and
+# v = y - 2t, which the linear regrid reproduces exactly. Alternate top-wall nodes
+# sit one ulp above the wall over thin near-wall triangles, so part of the
+# regridded top row falls a rounding error outside the triangulation, as it does
+# on real COMSOL data.
+
+COMSOL = FIXTURES / 'comsol_vtu_min'
+
+
+def _comsol_expected(fd, t):
+    X, Y = np.meshgrid(*fd.flow_points, indexing='ij')
+    return 1.0 + t + 0.5*X, Y - 2.0*t
+
+
+def test_comsol_vtu_reads_every_time_point_from_one_file():
+    # Regression: ComsolVTUData refused anything but a directory, though what it
+    # reads is a single .vtu holding every time point, so it loaded nothing.
+    envir = planktos.Environment()
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        envir.read_comsol_vtu_data(str(COMSOL / 'flow.vtu'), res=9)
+    fd = envir.flow
+    assert fd.ndim == 2 and fd.periodic_dim == (False, False) and fd._flat == (2,)
+    np.testing.assert_allclose(fd.flow_times, [0.0, 0.5, 1.0])
+    assert np.allclose(envir.L, [3.0, 2.0])
+    for t in (0.0, 0.5, 0.75, 1.0):
+        for got, want in zip(fd(t), _comsol_expected(fd, t)):
+            np.testing.assert_allclose(got, want, rtol=0, atol=1e-12)
+
+
+def test_comsol_vtu_fills_the_edge_the_triangulation_misses():
+    # Regression: a grid point a rounding error outside the triangulation came
+    # back NaN, and the cubic spline then refused the whole field.
+    envir = planktos.Environment()
+    envir.read_comsol_vtu_data(str(COMSOL / 'flow.vtu'), res=9)
+    u, v = envir.flow.get_raw_loaded_data()
+    X, Y = np.meshgrid(*envir.flow.flow_points, indexing='ij')
+    np.testing.assert_allclose(v[:, :, -1], Y[None, :, -1] - 2.0*np.array(
+        [0.0, 0.5, 1.0])[:, None], rtol=0, atol=1e-12)
+    assert not np.isnan(u).any() and not np.isnan(v).any()
+
+
+def test_comsol_vtu_with_one_time_point_is_time_invariant():
+    # Regression: one time point dropped the time axis but still passed a
+    # one-entry flow_times, which FluidData could not spline.
+    envir = planktos.Environment()
+    envir.read_comsol_vtu_data(str(COMSOL / 'single.vtu'), res=9)
+    fd = envir.flow
+    assert fd.flow_times is None
+    for got, want in zip((fd[0], fd[1]), _comsol_expected(fd, 0.25)):
+        np.testing.assert_allclose(got, want, rtol=0, atol=1e-12)
+
+
+def test_comsol_vtu_scales_by_vel_conv():
+    envir = planktos.Environment()
+    envir.read_comsol_vtu_data(str(COMSOL / 'flow.vtu'), res=9, vel_conv=2.0)
+    for got, want in zip(envir.flow(0.5), _comsol_expected(envir.flow, 0.5)):
+        np.testing.assert_allclose(got, 2.0*want, rtol=0, atol=1e-12)
+
+
+def test_comsol_vtu_refuses_a_directory():
+    with pytest.raises(FileNotFoundError):
+        planktos.Environment().read_comsol_vtu_data(str(COMSOL))
+
+
+# COMSOL's text grid export, which COMSOL may also name .vtu: '%' header lines,
+# one line of coordinates per axis, then a '% Data' block per quantity whose
+# rows run along x, y varying fastest. Written here rather than committed, on
+# cell centers of a uniform grid, with u = 1 + x/2 + z, v = y - 1, w = 2x, all
+# in m/s against a grid in mm.
+
+GRID3 = (np.linspace(-0.75, 0.75, 4), np.linspace(1.25, 3.75, 6),
+         np.linspace(0.5, 2.5, 3))
+
+
+def _grid_fields(X, Y, Z=None):
+    if Z is None:
+        return [1.0 + 0.5*X, Y - 1.0]
+    return [1.0 + 0.5*X + Z, Y - 1.0, 2.0*X]
+
+
+def _write_comsol_grid(path, grid, nan_at=None):
+    X = np.meshgrid(*grid, indexing='ij')
+    fields = _grid_fields(*X)
+    if nan_at is not None:
+        fields[0] = fields[0].copy()
+        fields[0][nan_at] = np.nan
+    names = 'xyz'[:len(grid)] + 'uvw'[:len(grid)]
+    lines = ['% Model:              grid_test.mph',
+             '% Version:            COMSOL 6.0.0.318',
+             '% Dimension:          {}'.format(len(grid)),
+             '% Nodes:              {}'.format(X[0].size),
+             '% Expressions:        {}'.format(len(names)),
+             '% Description:        made by test_io_loaders.py',
+             '% Length unit:        mm',
+             '% Grid']
+    lines += [' '.join(repr(float(c)) for c in axis) for axis in grid]
+    for name, arr in zip(names, list(X) + fields):
+        lines += ['% Data', '% {} ({})'.format(name, 'mm' if name in 'xyz'
+                                                 else 'm/s')]
+        # A row holds the x values; transposing puts x last and the slowest
+        #   axis first, which is the order the rows come in.
+        rows = arr.T.reshape(-1, len(grid[0]))
+        lines += [' '.join('NaN' if np.isnan(v) else repr(float(v)) for v in r)
+                  for r in rows]
+    Path(path).write_text('\n'.join(lines) + '\n')
+
+
+def test_comsol_text_grid_reads_as_it_is_written(tmp_path):
+    path = tmp_path / 'grid.vtu'
+    _write_comsol_grid(path, GRID3, nan_at=(1, 2, 0))
+    envir = planktos.Environment()
+    envir.read_comsol_vtu_data(str(path), vel_conv=1000)
+    fd = envir.flow
+    assert isinstance(fd, planktos.fluid.ComsolGridData)
+    assert fd.flow_times is None and fd.periodic_dim == (False, False, False)
+    np.testing.assert_allclose(envir.L, [1.5, 2.5, 2.0])
+    np.testing.assert_allclose(fd.fluid_domain_LLC, [-0.75, 1.25, 0.5])
+    X = np.meshgrid(*(g - g[0] for g in fd.flow_points), indexing='ij')
+    want = [1000*f for f in _grid_fields(*(x + c for x, c in
+                                          zip(X, fd.fluid_domain_LLC)))]
+    want[0][1, 2, 0] = 0.0
+    for d in range(3):
+        np.testing.assert_allclose(fd[d], want[d], rtol=0, atol=1e-9)
+
+
+def test_comsol_text_grid_in_2d_with_grid_conv_and_periodicity(tmp_path):
+    path = tmp_path / 'grid2d.txt'
+    _write_comsol_grid(path, GRID3[:2])
+    envir = planktos.Environment()
+    envir.read_comsol_vtu_data(str(path), periodic_dim=(True, False, True),
+                               grid_conv=0.001)
+    fd = envir.flow
+    assert fd.ndim == 2 and fd.periodic_dim == (True, False)
+    np.testing.assert_allclose(envir.L, [0.0015, 0.0025])
+    np.testing.assert_allclose(fd.fluid_domain_LLC, [-0.00075, 0.00125])
+    np.testing.assert_allclose(fd[1][0], GRID3[1] - 1.0, rtol=0, atol=1e-12)
+
+
+def test_comsol_grid_conv_is_refused_for_a_vtk_xml_file():
+    with pytest.raises(ValueError, match='grid_conv'):
+        planktos.Environment().read_comsol_vtu_data(str(COMSOL / 'flow.vtu'),
+                                                    grid_conv=2.0)
+
+
+def test_center_cell_regrid_extends_cell_centered_data_to_the_faces(tmp_path):
+    path = tmp_path / 'grid.vtu'
+    _write_comsol_grid(path, GRID3)
+    envir = planktos.Environment()
+    envir.read_comsol_vtu_data(str(path))
+    envir.center_cell_regrid(periodic_dim=(False, False, False))
+    fd = envir.flow
+    # Cells are 0.5 x 0.5 x 1 wide, so the faces sit half of that further out.
+    np.testing.assert_allclose(envir.L, [2.0, 3.0, 3.0])
+    np.testing.assert_allclose(fd.fluid_domain_LLC, [-1.0, 1.0, 0.0])
+    assert fd.fshape == (6, 8, 5) and fd.flow_points[0][0] == 0.0
+    # A linear field is extended exactly, faces included.
+    X = np.meshgrid(*(g + c for g, c in zip(fd.flow_points, fd.fluid_domain_LLC)),
+                    indexing='ij')
+    for got, want in zip((fd[0], fd[1], fd[2]), _grid_fields(*X)):
+        np.testing.assert_allclose(got, want, rtol=0, atol=1e-12)
+
+
+def test_center_cell_regrid_wraps_a_periodic_axis(tmp_path):
+    path = tmp_path / 'grid.vtu'
+    _write_comsol_grid(path, GRID3)
+    envir = planktos.Environment()
+    envir.read_comsol_vtu_data(str(path))
+    envir.center_cell_regrid(periodic_dim=True)
+    fd = envir.flow
+    assert fd.periodic_dim == (True, True, True)
+    for comp in (fd[0], fd[1], fd[2]):
+        np.testing.assert_array_equal(comp[0], comp[-1])
+        np.testing.assert_array_equal(comp[:, 0], comp[:, -1])
+
+
+def test_center_cell_regrid_keeps_a_time_varying_fluid_and_its_spline():
+    envir = planktos.Environment()
+    envir.read_comsol_vtu_data(str(COMSOL / 'flow.vtu'), res=9,
+                               linear_interp=True)
+    envir.center_cell_regrid()
+    fd = envir.flow
+    assert fd.fshape == (3, 11, 11) and fd.INUM is True
+    np.testing.assert_allclose(fd.flow_times, [0.0, 0.5, 1.0])
+    X, Y = np.meshgrid(*fd.flow_points, indexing='ij')
+    # The original grid started at the origin, so the old points are now
+    #   offset by the half cell the regrid added below them.
+    h = 3.0/8/2
+    np.testing.assert_allclose(fd(0.75)[0], 1.75 + 0.5*(X - h), rtol=0,
+                               atol=1e-12)
+
+
+@pytest.mark.parametrize('obstacle', ['no fluid', 'mesh', 'windowed', 'tiled'])
+def test_center_cell_regrid_refusals_leave_the_environment_as_it_was(
+        tmp_path, obstacle):
+    envir = planktos.Environment()
+    if obstacle == 'windowed':
+        envir.read_IB2d_fluid_data(str(FIXTURES / 'ib2d_fluid_min'), 0.5, 1,
+                                   INUM=4)
+    elif obstacle != 'no fluid':
+        path = tmp_path / 'grid.vtu'
+        _write_comsol_grid(path, GRID3[:2])
+        envir.read_comsol_vtu_data(str(path), periodic_dim=True)
+        if obstacle == 'mesh':
+            envir.read_IB2d_mesh_data(str(FIXTURES / 'mesh_min' / 'box.vertex'),
+                                      method='adjacent')
+        else:
+            with warnings.catch_warnings():
+                # This field is not periodic, so tiling warns of the seams.
+                warnings.simplefilter('ignore')
+                envir.tile_domain(2, 1)
+    before = (envir.flow, list(envir.L), envir._fluid_provenance)
+    with pytest.raises(ValueError):
+        envir.center_cell_regrid()
+    assert envir.flow is before[0] and list(envir.L) == before[1]
+    assert envir._fluid_provenance == before[2]
+
+
 @pytest.mark.vtu
 def test_vtu_load():
-    pathname = 'tests/data/comsol/vtu_test_data.txt'
-    assert Path(pathname).is_file(), f"Comsol data {pathname} not found!"
+    # The real export this loader was written for: the 2D channel-past-a-cylinder
+    # benchmark, 194 time points.
+    pathname = 'tests/data/comsol_vtu/rect_channelflow_uvw.vtu'
     envir = planktos.Environment()
-    envir.read_comsol_vtu_data(pathname, vel_conv=1000)
-    envir.set_boundary_conditions(('zero', 'zero'), ('zero', 'zero'), ('noflux', 'noflux'))
+    envir.read_comsol_vtu_data(pathname, res=21)
+    fd = envir.flow
+    assert fd.ndim == 2 and fd.fshape == (194, 21, 21)
+    assert fd.flow_times[0] == 0.0 and np.isclose(fd.flow_times[-1], 7.0)
+    assert np.allclose(envir.L, [2.2, 0.41])
+    u, v = fd.get_raw_loaded_data()
+    assert not np.isnan(u).any() and not np.isnan(v).any()
+    # No-slip walls, top and bottom, including along the top row the
+    # triangulation misses.
+    for f in (u, v):
+        assert np.abs(f[..., 0]).max() < 1e-10 and np.abs(f[..., -1]).max() < 1e-10
 
-    assert len(envir.L) == 3 and envir.flow_times is None
-    assert len(envir.flow) == 3 and len(envir.flow[0].shape) == 3
-    assert [envir.flow_points[d][-1] for d in range(3)] == envir.L
-    assert envir.time == 0.0
+
+# --------------------------------------------------------------------------- #
+#            NetCDF fluid (files written by the test; needs netCDF4)          #
+# --------------------------------------------------------------------------- #
+# Each component's value encodes its own coordinates, u = x + 10y + 100t and
+# v = -u, and the axes have different lengths, so a permutation that lands
+# any axis in the wrong place shows up in the values even where the shapes
+# happen to fit.
+
+_NC_AXES = {'t': np.array([0., 1., 2.]), 'x': np.linspace(0, 4, 5),
+            'y': np.linspace(0, 6, 4)}
+
+
+def _nc_component(c, t, x, y):
+    u = x + 10*y + 100*t
+    return u if c == 0 else -u
+
+
+def _write_netcdf(path, order, comp_at=None):
+    '''Write u and v with their dimensions in `order`, as two variables, or as
+    one variable with a component dimension inserted at index comp_at.'''
+    netCDF4 = pytest.importorskip('netCDF4')
+    ds = netCDF4.Dataset(str(path), 'w')
+    for d in order:
+        ds.createDimension(d, len(_NC_AXES[d]))
+        ds.createVariable(d, 'f8', (d,))[:] = _NC_AXES[d]
+    grid = dict(zip(order, np.meshgrid(*[_NC_AXES[d] for d in order],
+                                       indexing='ij')))
+    comps = [_nc_component(c, grid['t'], grid['x'], grid['y']) for c in (0, 1)]
+    if comp_at is None:
+        for name, values in zip(('u', 'v'), comps):
+            ds.createVariable(name, 'f8', order)[:] = values
+    else:
+        ds.createDimension('c', 2)
+        dims = list(order)
+        dims.insert(comp_at, 'c')
+        ds.createVariable('uv', 'f8', tuple(dims))[:] = np.stack(comps, comp_at)
+    ds.close()
+
+
+@pytest.mark.parametrize('order, reorder, comp_at', [
+    (('t', 'x', 'y'), None, None),
+    (('t', 'y', 'x'), [0, 2, 1], None),
+    # dim_reorder[i] is where NetCDF axis i goes. These two are not their own
+    # inverse, which is where that reading and np.transpose's part ways.
+    (('y', 't', 'x'), [2, 0, 1], None),
+    (('x', 'y', 't'), [1, 2, 0], None),
+    (('t', 'x', 'y'), None, 0),
+    # A component dimension with dim_reorder given raised TypeError, from
+    # list.insert returning None.
+    (('t', 'y', 'x'), [0, 2, 1], 3),
+    (('t', 'y', 'x'), [0, 2, 1], 1),
+], ids=['planktos-order', 'swap', 'cycle', 'cycle-inverse', 'component',
+        'component-last-reordered', 'component-mid-reordered'])
+def test_netcdf_flow_lands_on_the_planktos_axes(tmp_path, order, reorder, comp_at):
+    _write_netcdf(tmp_path / 'flow.nc', order, comp_at)
+    envir = planktos.Environment()
+    envir.load_NetCDF(str(tmp_path / 'flow.nc'))
+    if comp_at is None:
+        envir.read_NetCDF_flow('u', 'v', dim_reorder=reorder)
+    else:
+        envir.read_NetCDF_flow('uv', vec_idx=comp_at, dim_reorder=reorder)
+
+    assert np.allclose(envir.flow.flow_times, _NC_AXES['t'])
+    assert np.allclose(envir.flow.flow_points[0], _NC_AXES['x'])
+    assert np.allclose(envir.flow.flow_points[1], _NC_AXES['y'])
+    t, x, y = np.meshgrid(_NC_AXES['t'], _NC_AXES['x'], _NC_AXES['y'],
+                          indexing='ij')
+    raw = envir.flow.get_raw_loaded_data()
+    for c in (0, 1):
+        assert np.allclose(np.asarray(raw[c]), _nc_component(c, t, x, y))
 
 
 # --------------------------------------------------------------------------- #
@@ -247,13 +1941,7 @@ def test_vtu_load():
 
 def _read_scalar_vtk(filename):
     '''Read a 2D scalar RectilinearGrid vtk back as an (nx, ny) array.'''
-    import vtk
-    from vtk.util import numpy_support
-    reader = vtk.vtkRectilinearGridReader()
-    reader.SetFileName(str(filename)); reader.ReadAllScalarsOn(); reader.Update()
-    vd = reader.GetOutput()
-    arr = numpy_support.vtk_to_numpy(vd.GetPointData().GetScalars())
-    return arr.reshape(vd.GetDimensions()[::-1]).T.squeeze()
+    return _dataio.read_vtk_Rectilinear_Grid_Scalars(filename)[0]
 
 
 def test_save_fluid_static_2D_roundtrips(tmp_path):
@@ -262,10 +1950,10 @@ def test_save_fluid_static_2D_roundtrips(tmp_path):
     envir.save_fluid(str(tmp_path), 'flow')
     assert (tmp_path / 'flow.vtk').is_file()                      # single static file
     data, mesh, _ = _dataio.read_vtk_Rectilinear_Grid_Vector(str(tmp_path / 'flow.vtk'))
-    assert np.allclose(data[0][:, :, 0], envir.flow[0])          # u, orientation preserved
-    assert np.allclose(data[1][:, :, 0], envir.flow[1])          # v
-    assert np.allclose(mesh[0], envir.flow_points[0])            # origin-centered coords
-    assert np.allclose(mesh[1], envir.flow_points[1])
+    assert np.allclose(data[0][:, :, 0], envir.flow[0])   # u, orientation preserved
+    assert np.allclose(data[1][:, :, 0], envir.flow[1])   # v
+    assert np.allclose(mesh[0], envir.flow.flow_points[0])            # origin-centered coords
+    assert np.allclose(mesh[1], envir.flow.flow_points[1])
     assert mesh[0][0] == 0.0 and mesh[1][0] == 0.0
 
 
@@ -275,11 +1963,11 @@ def test_save_fluid_time_varying_2D_roundtrips(tmp_path):
                             dpdx=np.ones(8) * 0.22306, res=11, tspan=[0, 10])
     envir.save_fluid(str(tmp_path), 'flow', time_history=False, flow_times=True)
     files = sorted(tmp_path.glob('flow_*.vtk'))
-    assert len(files) == len(envir.flow_times)                   # one file per flow time
+    assert len(files) == len(envir.flow.flow_times)                   # one file per flow time
     data, _, t = _dataio.read_vtk_Rectilinear_Grid_Vector(str(tmp_path / 'flow_0003.vtk'))
-    expect = envir.interpolate_temporal_flow(time=envir.flow_times[3])
+    expect = envir.interpolate_temporal_flow(time=envir.flow.flow_times[3])
     assert np.allclose(data[0][:, :, 0], expect[0])
-    assert np.isclose(t, envir.flow_times[3])
+    assert np.isclose(t, envir.flow.flow_times[3])
 
 
 def test_save_fluid_static_3D_roundtrips(tmp_path):
@@ -288,7 +1976,7 @@ def test_save_fluid_static_3D_roundtrips(tmp_path):
     envir.save_fluid(str(tmp_path), 'flow3d')
     data, mesh, _ = _dataio.read_vtk_Rectilinear_Grid_Vector(str(tmp_path / 'flow3d.vtk'))
     assert all(np.allclose(data[i], envir.flow[i]) for i in range(3))
-    assert all(np.allclose(mesh[i], envir.flow_points[i]) for i in range(3))
+    assert all(np.allclose(mesh[i], envir.flow.flow_points[i]) for i in range(3))
 
 
 def test_save_2D_vorticity_static_roundtrips(tmp_path):
@@ -297,9 +1985,1192 @@ def test_save_2D_vorticity_static_roundtrips(tmp_path):
     x = np.linspace(0, 10, n); y = np.linspace(0, 8, n)
     X, Y = np.meshgrid(x, y, indexing='ij')
     envir = planktos.Environment(Lx=10, Ly=8, flow=[-Y, X])
-    envir.flow_points = (x, y)
+    envir.flow.flow_points = (x, y)
     envir.save_2D_vorticity(str(tmp_path), 'vort')
     assert (tmp_path / 'vort.vtk').is_file()
     vort = _read_scalar_vtk(tmp_path / 'vort.vtk')
     assert vort.shape == (n, n)
     assert np.allclose(vort, 2.0, atol=1e-9)
+
+
+# --------------------------------------------------------------------------- #
+#                scalar rectilinear / structured-points VTK I/O               #
+# --------------------------------------------------------------------------- #
+# The write half of the rectilinear pair existed alone for years, because
+# nothing read a Planktos scalar field back. Per-dump vorticity does (section
+# 3.3), and it needs both a rectilinear reader and a structured-points writer.
+# Round-trips are the whole test: what goes out must come back, and what comes
+# back must be readable by the reader the *solver's* files go through, or the
+# interoperability claim behind writing vtk at all is empty.
+
+def _wavy(x, y):
+    X, Y = np.meshgrid(x, y, indexing='ij')
+    return np.sin(X) * np.cos(2 * Y)
+
+
+def test_rectilinear_scalar_roundtrip_on_an_uneven_grid(tmp_path):
+    # Deliberately uneven: rectilinear is the format that can express this, and
+    # a reader that assumed uniform spacing would still get the data right and
+    # the coordinates wrong.
+    x = np.array([0., 0.5, 1.5, 3.0, 3.25])
+    y = np.array([0., 1.0, 3.0])
+    f = _wavy(x, y)
+    _dataio.write_vtk_2D_rectilinear_grid_scalars(tmp_path, 'vort', f, (x, y),
+                                                  cycle=3, time=2.5)
+    data, grid, t = _dataio.read_vtk_Rectilinear_Grid_Scalars(
+        tmp_path / 'vort_0003.vtk')
+    assert data.shape == f.shape                     # squeezed back to 2D
+    assert np.array_equal(data, f)                   # binary: exact, not close
+    assert np.allclose(grid[0], x) and np.allclose(grid[1], y)
+    assert t == 2.5
+
+
+def test_rectilinear_scalar_read_keeps_the_singleton_axis_when_asked(tmp_path):
+    x = np.linspace(0, 3, 4); y = np.linspace(0, 2, 3)
+    f = _wavy(x, y)
+    _dataio.write_vtk_2D_rectilinear_grid_scalars(tmp_path, 'vort', f, (x, y))
+    data, grid, _ = _dataio.read_vtk_Rectilinear_Grid_Scalars(
+        tmp_path / 'vort.vtk', squeeze=False)
+    assert data.shape == (4, 3, 1)
+    assert len(grid) == 3 and len(grid[2]) == 1
+    assert np.array_equal(data[:, :, 0], f)
+
+
+def test_rectilinear_scalar_read_refuses_a_vector_file(tmp_path):
+    x = np.linspace(0, 3, 4); y = np.linspace(0, 2, 3)
+    _dataio.write_vtk_rectilinear_grid_vectors(
+        tmp_path, 'flow', [_wavy(x, y), _wavy(x, y)], (x, y))
+    with pytest.raises(ValueError, match='no scalar point data'):
+        _dataio.read_vtk_Rectilinear_Grid_Scalars(tmp_path / 'flow.vtk')
+
+
+def test_structured_points_scalar_roundtrips_through_the_ib2d_reader(tmp_path):
+    # The point of this writer: a field Planktos derives must come back through
+    # the same reader the solver's own dumps go through, with IB2d's filename
+    # convention, so that nothing downstream can tell who wrote it.
+    x = np.linspace(0, 3, 7); y = np.linspace(0, 2, 5)
+    f = _wavy(x, y)
+    _dataio.write_vtk_structured_points_scalars(tmp_path, 'Omega', f, (x, y),
+                                                cycle=42, time=1.25, sep='.')
+    assert (tmp_path / 'Omega.0042.vtk').is_file()
+    back, bx, by = _dataio.read_2DEulerian_Data_From_vtk(tmp_path, '0042',
+                                                        'Omega', xy=True)
+    # read_2DEulerian_Data_From_vtk hands back [y,x]; the velocity path
+    # transposes, and so must anything reading a derived field.
+    assert np.array_equal(back.T, f)
+    assert np.allclose(bx, x) and np.allclose(by, y)
+
+
+def test_a_binary_file_with_field_data_reads_back_without_vtk_warnings(
+        tmp_path, capfd):
+    # VTK's legacy readers misread binary CYCLE/TIME field data in their
+    # metadata pass and printed a warning from C++ on every read of a file
+    # Planktos wrote, though every value came back. capfd sees the C++ stream.
+    x = np.linspace(0, 3, 7); y = np.linspace(0, 2, 5)
+    xr = np.array([0., 0.5, 1.5, 3.])
+    f = _wavy(x, y)
+    _dataio.write_vtk_structured_points_scalars(tmp_path, 'Omega', f, (x, y),
+                                                cycle=3, time=0.5, sep='.')
+    _dataio.write_vtk_2D_rectilinear_grid_scalars(tmp_path, 'rect', _wavy(xr, y),
+                                                  (xr, y), cycle=3, time=0.5)
+    capfd.readouterr()
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        back = _dataio.read_2DEulerian_Data_From_vtk(tmp_path, '0003', 'Omega')
+        rect = _dataio.read_vtk_Rectilinear_Grid_Scalars(tmp_path / 'rect_0003.vtk')
+    assert np.array_equal(back.T, f)
+    assert np.array_equal(np.squeeze(rect[0]), _wavy(xr, y))
+    err = capfd.readouterr().err
+    assert 'WARN' not in err and 'Warning' not in err, err
+
+
+class _WarningReader:
+    '''Stands in for a vtk legacy reader whose Update raises the given VTK
+    warnings and reads n_points points.'''
+
+    def __init__(self, messages, n_points):
+        self.messages, self.n_points, self.observers = messages, n_points, {}
+
+    def AddObserver(self, event, callback):
+        self.observers[1] = callback
+        return 1
+
+    def RemoveObserver(self, tag):
+        del self.observers[tag]
+
+    def Update(self):
+        for message in self.messages:
+            self.observers[1](self, 'WarningEvent', message)
+
+    def GetOutput(self):
+        n = self.n_points
+        return type('Out', (), {'GetNumberOfPoints': lambda self: n})()
+
+
+def test_the_field_data_filter_passes_on_every_other_vtk_warning():
+    misread = ('Warning: In vtkStructuredPointsReader.cxx, line 271\n'
+               'vtkStructuredPointsReader (0x1): Not all meta data was read '
+               'from the file.\n')
+    other = 'Warning: In x.cxx, line 1\nvtkThing (0x2): something else.\n'
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        _dataio._update_legacy_reader(_WarningReader([misread, other], 30))
+    assert [str(w.message) for w in caught] == [
+        'VTK: Warning: In x.cxx, line 1 vtkThing (0x2): something else.']
+    assert all(w.category is RuntimeWarning for w in caught)
+    # a read that produced nothing keeps even the field-data warning
+    with pytest.warns(RuntimeWarning, match='Not all meta data'):
+        _dataio._update_legacy_reader(_WarningReader([misread], 0))
+
+
+def test_structured_points_scalar_roundtrips_in_ascii_too(tmp_path):
+    # Binary is the default because it is far cheaper for identical disk, but
+    # vtkStructuredPointsReader takes either and IB2d itself writes ascii.
+    x = np.linspace(0, 3, 7); y = np.linspace(0, 2, 5)
+    f = _wavy(x, y)
+    _dataio.write_vtk_structured_points_scalars(tmp_path, 'Omega', f, (x, y),
+                                                cycle=1, binary=False, sep='.')
+    text = (tmp_path / 'Omega.0001.vtk').read_text()
+    assert 'ASCII' in text and 'DATASET STRUCTURED_POINTS' in text
+    back = _dataio.read_2DEulerian_Data_From_vtk(tmp_path, '0001', 'Omega')
+    assert np.allclose(back.T, f, atol=1e-10)
+
+
+def test_structured_points_scalar_default_separator_matches_the_siblings(tmp_path):
+    x = np.linspace(0, 1, 3); y = np.linspace(0, 1, 3)
+    _dataio.write_vtk_structured_points_scalars(tmp_path, 'Omega',
+                                                _wavy(x, y), (x, y), cycle=5)
+    assert (tmp_path / 'Omega_0005.vtk').is_file()
+
+
+def test_structured_points_scalar_refuses_an_uneven_axis(tmp_path):
+    # STRUCTURED_POINTS carries only an origin and a spacing, so it cannot
+    # express this grid. Writing the mean spacing would move every interior
+    # point, which is worse than refusing.
+    x = np.array([0., 0.5, 1.5, 3.0])
+    y = np.linspace(0, 2, 4)
+    with pytest.raises(ValueError, match='not evenly spaced'):
+        _dataio.write_vtk_structured_points_scalars(tmp_path, 'Omega',
+                                                    _wavy(x, y), (x, y))
+
+
+def test_structured_points_scalar_checks_the_grid_against_the_data(tmp_path):
+    x = np.linspace(0, 3, 7); y = np.linspace(0, 2, 5)
+    f = _wavy(x, y)
+    with pytest.raises(ValueError, match='coordinate arrays'):
+        _dataio.write_vtk_structured_points_scalars(tmp_path, 'Omega', f, (x,))
+    with pytest.raises(ValueError, match='coordinates but data has'):
+        _dataio.write_vtk_structured_points_scalars(tmp_path, 'Omega', f,
+                                                    (x, np.linspace(0, 2, 6)))
+
+
+def test_structured_points_scalar_roundtrips_in_3d(tmp_path):
+    # 2D is what a recording writes today, but the writer is not 2D-only and a
+    # 3D grid must not be silently mangled into a plane.
+    x = np.linspace(0, 3, 4); y = np.linspace(0, 2, 3); z = np.linspace(0, 1, 2)
+    X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
+    f = X + 10 * Y + 100 * Z
+    _dataio.write_vtk_structured_points_scalars(tmp_path, 'Omega', f, (x, y, z))
+    data, origin, spacing = _dataio.read_vtk_Structured_Points(
+        str(tmp_path / 'Omega.vtk'))
+    assert np.array_equal(data.T, f)                 # [z,y,x] -> [x,y,z]
+    assert np.allclose(origin, (0., 0., 0.))
+    assert np.allclose(spacing, (1., 1., 1.))
+
+
+# --------------------------------------------------------------------------- #
+#        VTK XML ImageData series: the .pvd collection and .vti dumps         #
+# --------------------------------------------------------------------------- #
+# vtixml_min is shaped like the 2D sea-fan export in tests/data/openfoam2D: one
+# point thick in z, zlib-compressed, Float32 U beside a scalar p. Its field is
+# u = t, v = x + 10*y, w = 0; the constants below mirror VTIXML_* in
+# _gen_fixtures.py.
+
+VTI_DIR = FIXTURES / 'vtixml_min'
+VTI_TIMES = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+VTI_GRID = [-1.0 + 0.5*np.arange(6), 0.5 + 0.25*np.arange(5), np.array([0.25])]
+
+
+def _vti_name(k):
+    return 'flow_{:04d}_t{:g}.vti'.format(k + 1, VTI_TIMES[k])
+
+
+def _write_pvd(path, entries):
+    '''A .pvd with one DataSet per dict of attributes in entries.'''
+    rows = ''.join('    <DataSet {}/>\n'.format(
+        ' '.join('{}="{}"'.format(k, v) for k, v in e.items())) for e in entries)
+    path.write_text('<?xml version="1.0"?>\n'
+                    '<VTKFile type="Collection" version="0.1">\n'
+                    '  <Collection>\n' + rows + '  </Collection>\n</VTKFile>\n')
+    return path
+
+
+def _write_vti(path, vectors, active=None, extent=(0, 3, 0, 2, 0, 0),
+               direction=None, time=None, spacing=(1, 1, 1)):
+    '''A small .vti holding each of `vectors` ({name: 3-vector}) at every point.'''
+    import vtk
+    from vtk.util import numpy_support
+    img = vtk.vtkImageData()
+    img.SetExtent(*extent)
+    img.SetSpacing(*spacing)
+    if direction is not None:
+        img.SetDirectionMatrix(*np.ravel(direction))
+    for name, value in vectors.items():
+        arr = numpy_support.numpy_to_vtk(
+            np.tile(np.asarray(value, dtype=float), (img.GetNumberOfPoints(), 1)),
+            deep=True)
+        arr.SetName(name)
+        img.GetPointData().AddArray(arr)
+    if active is not None:
+        img.GetPointData().SetActiveVectors(active)
+    if time is not None:
+        tv = vtk.vtkDoubleArray()
+        tv.SetName('TimeValue')
+        tv.InsertNextValue(time)
+        img.GetFieldData().AddArray(tv)
+    writer = vtk.vtkXMLImageDataWriter()
+    writer.SetFileName(str(path))
+    writer.SetInputData(img)
+    writer.Write()
+    return path
+
+
+def _write_vtr(path, vectors, active=None, coords=None, time=None):
+    '''A small .vtr on the given coordinate arrays, which need not be uniform.'''
+    import vtk
+    from vtk.util import numpy_support
+    if coords is None:
+        coords = (np.array([0., 1., 2., 4.]), np.array([0., 0.5, 2.]),
+                  np.array([0.]))
+    grid = vtk.vtkRectilinearGrid()
+    grid.SetDimensions(*[len(c) for c in coords])
+    for setter, c in zip((grid.SetXCoordinates, grid.SetYCoordinates,
+                          grid.SetZCoordinates), coords):
+        setter(numpy_support.numpy_to_vtk(np.asarray(c, dtype=float), deep=True))
+    for name, value in vectors.items():
+        arr = numpy_support.numpy_to_vtk(
+            np.tile(np.asarray(value, dtype=float), (grid.GetNumberOfPoints(), 1)),
+            deep=True)
+        arr.SetName(name)
+        grid.GetPointData().AddArray(arr)
+    if active is not None:
+        grid.GetPointData().SetActiveVectors(active)
+    if time is not None:
+        tv = vtk.vtkDoubleArray()
+        tv.SetName('TimeValue')
+        tv.InsertNextValue(time)
+        grid.GetFieldData().AddArray(tv)
+    writer = vtk.vtkXMLRectilinearGridWriter()
+    writer.SetFileName(str(path))
+    writer.SetInputData(grid)
+    writer.Write()
+    return path
+
+
+def test_read_pvd_series_resolves_files_and_times():
+    files, times = _dataio.read_pvd_series(VTI_DIR / 'flow.pvd')
+    assert files == [VTI_DIR / _vti_name(k) for k in range(8)]
+    assert all(f.is_file() for f in files)
+    assert times.tolist() == VTI_TIMES
+
+
+def test_read_pvd_series_keeps_the_declared_order_and_marks_unusable_times(tmp_path):
+    # Nothing is checked against the filesystem, and the order is as written.
+    pvd = _write_pvd(tmp_path / 'c.pvd', [
+        {'timestep': '2', 'file': 'b.vti'},
+        {'timestep': '1', 'file': 'sub/a.vti'},
+        {'file': 'c.vti'},
+        {'timestep': 'soon', 'file': 'd.vti'},
+        {'timestep': 'inf', 'file': 'e.vti'},
+        {'timestep': 'nan', 'file': 'f.vti'}])
+    files, times = _dataio.read_pvd_series(pvd)
+    assert files == [tmp_path / 'b.vti', tmp_path / 'sub' / 'a.vti',
+                     tmp_path / 'c.vti', tmp_path / 'd.vti',
+                     tmp_path / 'e.vti', tmp_path / 'f.vti']
+    assert times[:2].tolist() == [2., 1.]
+    assert np.isnan(times[2:]).all()
+
+
+def test_read_pvd_series_skips_an_entry_naming_no_file(tmp_path):
+    pvd = _write_pvd(tmp_path / 'c.pvd', [{'timestep': '1', 'file': 'a.vti'},
+                                          {'timestep': '2'}])
+    with pytest.warns(UserWarning, match='no file attribute'):
+        files, times = _dataio.read_pvd_series(pvd)
+    assert files == [tmp_path / 'a.vti']
+    assert times.tolist() == [1.]
+
+
+@pytest.mark.parametrize('attr, values', [('part', ('0', '1')),
+                                          ('group', ('fluid', 'solid'))])
+def test_read_pvd_series_refuses_datasets_split_across_groups_or_parts(
+        tmp_path, attr, values):
+    pvd = _write_pvd(tmp_path / 'c.pvd', [
+        {'timestep': '1', attr: values[0], 'file': 'a.vti'},
+        {'timestep': '1', attr: values[1], 'file': 'b.vti'}])
+    with pytest.raises(ValueError, match='more than one {}'.format(attr)):
+        _dataio.read_pvd_series(pvd)
+
+
+def test_read_pvd_series_refuses_a_file_that_is_not_a_collection():
+    with pytest.raises(ValueError, match='not a ParaView Collection'):
+        _dataio.read_pvd_series(VTI_DIR / _vti_name(0))
+
+
+@pytest.mark.parametrize('k', [0, 2, 7])
+def test_read_vtkxml_grid_data_returns_the_analytic_field(k):
+    data, mesh, time = _dataio.read_vtkxml_grid_data(VTI_DIR / _vti_name(k))
+    assert time == VTI_TIMES[k]
+    for got, want in zip(mesh, VTI_GRID):
+        assert np.allclose(got, want)
+    assert [d.shape for d in data] == [(6, 5, 1)]*3
+    X, Y, _ = np.meshgrid(*VTI_GRID, indexing='ij')
+    assert np.allclose(data[0], VTI_TIMES[k])          # u = t, Float32 on disk
+    assert np.allclose(data[1], X + 10*Y)              # a transposed read fails
+    assert np.all(data[2] == 0)
+
+
+def test_read_vtkxml_grid_data_reads_the_active_vectors_unless_named(tmp_path):
+    f = _write_vti(tmp_path / 'a.vti', {'A': [1, 2, 3], 'B': [4, 5, 6]},
+                   active='B')
+    data, _, _ = _dataio.read_vtkxml_grid_data(f)
+    assert [float(d.flat[0]) for d in data] == [4., 5., 6.]
+    data, _, _ = _dataio.read_vtkxml_grid_data(f, vec_name='A')
+    assert [float(d.flat[0]) for d in data] == [1., 2., 3.]
+
+
+def test_read_vtkxml_grid_data_needs_a_name_when_no_vectors_are_active(tmp_path):
+    f = _write_vti(tmp_path / 'a.vti', {'A': [1, 2, 3], 'B': [4, 5, 6]})
+    with pytest.raises(ValueError, match=r"vec_name, one of \['A', 'B'\]"):
+        _dataio.read_vtkxml_grid_data(f)
+
+
+def test_read_vtkxml_grid_data_refuses_an_absent_or_scalar_array():
+    f = VTI_DIR / _vti_name(0)
+    with pytest.raises(ValueError, match="no point-data array 'V'"):
+        _dataio.read_vtkxml_grid_data(f, vec_name='V')
+    with pytest.raises(ValueError, match='not the 3 of a velocity vector'):
+        _dataio.read_vtkxml_grid_data(f, vec_name='p')
+
+
+def test_read_vtkxml_grid_data_places_an_extent_not_starting_at_zero(tmp_path):
+    f = _write_vti(tmp_path / 'a.vti', {'U': [1, 0, 0]}, active='U',
+                   extent=(2, 7, 0, 2, 0, 0))
+    data, mesh, _ = _dataio.read_vtkxml_grid_data(f)
+    assert np.allclose(mesh[0], np.arange(2, 8))
+    assert data[0].shape == (6, 3, 1)
+
+
+@pytest.mark.parametrize('spacing', [(-0.5, 1, 1), (1, 0, 1)])
+def test_read_vtkxml_grid_data_refuses_coordinates_that_do_not_increase(
+        tmp_path, spacing):
+    # Regression: negative spacing loaded silently as decreasing coordinates,
+    # giving a negative domain length.
+    f = _write_vti(tmp_path / 'a.vti', {'U': [1, 0, 0]}, active='U',
+                   spacing=spacing)
+    with pytest.raises(ValueError, match='coordinates that increase'):
+        _dataio.read_vtkxml_grid_data(f)
+
+
+def test_read_vtkxml_grid_data_ignores_the_spacing_of_a_flat_axis(tmp_path):
+    f = _write_vti(tmp_path / 'a.vti', {'U': [1, 0, 0]}, active='U',
+                   spacing=(1, 1, -1))
+    _, mesh, _ = _dataio.read_vtkxml_grid_data(f)
+    assert len(mesh[2]) == 1
+
+
+def test_read_vtkxml_grid_data_refuses_a_rotated_grid(tmp_path):
+    f = _write_vti(tmp_path / 'a.vti', {'U': [1, 0, 0]}, active='U',
+                   direction=[[0, -1, 0], [1, 0, 0], [0, 0, 1]])
+    with pytest.raises(ValueError, match='rotated relative to the coordinate axes'):
+        _dataio.read_vtkxml_grid_data(f)
+
+
+def test_read_vtkxml_grid_data_time_is_none_without_a_timevalue(tmp_path):
+    f = _write_vti(tmp_path / 'a.vti', {'U': [1, 0, 0]}, active='U')
+    assert _dataio.read_vtkxml_grid_data(f)[2] is None
+    f = _write_vti(tmp_path / 'b.vti', {'U': [1, 0, 0]}, active='U', time=2.5)
+    assert _dataio.read_vtkxml_grid_data(f)[2] == 2.5
+
+
+def test_read_vtkxml_grid_data_raises_on_a_missing_file(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        _dataio.read_vtkxml_grid_data(tmp_path / 'absent.vti')
+
+
+def test_read_vtkxml_grid_data_reads_a_rectilinear_grid(tmp_path):
+    # .vtr carries its coordinates outright, so the grid need not be uniform.
+    coords = (np.array([0., 1., 2., 4.]), np.array([0., 0.5, 2.]),
+              np.array([0.25]))
+    f = _write_vtr(tmp_path / 'a.vtr', {'U': [1., 2., 3.]}, active='U',
+                   coords=coords, time=1.5)
+    data, mesh, time = _dataio.read_vtkxml_grid_data(f)
+    assert time == 1.5
+    for got, want in zip(mesh, coords):
+        assert np.allclose(got, want)
+    assert [d.shape for d in data] == [(4, 3, 1)]*3
+    assert np.allclose(data[1], 2.)
+
+
+def test_read_vtkxml_grid_data_refuses_rectilinear_coordinates_out_of_order(tmp_path):
+    f = _write_vtr(tmp_path / 'a.vtr', {'U': [1., 0., 0.]}, active='U',
+                   coords=(np.array([0., 2., 1., 4.]), np.array([0., 1.]),
+                           np.array([0.])))
+    with pytest.raises(ValueError, match='coordinates that increase'):
+        _dataio.read_vtkxml_grid_data(f)
+
+
+def test_read_vtkxml_grid_time_reads_both_formats(tmp_path):
+    vti = _write_vti(tmp_path / 'a.vti', {'U': [1, 0, 0]}, active='U', time=2.5)
+    vtr = _write_vtr(tmp_path / 'a.vtr', {'U': [1., 0., 0.]}, active='U', time=3.5)
+    untimed = _write_vtr(tmp_path / 'b.vtr', {'U': [1., 0., 0.]}, active='U')
+    assert _dataio.read_vtkxml_grid_time(vti) == 2.5
+    assert _dataio.read_vtkxml_grid_time(vtr) == 3.5
+    assert _dataio.read_vtkxml_grid_time(untimed) is None
+
+
+def test_read_vtkxml_grid_calls_refuse_another_extension(tmp_path):
+    f = tmp_path / 'a.vtu'
+    f.write_text('not a grid')
+    for call in (_dataio.read_vtkxml_grid_data, _dataio.read_vtkxml_grid_time):
+        with pytest.raises(ValueError, match='ImageData'):
+            call(f)
+
+
+# ---- VTKXMLData: the loader built on the readers above ----------------------
+
+def _vtixml(path=VTI_DIR, **kwargs):
+    from planktos import fluid
+    with pytest.warns(UserWarning, match='single point thick in z'):
+        return fluid.VTKXMLData(str(path), **kwargs)
+
+
+def _copy_vti_series(tmp_path):
+    dst = tmp_path / 'series'
+    shutil.copytree(VTI_DIR, dst)
+    return dst
+
+
+def test_vtkxml_loads_the_collection_as_2d_data():
+    envir = planktos.Environment()
+    with pytest.warns(UserWarning, match='single point thick in z') as record:
+        envir.read_vtkxml_fluid_data(str(VTI_DIR))
+    assert not any('slab of a 3D flow' in str(r.message) for r in record)
+    fd = envir.flow
+    assert fd.ndim == 2 and len(fd) == 2
+    assert fd.fshape == (8, 6, 5)
+    assert np.allclose(envir.L, [2.5, 1.0])
+    assert np.allclose(fd.fluid_domain_LLC, (-1.0, 0.5))
+    assert np.allclose(fd.flow_points[0], VTI_GRID[0] + 1.0)
+    assert np.allclose(fd.flow_points[1], VTI_GRID[1] - 0.5)
+    assert np.allclose(fd.flow_times, np.array(VTI_TIMES) - 0.1)
+    assert fd.dump_source == 'collection'
+    assert fd.time_source == 'the .pvd collection'
+    assert fd.series_path == VTI_DIR / 'flow.pvd'
+
+
+@pytest.mark.parametrize('INUM', [None, True])
+def test_vtkxml_values_match_the_files(INUM):
+    # u is the physical time, which runs 0.1 ahead of the environment's clock.
+    fd = _vtixml(INUM=INUM)
+    X, Y = np.meshgrid(VTI_GRID[0], VTI_GRID[1], indexing='ij')
+    for k in (0, 3, 7):
+        u, v = fd(VTI_TIMES[k] - 0.1)
+        assert np.allclose(u, VTI_TIMES[k])
+        assert np.allclose(v, X + 10*Y)
+    assert np.allclose(fd(0.25)[0], 0.35)
+
+
+def test_vtkxml_path_may_name_the_collection_itself():
+    fd = _vtixml(VTI_DIR / 'flow.pvd')
+    assert fd.series_path == VTI_DIR / 'flow.pvd'
+    assert len(fd.flow_times) == 8
+
+
+def test_vtkxml_a_single_file_is_time_invariant():
+    fd = _vtixml(VTI_DIR / _vti_name(2))
+    assert fd.flow_times is None
+    assert fd.dump_source == 'file' and fd.series_path is None
+    assert fd[0].shape == (6, 5)
+    assert np.allclose(fd[0], 0.3)
+
+
+@pytest.mark.parametrize('INUM', [True, 4])
+def test_vtkxml_holds_float64_and_is_exact_at_every_dump(INUM):
+    # The fixture's U is Float32 on disk. Held as float32, the in-memory path
+    # blended samples in float32 and missed the stored value at a dump's own
+    # time by float32 round-off, while a window the slider had rebuilt was
+    # float64 and hit it exactly.
+    fd = _vtixml(INUM=INUM)
+    assert all(f.dtype == np.float64 for f in fd.get_raw_loaded_data())
+    for k in range(8):
+        raw = _dataio.read_vtkxml_grid_data(VTI_DIR / _vti_name(k))[0]
+        u, v = fd(VTI_TIMES[k] - 0.1)
+        assert np.array_equal(u, raw[0][:, :, 0])
+        assert np.array_equal(v, raw[1][:, :, 0])
+    assert all(f.dtype == np.float64 for f in fd.get_raw_loaded_data())
+
+
+def test_vtkxml_a_single_file_ignores_INUM():
+    # Regression: an int INUM reached FluidData with no timeline and raised
+    # TypeError.
+    fd = _vtixml(VTI_DIR / _vti_name(2), INUM=4)
+    assert fd.flow_times is None and fd.INUM is None
+    assert np.allclose(fd[0], 0.3)
+
+
+def test_vtkxml_dump_numbers_count_declared_dumps(tmp_path):
+    # Regression: dump_number was the index over the dumps on disk, so a
+    # vorticity file written beside the data was named for a different dump
+    # once a missing one arrived, and a later recording reused it for the wrong
+    # dump.
+    from planktos import fluid
+    src = _copy_vti_series(tmp_path)
+    (src / _vti_name(2)).unlink()
+    with pytest.warns(UserWarning):
+        gappy = fluid.VTKXMLData(str(src))
+    whole = _vtixml()
+    assert [gappy.dump_number(i) for i in range(7)] == [0, 1, 3, 4, 5, 6, 7]
+    # flow_0004 is t_idx 2 with the gap and t_idx 3 without it
+    assert gappy.vorticity_filename(2) == whole.vorticity_filename(3) \
+        == 'Omega.0003.vtk'
+
+
+def test_vtkxml_file_suffixes_are_case_insensitive(tmp_path):
+    from planktos import fluid
+    for k in range(2):
+        shutil.copy(VTI_DIR / _vti_name(k), tmp_path / 'D{}.VTI'.format(k))
+    pvd = _write_pvd(tmp_path / 'series.PVD',
+                     [{'timestep': str(k), 'file': 'D{}.VTI'.format(k)}
+                      for k in range(2)])
+    with pytest.warns(UserWarning, match='single point thick'):
+        fd = fluid.VTKXMLData(str(pvd))
+    assert fd.dump_source == 'collection' and len(fd.flow_times) == 2
+
+
+def test_vtkxml_refuses_a_collection_with_a_non_finite_time(tmp_path):
+    # Regression: an inf timestep reached the spline, which raised from scipy
+    # without naming the collection.
+    from planktos import fluid
+    src = _copy_vti_series(tmp_path)
+    pvd = src / 'flow.pvd'
+    pvd.write_text(pvd.read_text().replace('timestep="0.8"', 'timestep="inf"'))
+    with pytest.raises(RuntimeError, match='No time information for 1 of 8 dumps'):
+        fluid.VTKXMLData(str(src))
+
+
+def test_vtkxml_vel_conv_scales_every_load():
+    fd = _vtixml(INUM=4, vel_conv=2.0)
+    assert np.allclose(fd(0.0)[0], 0.2)
+    assert np.allclose(fd(0.7)[0], 1.6)     # read by a window slide
+
+
+def test_vtkxml_reads_a_3d_series_and_accepts_periodic_dim_as_a_list(tmp_path):
+    # A call replayed from a run archive passes JSON's lists in place of tuples.
+    from planktos import fluid
+    for k in range(3):
+        _write_vti(tmp_path / 'd{}.vti'.format(k), {'U': [k, 1, 2]}, active='U',
+                   extent=(0, 3, 0, 2, 0, 1), time=float(k))
+    _write_pvd(tmp_path / 'c.pvd', [{'timestep': str(k), 'file': 'd{}.vti'.format(k)}
+                                    for k in range(3)])
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UserWarning)
+        fd = fluid.VTKXMLData(str(tmp_path), periodic_dim=[False, True, False])
+    assert fd.ndim == 3 and len(fd) == 3
+    assert fd.periodic_dim == (False, True, False)
+    assert np.allclose(fd(1.5)[0], 1.5)
+
+
+def test_vtkxml_skips_a_declared_dump_that_is_absent(tmp_path):
+    from planktos import fluid
+    src = _copy_vti_series(tmp_path)
+    (src / _vti_name(4)).unlink()
+    with pytest.warns(UserWarning) as record:
+        fd = fluid.VTKXMLData(str(src))
+    messages = [str(r.message) for r in record]
+    assert any('1 of 8 dumps' in m and 't = 0.5' in m for m in messages)
+    assert any('not evenly spaced' in m for m in messages)
+    assert fd.d_finish == 6
+    assert np.allclose(fd.flow_times, [0., .1, .2, .3, .5, .6, .7])
+    assert np.allclose(fd(0.4)[0], 0.5)     # across the gap, in simulation time
+
+
+def test_vtkxml_refuses_a_collection_naming_another_file_type(tmp_path):
+    from planktos import fluid
+    pvd = _write_pvd(tmp_path / 'c.pvd', [{'timestep': '0', 'file': 'a.vti'},
+                                          {'timestep': '1', 'file': 'b.vtu'}])
+    with pytest.raises(ValueError, match=r"type \['\.vtu'\]"):
+        fluid.VTKXMLData(str(pvd))
+
+
+def test_vtkxml_a_directory_needs_one_collection_or_some_files(tmp_path):
+    from planktos import fluid
+    with pytest.raises(FileNotFoundError,
+                       match=r'No \.pvd collection, \.vti or \.vtr'):
+        fluid.VTKXMLData(str(tmp_path))
+    for name in ('a.pvd', 'b.pvd'):
+        _write_pvd(tmp_path / name, [{'timestep': '0', 'file': 'x.vti'}])
+    with pytest.raises(RuntimeError, match='Found 2 .pvd collections'):
+        fluid.VTKXMLData(str(tmp_path))
+
+
+# ---- VTKXMLData without a collection, and dt ---------------------------------
+
+def _strip_vti_timevalue(directory):
+    '''Rewrite every .vti in directory without its TimeValue, compressed as before.'''
+    import vtk
+    for f in directory.glob('*.vti'):
+        reader = vtk.vtkXMLImageDataReader()
+        reader.SetFileName(str(f))
+        reader.Update()
+        img = reader.GetOutput()
+        img.GetFieldData().RemoveArray('TimeValue')
+        writer = vtk.vtkXMLImageDataWriter()
+        writer.SetFileName(str(f))
+        writer.SetInputData(img)
+        writer.SetDataModeToBinary()
+        writer.SetCompressorTypeToZLib()
+        writer.Write()
+
+
+def _vti_files(tmp_path, timed=True):
+    '''The fixture's .vti files with no collection beside them.'''
+    src = _copy_vti_series(tmp_path)
+    (src / 'flow.pvd').unlink()
+    if not timed:
+        _strip_vti_timevalue(src)
+    return src
+
+
+def test_vtkxml_without_a_collection_reads_the_files_timed_by_timevalue(tmp_path):
+    from planktos import fluid
+    src = _vti_files(tmp_path)
+    # Reading the files of a directory is an ordinary way for a series to
+    # arrive, not a degraded one, so nothing warns about the missing .pvd.
+    with pytest.warns(UserWarning, match='single point thick') as record:
+        fd = fluid.VTKXMLData(str(src))
+    assert not any('.pvd' in str(r.message) for r in record)
+    assert fd.dump_source == 'files' and fd.series_path is None
+    assert 'TimeValue' in fd.time_source
+    assert np.allclose(fd.flow_times, np.array(VTI_TIMES) - 0.1)
+    assert np.allclose(fd(0.25)[0], 0.35)
+
+
+def test_vtkxml_files_without_times_cost_one_timevalue_probe(tmp_path, monkeypatch):
+    # Whether a writer records TimeValue is a property of the series, so the
+    # first file settles it rather than every file being read to find out.
+    from planktos import fluid
+    src = _vti_files(tmp_path, timed=False)
+    real = _dataio.read_vtkxml_grid_time
+    calls = []
+    def spy(filename):
+        calls.append(filename)
+        return real(filename)
+    monkeypatch.setattr(fluid._dataio, 'read_vtkxml_grid_time', spy)
+    with pytest.warns(UserWarning) as record:
+        fd = fluid.VTKXMLData(str(src))
+    assert len(calls) == 1
+    assert fd.time_source == 'assumed unit steps'
+    assert np.allclose(fd.flow_times, np.arange(8.))
+    assert any('assuming unit time steps' in str(r.message) for r in record)
+
+
+def test_vtkxml_time_from_name_times_files_that_carry_none(tmp_path):
+    from planktos import fluid
+    src = _vti_files(tmp_path, timed=False)
+    with pytest.warns(UserWarning, match='single point thick'):
+        fd = fluid.VTKXMLData(str(src), time_from_name=r'_t([\d.]+)\.vti$')
+    assert 'filenames' in fd.time_source
+    assert np.allclose(fd.flow_times, np.array(VTI_TIMES) - 0.1)
+
+
+def test_vtkxml_time_from_name_that_misses_a_file_is_refused(tmp_path):
+    from planktos import fluid
+    src = _vti_files(tmp_path, timed=False)
+    (src / _vti_name(3)).rename(src / 'flow_0004_late.vti')
+    with pytest.raises(RuntimeError, match='No time information for 1 of 8'):
+        fluid.VTKXMLData(str(src), time_from_name=r'_t([\d.]+)\.vti$')
+
+
+def test_vtkxml_files_sort_by_the_numbers_in_their_names(tmp_path):
+    # Lexically d10 sorts first; the numbers in the names put it last.
+    from planktos import fluid
+    for k, name in enumerate(['d8.vti', 'd9.vti', 'd10.vti']):
+        _write_vti(tmp_path / name, {'U': [float(k), 0, 0]}, active='U',
+                   time=float(k))
+    with pytest.warns(UserWarning, match='single point thick') as record:
+        fd = fluid.VTKXMLData(str(tmp_path))
+    assert not any('reordered' in str(r.message) for r in record)
+    assert np.allclose(fd.flow_times, [0., 1., 2.])
+    assert [fd.dump_number(i) for i in range(3)] == [0, 1, 2]
+
+
+def test_vtkxml_dt_times_files_that_carry_none(tmp_path):
+    from planktos import fluid
+    src = _vti_files(tmp_path, timed=False)
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter('always')
+        fd = fluid.VTKXMLData(str(src), dt=0.1)
+    assert fd.time_source == 'the dt argument'
+    assert np.allclose(fd.flow_times, 0.1*np.arange(8))
+    assert not any('unit time steps' in str(r.message) for r in record)
+    assert np.allclose(fd(0.35)[0], 0.45)
+
+
+def test_vtkxml_dt_keeps_the_gap_an_absent_dump_leaves(tmp_path):
+    # Positions count the dumps the collection declares, so an absent one
+    # leaves a hole in the timeline rather than closing it up.
+    from planktos import fluid
+    src = _copy_vti_series(tmp_path)
+    pvd = src / 'flow.pvd'
+    pvd.write_text(re.sub(r' timestep="[^"]*"', '', pvd.read_text()))
+    (src / _vti_name(4)).unlink()
+    with pytest.warns(UserWarning):
+        fd = fluid.VTKXMLData(str(src), dt=0.1)
+    assert fd.time_source == 'the dt argument'
+    assert np.allclose(fd.flow_times, [0., .1, .2, .3, .5, .6, .7])
+    assert [fd.dump_number(i) for i in range(7)] == [0, 1, 2, 3, 5, 6, 7]
+    assert np.allclose(fd(0.5)[0], 0.6)
+
+
+def test_vtkxml_dt_fills_the_gaps_in_a_partly_timed_collection(tmp_path):
+    from planktos import fluid
+    src = _copy_vti_series(tmp_path)
+    pvd = src / 'flow.pvd'
+    pvd.write_text(pvd.read_text().replace(' timestep="0.4"', ''))
+    with pytest.raises(RuntimeError, match='No time information for 1 of 8'):
+        fluid.VTKXMLData(str(src))
+    with pytest.warns(UserWarning, match='single point thick'):
+        fd = fluid.VTKXMLData(str(src), dt=0.1)
+    assert 'dt filling 1 gap' in fd.time_source
+    assert np.allclose(fd.flow_times, 0.1*np.arange(8))
+
+
+@pytest.mark.parametrize('source', ['collection', 'files'])
+def test_vtkxml_dt_must_agree_with_the_times_the_source_carries(tmp_path, source):
+    from planktos import fluid
+    src = _copy_vti_series(tmp_path) if source == 'collection' \
+        else _vti_files(tmp_path)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', UserWarning)
+        with pytest.raises(ValueError, match=r'dt=0\.2 disagrees'):
+            fluid.VTKXMLData(str(src), dt=0.2)
+        fd = fluid.VTKXMLData(str(src), dt=0.1)
+    assert np.allclose(fd.flow_times, 0.1*np.arange(8))
+
+
+def test_vtkxml_dt_is_unused_for_a_single_file():
+    fd = _vtixml(VTI_DIR / _vti_name(2), dt=0.1)
+    assert fd.flow_times is None
+
+
+def test_vtkxml_reads_a_directory_of_vtr_dumps(tmp_path):
+    # A rectilinear series: same loader, and the non-uniform grid survives.
+    from planktos import fluid
+    coords = (np.array([0., 1., 2., 4.]), np.array([0., 0.5, 2.]),
+              np.array([0.25]))
+    for k in range(3):
+        _write_vtr(tmp_path / 'flow_{:02d}.vtr'.format(k),
+                   {'U': [float(k), 1., 0.]}, active='U', coords=coords,
+                   time=0.5*k)
+    with pytest.warns(UserWarning, match='single point thick'):
+        fd = fluid.VTKXMLData(str(tmp_path))
+    assert fd.dump_source == 'files' and fd.ndim == 2
+    assert np.allclose(fd.flow_times, [0., 0.5, 1.])
+    assert np.allclose(fd.flow_points[0], [0., 1., 2., 4.])
+    assert np.allclose(fd.flow_points[1], [0., 0.5, 2.])
+    assert np.allclose(fd(1.0)[0], 2.)
+
+
+def test_vtkxml_a_collection_may_name_vtr_dumps(tmp_path):
+    from planktos import fluid
+    for k in range(3):
+        _write_vtr(tmp_path / 'd{}.vtr'.format(k), {'U': [float(k), 1., 0.]},
+                   active='U', time=float(k))
+    _write_pvd(tmp_path / 'c.pvd', [{'timestep': str(k), 'file': 'd{}.vtr'.format(k)}
+                                    for k in range(3)])
+    with pytest.warns(UserWarning, match='single point thick'):
+        fd = fluid.VTKXMLData(str(tmp_path))
+    assert fd.dump_source == 'collection'
+    assert np.allclose(fd.flow_times, [0., 1., 2.])
+    assert np.allclose(fd(2.0)[0], 2.)
+
+
+@pytest.mark.parametrize('dt', [0, -0.1])
+def test_vtkxml_dt_must_be_positive(dt):
+    from planktos import fluid
+    with pytest.raises(ValueError, match='dt must be positive'):
+        fluid.VTKXMLData(str(VTI_DIR), dt=dt)
+
+
+@pytest.mark.parametrize('INUM, k', [(None, 1), (4, 6)])
+def test_vtkxml_refuses_a_dump_on_a_different_grid(tmp_path, INUM, k):
+    # Every dump is checked, including one first read by a window slide.
+    from planktos import fluid
+    src = _copy_vti_series(tmp_path)
+    _write_vti(src / _vti_name(k), {'U': [1, 0, 0]}, active='U',
+               extent=(0, 5, 0, 4, 0, 0), time=VTI_TIMES[k])
+    match = 'grid in ' + re.escape(_vti_name(k))
+    if INUM is None:
+        with pytest.raises(RuntimeError, match=match):
+            fluid.VTKXMLData(str(src))
+    else:
+        fd = _vtixml(src, INUM=INUM)
+        with pytest.raises(RuntimeError, match=match):
+            fd(VTI_TIMES[k] - 0.1)
+
+
+# --------------------------------------------------------------------------- #
+#            a plane exported as 3D vtk is 2D data within Planktos            #
+# --------------------------------------------------------------------------- #
+# A vtk dataset is always three-dimensional, so a solver exporting a single
+# plane writes it as a 3D grid one point thick -- which is exactly what IB2d
+# does for its genuinely 2D output. Planktos reads that as 2D: the flat axis,
+# its coordinate array and the velocity component along it all go together.
+#
+# Before this, VTK3dData squeezed the *data* but kept three coordinate arrays,
+# so the object claimed to be 3D, reported a zero-thickness domain, and raised
+# from inside scipy on the first move with a message naming neither the file nor
+# the cause.
+#
+# These write their own series rather than using a committed fixture: a planar
+# rectilinear grid has no structural quirk worth pinning byte-for-byte (unlike
+# openfoam_min's cell ordering, or lagspts_min's legacy vertex points), and what
+# the tests vary -- which axis is flat, whether the dropped component is zero --
+# wants to be an argument rather than three committed variants.
+
+
+def _write_slab(dirpath, flat_axis=2, w=0.0, ndumps=4):
+    '''A rectilinear 3D series one point thick along `flat_axis`.
+
+    The two surviving axes carry u = t and v = (the first surviving coordinate);
+    `w` is the value of the component along the flat axis, which is what decides
+    whether collapsing to 2D loses anything.
+    '''
+    dirpath.mkdir(parents=True, exist_ok=True)
+    axes = [np.linspace(0, 4, 5), np.linspace(0, 3, 4), np.linspace(0, 2, 3)]
+    axes[flat_axis] = np.array([0.0])
+    kept = [d for d in range(3) if d != flat_axis]
+    first = np.meshgrid(*axes, indexing='ij')[kept[0]]
+    for k in range(ndumps):
+        grid = pv.RectilinearGrid(*axes)
+        vec = [None, None, None]
+        vec[kept[0]] = np.full(first.size, float(k))          # u = t
+        vec[kept[1]] = first.ravel(order='F')                 # v = coordinate
+        vec[flat_axis] = np.full(first.size, w)               # the one dropped
+        grid['vel'] = np.stack(vec, axis=1)
+        grid.set_active_vectors('vel')
+        grid.field_data['TIME'] = np.array([float(k)])
+        grid.save(str(dirpath / 'slab_{:03d}.vtk'.format(k)), binary=False)
+    return dirpath
+
+
+def _load_slab(dirpath, match='single point thick', **kwargs):
+    envir = planktos.Environment()
+    with pytest.warns(UserWarning, match=match):
+        envir.read_IBAMR3d_vtk_data(str(dirpath), title='slab_', **kwargs)
+    return envir
+
+
+@pytest.mark.parametrize('INUM', [None, True])
+def test_a_planar_3d_series_loads_as_2d(tmp_path, INUM):
+    envir = _load_slab(_write_slab(tmp_path / 'slab'), INUM=INUM)
+    assert len(envir.flow.flow_points) == 2
+    assert envir.flow.ndim == 2
+    assert len(envir.flow) == 2                    # the w component went too
+    assert len(envir.L) == 2                       # and no zero-thickness axis
+    assert envir.flow.fshape == (4, 5, 4)
+    # The field is intact: u = t, v = x on the surviving axes.
+    u, v = envir.flow(2.0)
+    assert np.allclose(u, 2.0)
+    assert np.allclose(v, envir.flow.flow_points[0][:, None])
+
+
+def test_a_planar_3d_series_supports_a_2d_swarm(tmp_path):
+    # The end of the story: before, this raised
+    # "There are 3 point arrays, but values has 2 dimensions" from interpn.
+    envir = _load_slab(_write_slab(tmp_path / 'slab'))
+    swrm = planktos.Swarm(swarm_size=5, envir=envir, seed=1)
+    assert swrm.positions.shape[1] == 2
+    for _ in range(4):
+        swrm.move(0.5, silent=True)
+    assert np.isfinite(np.ma.getdata(swrm.positions)).all()
+
+
+@pytest.mark.parametrize('flat_axis, name', [(0, 'x'), (1, 'y'), (2, 'z')])
+def test_the_warning_names_the_flat_axis(tmp_path, flat_axis, name):
+    # Which axis went is not recoverable from the result -- a flat x leaves y
+    # and z, which become Planktos' x and y -- so the warning has to say.
+    envir = _load_slab(_write_slab(tmp_path / 'slab', flat_axis=flat_axis),
+                       match=r'single point thick in {}'.format(name))
+    assert len(envir.flow.flow_points) == 2
+    assert len(envir.flow) == 2
+    # The surviving components keep their order, whichever axis was dropped.
+    assert np.allclose(envir.flow(1.0)[0], 1.0)
+    assert np.allclose(envir.flow(1.0)[1],
+                       envir.flow.flow_points[0][:, None])
+
+
+def test_a_discarded_nonzero_component_is_called_out(tmp_path):
+    # w == 0 means nothing is lost. A nonzero w means this is a slab of a 3D
+    # flow rather than 2D data, and dropping it changes the physics -- so the
+    # warning has to say more than "read as 2D".
+    # The in-plane scale is max(u, v) = 4, the largest x coordinate.
+    envir = _load_slab(_write_slab(tmp_path / 'slab', w=0.7),
+                       match=r'z-velocity reaches 0\.7, 0\.175 times the largest '
+                             r'in-plane velocity.*slab of a 3D flow')
+    assert len(envir.flow) == 2
+
+
+def _flat_z_field(u, w):
+    '''A 4x3x1 field with a constant in-plane u, zero v and a constant w.'''
+    shape = (4, 3, 1)
+    flow = [np.full(shape, u), np.zeros(shape), np.full(shape, w)]
+    mesh = [np.linspace(0, 3, 4), np.linspace(0, 2, 3), np.array([0.0])]
+    return flow, mesh
+
+
+@pytest.mark.parametrize('w', [0.0, 2.6e-17, -2.6e-17, 1e-9])
+def test_round_off_in_a_discarded_component_is_not_called_out(w):
+    # Regression: the check was exact, so a planar export whose w is round-off
+    # (2.6e-17 against an in-plane 6.7e-3, in the 2D sea-fan data) was reported
+    # as a slab of a 3D flow.
+    from planktos import fluid
+    flow, mesh = _flat_z_field(6.7e-3, w)
+    with pytest.warns(UserWarning, match='single point thick') as record:
+        fluid._collapse_flat_axes(flow, mesh)
+    assert not any('slab of a 3D flow' in str(r.message) for r in record)
+
+
+def test_a_discarded_component_is_called_out_against_a_still_plane():
+    from planktos import fluid
+    flow, mesh = _flat_z_field(0.0, -0.5)
+    with pytest.warns(UserWarning, match=r'z-velocity reaches 0\.5 where the '
+                                         r'in-plane velocity is zero everywhere'):
+        fluid._collapse_flat_axes(flow, mesh)
+
+
+def test_two_flat_axes_are_refused(tmp_path):
+    # A line. Planktos is 2D or 3D, so there is nothing sensible to read this as.
+    src = tmp_path / 'line'
+    src.mkdir()
+    grid = pv.RectilinearGrid(np.linspace(0, 3, 5), np.array([0.0]),
+                              np.array([0.0]))
+    grid['vel'] = np.zeros((5, 3))
+    grid.set_active_vectors('vel')
+    grid.save(str(src / 'line.vtk'), binary=False)
+
+    with pytest.raises(ValueError, match='fewer than the two Planktos needs'):
+        planktos.Environment().read_IBAMR3d_vtk_data(str(src / 'line.vtk'))
+
+
+def test_a_fully_3d_series_is_untouched():
+    # The guard rail, against the committed 3D fixture: nothing about a genuine
+    # 3D series changes, and nothing warns.
+    envir = planktos.Environment()
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UserWarning)
+        envir.read_IBAMR3d_vtk_data(str(FIXTURES / 'vtk3d_min'),
+                                    title='IBAMR_db_')
+    assert len(envir.flow.flow_points) == 3
+    assert len(envir.flow) == 3
+    assert envir.flow.fshape == (8, 5, 4, 3)
+
+
+
+# --------------------------------------------------------------------------- #
+#          a 3D STL in a 2D environment is the outline it extrudes            #
+# --------------------------------------------------------------------------- #
+# A 2D simulation's geometry arrives as a straight extrusion across the one
+# cell of thickness the solver needed, and the fluid as a plane of that slab.
+# The mesh is reduced to the outline it was extruded from, whichever of the two
+# loaded first -- or the load that would pair a mesh with a fluid of another
+# dimension is refused, leaving the Environment exactly as it was.
+
+SQUARE = [(0.25, 0.25), (1.5, 0.25), (1.5, 0.75), (0.25, 0.75)]
+VTIXML = str(FIXTURES / 'vtixml_min')          # flat in z; LLC (-1, 0.5)
+TETRA = np.array([[0., 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]])[
+    [[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]]]
+
+
+def _write_stl(path, tris):
+    stlmesh = pytest.importorskip('stl.mesh')
+    data = np.zeros(len(tris), dtype=stlmesh.Mesh.dtype)
+    data['vectors'] = tris
+    stlmesh.Mesh(data).save(str(path))
+    return str(path)
+
+
+def _edges(segs):
+    return {frozenset(map(tuple, seg)) for seg in np.asarray(segs)}
+
+
+def _state(envir):
+    '''What a refused load must leave alone.'''
+    return (envir.flow, list(envir.L), envir._fluid_provenance, envir.ibmesh,
+            envir.max_meshpt_dist, envir._ibmesh_provenance)
+
+
+def _assert_unchanged(envir, before):
+    after = _state(envir)
+    assert after[0] is before[0]
+    assert after[1] == before[1]
+    assert after[2] == before[2]
+    assert after[3] is before[3]
+    assert after[4] == before[4]
+    assert after[5] == before[5]
+
+
+def test_stl_in_a_2d_environment_is_its_outline(tmp_path):
+    stl = _write_stl(tmp_path / 'sq.stl', H.extruded_polygon(SQUARE, 0.0, 0.5))
+    envir = planktos.Environment()
+    envir.read_vtkxml_fluid_data(VTIXML)
+    envir.read_stl_mesh_data(stl)
+    llc = np.array(envir.flow.fluid_domain_LLC)
+    assert envir.ibmesh.shape == (4, 2, 2)
+    assert envir.ibmesh.dtype == np.float64
+    assert _edges(envir.ibmesh) == _edges(H.closed_polygon(np.array(SQUARE) - llc))
+    assert envir.max_meshpt_dist == 1.25
+
+
+def test_stl_loaded_before_the_fluid_is_flattened_when_the_fluid_arrives(tmp_path):
+    stl = _write_stl(tmp_path / 'sq.stl', H.extruded_polygon(SQUARE, 0.0, 0.5))
+    fluid_first = planktos.Environment()
+    fluid_first.read_vtkxml_fluid_data(VTIXML)
+    fluid_first.read_stl_mesh_data(stl)
+
+    mesh_first = planktos.Environment()
+    mesh_first.read_stl_mesh_data(stl)
+    assert mesh_first.ibmesh.shape == (12, 3, 3)       # no fluid yet to fit
+    mesh_first.read_vtkxml_fluid_data(VTIXML)
+    assert _edges(mesh_first.ibmesh) == _edges(H.closed_polygon(SQUARE))
+    mesh_first.shift_ibmesh_to_match_LLC()
+
+    np.testing.assert_array_equal(mesh_first.ibmesh, fluid_first.ibmesh)
+    assert mesh_first.max_meshpt_dist == fluid_first.max_meshpt_dist
+
+
+@pytest.mark.parametrize('mesh_first', [False, True])
+@pytest.mark.parametrize('flat_axis', [0, 1])
+def test_the_axis_dropped_from_the_mesh_is_the_one_the_fluid_dropped(
+        tmp_path, flat_axis, mesh_first):
+    slab = _write_slab(tmp_path / 'slab', flat_axis=flat_axis)
+    stl = _write_stl(tmp_path / 'sq.stl',
+                     H.extruded_polygon(SQUARE, -1.0, 1.0, axis=flat_axis))
+    envir = planktos.Environment()
+    if mesh_first:
+        envir.read_stl_mesh_data(stl)
+    with pytest.warns(UserWarning, match='single point thick'):
+        envir.read_IBAMR3d_vtk_data(str(slab), title='slab_')
+    if not mesh_first:
+        envir.read_stl_mesh_data(stl)
+    assert _edges(envir.ibmesh) == _edges(H.closed_polygon(SQUARE))
+
+
+def test_a_natively_2d_fluid_drops_z_from_the_mesh(tmp_path):
+    stl = _write_stl(tmp_path / 'sq.stl', H.extruded_polygon(SQUARE, 3.0, 4.0))
+    envir = planktos.Environment()
+    envir.read_IB2d_fluid_data(str(FIXTURES / 'ib2d_fluid_min'), dt=0.01,
+                               print_dump=10)
+    envir.read_stl_mesh_data(stl)
+    assert _edges(envir.ibmesh) == _edges(H.closed_polygon(SQUARE))
+
+
+def test_a_3d_stl_that_is_not_an_extrusion_is_refused_in_2d(tmp_path):
+    good = _write_stl(tmp_path / 'sq.stl', H.extruded_polygon(SQUARE, 0.0, 0.5))
+    bad = _write_stl(tmp_path / 'tet.stl', TETRA)
+    envir = planktos.Environment()
+    envir.read_vtkxml_fluid_data(VTIXML)
+    envir.read_stl_mesh_data(good)
+    before = _state(envir)
+    with pytest.raises(ValueError, match='incompatible'):
+        envir.read_stl_mesh_data(bad)
+    _assert_unchanged(envir, before)
+
+
+def test_a_2d_fluid_is_refused_by_a_3d_mesh_loaded_first(tmp_path):
+    envir = planktos.Environment()
+    envir.read_IBAMR3d_vtk_data(str(FIXTURES / 'vtk3d_min'), title='IBAMR_db_')
+    envir.read_stl_mesh_data(_write_stl(tmp_path / 'tet.stl', TETRA))
+    before = _state(envir)
+    with pytest.raises(ValueError, match='2D fluid is incompatible'):
+        envir.read_vtkxml_fluid_data(VTIXML)
+    _assert_unchanged(envir, before)
+
+
+def test_a_3d_fluid_is_refused_by_a_2d_mesh_loaded_first():
+    envir = planktos.Environment()
+    envir.read_IB2d_fluid_data(str(FIXTURES / 'ib2d_fluid_min'), dt=0.01,
+                               print_dump=10)
+    envir.read_IB2d_mesh_data(str(FIXTURES / 'mesh_min' / 'box.vertex'))
+    before = _state(envir)
+    with pytest.raises(ValueError, match='3D fluid is incompatible'):
+        envir.read_IBAMR3d_vtk_data(str(FIXTURES / 'vtk3d_min'),
+                                    title='IBAMR_db_')
+    _assert_unchanged(envir, before)
+
+
+def test_a_moving_2d_mesh_refuses_a_3d_fluid():
+    envir = planktos.Environment()
+    envir.read_IB2d_mesh_data(str(FIXTURES / 'lagspts_min'), dt=0.1,
+                              print_dump=1)
+    with pytest.raises(ValueError, match='3D fluid is incompatible'):
+        envir.read_IBAMR3d_vtk_data(str(FIXTURES / 'vtk3d_min'),
+                                    title='IBAMR_db_')
+    assert envir.flow is None
+
+
+def test_a_2d_mesh_is_refused_in_a_3d_fluid():
+    envir = planktos.Environment()
+    envir.read_IBAMR3d_vtk_data(str(FIXTURES / 'vtk3d_min'), title='IBAMR_db_')
+    before = _state(envir)
+    with pytest.raises(ValueError, match='3D fluid is incompatible'):
+        envir.read_IB2d_mesh_data(str(FIXTURES / 'mesh_min' / 'box.vertex'))
+    _assert_unchanged(envir, before)
+
+
+def test_stl_in_3d_is_unchanged_but_for_the_llc_shift(tmp_path):
+    tris = H.extruded_polygon(SQUARE, 0.0, 0.5)
+    stl = _write_stl(tmp_path / 'sq.stl', tris)
+    g = np.linspace(0, 2, 5)
+    X, Y, Z = np.meshgrid(g, g, g, indexing='ij')
+    envir = planktos.Environment(Lx=2, Ly=2, Lz=2,
+                                 flow=[np.zeros_like(X), np.zeros_like(Y),
+                                       np.zeros_like(Z)])
+    envir.flow.fluid_domain_LLC = (1.0, 0.5, 0.25)
+    envir.read_stl_mesh_data(stl)
+    np.testing.assert_array_equal(envir.ibmesh,
+                                  tris - np.array([1.0, 0.5, 0.25]))
+
+
+SEAFAN = Path(__file__).parent / 'data' / 'openfoam2D'
+
+
+@pytest.mark.skipif(not SEAFAN.is_dir(), reason='sea-fan dataset not present')
+@pytest.mark.parametrize('mesh_first', [False, True])
+def test_the_sea_fan_plate_is_the_outline_its_producer_published(mesh_first):
+    # plate_outline_2d.csv is the dataset's own statement of the geometry, made
+    # independently of the STL. The STL stores float32, so the CSV is rounded
+    # to match before the exact comparison.
+    pytest.importorskip('stl.mesh')
+    with open(SEAFAN / 'geometry' / 'plate_outline_2d.csv') as f:
+        rows = list(csv.DictReader(f))
+    webs = {}
+    for r in rows:
+        webs.setdefault(r['web'], []).append(
+            (float(r['x_m']), float(r['y_m'])))
+    stl = str(SEAFAN / 'geometry' / 'plate.stl')
+    envir = planktos.Environment()
+    if mesh_first:
+        envir.read_stl_mesh_data(stl)
+    envir.read_vtkxml_fluid_data(str(SEAFAN / 'flow'), INUM=4)
+    if mesh_first:
+        envir.shift_ibmesh_to_match_LLC()
+    else:
+        envir.read_stl_mesh_data(stl)
+    llc = np.array(envir.flow.fluid_domain_LLC)
+    expected = set()
+    for corners in webs.values():
+        pts = np.array(corners, dtype=np.float32).astype(np.float64) - llc
+        expected |= _edges(H.closed_polygon(pts))
+    assert envir.ibmesh.shape == (28, 2, 2)
+    assert _edges(envir.ibmesh) == expected

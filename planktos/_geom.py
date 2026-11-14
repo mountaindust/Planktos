@@ -13,6 +13,8 @@ __author__ = "Christopher Strickland"
 __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
+import itertools
+
 import numpy as np
 
 
@@ -103,7 +105,7 @@ def closest_dist_btwn_two_lines(a0,a1,b0_list,b1_list):
 
         Assuming the lines formed by (a1-a0) and (b1-b0) are skew, the 
         closest points on the two lines are found using a method described 
-        in docs/notes/Line_closest_points.md
+        in docs/notes/Lines_closest_points.md
 
         Parameters
         ----------
@@ -122,7 +124,7 @@ def closest_dist_btwn_two_lines(a0,a1,b0_list,b1_list):
     '''
     if len(b0_list.shape) == 1:
         b0_list = np.reshape(b0_list, (1,len(b0_list)))
-        b1_list = np.reshape(b1_list, (1,len(b1)))
+        b1_list = np.reshape(b1_list, (1,len(b1_list)))
 
     # Calculate denominator
     A = a1 - a0
@@ -641,7 +643,7 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
     points or a list of spatial points in the case of the Q parameters.
 
     The mathematics behind this function are given in 
-    docs/Intersection_w_multilinear_polynomial.md
+    docs/notes/Intersection_w_multilinear_polynomial.md
     
     Parameters
     ----------
@@ -682,7 +684,7 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
     v0 = Q2 - Q0 # linear interpolation vector of first element points
     v1 = Q3 - Q1 # linear interpolation vector of second element points
 
-    # Solving for the intersection results in a quadratic in t. See TODO,
+    # Solving for the intersection results in a quadratic in t.
     # Put together quadratic equation At^2 + Bt + C = 0
     if len(Q0.shape) == 1:
         # Single mesh element case
@@ -842,3 +844,154 @@ def dist_point_to_plane(P0, normal, Q0):
     return np.abs(np.dot(normal,P0)-d)/np.linalg.norm(normal)
 
 
+
+def flatten_extruded_mesh(tris, axis=2):
+    '''Reduce a triangle mesh that is a straight extrusion to the 2D outline it
+    was extruded from, by dropping the extrusion axis.
+
+    A straight extrusion has its vertices at exactly two levels along ``axis``,
+    and each wall triangle has a vertex directly across from another. The walls
+    project onto the remaining two axes as segments, each kept once; the caps
+    project to triangles and are discarded. Coordinates are copied, never
+    computed, so segments that share an endpoint share it exactly.
+
+    Parameters
+    ----------
+    tris : Nx3x3 ndarray
+        triangles, one per row, each a 3x3 matrix whose rows are its vertices
+    axis : int, default=2
+        the axis the mesh was extruded along
+
+    Returns
+    -------
+    Mx2x2 ndarray
+        the outline's segments, each a 2x2 matrix whose rows are its endpoints
+
+    Raises
+    ------
+    ValueError
+        if the mesh is not a straight extrusion along ``axis``
+    '''
+
+    name = 'xyz'[axis]
+    level = tris[:, :, axis]
+    n_levels = len(np.unique(level))
+    if n_levels != 2:
+        raise ValueError(
+            "its vertices lie at {} distinct {}-coordinates, where a straight "
+            "extrusion along {} has exactly two".format(n_levels, name, name))
+
+    # A cap has all three vertices on one level.
+    cap = (level == level[:, :1]).all(axis=1)
+    walls = np.delete(tris[~cap], axis, axis=2)
+    p0, p1, p2 = walls[:, 0], walls[:, 1], walls[:, 2]
+    same01 = (p0 == p1).all(axis=1)
+    same12 = (p1 == p2).all(axis=1)
+    same02 = (p0 == p2).all(axis=1)
+    n_same = same01.astype(int) + same12 + same02
+    # A wall perpendicular to the cut projects to two distinct points, so
+    #   exactly one pair of its vertices coincides. None coinciding is a slanted
+    #   wall; all three is a triangle with no area, which contributes nothing.
+    slanted = np.count_nonzero(n_same == 0)
+    if slanted:
+        raise ValueError(
+            "{} of its {} side triangles are not parallel to the {}-axis, so "
+            "its cross-section varies along {}".format(
+                slanted, len(walls), name, name))
+    keep = n_same == 1
+    a = p0[keep]
+    b = np.where(same01[keep, None], p2[keep], p1[keep])
+    if len(a) == 0:
+        raise ValueError("it has no side walls, only caps")
+
+    # Both triangles of a rectangular wall project to the same segment. Putting
+    #   each segment's endpoints in lexicographic order makes the two copies
+    #   identical, so np.unique removes one.
+    swap = (a[:, 0] > b[:, 0]) | ((a[:, 0] == b[:, 0]) & (a[:, 1] > b[:, 1]))
+    first = np.where(swap[:, None], b, a)
+    second = np.where(swap[:, None], a, b)
+    segs = np.unique(np.concatenate((first, second), axis=1), axis=0)
+    return segs.reshape(-1, 2, 2)
+
+
+
+def max_edge_length(mesh):
+    '''Return the length of the longest edge of a static mesh of segments
+    (Nx2x2) or triangles (Nx3x3).'''
+
+    n = mesh.shape[1]
+    return max(np.linalg.norm(mesh[:, (i+1) % n] - mesh[:, i], axis=1).max()
+               for i in range(n))
+
+
+
+def tile_mesh(mesh, L, counts):
+    '''Replicate an immersed mesh across a tiled domain.
+
+    Copies are offset by ``L[d]*i_d`` along each axis and ordered with x
+    slowest and the base mesh first, so element ``t*N + e`` of the result is
+    element ``e`` of copy ``t`` and ``idx % N`` recovers the base element. A
+    moving mesh's copies move in phase.
+
+    Along every tiled axis (count > 1), every vertex in every frame must lie
+    strictly inside the tile, ``0 < x_d < L[d]``, so no two copies touch.
+
+    Parameters
+    ----------
+    mesh : ndarray
+        static segments (N,2,2), static triangles (N,3,3), or moving segments
+        (T,N,2,2)
+    L : sequence of float
+        the tile's length along each spatial axis
+    counts : sequence of int >= 1
+        the number of tiles along each spatial axis
+
+    Returns
+    -------
+    ndarray
+        the copies concatenated along the element axis: (K*N,2,2), (K*N,3,3)
+        or (T,K*N,2,2), where K is the product of counts
+
+    Raises
+    ------
+    ValueError
+        if counts is not one int >= 1 per axis, or if an element touches or
+        crosses a tile face along a tiled axis, naming the elements and axes
+    '''
+
+    mesh = np.asarray(mesh, dtype=np.float64)
+    D = mesh.shape[-1]
+    L = np.asarray(L, dtype=np.float64)
+    if len(L) != D or len(counts) != D:
+        raise ValueError("Need one tile length and one count per spatial "
+                         "axis ({}); got L={} and counts={}.".format(
+                             D, list(L), tuple(counts)))
+    if any(int(k) != k or k < 1 for k in counts):
+        raise ValueError("Tile counts must be integers of at least 1; got "
+                         "{}.".format(tuple(counts)))
+    counts = tuple(int(k) for k in counts)
+
+    # Each element's extent over all its vertices and frames. A moving mesh is
+    #   interpolated linearly between frames, so the frames bound every
+    #   position it takes.
+    over = (0, 2) if mesh.ndim == 4 else 1
+    lo = mesh.min(axis=over)
+    hi = mesh.max(axis=over)
+    out = (np.array(counts) > 1) & ((lo <= 0) | (hi >= L))
+    bad = np.nonzero(out.any(axis=1))[0]
+    if bad.size:
+        names = ['{} ({})'.format(e, ', '.join('xyz'[d] for d in
+                                              np.nonzero(out[e])[0]))
+                 for e in bad[:10]]
+        more = bad.size - len(names)
+        raise ValueError(
+            "Tiling the domain {} needs the immersed mesh strictly inside the "
+            "domain along each tiled axis, but these elements touch or cross "
+            "its boundary (along the axes shown): {}{}.".format(
+                counts, ', '.join(names),
+                ', and {} more'.format(more) if more else ''))
+
+    # i*L[d] per axis, the same arithmetic as a copy placed by hand.
+    copies = itertools.product(*(range(k) for k in counts))
+    return np.concatenate([mesh + np.array(idx)*L for idx in copies],
+                          axis=1 if mesh.ndim == 4 else 0)

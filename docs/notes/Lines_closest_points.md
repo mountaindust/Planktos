@@ -2,7 +2,7 @@ Assume we have two skew lines in 3D. Line $A$ is formed by the points
 $(\mathbf{a_0},\mathbf{a_1})$ and Line $B$ via $(\mathbf{b_0},\mathbf{b_1})$.
 
 Let $\mathbf{\hat{{v}}}_1$ be a unit vector in the direction of Line $A$, e.g. 
-$\mathbf{\hat{{v}}}_1 = (\mathbf{a_1}-\mathbf{a_2})/||(\mathbf{a_1}-\mathbf{a_2})||$ 
+$\mathbf{\hat{{v}}}_1 = (\mathbf{a_1}-\mathbf{a_0})/||(\mathbf{a_1}-\mathbf{a_0})||$ 
 and similarly for $\mathbf{\hat{{v}}}_2$ for Line $B$.
 
 Then $\mathbf{z} = \mathbf{\hat{{v}}}_1\times\mathbf{\hat{{v}}}_2$ is a vector 

@@ -1,0 +1,1442 @@
+'''Pins the dynamic (windowed) fluid-loading machinery -- that a window gives the
+same answer as the whole field, how it slides, and get_dudt under linear
+splining -- plus the per-dump mean cache that plotting reads instead of the field.
+
+`FluidData.update_spline` is the workhorse of dynamic loading: it responds to a
+request for a time outside the currently loaded window by loading the next or
+previous set of dumps and re-splining. `INUM` as an int is the setting that
+actually slides a window.
+
+The slider needs no real data: what it requires of a source is only a
+`load_dumpfiles(d_start, d_finish)` that returns a list of per-component ndarrays
+with a leading time axis. The synthetic subclass below supplies that from an
+in-memory array, so the real `update_spline` is exercised exactly and
+deterministically with nothing on disk. The quantitative windowed-linear vs.
+full-cubic error needs real data and is measured by
+tests/manual/quantify_temporal_interp.py.
+
+The key property is that linear interpolation in time is *local*: it
+depends only on the two bracketing samples, so which window happens to be
+resident cannot change the answer. Windowed-linear must therefore agree with
+full-linear to round-off at every query time. The test field is deliberately
+non-linear in time, so that agreement is a real check on the slider rather than
+an artifact of both schemes being exact.
+
+Agreement is to a few ulp rather than bit-for-bit because the slider carries
+window-boundary values by *evaluating* the outgoing spline rather than re-reading
+raw data. That costs an ulp per slide; it does not compound, which is itself
+pinned below (test_holdover_roundoff_does_not_accumulate) since a long 3D run
+makes thousands of slides.
+
+No RNG and no external data anywhere. All but the last two sections
+touch no files at all; the two closing sections drive the real loaders --
+VTK3dData and IB2dData --
+against small committed fixtures (tests/fixtures/vtk3d_min and
+tests/fixtures/ib2d_fluid_min, regenerate with tests/fixtures/_gen_fixtures.py),
+because what those sections are about is the timeline a loader builds from files.
+'''
+
+import os
+import shutil
+import warnings
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+import planktos
+from planktos import fluid, _dataio
+
+FIXTURES = Path(__file__).parent / 'fixtures'
+
+
+# --------------------------------------------------------------------------- #
+#                            synthetic dynamic source                          #
+# --------------------------------------------------------------------------- #
+
+class _InMemorySource(fluid.FluidData):
+    '''A FluidData source whose "disk" is an in-memory array.
+
+    Mirrors the structure IB2dData/VTK3dData use: record the dump bounds, load
+    the opening window, then hand it to FluidData to spline. Dump numbers are
+    chosen to equal time indices so the two index spaces coincide and assertions
+    stay readable. Every load is recorded in `load_calls` so tests can assert the
+    slider is not thrashing.
+    '''
+
+    def __init__(self, full_flow, flow_points, flow_times, INUM):
+        self._full = [np.asarray(f) for f in full_flow]
+        self.load_calls = []
+        self.d_start = 0
+        self.d_finish = len(flow_times) - 1
+        self.loaded_dump_bnds = (0, INUM)
+        self.loaded_idx_bnds = (0, INUM)
+        window = self.load_dumpfiles(0, INUM)
+        super().__init__(window, flow_points, flow_times, INUM)
+
+    def load_dumpfiles(self, d_start, d_finish):
+        self.load_calls.append((d_start, d_finish))
+        return [f[d_start:d_finish + 1].copy() for f in self._full]
+
+
+def _field_2d(nt=21, nx=6, ny=5, t_end=4.0):
+    '''u(t,x,y) = sin(t)*x, v(t,x,y) = t**2*y -- deliberately NOT linear in t, so
+    windowed-linear agreeing with full-linear is a statement about the slider and
+    not about both schemes being trivially exact.'''
+    t = np.linspace(0.0, t_end, nt)
+    x = np.linspace(0.0, 10.0, nx)
+    y = np.linspace(0.0, 8.0, ny)
+    X, Y = np.meshgrid(x, y, indexing='ij')
+    u = np.stack([np.sin(tt) * X for tt in t])
+    v = np.stack([tt ** 2 * Y for tt in t])
+    return t, (x, y), [u, v]
+
+
+def _field_3d(nt=13, n=4, t_end=3.0):
+    '''3D counterpart. The slider is dimension-agnostic (it only ever touches the
+    leading time axis); this pins that, cheaply.'''
+    t = np.linspace(0.0, t_end, nt)
+    g = np.linspace(0.0, 6.0, n)
+    X, Y, Z = np.meshgrid(g, g, g, indexing='ij')
+    u = np.stack([np.sin(tt) * X for tt in t])
+    v = np.stack([tt ** 2 * Y for tt in t])
+    w = np.stack([tt * Z for tt in t])
+    return t, (g, g, g), [u, v, w]
+
+
+def _pair(field, INUM):
+    '''Build a windowed source and a full-linear reference over the same data.'''
+    t, fpoints, comps = field
+    dyn = _InMemorySource([c.copy() for c in comps], fpoints, t.copy(), INUM)
+    full = fluid.FluidData([c.copy() for c in comps], fpoints, t.copy(), INUM=True)
+    return dyn, full, t
+
+
+def _diff(got, ref):
+    '''Max absolute difference between two lists of components.'''
+    return max(np.abs(g - r).max() for g, r in zip(got, ref))
+
+
+def _tol(ref):
+    '''A few ulp of the reference field -- see the module docstring on why
+    agreement is to round-off rather than bit-for-bit.'''
+    return 8 * np.finfo(float).eps * max(1.0, max(np.abs(r).max() for r in ref))
+
+
+_PKG_DIR = os.path.abspath(os.path.dirname(planktos.__file__))
+
+
+def _from_planktos(caught):
+    '''Keep only the warnings raised from inside the planktos package.
+
+    Anchored to the package directory rather than matching the string
+    "planktos" in the path, since the repository directory may differ from the
+    package directory only by case.
+    '''
+    return [w for w in caught
+            if os.path.abspath(str(w.filename)).startswith(_PKG_DIR)]
+
+
+# --------------------------------------------------------------------------- #
+#           machinery correctness -- windowed == full, to round-off            #
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize('INUM', [2, 3, 4, 5, 7])
+def test_windowed_matches_full_linear_forward_sweep(INUM):
+    dyn, full, t = _pair(_field_2d(), INUM)
+    for q in np.linspace(t[0], t[-1], 97):
+        ref = full(q)
+        assert _diff(dyn(q), ref) <= _tol(ref)
+
+
+@pytest.mark.parametrize('INUM', [2, 3, 4, 5, 7])
+def test_windowed_matches_full_linear_backward_sweep(INUM):
+    dyn, full, t = _pair(_field_2d(), INUM)
+    for q in np.linspace(t[-1], t[0], 97):
+        ref = full(q)
+        assert _diff(dyn(q), ref) <= _tol(ref)
+
+
+def test_windowed_matches_full_linear_random_access():
+    # Non-monotone access forces repeated slides in both directions, including
+    # slides that skip several windows at once. Fixed sequence, no RNG.
+    dyn, full, t = _pair(_field_2d(), 5)
+    for q in [0.0, 3.9, 0.1, 2.0, 4.0, 1.05, 3.3, 0.55, 2.7, 0.0, 4.0]:
+        ref = full(q)
+        assert _diff(dyn(q), ref) <= _tol(ref)
+
+
+def test_windowed_matches_full_linear_on_node_times():
+    # Query exactly at the data timestamps, where the two bracketing samples
+    # degenerate -- the case most likely to expose an off-by-one in the window.
+    dyn, full, t = _pair(_field_2d(), 5)
+    for q in t:
+        ref = full(q)
+        assert _diff(dyn(q), ref) <= _tol(ref)
+
+
+def test_windowed_matches_full_linear_3d():
+    dyn, full, t = _pair(_field_3d(), 5)
+    assert dyn.ndim == 3
+    for q in np.linspace(t[0], t[-1], 41):
+        ref = full(q)
+        assert _diff(dyn(q), ref) <= _tol(ref)
+
+
+def test_windowed_constant_extrapolation_beyond_data_bounds():
+    # FluidData.__call__ clamps to the endpoint values outside [t0, tN].
+    dyn, full, t = _pair(_field_2d(), 5)
+    lo, hi = full(t[0]), full(t[-1])
+    for q in (-1.0, t[0] - 1e-9):
+        assert _diff(dyn(q), lo) <= _tol(lo)
+    for q in (t[-1] + 1e-9, 99.0):
+        assert _diff(dyn(q), hi) <= _tol(hi)
+
+
+def test_holdover_roundoff_does_not_accumulate():
+    # The slider carries window-boundary values by evaluating the outgoing spline
+    # (fluid.py, both update_spline branches) rather than re-reading raw data,
+    # which costs an ulp per slide. If that error compounded, a long 3D run --
+    # thousands of slides -- would drift away from the truth. It does not: the
+    # error after hundreds of loads is the same order as after one. Linear
+    # accumulation over this many slides would be ~100x the single-slide error
+    # and would fail the bound below comfortably.
+    t, fpoints, comps = _field_2d(nt=201, t_end=20.0)
+    dyn = _InMemorySource([c.copy() for c in comps], fpoints, t.copy(), 4)
+    full = fluid.FluidData([c.copy() for c in comps], fpoints, t.copy(), INUM=True)
+
+    worst_per_sweep = []
+    for sweep in range(4):
+        qs = np.linspace(t[0], t[-1], 201)
+        if sweep % 2:
+            qs = qs[::-1]                      # alternate direction each pass
+        worst_per_sweep.append(max(_diff(dyn(q), full(q)) for q in qs))
+
+    assert len(dyn.load_calls) > 100           # we really did slide a lot
+    assert max(worst_per_sweep) <= 32 * np.finfo(float).eps
+
+
+# --------------------------------------------------------------------------- #
+#                           window-sliding behavior                            #
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize('INUM', [2, 3, 4, 5, 7])
+def test_window_stays_bounded_across_a_full_sweep(INUM):
+    # The whole point of dynamic loading: memory must not grow with the dataset.
+    # `<=` rather than `==` because the final window is whatever remains of the
+    # dataset and can be shorter -- see test_forward_slide_walks_to_the_end.
+    dyn, _, t = _pair(_field_2d(nt=41), INUM)
+    for q in np.linspace(t[0], t[-1], 120):
+        dyn(q)
+        for spline in dyn._flow:
+            assert len(spline.x) <= INUM + 1
+            assert spline.shape[0] == len(spline.x)
+
+
+def test_forward_slide_walks_to_the_end_of_the_dataset():
+    dyn, _, t = _pair(_field_2d(), 5)
+    assert dyn.loaded_idx_bnds == (0, 5)
+    assert dyn.loaded_dump_bnds == (0, 5)
+    dyn(t[-1])
+    assert dyn._flow[0].x[-1] == t[-1]                 # the end really is loaded
+    assert len(dyn._flow[0].x) <= 6
+
+    # Both bound tuples are inclusive, and this source numbers dumps to match
+    # time indices, so they must agree -- including in the end-of-dataset branch,
+    # which used to set idx_finish to len(flow_times), one past the last valid
+    # index. That was latent rather than live (nothing reads idx_bnds[1] once the
+    # end is reached, since the forward slide is gated off by extrapolate[1]) and
+    # the window was unaffected, because the slice that builds it clips. Fixed,
+    # and locked here so the two index spaces cannot silently drift apart again.
+    assert dyn.loaded_dump_bnds[1] == len(t) - 1
+    assert dyn.loaded_idx_bnds[1] == len(t) - 1
+    assert dyn.loaded_idx_bnds == dyn.loaded_dump_bnds
+
+
+@pytest.mark.parametrize('INUM', [2, 3, 4, 5, 7])
+def test_index_spaces_agree_at_every_slide(INUM):
+    # loaded_dump_bnds and loaded_idx_bnds are parallel inclusive descriptions of
+    # the same window. This source numbers dumps to match time indices, so they
+    # must be equal at all times, and both must describe the window the spline
+    # actually holds. Sweep both directions so every branch of update_spline runs.
+    dyn, _, t = _pair(_field_2d(nt=41), INUM)
+    qs = list(np.linspace(t[0], t[-1], 100)) + list(np.linspace(t[-1], t[0], 100))
+    for q in qs:
+        dyn(q)
+        lo, hi = dyn.loaded_idx_bnds
+        assert dyn.loaded_idx_bnds == dyn.loaded_dump_bnds
+        assert 0 <= lo <= hi <= len(t) - 1
+        assert len(dyn._flow[0].x) == hi - lo + 1
+        assert dyn._flow[0].x[0] == t[lo]
+        assert dyn._flow[0].x[-1] == t[hi]
+
+
+def test_backward_slide_returns_to_the_opening_window():
+    dyn, _, t = _pair(_field_2d(), 5)
+    dyn(t[-1])
+    assert dyn.loaded_idx_bnds[0] > 0
+    dyn(t[0])
+    assert dyn.loaded_idx_bnds == (0, 5)
+
+
+def test_jump_to_beginning_fast_path():
+    # update_spline has a dedicated branch for `time <= flow_times[INUM]` that
+    # reloads the opening window outright instead of sliding back one step at a
+    # time. Reach it from the far end of the dataset in a single call.
+    dyn, full, t = _pair(_field_2d(), 5)
+    dyn(t[-1])
+    n_loads_before = len(dyn.load_calls)
+    dyn(t[1])
+    assert dyn.loaded_idx_bnds == (0, 5)
+    assert len(dyn.load_calls) - n_loads_before == 1     # one load, not a walk
+    ref = full(t[1])
+    assert _diff(dyn(t[1]), ref) <= _tol(ref)
+
+
+def test_extrapolate_flags_track_position_in_the_dataset():
+    # (left, right): open at the start, closed in the middle, open at the end.
+    dyn, _, t = _pair(_field_2d(), 5)
+    assert dyn._flow[0].extrapolate == (True, False)
+    dyn(t[len(t) // 2])
+    assert dyn._flow[0].extrapolate == (False, False)
+    dyn(t[-1])
+    assert dyn._flow[0].extrapolate == (False, True)
+
+
+@pytest.mark.parametrize('nt', [17, 18, 19, 20, 21])
+def test_final_window_is_flagged_as_the_end_whatever_the_dataset_length(nt):
+    # Regression lock. The end-of-dataset test was `> d_finish` where it needed
+    # `>= d_finish`, so a window landing EXACTLY on the last dump fell through to
+    # the middle branch and was flagged (False, False) -- claiming there was more
+    # data to the right when there was none. It only triggers when the arithmetic
+    # lands exactly on the last index: forward slides advance the window end by
+    # INUM-1, so for INUM=4 it needs nt = 2 (mod 3) -- 17, 20, 23... Every other
+    # length overshoots and takes the correct branch, which is how it survived.
+    # Found by vetting the 3D loader against the real OpenFOAM series, which has
+    # 17 dumps and so lands exactly.
+    dyn, _, t = _pair(_field_2d(nt=nt), 4)
+    dyn(t[-1])
+    assert dyn.loaded_idx_bnds[1] == nt - 1, "window should reach the last dump"
+    assert dyn._flow[0].extrapolate == (False, True)
+
+
+def test_slide_count_is_bounded_over_a_monotone_sweep():
+    # A monotone walk must not reload the same window repeatedly. With 41 times
+    # and a 5-interval window, ceil(35/5) = 7 forward slides suffice; allow the
+    # opening load plus a small margin, but fail loudly on thrashing.
+    dyn, _, t = _pair(_field_2d(nt=41), 5)
+    for q in np.linspace(t[0], t[-1], 200):
+        dyn(q)
+    assert len(dyn.load_calls) <= 10
+
+
+def test_no_load_when_query_stays_inside_the_window():
+    dyn, _, t = _pair(_field_2d(), 5)
+    n_loads = len(dyn.load_calls)
+    for q in np.linspace(t[0], t[5], 25):
+        dyn(q)
+    assert len(dyn.load_calls) == n_loads
+
+
+def test_fmin_fmax_stay_tuples_and_widen_across_slides():
+    # Regression lock for the generator bug on the path where it actually bit:
+    # update_spline subscripts self.fmin on every
+    # slide, which raised TypeError when it was a generator expression.
+    dyn, _, t = _pair(_field_2d(), 5)
+    assert isinstance(dyn.fmin, tuple) and isinstance(dyn.fmax, tuple)
+    open_fmax = dyn.fmax
+    dyn(t[-1])
+    assert isinstance(dyn.fmin, tuple) and isinstance(dyn.fmax, tuple)
+    # v = t**2*y grows monotonically in t, so sweeping to the end must widen fmax
+    assert dyn.fmax[1] > open_fmax[1]
+    # fmax is a running maximum over data seen, so it never shrinks
+    assert all(new >= old for new, old in zip(dyn.fmax, open_fmax))
+    # unpacking twice must work (the plotting failure mode)
+    a, b = dyn.fmax
+    c, d = dyn.fmax
+    assert (a, b) == (c, d)
+
+
+def test_get_raw_loaded_data_returns_window_ndarrays():
+    # On a genuinely *sliding* window rather than INUM=True.
+    dyn, _, t = _pair(_field_2d(), 5)
+    _, _, comps = _field_2d()
+    dyn(t[9])                                   # land mid-dataset
+    lo, hi = dyn.loaded_idx_bnds
+    raw = dyn.get_raw_loaded_data()
+    assert len(raw) == 2
+    for comp in raw:
+        assert isinstance(comp, np.ndarray)
+        assert comp.shape[0] == hi - lo + 1
+        assert comp.shape[0] < len(t)           # the window, not the whole dataset
+    expected = comps[0][lo:hi + 1]
+    assert np.allclose(raw[0], expected, rtol=0, atol=_tol([expected]))
+
+
+def test_indexing_a_dynamically_loaded_fluiddata_raises():
+    # Container-style indexing is meaningless under dynamic loading, since the
+    # time index would refer to a shifting window. FluidData refuses it.
+    dyn, _, _ = _pair(_field_2d(), 5)
+    with pytest.raises(TypeError):
+        dyn[0]
+
+
+@pytest.mark.filterwarnings('ignore:INUM=20 spans the entire dataset')
+@pytest.mark.parametrize('INUM', [True, 20])
+def test_indexing_works_whenever_the_whole_dataset_is_resident(INUM):
+    # Regression: indexing was refused for every INUM but None, though only a
+    # sliding window makes a time index ambiguous. INUM=True, and an int that
+    # spans the dataset (21 time points here), hold every dump.
+    t, fpoints, comps = _field_2d()
+    fd = fluid.FluidData([c.copy() for c in comps], fpoints, t.copy(), INUM=INUM)
+    assert not fd.is_windowed
+    assert np.array_equal(fd[0][7], comps[0][7])
+    assert np.array_equal(fd[1][-3:], comps[1][-3:])
+
+
+@pytest.mark.parametrize('INUM', [1, 0, -3, 2.5])
+def test_an_INUM_below_two_is_refused(INUM):
+    # Regression: INUM=1 hung forever. Each forward slide loads INUM-1 new
+    # dumps, so the window never advanced. The loaders' own check was an
+    # assert, which python -O strips, and FluidData had none.
+    t, fpoints, comps = _field_2d()
+    with pytest.raises(ValueError, match='at least 2'):
+        fluid.FluidData([c.copy() for c in comps], fpoints, t.copy(), INUM=INUM)
+
+
+@pytest.mark.parametrize('loader', [lambda I: _vtk3d(I), lambda I: _ib2d(I),
+                                    lambda I: fluid.VTKXMLData(VTIXML, INUM=I)],
+                         ids=['VTK3dData', 'IB2dData', 'VTKXMLData'])
+def test_the_loaders_refuse_an_INUM_below_two(loader):
+    # Refused before any file is read: VTKXMLData would otherwise warn that its
+    # fixture is a single point thick in z.
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        with pytest.raises(ValueError, match='at least 2'):
+            loader(1)
+
+
+def test_a_loader_at_the_smallest_INUM_matches_full_linear():
+    # The minimum of 2 is the slider's own limit, not a margin. Drive a real
+    # loader there, in both directions, against the same data held whole.
+    dyn, full = _vtk3d(2), _vtk3d(True)
+    t = full.flow_times
+    for q in list(np.linspace(t[0], t[-1], 29)) + list(np.linspace(t[-1], t[0], 29)):
+        ref = full(q)
+        assert _diff(dyn(q), ref) <= _tol(ref)
+
+
+def test_not_enough_data_for_the_requested_window_raises():
+    t, fpoints, comps = _field_2d(nt=5)
+    with pytest.raises(RuntimeError):
+        _InMemorySource([c.copy() for c in comps], fpoints, t.copy(), INUM=5)
+
+
+# --------------------------------------------------------------------------- #
+#                        get_dudt under linear splining                        #
+# --------------------------------------------------------------------------- #
+
+def test_dudt_is_the_finite_difference_on_each_interval():
+    dyn, _, t = _pair(_field_2d(), 5)
+    _, _, comps = _field_2d()
+    for i in (0, 3, 9, 17):
+        dt = t[i + 1] - t[i]
+        expected = (comps[0][i + 1] - comps[0][i]) / dt
+        got = dyn.get_dudt(time=0.5 * (t[i] + t[i + 1]))
+        assert np.allclose(got[0], expected)
+
+
+def test_dudt_interval_convention_is_right_closed():
+    # A query landing exactly on a timestamp takes the slope of the interval to
+    # its LEFT -- i.e. du/dt is constant on (t[i-1], t[i]], not [t[i], t[i+1]).
+    # t0 is the documented exception, having no interval on its left. The choice
+    # is arbitrary (the true derivative does not exist at a breakpoint) but it is
+    # observable, so pin it.
+    dyn, _, t = _pair(_field_2d(), 5)
+    _, _, comps = _field_2d()
+    i = 6
+    left = (comps[0][i] - comps[0][i - 1]) / (t[i] - t[i - 1])
+    right = (comps[0][i + 1] - comps[0][i]) / (t[i + 1] - t[i])
+    assert not np.allclose(left, right)              # the intervals really differ
+
+    assert np.allclose(dyn.get_dudt(time=t[i])[0], left)
+    assert np.allclose(dyn.get_dudt(time=t[i] + 1e-9)[0], right)
+
+    first = (comps[0][1] - comps[0][0]) / (t[1] - t[0])
+    assert np.allclose(dyn.get_dudt(time=t[0])[0], first)
+
+
+def test_dudt_is_piecewise_constant_within_an_interval():
+    # Linear-in-time interpolation makes du/dt a step function -- constant on
+    # each interval and discontinuous at the breakpoints. This is the documented,
+    # deliberate cost of dynamic loading; pin it so a future change to the
+    # temporal scheme has to be explicit about breaking it.
+    dyn, _, t = _pair(_field_2d(), 5)
+    i = 6
+    inside = np.linspace(t[i], t[i + 1], 8)[1:]      # (t[i], t[i+1]] -- see above
+    ref = dyn.get_dudt(time=inside[0])
+    for q in inside[1:]:
+        assert _diff(dyn.get_dudt(time=q), ref) == 0.0
+
+
+def test_dudt_jumps_at_a_breakpoint():
+    dyn, _, t = _pair(_field_2d(), 5)
+    i = 6
+    at = dyn.get_dudt(time=t[i])                     # slope of (t[i-1], t[i]]
+    after = dyn.get_dudt(time=t[i] + 1e-9)           # slope of (t[i], t[i+1]]
+    # sin(t) has non-constant slope, so consecutive intervals differ
+    assert _diff(at, after) > 1e-3
+
+
+def test_dudt_matches_full_linear_across_slides():
+    dyn, full, t = _pair(_field_2d(), 5)
+    for q in np.linspace(t[0] + 1e-3, t[-1] - 1e-3, 61):
+        ref = full.get_dudt(time=q)
+        assert _diff(dyn.get_dudt(time=q), ref) <= _tol(ref)
+
+
+def test_dudt_is_zero_beyond_the_data_bounds():
+    # Velocity is held constant outside [t0, tN], so its time derivative is zero.
+    dyn, _, t = _pair(_field_2d(), 5)
+    for q in (t[0] - 0.5, t[-1] + 0.5):
+        for comp in dyn.get_dudt(time=q):
+            assert np.all(comp == 0.0)
+
+
+def test_dudt_at_every_time_point_matches_full_linear():
+    # Regression: LinearSpline.derivative tested its range with >= where
+    # __call__ uses >, so a time exactly on a window's last time point raised
+    # SplineRangeError -- the call that would have slid the window succeeded,
+    # and the derivative then refused it. With INUM=5 over 21 points that is
+    # t[5], t[9], t[13] and t[17]. Reachable from any inertial-particle run
+    # whose time lands on a dump time. A forward sweep never lands on a
+    # window's first time point, so this asserts nothing about that one.
+    dyn, full, t = _pair(_field_2d(), 5)
+    for q in t:
+        ref = full.get_dudt(time=q)
+        assert _diff(dyn.get_dudt(time=q), ref) <= _tol(ref)
+
+
+def test_dudt_at_the_final_time_point_is_the_slope_to_its_left():
+    # Regression: the same >= returned zero AT t[-1], as though that time were
+    # already beyond the data. The final time point follows the right-closed
+    # convention like every other. (Cubic splining never zeroed it.)
+    dyn, full, t = _pair(_field_2d(), 5)
+    _, _, comps = _field_2d()
+    expected = [(c[-1] - c[-2]) / (t[-1] - t[-2]) for c in comps]
+    assert not np.allclose(expected[0], 0.0)
+    for fd in (dyn, full):
+        assert _diff(fd.get_dudt(time=t[-1]), expected) <= _tol(expected)
+
+
+def test_dudt_3d_matches_full_linear():
+    dyn, full, t = _pair(_field_3d(), 5)
+    for q in np.linspace(t[0] + 1e-3, t[-1] - 1e-3, 31):
+        ref = full.get_dudt(time=q)
+        assert _diff(dyn.get_dudt(time=q), ref) <= _tol(ref)
+
+
+# --------------------------------------------------------------------------- #
+#                 per-dump mean cache under a sliding window                 #
+# --------------------------------------------------------------------------- #
+# Plot frames need the spatial mean of each velocity component. Computing it
+# from the field would make plotting re-stream the whole dataset a second time,
+# so FluidData caches the mean of each dump as that dump loads and evaluates it
+# with the same interpolation weights the field uses. The mean is linear and the
+# interpolation is a weighted sum of nodal fields, so this is exact, not an
+# approximation.
+#
+# The field here is not linear in time, so agreement with the field's own mean is
+# a statement about that identity rather than about both being trivially exact.
+
+def test_dump_means_match_the_field_across_slides():
+    dyn, _, t = _pair(_field_2d(), 5)
+    for q in np.linspace(t[0], t[-1], 37):
+        ref = tuple(f.mean() for f in dyn(q))
+        got = dyn.get_mean_velocity(time=q)
+        assert np.allclose(got, ref, rtol=0, atol=1e-12)
+
+
+def test_dump_means_match_full_linear():
+    # The windowed cache must not depend on which window happened to be resident
+    # -- the same property the windowed == full section pins for the field itself.
+    dyn, full, t = _pair(_field_2d(), 5)
+    for q in np.linspace(t[0], t[-1], 37):
+        assert np.allclose(dyn.get_mean_velocity(time=q),
+                           full.get_mean_velocity(time=q), rtol=0, atol=1e-12)
+
+
+def test_dump_means_survive_the_window_moving_on():
+    # This is the property the whole design rests on: after a run has swept
+    # forward, replaying it (which is what plot_all does) must cost no loads at
+    # all, even though the resident window is now at the far end of the dataset.
+    dyn, full, t = _pair(_field_2d(), 5)
+    for q in np.linspace(t[0], t[-1], 37):
+        dyn(q)
+    assert not np.isnan(dyn._dump_means).any(), 'a swept dump went unrecorded'
+
+    n_loads = len(dyn.load_calls)
+    for q in np.linspace(t[-1], t[0], 37):          # replay, backward
+        assert np.allclose(dyn.get_mean_velocity(time=q),
+                           full.get_mean_velocity(time=q), rtol=0, atol=1e-12)
+    assert len(dyn.load_calls) == n_loads, 'replaying the means re-streamed data'
+
+
+def test_dump_means_load_on_demand_when_never_seen():
+    # Falling back to a load is the correct answer for a time whose dumps have
+    # never been resident (a cache miss, not a cache lie).
+    dyn, full, t = _pair(_field_2d(), 5)
+    n_loads = len(dyn.load_calls)
+    q = t[-2]                                       # far outside the opening window
+    assert np.allclose(dyn.get_mean_velocity(time=q),
+                       full.get_mean_velocity(time=q), rtol=0, atol=1e-12)
+    assert len(dyn.load_calls) > n_loads
+
+
+def test_dump_means_recorded_on_the_jump_to_start_path():
+    # The backward slide has a separate fast path that reloads the opening window
+    # outright; it must record means too, or a backward replay silently misses.
+    dyn, full, t = _pair(_field_2d(), 5)
+    dyn(t[-1])                                      # sweep to the end
+    dyn(t[0])                                       # jump back to the beginning
+    assert dyn.loaded_idx_bnds == (0, 5)
+    for q in (t[0], t[1], t[3] + 0.01):
+        assert np.allclose(dyn.get_mean_velocity(time=q),
+                           full.get_mean_velocity(time=q), rtol=0, atol=1e-12)
+
+
+def test_dump_means_3d():
+    dyn, full, t = _pair(_field_3d(), 4)
+    for q in np.linspace(t[0], t[-1], 23):
+        got = dyn.get_mean_velocity(time=q)
+        assert len(got) == 3
+        assert np.allclose(got, full.get_mean_velocity(time=q),
+                           rtol=0, atol=1e-12)
+
+
+def test_dump_means_constant_extrapolation_beyond_data_bounds():
+    dyn, _, t = _pair(_field_2d(), 5)
+    assert np.allclose(dyn.get_mean_velocity(time=t[0] - 5),
+                       dyn.get_mean_velocity(time=t[0]))
+    assert np.allclose(dyn.get_mean_velocity(time=t[-1] + 5),
+                       dyn.get_mean_velocity(time=t[-1]))
+
+
+# --------------------------------------------------------------------------- #
+#          VTK3dData end-to-end -- the windowed path against real files        #
+# --------------------------------------------------------------------------- #
+# Everything above drives update_spline through a synthetic in-memory source.
+# These exercise the real 3D loader against the committed vtk fixture
+# (tests/fixtures/vtk3d_min, 8 dumps, regenerate with _gen_fixtures.py), which is
+# where the timeline actually comes from.
+#
+# The fixture field is u = t, v = x, w = t*z, with TIME = 0..7 in field data. u is
+# uniform in space and linear in t, so u(t) reads back the simulation time
+# directly -- which is what makes a frozen or truncated timeline obvious.
+
+VTK3D = str(FIXTURES / 'vtk3d_min')
+
+
+def _vtk3d(INUM):
+    return fluid.VTK3dData(VTK3D, title='IBAMR_db_', d_start=0, INUM=INUM)
+
+
+@pytest.mark.parametrize('INUM', [None, True, 4, 5])
+def test_vtk3d_flow_times_span_the_whole_series(INUM):
+    # Regression lock. flow_times used to be built from only the dumps loaded at
+    # construction, so on the windowed path it held INUM+1 entries instead of 8.
+    fd = _vtk3d(INUM)
+    assert fd.d_start == 0 and fd.d_finish == 7
+    assert len(fd.flow_times) == 8
+    assert np.allclose(fd.flow_times, np.arange(8.0))
+
+
+def test_vtk3d_holds_the_whole_series_by_default():
+    # Regression: the signature defaulted to INUM=7, a sliding window, while the
+    # docstring and every Environment reader default to None.
+    fd = fluid.VTK3dData(VTK3D, d_start=0)
+    assert fd.INUM is None and not fd.is_windowed
+    assert all(isinstance(f, fluid.fCubicSpline) for f in fd._flow)
+
+
+def test_vtk3d_refuses_dumps_it_cannot_find(tmp_path):
+    # These were asserts, which python -O strips.
+    with pytest.raises(FileNotFoundError, match='IBAMR_db_'):
+        fluid.VTK3dData(str(tmp_path), d_start=0)
+    with pytest.raises(ValueError, match='No dump 9'):
+        fluid.VTK3dData(VTK3D, d_start=9)
+    with pytest.raises(ValueError, match='No dump 12'):
+        fluid.VTK3dData(VTK3D, d_start=0, d_finish=12)
+
+
+def test_ib2d_refuses_a_directory_without_velocity_dumps(tmp_path):
+    # This was an assert, which python -O strips.
+    with pytest.raises(FileNotFoundError, match='uX'):
+        fluid.IB2dData(str(tmp_path), dt=0.1, print_dump=10)
+
+
+def _ib2d_copy(tmp_path, dumps, src='ib2d_fluid_min', names=('u',)):
+    for k in dumps:
+        for name in names:
+            shutil.copy(FIXTURES / src / '{}.{:04d}.vtk'.format(name, k), tmp_path)
+    return str(tmp_path)
+
+
+def test_ib2d_refuses_a_gap_in_its_dumps_at_construction(tmp_path):
+    # Regression: the timeline is built from the dump numbers, so a missing dump
+    # went unnoticed until a window slid onto it, partway through a run.
+    path = _ib2d_copy(tmp_path, [0, 1, 2, 3, 4, 6, 7])
+    with pytest.raises(FileNotFoundError, match=r'1 of the dumps 0 to 7.*: 5\.'):
+        fluid.IB2dData(path, dt=0.1, print_dump=10, INUM=2)
+
+
+def test_ib2d_scalar_form_needs_both_components_of_every_dump(tmp_path):
+    path = _ib2d_copy(tmp_path, [0, 1, 2], 'ib2d_fluid_scalar_min', ('uX',))
+    _ib2d_copy(tmp_path, [0, 2], 'ib2d_fluid_scalar_min', ('uY',))
+    with pytest.raises(FileNotFoundError, match=r': 1\.'):
+        fluid.IB2dData(path, dt=0.1, print_dump=10)
+
+
+def test_ib2d_starts_at_the_first_dump_on_disk_by_default(tmp_path):
+    # Regression: d_start defaulted to 0, so a series numbered from 1 -- as IB2d
+    # writes some -- could not be read without saying so.
+    fd = fluid.IB2dData(_ib2d_copy(tmp_path, range(1, 8)), dt=0.1, print_dump=10)
+    assert (fd.d_start, fd.d_finish) == (1, 7)
+    assert np.allclose(fd.flow_times, np.arange(7.0))
+    # The field is u = t on the fixture's own clock, so dump 1 reads 1.0 at the
+    # shifted time 0.
+    assert np.allclose(fd(0.0)[0], 1.0)
+
+
+@pytest.mark.parametrize('loader', [
+    lambda I: _ib2d(I), lambda I: _vtk3d(I),
+    lambda I: fluid.OpenFOAMData(str(FIXTURES / 'openfoam_min'), INUM=I),
+    lambda I: fluid.VTKXMLData(VTIXML, INUM=I)],
+    ids=['IB2dData', 'VTK3dData', 'OpenFOAMData', 'VTKXMLData'])
+def test_an_INUM_wider_than_the_series_is_refused_by_name(loader):
+    # Regression: three loaders read past the end of the series first, and
+    # reported a dump that was never part of it as missing (or an IndexError).
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        with pytest.raises(RuntimeError, match='INUM=40 asks for a window of 41'):
+            loader(40)
+
+
+def test_vtk3d_windowed_actually_slides():
+    # The consequence of the short timeline was not an error: INUM >= n_times-1
+    # sent FluidData down the "all in memory" branch with extrapolate=(True,True),
+    # which makes update_spline unreachable. Assert we are on the windowed path.
+    fd = _vtk3d(4)
+    assert isinstance(fd._flow[0], fluid.LinearSpline)
+    assert fd._flow[0].extrapolate == (True, False)     # closed on the right
+    assert fd.loaded_idx_bnds == (0, 4)
+    assert len(fd._flow[0].x) == 5                      # window, not all 8
+    fd(7.0)
+    assert fd.loaded_idx_bnds[1] == 7                   # it really moved
+    assert len(fd._flow[0].x) <= 5
+
+
+def test_vtk3d_windowed_does_not_freeze_at_the_end_of_the_first_window():
+    # The user-visible symptom: u = t everywhere, so a frozen fluid reports the
+    # last time of the opening window forever. Before the fix u(6) and u(7) both
+    # came back as 4.0, silently.
+    fd = _vtk3d(4)
+    for q in (0.0, 2.0, 4.0, 4.5, 6.0, 7.0):
+        assert np.allclose(fd(q)[0], q), "u should equal t everywhere"
+
+
+def test_vtk3d_windowed_matches_full_load():
+    # Windowed vs. everything-in-memory, on the same files.
+    dyn = _vtk3d(4)
+    full = _vtk3d(True)
+    for q in np.linspace(0.0, 7.0, 43):
+        ref = full(q)
+        assert _diff(dyn(q), ref) <= _tol(ref)
+
+
+def test_vtk3d_windowed_mean_velocity_matches_full_load():
+    # The plotting mean cache, on real files and a real slide. u = t everywhere,
+    # so the x-component mean reads back the simulation time -- a frozen or
+    # mis-indexed cache is immediately visible.
+    dyn = _vtk3d(4)
+    full = _vtk3d(True)
+    for q in np.linspace(0.0, 7.0, 29):
+        got = dyn.get_mean_velocity(time=q)
+        assert np.allclose(got, full.get_mean_velocity(time=q), rtol=0, atol=1e-12)
+        assert np.isclose(got[0], q)
+
+
+def test_vtk3d_static_and_spatial_components_survive_the_slide():
+    # v = x is steady and w = t*z varies in both; both must stay correct after
+    # the window has moved, which catches a slide that loads the wrong dumps.
+    fd = _vtk3d(4)
+    x, y, z = [np.linspace(0, e, n) for e, n in zip((4.0, 3.0, 2.0), (5, 4, 3))]
+    X, _, Z = np.meshgrid(x, y, z, indexing='ij')
+    for q in (1.0, 6.5):
+        u, v, w = fd(q)
+        assert np.allclose(u, q)
+        assert np.allclose(v, X)
+        assert np.allclose(w, q * Z)
+
+
+def test_vtk3d_grid_and_domain():
+    fd = _vtk3d(4)
+    assert fd.ndim == 3
+    assert fd.fshape == (8, 5, 4, 3)
+    assert np.allclose(fd.L, [4.0, 3.0, 2.0])
+    for got, want in zip(fd.flow_points, (np.linspace(0, 4, 5),
+                                          np.linspace(0, 3, 4),
+                                          np.linspace(0, 2, 3))):
+        assert np.allclose(got, want)
+
+
+def test_inum_spanning_the_dataset_warns():
+    # Asking for a window at least as wide as the dataset leaves nothing to
+    # slide; the object silently holds everything in memory instead. Say so --
+    # this is the guard that would have made the short-timeline bug loud.
+    with pytest.warns(UserWarning, match='no dynamic loading'):
+        fd = _vtk3d(7)
+    assert fd._flow[0].extrapolate == (True, True)
+
+
+def test_short_flow_times_is_rejected():
+    # The direct lock on the defect: a loader that timestamps only the window it
+    # loaded first must not be able to construct silently. INUM=True/None are
+    # exempt, since neither slides a window.
+    t, fpoints, comps = _field_2d(nt=21)
+
+    class _ShortTimeline(_InMemorySource):
+        def __init__(self, full_flow, flow_points, flow_times, INUM):
+            # d_finish advertises 21 dumps, but only INUM+1 timestamps are passed
+            self._full = [np.asarray(f) for f in full_flow]
+            self.load_calls = []
+            self.d_start = 0
+            self.d_finish = len(flow_times) - 1
+            self.loaded_dump_bnds = (0, INUM)
+            self.loaded_idx_bnds = (0, INUM)
+            window = self.load_dumpfiles(0, INUM)
+            fluid.FluidData.__init__(self, window, flow_points,
+                                     flow_times[0:INUM+1], INUM)
+
+    with pytest.raises(RuntimeError, match='entire dump range'):
+        _ShortTimeline([c.copy() for c in comps], fpoints, t.copy(), 5)
+
+
+# --------------------------------------------------------------------------- #
+#     the slider driven through the public API, rather than called directly    #
+# --------------------------------------------------------------------------- #
+# Everything above calls the FluidData object itself. These drive it the way a
+# user does -- through Swarm.move, calculate_FTLE, save_fluid, the plotting
+# backdrop -- because that is where a window slide actually happens in practice
+# and none of those paths had ever been run against a streaming source. Each
+# asserts the streamed answer equals the everything-in-memory answer, so a slide
+# landing in the wrong place cannot pass.
+
+
+def _field_gentle(nt=21, nx=6, ny=5, t_end=4.0):
+    '''A bounded, slowly varying field that keeps agents inside the domain.
+
+    _field_2d's v = t^2*y is deliberately violent, which is right for checking
+    interpolation but ejects every agent within a few steps -- and a test whose
+    agents have all left the domain proves nothing about the slider.
+    '''
+    t = np.linspace(0.0, t_end, nt)
+    x = np.linspace(0.0, 10.0, nx)
+    y = np.linspace(0.0, 8.0, ny)
+    X, Y = np.meshgrid(x, y, indexing='ij')
+    u = np.stack([0.5*np.sin(tt)*np.ones_like(X) for tt in t])
+    v = np.stack([0.3*np.cos(tt)*np.ones_like(Y) for tt in t])
+    return t, (x, y), [u, v]
+
+
+def _envir(INUM, field=None):
+    '''An Environment whose flow is windowed (int INUM) or fully resident.'''
+    t, fpoints, comps = field if field is not None else _field_gentle()
+    if INUM is True or INUM is None:
+        flow = fluid.FluidData([c.copy() for c in comps], fpoints, t.copy(),
+                               INUM=INUM)
+    else:
+        flow = _InMemorySource([c.copy() for c in comps], fpoints, t.copy(), INUM)
+    envir = planktos.Environment(Lx=10.0, Ly=8.0)
+    envir.flow = flow
+    envir.L = [10.0, 8.0]
+    envir._reset_flow_variables()
+    return envir, t
+
+
+@pytest.mark.parametrize('ndim', [2, 3])
+def test_periodic_fluid_survives_a_window_slide(ndim):
+    # Periodic x dynamic, in either dimension. periodic_dim is a property of the spatial grid and the
+    # slider only ever touches the time axis, so these are expected to be
+    # independent -- but "expected to be" is what this is here to replace.
+    # Sampled at the upper grid edge, where periodic wrapping is what decides
+    # the answer, and after the window has moved off the opening one.
+    if ndim == 2:
+        t, fpoints, comps = _field_2d()
+        per = (True, False)
+        edge = np.array([[fpoints[0][-1], 4.0], [0.0, 4.0]])
+    else:
+        t, fpoints, comps = _field_3d()
+        per = (True, True, False)
+        edge = np.array([[fpoints[0][-1], 3.0, 3.0], [0.0, 3.0, 3.0]])
+
+    class _Periodic(_InMemorySource):
+        def __init__(self, full_flow, flow_points, flow_times, INUM):
+            self._full = [np.asarray(f) for f in full_flow]
+            self.load_calls = []
+            self.d_start = 0
+            self.d_finish = len(flow_times) - 1
+            self.loaded_dump_bnds = (0, INUM)
+            self.loaded_idx_bnds = (0, INUM)
+            fluid.FluidData.__init__(self, self.load_dumpfiles(0, INUM),
+                                     flow_points, flow_times, INUM,
+                                     periodic_dim=per)
+
+    dyn = _Periodic([c.copy() for c in comps], fpoints, t.copy(), 4)
+    full = fluid.FluidData([c.copy() for c in comps], fpoints, t.copy(),
+                           INUM=True, periodic_dim=per)
+    assert dyn.periodic_dim == full.periodic_dim == per
+
+    envir_d = planktos.Environment(Lx=10.0, Ly=8.0)
+    envir_f = planktos.Environment(Lx=10.0, Ly=8.0)
+    for e, f in ((envir_d, dyn), (envir_f, full)):
+        e.flow = f
+        e.L = [fp[-1] for fp in fpoints]
+
+    for q in np.linspace(t[0], t[-1], 23):
+        ref = full(q)
+        assert _diff(dyn(q), ref) <= _tol(ref)
+        assert np.allclose(envir_d.interpolate_flow(edge, time=q),
+                           envir_f.interpolate_flow(edge, time=q))
+    assert dyn.loaded_idx_bnds[0] > 0, "the window should have moved"
+
+
+def test_swarm_move_drives_the_window_and_matches_a_resident_fluid():
+    # The usage that matters: the slide happens inside the agent loop, not from a
+    # test calling the fluid object. Diffusion is switched off so the two runs are
+    # deterministic and any difference is the fluid, not the RNG.
+    dyn_e, t = _envir(4)
+    full_e, _ = _envir(True)
+    swarms = []
+    for e in (dyn_e, full_e):
+        e.set_boundary_conditions(('noflux', 'noflux'), ('noflux', 'noflux'))
+        sw = planktos.Swarm(swarm_size=25, envir=e, init='random', seed=7)
+        sw.shared_props['cov'] = np.zeros((2, 2))       # pure advection
+        swarms.append(sw)
+    assert np.allclose(swarms[0].positions, swarms[1].positions), "same start"
+
+    opening = dyn_e.flow.loaded_idx_bnds
+    for _ in range(38):
+        for sw in swarms:
+            sw.move(0.1)
+
+    assert dyn_e.flow.loaded_idx_bnds[0] > opening[0], "the window should have moved"
+    assert len(dyn_e.flow.load_calls) > 1
+    assert np.ma.count(swarms[0].positions[:, 0]) == 25, "agents should be retained"
+    assert np.allclose(swarms[0].positions, swarms[1].positions, rtol=0, atol=1e-12)
+
+
+def test_move_swarms_with_a_streaming_fluid():
+    # Several swarms sharing one Environment must not each trigger their own
+    # reload of the same window.
+    envir, t = _envir(4)
+    for _ in range(2):
+        sw = planktos.Swarm(swarm_size=8, envir=envir)
+        sw.shared_props['cov'] = np.eye(2)*1e-4
+    n0 = len(envir.flow.load_calls)
+    for _ in range(25):
+        envir.move_swarms(0.1)
+    assert envir.flow.loaded_idx_bnds[0] > 0
+    assert len(envir.flow.load_calls) - n0 <= 5, "one reload per slide, not per swarm"
+
+
+def test_get_vorticity_across_a_slide():
+    # The plotting backdrop path: unlike the statistics, fluid='vort' does pull
+    # the field, so it can trigger a load.
+    dyn, _ = _envir(4)
+    full, t = _envir(True)
+    for q in (0.5, 3.5):
+        got, ref = dyn.flow.get_vorticity(time=q), full.flow.get_vorticity(time=q)
+        assert np.all(np.isfinite(got))
+        assert np.allclose(got, ref, rtol=0, atol=1e-12)
+    assert dyn.flow.loaded_idx_bnds[0] > 0
+
+
+@pytest.mark.parametrize('backward', [False, True])
+def test_calculate_FTLE_over_a_streaming_fluid(backward):
+    # FTLE integrates many tracers over a long span, so it walks the window
+    # across the dataset -- and backward=True walks it the other way, the
+    # direction least exercised elsewhere.
+    dyn, t = _envir(4)
+    full, _ = _envir(True)
+    for e in (dyn, full):
+        e.calculate_FTLE((10, 8), T=2.0, dt=0.1, backward=backward)
+    assert np.all(np.isfinite(dyn.FTLE_largest.compressed()))
+    assert np.allclose(dyn.FTLE_largest, full.FTLE_largest, rtol=0, atol=1e-10)
+
+
+def test_save_fluid_walks_the_whole_series_from_a_window(tmp_path):
+    # save_fluid(flow_times=True) asks for every dump in turn. Starting with the
+    # window parked at the END makes it jump back to the beginning and then sweep
+    # forward, and the bytes it writes are checked against a resident fluid --
+    # so a slide landing on the wrong dumps shows up as wrong data on disk, not
+    # merely as a wrong index.
+    dyn, t = _envir(4)
+    full, _ = _envir(True)
+    dyn.flow(t[-1])
+    assert dyn.flow.loaded_idx_bnds[1] == len(t) - 1
+
+    dyn.save_fluid(str(tmp_path), 'vel', time_history=False, flow_times=True)
+    files = sorted(f for f in os.listdir(tmp_path) if f.endswith('.vtk'))
+    assert len(files) == len(t), "one file per dump in the series"
+
+    worst = 0.0
+    tol = 0.0
+    for cyc, time in enumerate(t):
+        fname = tmp_path / 'vel_{:04d}.vtk'.format(cyc)
+        assert fname.is_file(), "no file written for dump {}".format(cyc)
+        data, _, _ = _dataio.read_vtk_Rectilinear_Grid_Vector(str(fname))
+        ref = full.flow(time)
+        worst = max(worst, max(np.abs(np.squeeze(data[k]) - np.squeeze(ref[k])).max()
+                               for k in range(2)))
+        tol = max(tol, _tol(ref))
+    # Round-off, not exactness: a value written from a window boundary was
+    # carried there by evaluating the outgoing spline, which costs an ulp (see
+    # the module docstring). A slide landing on the wrong dumps would be wrong by
+    # the size of the field, not by 1e-17.
+    assert worst <= tol, "streamed save differs from a resident fluid"
+
+
+# --------------------------------------------------------------------------- #
+#       OpenFOAMData end-to-end -- the finite-volume path, against files       #
+# --------------------------------------------------------------------------- #
+# The same questions as the VTK3dData block above, for the loader whose timeline
+# is the one most able to go wrong: it is built from a series index, filtered by
+# what is actually on disk, and indexed densely over the survivors. The fixture
+# declares 8 dumps and 2 are absent, so 6 remain at t = 0,1,2,3,4,6.
+#
+# The field assembles to u = t, v = x, w = t*z over the interior, so u(t) reads
+# back the simulation time and a frozen or mis-indexed timeline is obvious.
+
+OPENFOAM = str(FIXTURES / 'openfoam_min')
+
+
+def _openfoam(INUM):
+    with pytest.warns(UserWarning):     # absent dumps, uneven spacing, BC corner
+        return fluid.OpenFOAMData(OPENFOAM, INUM=INUM)
+
+
+@pytest.mark.parametrize('INUM', [None, True, 4])
+def test_openfoam_flow_times_span_the_surviving_series(INUM):
+    # The VTK3dData trap, in the form it takes here. "The whole series" means the
+    # dumps that EXIST, not the ones the index declares: building flow_times from
+    # the manifest while indexing dumps by what is on disk would put the two
+    # index spaces silently out of step.
+    fd = _openfoam(INUM)
+    assert fd.d_start == 0 and fd.d_finish == 5
+    assert len(fd.flow_times) == 6
+    assert np.allclose(fd.flow_times, [0., 1., 2., 3., 4., 6.])
+
+
+def test_openfoam_windowed_actually_slides():
+    fd = _openfoam(4)
+    assert isinstance(fd._flow[0], fluid.LinearSpline)
+    assert fd._flow[0].extrapolate == (True, False)
+    assert fd.loaded_idx_bnds == (0, 4)
+    assert len(fd._flow[0].x) == 5          # the window, not all 6
+    fd(6.0)
+    assert fd.loaded_idx_bnds[1] == 5       # it really moved
+
+
+def test_openfoam_windowed_does_not_freeze_at_the_end_of_the_first_window():
+    # u = t over the interior, so a frozen fluid reports the last time of the
+    # opening window forever.
+    fd = _openfoam(4)
+    for q in (0.0, 2.0, 4.0, 4.5, 6.0):
+        assert np.allclose(fd(q)[0][1:-1, 1:-1, 1:-1], q)
+
+
+def test_openfoam_windowed_matches_full_load():
+    dyn = _openfoam(4)
+    full = _openfoam(True)
+    for q in np.linspace(0.0, 6.0, 31):
+        ref = full(q)
+        assert _diff(dyn(q), ref) <= _tol(ref)
+
+
+def test_openfoam_the_gap_is_interpolated_across_not_skipped():
+    # t=5 is missing, so the interval 4->6 is twice as wide. The timeline must
+    # still be in simulation time: a loader that indexed by dump position would
+    # put the last dump at t=5 and shift everything after the hole.
+    fd = _openfoam(4)
+    assert np.allclose(fd(6.0)[0][1:-1, 1:-1, 1:-1], 6.0)
+    # halfway across the wide interval, linear in time
+    assert np.allclose(fd(5.0)[0][1:-1, 1:-1, 1:-1], 5.0)
+
+
+def test_openfoam_windowed_mean_velocity_matches_full_load():
+    # The plot-statistics cache, on the finite-volume loader and a real slide.
+    # u = t over the interior, so a frozen or mis-indexed cache is visible in the
+    # x-component mean; the wall shell and caps shift it off t, hence the
+    # comparison against a full load rather than against t itself.
+    dyn = _openfoam(4)
+    full = _openfoam(True)
+    for q in np.linspace(0.0, 6.0, 19):
+        assert np.allclose(dyn.get_mean_velocity(time=q),
+                           full.get_mean_velocity(time=q), rtol=0, atol=1e-12)
+
+
+def test_openfoam_windowed_dudt_matches_full_load():
+    # get_dudt through the real loader: piecewise constant under linear splining,
+    # and it must not change with which window happens to be resident.
+    dyn = _openfoam(4)
+    full = _openfoam(True)
+    for q in (0.5, 2.5, 3.5, 5.0):
+        assert _diff(dyn.get_dudt(time=q), full.get_dudt(time=q)) <= 1e-12
+
+
+def test_openfoam_boundary_data_follows_the_timestep():
+    # The caps carry real data that varies in time, so each dump must read its
+    # own patch files rather than the ones resolved when the mesh was built.
+    fd = _openfoam(4)
+    for q in (1.0, 6.0):
+        u, _, w = fd(q)
+        assert np.allclose(u[1:-1, 1:-1, 0], q)     # inlet cap
+        assert np.allclose(u[1:-1, 1:-1, -1], q)    # outlet cap
+        assert np.allclose(w[1:-1, 1:-1, -1], q*2.0)
+
+
+# --------------------------------------------------------------------------- #
+#      VTKXMLData end-to-end -- a planar .vti series indexed by a .pvd         #
+# --------------------------------------------------------------------------- #
+# The fixture (tests/fixtures/vtixml_min) is 8 dumps one point thick in z, timed
+# by its .pvd from 0.1. The field is u = t, v = x + 10*y, w = 0, so u reads back
+# the environment time plus 0.1, and the flat z axis has to be dropped again on
+# every windowed load.
+
+VTIXML = str(FIXTURES / 'vtixml_min')
+
+
+def _vtixml(INUM, path=VTIXML):
+    with pytest.warns(UserWarning, match='single point thick'):
+        return fluid.VTKXMLData(path, INUM=INUM)
+
+
+@pytest.mark.parametrize('INUM', [None, True, 4, 5])
+def test_vtkxml_flow_times_span_the_whole_series(INUM):
+    fd = _vtixml(INUM)
+    assert fd.d_start == 0 and fd.d_finish == 7
+    assert len(fd.flow_times) == 8
+    assert np.allclose(fd.flow_times, 0.1*np.arange(8))
+
+
+def test_vtkxml_windowed_actually_slides():
+    fd = _vtixml(4)
+    assert isinstance(fd._flow[0], fluid.LinearSpline)
+    assert fd._flow[0].extrapolate == (True, False)
+    assert fd.loaded_idx_bnds == (0, 4)
+    assert len(fd._flow[0].x) == 5          # the window, not all 8
+    fd(0.7)
+    assert fd.loaded_idx_bnds[1] == 7       # it really moved
+
+
+def test_vtkxml_windowed_does_not_freeze_and_stays_2d():
+    fd = _vtixml(4)
+    for q in (0.0, 0.2, 0.4, 0.45, 0.6, 0.7):
+        u, v = fd(q)                        # two components after every slide
+        assert u.shape == (6, 5)
+        assert np.allclose(u, q + 0.1)
+
+
+def test_vtkxml_windowed_matches_full_load():
+    dyn = _vtixml(4)
+    full = _vtixml(True)
+    for q in np.linspace(0.0, 0.7, 29):
+        ref = full(q)
+        assert _diff(dyn(q), ref) <= _tol(ref)
+
+
+def test_vtkxml_windowed_mean_velocity_matches_full_load():
+    dyn = _vtixml(4)
+    full = _vtixml(True)
+    for q in np.linspace(0.0, 0.7, 15):
+        got = dyn.get_mean_velocity(time=q)
+        assert np.allclose(got, full.get_mean_velocity(time=q), rtol=0, atol=1e-12)
+        assert np.isclose(got[0], q + 0.1)
+
+
+def test_vtkxml_slide_that_loads_a_single_dump(tmp_path):
+    # Six dumps with INUM=4: the slide past the opening window loads one dump,
+    # which still has to arrive with its time axis and lose its flat z axis.
+    src = tmp_path / 'series'
+    shutil.copytree(VTIXML, src)
+    pvd = src / 'flow.pvd'
+    pvd.write_text(''.join(line for line in pvd.read_text().splitlines(True)
+                           if 'flow_0007' not in line and 'flow_0008' not in line))
+    fd = _vtixml(4, path=str(src))
+    assert fd.d_finish == 5
+    u, v = fd(0.5)
+    assert np.allclose(u, 0.6)
+    assert fd.loaded_idx_bnds[1] == 5
+
+
+def test_vtkxml_windowed_over_files_with_no_collection(tmp_path):
+    # Found by globbing and timed with dt: the timeline still spans every file
+    # up front, and the window slides across it.
+    src = tmp_path / 'series'
+    shutil.copytree(VTIXML, src)
+    (src / 'flow.pvd').unlink()
+    with pytest.warns(UserWarning, match='single point thick'):
+        fd = fluid.VTKXMLData(str(src), INUM=4, dt=0.1)
+    assert fd.dump_source == 'files'
+    assert np.allclose(fd.flow_times, 0.1*np.arange(8))
+    for q in (0.0, 0.45, 0.7):
+        assert np.allclose(fd(q)[0], q + 0.1)
+    assert fd.loaded_idx_bnds[1] == 7
+
+
+# --------------------------------------------------------------------------- #
+#        IB2dData end-to-end -- the 2D reference path, against real files       #
+# --------------------------------------------------------------------------- #
+# 2D IB2d is the dynamic-loading path that has actually been exercised by hand,
+# and it was the only loader with no automated coverage whatsoever -- every
+# read_IB2d_fluid_data call in the tree lives in tests/manual/ and needs external
+# data. It is also the loader most exposed to the FluidData guards, since
+# IB2dData publishes d_start/d_finish like any streaming source.
+#
+# Fixture: tests/fixtures/ib2d_fluid_min, 8 dumps of u.####.vtk on a 6x5 grid.
+# IB2d omits the periodic endpoint in each direction and Planktos wraps it back
+# on, so the loaded field is 7x6 over a 6x5 domain. Fields are
+#     u = t                 -> u reads back the simulation time
+#     v = sin(2*pi*x/Lx)    -> steady, periodic in x
+# and dt=0.1, print_dump=10 puts the timestamps at 0, 1, ... 7.
+
+IB2D = str(FIXTURES / 'ib2d_fluid_min')
+
+
+def _ib2d(INUM):
+    return fluid.IB2dData(IB2D, dt=0.1, print_dump=10, d_start=0, INUM=INUM)
+
+
+@pytest.mark.parametrize('INUM', [None, True, 4])
+def test_ib2d_flow_times_span_the_whole_series(INUM):
+    fd = _ib2d(INUM)
+    assert (fd.d_start, fd.d_finish) == (0, 7)
+    assert len(fd.flow_times) == 8
+    assert np.allclose(fd.flow_times, np.arange(8.0))
+
+
+@pytest.mark.parametrize('INUM', [None, True, 4])
+def test_ib2d_construction_is_warning_free(INUM):
+    # The guards added to FluidData must not fire on a correct loader. IB2dData
+    # derives flow_times analytically over the full dump range, so it satisfies
+    # them -- but it is the path with the most to lose if they are wrong.
+    #
+    # Only warnings raised from inside planktos count. Promoting *every* warning
+    # to an error also catches third-party deprecations that this suite neither
+    # causes nor can fix: on numpy 2.5, vtk's own numpy_support does
+    # `result.shape = shape`, which numpy now deprecates, so a blanket
+    # simplefilter('error') fails here for reasons having nothing to do with the
+    # guards. That the guards *do* fire when they should is pinned separately by
+    # test_inum_spanning_the_dataset_warns and test_short_flow_times_is_rejected.
+    import warnings
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        _ib2d(INUM)
+    ours = _from_planktos(caught)
+    assert not ours, 'planktos warned during a correct load: {}'.format(
+        [str(w.message) for w in ours])
+
+
+def test_ib2d_windowed_actually_slides():
+    fd = _ib2d(4)
+    assert isinstance(fd._flow[0], fluid.LinearSpline)
+    assert fd._flow[0].extrapolate == (True, False)
+    assert fd.loaded_idx_bnds == (0, 4)
+    assert len(fd._flow[0].x) == 5
+    fd(7.0)
+    assert fd.loaded_idx_bnds[1] == 7
+    assert fd.loaded_idx_bnds == fd.loaded_dump_bnds
+
+
+def test_ib2d_windowed_does_not_freeze():
+    fd = _ib2d(4)
+    for q in (0.0, 2.0, 4.0, 4.5, 6.0, 7.0):
+        assert np.allclose(fd(q)[0], q), "u should equal t everywhere"
+
+
+def test_ib2d_windowed_matches_full_load():
+    dyn, full = _ib2d(4), _ib2d(True)
+    for q in np.linspace(0.0, 7.0, 43):
+        ref = full(q)
+        assert _diff(dyn(q), ref) <= _tol(ref)
+
+
+def test_ib2d_periodic_wrap_and_domain():
+    # IB2d omits the duplicate endpoint; Planktos restores it. A 6x5 dump becomes
+    # a 7x6 field spanning a 6x5 domain, with the appended edge copying the first.
+    fd = _ib2d(4)
+    assert fd.fshape == (8, 7, 6)
+    assert np.allclose(fd.L, [6.0, 5.0])
+    assert np.allclose(fd.flow_points[0], np.arange(7.0))
+    assert np.allclose(fd.flow_points[1], np.arange(6.0))
+    u, v = fd(3.0)
+    assert np.allclose(u, 3.0)
+    x = fd.flow_points[0][:, None]
+    assert np.allclose(v, np.sin(2 * np.pi * x / 6.0))
+    assert np.allclose(v[-1, :], v[0, :])      # wrapped edge duplicates the first
+    assert np.allclose(u[:, -1], u[:, 0])
+
+
+def test_ib2d_single_dump_is_time_invariant_and_wrapped():
+    # One dump comes back with no time axis, its periodic endpoint restored
+    # just as for a series.
+    fd = fluid.IB2dData(IB2D, dt=0.1, print_dump=10, d_start=3, d_finish=3)
+    assert fd.flow_times is None
+    assert fd.fshape == (7, 6)
+    assert np.allclose(fd.L, [6.0, 5.0])
+    u, v = fd[0], fd[1]
+    assert np.allclose(u, 3.0)
+    x = fd.flow_points[0][:, None]
+    assert np.allclose(v, np.sin(2 * np.pi * x / 6.0))
+    assert np.array_equal(v[-1, :], v[0, :])
+    assert np.array_equal(u[:, -1], u[:, 0])
+
+
+# --------------------------------------------------------------------------- #
+#        the leading time axis a load_dumpfiles is contracted to return       #
+# --------------------------------------------------------------------------- #
+# update_spline concatenates what load_dumpfiles hands back against the window,
+# and _record_dump_means reduces over its leading axis, so the axis has to be
+# there even when only one dump is being loaded. Two of the readers behind
+# load_dumpfiles drop it for a single dump -- _read_IB2d_dumpfiles branches on
+# d_start != d_finish, _read_vtkfiles calls squeeze() -- which is right for the
+# constructor's one-shot read and wrong on the streaming path.
+#
+# A single-dump load is not exotic: a forward slide takes INUM-1 dumps until it
+# reaches the end of the series and then takes whatever is left, and that
+# remainder is one dump whenever the dump count is k*(INUM-1)+3 -- with INUM=4,
+# any of 6, 9, 12, 15, ... time points. It failed loudly rather than silently (a
+# broadcast error out of _record_dump_means, ahead of a concatenate that would
+# also have failed), so no result was ever wrong because of it.
+
+@pytest.mark.parametrize('field, dumped', [(_field_2d, (6, 5)),
+                                           (_field_3d, (4, 4, 4))])
+def test_load_dumps_guarantees_the_leading_time_axis(field, dumped):
+    # _load_dumps is the contract boundary: whatever a subclass' load_dumpfiles
+    # hands back, what reaches update_spline carries a time axis.
+    t, fpoints, comps = field()
+    src = _InMemorySource([c.copy() for c in comps], fpoints, t.copy(), 4)
+
+    # a reader that drops the axis for a single dump, as two of the real ones do
+    src.load_dumpfiles = lambda a, b: [c[a] for c in src._full]
+    assert all(f.shape == (1,) + dumped for f in src._load_dumps(2, 2))
+
+    # and one that keeps it, for a single dump and for several
+    src.load_dumpfiles = lambda a, b: [c[a:b+1] for c in src._full]
+    assert all(f.shape == (1,) + dumped for f in src._load_dumps(2, 2))
+    assert all(f.shape == (3,) + dumped for f in src._load_dumps(2, 4))
+
+
+def _ib2d_subset(tmp_path, ndumps, INUM):
+    '''The IB2d fixture truncated to ndumps dumps, so the slide arithmetic lands
+    on a single-dump load at the end of the series.'''
+    d = tmp_path / 'ib2d_{}'.format(ndumps)
+    d.mkdir()
+    for k in range(ndumps):
+        shutil.copy(FIXTURES / 'ib2d_fluid_min' / 'u.{:04d}.vtk'.format(k), d)
+    return fluid.IB2dData(str(d), dt=0.1, print_dump=10, INUM=INUM)
+
+
+def test_ib2d_slide_that_loads_a_single_dump(tmp_path, monkeypatch):
+    # 6 time points with INUM=4: the opening window is 0-4, and the one forward
+    # slide has exactly dump 5 left to load.
+    fd = _ib2d_subset(tmp_path, 6, 4)
+    assert len(fd.flow_times) == 6
+    calls = []
+    original = type(fd).load_dumpfiles
+
+    def counted(self, a, b):
+        calls.append((a, b))
+        return original(self, a, b)
+
+    monkeypatch.setattr(type(fd), 'load_dumpfiles', counted)
+    u, v = fd(4.5)
+    assert (5, 5) in calls                      # a genuine single-dump load
+    assert u.shape == fd.fshape[1:]
+    assert np.allclose(u, 4.5)                  # u = t in this fixture
+    # The mean sidecar is the thing a mis-shaped return corrupts first.
+    assert np.allclose(fd._dump_means[:, 0], np.arange(6.0))
+
+
+def test_vtk3d_slide_that_loads_a_single_dump(tmp_path):
+    # The 3D counterpart, where the axis was dropped by squeeze() instead. The
+    # committed series is 8 dumps and 8 = k*3+3 has no integer solution, so the
+    # series is truncated to 6 -- which does, with INUM=4.
+    fd = fluid.VTK3dData(VTK3D, title='IBAMR_db_', d_start=0, d_finish=5, INUM=4)
+    assert len(fd.flow_times) == 6
+    u, v, w = fd(4.5)
+    assert u.shape == fd.fshape[1:]
+    assert np.allclose(u, 4.5)                  # u = t in this fixture
+    assert np.allclose(fd._dump_means[:, 0], np.arange(6.0))
+
+
+# --------------------------------------------------------------------------- #
+#                   is_windowed -- the regime discriminator                   #
+# --------------------------------------------------------------------------- #
+
+def test_is_windowed_is_true_only_when_a_window_can_slide():
+    t, fpoints, comps = _field_2d(nt=21)
+    assert _InMemorySource([c.copy() for c in comps], fpoints, t.copy(), 4) \
+        .is_windowed
+    # Everything resident, either spline class:
+    assert not fluid.FluidData([c.copy() for c in comps], fpoints, t.copy(),
+                               INUM=None).is_windowed
+    assert not fluid.FluidData([c.copy() for c in comps], fpoints, t.copy(),
+                               INUM=True).is_windowed
+    # An int INUM spanning the dataset holds everything and never slides, so it
+    # belongs with the resident cases and not with its own spelling.
+    with pytest.warns(UserWarning, match='spans the entire dataset'):
+        wide = fluid.FluidData([c.copy() for c in comps], fpoints, t.copy(),
+                               INUM=len(t) - 1)
+    assert not wide.is_windowed
+    # Time-invariant flow has no dumps at all.
+    x = np.linspace(0, 1, 4)
+    assert not fluid.FluidData([np.zeros((4, 4))] * 2, (x, x)).is_windowed
+
+
+# --------------------------------------------------------------------------- #
+#                          the dump-arrival observer                          #
+# --------------------------------------------------------------------------- #
+
+def test_the_observer_fires_wherever_data_lands_in_memory():
+    t, fpoints, comps = _field_2d(nt=21)
+    src = _InMemorySource([c.copy() for c in comps], fpoints, t.copy(), 4)
+    seen = []
+    src.add_dump_observer(lambda i, f: seen.append((i, len(f[0]))))
+    src(5.0)                            # forward slide
+    src(0.0)                            # jump back to the start
+    src(2.0)                            # forward again
+    # Every report must line up with a load, and the forward slides skip the two
+    # holdover dumps carried over from the outgoing window.
+    assert len(seen) == len(src.load_calls) - 1     # the opening load predates it
+    for (idx, n), (d_start, d_finish) in zip(seen, src.load_calls[1:]):
+        assert n == d_finish - d_start + 1
+
+
+def test_an_observer_can_be_removed_and_double_registration_is_a_no_op():
+    t, fpoints, comps = _field_2d(nt=21)
+    src = _InMemorySource([c.copy() for c in comps], fpoints, t.copy(), 4)
+    hits = []
+    observer = lambda i, f: hits.append(i)
+    src.add_dump_observer(observer)
+    src.add_dump_observer(observer)      # registering twice must not double-fire
+    src(1.0)
+    fired = len(hits)
+    assert fired == len(src.load_calls) - 1
+    assert fired > 0                     # otherwise the rest proves nothing
+    src.remove_dump_observer(observer)
+    src.remove_dump_observer(observer)   # idempotent
+    src(4.0)
+    assert len(src.load_calls) - 1 > fired    # more data really did land
+    assert len(hits) == fired

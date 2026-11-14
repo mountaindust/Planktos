@@ -1,0 +1,37 @@
+{
+  "file-series-version": "1.0",
+  "files": [
+    {
+      "name": "case_min_10.vtm",
+      "time": 0.0
+    },
+    {
+      "name": "case_min_20.vtm",
+      "time": 1.0
+    },
+    {
+      "name": "case_min_30.vtm",
+      "time": 2.0
+    },
+    {
+      "name": "case_min_40.vtm",
+      "time": 3.0
+    },
+    {
+      "name": "case_min_50.vtm",
+      "time": 4.0
+    },
+    {
+      "name": "case_min_60.vtm",
+      "time": 5.0
+    },
+    {
+      "name": "case_min_70.vtm",
+      "time": 6.0
+    },
+    {
+      "name": "case_min_80.vtm",
+      "time": 7.0
+    }
+  ]
+}

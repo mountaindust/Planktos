@@ -81,6 +81,25 @@ def closed_polygon(points):
     return polyline(np.vstack([pts, pts[:1]]))
 
 
+def extruded_polygon(points, lo=0.0, hi=1.0, axis=2):
+    '''Straight extrusion of a closed polygon from lo to hi along `axis`, as an
+    STL exporter writes one: each wall a rectangle split into two triangles,
+    each cap a fan. (4*len(points) - 4, 3, 3).'''
+    pts = np.asarray(points, dtype=float)
+    n = len(pts)
+    def lift(p, h):
+        return np.insert(p, axis, h)
+    tris = []
+    for i in range(n):
+        p, q = pts[i], pts[(i + 1) % n]
+        tris.append([lift(p, lo), lift(q, lo), lift(q, hi)])
+        tris.append([lift(p, lo), lift(q, hi), lift(p, hi)])
+    for h in (lo, hi):
+        for i in range(1, n - 1):
+            tris.append([lift(pts[0], h), lift(pts[i], h), lift(pts[i + 1], h)])
+    return np.array(tris)
+
+
 def book_3D(e0, e1, tips):
     '''Triangles all sharing the edge e0->e1, one per tip: (len(tips),3,3).
 

@@ -1,4 +1,7 @@
-'''Functions for reading and writing data from vtk, vtu, vertex files, and stl.
+'''Functions for reading and writing vtk data, in both its legacy and XML forms,
+and for reading the .vtm and .pvd indexes that tie a series of files together.
+Also reads IB2d vertex files, stl meshes and NetCDF.
+
 These are low-level functions that are probably unnecessary to use directly,
 unless you just want to directly get numpy arrays from datasets.
 
@@ -17,10 +20,17 @@ __email__ = "cstric12@utk.edu"
 __copyright__ = "Copyright 2017, Christopher Strickland"
 
 import os
+import re
+import json
+import base64
+import warnings
+import xml.etree.ElementTree as ET
 from pathlib import Path
 import numpy as np
 import vtk
 from vtk.util import numpy_support # Converts vtkarray to/from numpy array
+from vtkmodules.util.misc import calldata_type
+from vtkmodules.util.vtkConstants import VTK_STRING
 # from vtk.numpy_interface import dataset_adapter as dsa
 import pyvista as pv
 
@@ -35,6 +45,135 @@ try:
     NETCDF = True
 except ModuleNotFoundError:
     NETCDF = False
+
+
+#############################################################################
+#                                                                           #
+#                           SHARED SMALL HELPERS                            #
+#                                                                           #
+#############################################################################
+
+
+def _require_file(filename):
+    """Raise a legible FileNotFoundError before handing a path to vtk.
+
+    vtk's readers report a missing file only on stderr and then return an empty
+    dataset, which surfaces much later as an AttributeError from inside
+    numpy_support -- naming neither the file nor the cause.
+    """
+
+    path = Path(filename)
+    if not path.is_file():
+        raise FileNotFoundError("File {} not found!".format(str(path)))
+    return path
+
+
+def _field_data_by_name(vtk_data, name):
+    """One named FIELD data array, as numpy, or None if the file has no such entry.
+
+    Walks the field data by name rather than wrapping the dataset:
+    ``dsa.WrapDataObject`` hangs on some vtk builds with an internal
+    dataset_adapter error, so every reader here uses this loop instead.
+    """
+
+    fielddata = vtk_data.GetFieldData()
+    for n in range(fielddata.GetNumberOfArrays()):
+        if fielddata.GetArrayName(n) == name:
+            return numpy_support.vtk_to_numpy(fielddata.GetArray(n))
+    return None
+
+
+def _single_valued_field(vtk_data, name):
+    """A FIELD data entry that must hold exactly one value, as a float or None."""
+
+    arr = _field_data_by_name(vtk_data, name)
+    if arr is None:
+        return None
+    assert len(arr) == 1, "Currently can only support single time data."
+    return float(arr[0])
+
+
+def _dump_filepath(path, title, cycle=None, sep='_'):
+    """Destination for one file of a numbered series, creating the directory.
+
+    The one place the ``<title><sep><cycle>.vtk`` convention lives, so the four
+    writers below cannot drift apart on it.
+    """
+
+    path = Path(path)
+    if not path.is_dir():
+        os.makedirs(path)
+    if cycle is None:
+        return path / (title + '.vtk')
+    return path / (title + sep + '{:04d}.vtk'.format(cycle))
+
+
+def _stamp_cycle_time(grid, cycle=None, time=None):
+    """Attach the CYCLE and TIME field data every writer here records."""
+
+    if cycle is not None:
+        grid.field_data['CYCLE'] = cycle
+    if time is not None:
+        grid.field_data['TIME'] = time
+
+
+def _save_legacy_vtk(grid, filepath, binary, header=None):
+    """Write a pyvista dataset as legacy vtk, with ``header`` as its header line.
+
+    VTK's own default header, ``vtk output``, when header is None.
+    """
+
+    # vtkDataSetWriter hands off to the writer for the dataset's type, as
+    #   pyvista's save does, and is the one that exposes the header line.
+    writer = vtk.vtkDataSetWriter()
+    if header is not None:
+        writer.SetHeader(header)
+    if binary:
+        writer.SetFileTypeToBinary()
+    else:
+        writer.SetFileTypeToASCII()
+    writer.SetFileName(str(filepath))
+    writer.SetInputData(grid)
+    writer.Write()
+
+
+# VTK's legacy readers make a first pass over a file for the dataset's metadata,
+#   and that pass misreads binary field data -- the CYCLE and TIME every writer
+#   here records, and that VisIt writes too -- and warns with one of these. The
+#   data pass that follows reads every value correctly.
+_FIELD_DATA_MISREADS = ('Not all meta data was read from the file',
+                        'Could not read dimensions or extents from the file')
+
+
+def _update_legacy_reader(reader):
+    """Run ``reader.Update()`` on a legacy vtk reader, without the warnings
+    binary field data provokes.
+
+    Any other VTK warning is passed on as a RuntimeWarning, and so are those
+    two when the read produced no points, since then they may describe a real
+    failure.
+    """
+
+    held = []
+
+    @calldata_type(VTK_STRING)
+    def hold(obj, event, message):
+        held.append(message)
+
+    # With an observer on WarningEvent, VTK hands its warnings to it instead of
+    #   printing them.
+    tag = reader.AddObserver('WarningEvent', hold)
+    try:
+        reader.Update()
+    finally:
+        reader.RemoveObserver(tag)
+    output = reader.GetOutput()
+    read_something = output is not None and output.GetNumberOfPoints() > 0
+    for message in held:
+        if read_something and any(m in message for m in _FIELD_DATA_MISREADS):
+            continue
+        warnings.warn('VTK: ' + ' '.join(message.split()), RuntimeWarning,
+                      stacklevel=3)
 
 
 #############################################################################
@@ -56,6 +195,7 @@ def stl_dep(func):
             return func(*args, **kwargs)
     wrapper.__doc__ = func.__doc__
     return wrapper
+
 
 def netcdf_dep(func):
     '''Decorator for NetCDF readers to check package import.'''
@@ -103,10 +243,12 @@ def read_vtk_Structured_Points(filename):
         spacing of grid
     '''
 
+    _require_file(filename)
+
     # Load data
     reader = vtk.vtkStructuredPointsReader()
     reader.SetFileName(filename)
-    reader.Update()
+    _update_legacy_reader(reader)
     vtk_data = reader.GetOutput()
 
     # Get mesh data
@@ -152,11 +294,13 @@ def read_vtk_Rectilinear_Grid_Vector(filename):
     time : float
     '''
 
+    _require_file(filename)
+
     reader = vtk.vtkRectilinearGridReader()
     reader.SetFileName(filename)
     # Note: if multiple variables are in the same file, you will need to
     #   add the line(s) reader.ReadAllVectorsOn() and/or reader.ReadAllScalarsOn()
-    reader.Update()
+    _update_legacy_reader(reader)
     vtk_data = reader.GetOutput()
     mesh_shape = vtk_data.GetDimensions() # (xlen, ylen, zlen)
     mesh_bounds = vtk_data.GetBounds() # (xmin, xmax, ymin, ymax, zmin, zmax)
@@ -198,17 +342,142 @@ def read_vtk_Rectilinear_Grid_Vector(filename):
 
     ##### Here is the workaround #####
 
-    fielddata = vtk_data.GetFieldData()
-    time = None
-    for n in range(fielddata.GetNumberOfArrays()):
-        # search for 'TIME'
-        if fielddata.GetArrayName(n) == 'TIME':
-            time = numpy_support.vtk_to_numpy(fielddata.GetArray(n))
-            assert len(time) == 1, "Currently can only support single time data."
-            time = time[0]
-            break
+    time = _single_valued_field(vtk_data, 'TIME')
     
     return [x_data, y_data, z_data], [x_mesh, y_mesh, z_mesh], time
+
+
+
+def read_vtk_Rectilinear_Grid_Scalars(filename, squeeze=True):
+    '''Reads a VTK Rectilinear Grid file holding scalar point data, such as a
+    vorticity field, using the VTK Python library.
+
+    The counterpart of ``write_vtk_2D_rectilinear_grid_scalars``. Reads either
+    ascii or binary.
+
+    Parameters
+    ----------
+    filename : string or Path
+        path and filename of the VTK file
+    squeeze : bool, default=True
+        Drop any axis whose coordinate array has length 1, from the data and the
+        grid points alike so the two stay in agreement. VTK datasets are always
+        3D, so this is what returns a 2D field as ``(nx, ny)`` rather than
+        ``(nx, ny, 1)``. Set False for the raw 3D form.
+
+    Returns
+    -------
+    data : ndarray
+        the scalar field, indexed [x,y,z] (or [x,y] after squeezing a 2D field)
+    grid_points : list of 1D ndarrays
+        grid coordinates along each retained axis
+    time : float or None
+        the TIME field data entry, if the file carries one
+    '''
+
+    filename = _require_file(filename)
+
+    reader = vtk.vtkRectilinearGridReader()
+    reader.SetFileName(str(filename))
+    _update_legacy_reader(reader)
+    vtk_data = reader.GetOutput()
+    mesh_shape = vtk_data.GetDimensions() # (xlen, ylen, zlen)
+
+    grid_points = [
+        numpy_support.vtk_to_numpy(vtk_data.GetXCoordinates()),
+        numpy_support.vtk_to_numpy(vtk_data.GetYCoordinates()),
+        numpy_support.vtk_to_numpy(vtk_data.GetZCoordinates())]
+
+    scalars = vtk_data.GetPointData().GetScalars()
+    if scalars is None:
+        raise ValueError(
+            "{} has no scalar point data. ".format(str(filename))+
+            "read_vtk_Rectilinear_Grid_Vector reads the vector case.")
+    np_data = numpy_support.vtk_to_numpy(scalars)
+    # Flattened VTK point data moves in x, then y, then z, so the natural numpy
+    # shape is [z,y,x]. Transpose to [x,y,z] to match the rest of Planktos.
+    data = np.reshape(np_data, mesh_shape[::-1]).T
+
+    time = _single_valued_field(vtk_data, 'TIME')
+
+    if squeeze:
+        keep = [d for d in range(3) if len(grid_points[d]) > 1]
+        data = data.reshape([mesh_shape[d] for d in keep])
+        grid_points = [grid_points[d] for d in keep]
+
+    return data, grid_points, time
+
+
+
+def read_vtk_time_only(filename, nbytes=4096):
+    '''Read just the TIME field-data value from a legacy VTK file's header.
+
+    Legacy VTK writes ``FIELD FieldData`` immediately after the ``DATASET``
+    line, so a TIME entry lands within the first few hundred bytes -- ahead of
+    the coordinate arrays and long before POINT_DATA -- and costs one small
+    header read whatever the size of the file.
+
+    Reads ASCII and BINARY files alike.
+
+    Parameters
+    ----------
+    filename : string
+        path and filename of the VTK file
+    nbytes : int, default=4096
+        how many bytes of the header to scan
+
+    Returns
+    -------
+    float, or None if no single-valued TIME entry was found in the scanned
+        region. None is not proof that the file is untimed -- the format also
+        permits FIELD data inside the POINT_DATA/CELL_DATA sections, past the
+        scanned region -- so a caller that needs certainty should fall back to
+        read_vtk_Rectilinear_Grid_Vector for that file.
+    '''
+
+    # Timing a whole dump series up front is what dynamic loading needs before
+    #   it can slice windows out of one.
+    with open(filename, 'rb') as f:
+        head = f.read(nbytes)
+
+    # The third line of a legacy file names its storage mode.
+    lines = head.split(b'\n', 3)
+    if len(lines) < 4:
+        return None
+    binary = lines[2].strip().upper() == b'BINARY'
+
+    # A FIELD array is declared as "<name> <numComponents> <numTuples>
+    # <dataType>" on a line of text, with its values following. Require the
+    # single-valued form, matching the assertion in the full reader.
+    decl = re.search(rb'^TIME[ \t]+1[ \t]+1[ \t]+(\w+)[ \t]*\r?\n', head,
+                     re.MULTILINE)
+    if decl is None:
+        return None
+
+    if binary:
+        # The value is raw big-endian bytes, which can include a newline byte, so
+        # it is read by offset from the end of the declaration line.
+        dtypes = {'float': '>f4', 'double': '>f8', 'int': '>i4',
+                  'unsigned_int': '>u4', 'vtktypeint64': '>i8',
+                  'vtktypeuint64': '>u8'}
+        dtype = dtypes.get(decl.group(1).decode('ascii'))
+        if dtype is None:
+            return None
+        dtype = np.dtype(dtype)
+        if decl.end() + dtype.itemsize > len(head):
+            return None
+        return float(np.frombuffer(head, dtype=dtype, count=1,
+                                   offset=decl.end())[0])
+
+    # Only a value followed by its line end is trusted: one running to the end
+    # of the buffer may have been cut mid-number by the read limit.
+    value = re.match(rb'[ \t]*(\S+)[ \t]*\r?\n', head[decl.end():])
+    if value is None:
+        return None
+    try:
+        return float(value.group(1))
+    except ValueError:
+        return None
 
 
 
@@ -232,7 +501,7 @@ def read_vtk_Unstructured_Grid_Points(filename):
 
     reader = vtk.vtkUnstructuredGridReader()
     reader.SetFileName(filename)
-    reader.Update()
+    _update_legacy_reader(reader)
     vtk_data = reader.GetOutput()
 
     # Cells are specified by a vtk cell type and a list of points that make up
@@ -265,14 +534,7 @@ def read_vtk_Unstructured_Grid_Points(filename):
 
     vtkpoints = vtk_data.GetPoints()
     points = numpy_support.vtk_to_numpy(vtkpoints.GetData())
-    # also get bounds of the mesh (xmin, xmax, ymin, ymax, zmin, zmax)
-    fielddata = vtk_data.GetFieldData()
-    bounds = None
-    for n in range(fielddata.GetNumberOfArrays()):
-        # search for 'avtOriginalBounds'
-        if fielddata.GetArrayName(n) == 'avtOriginalBounds':
-            bounds = numpy_support.vtk_to_numpy(fielddata.GetArray(n))
-            break
+    bounds = _field_data_by_name(vtk_data, 'avtOriginalBounds')
     if bounds is None:
         bounds_list = []
         for ii in range(points.shape[1]):
@@ -281,6 +543,590 @@ def read_vtk_Unstructured_Grid_Points(filename):
         bounds = np.array(bounds_list)
         
     return points, bounds
+
+
+
+def read_vtu_Unstructured_Grid_Points_FEM(filename):
+    '''Read fluid velocity data from an xml Unstructured Grid VTU file, as 
+    results from a comsol finite element mesh. Uses the VTK Python library.
+    
+    Parameters
+    ----------
+    filename : string
+        path and filename of the VTK file
+
+    Returns
+    -------
+    points : Nx3 array
+        each row is the 3D coords of a vertex in the FEM mesh
+    data : list of arrays
+        each array is velocity data at all mesh points for a given time
+    data_names : list of strings
+        names of each data array in data
+    '''
+
+    reader = vtk.vtkXMLUnstructuredGridReader()
+    reader.SetFileName(filename)
+    reader.Update()
+    vtk_data = reader.GetOutput()
+
+    # Get location of FEM meshpoints
+    vtkpoints = vtk_data.GetPoints()
+    points = numpy_support.vtk_to_numpy(vtkpoints.GetData()) #Nx3 array
+    # Get point data
+    vtkpoint_data = vtk_data.GetPointData()
+    # Get number of DataArrays corresponding to point data
+    data_size = vtkpoint_data.GetNumberOfArrays()
+    # In COMSOL, each three arrays correspond to the x, y, z components of velocity
+    #   at each mesh point, with each array being length N where N is the
+    #   number of mesh points. Each set of three is a different time point.
+    #   So total number of time points is data_size/3.
+    data = []; data_names = []
+    for n in range(data_size):
+        data_array = vtkpoint_data.GetArray(n)
+        data.append(numpy_support.vtk_to_numpy(data_array))
+        data_names.append(vtkpoint_data.GetArrayName(n))
+        
+    return points, data, data_names
+
+
+
+def read_vtm_series(filename):
+    '''Read a ParaView ``.vtm.series`` index, mapping member files to times.
+
+    A ``.vtm.series`` is plain JSON and holds no field data at all -- it is the
+    declaration of a time series, listing one member file (typically a ``.vtm``
+    manifest) per timestep together with the simulation time it represents::
+
+        {"file-series-version" : "1.0",
+         "files" : [{"name" : "case_787.vtm", "time" : 7.5}, ...]}
+
+    Nothing is checked against the filesystem: the listed files may not all
+    exist, and a truncated or interrupted export is ordinary.
+
+    Parameters
+    ----------
+    filename : string or Path
+        path and filename of the .vtm.series file
+
+    Returns
+    -------
+    files : list of Path
+        member files in the order the series declares them, resolved relative to
+        the directory holding the series file. The order is preserved rather than
+        sorted by time; a series that declares times out of order is reported as
+        written.
+    times : ndarray of float
+        time for each entry of files. An entry the series gave no usable time for
+        is NaN rather than an error, so that a caller can fall back to a per-file
+        time source (e.g. read_vtm_manifest) for just those entries.
+    '''
+
+    # Plain JSON and no VTK, so timing a whole series costs one small parse --
+    #   which is what lets dynamic loading know every timestamp up front, before
+    #   it slices a window out of the series.
+    filename = Path(filename)
+    with open(filename, 'r') as f:
+        series = json.load(f)
+
+    if 'files' not in series:
+        raise ValueError("No 'files' entry in series index {}.".format(filename))
+
+    files = []; times = []
+    for entry in series['files']:
+        if 'name' not in entry:
+            warnings.warn("Skipping an entry with no 'name' in series index "+
+                          "{}.".format(filename), UserWarning)
+            continue
+        files.append(filename.parent / entry['name'])
+        try:
+            times.append(float(entry['time']))
+        except (KeyError, TypeError, ValueError):
+            times.append(np.nan)
+
+    return files, np.array(times, dtype=float)
+
+
+
+def read_vtm_manifest(filename):
+    '''Read a VTK XML MultiBlockDataSet (``.vtm``) manifest.
+
+    A ``.vtm`` contains no data of its own. It is a small XML file naming the
+    child files that together make up one dataset -- for a finite-volume export,
+    typically the interior volume plus one file per boundary patch::
+
+        <vtkMultiBlockDataSet>
+          <DataSet name='internal' file='case_787/internal.vtu' />
+          <Block name='boundary'>
+            <DataSet name='inlet' file='case_787/boundary/inlet.vtp' />
+            ...
+
+    Child paths are resolved but not checked for existence; see read_vtm_series.
+
+    Parameters
+    ----------
+    filename : string or Path
+        path and filename of the .vtm file
+
+    Returns
+    -------
+    datasets : dict of Path, keyed by dataset name
+        every ``DataSet`` in the manifest, flattened across any ``Block``
+        nesting, resolved relative to the directory holding the manifest. Names
+        are assumed unique within a manifest (they are for writers such as
+        OpenFOAM's foamToVTK); a repeat keeps the first and warns.
+    time : float or None
+        the ``TimeValue`` field data entry, if the manifest carries one. This is
+        a per-file fallback for a series index that is missing or incomplete.
+    '''
+
+    # The standard library, not vtkXMLMultiBlockDataReader: resolving names is
+    #   all that is wanted here, and it lets a caller settle at construction
+    #   which timesteps are on disk, before a window slide needs one.
+    filename = Path(filename)
+    root = ET.parse(filename).getroot()
+
+    datasets = {}
+    for elem in root.iter('DataSet'):
+        name = elem.get('name')
+        child = elem.get('file')
+        if name is None or child is None:
+            # A DataSet may legally carry its data inline instead of naming a
+            # file; there is nothing for us to resolve in that case.
+            warnings.warn("Skipping a DataSet with no name/file attribute in "+
+                          "manifest {}.".format(filename), UserWarning)
+            continue
+        if name in datasets:
+            warnings.warn("Duplicate dataset name '{}' in manifest {}; ".format(
+                          name, filename)+"keeping the first.", UserWarning)
+            continue
+        datasets[name] = filename.parent / child
+
+    time = None
+    for elem in root.iter('DataArray'):
+        if elem.get('Name') == 'TimeValue' and elem.text is not None:
+            try:
+                time = float(elem.text.split()[0])
+            except (ValueError, IndexError):
+                time = None
+            break
+
+    return datasets, time
+
+
+
+def read_vtkxml_time_only(filename, nbytes=4096):
+    '''Read just the ``TimeValue`` field-data entry from a VTK XML file's header.
+
+    VTK XML writes ``<FieldData>`` immediately inside the dataset element, ahead
+    of the ``<Piece>`` holding the mesh, so a ``TimeValue`` entry lands within
+    the first few hundred bytes however large the file is.
+
+    The VTK XML (e.g. .vtu, .vtp) counterpart of read_vtk_time_only.
+
+    Parameters
+    ----------
+    filename : string or Path
+        path and filename of the VTK XML file
+    nbytes : int, default=4096
+        how many bytes of the header to scan
+
+    Returns
+    -------
+    float, or None if no single-valued TimeValue was recovered from the scanned
+        region. None is not proof that the file is untimed: the entry may lie
+        past the scanned region, or be stored in an encoding this does not
+        decode (see below). A caller that needs certainty should fall back to
+        read_vtkxml_cell_data for that file.
+
+    Notes
+    -----
+    Inline ``ascii`` and uncompressed inline ``binary`` (base64) are decoded --
+    what VTK writes by default. ``appended`` and compressed arrays return None,
+    leaving the caller to fall back to the full reader.
+    '''
+
+    # An unstructured export repeats its whole mesh in every dump, so timing a
+    #   series through the full reader reads gigabytes to recover one float
+    #   apiece.
+    with open(filename, 'rb') as f:
+        head = f.read(nbytes).decode('utf-8', errors='ignore')
+
+    def _attrs(tag_body):
+        return dict(re.findall(r'([\w]+)\s*=\s*["\']([^"\']*)["\']', tag_body))
+
+    # Storage details are declared once on the root VTKFile element, not on the
+    # individual arrays.
+    root = re.search(r'<VTKFile\s([^>]*)>', head)
+    if root is None:
+        return None
+    root = _attrs(root.group(1))
+
+    for m in re.finditer(r'<DataArray\s([^>]*?)>(.*?)</DataArray>', head,
+                         re.DOTALL):
+        attrs = _attrs(m.group(1))
+        if attrs.get('Name') != 'TimeValue':
+            continue
+        # Match the assertion in the full reader: a single time per file.
+        if attrs.get('NumberOfTuples', '1') != '1':
+            return None
+
+        fmt = attrs.get('format', 'ascii').lower()
+        if fmt == 'ascii':
+            try:
+                return float(m.group(2).split()[0])
+            except (ValueError, IndexError):
+                return None
+        if fmt != 'binary':
+            return None
+        # A compressor is declared on the root even in ascii data mode, where it
+        # applies to nothing -- so it can only be judged once the array is known
+        # to be binary.
+        if 'compressor' in root:
+            return None
+
+        # Inline base64: a byte-count header of header_type, then the payload.
+        dtypes = {'Float32': 'f4', 'Float64': 'f8', 'Int32': 'i4',
+                  'Int64': 'i8', 'UInt32': 'u4', 'UInt64': 'u8'}
+        order = '>' if root.get('byte_order') == 'BigEndian' else '<'
+        if attrs.get('type') not in dtypes:
+            return None
+        dtype = np.dtype(order + dtypes[attrs['type']])
+        hsize = 8 if root.get('header_type', 'UInt32') == 'UInt64' else 4
+        try:
+            raw = base64.b64decode(''.join(m.group(2).split()))
+        except Exception:
+            return None
+        if len(raw) < hsize + dtype.itemsize:
+            return None
+        return float(np.frombuffer(raw, dtype=dtype, count=1,
+                                   offset=hsize)[0])
+
+    return None
+
+
+
+def read_vtkxml_cell_data(filename, arrays=('U',), load_cell_coordinates=True):
+    '''Read cell data, and the cell-center lattice it lives on, from a VTK XML
+    unstructured grid (``.vtu``) or polydata (``.vtp``) file.
+
+    Finite-volume solvers store fields per cell rather than per point, so the
+    point data of such a file is typically empty and ``GetPoints()`` returns cell
+    *corners* -- the wrong lattice to interpolate a cell field on. This reads
+    ``GetCellData()`` and, by default, returns the cell centers to go with it.
+
+    Parameters
+    ----------
+    filename : string or Path
+        path and filename of the .vtu or .vtp file
+    arrays : iterable of string, or None, default=('U',)
+        names of the cell data arrays to read. Any other array present in the
+        file is deselected before reading. A requested name that the file does
+        not carry warns and is absent from the result. If None, read everything.
+    load_cell_coordinates : bool, default=True
+        whether to compute and return the coordinates of the cell centers. Skip
+        it when the mesh is known to be static and the lattice has already been
+        established from an earlier file in the series.
+
+    Returns
+    -------
+    centers : Nx3 ndarray, or None if load_cell_coordinates is False
+        center of each cell, in the file's own cell order -- which is not
+        necessarily lexicographic in the coordinates, even for a grid-like mesh
+    data : dict of ndarray, keyed by array name
+        one entry per array read, in the same cell order as centers. Shape is
+        (N,) for a scalar field and (N,3) for a vector field.
+    time : float or None
+        the ``TimeValue`` field data entry, if the file carries one
+    '''
+
+    filename = _require_file(filename)
+
+    if filename.suffix == '.vtu':
+        reader = vtk.vtkXMLUnstructuredGridReader()
+    elif filename.suffix == '.vtp':
+        reader = vtk.vtkXMLPolyDataReader()
+    else:
+        raise ValueError("Unsupported extension '{}': ".format(filename.suffix)+
+                         "expected .vtu (unstructured grid) or .vtp (polydata).")
+    reader.SetFileName(str(filename))
+
+    # Array selection has to happen against the file's metadata, before the bulk
+    # read is triggered by Update(). An unstructured-grid file repeats its whole
+    # mesh every timestep, so this saves the unwanted field arrays on top of
+    # geometry that is re-read whatever is selected.
+    reader.UpdateInformation()
+    if arrays is not None:
+        arrays = tuple(arrays)
+        selection = reader.GetCellDataArraySelection()
+        available = [selection.GetArrayName(n) for n in
+                     range(selection.GetNumberOfArrays())]
+        for name in available:
+            if name not in arrays:
+                selection.DisableArray(name)
+        missing = [name for name in arrays if name not in available]
+        if len(missing) > 0:
+            warnings.warn("Cell data array(s) {} not found in {}. ".format(
+                          missing, str(filename))+
+                          "Present: {}.".format(available), UserWarning)
+    reader.Update()
+    vtk_data = reader.GetOutput()
+
+    # Read the cell data
+    vtkcell_data = vtk_data.GetCellData()
+    data = {}
+    for n in range(vtkcell_data.GetNumberOfArrays()):
+        name = vtkcell_data.GetArrayName(n)
+        data[name] = numpy_support.vtk_to_numpy(vtkcell_data.GetArray(n))
+
+    # Get the cell centers, which are the points this data is specified at
+    if load_cell_coordinates:
+        center_filter = vtk.vtkCellCenters()
+        center_filter.SetInputData(vtk_data)
+        center_filter.Update()
+        centers = numpy_support.vtk_to_numpy(
+            center_filter.GetOutput().GetPoints().GetData())
+    else:
+        centers = None
+
+    time = _single_valued_field(vtk_data, 'TimeValue')
+
+    return centers, data, time
+
+
+
+def read_pvd_series(filename):
+    '''Read a ParaView collection (``.pvd``) index, mapping member files to times.
+
+    A ``.pvd`` is plain XML naming one member file per timestep::
+
+        <VTKFile type="Collection">
+          <Collection>
+            <DataSet timestep="0.1" group="" part="0" file="flow_0001_t0.1.vti"/>
+
+    Nothing is checked against the filesystem.
+
+    Parameters
+    ----------
+    filename : string or Path
+        path and filename of the .pvd file
+
+    Returns
+    -------
+    files : list of Path
+        member files in the order the collection declares them, resolved
+        relative to the directory holding it
+    times : ndarray of float
+        time of each entry of files; NaN where an entry gives no usable time
+
+    Raises
+    ------
+    ValueError
+        if the file is not a Collection, or if it splits its datasets across
+        more than one group or part
+    '''
+
+    filename = Path(filename)
+    root = ET.parse(filename).getroot()
+    if root.get('type') != 'Collection':
+        raise ValueError("{} is not a ParaView Collection (its VTKFile type is "
+                         "{!r}).".format(filename, root.get('type')))
+
+    files = []; times = []; labels = {'group': set(), 'part': set()}
+    for elem in root.iter('DataSet'):
+        member = elem.get('file')
+        if member is None:
+            warnings.warn("Skipping a DataSet with no file attribute in "
+                          "collection {}.".format(filename), UserWarning)
+            continue
+        for attr in labels:
+            labels[attr].add(elem.get(attr, ''))
+        files.append(filename.parent / member)
+        try:
+            t = float(elem.get('timestep', ''))
+        except ValueError:
+            t = np.nan
+        # inf and nan are not times.
+        times.append(t if np.isfinite(t) else np.nan)
+
+    # Several groups or parts make each timestep a set of datasets rather than
+    #   one, which a list of (file, time) cannot describe.
+    for attr, values in labels.items():
+        if len(values) > 1:
+            raise ValueError(
+                "{} splits its datasets across more than one {}: {}. A "
+                "collection with one dataset per timestep is required.".format(
+                    filename, attr, sorted(values)))
+
+    return files, np.array(times, dtype=float)
+
+
+
+def _vtkxml_grid_reader(path):
+    """The XML reader for a .vti or .vtr file, chosen by extension."""
+
+    readers = {'.vti': vtk.vtkXMLImageDataReader,
+               '.vtr': vtk.vtkXMLRectilinearGridReader}
+    factory = readers.get(path.suffix.lower())
+    if factory is None:
+        raise ValueError(
+            "{} is not a VTK XML ImageData (.vti) or RectilinearGrid (.vtr) "
+            "file.".format(path))
+    reader = factory()
+    reader.SetFileName(str(path))
+    return reader
+
+
+
+def read_vtkxml_grid_data(filename, vec_name=None):
+    '''Read vector point data from a VTK XML ImageData (``.vti``) or
+    RectilinearGrid (``.vtr``) file.
+
+    An ImageData grid is uniform, given by an origin and a spacing; a
+    RectilinearGrid carries its coordinates outright and need not be.
+
+    Parameters
+    ----------
+    filename : string or Path
+        path and filename of the .vti or .vtr file
+    vec_name : string, optional
+        name of the point-data array to read. Defaults to the array the file
+        declares as its active vectors.
+
+    Returns
+    -------
+    list of arrays
+        vector data, one array per component in order x, y, z, each indexed
+        as [x,y,z]
+    list of arrays
+        1D arrays of grid points in the x, y, and z directions
+    time : float or None
+        the ``TimeValue`` field-data entry, if the file carries one
+
+    Raises
+    ------
+    ValueError
+        if the file is of another type, if no array is named and the file
+        declares no active vectors, if the array is absent or does not have
+        three components, or if the grid is not aligned with the coordinate
+        axes or its coordinates do not increase
+    '''
+
+    path = _require_file(filename)
+
+    reader = _vtkxml_grid_reader(path)
+    reader.UpdateInformation()
+    selection = reader.GetPointDataArraySelection()
+    available = [selection.GetArrayName(n)
+                 for n in range(selection.GetNumberOfArrays())]
+
+    if vec_name is None:
+        vec_name = _active_vectors_name(path)
+        if vec_name is None:
+            raise ValueError(
+                "{} declares no active vectors; pass vec_name, one of "
+                "{}.".format(path, available))
+    if vec_name not in available:
+        raise ValueError("{} has no point-data array '{}'. Available: "
+                         "{}.".format(path, vec_name, available))
+
+    # Only the velocity is decompressed.
+    selection.DisableAllArrays()
+    selection.EnableArray(vec_name)
+    reader.GetCellDataArraySelection().DisableAllArrays()
+    reader.Update()
+    vtk_data = reader.GetOutput()
+
+    # ImageData can be rotated relative to the axes; a rectilinear grid has no
+    #   such transform to carry.
+    if hasattr(vtk_data, 'GetDirectionMatrix'):
+        direction = vtk_data.GetDirectionMatrix()
+        direction = np.array([[direction.GetElement(i, j) for j in range(3)]
+                              for i in range(3)])
+        if not np.allclose(direction, np.eye(3)):
+            raise ValueError(
+                "The grid in {} is rotated relative to the coordinate axes "
+                "(Direction {}). Planktos needs a grid aligned with its "
+                "axes.".format(path, direction.ravel().tolist()))
+
+    array = vtk_data.GetPointData().GetArray(vec_name)
+    if array.GetNumberOfComponents() != 3:
+        raise ValueError(
+            "'{}' in {} has {} component(s), not the 3 of a velocity "
+            "vector.".format(vec_name, path, array.GetNumberOfComponents()))
+
+    if path.suffix.lower() == '.vtr':
+        mesh = [numpy_support.vtk_to_numpy(coords) for coords in
+                (vtk_data.GetXCoordinates(), vtk_data.GetYCoordinates(),
+                 vtk_data.GetZCoordinates())]
+    else:
+        # The origin is the position of index 0, which the extent need not
+        #   start at.
+        extent = vtk_data.GetExtent()
+        origin = vtk_data.GetOrigin()
+        spacing = vtk_data.GetSpacing()
+        mesh = [origin[d] + spacing[d]*np.arange(extent[2*d], extent[2*d+1]+1)
+                for d in range(3)]
+    for d, coords in enumerate(mesh):
+        if len(coords) > 1 and not np.all(np.diff(coords) > 0):
+            raise ValueError(
+                "The grid in {} does not have coordinates that increase along "
+                "{}.".format(path, 'xyz'[d]))
+
+    # Points run with x fastest, so the flat array reshapes to [z,y,x].
+    #   Transpose each component to [x,y,z].
+    np_data = numpy_support.vtk_to_numpy(array)
+    shape = vtk_data.GetDimensions()[::-1]
+    data = [np.reshape(np_data[:,d], shape).T for d in range(3)]
+
+    time = _single_valued_field(vtk_data, 'TimeValue')
+
+    return data, mesh, time
+
+
+
+def read_vtkxml_grid_time(filename):
+    '''Read the ``TimeValue`` field-data entry of a VTK XML ImageData (``.vti``)
+    or RectilinearGrid (``.vtr``) file.
+
+    No point or cell arrays are read or decompressed, so this is the cheap way
+    to time a file whose header ``read_vtkxml_time_only`` cannot decode.
+
+    Parameters
+    ----------
+    filename : string or Path
+        path and filename of the .vti or .vtr file
+
+    Returns
+    -------
+    float, or None if the file carries no TimeValue
+    '''
+
+    path = _require_file(filename)
+    reader = _vtkxml_grid_reader(path)
+    reader.UpdateInformation()
+    reader.GetPointDataArraySelection().DisableAllArrays()
+    reader.GetCellDataArraySelection().DisableAllArrays()
+    reader.Update()
+    return _single_valued_field(reader.GetOutput(), 'TimeValue')
+
+
+
+def _active_vectors_name(filename):
+    '''The Vectors attribute of a VTK XML file's PointData, or None.
+
+    Parsed incrementally, stopping at the PointData element, so only the XML
+    ahead of the point arrays is read.
+    '''
+
+    try:
+        for _, elem in ET.iterparse(filename, events=('start',)):
+            if elem.tag == 'PointData':
+                return elem.get('Vectors')
+    except ET.ParseError:
+        # Raw appended data is not XML, and lies after any PointData element.
+        pass
+    return None
 
 
 
@@ -339,10 +1185,11 @@ def read_2DEulerian_Data_From_vtk(path, simNum, strChoice, xy=False):
 
 
 def read_vtu_mesh_velocity(filename):
-    '''Reads ascii COMSOL velocity data in a vtu or equivalent text file. It is 
-    assumed that the data is on a regular grid. Currently, there is no support 
-    for multiple time points, so the file must contain data from only a single 
-    time.
+    '''Read COMSOL's text grid export: velocity on a regular grid, at one time.
+
+    COMSOL can write this export with a .vtu extension, though it is plain
+    text, not VTK XML. A NaN velocity, at a grid point outside the COMSOL
+    geometry, is read as 0.0.
 
     Parameters
     ----------
@@ -550,25 +1397,17 @@ def write_vtk_point_data(path, title, data, cycle=None, time=None):
         simulation time (generally understood to be in seconds)
     '''
 
-    path = Path(path)
-    if not path.is_dir():
-        os.makedirs(path)
-    if cycle is None:
-        filepath = path / (title + '.vtk')
-    else:
-        filepath = path / (title + '_{:04d}.vtk'.format(cycle))
+    filepath = _dump_filepath(path, title, cycle, '_')
 
     vtk_data = pv.PolyData(data)
-    if cycle is not None:
-        vtk_data.field_data['CYCLE'] = cycle
-    if time is not None:
-        vtk_data.field_data['TIME'] = time
+    _stamp_cycle_time(vtk_data, cycle, time)
     vtk_data.save(str(filepath), binary=False)
 
 
 
-def write_vtk_2D_rectilinear_grid_scalars(path, title, data, grid_points, 
-                                          cycle=None, time=None, binary=True):
+def write_vtk_2D_rectilinear_grid_scalars(path, title, data, grid_points,
+                                          cycle=None, time=None, binary=True,
+                                          sep='_', header=None):
     '''Write scalar data to a VTK Rectilinear Grid file (e.g. vorticity). 
     Expects data to be on a 2D rectilinear grid. Uses the pyvista library. 
     
@@ -593,15 +1432,15 @@ def write_vtk_2D_rectilinear_grid_scalars(path, title, data, grid_points,
         simulation time (generally understood to be in seconds)
     binary : bool
         whether or not the VTK should be binary (vs. ascii for, e.g., debugging)
+    sep : str, default='_'
+        what separates the title from the dump number in the filename. '_' gives
+        Omega_0042.vtk; '.' gives Omega.0042.vtk, which is IB2d's convention.
+    header : str, optional
+        the file's header line, at most 256 characters. VTK's default,
+        ``vtk output``, when None.
     '''
 
-    path = Path(path)
-    if not path.is_dir():
-        os.mkdir(path)
-    if cycle is None:
-        filepath = path / (title + '.vtk')
-    else:
-        filepath = path / (title + '_{:04d}.vtk'.format(cycle))
+    filepath = _dump_filepath(path, title, cycle, sep)
 
     # A RectilinearGrid's dimensions are implied by the coordinate arrays, so the
     # grid_points lengths must match data.shape (here (nx, ny) -> (nx, ny, 1)).
@@ -610,11 +1449,98 @@ def write_vtk_2D_rectilinear_grid_scalars(path, title, data, grid_points,
     #   order because VTK moves in the x, then y, then z direction but with C
     #   memory layout, our arrays move in the z, then y, then x directions
     grid.point_data["values"] = data.flatten(order="F")
-    if cycle is not None:
-        grid.field_data['CYCLE'] = cycle
-    if time is not None:
-        grid.field_data['TIME'] = time
-    grid.save(str(filepath), binary=binary)
+    _stamp_cycle_time(grid, cycle, time)
+    _save_legacy_vtk(grid, filepath, binary, header)
+
+
+
+def write_vtk_structured_points_scalars(path, title, data, grid_points,
+                                        cycle=None, time=None, binary=True,
+                                        sep='_', header=None):
+    '''Write scalar data on a *uniform* grid to a VTK Structured Points file.
+
+    The companion to ``write_vtk_2D_rectilinear_grid_scalars``, for an evenly
+    spaced grid. This is the format IB2d and similar solvers print their own
+    scalar fields in, so a field written here is read back by ParaView or by the
+    solver's own tooling with no knowledge of Planktos.
+
+    ``STRUCTURED_POINTS`` carries only an origin and a spacing, so it cannot
+    express a rectilinear grid. Non-uniform spacing raises; use the rectilinear
+    writer for that.
+
+    Parameters
+    ----------
+    path : string
+        directory where data should go; created if it does not exist
+    title : string
+        title to prepend to the filename, and the name given to the scalar array
+        in the file. IB2d, for instance, names both 'Omega' for vorticity.
+    data : ndarray
+        scalar data, 2D or 3D, indexed [x,y(,z)]
+    grid_points : tuple of 1D ndarrays
+        grid points along each axis; Environment.flow.flow_points. Must be evenly
+        spaced along each axis, and match the shape of data.
+    cycle : int, optional
+        dump number, which is also included in the filename
+    time : float, optional
+        simulation time
+    binary : bool, default=True
+        whether the VTK should be binary rather than ascii;
+        ``vtkStructuredPointsReader`` takes either.
+    sep : str, default='_'
+        what separates the title from the dump number in the filename.
+        ``'_'`` gives ``Omega_0042.vtk``, matching the other writers here;
+        ``'.'`` gives ``Omega.0042.vtk``, which is IB2d's own convention.
+    header : str, optional
+        the file's header line, at most 256 characters. VTK's default,
+        ``vtk output``, when None.
+    '''
+
+    filepath = _dump_filepath(path, title, cycle, sep)
+
+    data = np.asarray(data)
+    if len(grid_points) != data.ndim:
+        raise ValueError(
+            "data has {} axes but {} coordinate arrays were given.".format(
+                data.ndim, len(grid_points)))
+
+    origin = []
+    spacing = []
+    for d, coords in enumerate(grid_points):
+        coords = np.asarray(coords)
+        if len(coords) != data.shape[d]:
+            raise ValueError(
+                "axis {} has {} coordinates but data has {} entries "
+                "there.".format(d, len(coords), data.shape[d]))
+        origin.append(float(coords[0]))
+        if len(coords) < 2:
+            # A single plane has no spacing to speak of. VTK wants a positive
+            # number; 1 is what IB2d writes for its singleton z axis.
+            spacing.append(1.0)
+            continue
+        dx = np.diff(coords)
+        # Structured points cannot represent uneven spacing, and quietly writing
+        # the mean would move every interior grid point.
+        if not np.allclose(dx, dx[0], rtol=1e-8, atol=0.0):
+            raise ValueError(
+                "axis {} is not evenly spaced, so it cannot be written as VTK "
+                "structured points (which carry only an origin and a spacing). "
+                "Use write_vtk_2D_rectilinear_grid_scalars instead.".format(d))
+        spacing.append(float(dx[0]))
+
+    # VTK datasets are 3D. Pad a 2D grid with a singleton z, as IB2d does.
+    dims = list(data.shape) + [1]*(3 - data.ndim)
+    origin = origin + [0.0]*(3 - data.ndim)
+    spacing = spacing + [1.0]*(3 - data.ndim)
+
+    grid = pv.ImageData(dimensions=tuple(dims), spacing=tuple(spacing),
+                        origin=tuple(origin))
+    # Fortran order because VTK moves in x, then y, then z, while our arrays are
+    # C-contiguous with x slowest.
+    grid[title] = data.ravel(order='F')
+    grid.set_active_scalars(title)
+    _stamp_cycle_time(grid, cycle, time)
+    _save_legacy_vtk(grid, filepath, binary, header)
 
 
 
@@ -649,13 +1575,7 @@ def write_vtk_rectilinear_grid_vectors(path, title, data, grid_points,
         whether or not the VTK should be binary (vs. ascii for, e.g., debugging)
     '''
 
-    path = Path(path)
-    if not path.is_dir():
-        os.mkdir(path)
-    if cycle is None:
-        filepath = path / (title + '.vtk')
-    else:
-        filepath = path / (title + '_{:04d}.vtk'.format(cycle))
+    filepath = _dump_filepath(path, title, cycle, '_')
 
     if len(grid_points) == 2:
         # VTK data must be 3D
@@ -673,9 +1593,6 @@ def write_vtk_rectilinear_grid_vectors(path, title, data, grid_points,
     fdata_vtk.SetName(title)
     grid_pt_data = grid.GetPointData()
     grid_pt_data.SetVectors(fdata_vtk)
-    if cycle is not None:
-        grid.field_data['CYCLE'] = cycle
-    if time is not None:
-        grid.field_data['TIME'] = time
+    _stamp_cycle_time(grid, cycle, time)
     grid.save(str(filepath), binary=binary)
     

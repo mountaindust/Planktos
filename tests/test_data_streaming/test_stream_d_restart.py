@@ -1,0 +1,230 @@
+'''Claim 4 -- a recorded run can be picked up again from disk.
+
+    "I should be able to run a simulation, streaming its results to disk, and
+     then completely delete both the Environment and the Swarm object. I should
+     then be able to create a new Environment and a new Swarm from that data on
+     disk, recovering completely the state at which I left off the simulation so
+     that I can resume it as if nothing happened."
+
+This is **checkpoint and restart**, in two parts:
+
+* what the archive already carried, asserted positively -- the environment
+  really can be rebuilt from provenance, and the agent state really does come
+  back exactly;
+* and the whole claim end to end, so that "as if nothing happened" is tested
+  rather than assumed.
+
+What a resumed run does with the archive it came from -- it continues it, byte
+for byte -- is pinned in
+tests/test_recording.py, beside the rest of what record() decides.
+'''
+
+import json
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+import planktos
+
+from _streaming import (assert_same_state, copy_ib2d, ib2d_envir, run)
+
+
+DT = 0.5
+STEPS = 8
+
+
+def _record_a_run(tmp_path, steps=STEPS, seed=17, n=6, **kwargs):
+    '''A recorded run, plus everything about it a restart would have to match.'''
+
+    src = copy_ib2d(tmp_path, 'src', with_vorticity=True)
+    envir = ib2d_envir(src, INUM=4)
+    swrm = planktos.Swarm(swarm_size=n, envir=envir, seed=seed)
+    swrm.shared_props['cov'] = swrm.shared_props['cov'] * 0.05
+    swrm.add_prop('sensitivity', np.linspace(0.1, 0.9, n))
+    with envir.record(str(tmp_path / 'run'), **kwargs) as rec:
+        run(swrm, steps, dt=DT)
+    return rec, envir, swrm
+
+
+def _rebuild_environment(archive):
+    '''An Environment built from nothing but the archive, as a user would.
+
+    This is the recipe the provenance record exists to make possible: the
+    loader's own name and the arguments it was called with, replayed.
+    '''
+
+    prov = archive.meta['provenance']
+    env = prov['environment']
+    L = env['L']
+    kwargs = dict(Lx=L[0], Ly=L[1], units=env['units'],
+                  rho=env['rho'], mu=env['mu'])
+    if len(L) == 3:
+        kwargs['Lz'] = L[2]
+    bndry = env['bndry']
+    for axis, name in zip(bndry, ('x_bndry', 'y_bndry', 'z_bndry')[:len(L)]):
+        kwargs[name] = axis[0]
+    envir = planktos.Environment(**kwargs)
+    fluid = prov['fluid']
+    getattr(envir, fluid['loader'])(**fluid['kwargs'])
+    return envir
+
+
+# --------------------------------------------------------------------------- #
+#                       what the archive already carries                      #
+# --------------------------------------------------------------------------- #
+
+def test_the_environment_can_be_rebuilt_from_the_provenance_record(tmp_path):
+    # The half that is built. Nothing about the fluid is serialized; the loader
+    # call is replayed instead, and the archive's own fingerprint check is what
+    # says the rebuilt world is the same world.
+    rec, envir, swrm = _record_a_run(tmp_path)
+    archive = planktos.load_run(rec.path)
+    try:
+        rebuilt = _rebuild_environment(archive)
+        archive.check_against(rebuilt)             # raises if it is not
+        assert list(rebuilt.L) == list(envir.L)
+        np.testing.assert_array_equal(rebuilt.flow.flow_times,
+                                      envir.flow.flow_times)
+        for a, b in zip(rebuilt.flow.flow_points, envir.flow.flow_points):
+            np.testing.assert_array_equal(a, b)
+    finally:
+        archive.close()
+
+
+def test_the_agent_state_comes_back_exactly(tmp_path):
+    # Positions, velocities and the clock survive the round trip bit for bit,
+    # which is the part of a restart that the archive was actually built for.
+    # Velocities are asked for: they are opt-in, and this is the test of them.
+    rec, envir, swrm = _record_a_run(
+        tmp_path, store=('positions', 'velocities'))
+    last_pos = np.ma.copy(swrm.positions)
+    last_vel = np.ma.copy(swrm.velocities)
+    last_time = envir.time
+
+    archive = planktos.load_run(rec.path)
+    try:
+        j = archive.capture_at(last_time)
+        assert_same_state(archive.positions(0)[j], last_pos, 'positions')
+        assert_same_state(archive.velocities(0)[j], last_vel, 'velocities')
+        assert archive.times[j] == last_time
+    finally:
+        archive.close()
+
+
+def test_a_hand_built_restart_gets_the_positions_and_the_clock_right(tmp_path):
+    # As far as a knowledgeable user can get today with the public API. It is
+    # worth pinning because it is the floor the missing pieces sit on top of.
+    rec, envir, swrm = _record_a_run(tmp_path)
+    want_pos = np.ma.copy(swrm.positions)
+    want_time = envir.time
+    del envir, swrm
+
+    archive = planktos.load_run(rec.path)
+    try:
+        rebuilt = _rebuild_environment(archive)
+        j = len(archive.times) - 1
+        positions = np.ma.masked_invalid(
+            np.ma.filled(archive.positions(0)[j], np.nan))
+        resumed = planktos.Swarm(envir=rebuilt, init=np.ma.getdata(positions))
+        resumed.positions = positions
+        rebuilt.time = float(archive.times[j])
+        rebuilt.time_history = [float(t) for t in archive.times[:j]]
+    finally:
+        archive.close()
+
+    assert_same_state(resumed.positions, want_pos, 'restored positions')
+    assert rebuilt.time == want_time
+
+
+# --------------------------------------------------------------------------- #
+#                        the restart entry point                              #
+# --------------------------------------------------------------------------- #
+
+def test_planktos_offers_a_way_to_resume_a_recorded_run(tmp_path):
+    rec, envir, swrm = _record_a_run(tmp_path)
+    archive = planktos.load_run(rec.path)
+    try:
+        # Not hasattr: RunArchive.checkpoint exists and returns state, which an
+        # attribute-name check cannot tell from a rebuild. Ask for the thing
+        # itself -- an Environment, and Swarms attached to it.
+        entry = next((getattr(archive, name) for name in
+                      ('restore', 'to_environment', 'resume', 'rebuild')
+                      if hasattr(archive, name)), None)
+        assert entry is not None, 'no restart entry point exists'
+        rebuilt, swarms = entry()
+        assert isinstance(rebuilt, planktos.Environment)
+        assert swarms and all(s.envir is rebuilt for s in swarms)
+    finally:
+        archive.close()
+
+
+# --------------------------------------------------------------------------- #
+#                          the claim, end to end                              #
+# --------------------------------------------------------------------------- #
+
+def test_a_run_resumes_from_disk_as_if_nothing_had_happened(tmp_path):
+    # The whole claim, as one assertion. Everything else in this module is a
+    # piece of it.
+    # The reference: one uninterrupted run of 2*STEPS steps.
+    src = copy_ib2d(tmp_path, 'ref_src', with_vorticity=True)
+    ref_envir = ib2d_envir(src, INUM=4)
+    ref = planktos.Swarm(swarm_size=6, envir=ref_envir, seed=17)
+    ref.shared_props['cov'] = ref.shared_props['cov'] * 0.05
+    ref.add_prop('sensitivity', np.linspace(0.1, 0.9, 6))
+    run(ref, 2 * STEPS, dt=DT)
+
+    # The claim: record the first half, throw everything away, rebuild, finish.
+    rec, envir, swrm = _record_a_run(tmp_path, steps=STEPS)
+    del envir, swrm
+
+    archive = planktos.load_run(rec.path)
+    try:
+        rebuilt, swarms = archive.restore()
+    finally:
+        archive.close()
+    resumed, = swarms
+
+    run(resumed, STEPS, dt=DT)
+
+    assert rebuilt.time == pytest.approx(ref_envir.time)
+    assert_same_state(resumed.positions, ref.positions,
+                      'the resumed run ended somewhere else')
+
+
+def test_the_resumed_run_keeps_its_histories_aligned(tmp_path):
+    # A mismatch between time_history and pos_history raises nothing at all and
+    # silently misaligns every frame a plot draws, so it is worth its own check.
+    rec, envir, swrm = _record_a_run(tmp_path)
+    archive = planktos.load_run(rec.path)
+    try:
+        rebuilt, (resumed,) = archive.restore()
+    finally:
+        archive.close()
+    assert len(rebuilt.time_history) == len(resumed.pos_history)
+    assert len(resumed.full_pos_history) == len(swrm.full_pos_history)
+    # Velocities were not stored, so there is no series to restore. Empty is
+    # what routes the statistics to what the recording derived instead;
+    # masked-filling it to match pos_history would read as "every agent has
+    # left" and print zero speeds.
+    assert resumed.vel_history == []
+    run(resumed, 2, dt=DT)
+    assert len(rebuilt.time_history) == len(resumed.pos_history)
+
+
+def test_a_restore_without_history_still_resumes_the_physics(tmp_path):
+    # history=False leaves the three histories empty, which the plot notices and
+    # the physics does not: the trajectory has to be identical either way.
+    rec, envir, swrm = _record_a_run(tmp_path)
+    ends = []
+    for history in (True, False):
+        archive = planktos.load_run(rec.path)
+        try:
+            rebuilt, (resumed,) = archive.restore(history=history)
+        finally:
+            archive.close()
+        assert bool(resumed.pos_history) is history
+        assert len(rebuilt.time_history) == len(resumed.pos_history)
+        run(resumed, STEPS, dt=DT)
+        ends.append(resumed.positions)
+    assert_same_state(ends[0], ends[1], 'history= changed the physics')

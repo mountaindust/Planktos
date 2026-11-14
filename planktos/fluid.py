@@ -8,310 +8,3366 @@ Author: Christopher Strickland
 Email: cstric12@utk.edu
 '''
 
+import hashlib
+import re
 import warnings
 import numpy as np
-from scipy import interpolate
+from scipy import interpolate, spatial
 from pathlib import Path
 from . import _dataio
 
-def _read_IB2d_dumpfiles(path, d_start, d_finish, vector_data):
-    '''
-    Load IB2d data at path starting with dump d_start and ending with dump
-    d_end. This can read just one or many dump files.
 
-    Parameters
+#######################################################################
+#####    CONTAINER CLASSES FOR LOADING AND HANDLING FLUID DATA    #####
+#######################################################################
+
+
+def _check_INUM(INUM):
+    '''Raise ValueError unless INUM is None, True, False or an int of at least 2.
+
+    Called by FluidData.__init__, and by each loader before it reads anything.
+    '''
+    if INUM is None or isinstance(INUM, bool):
+        return
+    if not isinstance(INUM, (int, np.integer)) or INUM < 2:
+        raise ValueError(
+            "INUM must be None, True, or an integer of at least 2, not {!r}. An "
+            "integer INUM holds a window of INUM+1 time points and slides it by "
+            "loading INUM-1 new ones.".format(INUM))
+
+
+class FluidData:
+    '''
+    Container class for fluid velocity data and its temporal interpolations.
+
+    ``Environment.flow`` is an instance of this class, or of one of its
+    per-source subclasses. It owns the velocity field, the spatial grid the
+    field is defined on, the time stamps, and the interpolation in time --
+    including loading further data from storage when a requested time falls
+    outside what is currently held in memory.
+
+    There are two ways to get velocity data out of it.
+
+    **Call it with a time.** ``envir.flow(t)`` returns the field at simulation
+    time ``t``, interpolated in time, as a list of plain ndarrays:
+    ``[x-velocity (i,j,[k]), y-velocity (i,j,[k]), z-velocity (3D only)]``,
+    where i indexes x, j indexes y and k indexes z, each increasing with the
+    corresponding coordinate. This works for any time-varying field, and it is
+    the only option while a window of data slides, since the time requested is
+    what determines which data gets loaded. A time-invariant field has no time
+    to call it with, and raises ``TypeError``.
+
+    **Index it like a list.** ``envir.flow[0]`` gives the x-velocity component.
+    For a time-invariant field that is the raw ndarray. For a time-varying field
+    it is that component's interpolant in time, which may itself be indexed by
+    time index as though it were an ``([t],i,j,[k])`` array. This is unavailable
+    while a window of data slides (``is_windowed``), because a time index would
+    then refer to a position in the window rather than in the dataset;
+    ``TypeError`` is raised instead.
+
+    Interpolation in *space* does not happen here. Use
+    ``Environment.interpolate_flow``, or one of the ``Swarm`` accessors that
+    wrap it (``get_fluid_drift`` and friends).
+
+    Interpolation in *time* is cubic when the whole dataset is held in memory
+    and linear when data is loaded dynamically -- see ``INUM`` below, and the
+    discussion of the tradeoff in the narrative documentation for this class.
+
+    FluidData is subclassed for loading data from particular types of sources.
+
+    Attributes
     ----------
-    path : string
-        path to vtk data
-    d_start : int
-        first dump file to load
-    d_finish : int
-        last dump file to load
-    vector_data : bool
-        whether the data is vector velocity data (u) or not. The other 
-        choice being x and y directed velocity magnitude (uX, uY)
-
-    Returns
-    -------
-    fluid : list of ndarray
-    x : x-coordinate mesh, 1D ndarray
-    y : y-coordinate mesh, 1D ndarray
+    flow_points : tuple (len == spatial dimension) of 1D ndarrays
+        Points defining the spatial grid the fluid velocity is specified on.
+        These need not be evenly spaced, but must have the same length as the
+        corresponding spatial dimension of the flow data. Endpoints are assumed
+        to lie on the domain boundary.
+    flow_times : ndarray of floats, or None
+        Time stamp for each index t in the flow arrays. None for a
+        time-invariant field.
+    fshape : tuple
+        Shape of each component of the fluid velocity field as an ndarray of
+        raw data, ``([t],i,j,[k])``.
+    spatial_shape : tuple
+        Shape of a single time slice of one velocity component, ``(i,j,[k])``.
+    ndim : int
+        Number of spatial dimensions of the fluid velocity field (2 or 3).
+    INUM : None, True, or int >= 2
+        How much data is held in memory, and how it is interpolated in time.
+        None (the default) splines the entire dataset cubically. True splines
+        the entire dataset linearly. An int loads a sliding window of
+        ``INUM`` + 1 time points from storage as needed and splines it linearly.
+    periodic_dim : tuple of bool
+        Whether the fluid data is periodic in each spatial dimension. Defaults
+        to non-periodic, and is independent of the agent boundary conditions in
+        ``Environment.bndry``.
+    fluid_domain_LLC : tuple
+        If the fluid velocity came from data that was translated in space so
+        that its lower left corner sat at the origin, this holds the original
+        lower left corner.
+    fmin : tuple
+        Minimum velocity in each direction over all data seen so far.
+    fmax : tuple
+        Maximum velocity in each direction over all data seen so far.
+    tiling : tuple of int
+        Number of tiles along each axis, set by ``Environment.tile_domain``; all
+        ones when untiled. Tiling repeats the stored grid without copying it, so
+        ``flow_points``, ``fshape`` and every field returned describe one tile.
+    tiled_points : tuple of 1D ndarrays
+        Grid coordinates across the tiled domain.
     '''
-    X_vel = []
-    Y_vel = []
-    for n in range(d_start, d_finish+1):
-        # Points to desired data viz_IB2d data file
-        if n < 10:
-            numSim = '000'+str(n)
-        elif n < 100:
-            numSim = '00'+str(n)
-        elif n < 1000:
-            numSim = '0'+str(n)
-        else:
-            numSim = str(n)
 
-        # Imports (x,y) grid values and ALL Eulerian Data %
-        #                      DEFINITIONS
-        #          x: x-grid                y: y-grid
-        #       Omega: vorticity           P: pressure
-        #    uMag: mag. of velocity
-        #    uX: mag. of x-Velocity   uY: mag. of y-Velocity
-        #    u: velocity vector
-        #    Fx: x-directed Force     Fy: y-directed Force
-        #
-        #  Note: U(j,i): j-corresponds to y-index, i to the x-index
+    # Axes of the source grid that were one point thick and were dropped on
+    #   reading, numbered as in the source (0, 1, 2 for x, y, z). The loaders
+    #   that collapse such axes set it; Environment reads it to know which axis
+    #   to drop from a 3D immersed mesh.
+    _flat = ()
+    # Tile counts per axis once Environment.tile_domain has run; None until
+    #   then, and None is what keeps every untiled code path as it was.
+    _tiling = None
+
+    def __init__(self, flow, flow_points, flow_times=None, INUM=None,
+                 periodic_dim=False, fluid_domain_LLC=None):
+        '''Build from velocity arrays in memory; the per-source subclasses read
+        files and call this.
+
+        Parameters
+        ----------
+        flow : list of ndarrays
+            one per velocity component, each ([t],i,j,[k]): i indexes x, 
+            j indexes y, and k indexes the z grid points, each increasing with 
+            its coordinate. The list is not modified.
+        flow_points : tuple (len == spatial dimension) of 1D ndarrays
+            grid coordinates along each spatial axis, one per point of the data
+            along that axis. They need not be evenly spaced; the endpoints lie on
+            the domain boundary.
+        flow_times : 1D ndarray, optional
+            the time of each index t, for time-varying flow. Omit it for
+            time-invariant flow.
+        INUM : int >= 2, True, or None (default)
+            None splines all the data cubically in time; True splines all of it
+            linearly; an int holds a window of INUM+1 time points, splines it
+            linearly, and slides it with the subclass's load_dumpfiles. An int
+            equal to the number of intervals holds everything, with a warning.
+            Use an int only when the dataset will not fit in memory: streaming
+            it is slower.
+        periodic_dim : bool or tuple of bool, default=False
+            whether the data is periodic along each spatial axis, independent of
+            the agent boundary conditions in Environment.bndry. A periodic axis's
+            upper grid edge must repeat its lower one; interpolation wraps there.
+        fluid_domain_LLC : tuple, optional
+            the data's original lower left corner, when it was translated so that
+            corner sits at the origin
+
+        Raises
+        ------
+        ValueError
+            if INUM is not None, True or an int of at least 2
+        RuntimeError
+            if an int INUM is at least the number of time points, or a subclass
+            loading dynamically supplies flow_times for only part of its dumps
+        '''
         
-        if vector_data:
-            # read in vector velocity data
-            strChoice = 'u'; xy = True
-            uX, uY, x, y = _dataio.read_2DEulerian_Data_From_vtk(path, numSim,
-                                                                strChoice,xy)
-            X_vel.append(uX.T) # (y,x) -> (x,y) coordinates
-            Y_vel.append(uY.T) # (y,x) -> (x,y) coordinates
+        _check_INUM(INUM)
+        # Its entries are replaced by splines below; the caller's list is not.
+        flow = list(flow)
+        self.INUM = INUM # This is how many intervals to use when initiating 
+                         #  the spline object.
+        self.fluid_domain_LLC = fluid_domain_LLC
+        # Callbacks fired whenever fluid data lands in memory; see
+        #   add_dump_observer. Set before the first _record_dump_means call
+        #   below, which is the first thing that would fan out.
+        self._dump_observers = []
+        # Where per-dump vorticity files live, once that is known. None means
+        #   nothing has established a location -- see probe_stored_vorticity.
+        self.vorticity_path = None
+        # The two most recently read per-dump vorticity fields, keyed on the
+        #   GLOBAL dump index so the cache stays correct across a window slide
+        #   it knows nothing about.
+        self._vort_cache = {}
+
+        if flow_times is not None and not isinstance(INUM, (bool, type(None))) \
+                and len(flow_times) <= INUM:
+            raise RuntimeError(
+                "INUM={} asks for a window of {} time points, but the series "
+                "has only {}. Use INUM=None or True to hold all of it.".format(
+                    INUM, INUM+1, len(flow_times)))
+
+        # A subclass that streams from storage must hand over the timestamps for
+        # the WHOLE dataset, not just the resident window: windows are sliced out
+        # of flow_times and the simulation is bounded by its endpoints. Getting
+        # this wrong does not raise on its own -- a short flow_times makes
+        # INUM >= len(flow_times)-1 below, which quietly selects the "everything
+        # is in memory" branch, sets extrapolate=(True, True), and thereby
+        # disables update_spline for the rest of the run. Check it here, where
+        # the subclass has already published the dump range it intends to cover.
+        if INUM is not None and INUM is not True and INUM is not False \
+                and flow_times is not None \
+                and hasattr(self, 'd_start') and hasattr(self, 'd_finish'):
+            expected = self.d_finish - self.d_start + 1
+            if len(flow_times) != expected:
+                raise RuntimeError(
+                    "flow_times must cover the entire dump range when loading "
+                    "dynamically: dumps {}-{} is {} time points, but "
+                    "flow_times has {}. A loader must timestamp every dump up "
+                    "front, not just the window it loads first.".format(
+                        self.d_start, self.d_finish, expected, len(flow_times)))
+
+        self.flow_points = flow_points
+        self.flow_times = flow_times
+        # A single bool applies to every axis. A sequence gives one entry per
+        #   axis and is stored as a tuple of bools whatever it arrived as: a
+        #   call replayed from a run archive's provenance passes a list.
+        if periodic_dim is None or isinstance(periodic_dim, (bool, np.bool_)):
+            self.periodic_dim = (bool(periodic_dim),)*len(flow)
         else:
-            # read in x-directed Velocity Magnitude #
-            strChoice = 'uX'; xy = True
-            uX,x,y = _dataio.read_2DEulerian_Data_From_vtk(path,numSim,
-                                                        strChoice,xy)
-            X_vel.append(uX.T) # (y,x) -> (x,y) coordinates
+            self.periodic_dim = tuple(bool(p) for p in periodic_dim)
+        
+        if self.flow_times is not None:
+            # record shape of the fluid data
+            self.fshape = (len(self.flow_times), *flow[0].shape[1:])
 
-            # read in y-directed Velocity Magnitude #
-            strChoice = 'uY'
-            uY = _dataio.read_2DEulerian_Data_From_vtk(path,numSim,
-                                                    strChoice)
-            Y_vel.append(uY.T) # (y,x) -> (x,y) coordinates
+            # Per-dump spatial means of each velocity component: the sidecar the
+            # plotting statistics read instead of touching the field itself.
+            # Recorded here and in update_spline -- wherever data lands in
+            # memory -- so it costs one reduction over data that is already
+            # resident. NaN marks a dump that has never been loaded, which is
+            # possible only when a window is being slid.
+            self._dump_means = np.full((len(self.flow_times), len(flow)), np.nan)
+            self._dumps_arrived(0, flow)
+            # Set below for cubic splining, where the whole dataset is resident.
+            self._mean_interp = None
 
-        ##### The following is just for reference! ######
-        # read in Vorticity #
-        # strChoice = 'Omega'; first = 0
-        # Omega = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
-        #                                               strChoice,first)
-        # read in Pressure #
-        # strChoice = 'P'; first = 0
-        # P = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
-        #                                           strChoice,first)
-        # read in Velocity Magnitude #
-        # strChoice = 'uMag'; first = 0
-        # uMag = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
-        #                                              strChoice,first)
-        # read in x-directed Forces #
-        # strChoice = 'Fx'; first = 0
-        # Fx = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
-        #                                            strChoice,first)
-        # read in y-directed Forces #
-        # strChoice = 'Fy'; first = 0
-        # Fy = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
-        #                                            strChoice,first)
-        ###################################################
+            if self.INUM is not None and self.INUM is not False:
+                if self.INUM is True or self.INUM >= len(self.flow_times)-1:
+                    if self.INUM is not True:
+                        # An int INUM is a request for a sliding window, but one
+                        # at least as wide as the dataset leaves nothing to
+                        # slide. Say so: the resulting object holds everything in
+                        # memory and never calls update_spline, which is the
+                        # opposite of what was asked for.
+                        warnings.warn(
+                            "INUM={} spans the entire dataset ({} time points), "
+                            "so all fluid data is being held in memory and no "
+                            "dynamic loading will occur. Use a smaller INUM to "
+                            "load windows from storage.".format(
+                                self.INUM, len(self.flow_times)), UserWarning)
+                    for n, f in enumerate(flow):
+                        flow[n] = LinearSpline(self.flow_times, f, extrapolate=(True, True))
+                elif self.INUM < len(self.flow_times)-1:
+                    ### Create initial spline ###
+                    load_times = self.flow_times[0:self.INUM+1]
+                    for n, f in enumerate(flow):
+                        flow[n] = LinearSpline(load_times, f, extrapolate=(True, False))
+            else:
+                ### Spline all data with not-a-knot ###
+                self.INUM = None
+                for n, f in enumerate(flow):
+                    flow[n] = fCubicSpline(self.flow_times, f, extrapolate=(True, True))
+                # Spline the per-dump means with the same class and knots as the
+                # field. Cubic spline construction is linear in the data, and so
+                # is the spatial mean, so this evaluates to exactly the mean of
+                # the splined field at any time -- provided the two are built
+                # the same way, which reusing fCubicSpline guarantees.
+                self._mean_interp = fCubicSpline(self.flow_times, self._dump_means,
+                                                 extrapolate=(True, True))
+            self._flow = flow
+        else:
+            # Time-invariant flow. Just save it as-is.
+            self.fshape = flow[0].shape
+            self._flow = list(flow)
+            self._dump_means = np.array([np.mean(f) for f in self._flow])
+            self._mean_interp = None
 
-    ### Return data ###
-    if d_start != d_finish:
-        return [np.transpose(np.dstack(X_vel),(2,0,1)), 
-                np.transpose(np.dstack(Y_vel),(2,0,1))] , x, y
-    else:
-        return [X_vel[0], Y_vel[0]], x, y
+        self.fmin = tuple(f.min() for f in self._flow)
+        self.fmax = tuple(f.max() for f in self._flow)
 
 
+    def __call__(self, time):
+        '''Velocity field at simulation time ``time``, interpolated in time.
 
-def _read_IBAMR3d_vtkfiles(path, d_start=0, d_finish=None, 
-                          vel_conv=None, grid_conv=None):
-    '''Reads in one or more vtk Rectilinear Grid Vector files. If path
-    refers to a single file, the resulting flow will be time invariant.
-    Otherwise, this method will assume that files are named IBAMR_db_###.vtk 
-    where ### is the dump number, and that the mesh is the same in each vtk.
-    Also, imported times will be translated backward so that the first time 
-    loaded corresponds to a Planktos environment time of 0.0.
+        Loads data when ``time`` falls outside the window held in memory. A time
+        outside the data's time range takes the value at its nearer end.
 
-    Parameters
-    ----------
-    path : string
-        path to vtk data, incl. file extension if a single file
-    d_start : int, default=0
-        vtk dump number to start with.
-    d_finish : int, optional
-        vtk dump number to end with. If None, end with last one.
-    vel_conv : float, optional
-        scalar to multiply the velocity by in order to convert units
-    grid_conv : float, optional
-        scalar to multiply the grid by in order to convert units
+        Returns
+        -------
+        list of ndarrays, one per velocity component, each (i,j,[k]) on
+        ``flow_points``: the stored tile when tiled
 
-    Returns
-    -------
-    flow : list of ndarray (fluid data)
-    mesh : list of 1D arrays of grid points in x, y, and z directions
-    flow_times : None or ndarray of times at which the fluid velocity is
-        specified.
-    '''
-
-    path = Path(path)
-    if path.is_file():
-        flow, mesh, time = _dataio.read_vtk_Rectilinear_Grid_Vector(path)
-        flow_times = None
+        Raises
+        ------
+        TypeError
+            for time-invariant flow, which is indexed instead
+        '''
+        if self.flow_times is None:
+            raise TypeError('This fluid is time-invariant, so it cannot be '
+                            'evaluated at a time. Index it instead: flow[0] '
+                            'is the x-velocity.')
+        # Constant extrapolation beyond the data's time bounds
+        if time <= self.flow_times[0]:
+            time = self.flow_times[0]
+        elif time >= self.flow_times[-1]:
+            time = self.flow_times[-1]
+        try:
+            return [fspline(time) for fspline in self._flow]
+        except SplineRangeError:
+            self.update_spline(time)
+            return [fspline(time) for fspline in self._flow]
     
-    elif path.is_dir():
-        file_names = [x.name for x in path.iterdir() if x.is_file() and
-                      x.name[:9] == 'IBAMR_db_']
-        file_nums = sorted([int(f[9:12]) for f in file_names])
-        if d_start is None:
-            d_start = file_nums[0]
+    def __len__(self):
+        '''Number of velocity components, equal to the spatial dimension.'''
+        return len(self._flow)
+    
+    def __getitem__(self, pos):
+        '''Velocity component ``pos``.
+
+        The raw ndarray for time-invariant flow. For time-varying flow, that
+        component's interpolant in time, which indexes by time index like an
+        ``(t,i,j,[k])`` array. Raises ``TypeError`` while a window of data
+        slides (``is_windowed``), since a time index would then point into the
+        window rather than the dataset. Either is on ``flow_points``, the
+        stored tile when tiled.
+        '''
+        if not self.is_windowed:
+            return self._flow[pos]
         else:
-            d_start = int(d_start)
-            assert d_start in file_nums, "d_start number not found!"
-        if d_finish is None:
-            d_finish = file_nums[-1]
+            raise TypeError('A FluidData object with dynamically loaded data '+
+                            'must be called as a function with a simulation '+
+                            'time passed as an argument in order to return a '+
+                            'list of fluid velocity field ndarrays.')
+
+    @property
+    def ndim(self):
+        '''Returns the number of dimensions of the fluid velocity field.'''
+        return len(self.flow_points)
+
+
+    @property
+    def spatial_shape(self):
+        '''Returns the shape of one time slice of a velocity component.'''
+        # fshape leads with a time axis only when the flow is time-varying, so
+        # a time-invariant field is already its own spatial shape.
+        if self.flow_times is None:
+            return self.fshape
+        return self.fshape[1:]
+    
+
+
+    def get_raw_loaded_data(self):
+        '''The ndarrays the interpolants are built on, one per component.
+
+        Under dynamic loading, only the window held in memory; when tiled,
+        only the stored tile. Linear interpolants return their data by
+        reference; cubic ones rebuild it.
+        '''
+        # Static flow is stored as arrays; time-varying flow as splines of
+        #   either class, so this branches on flow_times, not the spline type.
+        if self.flow_times is None:
+            return self._flow
+        return [flow.regenerate_data() for flow in self._flow]
+
+
+
+    @property
+    def is_windowed(self):
+        '''True when only a sliding window of the dataset is held in memory.
+
+        False for time-invariant flow, for ``INUM=None`` (cubic, all resident)
+        and for ``INUM=True`` (linear, all resident) -- and also for an int
+        ``INUM`` that spans the whole dataset, which holds everything and never
+        slides.
+        '''
+
+        if self.flow_times is None:
+            return False
+        # False is normalized to None by __init__ when there are flow_times, so
+        #   an int is all that is left to test.
+        if self.INUM is None or self.INUM is True:
+            return False
+        return self.INUM < len(self.flow_times) - 1
+
+
+    def add_dump_observer(self, observer):
+        '''Call ``observer(idx_start, flow)`` whenever fluid data lands in memory.
+
+        Fires from every load path. Registering the same observer twice does
+        nothing.
+
+        - **The same dump can be delivered more than once.** A window sliding
+          back to the start of a series reloads dumps already delivered, so an
+          observer that writes a file or appends to a list must skip a repeat.
+        - **Data already in memory when the observer registers is never
+          delivered**, and time-invariant flow never fires at all. Take what is
+          resident from :meth:`iter_resident_dumps`, which covers both.
+
+        Parameters
+        ----------
+        observer : callable
+            called with ``(idx_start, flow)``, where ``idx_start`` is the index
+            into ``flow_times`` of the first time point supplied and ``flow`` is
+            a list of per-component ndarrays with a leading time axis -- raw
+            data, not splines. Keep the arrays, not the list: the list is
+            reused after the call returns.
+        '''
+
+        if observer not in self._dump_observers:
+            self._dump_observers.append(observer)
+
+
+    def remove_dump_observer(self, observer):
+        '''Stop calling an observer registered by :meth:`add_dump_observer`.
+        A no-op if it is not registered.'''
+
+        if observer in self._dump_observers:
+            self._dump_observers.remove(observer)
+
+
+    def _record_dump_means(self, idx_start, flow):
+        '''Store the spatial mean of each velocity component for the dumps
+        delivered. Called by :meth:`_dumps_arrived`.
+
+        Parameters
+        ----------
+        idx_start : int
+            index into flow_times that the first time point of the passed data
+            corresponds to
+        flow : list of ndarrays
+            per-component fluid data with a leading time axis, in the form
+            load_dumpfiles returns
+        '''
+
+        for n, f in enumerate(flow):
+            if self._tiling is None:
+                means = np.mean(f, axis=tuple(range(1, f.ndim)))
+            else:
+                means = self._tiled_mean(f)
+            self._dump_means[idx_start:idx_start+len(means), n] = means
+
+
+
+    @property
+    def dump_means(self):
+        """Spatial mean of each velocity component, per dump, as (n_dumps, ncomp).
+
+        NaN for a dump that has never been in memory, which is possible only
+        while a window is being slid. Time-invariant flow has a single row.
+        """
+
+        return np.atleast_2d(self._dump_means)
+
+
+    def iter_resident_dumps(self):
+        """Yield ``(t_idx, [one array per component])`` for each dump in memory.
+
+        One dump at a time, never stacked. Time-invariant flow yields once, with
+        ``t_idx`` 0; cubic splining yields every dump, rebuilt one at a time
+        from the spline; linear splining yields the dumps it holds.
+        """
+
+        if self.flow_times is None:
+            yield 0, list(self._flow)
+            return
+        if self.INUM is None:
+            # Cubic, everything resident. Indexing a component's spline by time
+            #   index reconstructs one dump; regenerate_data would rebuild the
+            #   entire series at once.
+            for i in range(len(self.flow_times)):
+                yield i, [f[i] for f in self._flow]
+            return
+        # Linear. regenerate_data hands back the resident window by reference,
+        #   so slicing a dump out of it copies nothing.
+        idx0 = getattr(self, 'loaded_idx_bnds', (0, None))[0]
+        window = [f.regenerate_data() for f in self._flow]
+        for i in range(len(window[0])):
+            yield idx0 + i, [w[i] for w in window]
+
+
+    def _dumps_arrived(self, idx_start, flow):
+        '''Fluid data just landed in memory: record its means, call the observers.
+
+        Called from every load site. A forward slide passes only the dumps it
+        loaded, not the two it carries over from the outgoing window.
+
+        Parameters
+        ----------
+        idx_start : int
+            index into flow_times of the first time point supplied
+        flow : list of ndarrays
+            per-component data with a leading time axis
+        '''
+
+        self._record_dump_means(idx_start, flow)
+        for observer in self._dump_observers:
+            observer(idx_start, flow)
+
+
+    def _interp_dump_means(self, time):
+        '''The per-dump means at ``time``, weighted as the field is, or None if
+        a bracketing dump has never been loaded.
+
+        A time outside the data's time range takes its nearer end, as in
+        ``__call__``.
+        '''
+
+        # Exact: both spline classes evaluate as a weighted sum of the nodal
+        #   fields, and the spatial mean is linear, so
+        #   mean(u(t)) == sum_i w_i(t)*mean(u_i).
+
+        if self._mean_interp is not None:
+            # Cubic. The entire dataset was resident when the interpolant was
+            # built, so no mean can be missing.
+            if time <= self.flow_times[0]:
+                time = self.flow_times[0]
+            elif time >= self.flow_times[-1]:
+                time = self.flow_times[-1]
+            return tuple(float(m) for m in self._mean_interp(time))
+
+        # Linear. Done off flow_times and the sidecar rather than off the
+        # resident spline, so it stays correct for any dump whose mean has been
+        # recorded -- including one the sliding window has since moved past.
+        means = _linear_blend(self.flow_times, time, self._dump_means.__getitem__)
+
+        if np.isnan(means).any():
+            return None
+        return tuple(float(m) for m in means)
+
+
+
+    def get_mean_velocity(self, time=None, t_idx=None):
+        '''Spatial mean of each fluid velocity component, from a per-dump cache.
+
+        Exactly the mean of ``self(time)``, without touching the field: a time
+        whose two bracketing dumps have both been in memory costs no load.
+
+        Parameters
+        ----------
+        time : float, optional
+            the time at which to evaluate the means; takes precedence over
+            ``t_idx``. Ignored, with a warning, for time-invariant flow.
+        t_idx : int, optional
+            the index into flow_times at which to evaluate the means
+
+        Returns
+        -------
+        tuple of floats, one per velocity component
+
+        Raises
+        ------
+        ValueError
+            for time-varying flow, if neither time nor t_idx is given
+        '''
+
+        if self.flow_times is None:
+            if time is not None or t_idx is not None:
+                warnings.warn("Flow is time-invariant; ignoring time and t_idx.")
+            return tuple(float(m) for m in self._dump_means)
+
+        if time is None and t_idx is not None:
+            time = self.flow_times[t_idx]
+        elif time is None and t_idx is None:
+            raise ValueError("Either time or t_idx must be specified.")
+
+        means = self._interp_dump_means(time)
+        if means is None:
+            # A bracketing dump has never been in memory. Load it -- which
+            # records the means for the whole window -- and try again.
+            flow = self(time)
+            means = self._interp_dump_means(time)
+            if means is None:
+                # The load did not cover both bracketing dumps. Reduce the field
+                # we now hold; it is the same value, just paid for the hard way.
+                if self._tiling is not None:
+                    return tuple(float(self._tiled_mean(f)) for f in flow)
+                return tuple(float(np.mean(f)) for f in flow)
+        return means
+
+
+
+    def load_dumpfiles(self, d_start, d_finish):
+        '''Read dumps ``d_start`` through ``d_finish``, inclusive. Subclasses
+        that load dynamically implement this.
+
+        Parameters
+        ----------
+        d_start, d_finish : int
+            ``self.d_start + t_idx`` for the first and last time index wanted
+
+        Returns
+        -------
+        list of ndarrays, one per velocity component, each (t,i,j,[k]). The
+        leading time axis may be dropped for a single dump.
+
+        Raises
+        ------
+        NotImplementedError
+            on the base class
+        '''
+        raise NotImplementedError('The subclass for this type of data must '+
+                                  'implement its own data loaders.')
+
+
+    def _load_dumps(self, d_start, d_finish):
+        """``load_dumpfiles``, with the leading time axis restored for a single
+        dump. ``update_spline`` loads only through here."""
+
+        # update_spline concatenates along the time axis and _record_dump_means
+        #   reduces over it, so it must be there. Some readers drop it for a
+        #   single dump, as the constructor's read of a time-invariant field needs.
+
+        ndim = len(self.flow_points)
+        return [f if f.ndim > ndim else f[np.newaxis, ...]
+                for f in self.load_dumpfiles(d_start, d_finish)]
+
+
+
+    def update_spline(self, time):
+        '''Slide the window held in memory until it covers ``time``.
+
+        Called by ``__call__`` and ``get_dudt`` when a time falls outside the
+        window; does nothing when the whole dataset is held.
+        '''
+
+        while time > self._flow[0].x[-1] and not self._flow[0].extrapolate[1]:
+            # spline forward
+
+            ####### get info about what we will be loading #######
+            d_start = self.loaded_dump_bnds[1]+1 # first dump to load
+            idx_start = self.loaded_idx_bnds[1]-1 # first index in new spline
+            if self.loaded_dump_bnds[1]-1 + self.INUM >= self.d_finish:
+                # The end of the dataset. >=, not >: a window reaching exactly
+                #   the last dump is the final one, open on the right. Each
+                #   forward slide moves the window end by INUM-1, so it lands
+                #   there when the dump count is a multiple of INUM-1, plus 2.
+                d_finish = self.d_finish
+                # Last valid index, inclusive like loaded_dump_bnds.
+                idx_finish = len(self.flow_times) - 1
+                extrapolate = (False, True)
+            else:
+                # We are contained in the middle of the dataset.
+                d_finish = self.loaded_dump_bnds[1]-1 + self.INUM
+                idx_finish = self.loaded_idx_bnds[1]-1 + self.INUM
+                extrapolate = (False, False)
+            load_times = self.flow_times[idx_start:idx_finish+1]
+
+            ####### retain only the necessary current data #######
+            last_flow_0 = []; last_flow_1 = []
+            for n in range(len(self._flow)):
+                # grab flow at holdover times
+                last_flow_0.append(np.array(self._flow[n](load_times[0])))
+                # grab flow at final loaded time from current spline
+                last_flow_1.append(np.array(self._flow[n](load_times[1])))
+                # free up memory
+                self._flow[n] = None
+                
+            # load new data
+            flow = self._load_dumps(d_start, d_finish)
+
+            # Record means for the freshly loaded dumps, which start two time
+            # points into the new window. The two holdovers prepended below are
+            # already in the sidecar from when they were first loaded, and those
+            # entries came from raw data rather than from a spline evaluation
+            # carried across a window boundary.
+            self._dumps_arrived(idx_start+2, flow)
+
+            # add old spline data
+            for n,f in enumerate(flow):
+                flow[n] = np.concatenate((last_flow_0[n][np.newaxis,...],
+                                          last_flow_1[n][np.newaxis,...], f))
+
+            ####### Spline it #######
+            for n in range(len(flow)):
+                self._flow[n] = LinearSpline(load_times, flow[n], extrapolate)
+            self.loaded_dump_bnds = (self.loaded_dump_bnds[1]-1,d_finish)
+            self.loaded_idx_bnds = (idx_start, idx_finish)
+
+            # Update fmin/fmax
+            self.fmin = tuple(min(self.fmin[n],f.min()) for n,f in enumerate(self._flow))
+            self.fmax = tuple(max(self.fmax[n],f.max()) for n,f in enumerate(self._flow))
+            
+        while time < self._flow[0].x[0] and not self._flow[0].extrapolate[0]:
+            # spline backward
+
+            ####### if the beginning is requested, jump there #######
+            if time <= self.flow_times[self.INUM]:
+                self._flow = None
+                self._flow = self._load_dumps(self.d_start, self.d_start + self.INUM)
+                self.loaded_dump_bnds = (self.d_start, self.d_start + self.INUM)
+                self.loaded_idx_bnds = (0, self.INUM)
+                self._dumps_arrived(0, self._flow)
+                for n in range(len(self._flow)):
+                    self._flow[n] = LinearSpline(
+                        self.flow_times[0:self.INUM+1], self._flow[n],
+                        extrapolate=(True, False))
+            else:
+            ####### We are contained in the middle of the dataset. #######
+                ####### get info about what we will be loading #######
+                d_finish = self.loaded_dump_bnds[0]-1 # last dump to load
+                idx_finish = self.loaded_idx_bnds[0]+1 # last index in new spline
+                d_start = self.loaded_dump_bnds[0]+1 - self.INUM
+                idx_start = self.loaded_idx_bnds[0]+1 - self.INUM
+                extrapolate = (False, False)
+                load_times = self.flow_times[idx_start:idx_finish+1]
+
+                ####### retain only the necessary current data #######
+                last_flow_0 = []; last_flow_1 = []
+                for n in range(len(self._flow)):
+                    # grab flow at second loaded time from current spline.
+                    #   this will become the final loaded flow.
+                    last_flow_1.append(np.array(self._flow[n](load_times[-1])))
+                    # grab flow at first loaded time, will be next to last flow.
+                    last_flow_0.append(np.array(self._flow[n](load_times[-2])))
+                    # free up memory
+                    self._flow[n] = None
+                    
+                # load new data
+                flow = self._load_dumps(d_start, d_finish)
+
+                # Record means for the freshly loaded dumps. Sliding backward,
+                # these occupy the front of the new window; the two holdovers
+                # appended below already have their means recorded.
+                self._dumps_arrived(idx_start, flow)
+
+                # add old spline data
+                for n,f in enumerate(flow):
+                    flow[n] = np.concatenate((f, last_flow_0[n][np.newaxis,...],
+                                              last_flow_1[n][np.newaxis,...]))
+
+                ####### Spline it #######
+                for n in range(len(flow)):
+                    self._flow[n] = LinearSpline(load_times, flow[n], extrapolate)
+                self.loaded_dump_bnds = (d_start, self.loaded_dump_bnds[0]+1)
+                self.loaded_idx_bnds = (idx_start, idx_finish)
+
+            # Update fmin/fmax
+            self.fmin = tuple(min(self.fmin[n],f.min()) for n,f in enumerate(self._flow))
+            self.fmax = tuple(max(self.fmax[n],f.max()) for n,f in enumerate(self._flow))
+    
+
+
+    @property
+    def tiling(self):
+        '''Number of tiles along each axis; all ones when untiled.'''
+
+        if self._tiling is None:
+            return (1,)*len(self.flow_points)
+        return self._tiling
+
+
+    @property
+    def tiled_points(self):
+        '''Grid coordinates across the tiled domain, one array per axis.
+
+        Along an axis tiled k times with N stored points there are k(N-1)+1,
+        ``fp[1:] + n*fp[-1]`` appended for each extra tile. ``flow_points``
+        itself when untiled.
+        '''
+
+        if self._tiling is None:
+            return self.flow_points
+        return tuple(fp if k == 1 else
+                     np.concatenate([fp] + [fp[1:] + n*fp[-1] for n in range(1, k)])
+                     for fp, k in zip(self.flow_points, self._tiling))
+
+
+    def _tiled_index(self, d):
+        '''The stored index each point of the tiled grid reads along axis d.'''
+
+        # A tiled point at v*h wraps onto the stored tile at (v mod (N-1))*h,
+        #   just as interpolate_flow wraps a position, so a tiled field read
+        #   through this map is the field the simulation sees at every node.
+        N = len(self.flow_points[d])
+        if self.tiling[d] == 1:
+            return np.arange(N)
+        return np.arange(self.tiling[d]*(N-1) + 1) % (N-1)
+
+
+    def materialize_tiled(self, field):
+        '''Replicate a field on the stored grid across the tiled domain.
+
+        Applies to the trailing spatial axes, so a leading time axis is kept.
+        The result is the product of the tile counts times the size of
+        ``field``. Returns ``field`` itself when untiled.
+
+        Parameters
+        ----------
+        field : ndarray
+            ([t],i,j,[k]) on the stored grid, e.g. a velocity component or the
+            vorticity
+
+        Returns
+        -------
+        ndarray on ``tiled_points``
+        '''
+
+        if self._tiling is None:
+            return field
+        lead = field.ndim - len(self.flow_points)
+        for d, k in enumerate(self._tiling):
+            if k > 1:
+                field = np.take(field, self._tiled_index(d), axis=lead+d)
+        return field
+
+
+    def tiled_strided(self, field, strides):
+        '''Every ``strides[d]``-th point of the tiled field along each axis.
+
+        Equal to ``materialize_tiled(field)`` sliced by ``strides``, without
+        building the tiled field. Its coordinates are
+        ``tiled_points[d][::strides[d]]``. A view of ``field`` when untiled.
+
+        Parameters
+        ----------
+        field : ndarray
+            ([t],i,j,[k]) on the stored grid
+        strides : sequence of int, one per spatial axis
+
+        Returns
+        -------
+        ndarray
+        '''
+
+        lead = field.ndim - len(self.flow_points)
+        if self._tiling is None:
+            return field[(slice(None),)*lead + tuple(slice(None, None, s)
+                                                     for s in strides)]
+        for d, s in enumerate(strides):
+            field = np.take(field, self._tiled_index(d)[::s], axis=lead+d)
+        return field
+
+
+    def _tiled_mean(self, field):
+        '''Node mean over the tiled grid of the trailing spatial axes of
+        ``field``, as a materialized field's np.mean would give, to roundoff.'''
+
+        # Through _tiled_index, stored index 0 appears k+1 times along an axis
+        #   tiled k times, the interior k times and index N-1 never. The
+        #   weights are separable, so contract one axis at a time, last first.
+        for k in reversed(self.tiling):
+            if k == 1:
+                field = field.mean(axis=-1)
+            else:
+                w = np.full(field.shape[-1], float(k))
+                w[0] = k + 1
+                w[-1] = 0
+                field = field @ w / w.sum()
+        return field
+
+
+    def _set_tiling(self, counts):
+        '''Record the domain's tiling and recompute the per-dump means as the
+        tiled domain's. Called by ``Environment.tile_domain``.'''
+
+        self._tiling = tuple(counts)
+        if self.flow_times is None:
+            self._dump_means = np.array([self._tiled_mean(f) for f in self._flow])
+            return
+        # A dump not in memory loses its mean and reloads on demand, as a
+        #   never-loaded dump does.
+        means = np.full_like(self._dump_means, np.nan)
+        for t_idx, comps in self.iter_resident_dumps():
+            means[t_idx] = [self._tiled_mean(f) for f in comps]
+        self._dump_means = means
+        if self._mean_interp is not None:
+            self._mean_interp = fCubicSpline(self.flow_times, self._dump_means,
+                                             extrapolate=(True, True))
+
+
+
+    def get_vorticity(self, time=None, t_idx=None):
+        '''Vorticity of the velocity field, at a time or time index.
+
+        Differenced with ``np.gradient``, across the wrap on periodic axes.
+        Time-varying flow evaluates ``self(time)``, which can trigger a load.
+
+        Parameters
+        ----------
+        time : float, optional
+            the time at which to compute the vorticity; takes precedence over
+            ``t_idx``. Ignored, with a warning, for time-invariant flow.
+        t_idx : int, optional
+            the index into flow_times at which to compute the vorticity
+
+        Returns
+        -------
+        ndarray (i,j) in 2D, the out-of-plane component; a tuple of three
+        (i,j,k) ndarrays in 3D. On ``flow_points``: the stored tile when
+        tiled.
+
+        Raises
+        ------
+        ValueError
+            for time-varying flow, if neither time nor t_idx is given
+        '''
+
+        if self.flow_times is not None:
+            if time is None and t_idx is not None:
+                time = self.flow_times[t_idx]
+            elif time is None and t_idx is None:
+                raise ValueError("Either time or t_idx must be specified.")
+            flow = self(time)
         else:
-            d_finish = int(d_finish)
-            assert d_finish in file_nums, "d_finish number not found!"
+            if time is not None or t_idx is not None:
+                warnings.warn("Flow is time-invariant; ignoring time and t_idx.")
+            flow = self
+
+        # Periodic axes are differenced across the wrap; see
+        # _vorticity_from_field, which is shared with the dump-arrival observer
+        # so that the two cannot compute different fields.
+        return _vorticity_from_field(flow, self.flow_points, self.periodic_dim)
+    
+
+
+    #####################   per-dump vorticity   #####################
+    #
+    # Vorticity is not cached -- it is sourced. Which of three things happens is
+    # decided by is_windowed and by whether the source already ships the field:
+    #
+    #   whole field resident     -> nothing on disk; recompute from the velocity
+    #   windowed, source has     -> read the source's own per-dump field
+    #   windowed, source has not -> write one per dump as it lands, in the
+    #                               source's own format, and read it back
+    #                               through the same path
+    #
+    # A subclass that ships the field overrides probe_stored_vorticity and
+    # read_dump_vorticity; one whose format differs from the generic rectilinear
+    # default also overrides write_dump_vorticity. The blended read
+    # (get_stored_vorticity) is generic.
+    #
+    # 2D only, since a fluid backdrop is only drawn in 2D. OpenFOAMData ships a
+    # `vorticity` cell array on every dump and would be the first beneficiary if
+    # a 3D backdrop arrives with the vtk plotting rewrite; it is deliberately not
+    # read until then, since reading it means the cell-order permutation and
+    # boundary splice again for a field nothing would draw.
+
+    VORTICITY_TITLE = 'Omega'
+
+
+    def dump_number(self, t_idx):
+        """The source's own dump number for index ``t_idx`` into ``flow_times``:
+        ``d_start + t_idx``, where ``d_start`` is 0 for a source without dump
+        numbers of its own."""
+
+        return int(getattr(self, 'd_start', 0)) + int(t_idx)
+
+
+    def source_dir(self):
+        """The directory this fluid was read from (its ``path``), or None for a
+        fluid built from arrays.
+
+        ``Environment.record`` writes per-dump vorticity here when the directory
+        is writable.
+        """
+
+        path = getattr(self, 'path', None)
+        return None if path is None else Path(path)
+
+
+    def probe_stored_vorticity(self):
+        """Whether this source already carries a per-dump vorticity field.
+
+        The base class returns ``('absent', None)``; a source that ships the
+        field overrides it.
+
+        Returns
+        -------
+        state : {'complete', 'partial', 'absent'}
+            ``'partial'`` when only some dumps have one. ``Environment.record``
+            uses the source's field only when ``'complete'``, and otherwise
+            writes a complete series of its own.
+        directory : Path or None
+            where the field is, unless the state is ``'absent'``
+        """
+
+        return 'absent', None
+
+
+    def vorticity_filename(self, t_idx):
+        """Name of the per-dump vorticity file for ``t_idx``, ``Omega.NNNN.vtk``
+        numbered by :meth:`dump_number`. The reader and the writer both use it."""
+
+        return '{}.{:04d}.vtk'.format(self.VORTICITY_TITLE,
+                                      self.dump_number(t_idx))
+
+
+    def read_dump_vorticity(self, t_idx):
+        """Read one dump's vorticity field off disk, on the velocity's grid.
+
+        Reads what :meth:`write_dump_vorticity` writes, a rectilinear-grid
+        scalar vtk on ``flow_points``, from ``vorticity_path``. A subclass whose
+        solver uses another format overrides both. Raises ``RuntimeError`` when
+        no ``vorticity_path`` is set.
+
+        Parameters
+        ----------
+        t_idx : int
+            index into ``flow_times``
+
+        Returns
+        -------
+        ndarray indexed [x,y], on ``flow_points``
+        """
+
+        vort, _, _ = _dataio.read_vtk_Rectilinear_Grid_Scalars(
+            self._vorticity_dir() / self.vorticity_filename(t_idx))
+        return vort
+
+
+    def write_dump_vorticity(self, t_idx, vort, path):
+        """Write one dump's vorticity field, in this source's own format.
+
+        Writes a rectilinear-grid scalar vtk on ``flow_points``. A subclass on a
+        uniform grid overrides this to write structured points instead, as its
+        solver prints them. Either way the file's header line is the stamp
+        ``Planktos <version> vorticity <digest>``, which marks it as Planktos's
+        and records a digest of ``vort``.
+
+        Parameters
+        ----------
+        t_idx : int
+            index into ``flow_times``
+        vort : ndarray
+            the field, indexed [x,y], on ``flow_points``
+        path : str or Path
+            directory to write into
+        """
+
+        _dataio.write_vtk_2D_rectilinear_grid_scalars(
+            path, self.VORTICITY_TITLE, vort, self.flow_points,
+            cycle=self.dump_number(t_idx),
+            time=None if self.flow_times is None else float(self.flow_times[t_idx]),
+            sep='.', header=_vorticity_stamp(vort))
+
+
+    def _vorticity_dir(self):
+        """Where per-dump vorticity lives, raising if nothing has said."""
+
+        if self.vorticity_path is None:
+            raise RuntimeError(
+                'no per-dump vorticity location is known for this fluid. One is '
+                'established when recording starts (Environment.record), or by '
+                'a source that ships the field.')
+        return Path(self.vorticity_path)
+
+
+    def get_stored_vorticity(self, time):
+        """Vorticity at ``time``, blended from per-dump vorticity files.
+
+        Equal to the curl of ``self(time)``: the two bracketing dumps are
+        blended with the weights the velocity uses. For a sliding window, where
+        :meth:`get_vorticity` would reload the velocity. Reads at most two files
+        per call, and one per dump interval over a monotone sweep.
+
+        **Linear splining only**: under cubic splining, call
+        :meth:`get_vorticity` instead.
+
+        Parameters
+        ----------
+        time : float
+
+        Returns
+        -------
+        ndarray indexed [x,y]
+
+        Raises
+        ------
+        RuntimeError
+            under cubic splining, or when no ``vorticity_path`` is set
+        """
+
+        if self.flow_times is None:
+            return self._dump_vorticity(0)
+
+        if self.INUM is None:
+            raise RuntimeError(
+                'this fluid is splined cubically in time, so per-dump vorticity '
+                'cannot reproduce the field in use: not-a-knot weights are '
+                'global, and applying them would mean holding the whole series. '
+                'The whole field is resident in this regime -- call '
+                'get_vorticity(time=) instead, which differentiates the '
+                'interpolated velocity and is the same field by construction.')
+
+        # Through the same weights the velocity itself is blended with. The
+        #   curl is linear, so the blend of the curls is the curl of the blend.
+        #   Cubic weights come from a global solve, which would need the whole
+        #   series. The two-slot cache in _dump_vorticity serves the reads.
+        return _linear_blend(self.flow_times, time, self._dump_vorticity)
+
+
+    def _dump_vorticity(self, t_idx):
+        """One dump's vorticity, from the two-slot read cache."""
+
+        t_idx = int(t_idx)
+        if t_idx not in self._vort_cache:
+            self._vort_cache[t_idx] = self.read_dump_vorticity(t_idx)
+        vort = self._vort_cache[t_idx]
+        # Evict whatever is furthest from what was just asked for. On a monotone
+        #   sweep that is the trailing dump, which is what makes one read per
+        #   dump interval enough in either direction.
+        while len(self._vort_cache) > 2:
+            drop = max(self._vort_cache, key=lambda k: abs(k - t_idx))
+            del self._vort_cache[drop]
+        return vort
+
+
+    def get_dudt(self, time=None, t_idx=None):
+        '''Time derivative of the velocity field, at a time or time index.
+
+        Zero strictly outside the data's time range, where the velocity is held
+        constant. Under linear splining it is piecewise constant on
+        (t[i-1], t[i]], so a time on a time point takes the slope to its left;
+        the first time point takes the slope to its right. Can trigger a load.
+        Time-invariant flow returns zeros, with a warning.
+
+        Parameters
+        ----------
+        time : float, optional
+            the time at which to compute the derivative; takes precedence over
+            ``t_idx``
+        t_idx : int, optional
+            the index into flow_times at which to compute the derivative
+
+        Returns
+        -------
+        list of ndarrays, one per velocity component, each (i,j,[k]) on
+        ``flow_points``: the stored tile when tiled
+
+        Raises
+        ------
+        ValueError
+            for time-varying flow, if neither time nor t_idx is given
+        '''
+
+        if self.flow_times is not None:
+            if time is None and t_idx is not None:
+                time = self.flow_times[t_idx]
+            elif time is None and t_idx is None:
+                raise ValueError("Either time or t_idx must be specified.")
+        else:
+            # temporally constant flow
+            warnings.warn("Flow is time-invariant; returning zero derivative.")
+            return [np.zeros(self.fshape) for ii in range(len(self))]
+        
+        # Constant extrapolation strictly beyond the data's time bounds: the
+        # velocity is held constant there, so du/dt = 0. At the endpoints
+        # themselves the spline derivative is well-defined, so use strict
+        # inequalities. fshape[1:] drops the leading time axis, giving a single-
+        # time field per component (fshape includes the time axis for time-
+        # varying flow).
+        if time < self.flow_times[0] or time > self.flow_times[-1]:
+            return [np.zeros(self.fshape[1:]) for ii in range(len(self))]
+        else:
+            dudt_list = []
+            # ensure the relevant data is loaded
+            try:
+                self._flow[0](time)
+            except SplineRangeError:
+                self.update_spline(time)
+            for fspline in self._flow:
+                if isinstance(fspline, fCubicSpline):
+                    dudt = fspline.derivative()(time)
+                else:
+                    # LinearSpline
+                    dudt = fspline.derivative(time)
+                dudt_list.append(dudt)
+
+        return dudt_list
+    
+
+
+    def calculate_DuDt(self, time=None, t_idx=None):
+        '''Material derivative of the velocity field, at a time or time index.
+
+        .. math::
+
+            \\frac{D\\mathbf{u}}{Dt} = \\mathbf{u}_t +
+            (\\nabla\\mathbf{u})\\mathbf{u}
+
+        Spatial gradients are second-order differences (``np.gradient`` with
+        ``edge_order=2``), across the wrap on periodic axes; ``u_t`` is
+        :meth:`get_dudt`. Time-varying flow evaluates ``self(time)``, which can
+        trigger a load.
+
+        Parameters
+        ----------
+        time : float, optional
+            the time at which to compute the material derivative; takes
+            precedence over ``t_idx``. Ignored, with a warning, for
+            time-invariant flow.
+        t_idx : int, optional
+            the index into flow_times at which to compute it
+
+        Returns
+        -------
+        list of ndarrays, one per velocity component, each (i,j,[k]) on
+        ``flow_points``: the stored tile when tiled
+
+        Raises
+        ------
+        ValueError
+            for time-varying flow, if neither time nor t_idx is given
+        '''
+
+        if self.flow_times is not None:
+            if time is None and t_idx is not None:
+                time = self.flow_times[t_idx]
+            elif time is None and t_idx is None:
+                raise ValueError("Either time or t_idx must be specified.")
+            flow = self(time)
+        else:
+            if time is not None or t_idx is not None:
+                warnings.warn("Flow is time-invariant; ignoring time and t_idx.")
+            # temporally constant flow
+            flow = self
+
+        # Per axis rather than one call over all of them, because periodicity is
+        # a per-axis property: a periodic axis is differenced across the wrap,
+        # where np.gradient would one-side against data that actually continues.
+        # np.array(flow) puts the components on axis 0, so spatial axis d is
+        # array axis d+1.
+        stacked = np.array(flow)
+        flow_grad = [_spatial_gradient(stacked, self.flow_points[d], d+1,
+                                       self.periodic_dim[d], edge_order=2)
+                     for d in range(self.ndim)]
+
+        # Take dot product
+        DuDt = []
+        for g,f in zip(flow_grad,flow):
+            DuDt.append(g*f)
+        DuDt = np.sum(DuDt, axis=0)
+
+        # Add dudt, which is zero for time-invariant flow
+        if self.flow_times is not None:
+            DuDt += np.array(self.get_dudt(time))
+
+        return [u for u in DuDt]
+
+
+
+class IB2dData(FluidData):
+
+    def __init__(self, path, dt, print_dump, d_start=None, d_finish=None,
+                 INUM=None):
+        '''Reads IB2d's vtk velocity dumps, in vector form (``u.####.vtk``) or
+        scalar form (``uX.####.vtk`` and ``uY.####.vtk``). Times are shifted so
+        that dump d_start is at t=0.
+
+        IB2d's Eulerian grid is uniform and always periodic in x and y, and its
+        dumps omit the grid line that repeats the first. That line is restored,
+        so the fluid loads periodic, one point longer along each axis than the
+        dumps. IB2d is an immersed boundary code for fluid-structure
+        interaction, hosted at https://github.com/nickabattista/IB2d
+
+        Parameters
+        ----------
+        path : str
+            path to folder with vtk data
+        dt : float
+            dt in input2d
+        print_dump : int
+            print_dump in input2d
+        d_start : int, optional
+            number of first vtk dump to read in, or None (default) for the first
+            dump on disk
+        d_finish : int, optional
+            number of last vtk dump to read in, or None (default) for the last
+        INUM : int >= 2, True, or None (default)
+            max number of splined intervals held at any one time; the number of
+            time points held is 1+INUM, and INUM must be at least 2. None splines
+            the entire dataset at once and cubically in time; True holds the
+            entire dataset too but splines it linearly; an int streams a sliding
+            window from storage and splines that linearly. Use an int only
+            when the dataset will not fit in memory: streaming it is slower.
+
+        Raises
+        ------
+        FileNotFoundError
+            if path is not a directory, holds no velocity dumps, or lacks any
+            dump from d_start to d_finish
+        '''
+
+        ##### Parse parameters and read in data #####
+        self.path = path
+
+        path = Path(path)
+        if not path.is_dir():
+            raise FileNotFoundError("Directory {} not found!".format(str(path)))
+
+        # The dump numbers on disk, which settle the range to read
+        file_names = [x.name for x in path.iterdir() if x.is_file()]
+        if 'u.' in [x[:2] for x in file_names]:
+            present = {int(f[2:6]) for f in file_names if f[:2] == 'u.'}
+            self.vector_data = True
+        else:
+            if 'uX.' not in [x[:3] for x in file_names]:
+                raise FileNotFoundError(
+                    "Could not find u.####.vtk or uX.####.vtk files in "
+                    "{}.".format(str(path)))
+            # The scalar form needs uX and uY both.
+            present = ({int(f[3:7]) for f in file_names if f[:3] == 'uX.'} &
+                       {int(f[3:7]) for f in file_names if f[:3] == 'uY.'})
+            self.vector_data = False
+        d_start = min(present) if d_start is None else round(d_start)
+        d_finish = max(present) if d_finish is None else round(d_finish)
+        # IB2d numbers its dumps consecutively and the timeline is built from
+        #   those numbers, so every dump in the range has to be there. Checked
+        #   now rather than at the window slide that first reaches a gap.
+        missing = [n for n in range(d_start, d_finish+1) if n not in present]
+        if len(missing) > 0:
+            raise FileNotFoundError(
+                "{} of the dumps {} to {} are not in {}: {}{}.".format(
+                    len(missing), d_start, d_finish, str(path),
+                    ', '.join(str(n) for n in missing[:10]),
+                    ', ...' if len(missing) > 10 else ''))
+
+        # Save time data
+        if d_start != d_finish:
+            flow_times = np.arange(d_start,d_finish+1)*print_dump*dt
+            # shift time so that flow starts at t=0
+            flow_times -= flow_times[0]
+        else:
+            flow_times = None
+
+        # Save dump bounds
+        self.d_start = d_start
+        self.d_finish = d_finish
+
+        ### Load fluid data ###
+        if INUM is None or INUM is True:
+            print('Reading vtk fluid data...')
+            flow, x, y = self._read_IB2d_dumpfiles(self.path, self.d_start,
+                                                   self.d_finish, self.vector_data)
+            print('Done!')
+        else:
+            _check_INUM(INUM)
+            # Clamped to the series, so that an INUM wider than it reaches
+            # FluidData's own check rather than a dump that does not exist.
+            last = min(self.d_start + INUM, self.d_finish)
+            flow, x, y = self._read_IB2d_dumpfiles(self.path, self.d_start,
+                                                   last, self.vector_data)
+            # record the inclusive bounds of the starting dump numbers to be used
+            self.loaded_dump_bnds = (self.d_start, last)
+            # same, but based off of zero to correspond with flow_times indices
+            self.loaded_idx_bnds = (0, last - self.d_start)
+
+        # shift domain to quadrant 1
+        self._orig_flow_points = (x-x[0], y-y[0])
+        fluid_domain_LLC = (x[0], y[0])
+
+        # IB2d always has periodic BC, and its vtk omits the grid points at the
+        #   upper end of the domain, which duplicate the lower ones. The reader
+        #   restored them in the field; restore them in the grid.
+        flow_points = tuple(np.append(p, p[-1] + (p[-1] - p[-2]))
+                            for p in self._orig_flow_points)
+        self.L = [p[-1] for p in flow_points]
+
+        # pass to parent to spline the data.
+        super().__init__(flow, flow_points, flow_times, INUM, periodic_dim=True,
+                         fluid_domain_LLC=fluid_domain_LLC)
+
+
+
+    def load_dumpfiles(self, d_start, d_finish):
+        '''Read IB2d dumps d_start through d_finish, inclusive, by dump number.'''
+        return self._read_IB2d_dumpfiles(self.path, d_start, d_finish,
+                                         self.vector_data, False)
+
+
+
+    def probe_stored_vorticity(self):
+        """Whether IB2d's own ``Omega.####.vtk`` beside the velocity covers
+        dumps d_start to d_finish: ``'complete'`` for all of them, ``'partial'``
+        for some, ``'absent'`` for none, with the directory unless absent. IB2d
+        writes them when its ``input2d`` asks for vorticity. A file carrying
+        Planktos's stamp is Planktos's own and does not count.
+        """
+
+        # Checked against the whole dump range rather than by existence of any
+        #   file, so that a series covering part of the run reads as partial.
+        directory = Path(self.path)
+        needed = set(range(self.d_start, self.d_finish+1))
+        present = set()
+        for f in directory.glob('{}.*.vtk'.format(self.VORTICITY_TITLE)):
+            stem = f.name[len(self.VORTICITY_TITLE)+1:-4]
+            try:
+                n = int(stem)
+            except ValueError:
+                continue
+            # A stamped file is a series an earlier recording wrote, which the
+            #   writer checks against the field and rewrites if it is stale.
+            if n in needed and _read_vorticity_stamp(f) is None:
+                present.add(n)
+        if not present:
+            return 'absent', None
+        if needed <= present:
+            return 'complete', directory
+        return 'partial', directory
+
+
+    def read_dump_vorticity(self, t_idx):
+        """Read one dump's ``Omega.####.vtk``, on ``flow_points``.
+
+        Transposed from IB2d's ``[y,x]`` and adds back the periodic endpoint IB2d
+        omits (as for velocity) so a 6x5 dump reads as a 7x6 field.
+        """
+
+        # No LLC shift here -- flow_points is already in quadrant 1, and the
+        #   field carries no coordinates of its own.
+        vort = _dataio.read_2DEulerian_Data_From_vtk(
+            self._vorticity_dir(), '{:04d}'.format(self.dump_number(t_idx)),
+            self.VORTICITY_TITLE)
+        return _wrap_scalar(vort.T, self.periodic_dim)
+
+
+    def write_dump_vorticity(self, t_idx, vort, path):
+        """Write one dump's vorticity as IB2d prints its own: structured points
+        on the solver's own coordinates, without the periodic endpoint, so that
+        :meth:`read_dump_vorticity` reads it back unchanged. The header line is
+        Planktos's stamp, as in :meth:`FluidData.write_dump_vorticity`.
+        """
+
+        stripped = _unwrap_scalar(vort, self.periodic_dim)
+        # The source's own coordinates, not the quadrant-1 shift Planktos works
+        #   in, so the file sits on exactly the grid the solver's own dumps do.
+        grid = tuple(self._orig_flow_points[d] + self.fluid_domain_LLC[d]
+                     for d in range(2))
+        _dataio.write_vtk_structured_points_scalars(
+            path, self.VORTICITY_TITLE, stripped, grid,
+            cycle=self.dump_number(t_idx),
+            time=None if self.flow_times is None else float(self.flow_times[t_idx]),
+            sep='.', header=_vorticity_stamp(vort))
+
+
+    def _read_IB2d_dumpfiles(self, path, d_start, d_finish, vector_data, xy=True):
+        '''Read IB2d dumps d_start through d_finish, inclusive, from path.
+
+        Parameters
+        ----------
+        path : string
+            path to vtk data
+        d_start : int
+            first dump file to load
+        d_finish : int
+            last dump file to load
+        vector_data : bool
+            whether the data is vector velocity data (u) or not. The other 
+            choice being x and y directed velocity magnitude (uX, uY)
+        xy : bool
+            whether or not to return the x,y grid points as well
+
+        Returns
+        -------
+        fluid : list of ndarray
+            one per velocity component, indexed (t,x,y) with the periodic
+            endpoint IB2d omits restored along x and y; (x,y) for a single dump
+        x : x-coordinate mesh, 1D ndarray, as IB2d wrote it
+        y : y-coordinate mesh, 1D ndarray, as IB2d wrote it
+        '''
+        nt = d_finish - d_start + 1
+        X_vel = None
+        for i, n in enumerate(range(d_start, d_finish+1)):
+            # Points to desired data viz_IB2d data file
+            numSim = '{:04d}'.format(n)
+
+            # Imports (x,y) grid values and ALL Eulerian Data %
+            #                      DEFINITIONS
+            #          x: x-grid                y: y-grid
+            #       Omega: vorticity           P: pressure
+            #    uMag: mag. of velocity
+            #    uX: mag. of x-Velocity   uY: mag. of y-Velocity
+            #    u: velocity vector
+            #    Fx: x-directed Force     Fy: y-directed Force
+            #
+            #  Note: U(j,i): j-corresponds to y-index, i to the x-index
+            
+            if vector_data:
+                # read in vector velocity data
+                strChoice = 'u'
+                if xy:
+                    uX,uY,x,y = _dataio.read_2DEulerian_Data_From_vtk(path, numSim,
+                                                                      strChoice,xy)
+                else:
+                    uX,uY = _dataio.read_2DEulerian_Data_From_vtk(path, numSim,
+                                                                  strChoice,xy)
+            else:
+                # read in x-directed Velocity Magnitude #
+                strChoice = 'uX'
+                if xy:
+                    uX,x,y = _dataio.read_2DEulerian_Data_From_vtk(path,numSim,
+                                                                   strChoice,xy)
+                else:
+                    uX = _dataio.read_2DEulerian_Data_From_vtk(path,numSim,
+                                                               strChoice,xy)
+
+                # read in y-directed Velocity Magnitude #
+                strChoice = 'uY'
+                uY = _dataio.read_2DEulerian_Data_From_vtk(path,numSim,
+                                                           strChoice)
+
+            if X_vel is None:
+                # The first dump fixes the grid. Each axis gets one extra line
+                #   for the periodic endpoint IB2d omits, filled after the loop.
+                ny, nx = uX.shape
+                X_vel = np.empty((nt, nx+1, ny+1))
+                Y_vel = np.empty((nt, nx+1, ny+1))
+            # (y,x) -> (x,y), copied straight into place. The read returns views
+            #   onto vtk's own buffers; dropping them here frees each dump before
+            #   the next is read, so the series is never held twice.
+            X_vel[i, :nx, :ny] = uX.T
+            Y_vel[i, :nx, :ny] = uY.T
+            del uX, uY
+
+            ##### The following is just for reference! ######
+            # read in Vorticity #
+            # strChoice = 'Omega'; first = 0
+            # Omega = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
+            #                                               strChoice,first)
+            # read in Pressure #
+            # strChoice = 'P'; first = 0
+            # P = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
+            #                                           strChoice,first)
+            # read in Velocity Magnitude #
+            # strChoice = 'uMag'; first = 0
+            # uMag = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
+            #                                              strChoice,first)
+            # read in x-directed Forces #
+            # strChoice = 'Fx'; first = 0
+            # Fx = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
+            #                                            strChoice,first)
+            # read in y-directed Forces #
+            # strChoice = 'Fy'; first = 0
+            # Fy = _dataio.read_2DEulerian_Data_From_vtk(pathViz,numSim,
+            #                                            strChoice,first)
+            ###################################################
+
+        ### Restore the periodic endpoints, in place ###
+        # The last line along each axis repeats the first. The corner follows
+        #   from the x line, which is already filled when y is.
+        for f in (X_vel, Y_vel):
+            f[:, -1, :] = f[:, 0, :]
+            f[:, :, -1] = f[:, :, 0]
+
+        ### Return data ###
+        flow = [X_vel, Y_vel] if nt > 1 else [X_vel[0], Y_vel[0]]
+        if xy:
+            return flow, x, y
+        return flow
+            
+
+
+class VTK3dData(FluidData):
+
+    def __init__(self, path, title='IBAMR_db_', d_start=0, d_finish=None, 
+                 INUM=None, periodic_dim=(True, True, False), vel_conv=None):
+        '''Reads one or more vtk rectilinear-grid vector files, as IBAMR's data
+        is converted to through VisIt or ParaView.
+
+        A path to a single file gives time-invariant flow. A directory is read
+        as a series of files named ``<title>###.vtk``, ``###`` the dump number,
+        sharing one mesh. The ``TIME`` field data of each file times the series,
+        shifted so the first dump read is at t=0; if any file lacks it, unit time
+        steps are used instead, with a warning. A grid one point thick along an
+        axis is read as 2D data on the others. The grid is taken to include
+        every domain boundary.
+
+        Parameters
+        ----------
+        path : string
+            a directory holding the series, or a single file. For a single file
+            title, d_start, d_finish and INUM are ignored.
+        title : string, default='IBAMR_db_'
+            the name of each file before its dump number
+        d_start : int or None, default=0
+            first dump number to read; None for the first on disk
+        d_finish : int, optional
+            last dump number to read, or None (default) for the last on disk
+        INUM : int >= 2, True, or None (default)
+            max number of splined intervals held at any one time; the number of
+            time points held is 1+INUM, and INUM must be at least 2. None splines
+            the entire dataset at once and cubically in time; True holds the
+            entire dataset too but splines it linearly; an int streams a sliding
+            window from storage and splines that linearly. Use an int only
+            when the dataset will not fit in memory: streaming it is slower.
+        periodic_dim : bool or sequence of bool, default=(True, True, False)
+            whether the data is periodic along each axis, or along every axis
+        vel_conv : float, optional
+            scalar to multiply the velocity by in order to convert units to
+            match the spatial grid units
+
+        Raises
+        ------
+        FileNotFoundError
+            if path does not exist, a directory holds no ``<title>###.vtk``
+            files, or a dump from d_start to d_finish is missing
+        ValueError
+            if d_start or d_finish is not a dump number on disk
+        '''
+
+        ##### Parse parameters and read in data #####
+        self.path = path
+        self.title = title
+        self.vel_conv = vel_conv
+
+        path = Path(path)
+        if path.is_file():
+            flow, mesh, time = _dataio.read_vtk_Rectilinear_Grid_Vector(path)
+            flow_times = None
+            # Time-invariant flow, with no window to slide.
+            INUM = None
+        
+        elif path.is_dir():
+            tlen = len(title)
+            file_names = [x.name for x in path.iterdir() if x.is_file() and
+                      x.name[:tlen] == title]
+            if len(file_names) == 0:
+                raise FileNotFoundError(
+                    "No files named {}###.vtk in {}.".format(title, str(path)))
+            # get number width
+            self.nwidth = len(file_names[0])-len(title)-len('.vtk')
+            # get file numbers and store d_start, d_finish.
+            file_nums = sorted([int(f[tlen:-4]) for f in file_names])
+            if d_start is None:
+                self.d_start = file_nums[0]
+            else:
+                self.d_start = round(d_start)
+                if self.d_start not in file_nums:
+                    raise ValueError("No dump {} in {}: its dumps run {} to "
+                                     "{}.".format(self.d_start, str(path),
+                                                  file_nums[0], file_nums[-1]))
+            if d_finish is None:
+                self.d_finish = file_nums[-1]
+            else:
+                self.d_finish = round(d_finish)
+                if self.d_finish not in file_nums:
+                    raise ValueError("No dump {} in {}: its dumps run {} to "
+                                     "{}.".format(self.d_finish, str(path),
+                                                  file_nums[0], file_nums[-1]))
+            
+            ### Timestamp the whole dump series before loading any fluid ###
+            # flow_times must span the ENTIRE range, not just the window loaded
+            #   first: FluidData slices windows out of it and bounds the
+            #   simulation by its endpoints.
+            flow_times = self._read_all_times(self.d_start, self.d_finish)
+            if flow_times is None:
+                # A single dump is time-invariant flow, with no window to slide.
+                INUM = None
+
+            ### Load fluid data ###
+            if INUM is None or INUM is True:
+                print('Reading vtk fluid data...')
+                flow, mesh = self._read_vtkfiles(self.path, self.title,
+                                                 self.d_start, self.d_finish)
+                print('Done!')
+            else:
+                _check_INUM(INUM)
+                # Clamped to the series, so that an INUM wider than it reaches
+                # FluidData's own check rather than a dump that does not exist.
+                last = min(self.d_start + INUM, self.d_finish)
+                flow, mesh = self._read_vtkfiles(self.path, self.title,
+                                                 self.d_start, last)
+                # record the inclusive bounds of the starting dump numbers to be used
+                self.loaded_dump_bnds = (self.d_start, last)
+                # same, but based off of zero to correspond with flow_times indices
+                self.loaded_idx_bnds = (0, last - self.d_start)
+        else:
+            raise FileNotFoundError("Directory {} not found!".format(str(path)))
+    
+        # A plane exported as 3D vtk is 2D data. Drop any axis one point
+        #   thick, with its velocity component; the axes are remembered so that
+        #   later windowed reads are collapsed the same way.
+        self._read_ndim = len(mesh)
+        flow, mesh, periodic_dim, self._flat = _collapse_flat_axes(
+            flow, mesh, periodic_dim, source=str(path))
+
+        # shift domain to quadrant 1
+        flow_points = tuple(m - m[0] for m in mesh)
+        fluid_domain_LLC = tuple(m[0] for m in mesh)
+        # It is assumed that the fluid spatial grid includes all 
+        # domain boundaries.
+        self.L = [fp[-1] for fp in flow_points]
+        
+        if self.vel_conv is not None:
+            print("Converting vel units by a factor of {}.".format(self.vel_conv))
+            for f in flow:
+                f *= self.vel_conv
+
+        super().__init__(flow, flow_points, flow_times, INUM, periodic_dim,
+                         fluid_domain_LLC=fluid_domain_LLC)
+        
+
+
+    def load_dumpfiles(self, d_start, d_finish):
+        '''Read dumps d_start through d_finish, inclusive, by dump number,
+        collapsed and scaled as at construction.'''
+        flow, mesh = self._read_vtkfiles(self.path, self.title,
+                                         d_start, d_finish)
+        if self.vel_conv is not None:
+            for f in flow:
+                f *= self.vel_conv
+        return _drop_flat_axes(flow, self._flat, self._read_ndim)
+
+
+
+    def _read_all_times(self, d_start, d_finish):
+        '''Timestamp every dump in [d_start, d_finish] from the TIME in its
+        header, reading a file in full only where the header scan finds none.
+
+        Parameters
+        ----------
+        d_start : int
+            first dump number in the series
+        d_finish : int
+            last dump number in the series (inclusive)
+
+        Returns
+        -------
+        ndarray of times shifted so that d_start is at t=0, or None if the
+            series holds a single dump (time-invariant flow). If time
+            information is missing from any dump, warns and falls back to unit
+            time steps across the whole series.
+        '''
+
+        if d_start == d_finish:
+            return None
+
+        path = Path(self.path)
+        times = []
+        for n in range(d_start, d_finish+1):
+            fname = str(path / (self.title + str(n).zfill(self.nwidth) + '.vtk'))
+            time = _dataio.read_vtk_time_only(fname)
+            if time is None:
+                # Header scan missed it; pay for a full read of this one file
+                # before deciding the dump carries no time information.
+                time = _dataio.read_vtk_Rectilinear_Grid_Vector(fname)[2]
+            times.append(time)
+
+        if None in times:
+            warnings.warn("Could not retrieve time information from at least"+
+                          " one vtk file. Assuming unit time-steps...", UserWarning)
+            return np.arange(len(times), dtype=float)
+
+        times = np.array(times, dtype=float)
+        # shift so that the first dump loaded corresponds to environment time 0
+        return times - times[0]
+
+
+    
+    def _read_vtkfiles(self, path, title, d_start, d_finish):
+        '''Read dumps d_start through d_finish, inclusive, of a
+        ``<title>###.vtk`` series. Times come from :meth:`_read_all_times`.
+
+        Parameters
+        ----------
+        path : string
+            the directory holding the series
+        title : string
+            the name of each file before its dump number
+        d_start, d_finish : int
+            first and last dump number to read
+
+        Returns
+        -------
+        flow : list of ndarray
+            one per velocity component, (t,i,j,k); (i,j,k) for a single dump
+        mesh : list of 1D arrays of grid points in x, y, and z
+        '''
+
+        path = Path(path)
+
+        ### Gather data ###
+        flow = None
+        count = d_finish - d_start + 1
+        for m, n in enumerate(range(d_start, d_finish+1)):
+            num = str(n).zfill(self.nwidth)
+            this_file = path / (title+num+'.vtk')
+            data, mesh, _ = _dataio.read_vtk_Rectilinear_Grid_Vector(str(this_file))
+            if flow is None:
+                # Filled in place, so the series is held once rather than as a
+                #   list of dumps and a stacked copy of it.
+                flow = [np.empty((count, *d.shape), dtype=d.dtype) for d in data]
+            for f, d in zip(flow, data):
+                f[m] = d
+            del data
+
+        # Only the time axis is dropped, and only for a single dump. A blanket
+        #   squeeze would also collapse a spatial axis one point thick -- which
+        #   is a plane, and is _collapse_flat_axes' business, since the
+        #   coordinate arrays have to go with it.
+        if d_start == d_finish:
+            flow = [f[0] for f in flow]
+
+        return flow, mesh
+
+
+
+class ComsolVTUData(FluidData):
+
+    def __init__(self, path, periodic_dim=(False, False, False), res=101,
+                 linear_interp=False, vel_conv=None):
+        '''Reads one vtu file exported from COMSOL Multiphysics, holding the
+        velocity at every time point on its FEM mesh, and regrids it onto a
+        regular grid spanning the mesh's bounding box. Times are shifted so that
+        the first is at a Planktos environment time of 0.0.
+
+        Parameters
+        ----------
+        path : string
+            path to the .vtu file
+        periodic_dim : bool or sequence of bool, default=(False, False, False)
+            whether the data is periodic along each axis, or along every axis.
+            The z entry is dropped for an export flat in z.
+        res : int, default=101
+            number of grid points along each axis of the regular grid, whatever
+            the axis' extent
+        linear_interp : bool, default=False
+            whether to interpolate in time linearly (True) or with a cubic
+            spline (False). The whole export is held in memory either way.
+        vel_conv : float, optional
+            scalar to multiply the velocity by in order to convert units to
+            match the spatial grid units
+
+        Raises
+        ------
+        FileNotFoundError
+            if path is not a file
+
+        Warns
+        -----
+        UserWarning
+            if regular grid points lie outside the FEM mesh; each takes the
+            velocity of the nearest mesh node
+        '''
+
+        ##### Parse parameters and read in data #####
+        self.path = path
+        self.vel_conv = vel_conv
+
+        path = Path(path)
+        if not path.is_file():
+            raise FileNotFoundError("File {} not found!".format(str(path)))
+
+        ### Load fluid data ###
+        print('Reading vtu fluid data...')
+        flow, mesh, flow_times = self._read_vtufile(self.path, res=res)
+        print('Done!')
+
+        # _read_vtufile drops z itself from a mesh flat in z, as a 2D export
+        #   is, so its periodicity flag goes here, and z is recorded as flat.
+        dropped_z = len(mesh) == 2
+        if dropped_z and not isinstance(periodic_dim, bool):
+            periodic_dim = tuple(periodic_dim)[:2]
+        flow, mesh, periodic_dim, self._flat = _collapse_flat_axes(
+            flow, mesh, periodic_dim, source=str(path))
+        if dropped_z:
+            self._flat = (2,)
+
+        # shift domain to quadrant 1
+        flow_points = tuple(m - m[0] for m in mesh)
+        fluid_domain_LLC = tuple(m[0] for m in mesh)
+        # It is assumed that the fluid spatial grid includes all 
+        # domain boundaries.
+        self.L = [fp[-1] for fp in flow_points]
+
+        if self.vel_conv is not None:
+            print("Converting vel units by a factor of {}.".format(self.vel_conv))
+            for f in flow:
+                f *= self.vel_conv
+        
+        if not linear_interp:
+            linear_interp = None
+        super().__init__(flow, flow_points, flow_times, linear_interp, periodic_dim,
+                         fluid_domain_LLC=fluid_domain_LLC)
+        
+
+
+    def _read_vtufile(self, path, res=101):
+        '''Read a COMSOL vtu export and regrid every time point in it onto a
+        regular grid of res points per axis, linearly over a triangulation of
+        the FEM mesh.
+
+        Parameters
+        ----------
+        path : string
+            path to the .vtu file
+        res : int, default=101
+            number of grid points along each axis
+
+        Returns
+        -------
+        flow : list of ndarray
+            one per axis of mesh, each (t,i,j,[k]); (i,j,[k]) for one time point
+        mesh : list of 1D arrays of grid points in x and y, and in z unless
+            the FEM mesh is flat in z
+        flow_times : ndarray of times at which the fluid velocity is specified,
+            shifted so the first is 0.0, or None for a single time point
+        '''
 
         ### Gather data ###
         flow = [[], [], []]
         flow_times = []
 
-        for n in range(d_start, d_finish+1):
-            if n < 10:
-                num = '00'+str(n)
-            elif n < 100:
-                num = '0'+str(n)
+        points, data, data_names = _dataio.read_vtu_Unstructured_Grid_Points_FEM(path)
+
+        # Create regular grid
+        x = np.linspace(points[:,0].min(), points[:,0].max(), res)
+        y = np.linspace(points[:,1].min(), points[:,1].max(), res)
+        if points[:,2].max() == points[:,2].min():
+            # 2D case
+            z_dir = False
+            point_list = np.array([[px,py] for px in x for py in y])
+            points = points[:,:2]
+            mesh = [x, y]
+        else:
+            z = np.linspace(points[:,2].min(), points[:,2].max(), res)
+            z_dir = True
+            point_list = np.array([[px,py,pz] for px in x for py in y for pz in z])
+            mesh = [x, y, z]
+
+        # The mesh is the same at every time point, so it is triangulated once.
+        tri = spatial.Delaunay(points)
+        ndim = points.shape[1]
+        # Grid points the interpolant leaves undefined lie outside the
+        #   triangulation's hull. On a rectangular domain these are edge points
+        #   a rounding error outside, where boundary nodes' coordinates differ
+        #   in the last bit; each takes the linear interpolant of the simplex it
+        #   barely misses. A point outside by more than that is beyond the mesh
+        #   and takes the value of the nearest node, with a warning.
+        miss = np.isnan(interpolate.LinearNDInterpolator(
+            tri, np.zeros(len(points)))(point_list))
+        if miss.any():
+            xm = point_list[miss]
+            simplex = tri.find_simplex(xm, tol=1e-10)
+            edge = simplex >= 0
+            T = tri.transform[simplex[edge]]
+            b = np.einsum('ijk,ik->ij', T[:, :ndim], xm[edge] - T[:, ndim])
+            bary = np.column_stack((b, 1 - b.sum(axis=1)))
+            verts = tri.simplices[simplex[edge]]
+            far = ~edge
+            if far.any():
+                nearest = spatial.cKDTree(points).query(xm[far])[1]
+                warnings.warn(
+                    "{} of the {} regridded points lie outside the COMSOL "
+                    "mesh, and take the velocity of the nearest mesh "
+                    "node.".format(int(far.sum()), len(point_list)),
+                    UserWarning)
+
+        def regrid(values):
+            out = interpolate.LinearNDInterpolator(tri, values)(point_list)
+            if miss.any():
+                fill = np.empty(len(xm))
+                fill[edge] = np.einsum('ij,ij->i', bary, values[verts])
+                if far.any():
+                    fill[far] = values[nearest]
+                out[miss] = fill
+            return out
+
+        # In COMSOL, each three arrays correspond to the x, y, z components of velocity
+        #   at each mesh point, with each array being length N where N is the
+        #   number of mesh points. Each set of three is a different time point.
+        #   So total number of time points is data_size/3.
+        for n in range(0, len(data), 3):
+            flow[0].append(regrid(data[n]))
+            flow[1].append(regrid(data[n+1]))
+            if z_dir:
+                flow[2].append(regrid(data[n+2]).reshape((res,res,res)))
+                flow[0][-1] = flow[0][-1].reshape((res,res,res))
+                flow[1][-1] = flow[1][-1].reshape((res,res,res))
             else:
-                num = str(n)
-            this_file = path / ('IBAMR_db_'+num+'.vtk')
-            data, mesh, time = _dataio.read_vtk_Rectilinear_Grid_Vector(str(this_file))
+                flow[0][-1] = flow[0][-1].reshape((res,res))
+                flow[1][-1] = flow[1][-1].reshape((res,res))
+            # get flow time
+            flow_times.append(float(data_names[n][data_names[n].rfind('t=')+2:]))
+
+        # One component per axis of the mesh: the 2D branch above never fills
+        #   flow[2], so carrying it through would hand back an empty array as a
+        #   third velocity component.
+        flow = [np.array(f) for f in flow[:len(mesh)]]
+        if len(flow_times) == 1:
+            # A single time point is time-invariant flow.
+            return [f[0] for f in flow], mesh, None
+
+        # shift so that the first time point corresponds to environment time 0
+        flow_times = np.array(flow_times)
+        return flow, mesh, flow_times - flow_times[0]
+
+
+
+class ComsolGridData(FluidData):
+
+    def __init__(self, path, periodic_dim=False, vel_conv=None, grid_conv=None):
+        '''Reads COMSOL's text grid export: the velocity at one time, on the
+        regular grid the export was asked for. COMSOL may give this file a .vtu
+        extension, though it is plain text, not VTK XML.
+
+        The domain is the grid's bounding box. Where the grid points are cell
+        centers, that is half a cell short of each face; call
+        ``Environment.center_cell_regrid`` to extend it.
+
+        Parameters
+        ----------
+        path : string
+            path to the export
+        periodic_dim : bool or sequence of bool, default=False
+            whether the data is periodic along each axis, or along every axis.
+            Entries past the data's dimension are ignored.
+        vel_conv : float, optional
+            scalar to multiply the velocity by in order to convert units to
+            match the spatial grid units
+        grid_conv : float, optional
+            scalar to multiply the grid by in order to convert units
+
+        Raises
+        ------
+        FileNotFoundError
+            if path is not a file
+        '''
+
+        self.path = path
+        self.vel_conv = vel_conv
+        self.grid_conv = grid_conv
+
+        if not Path(path).is_file():
+            raise FileNotFoundError("File {} not found!".format(str(path)))
+
+        print('Reading COMSOL grid data...')
+        flow, mesh = _dataio.read_vtu_mesh_velocity(str(path))
+        print('Done!')
+
+        if vel_conv is not None:
+            print("Converting vel units by a factor of {}.".format(vel_conv))
+            flow = [f*vel_conv for f in flow]
+        if grid_conv is not None:
+            print("Converting grid units by a factor of {}.".format(grid_conv))
+            mesh = [m*grid_conv for m in mesh]
+        if not isinstance(periodic_dim, (bool, np.bool_)):
+            periodic_dim = tuple(periodic_dim)[:len(mesh)]
+
+        # shift domain to quadrant 1
+        flow_points = tuple(m - m[0] for m in mesh)
+        self.L = [fp[-1] for fp in flow_points]
+        super().__init__(flow, flow_points, None, None, periodic_dim,
+                         fluid_domain_LLC=tuple(m[0] for m in mesh))
+
+
+
+class OpenFOAMData(FluidData):
+
+    def __init__(self, path, INUM=None, periodic_dim=(False, False, False),
+                 vel_conv=None, require_boundary=True):
+        '''Reads finite-volume velocity data from an OpenFOAM VTK export, the
+        output of ``foamToVTK``.
+
+        The export is a ``.vtm.series`` index naming one ``.vtm`` manifest per
+        timestep, each naming an ``internal.vtu`` of volume data and one
+        ``.vtp`` per boundary patch. Times are shifted so that the first dump is
+        at a Planktos environment time of 0.0.
+
+        The velocity is cell data, at cell centers that arrive in no particular
+        order and sit half a cell inside the domain. The lattice and its
+        ordering are recovered from the first dump, and the boundary patches are
+        spliced onto the six faces to reach the true domain edge. The grid is
+        therefore rectilinear but not uniform: the outermost interval along each
+        axis is half a cell wide. The mesh must be a complete tensor-product
+        lattice, and every dump must share it; both are checked, the cell count
+        on every dump and the cell positions on the second.
+
+        Where pieces of the export are missing, the dumps and their times come
+        from the first of these that is present, and every step past the first
+        warns:
+
+        1. the ``.vtm.series`` index, using the times it declares;
+        2. the ``.vtm`` manifests, using the ``TimeValue`` each one carries;
+        3. the dump directories, using the ``TimeValue`` in each
+           ``internal.vtu``;
+        4. unit time steps.
+
+        ``dump_source`` and ``time_source`` record which answered. Dumps found
+        by globbing (2 and 3) are ordered by their times, else by a
+        numeric-aware sort of their names. A dump the index declares but which
+        is not on disk is skipped with a warning.
+
+        Parameters
+        ----------
+        path : string
+            path to the directory holding the export (typically the ``VTK``
+            directory foamToVTK writes), or to the ``.vtm.series`` index itself.
+            A directory need not contain an index; see the fallback chain above.
+        INUM : int >= 2, True, or None (default)
+            max number of splined intervals held at any one time; the number of
+            time points held is 1+INUM, and INUM must be at least 2. None splines
+            the entire dataset at once and cubically in time; True holds the
+            entire dataset too but splines it linearly; an int streams a sliding
+            window from storage and splines that linearly. Use an int only
+            when the dataset will not fit in memory: streaming it is slower.
+        periodic_dim : bool or sequence of bool, default=(False, False, False)
+            whether the data is periodic along each axis, or along every axis
+        vel_conv : float, optional
+            scalar to multiply the velocity by in order to convert units to
+            match the spatial grid units
+        require_boundary : bool, default=True
+            whether every one of the six domain faces must be covered by a
+            boundary patch. A face without one raises by default, since the
+            domain would otherwise be reported half a cell short there. False
+            instead extrapolates the interior out to each uncovered face, with a
+            warning; faces with a patch still use it.
+
+        Attributes
+        ----------
+        dump_source : {'series', 'manifests', 'directories'}
+            which step of the fallback chain supplied the list of dumps
+        time_source : string
+            a phrase naming where the times came from, including how many gaps
+            a secondary source filled
+        series_path : Path or None
+            the ``.vtm.series`` index, if there was one to read
+
+        Raises
+        ------
+        FileNotFoundError
+            if path holds no index, manifest or dump directory, or none of the
+            dumps the series declares is on disk
+        ValueError
+            if the cells or a boundary patch do not form a complete
+            tensor-product lattice
+        RuntimeError
+            if a directory holds several ``.vtm.series`` indices, only some
+            dumps carry a time, the times do not strictly increase, a boundary
+            patch cannot be spliced on, a face has none while require_boundary
+            is True, or a dump does not share the first dump's mesh
+        '''
+
+        ##### Parse parameters #####
+        self.path = path
+        self.vel_conv = vel_conv
+        self.require_boundary = require_boundary
+        # FluidData.__init__ runs last and is what sets self.periodic_dim, but
+        # the regrid of an uncovered face needs it during the opening load.
+        self._periodic_dim = periodic_dim
+        # The boundary-condition corner warning is a property of the dataset,
+        # not of the timestep, so say it once rather than on every window slide.
+        self._warned_bc_corner = False
+        # The mesh check runs on the second dump and only the first time it is
+        # read -- a window sliding back to the start must not pay for it again.
+        self._mesh_verified = False
+        if INUM is not None and INUM is not True:
+            _check_INUM(INUM)
+
+        ##### Resolve the series index and the dumps that actually exist #####
+        self._dumps, flow_times = self._read_series(path)
+        # Dump "numbers" are a dense 0-based index over the dumps that exist, NOT
+        # the numbers in the directory names (787, 800, ... 1034, which are
+        # neither consecutive nor gap-free). FluidData.update_spline does index
+        # arithmetic on d_start/d_finish -- d_start = loaded_dump_bnds[1]+1, and
+        # so on -- so dump numbers must step by one in lockstep with flow_times.
+        # Indexing the surviving series makes that true by construction, and
+        # keeps load_dumpfiles from ever being handed a filename that is absent.
+        self.d_start = 0
+        self.d_finish = len(self._dumps) - 1
+
+        ##### Establish the grid, once: the mesh does not move #####
+        print('Reading OpenFOAM mesh...')
+        self._build_grid(self._dumps[0])
+
+        ##### Load fluid data #####
+        print('Reading OpenFOAM fluid data...')
+        if flow_times is None:
+            # Single dump: time-invariant flow, with no window to slide.
+            INUM = None
+            flow = [f[0] for f in self.load_dumpfiles(0, 0)]
+        elif INUM is None or INUM is True:
+            flow = self.load_dumpfiles(self.d_start, self.d_finish)
+        else:
+            # Clamped to the series, so that an INUM wider than it reaches
+            # FluidData's own check rather than a dump that does not exist.
+            last = min(self.d_start + INUM, self.d_finish)
+            flow = self.load_dumpfiles(self.d_start, last)
+            # record the inclusive bounds of the starting dump numbers to be used
+            self.loaded_dump_bnds = (self.d_start, last)
+            # same, but based off of zero to correspond with flow_times indices
+            self.loaded_idx_bnds = (0, last - self.d_start)
+        print('Done!')
+
+        # shift domain to quadrant 1
+        mesh = self._grid
+        flow_points = tuple(m - m[0] for m in mesh)
+        fluid_domain_LLC = tuple(m[0] for m in mesh)
+        # The boundary splice above is what makes this true: the spatial grid
+        # includes all domain boundaries.
+        self.L = [fp[-1] for fp in flow_points]
+
+        super().__init__(flow, flow_points, flow_times, INUM, periodic_dim,
+                         fluid_domain_LLC=fluid_domain_LLC)
+
+
+
+    def load_dumpfiles(self, d_start, d_finish):
+        '''Read dumps d_start through d_finish, inclusive: indices into the dumps
+        on disk, not the numbers in their directory names.'''
+        if d_finish < d_start:
+            # An empty range, from a degenerate slide past the end of the data,
+            #   shaped like the window so that it concatenates.
+            empty = np.zeros((0, *(n+2 for n in self._shape)))
+            return [empty.copy() for _ in range(3)]
+
+        # Filled in place, so the series is held once rather than as a list of
+        #   dumps and a stacked copy of it.
+        flow = [np.empty((d_finish - d_start + 1, *(k+2 for k in self._shape)))
+                for _ in range(3)]
+        for m, n in enumerate(range(d_start, d_finish+1)):
+            # Dump 1 is always in the opening load -- the whole series if it
+            # fits, else dumps 0..INUM -- so the mesh check lands at
+            # construction and costs no read of its own.
+            verify = n == 1 and not self._mesh_verified
+            vel = self._read_dump(self._dumps[n], verify=verify)
+            if verify:
+                self._mesh_verified = True
             for dim in range(3):
-                flow[dim].append(data[dim])
-            flow_times.append(time)
+                flow[dim][m] = vel[..., dim]
+            del vel
 
-        flow = [np.array(flow[0]).squeeze(), np.array(flow[1]).squeeze(),
-                np.array(flow[2]).squeeze()]
-        # parse time information
-        if None not in flow_times and len(flow_times) > 1:
-            # shift time so that the first time is 0.
-            flow_times = np.array(flow_times) - min(flow_times)
-        elif None in flow_times and len(flow_times) > 1:
-            # could not parse time information
-            warnings.warn("Could not retrieve time information from at least"+
-                          " one vtk file. Assuming unit time-steps...", UserWarning)
-            flow_times = np.arange(len(flow_times))
+        if self.vel_conv is not None:
+            for f in flow:
+                f *= self.vel_conv
+        return flow
+
+
+
+    def dump_number(self, t_idx):
+        """The position of dump ``t_idx`` in the series its source declares.
+
+        Counted over every declared dump, present or not, so a file named from
+        it stays with its dump when a missing one later arrives.
+        """
+
+        return self._dump_numbers[int(t_idx)]
+
+
+
+    @staticmethod
+    def _check_internal(datasets, source):
+        if 'internal' not in datasets:
+            raise RuntimeError(
+                "Manifest {} names no 'internal' dataset. Expected the "
+                "volume data written by foamToVTK.".format(source.name))
+
+
+
+    def _find_dumps(self, path):
+        '''Locate the dumps of the series, and how each one is timestamped.
+
+        Three sources are tried in turn, each a fallback for the one before it:
+        the ``.vtm.series`` index, the ``.vtm`` manifests, and the dump
+        directories themselves. Which one answered is recorded in
+        ``dump_source`` / ``time_source``, with a warning when it is not the
+        first.
+
+        Returns
+        -------
+        list of (datasets, time), one per dump the source declares, in the order
+            the source gives them. datasets is the resolved {dataset name: path}
+            mapping, or None for a dump that is declared but whose data is not
+            on disk; time is NaN for a dump the source could not timestamp.
+        '''
+
+        path = Path(path)
+        if path.is_file():
+            return self._candidates_from_series(path)
+        if not path.is_dir():
+            raise FileNotFoundError("{} not found!".format(str(path)))
+
+        ##### 1: the .vtm.series index #####
+        found = sorted(path.glob('*.vtm.series'))
+        if len(found) > 1:
+            raise RuntimeError(
+                "Found {} .vtm.series indices in {}: {}. Pass the one to "
+                "read.".format(len(found), str(path),
+                               [f.name for f in found]))
+        if len(found) == 1:
+            return self._candidates_from_series(found[0])
+
+        ##### 2: the .vtm manifests #####
+        vtms = sorted(path.glob('*.vtm'),
+                      key=lambda p: _natural_key(p.name))
+        if len(vtms) > 0:
+            warnings.warn(
+                "No .vtm.series index in {}; falling back to the {} .vtm "
+                "manifest(s) found there, timed by their own TimeValue "
+                "entries.".format(str(path), len(vtms)), UserWarning)
+            return self._candidates_from_manifests(vtms)
+
+        ##### 3: the dump directories #####
+        dumpdirs = sorted((d for d in path.iterdir()
+                           if d.is_dir() and (d/'internal.vtu').is_file()),
+                          key=lambda p: _natural_key(p.name))
+        if len(dumpdirs) > 0:
+            warnings.warn(
+                "No .vtm.series index and no .vtm manifests in {}; falling "
+                "back to the {} dump director(ies) found there, timed by the "
+                "TimeValue in each internal.vtu. Boundary patches are taken to "
+                "be the .vtp files beside each internal.vtu or in a boundary/ "
+                "subdirectory.".format(str(path), len(dumpdirs)), UserWarning)
+            return self._candidates_from_dirs(dumpdirs)
+
+        raise FileNotFoundError(
+            "No .vtm.series index, .vtm manifest, or dump directory holding an "
+            "internal.vtu found in {}. Expected the VTK directory written by "
+            "foamToVTK.".format(str(path)))
+
+
+
+    def _candidates_from_series(self, series):
+        '''Dumps declared by a .vtm.series index -- the primary source.'''
+
+        self.series_path = series
+        self.dump_source = 'series'
+        self._source_label = "the index {}".format(series.name)
+        self.time_source = "the .vtm.series index"
+
+        files, times = _dataio.read_vtm_series(series)
+
+        candidates = []; filled = 0
+        for f, t in zip(files, times):
+            if not f.is_file():
+                candidates.append((None, t))
+                continue
+            datasets, mtime = _dataio.read_vtm_manifest(f)
+            self._check_internal(datasets, f)
+            if np.isnan(t):
+                # The index failed to describe this entry; the manifest's own
+                # TimeValue is the per-file fallback for precisely that.
+                t = np.nan if mtime is None else mtime
+                filled += int(not np.isnan(t))
+            if not datasets['internal'].is_file():
+                candidates.append((None, t))
+                continue
+            candidates.append((datasets, t))
+
+        if filled > 0:
+            self.time_source = ("the .vtm.series index, with per-manifest "
+                                "TimeValue filling {} gap(s) in it".format(filled))
+            warnings.warn(
+                "{} declares {} dump(s) without a usable time; their TimeValue "
+                "was taken from the .vtm manifest instead.".format(
+                    series.name, filled), UserWarning)
+
+        return candidates
+
+
+
+    def _candidates_from_manifests(self, vtms):
+        '''Dumps found by globbing .vtm manifests, timed by their TimeValue.
+        The fallback when there is no .vtm.series index.'''
+
+        self.series_path = None
+        self.dump_source = 'manifests'
+        self._source_label = "the .vtm manifests in {}".format(
+            str(vtms[0].parent))
+        self.time_source = "the TimeValue of each .vtm manifest"
+
+        candidates = []
+        for f in vtms:
+            datasets, mtime = _dataio.read_vtm_manifest(f)
+            self._check_internal(datasets, f)
+            t = np.nan if mtime is None else mtime
+            candidates.append(
+                (datasets if datasets['internal'].is_file() else None, t))
+        return candidates
+
+
+
+    def _candidates_from_dirs(self, dumpdirs):
+        '''Dumps found by globbing the dump directories, timed by the TimeValue
+        in each internal.vtu. The fallback when there are no manifests either.
+        '''
+
+        # Times come from the TimeValue header rather than a parse: an
+        #   unstructured export repeats its whole mesh in every dump, so parsing
+        #   them all for one float apiece would read gigabytes.
+
+        self.series_path = None
+        self.dump_source = 'directories'
+        self._source_label = "the dump directories in {}".format(
+            str(dumpdirs[0].parent))
+        self.time_source = "the TimeValue in each internal.vtu"
+
+        candidates = []; untimed_writer = False
+        for k, d in enumerate(dumpdirs):
+            internal = d/'internal.vtu'
+            t = _dataio.read_vtkxml_time_only(internal)
+            if t is None and not untimed_writer:
+                # The header scan is bounded and decodes only the common
+                # encodings, so a miss is not proof the file is untimed. Pay for
+                # one full read before concluding it.
+                t = _dataio.read_vtkxml_cell_data(
+                    internal, arrays=(), load_cell_coordinates=False)[2]
+                if t is None and k == 0:
+                    # Whether a writer records TimeValue at all is a property of
+                    # the export, not of one file within it. Settling that on the
+                    # first dump keeps "this series carries no times" from
+                    # costing a full parse of every dump in it -- gigabytes of
+                    # static mesh re-read, for a conclusion the first file has
+                    # already given.
+                    untimed_writer = True
+            # foamToVTK puts the patches in a boundary/ subdirectory; tolerate
+            # them sitting beside internal.vtu as well.
+            datasets = {'internal': internal}
+            for p in sorted((d/'boundary').glob('*.vtp')) + sorted(d.glob('*.vtp')):
+                datasets.setdefault(p.stem, p)
+            candidates.append((datasets, np.nan if t is None else t))
+        return candidates
+
+
+
+    def _read_series(self, path):
+        '''Resolve the dump series and work out which of its dumps are present.
+
+        Returns
+        -------
+        dumps : list of dict
+            the resolved {dataset name: path} manifest of each dump that exists,
+            in time order
+        flow_times : ndarray of floats, or None if there is only one dump
+            time of each entry of dumps, shifted so the first is 0.0
+        '''
+
+        # Resolved at construction, so that a missing file is found now rather
+        #   than at the window slide that first needs it.
+        # Each candidate carries its declared position, which dump_number reports.
+        candidates = [((k, d) if d is not None else None, t)
+                      for k, (d, t) in enumerate(self._find_dumps(path))]
+        dumps, flow_times, self.time_source = _resolve_timeline(
+            candidates, self._source_label, self.time_source,
+            declared_order=self.dump_source == 'series')
+        self._dump_numbers = [k for k, _ in dumps]
+        return [d for _, d in dumps], flow_times
+
+
+
+    @staticmethod
+    def _cluster_axis(v, rel_tol=1e-5):
+        '''Group the values of one coordinate into the levels of a grid axis.
+
+        Returns the sorted coordinate of each level and the level index of each
+        cell. Consecutive sorted values more than rel_tol of the axis' span
+        apart start a new level.
+        '''
+
+        # The coordinates are exact; what is missing is which cells share a
+        #   level, which sorting and splitting at gaps supplies. rel_tol has
+        #   only to sit between the roundoff spread and the grid spacing: any
+        #   value from 1e-3 to 1e-8 gives identical results on real export data.
+
+        # np.unique will not do here: cells that share a level do not always land
+        #   on the same float64. On a 775k-cell export a level held up to 8
+        #   distinct values spanning 5e-16 of a cell width, and np.unique
+        #   reported 79 levels where 66 existed.
+        order = np.argsort(v, kind='stable')
+        s = v[order]
+        tol = (s[-1] - s[0])*rel_tol
+        brk = np.nonzero(np.diff(s) > tol)[0]
+        starts = np.concatenate(([0], brk+1))
+        ends = np.concatenate((brk+1, [len(s)]))
+
+        # Any member of a level would serve as its coordinate -- the spread is
+        #   pure roundoff -- but the mean is the obvious choice.
+        vals = np.array([s[a:b].mean() for a, b in zip(starts, ends)])
+        lvl = np.empty(len(v), dtype=np.int64)
+        for k, (a, b) in enumerate(zip(starts, ends)):
+            lvl[order[a:b]] = k
+        return vals, lvl
+
+
+
+    def _build_lattice(self, centers, axes=(0, 1, 2)):
+        '''Recover a rectilinear grid, and the cell ordering, from cell centers.
+
+        Parameters
+        ----------
+        centers : Nx3 ndarray
+            cell center coordinates, in the order the file stores them
+        axes : tuple of int
+            which spatial axes the cells vary over. Two axes for a boundary
+            patch, which is planar in the third.
+
+        Returns
+        -------
+        grid : list of 1D ndarray
+            coordinates along each axis in axes
+        perm : ndarray of int
+            ordering such that ``field[perm].reshape(shape)`` is indexed by the
+            axes in order, each increasing with its coordinate
+        shape : tuple of int
+
+        Raises
+        ------
+        ValueError
+            if the cells do not form a complete tensor-product grid
+        '''
+
+        # Requiring the linear index to be a permutation of arange is total: it
+        #   fails on a missing cell, a duplicated one, refinement, or any
+        #   non-tensor mesh.
+
+        grid = []; idx = []
+        for d in axes:
+            vals, lvl = self._cluster_axis(centers[:, d])
+            grid.append(vals); idx.append(lvl)
+        shape = tuple(len(g) for g in grid)
+
+        lin = np.zeros(len(centers), dtype=np.int64)
+        for k in range(len(axes)):
+            lin = lin*shape[k] + idx[k]
+
+        total = int(np.prod(shape))
+        if len(centers) != total or \
+                not np.array_equal(np.sort(lin), np.arange(total)):
+            raise ValueError(
+                "Fluid data is not on a rectilinear grid: {} cells do not form "
+                "a complete {} lattice. Planktos interpolates on a "
+                "tensor-product grid, so a refined or genuinely unstructured "
+                "mesh must be resampled before it can be read.".format(
+                    len(centers), ' x '.join(str(s) for s in shape)))
+
+        return grid, np.argsort(lin), shape
+
+
+
+    def _verify_dump_mesh(self, centers, perm, shape, axes, source,
+                          plane=None, rel_tol=1e-5):
+        '''Raise RuntimeError if a dump's cells do not lie where the mesh says.
+
+        The mesh is read once and every later dump reshaped through its
+        permutation, so a dump whose cells are merely reordered would otherwise
+        load with every value in the wrong place.
+
+        Parameters
+        ----------
+        centers : Nx3 ndarray
+            cell centers of this dump, in the file's own order. For a patch file
+            holding several faces this is all of them; perm selects.
+        perm : ndarray of int
+            the selection/reordering established at construction. Its length,
+            not that of centers, is what must match shape.
+        shape : tuple of int
+            lattice shape the permuted cells are expected to fill
+        axes : tuple of int
+            spatial axes the block varies over, in the order of shape
+        source : string
+            name of the file, for the error message
+        plane : (int, float), optional
+            axis and coordinate of the constant direction of a planar patch
+        rel_tol : float, default=1e-5
+            tolerance as a fraction of each axis' span, the figure
+            _cluster_axis separates levels with
+        '''
+
+        ordered = centers[perm].reshape(*shape, centers.shape[1])
+        # _grid[d] is [boundary plane, *interior cell centers, boundary plane],
+        # so the interior lattice -- which is what the permutation indexes, and
+        # what a patch shares in its two tangential directions -- is the middle.
+        # NB this assumes the boundary splice happened. _build_grid always puts
+        # an edge coordinate at each end, inferred or from a patch, so the slice
+        # still means "the cell centers" under require_boundary=False.
+        def along(k):
+            '''grid vector of the k'th axis of shape, shaped to broadcast'''
+            return self._grid[axes[k]][1:-1].reshape(
+                [-1 if j == k else 1 for j in range(len(shape))])
+
+        # A planar patch's constant coordinate is a scalar and broadcasts as is.
+        checks = [(d, along(k)) for k, d in enumerate(axes)]
+        if plane is not None:
+            checks.append(plane)
+
+        for d, ref in checks:
+            off = float(np.abs(ordered[..., d] - ref).max())
+            tol = float(np.ptp(self._grid[d]))*rel_tol
+            if off > tol:
+                raise RuntimeError(
+                    "The cells of {} do not lie on the mesh established from "
+                    "the first dump: along {}, they are off by up to {:g} "
+                    "(tolerance {:g}). The series is assumed to be one run, "
+                    "with one fixed cell ordering; a dump whose cells are "
+                    "merely reordered would otherwise load with every value in "
+                    "the wrong place.".format(source, 'xyz'[d], off, tol))
+
+
+
+    def _build_grid(self, datasets):
+        '''Establish the spatial grid and every reordering the loader will need.
+
+        Done once, from one dump: the mesh does not move. Sets ``_grid`` (the
+        assembled coordinate arrays, boundary included), ``_perm``/``_shape``
+        for the interior, and ``_faces``, which says where each of the six
+        domain faces gets its data.
+
+        Raises
+        ------
+        ValueError
+            if the interior or a patch is not a complete tensor-product lattice
+        RuntimeError
+            if a patch is not planar on one face, does not share the interior's
+            lattice, overlaps another, or a face has none while
+            require_boundary is True
+        '''
+
+        ##### Interior #####
+        centers, _, _ = _dataio.read_vtkxml_cell_data(datasets['internal'],
+                                                      arrays=())
+        interior, self._perm, self._shape = self._build_lattice(centers)
+
+        ##### Boundary patches #####
+        # Faces are identified by geometry, not by patch name. A patch file may
+        # hold several faces (foamToVTK writes all four lateral walls into one
+        # walls.vtp), and names are case-specific -- inlet/outlet/walls here,
+        # something else in the next export. Which face a cell belongs to is
+        # decided by which interior axis range it falls outside of.
+        self._faces = {}
+        self._patch_cells = {}
+        for name, fname in datasets.items():
+            if name == 'internal':
+                continue
+            pcenters, _, _ = _dataio.read_vtkxml_cell_data(fname, arrays=())
+            # Every later dump indexes this patch with the selection built here,
+            # so a patch that changes length would take the wrong cells (or
+            # raise a bare IndexError). Cheap to check, so it always is.
+            self._patch_cells[name] = len(pcenters)
+            # For each axis, is this cell outside the interior cell-center range?
+            outside = np.stack(
+                [np.where(pcenters[:, d] < interior[d][0], 0,
+                          np.where(pcenters[:, d] > interior[d][-1], 1, -1))
+                 for d in range(3)], axis=1)
+            n_out = (outside >= 0).sum(axis=1)
+            if np.any(n_out != 1):
+                raise RuntimeError(
+                    "Boundary patch '{}' has {} cells that do not lie on "
+                    "exactly one domain face. A patch is expected to be planar "
+                    "and to sit just outside the interior cell centers.".format(
+                        name, int((n_out != 1).sum())))
+            for d in range(3):
+                for side in (0, 1):
+                    sel = np.nonzero(outside[:, d] == side)[0]
+                    if len(sel) == 0:
+                        continue
+                    tan = tuple(a for a in range(3) if a != d)
+                    fgrid, fperm, fshape = self._build_lattice(pcenters[sel],
+                                                               axes=tan)
+                    # The patch has to sit on the interior's own in-plane
+                    # lattice, or it could not be spliced on without resampling.
+                    for k, a in enumerate(tan):
+                        if len(fgrid[k]) != len(interior[a]) or \
+                                not np.allclose(fgrid[k], interior[a]):
+                            raise RuntimeError(
+                                "Boundary patch '{}' does not share the "
+                                "interior grid in the {} direction, so it "
+                                "cannot be spliced on.".format(
+                                    name, 'xyz'[a]))
+                    plane = float(pcenters[sel, d].mean())
+                    if (d, side) in self._faces:
+                        raise RuntimeError(
+                            "Two boundary patches cover the {} face of the "
+                            "domain.".format('xyz'[d]+'-+'[side]))
+                    # Keyed by dataset NAME, not by the path it resolved to in
+                    # this dump: the patch geometry is fixed but its data varies
+                    # in time, so each timestep must read its own file. sel[fperm]
+                    # is a single index array doing selection and reordering at
+                    # once, so a timestep's read is one fancy-index and a reshape.
+                    self._faces[(d, side)] = (name, sel[fperm], fshape, plane)
+
+        # Faces with no patch. Kept per face rather than per dataset: a patch
+        # carries the boundary condition the solver applied, which extrapolating
+        # the interior cannot, so every face that has one keeps using it and
+        # only the uncovered faces are regridded.
+        self._regrid_faces = [(d, side) for d in range(3) for side in (0, 1)
+                              if (d, side) not in self._faces]
+        if len(self._regrid_faces) > 0:
+            names = ', '.join('{}{}'.format('xyz'[d], '-+'[s])
+                              for d, s in self._regrid_faces)
+            if self.require_boundary:
+                raise RuntimeError(
+                    "No boundary patch covers the {} face(s) of the "
+                    "domain. Cell centers are inset half a cell, so without "
+                    "them the domain would be reported short by half a cell "
+                    "there, shifting every coordinate in it with nothing "
+                    "downstream able to detect it. Pass require_boundary=False "
+                    "to extrapolate the interior out to those faces "
+                    "instead.".format(names))
+            stretched = [d for d in range(3)
+                         if not np.allclose(np.diff(interior[d]),
+                                            interior[d][1]-interior[d][0],
+                                            rtol=1e-6)
+                         and any((d, s) in self._regrid_faces for s in (0, 1))]
+            warnings.warn(
+                "No boundary patch covers the {} face(s); the fluid there is "
+                "extrapolated from the interior and the domain edge is placed "
+                "half a cell out. A patch would carry the boundary condition "
+                "the solver applied, which this cannot -- a no-slip wall, for "
+                "one, is not the linear extension of the flow beside it.".format(
+                    names) +
+                ("" if len(stretched) == 0 else
+                 " Cell spacing along {} is also non-uniform, so the edge "
+                 "placement there is biased by the local stretch ratio.".format(
+                     ', '.join('xyz'[d] for d in stretched))), UserWarning)
+
+        ##### Assemble the grid coordinates #####
+        # Where a patch covers a face its plane is the domain edge exactly.
+        # Where none does, it is inferred from the cell spacing -- the same
+        # closure _center_cell_regrid uses, which is then handed those resolved
+        # edges as `bounds` so the grid and the data cannot disagree.
+        self._grid = []
+        for d in range(3):
+            guess = _infer_domain_edges(interior[d])
+            ends = [self._faces[(d, s)][3] if (d, s) in self._faces else guess[s]
+                    for s in (0, 1)]
+            self._grid.append(np.concatenate(
+                ([ends[0]], interior[d], [ends[1]])))
+            if not np.all(np.diff(self._grid[-1]) > 0):
+                raise RuntimeError(
+                    "Boundary patches for the {} direction do not lie outside "
+                    "the interior cell centers.".format('xyz'[d]))
+
+
+
+    def _read_dump(self, datasets, atol=1e-12, verify=False):
+        '''Read one timestep and assemble it onto the full domain grid.
+
+        Returns an (nx+2, ny+2, nz+2, 3) array: the interior block surrounded by
+        a shell of boundary values.
+
+        The shell is filled in three stages, because the patch files cover the
+        six faces but not the lines and points where faces meet. An edge cell of
+        the assembled grid lies on two faces at once and appears in neither
+        patch; it is filled from the two faces that meet there, and a corner from
+        the three edges. Where the two sides disagree -- a genuine discontinuity
+        in the boundary conditions, e.g. an outflow running into a no-slip wall
+        -- an exactly zero velocity is taken as no-slip and wins, and anything
+        else is averaged. Either way it warns.
+
+        Parameters
+        ----------
+        datasets : dict
+            the dump's {dataset name: path} manifest
+        atol : float, default=1e-12
+            disagreement between patches meeting at an edge, above which it
+            warns, once per dataset
+        verify : bool, default=False
+            also check this dump's cells against the mesh, with
+            :meth:`_verify_dump_mesh`
+
+        Raises
+        ------
+        RuntimeError
+            if the dump's cell count or a patch's differs from the mesh, a
+            patch the mesh needs is missing, or verify finds a moved cell
+        '''
+
+        nx, ny, nz = self._shape
+        vel = np.zeros((nx+2, ny+2, nz+2, 3))
+
+        centers, data, _ = _dataio.read_vtkxml_cell_data(
+            datasets['internal'], arrays=('U',),
+            load_cell_coordinates=verify)
+        U = data['U']
+        if len(U) != nx*ny*nz:
+            raise RuntimeError(
+                "{} has {} cells; the mesh established from the first dump has "
+                "{}. The mesh is assumed not to change across the "
+                "series.".format(datasets['internal'].name, len(U), nx*ny*nz))
+        if verify:
+            self._verify_dump_mesh(centers, self._perm, self._shape, (0, 1, 2),
+                                   datasets['internal'].name)
+        vel[1:-1, 1:-1, 1:-1, :] = U[self._perm].reshape(nx, ny, nz, 3)
+
+        ##### Stage 1: the six faces, from the patch files #####
+        patches = {}
+        for (d, side), (name, sel, fshape, plane) in self._faces.items():
+            if name not in patches:
+                if name not in datasets:
+                    raise RuntimeError(
+                        "Dump {} has no '{}' boundary patch, but the mesh "
+                        "established from the first dump needs it for the {} "
+                        "face.".format(datasets['internal'].parent.name, name,
+                                       'xyz'[d]+'-+'[side]))
+                pcenters, pdata, _ = _dataio.read_vtkxml_cell_data(
+                    datasets[name], arrays=('U',),
+                    load_cell_coordinates=verify)
+                # A patch is indexed by the selection built at construction, so
+                # one that changed length would take the wrong cells rather than
+                # fail. Always checked; it costs a comparison.
+                if len(pdata['U']) != self._patch_cells[name]:
+                    raise RuntimeError(
+                        "Boundary patch {} has {} cells; the mesh established "
+                        "from the first dump has {}. The mesh is assumed not "
+                        "to change across the series.".format(
+                            datasets[name].name, len(pdata['U']),
+                            self._patch_cells[name]))
+                patches[name] = (pdata['U'], pcenters)
+            if verify:
+                self._verify_dump_mesh(
+                    patches[name][1], sel, fshape,
+                    tuple(a for a in range(3) if a != d),
+                    datasets[name].name, plane=(d, plane))
+            face = patches[name][0][sel].reshape(*fshape, 3)
+            idx = [slice(1, -1)]*3
+            idx[d] = 0 if side == 0 else -1
+            vel[tuple(idx)] = face
+
+        ##### Stage 1b: any face with no patch, by extending the interior #####
+        # Only the faces' interior runs are taken; the edges and corners
+        # _center_cell_regrid also fills are discarded, so that stages 2 and 3
+        # below decide those by one rule whatever mix of patched and
+        # extrapolated faces meet there. Each face's interior run depends only
+        # on the sweep along its own axis, so the discarded parts cannot affect
+        # what is kept.
+        if len(self._regrid_faces) > 0:
+            inner = vel[1:-1, 1:-1, 1:-1, :]
+            # bounds= are the edges _build_grid already published, so the field
+            # is extended to exactly the grid the loader reports. The two
+            # coincide on a uniform mesh whose patches sit half a cell out -- as
+            # the reference dataset's do, which is why no test here can tell the
+            # difference; _center_cell_regrid's own tests pin it.
+            ext, _ = _center_cell_regrid(
+                [inner[..., k] for k in range(3)],
+                [g[1:-1] for g in self._grid], self._periodic_dim,
+                bounds=[(g[0], g[-1]) for g in self._grid])
+            for d, side in self._regrid_faces:
+                idx = [slice(1, -1)]*3
+                idx[d] = 0 if side == 0 else -1
+                vel[tuple(idx)] = np.stack([e[tuple(idx)] for e in ext],
+                                           axis=-1)
+
+        ##### Stage 2: the twelve edges, from the two faces meeting there #####
+        # Each edge runs along axis c with axes a and b at their extremes. Only
+        # the interior run of it is defined by the faces; the two ends are
+        # corners, where three faces meet, and are left to stage 3.
+        # Where the two faces disagree an exactly zero velocity wins: it marks a
+        # no-slip wall, and a wall is no-slip right up to where something else
+        # runs into it, so averaging would smear a nonzero velocity onto a
+        # surface the fluid cannot move along.
+        #
+        # Whole vector, exact zero -- no-slip makes every component vanish and
+        # the exporter writes 0.0, whereas one component vanishing is ordinary
+        # (w = 0 on a z-normal inlet plane) and means nothing. A tolerance would
+        # misread slow near-wall flow as no-slip.
+        disagreement = 0.
+        zeroed = 0
+        for a in range(3):
+            for b in range(a+1, 3):
+                for sa in (0, -1):
+                    for sb in (0, -1):
+                        idx = [slice(1, -1)]*3
+                        idx[a] = sa; idx[b] = sb
+                        # Step one cell inward along a and the point lands on
+                        # face b; step inward along b and it lands on face a.
+                        # Both were filled in stage 1.
+                        from_b = list(idx); from_b[a] = 1 if sa == 0 else -2
+                        from_a = list(idx); from_a[b] = 1 if sb == 0 else -2
+                        va = vel[tuple(from_a)]
+                        vb = vel[tuple(from_b)]
+                        za = ~np.any(va, axis=-1)
+                        zb = ~np.any(vb, axis=-1)
+                        vel[tuple(idx)] = np.where((za | zb)[..., None], 0.,
+                                                   0.5*(va + vb))
+                        # Count only where the rule changed the answer: both
+                        # zero already averages to zero.
+                        zeroed += int(np.count_nonzero(za ^ zb))
+                        disagreement = max(disagreement,
+                                           float(np.abs(va-vb).max()))
+
+        ##### Stage 3: the eight corners, from the three edges meeting there ###
+        # Same rule. A corner sits on all three faces meeting there, so if any
+        # of its edges came out no-slip the corner is on that wall too.
+        for sx in (0, -1):
+            for sy in (0, -1):
+                for sz in (0, -1):
+                    ix = 1 if sx == 0 else -2
+                    iy = 1 if sy == 0 else -2
+                    iz = 1 if sz == 0 else -2
+                    edges = (vel[ix, sy, sz, :], vel[sx, iy, sz, :],
+                             vel[sx, sy, iz, :])
+                    if any(not np.any(e) for e in edges):
+                        vel[sx, sy, sz, :] = 0.
+                    else:
+                        vel[sx, sy, sz, :] = sum(edges)/3
+
+        if disagreement > atol and not self._warned_bc_corner:
+            self._warned_bc_corner = True
+            warnings.warn(
+                "Boundary patches disagree by up to {:g} where they meet along "
+                "the edges of the domain. This is a discontinuity in the "
+                "boundary conditions themselves (an inflow meeting a no-slip "
+                "wall, say), not an error in the data. Where one side is "
+                "exactly zero it is taken as no-slip and wins, which is the "
+                "case for {} of those cells; the rest are the average of the "
+                "two faces.".format(disagreement, zeroed), UserWarning)
+
+        return vel
+
+
+
+class VTKXMLData(FluidData):
+
+    def __init__(self, path, INUM=None, periodic_dim=(False, False, False),
+                 vel_conv=None, vec_name=None, time_from_name=None, dt=None):
+        '''Reads fluid velocity point data from VTK XML ImageData (``.vti``) or
+        RectilinearGrid (``.vtr``) files and creates a FluidData instance from
+        it.
+
+        The dumps of a series, and their times, come from the first of these
+        that is present:
+
+        1. a ParaView collection (``.pvd``), timed by the timesteps it declares;
+        2. the ``.vti``/``.vtr`` files in the directory, in numeric-aware
+           filename order, timed by the ``TimeValue`` each one carries;
+        3. the same files, timed by their filenames through ``time_from_name``;
+        4. the same files, in unit time steps.
+
+        Which one answered is recorded in ``dump_source`` and ``time_source``.
+        Reading the files of a directory without a ``.pvd`` passes silently; a
+        series with no times at all warns, since its unit steps are indices
+        rather than physical times. Given ``dt``, each dump's time is
+        ``dt`` times its position in the series, counting any dump a collection
+        declares but which is absent; times the source carries must agree with
+        it, and it supplies any the source lacks.
+
+        Times are shifted so that the first dump is at a Planktos environment
+        time of 0.0. A single ``.vti`` file gives time-invariant flow, for which
+        INUM and dt are ignored.
+
+        The grid is read from the first dump, and every later dump is checked
+        against it. A grid one point thick in a dimension is read as 2D data on
+        the others, with the velocity component along that dimension dropped.
+
+        A dump the collection declares but which is not on disk is skipped with
+        a warning, and the timeline is built over the dumps that exist.
+
+        Parameters
+        ----------
+        path : string
+            a directory holding a ``.pvd`` collection or ``.vti``/``.vtr``
+            files, the ``.pvd`` itself, or a single dump file
+        INUM : int >= 2, True, or None (default)
+            max number of splined intervals held at any one time; the number of
+            time points held is 1+INUM, and INUM must be at least 2. None splines
+            the entire dataset at once and cubically in time; True holds the
+            entire dataset too but splines it linearly; an int streams a sliding
+            window from storage and splines that linearly. Use an int only
+            when the dataset will not fit in memory: streaming it is slower.
+        periodic_dim : bool or sequence of bool, default=(False, False, False)
+            whether the data is periodic along each axis, or along every axis
+        vel_conv : float, optional
+            scalar to multiply the velocity by in order to convert units to
+            match the spatial grid units
+        vec_name : string, optional
+            name of the velocity point-data array. Defaults to the array each
+            file declares as its active vectors.
+        time_from_name : string, optional
+            regular expression whose first group is a dump's time within its
+            filename, such as ``r'_t([0-9.]+)[.]vti$'``. Used for dump files
+            that have no collection and carry no ``TimeValue``.
+        dt : float, optional
+            interval between consecutive dumps
+
+        Attributes
+        ----------
+        dump_source : {'collection', 'files', 'file'}
+            where the list of dumps came from
+        time_source : string
+            a phrase naming where the times came from
+        series_path : Path or None
+            the ``.pvd`` collection, if there was one
+
+        Raises
+        ------
+        FileNotFoundError
+            if path does not exist, holds no ``.pvd``, ``.vti`` or ``.vtr``, or
+            none of the dumps the series declares is on disk
+        ValueError
+            if dt is not positive or disagrees with the times the source
+            carries, or the series names files of another type
+        RuntimeError
+            if a directory holds several ``.pvd`` collections, only some dumps
+            carry a time, the times do not strictly increase, or a dump's grid
+            differs from the first dump's
+        '''
+
+        ##### Parse parameters #####
+        self.path = path
+        self.vel_conv = vel_conv
+        self.vec_name = vec_name
+        self.time_from_name = time_from_name
+        self.dt = dt
+        if INUM is not None and INUM is not True:
+            _check_INUM(INUM)
+        if dt is not None and not dt > 0:
+            raise ValueError("dt must be positive, not {!r}.".format(dt))
+        self._name_pattern = (None if time_from_name is None
+                              else re.compile(time_from_name))
+
+        ##### Resolve the dumps that exist, and their timeline #####
+        candidates = self._find_dumps(Path(path))
+        if dt is not None:
+            candidates = self._apply_dt(candidates)
+        # Each candidate carries its declared position, which dump_number reports.
+        candidates = [((k, f) if f is not None else None, t)
+                      for k, (f, t) in enumerate(candidates)]
+        dumps, flow_times, self.time_source = _resolve_timeline(
+            candidates, self._source_label, self.time_source,
+            declared_order=self.dump_source != 'files')
+        self._dump_numbers = [k for k, _ in dumps]
+        self._dumps = [f for _, f in dumps]
+        # d_start/d_finish are a dense 0-based index over the dumps that exist,
+        # so that update_spline's arithmetic on them steps in lockstep with
+        # flow_times.
+        self.d_start = 0
+        self.d_finish = len(self._dumps) - 1
+
+        ##### Load fluid data; the first dump read sets the grid #####
+        self._grid = None
+        print('Reading VTK XML fluid data...')
+        if flow_times is None:
+            # A single dump is time-invariant flow, with no window to slide.
+            INUM = None
+            flow = [f[0] for f in self._read_dumps(0, 0)]
+        elif INUM is None or INUM is True:
+            flow = self._read_dumps(self.d_start, self.d_finish)
         else:
-            flow_times = None
+            # Clamped to the series, so that an INUM wider than it reaches
+            # FluidData's own check rather than a dump that does not exist.
+            last = min(self.d_start + INUM, self.d_finish)
+            flow = self._read_dumps(self.d_start, last)
+            # record the inclusive bounds of the starting dump numbers to be used
+            self.loaded_dump_bnds = (self.d_start, last)
+            # same, but based off of zero to correspond with flow_times indices
+            self.loaded_idx_bnds = (0, last - self.d_start)
+        print('Done!')
 
-    if vel_conv is not None:
-        print("Converting vel units by a factor of {}.".format(vel_conv))
-        for ii, d in enumerate(flow):
-            flow[ii] = d*vel_conv
-    if grid_conv is not None:
-        print("Converting grid units by a factor of {}.".format(grid_conv))
-        for ii, m in enumerate(mesh):
-            mesh[ii] = m*grid_conv
+        # A plane exported as 3D data is 2D data. The dropped axes are
+        #   remembered so that windowed loads are collapsed the same way.
+        flow, mesh, periodic_dim, self._flat = _collapse_flat_axes(
+            flow, self._grid, periodic_dim, source=str(path))
 
-    return flow, mesh, flow_times
+        # shift domain to quadrant 1
+        flow_points = tuple(m - m[0] for m in mesh)
+        fluid_domain_LLC = tuple(m[0] for m in mesh)
+        # ImageData points include the domain boundaries.
+        self.L = [fp[-1] for fp in flow_points]
+
+        super().__init__(flow, flow_points, flow_times, INUM, periodic_dim,
+                         fluid_domain_LLC=fluid_domain_LLC)
 
 
 
-def _wrap_flow(flow, flow_points, periodic_dim=(True, True, False)):
-    '''In some cases, software may print out fluid velocity data that omits 
-    the velocities at the right boundaries in spatial dimensions that are 
-    meant to be periodic. This helper function restores that data by copying 
-    everything over. 3rd dimension will automatically be ignored if 2D.
+    def load_dumpfiles(self, d_start, d_finish):
+        '''Read dumps d_start through d_finish, inclusive: indices into the dumps
+        on disk, collapsed and scaled as at construction.'''
+        return _drop_flat_axes(self._read_dumps(d_start, d_finish), self._flat,
+                               len(self._grid))
 
-    Parameters
-    ----------
-    flow : list of ndarrays
-        This will be overwritten to save space!
-    flow_points : tuple of mesh coordinates (x,y,[z])
-    periodic_dim : list of 2 or 3 bool, default=[True, True, False]
-        True if that spatial dimension is periodic, otherwise False
 
-    Returns
-    -------
-    flow : list of ndarrays
-    flow_points : tuple of mesh coordinates (ndarrays)
-    L : list of dimension lengths
+
+    def dump_number(self, t_idx):
+        """The position of dump ``t_idx`` in the series its source declares.
+
+        Counted over every declared dump, present or not, so a file named from
+        it stays with its dump when a missing one later arrives.
+        """
+
+        return self._dump_numbers[int(t_idx)]
+
+
+
+    def _find_dumps(self, path):
+        '''Locate the dumps of the series, and the time each one declares.
+
+        Returns
+        -------
+        list of (file, time), one per dump the source declares, in its order.
+            file is None for a dump that is declared but not on disk; time is
+            NaN where the source gives none.
+        '''
+
+        if path.is_file() and path.suffix.lower() == '.pvd':
+            return self._candidates_from_collection(path)
+        if path.is_file():
+            self.series_path = None
+            self.dump_source = 'file'
+            self._source_label = "the file {}".format(path.name)
+            self.time_source = "a single dump"
+            self._check_readable([path], path)
+            return [(path, np.nan)]
+        if not path.is_dir():
+            raise FileNotFoundError("{} not found!".format(str(path)))
+
+        found = sorted(path.glob('*.pvd'))
+        if len(found) > 1:
+            raise RuntimeError(
+                "Found {} .pvd collections in {}: {}. Pass the one to "
+                "read.".format(len(found), str(path), [f.name for f in found]))
+        if len(found) == 1:
+            return self._candidates_from_collection(found[0])
+
+        files = sorted((p for p in path.iterdir()
+                        if p.is_file() and p.suffix.lower() in ('.vti', '.vtr')),
+                       key=lambda p: _natural_key(p.name))
+        if len(files) == 0:
+            raise FileNotFoundError(
+                "No .pvd collection, .vti or .vtr files found in {}.".format(
+                    str(path)))
+        return self._candidates_from_files(path, files)
+
+
+
+    def _candidates_from_collection(self, pvd):
+        '''Dumps declared by a .pvd collection, timed by its timesteps.'''
+
+        self.series_path = pvd
+        self.dump_source = 'collection'
+        self._source_label = "the collection {}".format(pvd.name)
+        self.time_source = "the .pvd collection"
+
+        files, times = _dataio.read_pvd_series(pvd)
+        self._check_readable(files, pvd)
+        return [(f if f.is_file() else None, t) for f, t in zip(files, times)]
+
+
+
+    def _candidates_from_files(self, directory, files):
+        '''Dumps found by globbing dump files, timed by TimeValue or filename.'''
+
+        self.series_path = None
+        self.dump_source = 'files'
+        self._source_label = "the .vti/.vtr files in {}".format(str(directory))
+
+        # A writer records TimeValue in every dump or in none, so the first file
+        #   settles which, and a series without it costs one probe in total.
+        first = self._file_time(files[0])
+        if first is not None:
+            self.time_source = "the TimeValue in each dump"
+            times = [first] + [self._file_time(f) for f in files[1:]]
+        elif self._name_pattern is not None:
+            self.time_source = "the filenames, through time_from_name"
+            times = [self._name_time(f) for f in files]
+        else:
+            # Left for _resolve_timeline to replace with unit steps, or for dt.
+            self.time_source = "the dump files, which carry no times"
+            times = [None]*len(files)
+
+        return [(f, np.nan if t is None else t) for f, t in zip(files, times)]
+
+
+
+    def _apply_dt(self, candidates):
+        '''Time each declared dump as dt times its position in the series.
+
+        Times the source already carries must agree with dt; dt supplies the
+        rest.
+        '''
+
+        times = np.array([t for _, t in candidates], dtype=float)
+        positions = np.arange(len(times))
+        timed = ~np.isnan(times)
+        if timed.any():
+            # Measured from the first timed dump, since a source's times need
+            #   not start at zero.
+            ref = int(np.argmax(timed))
+            expected = times[ref] + self.dt*(positions - ref)
+            bad = timed & ~np.isclose(times, expected, rtol=0, atol=1e-6*self.dt)
+            if bad.any():
+                i = int(np.argmax(bad))
+                raise ValueError(
+                    "dt={:g} disagrees with the times from {}: dump {} of the "
+                    "series is at t = {:g}, where dt puts it at t = {:g}.".format(
+                        self.dt, self.time_source, i, times[i], expected[i]))
+        else:
+            expected = self.dt*positions
+
+        gaps = int((~timed).sum())
+        if gaps == len(times):
+            self.time_source = 'the dt argument'
+        elif gaps > 0:
+            self.time_source = '{}, with dt filling {} gap(s)'.format(
+                self.time_source, gaps)
+        return [(f, t) for (f, _), t in
+                zip(candidates, np.where(timed, times, expected))]
+
+
+
+    @staticmethod
+    def _file_time(filename):
+        '''A dump's TimeValue: from its header where that decodes, else read
+        with no arrays.'''
+
+        t = _dataio.read_vtkxml_time_only(filename)
+        return t if t is not None else _dataio.read_vtkxml_grid_time(filename)
+
+
+
+    def _name_time(self, filename):
+        '''The time time_from_name finds in a filename, or None.'''
+
+        match = self._name_pattern.search(filename.name)
+        if match is None:
+            return None
+        try:
+            t = float(match.group(1) if match.groups() else match.group(0))
+        except ValueError:
+            return None
+        return t if np.isfinite(t) else None
+
+
+
+    @staticmethod
+    def _check_readable(files, source):
+        '''Raise ValueError if a series names files of a type this class does
+        not read. Called at construction, before any data is loaded.'''
+
+        unreadable = sorted({f.suffix.lower() for f in files} - {'.vti', '.vtr'})
+        if unreadable:
+            raise ValueError(
+                "{} names files of type {}, which VTKXMLData does not read. It "
+                "reads VTK XML ImageData (.vti) and RectilinearGrid "
+                "(.vtr).".format(source.name, unreadable))
+
+
+
+    def _read_dumps(self, d_start, d_finish):
+        '''Read dumps d_start..d_finish (inclusive) as three (t,i,j,k) components.'''
+
+        flow = None
+        count = d_finish - d_start + 1
+        for m, n in enumerate(range(d_start, d_finish+1)):
+            filename = self._dumps[n]
+            data, mesh, _ = _dataio.read_vtkxml_grid_data(filename,
+                                                           self.vec_name)
+            self._check_grid(mesh, filename)
+            if flow is None:
+                # Filled in place, so the series is held once rather than as a
+                # list of dumps and a stacked copy of it. Held as float64
+                # whatever the file stores: a window the slider rebuilds is
+                # float64, and linear interpolation between float32 samples
+                # rounds their difference, missing the stored value even at a
+                # dump's own time.
+                flow = [np.empty((count, *d.shape)) for d in data]
+            for f, d in zip(flow, data):
+                f[m] = d
+
+        if flow is None:
+            # An empty range, from a degenerate slide past the end of the data.
+            shape = tuple(len(c) for c in self._grid)
+            flow = [np.zeros((0, *shape)) for _ in range(3)]
+
+        if self.vel_conv is not None:
+            for f in flow:
+                f *= self.vel_conv
+        return flow
+
+
+
+    def _check_grid(self, mesh, filename):
+        '''The first dump read sets the grid; every later one must match it.'''
+
+        if self._grid is None:
+            self._grid = mesh
+        elif not all(np.array_equal(a, b) for a, b in zip(mesh, self._grid)):
+            raise RuntimeError(
+                "The grid in {} differs from the grid of the first dump read. "
+                "Every dump in a series must share one grid.".format(
+                    Path(filename).name))
+
+
+#######################################################################
+#####                    TEMPORAL INTERPOLATION                   #####
+#######################################################################
+
+
+
+
+class LinearSpline:
+    '''Linear interpolant in time of one velocity component.
+
+    Evaluates to plain ndarrays. Holds either the whole dataset (``INUM=True``)
+    or the window ``FluidData.update_spline`` slides.
     '''
 
-    dim = len(flow_points)
-    if dim == len(flow[0].shape):
-        TIME_DEP = False
-    else:
-        TIME_DEP = True
-            
-    dx = np.array([flow_points[d][-1]-flow_points[d][-2] 
-                    for d in range(dim)])
+    def __init__(self, flow_times, flow, extrapolate=(True, True)):
+        '''
+        Parameters
+        ----------
+        flow_times : 1D ndarray
+            increasing time points
+        flow : ndarray, indexed (t,i,j,[k])
+            the component at each time point, held by reference
+        extrapolate : (bool, bool), default=(True, True)
+            whether a time before the first / after the last time point takes
+            the end value (True) or raises SplineRangeError (False)
+        '''
+        self.flow_times = flow_times
+        self.flow = flow
+        self.extrapolate = extrapolate
+        self._shape = flow.shape
+
+    @property
+    def shape(self):
+        # Custom getter for shape property
+        return self._shape
+
+    @shape.setter
+    def shape(self, value):
+        # Make this property read-only
+        raise AttributeError("shape is read-only in LinearSpline")
+
+    @property
+    def x(self):
+        return self.flow_times
+
+    def __call__(self, val):
+        if (val < self.flow_times[0] and not self.extrapolate[0]) \
+              or (val > self.flow_times[-1] and not self.extrapolate[1]):
+            raise SplineRangeError('Out of range without extrapolation.')
+        return _linear_blend(self.flow_times, val, self.flow.__getitem__)
+
+
+    def __getitem__(self, pos):
+        '''
+        Allows indexing into the interpolator at original time mesh points.
+        '''
+        return _spline_index(self, pos)
+
+    def __setitem__(self, pos, val):
+        self.flow[pos] = val
+
+    def max(self):
+        return self.flow.max()
     
-    # find new flow field shape
-    new_flow_shape = np.array(flow[0].shape)
-    if not TIME_DEP:
-        new_flow_shape += 1*np.array(periodic_dim)
-    else:
-        new_flow_shape[1:] += 1*np.array(periodic_dim)
+    def min(self):
+        return self.flow.min()
+    
+    def absmax(self):
+        return np.abs(self.flow).max()
 
-    # create new flow field, putting old data in lower left corner
-    new_flow = [np.zeros(new_flow_shape) for d in range(dim)]
-    if TIME_DEP:
-        old_shape = flow[0].shape[1:]
-    else:
-        old_shape = flow[0].shape
-    for d in range(dim):
-        if dim == 2:
-            new_flow[d][...,:old_shape[0],:old_shape[1]] = flow[d]
+    def regenerate_data(self):
+        '''The data the interpolant is built on, by reference rather than copied.'''
+        return self.flow
+
+    def derivative(self, val):
+        '''Time derivative at ``val``: the slope of the data interval holding it.
+
+        Piecewise constant on right-closed intervals (t[i-1], t[i]], so a time
+        on a time point takes the slope to its left. The first time point held
+        takes the slope to its right, having no interval held on its left.
+        Zero past an extrapolating end; SplineRangeError past one that is not.
+        '''
+        # Strict >, as in __call__: the last time point is in range and takes
+        #   the slope to its left.
+        if (val < self.flow_times[0] and not self.extrapolate[0]) \
+              or (val > self.flow_times[-1] and not self.extrapolate[1]):
+            raise SplineRangeError('Out of range without extrapolation.')
+        elif val == self.flow_times[0]:
+            idx = 0
+        elif val < self.flow_times[0] or val > self.flow_times[-1]:
+            return np.zeros_like(self.flow[0]) # constant extrapolation
         else:
-            new_flow[d][...,:old_shape[0],:old_shape[1],:old_shape[2]] = flow[d]
-    # replace old flow field
-    flow = new_flow
-
-    # fill in the new edges and update flow points
-    flow_points_new = []
-    for d in range(dim):
-        if periodic_dim[d]:
-            flow_points_new.append(np.append(flow_points[d], 
-                                flow_points[d][-1]+dx[d]))
-            for dd in range(dim):
-                if d == 0 and not TIME_DEP:
-                    flow[dd][-1,...] = flow[dd][0,...]
-                elif d == 0 and TIME_DEP:
-                    flow[dd][:,-1,...] = flow[dd][:,0,...]
-                elif d == 1 and not TIME_DEP:
-                    flow[dd][:,-1,...] = flow[dd][:,0,...]
-                elif d == 1 and TIME_DEP:
-                    flow[dd][:,:,-1,...] = flow[dd][:,:,0,...]
-                else:
-                    flow[dd][...,-1] = flow[dd][...,0]
-        else:
-            flow_points_new.append(flow_points[d])
-
-    flow_pts = tuple(flow_points_new)
-    # return flow, flow_points, L
-    return flow, flow_pts, [flow_pts[d][-1] for d in range(dim)]
-
-
-#######################################################################
-#####           FLUID TEMPORAL INTERPOLATION ROUTINES             #####
-#######################################################################
-
-
-def create_temporal_interpolations(flow_times, flow_data):
-    '''This function controls how temporal interpolations of the fluid
-    velocity data will be created for the Environment class.
-
-    Parameters
-    ----------
-    flow_times : 1D array of time points
-    flow_data : list of ndarrays with fluid velocity field data.
-        This data should be expected to be overwritten to save space.
-
-    Returns
-    -------
-    list of interpolation objects (PPoly)
-    '''
-
-    for n, flow in enumerate(flow_data):
-        # Defaults to axis=0 along which data is varying, which is t axis
-        # Defaults to not-a-knot boundary condition, resulting in first
-        #   and second segments at curve ends being the same polynomial
-        # Defaults to extrapolating out-of-bounds points based on first
-        #   and last intervals. This will be overridden by this method
-        #   to use constant extrapolation instead.
-        flow_data[n] = fCubicSpline(flow_times, flow)
-    return flow_data
+            idx = np.searchsorted(self.flow_times, val) - 1
+        return (self.flow[idx+1] - self.flow[idx]) / (self.flow_times[idx+1] - self.flow_times[idx])
 
 
 
@@ -320,55 +3376,65 @@ class fCubicSpline(interpolate.CubicSpline):
     Extends Scipy's CubicSpline object to get info about original fluid data.
     '''
 
-    def __init__(self, flow_times, flow, **kwargs):
-        super(fCubicSpline, self).__init__(flow_times, flow, **kwargs)
+    def __init__(self, flow_times, flow, extrapolate=(True, True),
+                 bc_type='not-a-knot'):
+        '''Cubic spline in time of one velocity component, over the whole dataset.
 
-        self.shape = flow.shape
+        Parameters
+        ----------
+        flow_times : 1D ndarray
+            increasing time points
+        flow : ndarray, indexed (t,i,j,[k])
+            the component at each time point
+        extrapolate : (bool, bool), default=(True, True)
+            whether a time before the first / after the last time point is
+            evaluated (True) or raises SplineRangeError (False)
+        bc_type : default='not-a-knot'
+            passed to scipy.interpolate.CubicSpline
+        '''
+        super().__init__(flow_times, flow, axis=0, extrapolate=True,
+                         bc_type=bc_type)
+
+        self._shape = flow.shape
+        self.extrapolate = extrapolate
+        # These are inaccurate and should only be used for plotting!
         self.data_max = flow.max()
         self.data_min = flow.min()
 
+    @property
+    def shape(self):
+        # Custom getter for shape property
+        return self._shape
 
+    @shape.setter
+    def shape(self, value):
+        # Make this property read-only
+        raise AttributeError("shape is read-only in fCubicSpline")
+
+
+
+    def __call__(self, val):
+        if (val < self.x[0] and not self.extrapolate[0]) \
+              or (val > self.x[-1] and not self.extrapolate[1]):
+            raise SplineRangeError('Out of range without extrapolation.')
+        return super().__call__(val)
 
     def __getitem__(self, pos):
         '''
-        Allows indexing into the interpolator.
+        Allows indexing into the interpolator at original time mesh points.
         '''
-        if type(pos) == int:
-            return self.__call__(self.x[pos])
-        elif type(pos) == slice:
-            start = pos.start; stop = pos.stop; step = pos.step
-            if start is None: start = 0
-            if stop is None: stop = len(self.x)
-            if step is None: step = 1
-            return np.stack([self.__call__(self.x[n]) for 
-                             n in range(start,stop,step)])
-        elif type(pos) == tuple:
-            if type(pos[0]) == int:
-                return self.__call__(self.x[pos[0]])[pos[1:]]
-            elif type(pos[0]) == slice:
-                start = pos[0].start; stop = pos[0].stop; step = pos[0].step
-                if start is None: start = 0
-                if stop is None: stop = len(self.x)
-                if step is None: step = 1
-                return np.stack([self.__call__(self.x[n])[pos[1:]] for 
-                                 n in range(start,stop,step)])
-            else:
-                raise IndexError('Only integers or slices supported in fCubicSpline.')
-        else:
-            raise IndexError('Only integers or slices supported in fCubicSpline.')
-
-
+        return _spline_index(self, pos)
 
     def __setitem__(self, pos, val):
         raise RuntimeError("Cannot assign to spline object. "+
                            "Use regenerate_data to recreate original data first.")
-
-
-
+    
     def max(self):
+        '''This will return a data max based on the data used to build the spline.'''
         return self.data_max
 
     def min(self):
+        '''This will return a data min based on the data used to build the spline.'''
         return self.data_min
 
     def absmax(self):
@@ -379,4 +3445,686 @@ class fCubicSpline(interpolate.CubicSpline):
         Rebuild the original data.
         '''
         return np.stack([self.__call__(val) for val in self.x])
+    
 
+
+class SplineRangeError(ValueError):
+    """
+    Exception raised for asking for a value outside of interpolation range.
+    """
+    def __init__(self, message="Value is outside of valid interpolation range."):
+        self.message = message
+        super().__init__(self.message)
+
+
+def _spline_index(spline, pos):
+    """Index a spline at its own knots, as though it were an ``([t],i,j,[k])`` array.
+
+    ``spline.x`` is the knot sequence and ``spline(t)`` the field there.
+
+    Parameters
+    ----------
+    spline : LinearSpline or fCubicSpline
+    pos : int, slice, or tuple
+        The leading entry indexes time, as an int (numpy integers included) or a
+        slice; anything after it indexes into the field at that time.
+
+    Returns
+    -------
+    ndarray -- one time point for an integer index, a stack of them for a slice
+
+    Raises
+    ------
+    IndexError
+        if the time index is neither an integer nor a slice
+    """
+
+    knots = spline.x
+    lead, rest = (pos[0], pos[1:]) if isinstance(pos, tuple) else (pos, ())
+
+    def at(i):
+        field = spline(knots[i])
+        return field[rest] if rest else field
+
+    if isinstance(lead, (int, np.integer)):
+        return at(lead)
+    if isinstance(lead, slice):
+        # slice.indices resolves None, negative bounds and negative steps against
+        #   the length.
+        return np.stack([at(i) for i in range(*lead.indices(len(knots)))])
+    raise IndexError('Only integers or slices are supported in {}.'.format(
+        type(spline).__name__))
+
+
+def _linear_blend(times, t, get):
+    """Linearly interpolate at ``t`` between the two entries bracketing it.
+
+    Times outside ``times`` take the nearest end entry.
+
+    Parameters
+    ----------
+    times : 1D ndarray
+        increasing knot times
+    t : float
+    get : callable
+        ``get(i)`` returns entry ``i``, an array of any shape. It is called once
+        where ``t`` lands on a knot or outside the data, and twice otherwise.
+
+    Returns
+    -------
+    ndarray, always a new one rather than an entry ``get`` returned
+    """
+
+    # This is the one place the weights of a linear interpolation in time are
+    #   computed. LinearSpline evaluates the velocity through it, and per-dump
+    #   means and vorticity are blended through it, so all three share weights.
+
+    # Bracket t, clamping to the ends so that a time outside the data gets the
+    #   constant extrapolation the field itself uses. A single entry is copied,
+    #   since get may hand back stored data -- a window's own dump, or a read
+    #   cache -- and the caller is free to change what it is given.
+    if len(times) < 2 or t <= times[0]:
+        return np.array(get(0))
+    if t >= times[-1]:
+        return np.array(get(len(times) - 1))
+    idx = int(np.searchsorted(times, t)) - 1
+    w = (t - times[idx]) / (times[idx+1] - times[idx])
+    if w == 0.0:
+        # t landed on a knot; one call, and no arithmetic on the nodal values.
+        return np.array(get(idx))
+    lo = get(idx)
+    hi = get(idx+1)
+    # The difference is taken in at least float64. In float32 it rounds, and the
+    #   blend then misses the second entry even at weight 1.
+    return lo + np.subtract(hi, lo, dtype=np.result_type(hi, lo, np.float64))*w
+
+
+
+#######################################################################
+#####          INGESTION: FROM A SOURCE'S FILES TO A GRID         #####
+#######################################################################
+
+
+####################   the timeline   ####################
+
+def _natural_key(name):
+    '''Sort key that orders the numbers embedded in a name numerically, so that
+    an unpadded ``case_787`` sorts before ``case_1008``.'''
+    # The split always alternates non-digit, digit, ..., so two keys compare
+    #   like with like throughout.
+    return tuple(int(s) if s.isdigit() else s
+                 for s in re.split(r'(\d+)', name))
+
+
+def _resolve_timeline(candidates, source_label, time_source, declared_order):
+    '''Turn the dumps a source declares into the dumps to load, and their timeline.
+
+    Declared dumps missing from disk are skipped with a warning. A series with
+    no times anywhere falls back to unit steps, with a warning; one with times
+    for only some of its dumps is refused. Times must strictly increase, and
+    uneven spacing is warned about.
+
+    Parameters
+    ----------
+    candidates : list of (dump, time)
+        one entry per dump the source declares, in the source's order. dump is
+        whatever the loader reads it from, or None for a dump that is declared
+        but not on disk; time is NaN where the source gives none.
+    source_label : str
+        names the source in warnings and errors
+    time_source : str
+        names where the times came from
+    declared_order : bool
+        True when the source's order is authoritative (an index), which is
+        kept. Otherwise the dumps are sorted by their times.
+
+    Returns
+    -------
+    dumps : list
+        the dumps that exist, in time order
+    flow_times : ndarray of float, or None if only one dump exists
+        shifted so the first is 0.0
+    time_source : str
+        as passed in, or 'assumed unit steps' when no dump carried a time
+
+    Raises
+    ------
+    FileNotFoundError
+        if none of the declared dumps is on disk
+    RuntimeError
+        if only some dumps carry a time, or the times do not strictly increase
+    '''
+
+    ##### Drop the dumps whose data is not on disk #####
+    def _fmt(t):
+        return 'unknown' if t is None or np.isnan(t) else '{:g}'.format(t)
+
+    dumps = []; keep_times = []; missing = []
+    for dump, t in candidates:
+        if dump is None:
+            missing.append(_fmt(t))
+        else:
+            dumps.append(dump)
+            keep_times.append(t)
+
+    if len(dumps) == 0:
+        raise FileNotFoundError(
+            "None of the {} dumps found via {} are present on disk.".format(
+                len(candidates), source_label))
+
+    if len(missing) > 0:
+        # Warn rather than fail: a truncated or interrupted export is normal.
+        # But warn loudly -- silence here would be worse than the failure,
+        # since the run would complete with nothing indicating that the
+        # timeline is not the one the source declared.
+        warnings.warn(
+            "{} of {} dumps found via {} are not on disk and have been "
+            "skipped: t = {}. The timeline is built over the {} dumps that "
+            "remain.".format(len(missing), len(candidates), source_label,
+                             ', '.join(missing), len(dumps)), UserWarning)
+
+    if len(dumps) == 1:
+        return dumps, None, time_source
+
+    keep_times = np.array(keep_times, dtype=float)
+
+    ##### No time information anywhere: fall back to unit steps #####
+    if np.all(np.isnan(keep_times)):
+        warnings.warn(
+            "No time information for any dump found via {}: assuming unit "
+            "time steps. Every time the simulation is run against is "
+            "therefore an index, not a physical time, and any velocity in "
+            "physical units is scaled wrongly by the true dump "
+            "interval.".format(source_label), UserWarning)
+        return dumps, np.arange(len(dumps), dtype=float), 'assumed unit steps'
+
+    if np.any(np.isnan(keep_times)):
+        # Unit steps are defensible only when nothing better exists. Here most
+        # of the series is timed, and indices would move every dump that carries
+        # a time to the wrong place.
+        raise RuntimeError(
+            "No time information for {} of {} dumps found via {}, but the "
+            "rest are timed. Unit time steps would misplace the dumps that "
+            "do carry a time, so the series cannot be read as it "
+            "stands.".format(int(np.isnan(keep_times).sum()), len(dumps),
+                             source_label))
+
+    ##### Order the dumps of an unindexed source by their recovered times ####
+    # An index declares its own order and is authoritative about it, so it is
+    # left as written. For a globbed source the order was ours to pick and the
+    # filenames were only a proxy; the times are the real thing.
+    if not declared_order:
+        order = np.argsort(keep_times, kind='stable')
+        if not np.array_equal(order, np.arange(len(order))):
+            warnings.warn(
+                "The dumps found via {} are not in time order under their "
+                "filenames; they have been reordered by their recorded "
+                "times.".format(source_label), UserWarning)
+            dumps = [dumps[i] for i in order]
+            keep_times = keep_times[order]
+
+    # shift so that the first dump loaded corresponds to environment time 0
+    flow_times = keep_times - keep_times[0]
+
+    ##### The timeline has to be a timeline #####
+    # Both splines divide by the interval between successive times, so a
+    # repeat or a step backward is not a degraded timeline but an unusable
+    # one. A well-formed source cannot produce it, which is exactly why it is
+    # worth saying out loud if it appears.
+    bad = np.nonzero(np.diff(flow_times) <= 0)[0]
+    if len(bad) > 0:
+        raise RuntimeError(
+            "Dump times from {} are not strictly increasing: t = {} is "
+            "followed by t = {}.".format(
+                time_source, '{:g}'.format(keep_times[bad[0]]),
+                '{:g}'.format(keep_times[bad[0]+1])))
+
+    ##### Warn about non-uniform spacing left behind by any gaps #####
+    # Interpolation error scales with the dump interval, so a series with a
+    # hole is measurably worse across that hole and the user should be told
+    # where, separately from being told which dumps are absent.
+    dt = np.diff(flow_times)
+    if not np.allclose(dt, dt[0], rtol=1e-6):
+        wide = np.nonzero(dt > dt.min()*(1+1e-6))[0]
+        warnings.warn(
+            "Dump times are not evenly spaced: intervals range from {:g} to "
+            "{:g}. Temporal interpolation is less accurate across the wider "
+            "ones, which begin at t = {}.".format(
+                dt.min(), dt.max(),
+                ', '.join('{:g}'.format(flow_times[i]) for i in wide)),
+            UserWarning)
+
+    return dumps, flow_times, time_source
+
+
+####################   flat axes   ####################
+
+def _collapse_flat_axes(flow, mesh, periodic_dim=None, source=None):
+    """Reduce a field written on a one-point-thick grid to its real dimension.
+
+    Everything that describes the grid moves together -- the field, the
+    coordinate arrays, the velocity components and the periodicity flags -- so
+    that a plane exported as 3D vtk becomes an ordinary 2D Planktos fluid rather
+    than a 3D one of zero thickness.
+
+    Parameters
+    ----------
+    flow : list of ndarrays
+    mesh : sequence of 1D ndarrays
+        coordinates along each axis
+    periodic_dim : bool or sequence of bool, optional
+    source : str, optional
+        named in the warning
+
+    Returns
+    -------
+    flow, mesh, periodic_dim, axes -- the first three with flat axes removed,
+    and the axes that were dropped, for a loader to reapply to later reads
+
+    Raises
+    ------
+    ValueError
+        if fewer than two axes would be left; Planktos is 2D or 3D
+
+    Warns
+    -----
+    UserWarning
+        naming the dropped axes, and any velocity component dropped with them
+        whose peak exceeds 1e-6 of the largest in-plane velocity
+    """
+
+    axes = tuple(d for d, c in enumerate(mesh) if len(np.atleast_1d(c)) < 2)
+    if not axes:
+        return flow, list(mesh), periodic_dim, axes
+
+    names = 'xyz'
+    dropped = ', '.join(names[d] for d in axes)
+    if len(mesh) - len(axes) < 2:
+        raise ValueError(
+            "This grid is one point thick along {} of its {} axes, leaving "
+            "fewer than the two Planktos needs. {}".format(
+                dropped, len(mesh),
+                '' if source is None else 'Read from {}.'.format(source)))
+
+    # A component along an axis that is being dropped is discarded with it. It is
+    #   reported when its peak exceeds 1e-6 of the largest in-plane velocity:
+    #   above the round-off a solver's float32 output carries, below any
+    #   out-of-plane flow worth keeping. The ratio goes in the warning so the
+    #   user can judge it.
+    def peak(f):
+        return max(float(f.max()), -float(f.min()))
+    scale = max(peak(f) for d, f in enumerate(flow) if d not in axes)
+    notes = []
+    for d in axes:
+        w = peak(flow[d])
+        if w <= 1e-6*scale:
+            continue
+        if scale > 0:
+            notes.append('the {}-velocity reaches {:.3g}, {:.3g} times the '
+                         'largest in-plane velocity'.format(names[d], w, w/scale))
+        else:
+            notes.append('the {}-velocity reaches {:.3g} where the in-plane '
+                         'velocity is zero everywhere'.format(names[d], w))
+    warnings.warn(
+        "Fluid grid is a single point thick in {}, so it is being read as {}D "
+        "data on the remaining axes.{}{}".format(
+            dropped, len(mesh) - len(axes),
+            '' if source is None else ' Read from {}.'.format(source),
+            '' if not notes else
+            ' NOTE: {}, and is being discarded with that axis -- this is a '
+            'slab of a 3D flow rather than 2D data.'.format('; '.join(notes))),
+        UserWarning, stacklevel=3)
+
+    flow = _drop_flat_axes(flow, axes, len(mesh))
+    mesh = [c for d, c in enumerate(mesh) if d not in axes]
+    if periodic_dim is not None and not isinstance(periodic_dim, bool):
+        periodic_dim = tuple(v for d, v in enumerate(periodic_dim)
+                             if d not in axes)
+    return flow, mesh, periodic_dim, axes
+
+
+def _drop_flat_axes(flow, axes, ndim):
+    """Remove flat spatial axes from a velocity field, components included.
+
+    The component *along* a flat axis goes with it: Planktos carries one
+    velocity component per spatial dimension, so a 2D grid holds a 2D vector.
+
+    Parameters
+    ----------
+    flow : list of ndarrays
+        one per velocity component, each ``([t],i,j,[k])``
+    axes : tuple of int
+        spatial axes to drop, as :func:`_collapse_flat_axes` identifies them
+    ndim : int
+        spatial dimension of the data as read, before anything is dropped.
+        Used to tell whether the arrays carry a leading time axis.
+
+    Returns
+    -------
+    list of ndarrays, one shorter and one axis flatter per entry in ``axes``
+    """
+
+    if not axes:
+        return flow
+    # A leading time axis shifts every spatial axis along by one.
+    offset = 1 if flow[0].ndim > ndim else 0
+    kept = [f for d, f in enumerate(flow) if d not in axes]
+    return [np.squeeze(f, axis=tuple(d + offset for d in axes)) for f in kept]
+
+
+####################   cell-centred data   ####################
+
+def _infer_domain_edges(c):
+    '''Locate a cell-centered axis' domain boundaries from its own spacing.
+
+    Half the distance to the neighboring center: exact on a uniform grid, a
+    guess on a stretched one. See _center_cell_regrid for why it is a guess.
+    '''
+    return c[0] - (c[1] - c[0])/2, c[-1] + (c[-1] - c[-2])/2
+
+
+def _center_cell_regrid(flow, flow_points, periodic_dim=None, bounds=None):
+    '''Extend cell-centered fluid data out to the edges of its domain.
+
+    Finite-volume solvers specify velocity at the center of each cell, so the
+    outermost samples sit half a cell inside the domain and the data reports it
+    one cell narrower than it is. This adds one grid plane at each end of each
+    spatial axis, at the domain boundary, and fills it by extending the field.
+
+    The result is rectilinear but not uniform: the two outermost intervals along
+    each axis are the half-cell from the outermost centers out to the boundary.
+    The new planes extrapolate the interior; they do not carry the solver's
+    boundary condition, which ``OpenFOAMData`` splices on from boundary patches
+    when the export has them.
+
+    Each boundary is placed half the distance to the neighboring cell center,
+    which is exact on a uniform grid and biased on a stretched one, with a
+    warning naming any such axis. Pass ``bounds`` for an end whose true
+    coordinate is known.
+
+    Parameters
+    ----------
+    flow : list of ndarray
+        one array per velocity component, each indexed [x,y(,z)] for
+        time-invariant flow or [t,x,y(,z)] for time-varying. Not modified.
+    flow_points : tuple of ndarray
+        1D cell-center coordinates along each spatial axis, increasing. At least
+        two per axis, since the boundary is located from the spacing.
+    periodic_dim : list of bool, optional
+        per spatial axis; defaults to non-periodic throughout. A periodic axis
+        wraps rather than extrapolating, so both of its new planes hold the same
+        values and the field stays periodic on the returned grid.
+    bounds : sequence of (float or None, float or None), optional
+        the true domain boundary of each spatial axis, where it is known. A None
+        entry -- or None throughout -- is inferred as above. Supplying an end
+        both places the new plane exactly and extends the field to it, so the
+        two need not be half a cell out.
+
+    Returns
+    -------
+    flow : list of ndarray
+        each grown by two along every spatial axis
+    flow_points : tuple of ndarray
+        cell centers with the two boundary coordinates added, in the same
+        coordinate system as the input -- shifting to the first quadrant is the
+        caller's business, as it is for the loaders' own grids
+
+    Raises
+    ------
+    ValueError
+        if an axis has fewer than two points, the components have neither the
+        time-invariant nor the time-varying number of dimensions, or a bound
+        does not lie outside its axis' cell centers
+    '''
+
+    ndim = len(flow_points)
+    flow_points = [np.asarray(c, dtype=float) for c in flow_points]
+    flow = [np.asarray(f) for f in flow]
+
+    if periodic_dim is None:
+        periodic_dim = [False]*ndim
+    for d, c in enumerate(flow_points):
+        if len(c) < 2:
+            raise ValueError(
+                "Axis {} has {} grid point(s). At least two are needed: the "
+                "domain boundary is located from the spacing between "
+                "them.".format('xyz'[d], len(c)))
+    if flow[0].ndim == ndim:
+        toff = 0
+    elif flow[0].ndim == ndim + 1:
+        toff = 1                          # leading time axis
+    else:
+        raise ValueError(
+            "Flow components have {} dimensions against {} spatial axes; "
+            "expected {} (time-invariant) or {} (time-varying).".format(
+                flow[0].ndim, ndim, ndim, ndim+1))
+
+    if bounds is None:
+        bounds = [(None, None)]*ndim
+
+    ##### Resolve each end, and say where that was a guess rather than exact ###
+    # Where the boundary is, is underdetermined: n cell centers give n equations
+    #   in the n+1 cell faces. _infer_domain_edges takes the outermost face half
+    #   the distance to the neighboring center. First two cells of width w and
+    #   rw put it w(1+r)/4 out, against a true w/2.
+    edges = []
+    inferred = []
+    for d, c in enumerate(flow_points):
+        guess = _infer_domain_edges(c)
+        ends = tuple(guess[e] if bounds[d][e] is None else float(bounds[d][e])
+                     for e in (0, 1))
+        if not (ends[0] < c[0] and ends[1] > c[-1]):
+            raise ValueError(
+                "Domain bounds ({:g}, {:g}) for axis {} do not lie outside its "
+                "cell centers ({:g}, {:g}).".format(
+                    ends[0], ends[1], 'xyz'[d], c[0], c[-1]))
+        edges.append(ends)
+        # Only an end that was actually inferred can be wrong, and only a
+        # stretched axis makes the inference more than a restatement of dx.
+        if any(bounds[d][e] is None for e in (0, 1)) and \
+                not np.allclose(np.diff(c), c[1]-c[0], rtol=1e-6):
+            inferred.append(d)
+
+    if len(inferred) > 0:
+        warnings.warn(
+            "Cell-center spacing is not uniform along {}, so the domain "
+            "boundary there is inferred as half the distance to the "
+            "neighboring cell center. That is exact only for a uniform grid; "
+            "on a stretched one it is biased by the local stretch ratio. Pass "
+            "bounds= if the true extent is known.".format(
+                ', '.join('xyz'[d] for d in inferred)), UserWarning)
+
+    ##### Extend one axis at a time #####
+    # Axis by axis rather than by assembling the shell of boundary points and
+    # interpolating it in one go. Sweeping this way gets the edges and corners
+    # for free -- the second axis extends planes the first has already extended,
+    # which is exactly the tensor-product (multilinear) extension those corners
+    # need -- and the axes commute, so the order does not matter.
+    new_points = []
+    for d in range(ndim):
+        c = flow_points[d]
+        ax = d + toff
+        h_lo = c[0] - edges[d][0]
+        h_hi = edges[d][1] - c[-1]
+        new_points.append(np.concatenate(([edges[d][0]], c, [edges[d][1]])))
+
+        for ii, f in enumerate(flow):
+            v0 = np.take(f, 0, axis=ax); v1 = np.take(f, 1, axis=ax)
+            u0 = np.take(f, -1, axis=ax); u1 = np.take(f, -2, axis=ax)
+            if periodic_dim[d]:
+                # The two edges are the same place, so they hold the same value:
+                # the field across the wrap, weighted by the two half-widths
+                # meeting there.
+                lo = hi = (h_lo*u0 + h_hi*v0)/(h_lo + h_hi)
+            else:
+                lo = v0 - (v1 - v0)*h_lo/(c[1] - c[0])
+                hi = u0 + (u0 - u1)*h_hi/(c[-1] - c[-2])
+            flow[ii] = np.concatenate((np.expand_dims(lo, ax), f,
+                                       np.expand_dims(hi, ax)), axis=ax)
+
+    return flow, tuple(new_points)
+
+
+
+#######################################################################
+#####            DERIVED FIELDS: GRADIENT AND VORTICITY           #####
+#######################################################################
+
+
+def _spatial_gradient(f, coords, axis, periodic=False, edge_order=1):
+    '''Differentiate along one spatial axis with ``np.gradient``, differencing
+    across the wrap if that axis is periodic.
+
+    A periodic axis carries a duplicated end line (the upper grid edge repeats
+    the lower one), so the field continues past either end.
+
+    Parameters
+    ----------
+    f : ndarray
+        the field, indexed [x,y(,z)]
+    coords : 1D ndarray
+        grid coordinates along this axis
+    axis : int
+    periodic : bool, default=False
+    edge_order : int, default=1
+        passed to np.gradient; it has no effect on a periodic axis
+
+    Returns
+    -------
+    ndarray, the same shape as f
+    '''
+
+    # A periodic axis takes one ghost point from the far side at each end,
+    #   differences the extended array with np.gradient, and trims the ghosts.
+    #   np.gradient applies edge_order only at the array's ends, which are the
+    #   ghosts, and keeps its handling of non-uniform spacing.
+    if not periodic:
+        return np.gradient(f, coords, axis=axis, edge_order=edge_order)
+
+    # The point before index 0 is index -2, not -1: the last line repeats the
+    # first. Likewise the point after the last is index 1.
+    period = coords[-1] - coords[0]
+    x = np.concatenate(([coords[-2] - period], coords, [coords[1] + period]))
+    ext = np.concatenate((np.take(f, [-2], axis=axis), f,
+                          np.take(f, [1], axis=axis)), axis=axis)
+    grad = np.gradient(ext, x, axis=axis, edge_order=edge_order)
+    trim = [slice(None)]*f.ndim
+    trim[axis] = slice(1, -1)
+    return grad[tuple(trim)]
+
+
+def _vorticity_from_field(flow, flow_points, periodic_dim):
+    '''Curl of a single-time velocity field held as raw ndarrays.
+
+    Used by ``FluidData.get_vorticity``, and by the run archive's per-dump
+    vorticity writer, which holds raw arrays as they load.
+
+    Parameters
+    ----------
+    flow : sequence of ndarrays
+        one velocity component per spatial dimension, each indexed [x,y(,z)]
+        with **no** leading time axis
+    flow_points : tuple of 1D ndarrays
+        the spatial grid, one coordinate array per dimension
+    periodic_dim : sequence of bool
+        whether each spatial axis is periodic; a periodic axis is differenced
+        across the wrap
+
+    Returns
+    -------
+    ndarray in 2D (the scalar out-of-plane component), or a tuple of three
+    ndarrays in 3D (the vector curl)
+    '''
+
+    ndim = len(flow_points)
+
+    def d(f, axis):
+        return _spatial_gradient(f, flow_points[axis], axis, periodic_dim[axis])
+
+    if ndim == 2:
+        return d(flow[1][:], 0) - d(flow[0][:], 1)
+
+    dvxdy = d(flow[0][:], 1)
+    dvxdz = d(flow[0][:], 2)
+    dvydx = d(flow[1][:], 0)
+    dvydz = d(flow[1][:], 2)
+    dvzdx = d(flow[2][:], 0)
+    dvzdy = d(flow[2][:], 1)
+    return (dvzdy - dvydz, dvxdz - dvzdx, dvydx - dvxdy)
+
+
+####################   per-dump vorticity files   ####################
+
+# The header line of a per-dump vorticity file Planktos wrote: the version that
+#   wrote it and a digest of the field it holds. A file without one is foreign --
+#   a solver's own -- and is read but never overwritten.
+_VORTICITY_STAMP = 'Planktos {} vorticity {}'
+
+
+def _vorticity_digest(vort):
+    '''Digest of one dump's vorticity field, as 32 hex characters.'''
+
+    # The digest is of the field itself, so anything that changes the field --
+    #   vel_conv, vec_name, periodic_dim, the source data -- changes it.
+    vort = np.ascontiguousarray(vort, dtype=np.float64)
+    h = hashlib.blake2b(digest_size=16)
+    h.update(repr(vort.shape).encode())
+    h.update(vort.tobytes())
+    return h.hexdigest()
+
+
+def _vorticity_stamp(vort):
+    '''The header line a per-dump vorticity file is written with.'''
+
+    from . import __version__
+    return _VORTICITY_STAMP.format(__version__, _vorticity_digest(vort))
+
+
+def _read_vorticity_stamp(filename):
+    '''``(version, digest)`` from the header of a vorticity file Planktos wrote.
+
+    Returns None for a file without the stamp, or one that cannot be opened.
+    '''
+
+    # A legacy vtk file's header is its second line, ascii even when the data
+    #   is binary, so reading it costs two short reads.
+    try:
+        with open(filename, 'rb') as fobj:
+            fobj.readline()
+            header = fobj.readline(257).decode('ascii', 'replace').split()
+    except OSError:
+        return None
+    if len(header) == 4 and header[0] == 'Planktos' and header[2] == 'vorticity':
+        return header[1], header[3]
+    return None
+
+
+def _wrap_scalar(f, periodic_dim):
+    '''Restore the duplicated end line on each periodic axis of a *scalar* field.
+
+    For a derived field read from a source that omits the periodic endpoint,
+    such as IB2d's ``Omega.####.vtk``.
+
+    Parameters
+    ----------
+    f : ndarray, indexed [x,y(,z)]
+    periodic_dim : sequence of bool, one per axis of f
+
+    Returns
+    -------
+    ndarray with one extra entry along each periodic axis
+    '''
+
+    for d, periodic in enumerate(periodic_dim):
+        if periodic:
+            f = np.concatenate((f, np.take(f, [0], axis=d)), axis=d)
+    return f
+
+
+def _unwrap_scalar(f, periodic_dim):
+    '''Drop the duplicated end line on each periodic axis. Inverse of
+    ``_wrap_scalar``, for writing a derived field back in the source's own
+    convention.'''
+
+    return f[tuple(slice(0, -1) if periodic else slice(None)
+                   for periodic in periodic_dim)]

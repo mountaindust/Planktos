@@ -4,7 +4,7 @@ Importing 3D data and tiling (IBAMR VTK via VisIt)
 This example is very similar to the previous one, but in 3D with data that is 
 available in the tests folder. It also demonstrates the utility of the convex 
 hull algorithm and demonstrates how the domain can be tiled. The script for this 
-example can be found in the examples folder under the name ex_IBAMR_ibmesh.py. 
+example can be found in the examples folder under the name 07_IBAMR_ibmesh.py. 
 The data was generated in IBAMR. [1]_ [2]_ ::
 
     import planktos
@@ -32,10 +32,17 @@ This data was generated with periodic boundary conditions in the x and y
 directions, simulating an infinite array of cylinders. This means that we
 can tile our environment if we like, getting a bigger domain for the agents!
 In this case, let's tile the environment to a 3x3 grid with respect to its
-original size. ::
+original size. Tiling comes last, after the fluid and the mesh are loaded. This
+data was resampled onto a rectilinear grid, so its opposite edges do not match
+exactly, and ``tile_domain`` warns with the size of the mismatch (here about
+0.1% of the flow speed). ::
 
-    envir.tile_flow(3,3)
+    envir.tile_domain(3,3)
     envir.plot_flow()
+
+Notice that the cylinder mesh got tiled too! The fluid data is not copied:
+``envir.flow`` still holds the one stored tile, and agent positions are wrapped
+onto it.
 
 .. image:: ../_static/IBAMR_tiled.png
 
