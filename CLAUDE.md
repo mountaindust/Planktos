@@ -38,15 +38,14 @@ number and the changelog** — these are easy to forget. Be proactive about it:
   it via `attr: planktos.__version__`, and `docs/conf.py` imports it — so the one
   string in `__init__.py` is the single source of truth.
 - **`git tag` lists what has been released, and a tagged version is closed.** Its
-  `changelog.txt` entry is shipped history: leave it alone, on both branches. If
-  `master`'s `__version__` equals its newest tag, the next change landing there needs
-  a bump first.
-- *(As of 2026-10-30: `dyload` is developing `1.1.0`; the newest release is `1.0.3`.)*
-- **A fix made here goes under the development version in `changelog.txt`,** since
-  the released ones are closed — including a fix `master` would also need.
-- *(Decided 2026-11-03.)* **The next release is `1.1.0`, with no `1.0.4`, and there is
-  no cherry-pick queue.** Fixes reach users with 1.1.0. Do not log fixes for porting
-  to `master` or propose cherry-picking them.
+  `changelog.txt` entry is shipped history: leave it alone, on every branch. If a
+  branch's `__version__` equals the newest tag, the next user-facing change landing
+  there needs a bump first — surface it.
+- *(As of 2026-11-14: the newest release is `1.1.0`; the next version number is not
+  yet chosen.)*
+- **A fix made on the development branch goes under the development version in
+  `changelog.txt`,** since the released ones are closed — including a fix `master`
+  would also need.
 - `changelog.txt` is hand-maintained, terse, and grouped by version. When a
   change is user-facing, prompt to add an entry under the appropriate version.
 - When work looks release-worthy (or a user-facing change lands) but the version
@@ -112,9 +111,9 @@ If the worry behind a long explanation is regression, that is what the tests are
 for. Test files are a partial exception to all of this: a regression test may state
 the defect it pins, since that is the test's purpose.
 
-**The branch's docstrings were swept to this standard** (finished 2026-10-22) — every
-module this branch added or changed. What the sweep did *not* reach: docstrings
-`master` also has and this branch never touched. Do not add more of what
+**Docstrings were swept to this standard during 1.1.0 development** (finished
+2026-10-22) — every module that work added or changed. What the sweep did *not*
+reach: docstrings from 1.0.x that 1.1.0 never touched. Do not add more of what
 the sweep removed.
 
 ## What Planktos is
@@ -133,22 +132,28 @@ Biology* 84(72). Docs: https://planktos.readthedocs.io
 
 ## Branch context (read this first)
 
-- **`dyload`** — *(as of 2026-10-30)* **the development branch.** The main feature work: **dynamic
-  loading of fluid data** (streaming/loading fluid time steps on demand rather
-  than all at once). This matters because time-dependent 3D fluid data is often
-  ~100 GB raw and significantly larger once splined, so it cannot be held in
-  memory all at once. **You are usually here.**
-- **`master`** — stable/published; carries the released `1.0.x` line. Small,
-  self-contained changes (docs, typos, packaging) are sometimes made here
-  directly and then merged into `dyload`.
-- **`mvbnd`** — **gone.** This was the 2D **moving immersed boundaries** work; it
-  was merged into `master`, released as tag `v1.0.0`, and the branch has since
-  been deleted locally and on origin. Older notes and commit messages still
-  mention it; that history is preserved in `master`.
+- **`vtk`** — *(as of 2026-11-14)* **the development branch. You are usually here.**
+  Its work: **move 3D plotting from matplotlib to vtk**, through PyVista (already a
+  required dependency), unlocking 3D visualization
+  the matplotlib placeholder cannot do. Two problems stalled this before, and solving
+  them comes first: drawing agents as points (the sphere glyphs tried were always too
+  large) and drawing a heading mark on each agent, as 2D plots do.
+  **This work is timeboxed.** The research priority is 3D moving immersed boundaries.
+  If vtk plotting proves slow, it is set aside and work moves to moving boundaries,
+  possibly on a new branch — so keep its changes self-contained and do not let it
+  sprawl into the 2D path.
+- **`master`** — stable/published; carries the released line (*as of 2026-11-14,
+  `1.1.0`*). Small, self-contained changes (docs, typos, packaging) are sometimes
+  made here directly and then merged into the development branch.
+- **Gone:** `dyload` (dynamic loading of fluid data and run archives; released as
+  `v1.1.0`) and `mvbnd` (2D moving immersed boundaries; released as `v1.0.0`). Older
+  notes and commit messages still mention them; their history is preserved in
+  `master`.
 
-*(As of 2026-10-30.)* **3D moving boundaries are parked and not scheduled.** `TODO.md` keeps the list under
-a PARKED heading purely so the pieces are not rediscovered from scratch later; do not
-start work from it. Moving boundaries are currently **2D only**.
+*(As of 2026-11-14.)* **3D moving boundaries come next, after the vtk plotting work**
+(or in its place, if that work is set aside). Do not start them on the `vtk` branch.
+`TODO.md` keeps the known pieces under their own heading. Moving boundaries are
+currently **2D only**.
 
 **3D fluid data sources (terse, for future reference).** The 3D flows come from
 either **IBFE** (fluid solved over the *entire* domain, including inside immersed
@@ -171,23 +176,14 @@ comments describe the export's structure; the dataset itself (gitignored, in
 ingestion: porting the old VisIt SAMRAI→vtk script, reading COMSOL directly, and OpenFOAM cases
 whose mesh is genuinely unstructured (`snappyHexMesh` refinement, tets, polyhedra).
 
-**`TODO.md` is the working plan for this branch**, and the authority on what is open,
-what is known-broken and what comes next. Read it before starting work here, keep it
-updated as items land, and look there rather than here for status. Finished work leaves
-it: the branch's build record is the git history of `TODO.md` and of the deleted
-`docs/notes/run_persistence.md`.
-
-**How `dyload` diverges from `master`.** Almost all of it is the fluid API: on
-this branch `Environment.flow` is a `FluidData` object, and a number of
-fluid-related `Environment` methods were renamed, moved onto `FluidData`, or
-removed outright (see "Fluid data architecture"). The practical hazard is that
-documentation and tests written against `master` **merge cleanly and are still
-wrong** — this has already happened once. When merging from `master`, grep the
-incoming text for fluid API names and check each against the source rather than
-trusting a conflict-free merge.
+**`TODO.md` is the working plan for the development branch**, and the authority on
+what is open, what is known-broken and what comes next. Read it before starting work
+here, keep it updated as items land, and look there rather than here for status.
+Finished work leaves it: 1.1.0's build record is the git history of `TODO.md` and of
+the deleted `docs/notes/run_persistence.md`, up to tag `v1.1.0`.
 
 When making cross-cutting changes (like this CLAUDE.md), expect them to be
-merged from `master` into `dyload` later.
+merged from `master` into the development branch later.
 
 ## Package layout
 
@@ -224,14 +220,13 @@ surface (a deliberate convention — see `changelog.txt`).
 4. **`Environment.flow` is a `fluid.FluidData` object**, not a list of ndarrays.
    Index it (`envir.flow[0]`) to get a spatial component. Spatial interpolation
    is **linear**; interpolation in time is **cubic when the whole dataset is in
-   memory and linear when dynamically loading**. See the next section — this is
-   the biggest single difference from `master`.
+   memory and linear when dynamically loading**. See the next section.
 
-## Fluid data architecture (the heart of this branch)
+## Fluid data architecture
 
-`Environment.flow` is a **`fluid.FluidData` instance**. This is the central change
-on `dyload` and the thing most likely to trip up code, docs, or tests written
-against `master`.
+`Environment.flow` is a **`fluid.FluidData` instance**. Since 1.1.0 it replaces the
+list of ndarrays used through 1.0.x, so it is the thing most likely to trip up code,
+docs or tests written against 1.0.x.
 
 - `FluidData` owns the velocity field, the spatial grid (`flow_points`), the time
   stamps (`flow_times`), periodicity (`periodic_dim`), and the temporal
@@ -377,9 +372,9 @@ showcase (needs external data — see the file header for the download link).
 
 ### Plotting: 2D is the real thing, 3D is a stand-in
 
-All plotting is matplotlib today. **The 3D plotting is explicitly a placeholder**
-awaiting a vtk-powered library, and when that lands 3D plotting will be **split out
-entirely** from the 2D path. Two working consequences:
+All plotting is matplotlib today. **The 3D plotting is explicitly a placeholder**,
+which the `vtk` branch is replacing (see "Branch context"); 3D plotting will then be
+**split out entirely** from the 2D path. Two working consequences:
 
 - **Do not invest in matplotlib 3D rendering.** Effort spent enriching 3D frames is
   written off at the rewrite. Keep 3D changes minimal and cheap.
@@ -657,5 +652,5 @@ worth knowing (`calculate_FTLE`):
 - Build: setuptools; `setup.cfg` lists the dependencies and optional extras. Editable
   install with `pip install -e .`.
 - `changelog.txt` is hand-maintained — update it for user-facing changes.
-- `TODO.md` is the working plan for this branch (what is open, deferred and
-  parked). Keep it current as items land; see "Branch context" above.
+- `TODO.md` is the working plan for the development branch (what is open, next
+  and deferred). Keep it current as items land; see "Branch context" above.
