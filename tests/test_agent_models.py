@@ -173,6 +173,63 @@ def test_massive_particle_models_run_deterministically(cls, kwargs, dim):
 
 
 # --------------------------------------------------------------------------- #
+#                 highRe_massive_drift against Nathan et al. (2011)           #
+# --------------------------------------------------------------------------- #
+# Nathan et al. Eq. 2 gives the drag per unit mass, dv/dt = k|u-v|(u-v) with
+# k = rho*Cd*A/m. Regression: the model divided by m twice, so the drag was 1/m
+# times this. In a uniform flow the slip w = u - v obeys dw/dt = -k|w|w, which
+# keeps its direction and gives w(t) = w0/(1 + k|w0|t).
+
+_RHO, _CD, _AREA = 1.2, 0.5, 0.01
+
+
+def _drift_swarm(m, n=3):
+    envir = planktos.Environment(Lx=50, Ly=50, rho=_RHO,
+                                 flow=[np.full((5, 5), 3.0), np.full((5, 5), -1.0)])
+    swrm = planktos.Swarm(swarm_size=n, envir=envir, init=np.array([[25., 25.]] * n), seed=1)
+    swrm.shared_props.update(Cd=_CD, cross_sec=_AREA)
+    if np.ndim(m) == 0:
+        swrm.shared_props['m'] = m
+    else:
+        swrm.add_prop('m', np.asarray(m))
+    return swrm
+
+
+@pytest.mark.parametrize('m', [0.002, 0.5, 4.0])
+def test_highRe_drag_is_the_acceleration_of_Nathan_eq2(m):
+    swrm = _drift_swarm(m)
+    vel = np.array([[0.0, 0.0], [1.0, 2.0], [3.0, -1.0]])
+    state = np.concatenate((np.asarray(swrm.positions), vel))
+    out = np.asarray(motion.highRe_massive_drift(swrm)(0.0, state))
+    slip = np.array([3.0, -1.0]) - vel
+    expected = (_RHO*_CD*_AREA/m) * np.linalg.norm(slip, axis=1)[:, None] * slip
+    assert np.allclose(out[:3], vel)
+    assert np.allclose(out[3:], expected)
+
+
+def test_highRe_slip_decays_as_closed_form_in_uniform_flow():
+    m, tf = 0.002, 1.0
+    k = _RHO*_CD*_AREA/m
+    swrm = _drift_swarm(m, n=1)
+    state0 = np.concatenate((np.asarray(swrm.positions), np.zeros((1, 2))))
+    sf = motion.RK45(motion.highRe_massive_drift(swrm), 0.0, state0, tf,
+                     rtol=1e-10, atol=1e-12)
+    w0 = np.array([3.0, -1.0])
+    w = w0/(1 + k*np.linalg.norm(w0)*tf)
+    assert np.allclose(sf[1], w0 - w, atol=1e-8)
+
+
+def test_highRe_takes_per_agent_mass():
+    masses = np.array([0.002, 0.004, 0.008])
+    swrm = _drift_swarm(masses)
+    state = np.concatenate((np.asarray(swrm.positions), np.zeros((3, 2))))
+    out = np.asarray(motion.highRe_massive_drift(swrm)(0.0, state))
+    slip = np.array([3.0, -1.0])
+    expected = (_RHO*_CD*_AREA/masses)[:, None] * np.linalg.norm(slip) * slip
+    assert np.allclose(out[3:], expected)
+
+
+# --------------------------------------------------------------------------- #
 #                 motion.RK45 solver (public deterministic ODE)               #
 # --------------------------------------------------------------------------- #
 # RK45 wraps scipy.integrate.solve_ivp and is part of the public motion API

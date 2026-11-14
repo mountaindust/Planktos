@@ -31,6 +31,7 @@ Streaming out data to disk as an archive and both plotting and restoring from th
 - Bug fix: plot_all(writer_kwargs=...) encodes movies at fps unless writer_kwargs sets its own.
 - Bug fix: % remaining now counts from the first state that has agents.
 - Bug fix: plot_all raised KeyError in 2D for a swarm with per-agent colors
+- Bug fix: motion.highRe_massive_drift divided drag by mass twice; its drag was 1/m times the correct value.
 - Porous-layer plots are now the same every time, and no longer use numpy's global random state.
 - other minor bug fixes
 

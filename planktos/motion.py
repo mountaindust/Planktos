@@ -429,19 +429,19 @@ def inertial_particles(swarm):
 
 def highRe_massive_drift(swarm):
     '''Function generator for ODEs governing high Re massive drift with
-    drag as formulated by Nathan et al. [4]_. Assumes Re > 10 with 
-    neutrally buoyant particles possessing mass and a known cross-sectional area 
-    given by the property cross_sec.
+    drag as formulated by Nathan et al. [4]_. Assumes Re > 10 and neutrally
+    buoyant particles of mass :math:`m` and cross-sectional area :math:`A`.
+    The acceleration of each particle is its drag per unit mass,
 
         .. math::
-            f_D = \\frac{\\rho C_d A}{m}||\\mathbf{u}-\\mathbf{v}||
-            (\\mathbf{u} -\\mathbf{v})
+            \\frac{d\\mathbf{v}}{dt} = \\frac{\\rho C_d A}{m}
+            ||\\mathbf{u}-\\mathbf{v}||(\\mathbf{u} -\\mathbf{v})
 
-    where :math:`f_D` is the drag force acting on the particle, :math:`C_d` is 
-    the drag coefficient, :math:`A` is the cross sectional area, :math:`\\rho` 
-    is the fluid density, and :math:`\\mathbf{u}` is the fluid velocity. 
-    The system of ODEs are specified so that the acceleration is defined to be 
-    :math:`f_D/m`.
+    where :math:`\\mathbf{v}` is the particle velocity, :math:`\\mathbf{u}`
+    the fluid velocity, :math:`\\rho` the fluid density and :math:`C_d` the
+    drag coefficient. As in [4], :math:`C_d` absorbs the factor 1/2 of the
+    usual drag law, so it is half the conventional coefficient (0.235 rather
+    than 0.47 for a sphere).
 
     Parameters
     ----------
@@ -477,8 +477,11 @@ def highRe_massive_drift(swarm):
     assert swarm.envir.rho is not None, "rho (fluid density) not specified"
     rho = swarm.envir.rho
     cross_sec = swarm.get_prop('cross_sec')
+    # Drag per unit mass and per unit squared slip speed. A column, so that a
+    #   per-agent value (length N, from Swarm.props) scales its agent's row.
+    k = np.reshape(rho*Cd*cross_sec/m, (-1, 1))
 
-    # Get acceleration of each agent in neutral boyancy
+    # Get acceleration of each agent in neutral buoyancy
     def ODEs(t,x):
         '''Given a current time and array of shape 2NxD, where the first N entries
         are the particle positions and the second N entries are the particle
@@ -503,10 +506,9 @@ def highRe_massive_drift(swarm):
         N = round(x.shape[0]/2)
         fluid_vel = swarm.get_fluid_drift(t,x[:N])
 
-        # ||u - v|| per agent, broadcast across the spatial dimension (D-agnostic;
-        #   diff[:,None] replaces a previously hardcoded 3-component stack).
+        # ||u - v|| per agent, broadcast across the spatial dimension.
         diff = np.linalg.norm(x[N:]-fluid_vel,axis=1)
-        dvdt = (rho*Cd*cross_sec/m**2)*(fluid_vel-x[N:])*diff[:,None]
+        dvdt = k*(fluid_vel-x[N:])*diff[:,None]
 
         return ma.concatenate((x[N:],dvdt))
 
