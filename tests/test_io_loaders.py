@@ -1908,6 +1908,68 @@ def test_structured_points_scalar_roundtrips_through_the_ib2d_reader(tmp_path):
     assert np.allclose(bx, x) and np.allclose(by, y)
 
 
+def test_a_binary_file_with_field_data_reads_back_without_vtk_warnings(
+        tmp_path, capfd):
+    # VTK's legacy readers misread binary CYCLE/TIME field data in their
+    # metadata pass and printed a warning from C++ on every read of a file
+    # Planktos wrote, though every value came back. capfd sees the C++ stream.
+    x = np.linspace(0, 3, 7); y = np.linspace(0, 2, 5)
+    xr = np.array([0., 0.5, 1.5, 3.])
+    f = _wavy(x, y)
+    _dataio.write_vtk_structured_points_scalars(tmp_path, 'Omega', f, (x, y),
+                                                cycle=3, time=0.5, sep='.')
+    _dataio.write_vtk_2D_rectilinear_grid_scalars(tmp_path, 'rect', _wavy(xr, y),
+                                                  (xr, y), cycle=3, time=0.5)
+    capfd.readouterr()
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        back = _dataio.read_2DEulerian_Data_From_vtk(tmp_path, '0003', 'Omega')
+        rect = _dataio.read_vtk_Rectilinear_Grid_Scalars(tmp_path / 'rect_0003.vtk')
+    assert np.array_equal(back.T, f)
+    assert np.array_equal(np.squeeze(rect[0]), _wavy(xr, y))
+    err = capfd.readouterr().err
+    assert 'WARN' not in err and 'Warning' not in err, err
+
+
+class _WarningReader:
+    '''Stands in for a vtk legacy reader whose Update raises the given VTK
+    warnings and reads n_points points.'''
+
+    def __init__(self, messages, n_points):
+        self.messages, self.n_points, self.observers = messages, n_points, {}
+
+    def AddObserver(self, event, callback):
+        self.observers[1] = callback
+        return 1
+
+    def RemoveObserver(self, tag):
+        del self.observers[tag]
+
+    def Update(self):
+        for message in self.messages:
+            self.observers[1](self, 'WarningEvent', message)
+
+    def GetOutput(self):
+        n = self.n_points
+        return type('Out', (), {'GetNumberOfPoints': lambda self: n})()
+
+
+def test_the_field_data_filter_passes_on_every_other_vtk_warning():
+    misread = ('Warning: In vtkStructuredPointsReader.cxx, line 271\n'
+               'vtkStructuredPointsReader (0x1): Not all meta data was read '
+               'from the file.\n')
+    other = 'Warning: In x.cxx, line 1\nvtkThing (0x2): something else.\n'
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        _dataio._update_legacy_reader(_WarningReader([misread, other], 30))
+    assert [str(w.message) for w in caught] == [
+        'VTK: Warning: In x.cxx, line 1 vtkThing (0x2): something else.']
+    assert all(w.category is RuntimeWarning for w in caught)
+    # a read that produced nothing keeps even the field-data warning
+    with pytest.warns(RuntimeWarning, match='Not all meta data'):
+        _dataio._update_legacy_reader(_WarningReader([misread], 0))
+
+
 def test_structured_points_scalar_roundtrips_in_ascii_too(tmp_path):
     # Binary is the default because it is far cheaper for identical disk, but
     # vtkStructuredPointsReader takes either and IB2d itself writes ascii.

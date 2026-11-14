@@ -29,6 +29,8 @@ from pathlib import Path
 import numpy as np
 import vtk
 from vtk.util import numpy_support # Converts vtkarray to/from numpy array
+from vtkmodules.util.misc import calldata_type
+from vtkmodules.util.vtkConstants import VTK_STRING
 # from vtk.numpy_interface import dataset_adapter as dsa
 import pyvista as pv
 
@@ -135,6 +137,45 @@ def _save_legacy_vtk(grid, filepath, binary, header=None):
     writer.Write()
 
 
+# VTK's legacy readers make a first pass over a file for the dataset's metadata,
+#   and that pass misreads binary field data -- the CYCLE and TIME every writer
+#   here records, and that VisIt writes too -- and warns with one of these. The
+#   data pass that follows reads every value correctly.
+_FIELD_DATA_MISREADS = ('Not all meta data was read from the file',
+                        'Could not read dimensions or extents from the file')
+
+
+def _update_legacy_reader(reader):
+    """Run ``reader.Update()`` on a legacy vtk reader, without the warnings
+    binary field data provokes.
+
+    Any other VTK warning is passed on as a RuntimeWarning, and so are those
+    two when the read produced no points, since then they may describe a real
+    failure.
+    """
+
+    held = []
+
+    @calldata_type(VTK_STRING)
+    def hold(obj, event, message):
+        held.append(message)
+
+    # With an observer on WarningEvent, VTK hands its warnings to it instead of
+    #   printing them.
+    tag = reader.AddObserver('WarningEvent', hold)
+    try:
+        reader.Update()
+    finally:
+        reader.RemoveObserver(tag)
+    output = reader.GetOutput()
+    read_something = output is not None and output.GetNumberOfPoints() > 0
+    for message in held:
+        if read_something and any(m in message for m in _FIELD_DATA_MISREADS):
+            continue
+        warnings.warn('VTK: ' + ' '.join(message.split()), RuntimeWarning,
+                      stacklevel=3)
+
+
 #############################################################################
 #                                                                           #
 #                          DEPENDENCY DECORATORS                            #
@@ -207,7 +248,7 @@ def read_vtk_Structured_Points(filename):
     # Load data
     reader = vtk.vtkStructuredPointsReader()
     reader.SetFileName(filename)
-    reader.Update()
+    _update_legacy_reader(reader)
     vtk_data = reader.GetOutput()
 
     # Get mesh data
@@ -259,7 +300,7 @@ def read_vtk_Rectilinear_Grid_Vector(filename):
     reader.SetFileName(filename)
     # Note: if multiple variables are in the same file, you will need to
     #   add the line(s) reader.ReadAllVectorsOn() and/or reader.ReadAllScalarsOn()
-    reader.Update()
+    _update_legacy_reader(reader)
     vtk_data = reader.GetOutput()
     mesh_shape = vtk_data.GetDimensions() # (xlen, ylen, zlen)
     mesh_bounds = vtk_data.GetBounds() # (xmin, xmax, ymin, ymax, zmin, zmax)
@@ -338,7 +379,7 @@ def read_vtk_Rectilinear_Grid_Scalars(filename, squeeze=True):
 
     reader = vtk.vtkRectilinearGridReader()
     reader.SetFileName(str(filename))
-    reader.Update()
+    _update_legacy_reader(reader)
     vtk_data = reader.GetOutput()
     mesh_shape = vtk_data.GetDimensions() # (xlen, ylen, zlen)
 
@@ -460,7 +501,7 @@ def read_vtk_Unstructured_Grid_Points(filename):
 
     reader = vtk.vtkUnstructuredGridReader()
     reader.SetFileName(filename)
-    reader.Update()
+    _update_legacy_reader(reader)
     vtk_data = reader.GetOutput()
 
     # Cells are specified by a vtk cell type and a list of points that make up
