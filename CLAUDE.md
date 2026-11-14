@@ -163,8 +163,9 @@ container says nothing about the geometry. It needs **no resampling**, only a re
 permutation (cell ordering is not lexicographic) and a half-cell boundary splice. Fluid
 there is defined *everywhere*, including inside the immersed object, which carries a
 porosity source term rather than being cut out of the mesh. Verify a dataset's actual
-lattice before assuming it needs a VisIt/ParaView pass; see
-`docs/notes/openfoam_oral_arm_dataset.md`.
+lattice before assuming it needs a VisIt/ParaView pass. `OpenFOAMData`'s docstring and
+comments describe the export's structure; the dataset itself (gitignored, in
+`tests/unsteady_3D_testdata/`) carries the full record in its README.
 
 `OpenFOAMData` reads that dataset. What stays out of scope is *other* source-specific
 ingestion: porting the old VisIt SAMRAI→vtk script, reading COMSOL directly, and OpenFOAM cases

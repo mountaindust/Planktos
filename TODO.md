@@ -92,6 +92,12 @@ Priority key: 🔴 do first · 🟡 next · 🟢 later · ⚪ deferred / low pri
   denominator becomes `xgrid[n1] - xgrid[n0]`. A centred difference on a non-uniform
   grid is first order unless the weighted three-point formula is used — decide that
   deliberately.
+- **Faster OpenFOAM dump reads.** 61% of each oral-arm `internal.vtu` is geometry
+  that never changes, and `vtkXMLUnstructuredGridReader` re-reads it every dump
+  (unused field arrays are already skipped). Two options: parse the `U` `DataArray`
+  straight out of the XML (inline base64, uncompressed, `UInt64` headers, so about
+  7× less I/O per dump), or preprocess each dump to `.npy` once. The
+  `openfoam_min` fixture keeps foamToVTK's byte layout for this.
 - **COMSOL** (`ComsolVTUData`): full-load only, unverified against a current export;
   the collaborator no longer uses COMSOL. `test_io_loaders.py::test_vtu_load` stays
   skipped without a committed fixture.

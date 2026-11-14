@@ -72,23 +72,37 @@ of one edge, come back on the mesh element, and then move off the other edge.
 It's probably impossible to move off the same edge twice and then come back on... 
 but anyway, we only need to find the first time any of this happens.
 
-Let $\mathbf{Q}(t) = \mathbf{Q}_1(t)-\mathbf{Q}_0(t)$. 
-Then $||\mathbf{Q}_1(t)-\mathbf{Q}_0(t)||^2$ has a critical point at
-$$t^* = \frac{\mathbf{Q}(0)\cdot(1-\mathbf{Q}(1))}{
-    (\mathbf{Q}(0)+\mathbf{Q}(1))\cdot\mathbf{1}-2(\mathbf{Q}(0)\cdot\mathbf{Q}(1))}.$$
+The agent meets the element at the time of intersection $t_I$, so detection 
+concerns $t\in[t_I,1]$. Let $u = (t-t_I)/(1-t_I)$, which runs from 0 to 1 over 
+that interval. The endpoints of the element move linearly in time, so 
+$\mathbf{Q}$ is the linear interpolation
+$$\mathbf{Q}(u) = (1-u)\mathbf{Q}_{t_I} + u\mathbf{Q}_{end},$$
+where $\mathbf{Q}_{t_I}$ and $\mathbf{Q}_{end}$ are the element vectors at 
+$t=t_I$ and $t=1$. Then $||\mathbf{Q}(u)||^2$ is a quadratic in $u$ opening 
+upward, with its minimum where its derivative vanishes:
+$$u^* = \frac{\mathbf{Q}_{t_I}\cdot(\mathbf{Q}_{t_I}-\mathbf{Q}_{end})}
+    {||\mathbf{Q}_{t_I}-\mathbf{Q}_{end}||^2}.$$
 If $x(t)$ changes direction, it does so when 
 $$\frac{d\mathbf{x}_{agent\ \parallel\ \mathbf{Q}}}{dt}=0 \implies
-\mathbf{Q}(t)\cdot\mathbf{v}=0$$
-This occurs when
-$$t^{**} = \frac{\mathbf{Q}(0)\cdot\mathbf{v}}{(\mathbf{Q}(0)-\mathbf{Q}(1))\cdot\mathbf{v}}$$
+\mathbf{Q}(u)\cdot\mathbf{v}=0,$$
+which is linear in $u$ and so occurs at
+$$u^{**} = \frac{\mathbf{Q}_{t_I}\cdot\mathbf{v}}
+    {(\mathbf{Q}_{t_I}-\mathbf{Q}_{end})\cdot\mathbf{v}}.$$
+Each maps back to time by $t = t_I + u(1-t_I)$.
 
-If we check both of these critical times (if they exist, and if they are within 
-the interval starting at the time of intersection and ending at $t=1$), plus the 
-situation at $t=1$, we should have everything covered on detection.
+The implementation checks for an excursion past an endpoint at these two 
+critical times (where they lie strictly between $t_I$ and 1) and at $t=1$. This 
+is a sampling heuristic rather than a complete test: the excursion is the 
+interval on which the agent's position along the element leaves $[0,1]$, and an 
+excursion that begins and ends between the sampled times is missed (issue #73). 
+The cost is accuracy only. The agent is carried along the element's line through 
+the missed excursion instead of being released at the endpoint, so it never 
+crosses the element.
 
 Then, actually finding $t$ is a nonlinear least squares minimization problem 
 (this avoids numerical issues versus a root finding algorithm on the difference 
-between $x(t)$ and $\mathbf{Q}_0$ or $\mathbf{Q}_1$), and we solve it using 
-Powell's hybrid "dog leg" method, a rectangular trust-region method implemented 
-in scipy that makes use of the Jacobian of the residual function, here simply 
+between $x(t)$ and $\mathbf{Q}_0$ or $\mathbf{Q}_1$), and we solve it with 
+scipy's `least_squares` using the "dogbox" method: a dogleg algorithm with 
+rectangular trust regions, which keeps $t$ within the bounds $[t_I,1]$. It makes 
+use of the Jacobian of the residual function, here simply 
 $\frac{d\mathbf{x}}{dt}-\frac{d\mathbf{Q}}{dt}$.

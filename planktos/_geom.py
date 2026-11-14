@@ -643,7 +643,7 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
     points or a list of spatial points in the case of the Q parameters.
 
     The mathematics behind this function are given in 
-    docs/Intersection_w_multilinear_polynomial.md
+    docs/notes/Intersection_w_multilinear_polynomial.md
     
     Parameters
     ----------
@@ -684,7 +684,7 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
     v0 = Q2 - Q0 # linear interpolation vector of first element points
     v1 = Q3 - Q1 # linear interpolation vector of second element points
 
-    # Solving for the intersection results in a quadratic in t. See TODO,
+    # Solving for the intersection results in a quadratic in t.
     # Put together quadratic equation At^2 + Bt + C = 0
     if len(Q0.shape) == 1:
         # Single mesh element case

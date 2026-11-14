@@ -56,8 +56,8 @@ IB2d omits the periodic endpoint in each direction, so a 6×5 dump loads back as
 - `openfoam_min/` — an OpenFOAM-style multiblock series: `.vtm.series` indexing
   per-timestep `.vtm` manifests, each naming an interior `.vtu` plus
   `inlet`/`outlet`/`walls` `.vtp` boundary patches, all carrying **cell** data on a
-  uniform Cartesian box. A miniature of the oral-arm export — see
-  `docs/notes/openfoam_oral_arm_dataset.md`. Deliberately non-lexicographic cell
+  uniform Cartesian box. A miniature of the OpenFOAM oral-arm export that
+  `OpenFOAMData` was built for. Deliberately non-lexicographic cell
   ordering and unpadded directory numbers, both of which the reader has to handle.
 - `vtixml_min/` — 8 zlib-compressed `.vti` dumps one point thick in z, indexed by
   `flow.pvd` and carrying `TimeValue`, shaped like the 2D sea-fan export.

@@ -278,8 +278,8 @@ def write_vtk3d_series(outdir=HERE / 'vtk3d_min'):
 
 
 # OpenFOAM-style multiblock series, for the .vtm.series / .vtm / cell-data readers.
-# Structurally a miniature of the oral-arm export (see
-# docs/notes/openfoam_oral_arm_dataset.md): a uniform Cartesian box of hexahedra
+# Structurally a miniature of the OpenFOAM oral-arm export (foamToVTK output):
+# a uniform Cartesian box of hexahedra
 # carrying CELL data, wrapped in per-timestep .vtm manifests that name an interior
 # .vtu plus inlet/outlet/walls .vtp boundary patches, indexed by a .vtm.series JSON.
 #
@@ -405,9 +405,9 @@ def _of_save(dataset, path):
 
     pyvista's save() gives no control here and defaults to zlib with UInt32
     headers. The difference is invisible through vtk's readers, but it is exactly
-    what the planned direct-XML fast path for U depends on (note
-    docs/notes/openfoam_oral_arm_dataset.md sec 7) -- and that would be developed
-    against this fixture, so the fixture has to be honest about the byte layout.
+    what a direct-XML fast path for reading U would depend on, and such a path
+    would be developed against this fixture, so the fixture has to be honest
+    about the byte layout.
     '''
     writer = (vtk.vtkXMLUnstructuredGridWriter() if path.suffix == '.vtu'
               else vtk.vtkXMLPolyDataWriter())

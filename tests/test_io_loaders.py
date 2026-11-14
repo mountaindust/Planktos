@@ -178,7 +178,7 @@ def test_a_binary_series_is_timestamped_without_a_full_parse(tmp_path, monkeypat
 #        VTK XML multiblock series: .vtm.series, .vtm, and cell data          #
 # --------------------------------------------------------------------------- #
 # The readers behind the OpenFOAM finite-volume path. The fixture is a miniature
-# of the real oral-arm export (docs/notes/openfoam_oral_arm_dataset.md): a 4x4x5
+# of the real OpenFOAM oral-arm export: a 4x4x5
 # uniform box of hexahedra carrying CELL data, per-timestep .vtm manifests naming
 # an interior .vtu plus inlet/outlet/walls .vtp patches, and a .vtm.series index.
 # Eight dumps are declared; two are absent (an interior hole at t=5 and an end
