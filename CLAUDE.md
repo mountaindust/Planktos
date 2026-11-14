@@ -46,8 +46,7 @@ number and the changelog** — these are easy to forget. Be proactive about it:
   the released ones are closed — including a fix `master` would also need.
 - *(Decided 2026-11-03.)* **The next release is `1.1.0`, with no `1.0.4`, and there is
   no cherry-pick queue.** Fixes reach users with 1.1.0. Do not log fixes for porting
-  to `master` or propose cherry-picking them; the frozen queue at the bottom of
-  `TODO.md` is history.
+  to `master` or propose cherry-picking them.
 - `changelog.txt` is hand-maintained, terse, and grouped by version. When a
   change is user-facing, prompt to add an entry under the appropriate version.
 - When work looks release-worthy (or a user-facing change lands) but the version
@@ -115,8 +114,7 @@ the defect it pins, since that is the test's purpose.
 
 **The branch's docstrings were swept to this standard** (finished 2026-10-22) — every
 module this branch added or changed. What the sweep did *not* reach: docstrings
-`master` also has and this branch never touched, and the texts held back until the
-`master` merge (the merge item's follow-up list in `TODO.md`). Do not add more of what
+`master` also has and this branch never touched. Do not add more of what
 the sweep removed.
 
 ## What Planktos is
@@ -172,10 +170,11 @@ lattice before assuming it needs a VisIt/ParaView pass; see
 ingestion: porting the old VisIt SAMRAI→vtk script, reading COMSOL directly, and OpenFOAM cases
 whose mesh is genuinely unstructured (`snappyHexMesh` refinement, tets, polyhedra).
 
-**`TODO.md` is the working plan for this branch**, and the authority on what is done,
+**`TODO.md` is the working plan for this branch**, and the authority on what is open,
 what is known-broken and what comes next. Read it before starting work here, keep it
-updated as items land, and look there rather than here for status. It also holds the
-design history behind the fluid architecture.
+updated as items land, and look there rather than here for status. Finished work leaves
+it: the branch's build record is the git history of `TODO.md` and of the deleted
+`docs/notes/run_persistence.md`.
 
 **How `dyload` diverges from `master`.** Almost all of it is the fluid API: on
 this branch `Environment.flow` is a `FluidData` object, and a number of
@@ -205,7 +204,7 @@ surface (a deliberate convention — see `changelog.txt`).
 | `planktos/_geom.py` | internal | Pure geometry workhorses: segment/line/triangle intersections, closest distances, multilinear-polynomial intersection (for moving meshes). Formerly static methods of `Swarm`. |
 | `planktos/_ibc.py` | internal | Immersed-boundary collision handling: `apply_internal_static_BC`, `apply_internal_moving_BC`, and the project-and-slide routines for static and moving meshes. |
 | `planktos/_dataio.py` | internal | Low-level read/write of vtk, vtu, .vertex, stl, NetCDF. Use `Environment` loader methods instead of calling these directly. |
-| `planktos/archive.py` | `RunArchive` and `load_run` are public; `RunRecorder` is re-exported here | **Reading** a run archive — chunked, append-only, crash-valid capture of agent state written as a run proceeds, plus the per-dump fluid quantities a later plot needs. Streams agents *out* the way `fluid.py` streams the field *in*. Its module docstring is the on-disk format spec. `RunArchive.restore` rebuilds the Environment and Swarms. See `docs/notes/run_persistence.md` §2 and §3. |
+| `planktos/archive.py` | `RunArchive` and `load_run` are public; `RunRecorder` is re-exported here | **Reading** a run archive — chunked, append-only, crash-valid capture of agent state written as a run proceeds, plus the per-dump fluid quantities a later plot needs. Streams agents *out* the way `fluid.py` streams the field *in*. Its module docstring is the on-disk format spec. `RunArchive.restore` rebuilds the Environment and Swarms. |
 | `planktos/_recording.py` | internal (`RunRecorder` reached through `Environment.record`) | **Writing** a run archive: `RunRecorder`, the agent writer `_ArchiveWriter`, the fluid planning and `_FluidWriter`, and the choice of directory (`_resolve_archive_path`, `_appendable`). |
 | `planktos/_archive_format.py` | internal | What reading and writing share: format constants, `_atomic_write`, file naming, and the fingerprint functions that decide whether an archive matches an Environment. |
 | `planktos/_frames.py` | internal | Where a plot frame's data comes from. `FrameSource` settles "what states exist, and where does the fluid backdrop come from" once, so `Swarm.plot`/`plot_all` index it rather than branching on it. Agent state is always live history; the backdrop comes from the Environment's run archive when it has one. |
@@ -244,8 +243,7 @@ against `master`.
   mean of each component is recorded per dump as that dump loads, and evaluated
   with the same interpolation weights the field uses — exact, because the mean is
   linear and both splines are weighted sums of nodal fields. This is what lets
-  plotting print fluid statistics without re-streaming the dataset (see
-  `docs/notes/run_persistence.md` §3.1). A mean stays valid after the
+  plotting print fluid statistics without re-streaming the dataset. A mean stays valid after the
   sliding window has moved past its dump; only a never-loaded dump costs a load.
 - `FluidData.get_raw_loaded_data()` is the nearest thing to the old
   `Environment.regenerate_flow_data()`. Note *loaded*: under dynamic loading only
@@ -267,7 +265,8 @@ against `master`.
   `get_stored_vorticity(time)`, which blends the two bracketing dumps with
   `LinearSpline`'s own weights through a two-slot cache. It **raises** under cubic
   splining, where the weights are global — that regime recomputes from the resident
-  field. `docs/notes/run_persistence.md` §3.3 has the reasoning. A series Planktos
+  field. The comment opening `FluidData`'s per-dump vorticity section states the
+  rule. A series Planktos
   writes is **stamped** in each file's vtk header with a digest of its field, so a
   later recording rewrites a stale one and a replay refuses a rewritten one; an
   unstamped file is the solver's and is never touched.
@@ -292,8 +291,8 @@ placeholder.** Cubic was tried and abandoned: stitching a cubic spline across a
 window that gains data on either side is numerically unstable, and resplining each
 window makes derivatives discontinuous at the breakpoints. Linear is
 unconditionally stable, trivially window-extensible (carry two raw boundary
-values, no derivatives to match), and needs less data held. The design history —
-including the specific approaches that failed — is at the bottom of `TODO.md`.
+values, no derivatives to match), and needs less data held. The abandoned cubic-window
+code is recoverable with `git log -S "_left_based_cspline" -- planktos/fluid.py`.
 
 The cost, worth stating plainly because it reaches the physics: smoothness drops
 C²→C⁰ (velocity kinks at each timestamp), between-sample accuracy goes
@@ -301,7 +300,7 @@ O(Δt⁴)→O(Δt²), and ∂u/∂t becomes a piecewise-constant step function �
 `get_dudt` → the material derivative → the inertial-particle models. Full cubic
 stays the default for datasets that fit in memory.
 
-**That gap has been measured** (2026-08-11); detail in `TODO.md`,
+**That gap has been measured** (2026-08-11); the table is in `docs/api/FluidData.rst`,
 reproducible via `tests/manual/quantify_temporal_interp.py` and
 `vet_dynamic_loading_3d.py`. Linear vs cubic rms error: **1.27% vs 0.54% of U_rms** in
 2D (Δt=1e-3 s), **9.46% vs 1.13%** in 3D at the coarser cadence reachable there. Quote
@@ -313,8 +312,7 @@ A third dataset, the 2D sea fan, sits at the coarse end — ~20 samples per puls
 and is the one to quote for a sparse cadence: **5.49% vs 1.50% of U_rms** at
 Δt=0.2 s, median orders 1.91/4.86, ensemble means within 0.09%. It also pins the
 memory claim on real data: a windowed sweep holds **41 MB where cubic holds 1604 MB**.
-Reproduce with `tests/manual/quantify_seafan_interp.py`; detail in
-`docs/notes/run_persistence.md` Appendix C.
+Reproduce with `tests/manual/quantify_seafan_interp.py`.
 
 **Velocity components are plain `np.ndarray`.** Index a `FluidData` (`envir.flow[0]`)
 for a static component, or call it (`envir.flow(t)`) for a temporally interpolated
@@ -327,9 +325,8 @@ overriding `.shape`/`__getitem__`. It was **deleted** in the fluid-interface
 refactor: modern scipy defeats the trick (`RegularGridInterpolator` calls
 `np.asarray` on any array-API object, discarding the virtual shape), so the tiled
 interpolation path never actually worked, while the subclass corrupted ordinary
-numpy operations on flow data. `docs/notes/run_persistence.md` Appendix A is the
-surviving record; the full analysis is in the git history of the deleted
-`docs/notes/flow_field_interface.md`.
+numpy operations on flow data. The full analysis is in the git history of the
+deleted `docs/notes/flow_field_interface.md`.
 
 ### Tiling wraps positions; the fluid stays one stored tile
 
@@ -351,8 +348,9 @@ environment takes the old code paths untouched.
 - A run archive records the call (with the stored tile's `L`) and `restore()` replays
   it last; `grid.npz` gains a `tiling` key only when tiled, so untiled archives are
   byte-identical to before.
-- Do not reintroduce a materializing or a virtualizing implementation;
-  `docs/notes/run_persistence.md` §9.2 says why both failed. `Environment.extend`
+- Do not reintroduce a materializing or a virtualizing implementation: scipy
+  defeats a virtual array (see `FlowArray` above), and materializing multiplies
+  the memory of the 3D datasets tiling exists for. `Environment.extend`
   remains removed; whether it returns is a separate pass.
 - `tests/test_tiling.py` compares every path against an oracle materialized in test
   code (`tests/_tiling_harness.py`), bitwise on a dyadic grid — simulation, plots
@@ -389,8 +387,7 @@ entirely** from the 2D path. Two working consequences:
 
 Already visible in the code: `Swarm.plot_all`'s `fluid='vort'|'quiver'` backdrops
 are 2D-only, so a 3D frame draws nothing about the fluid — and `fluid=` is forced to
-`None` in 3D at record time *and* ignored there at render time. See
-`docs/notes/run_persistence.md` §0.2.
+`None` in 3D at record time *and* ignored there at render time.
 
 ### Plotting goes through `_frames.FrameSource`
 
@@ -421,7 +418,7 @@ Two rules it enforces:
 
 **Plotting a run in a later session is not a plotting problem.** It goes through
 `planktos.load_run(path).restore()`, which rebuilds the Environment and Swarms where the
-run left off (`run_persistence.md` §2.11), and then plots them as usual. Do not solve it
+run left off, and then plots them as usual. Do not solve it
 inside `plot`/`plot_all`.
 
 ## Customizing agent behavior — the one rule that matters
@@ -658,5 +655,5 @@ worth knowing (`calculate_FTLE`):
 - Build: setuptools; `setup.cfg` lists the dependencies and optional extras. Editable
   install with `pip install -e .`.
 - `changelog.txt` is hand-maintained — update it for user-facing changes.
-- `TODO.md` is the working plan for this branch (phases, known bugs, design
-  history). Keep it current as items land; see "Branch context" above.
+- `TODO.md` is the working plan for this branch (what is open, deferred and
+  parked). Keep it current as items land; see "Branch context" above.

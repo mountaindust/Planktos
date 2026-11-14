@@ -269,7 +269,7 @@ def test_writable_source_dir_tests_rather_than_assumes(tmp_path):
 # --------------------------------------------------------------------------- #
 #      the headline: a blended per-dump field IS the curl of the velocity     #
 # --------------------------------------------------------------------------- #
-# Section 3.2 made executable. Times are chosen off the dump cadence so the
+# Times are chosen off the dump cadence so the
 # blend does real work; the fixture's vorticity is nonlinear in time, so a
 # nearest-dump reader fails these.
 
@@ -567,8 +567,8 @@ def test_a_genuinely_still_fluid_records_zero_and_not_nan(tmp_path):
 
 
 def test_dump_stats_is_written_in_3d_where_no_backdrop_is_drawn(tmp_path):
-    # Section 0.2: the statistics are the entire 3D deliverable of this
-    # component. Everything else here is 2D-only, so this is the one thing a 3D
+    # The statistics are the only fluid data a 3D archive carries.
+    # Everything else here is 2D-only, so this is the one thing a 3D
     # archive must still carry.
     envir = planktos.Environment()
     envir.read_IBAMR3d_vtk_data(str(FIXTURES / 'vtk3d_min'),
@@ -786,7 +786,7 @@ def test_the_reader_serves_stored_quiver_arrows(tmp_path):
 
 
 def test_asking_for_a_quiver_that_was_not_recorded_names_the_cause(tmp_path):
-    # Section 2.8: a quantity that was not recorded is a hard refusal naming what
+    # A quantity that was not recorded is a hard refusal naming what
     # is absent, not a silent fall back to re-streaming the fluid.
     envir = _envir(VORT_FIXTURE, INUM=4)
     rec = _record_and_sweep(envir, tmp_path / 'archive')

@@ -287,7 +287,7 @@ def test_constructing_fluiddata_leaves_the_callers_list_alone(INUM):
 
 
 # --------------------------------------------------------------------------- #
-#                    fmin / fmax — tuple contract (Appendix A lock)                  #
+#                         fmin / fmax — tuple contract                        #
 # --------------------------------------------------------------------------- #
 
 def test_fmin_fmax_are_reusable_tuples_static():

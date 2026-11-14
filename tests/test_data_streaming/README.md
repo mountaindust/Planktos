@@ -87,7 +87,8 @@ the cosmetic `ibmesh_color` and `plot_structs`. Not yet pinned by a test.
 Each was pinned by a `strict=True` xfail naming it, so the marker failed the
 suite the moment the defect was fixed. **All five are now fixed and every marker
 is cleared**; the tests stay as regression locks. F2, F3 and F4 went with
-component C, F1 on 2026-08-31, and F5 with R1–R3 on 2026-09-02 and 2026-09-03.
+the archive-backed plotting (2026-08-27), F1 on 2026-08-31, and F5 with the
+checkpoint and restore work on 2026-09-02 and 2026-09-03.
 
 ### F1 (fixed) — `plot_all(fluid='vort')` raised on any time-invariant flow
 
@@ -106,9 +107,7 @@ example hits it, which is why it survived so long.
 
 **Fixed** by `FluidData.spatial_shape`, which names the concept once —
 `fshape` when `flow_times is None`, `fshape[1:]` otherwise — and is read at
-both plotting sites that built a placeholder. Logged in `TODO.md`'s
-cherry-pick queue: the `master` port is a hand edit, since there is no
-`FluidData` there to hang the property on.
+both plotting sites that built a placeholder.
 
 Pinned: `test_stream_a_inram.py::test_plot_all_draws_vorticity_over_a_time_invariant_flow`,
 which now also walks the frames — `plot_all` renders none on Agg, so the
@@ -129,7 +128,7 @@ Pinned: `test_stream_b_windowed_replay.py::test_the_warning_counts_dumps_that_ex
 ### F3 (fixed) — the quiver arrow scale was taken from `flow.fmax`, not the archive
 
 `_frames.FrameSource._global_scales` set
-`quiver_scale = norm(flow.fmax)`. `run_persistence.md` §3.5 says of `fmax`, in
+`quiver_scale = norm(flow.fmax)`. The design said of `fmax`, in
 as many words, that it is **not** usable for this — it covers all data seen so
 far and grows during a run — and its "as built" text records the scale as
 `norm(nanmax(dump_stats['vmax'], axis=0))`. `Swarm.plot`'s own comment says the
@@ -139,7 +138,7 @@ did neither.
 The two agree for a run that swept the whole dataset, which is why it had not
 shown up. They diverged as soon as the field sees anything the recorded stretch
 did not: measured **13.88 → 42.45** for the same archive after one unrelated
-`envir.flow(7.0)`. That is exactly the render-to-render drift §3.5 exists to
+`envir.flow(7.0)`. That is exactly the render-to-render drift the global scales exist to
 remove. **Fixed** in `_global_scales`, which now reduces `dump_stats['vmax']` where
 there is a recording and keeps `fmax` only as the no-archive fallback. The
 repo-side test that pinned the old behavior became
@@ -152,7 +151,7 @@ naming the wanted value)
 
 ### F4 (fixed) — no check that the frames to be drawn were covered by the recording
 
-§2.8 refuses up front when the archive lacks a *quantity*. There was no
+`FrameSource` refuses up front when the archive lacks a *quantity*. There was no
 counterpart for *coverage*. Where a recording stopped before the run did and the
 vorticity lives in the archive, the first frame past the last recorded dump
 raises a bare `FileNotFoundError` from inside `_dataio` — partway through the
@@ -169,7 +168,7 @@ Pinned: `test_stream_c_recorded_replay.py::test_frames_outside_the_recorded_dump
 
 ### F5 (fixed) — claim 4 was unbuilt (five items)
 
-`run_persistence.md` §2.11's table, made executable. The archive carried no
+The restore design's state list, made executable. The archive carried no
 `rndState` (so a restart could not be reproducible), no `props` or
 `shared_props` (so a restarted swarm was a default swarm on recorded
 coordinates), no `ib_condition`/`color`, and there was no reader-side entry

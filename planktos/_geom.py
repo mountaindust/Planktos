@@ -105,7 +105,7 @@ def closest_dist_btwn_two_lines(a0,a1,b0_list,b1_list):
 
         Assuming the lines formed by (a1-a0) and (b1-b0) are skew, the 
         closest points on the two lines are found using a method described 
-        in docs/notes/Line_closest_points.md
+        in docs/notes/Lines_closest_points.md
 
         Parameters
         ----------

@@ -1,31 +1,30 @@
 #! /usr/bin/env python3
 '''Vet the dynamic-loading machinery against real 3D data.
 
-This answers the "then, once it loads" list in TODO.md Phase 2: the windowed
-loader is exercised in 3D by the fast suite, but only against synthetic sources
-and tiny committed fixtures. This runs the same questions against the real
+The windowed loader is exercised in 3D by the fast suite, but only against
+synthetic sources and tiny committed fixtures. This runs the same questions against the real
 OpenFOAM oral-arm export -- 17 dumps of 68x68x180, ~350 MB raw, streamed from
 1.5 GB of files -- which is the case the branch exists for.
 
 WHAT EACH PART ANSWERS, AND WHY IT IS SEPARATE
 
-  Part 0  Phase 1 (A): windowed-linear reproduces full-linear. Linear
+  Part 0  windowed-linear reproduces full-linear. Linear
           interpolation is local, so which window is resident cannot change a
           value; anything else is a bug in the slider. Checked over forward and
           backward sweeps, non-monotone access, exactly-on-node times, and
           out-of-bounds clamping, plus that the holdover round-off does not
           accumulate over many slides.
-  Part 1  Phase 1 (B): the slider's bookkeeping -- bounded window, bounded load
+  Part 1  the slider's bookkeeping -- bounded window, bounded load
           count, the two index spaces agreeing, fmin/fmax widening, and the
           jump-to-beginning fast path being one load rather than a walk.
-  Part 2  Phase 1 (D): get_dudt under linear splining, which is piecewise
+  Part 2  get_dudt under linear splining, which is piecewise
           constant and feeds the material derivative and the inertial models.
   Part 3  The branch's headline claim, and the one thing no test can make:
           that memory stays bounded to one window on a real dataset.
-  Part 4  Phase 1 (C): interpolation error against withheld ground truth.
-  Part 5  Phase 1 (C): convergence order, which is what makes a number from one
+  Part 4  interpolation error against withheld ground truth.
+  Part 5  convergence order, which is what makes a number from one
           dataset mean anything for another.
-  Part 6  Phase 1 (C): what it costs an actual ensemble of agents.
+  Part 6  what it costs an actual ensemble of agents.
   Part 7  The 3D material derivative end to end, through an inertial model.
 
 A NOTE ON THIS DATASET'S TIMELINE
@@ -495,7 +494,7 @@ if 5 in PARTS:
      period is 1.25 s, so the raw dt = {:.4g} s gives {:.0f} samples per cycle and
      the subsampled dt = {:.4g} s gives {:.0f}. Neither is deep enough into the
      asymptotic regime for a convergence order to appear. Quote the 2D orders
-     (TODO Phase 1 (C)) and treat this dataset as evidence about ERROR SIZE at a
+     (quantify_temporal_interp.py) and treat this dataset as evidence about ERROR SIZE at a
      coarse cadence, not about convergence rate.'''.format(
             lever, len(uni[::max(SUBSAMPLE_FACTORS)]), N_UNIFORM,
             dt_dump, 1.25/dt_dump,

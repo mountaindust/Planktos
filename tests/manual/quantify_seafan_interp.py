@@ -2,7 +2,7 @@
 '''Vet the .vti loader and quantify linear-vs-cubic interpolation on the sea fan.
 
 The 2D counterpart of tests/manual/vet_dynamic_loading_3d.py, and the second real
-dataset for the Phase 1 (C) question that tests/manual/quantify_temporal_interp.py
+dataset for the question that tests/manual/quantify_temporal_interp.py
 answers on IB2d leaf data. Two things make it worth running separately from that
 one:
 
@@ -15,22 +15,22 @@ one:
 
 WHAT EACH PART ANSWERS
 
-  Part 0  Phase 1 (A) on this loader: windowed (INUM=k) reproduces full-linear
+  Part 0  windowed (INUM=k) reproduces full-linear
           (INUM=True). Linear interpolation is local, so which window is resident
           cannot change a value; anything else is a bug in the slider. That
           reduction is what makes Parts 3-6 a linear-vs-cubic question with the
           streaming machinery contributing nothing.
-  Part 1  Phase 1 (B): the slider's bookkeeping on real files -- bounded window,
+  Part 1  the slider's bookkeeping on real files -- bounded window,
           bounded load count over a sweep, the two index spaces agreeing,
           fmin/fmax widening, and the jump-to-beginning fast path.
   Part 2  The branch's headline claim: memory stays bounded to one window, where
           holding the dataset costs 411 MB and splining it cubically ~2 GB.
-  Part 3  Phase 1 (C): velocity error against withheld dumps, whose stored values
+  Part 3  velocity error against withheld dumps, whose stored values
           are ground truth neither scheme saw. Comparing the two schemes against
           each other would measure their disagreement, not either one's error.
-  Part 4  Phase 1 (C): du/dt error, the term that reaches get_dudt -> the material
+  Part 4  du/dt error, the term that reaches get_dudt -> the material
           derivative -> the inertial models.
-  Part 5  Phase 1 (C): convergence order by error percentile, which is what lets
+  Part 5  convergence order by error percentile, which is what lets
           anyone with a different dump interval use these numbers at all. A whole-
           field rms ratio blends a temporally smooth bulk with a rough tail and
           describes neither.

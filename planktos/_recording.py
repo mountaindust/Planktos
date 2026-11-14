@@ -343,8 +343,8 @@ class _ArchiveWriter:
                      else _resolve_archive_path(path))
         self.agent_dir = self.path / 'agents'
         self.agent_dir.mkdir(exist_ok=True)
-        # Component B writes here. Created now so that the layout is complete
-        #   from the start and B never has to wonder whether it exists.
+        # The fluid half writes here. Created now so that the layout is complete
+        #   from the start and the fluid writer never has to check for it.
         (self.path / 'fluid').mkdir(exist_ok=True)
 
         self._fingerprint = dict(fingerprint)
@@ -363,8 +363,8 @@ class _ArchiveWriter:
         # What velocities were needed for, recorded exactly when velocities are
         #   not: the agent-speed statistics a plot prints, and the heading angle
         #   a 2D frame draws. Both are derived at capture time, when the
-        #   velocity is in hand; neither is recoverable from stored positions
-        #   (section 5.1), which is why they are stored rather than re-derived.
+        #   velocity is in hand; neither is recoverable from stored positions,
+        #   which is why they are stored rather than re-derived.
         self.derive = 'velocities' not in self.store
         # shared_props is O(T) and has nothing to do with whether the O(N.T)
         #   per-agent DataFrame was wanted, so it is its own token. It shares
@@ -1045,16 +1045,17 @@ class _ArchiveWriter:
 #                                                                           #
 #############################################################################
 
-# The fluid half of an archive (docs/notes/run_persistence.md section 3). What
-#   it exists for: never re-stream a 100 GB dataset to draw a picture of it. A
-#   render needs three things from the fluid, and each is handled by its own rule
-#   rather than by one mechanism, because the regimes genuinely differ:
+# The fluid half of an archive. What it exists for: never re-stream a 100 GB
+#   dataset to draw a picture of it. A render needs three things from the fluid,
+#   and each is handled by its own rule rather than by one mechanism, because
+#   the regimes genuinely differ:
 #
 #   frame statistics  the spatial mean of each velocity component, per dump.
 #                     A few floats. Always written, in 2D and 3D alike -- this
-#                     is the only part of component B a 3D run gets, and it is
-#                     what lets the statistics box be drawn from an archive.
-#   vorticity         sourced by regime (section 3.3): recomputed when the whole
+#                     is the only part of the fluid half a 3D run gets, and it
+#                     is what lets the statistics box be drawn from an archive.
+#   vorticity         sourced by regime (the rule is in FluidData's per-dump
+#                     vorticity section, fluid.py): recomputed when the whole
 #                     field is resident, read from the source when it ships one,
 #                     written per dump only when neither holds. 2D only.
 #   quiver            a downsampled subsample of the velocity, opt-in, written
@@ -1652,7 +1653,7 @@ class RunRecorder:
         if self.appending:
             # Every swarm the archive holds has to go on being captured: a
             #   series that stops half way is a refusal rather than a silent
-            #   gap (section 2.8), and the writer would otherwise raise about
+            #   gap, and the writer would otherwise raise about
             #   mismatched swarm sets at the first step instead of here.
             absent = sorted(set(self._writer._swarms) - set(
                 range(len(self._swarms))))

@@ -1,6 +1,6 @@
 # OpenFOAM oral-arm dataset — structural analysis
 
-Analysis of the Phase 2 test dataset: the `VTK/` export shipped with
+Analysis of the 3D test dataset: the `VTK/` export shipped with
 `README_oral_arm_setup.md` (case `case08_alpha2_1e8`), performed 2026-07-31 to
 determine whether the data is usable by Planktos and what an ingestion path would
 look like. Everything below was verified by reading the files, not inferred from
@@ -9,8 +9,8 @@ the README.
 **The data itself lives at `tests/unsteady_3D_testdata/`, which is gitignored in
 its entirety.** This note was originally written into that directory and was
 therefore untracked; it was moved here on 2026-08-10 so the analysis survives
-independently of the data. §7 is the work list for the Phase 2 loader — see
-`TODO.md` Phase 2, which points here rather than restating it.
+independently of the data. §7 is the work list the `OpenFOAMData` loader was
+built from.
 
 **Headline:** despite being stored as `vtkUnstructuredGrid`, the fluid data sits on a
 **perfectly uniform Cartesian grid** that never changes in time. No regridding is
@@ -281,7 +281,7 @@ supply `flow_times` spanning the whole dump range: "whole range" means **the dum
 that exist**, not the ones the `.vtm.series` manifest lists. Building `flow_times`
 from the manifest and the file index from the directory listing would put the two
 index spaces silently out of step — the same class of bug as the `VTK3dData` frozen
-timeline (`TODO.md` Phase 2).
+timeline, fixed before this loader was written.
 
 ### The timeline survives losing pieces of the export ✅ DONE (2026-08-11)
 

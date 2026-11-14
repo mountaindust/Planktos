@@ -1,12 +1,12 @@
 #! /usr/bin/env python3
 '''Quantify the cost of dynamic loading's linear-in-time interpolation.
 
-This answers TODO.md Phase 1 (C): dynamic loading gives up cubic-in-time
-interpolation for linear, and the size of that loss had only ever been eyeballed.
+Dynamic loading gives up cubic-in-time interpolation for linear; this measures
+what that costs.
 
 WHAT IS ACTUALLY BEING MEASURED
 -------------------------------
-Phase 1 (A) established that windowed-linear (INUM=k) reproduces full-linear
+tests/test_dynamic_loading.py establishes that windowed-linear (INUM=k) reproduces full-linear
 (INUM=True) to round-off: linear interpolation is local, depending only on the two
 bracketing samples, so which window happens to be resident cannot change a value.
 The dynamic-vs-cubic gap is therefore *entirely* a linear-vs-cubic question, with

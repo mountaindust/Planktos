@@ -1,9 +1,9 @@
 '''Where does vorticity cost less: recomputed from velocity, or read from disk?
 
-Supports the vorticity rule in docs/notes/run_persistence.md section
-3.3.
+Supports the per-dump vorticity rule described above
+FluidData.probe_stored_vorticity in planktos/fluid.py.
 Vorticity is LAZY in every strategy here -- nothing is preloaded, because
-holding a whole series of it is exactly what item 6 ruled out. So the two ways
+holding a whole series of it would double the resident fluid. So the two ways
 to answer get_vorticity(t) are:
 
     recompute   np.gradient on the temporally interpolated velocity (today).
@@ -81,7 +81,7 @@ def _load(path, dt, print_dump, INUM=None, d_start=0):
 
 
 # --------------------------------------------------------------------------- #
-#                     the disk-backed prototype (section 4/6)                 #
+#                          the disk-backed prototype                          #
 # --------------------------------------------------------------------------- #
 
 class OmegaReader:
@@ -255,7 +255,7 @@ def _periodic_curl(fd, t):
 
 
 def agreement(path, dt, print_dump):
-    '''Is the solver's Omega even the same field we compute? (section 5)'''
+    '''Is the solver's Omega even the same field we compute? '''
     fd = _load(path, dt, print_dump, INUM=None)
     rdr = OmegaReader(fd, path)
     print('\n--- stored Omega vs recomputed curl, at dump times ---')
