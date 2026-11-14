@@ -208,9 +208,11 @@ def records_provenance(slot, preceded_by=None, order_against=None,
 def note_modifier(slot):
     '''Decorate a method that alters already-loaded data in place.
 
-    Appends the method's name to the record's 'modified_by' list. Every
-    modifier in Planktos is deterministic given the loaded data, so replaying
-    the loader and then the listed modifiers reproduces the mesh the run used.
+    Appends to the record's 'modified_by' list the method's name, or for a
+    method that takes arguments, ``{'modifier': <name>, 'kwargs': {...}}`` with
+    defaults filled in. Every modifier in Planktos is deterministic given the
+    loaded data and its arguments, so replaying the loader and then the listed
+    modifiers reproduces the data the run used.
 
     Parameters
     ----------
@@ -220,12 +222,24 @@ def note_modifier(slot):
     '''
 
     def decorate(method):
+        signature = inspect.signature(method)
+        takes_arguments = len(signature.parameters) > 1
+
         @functools.wraps(method)
         def wrapper(self, *args, **kwargs):
             result = method(self, *args, **kwargs)
             record = getattr(self, slot, None)
             if record is not None:
-                record.setdefault('modified_by', []).append(method.__name__)
+                entry = method.__name__
+                if takes_arguments:
+                    bound = signature.bind(self, *args, **kwargs)
+                    bound.apply_defaults()
+                    arguments = dict(bound.arguments)
+                    arguments.pop('self', None)
+                    entry = {'modifier': method.__name__,
+                             'kwargs': {name: jsonable(value)
+                                        for name, value in arguments.items()}}
+                record.setdefault('modified_by', []).append(entry)
             return result
 
         return wrapper

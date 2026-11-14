@@ -1991,6 +1991,64 @@ class ComsolVTUData(FluidData):
 
 
 
+class ComsolGridData(FluidData):
+
+    def __init__(self, path, periodic_dim=False, vel_conv=None, grid_conv=None):
+        '''Reads COMSOL's text grid export: the velocity at one time, on the
+        regular grid the export was asked for. COMSOL may give this file a .vtu
+        extension, though it is plain text, not VTK XML.
+
+        The domain is the grid's bounding box. Where the grid points are cell
+        centers, that is half a cell short of each face; call
+        ``Environment.center_cell_regrid`` to extend it.
+
+        Parameters
+        ----------
+        path : string
+            path to the export
+        periodic_dim : bool or sequence of bool, default=False
+            whether the data is periodic along each axis, or along every axis.
+            Entries past the data's dimension are ignored.
+        vel_conv : float, optional
+            scalar to multiply the velocity by in order to convert units to
+            match the spatial grid units
+        grid_conv : float, optional
+            scalar to multiply the grid by in order to convert units
+
+        Raises
+        ------
+        FileNotFoundError
+            if path is not a file
+        '''
+
+        self.path = path
+        self.vel_conv = vel_conv
+        self.grid_conv = grid_conv
+
+        if not Path(path).is_file():
+            raise FileNotFoundError("File {} not found!".format(str(path)))
+
+        print('Reading COMSOL grid data...')
+        flow, mesh = _dataio.read_vtu_mesh_velocity(str(path))
+        print('Done!')
+
+        if vel_conv is not None:
+            print("Converting vel units by a factor of {}.".format(vel_conv))
+            flow = [f*vel_conv for f in flow]
+        if grid_conv is not None:
+            print("Converting grid units by a factor of {}.".format(grid_conv))
+            mesh = [m*grid_conv for m in mesh]
+        if not isinstance(periodic_dim, (bool, np.bool_)):
+            periodic_dim = tuple(periodic_dim)[:len(mesh)]
+
+        # shift domain to quadrant 1
+        flow_points = tuple(m - m[0] for m in mesh)
+        self.L = [fp[-1] for fp in flow_points]
+        super().__init__(flow, flow_points, None, None, periodic_dim,
+                         fluid_domain_LLC=tuple(m[0] for m in mesh))
+
+
+
 class OpenFOAMData(FluidData):
 
     def __init__(self, path, INUM=None, periodic_dim=(False, False, False),

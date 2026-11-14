@@ -1436,16 +1436,23 @@ class Environment:
 
     @_provenance.records_provenance('_fluid_provenance', describes='flow')
     def read_comsol_vtu_data(self, filename, periodic_dim=(False, False, False),
-                             res=101, linear_interp=False, vel_conv=None):
-        '''Reads in vtu flow data from a single source. It is assumed this 
-        data is on a FEM mesh, and so it will be regridded onto a regular grid 
-        with resolution res in each dimension. Imported times will be translated 
-        backward so that the first time loaded corresponds to a Planktos
-        environment time of 0.0. The whole export is held in memory.
+                             res=101, linear_interp=False, vel_conv=None,
+                             grid_conv=None):
+        '''Reads fluid velocity data exported from COMSOL Multiphysics, in
+        either of two formats, told apart by the file's contents:
 
-        Sets L to the fluid's domain and clears h_p, plot_structs and the
-        cached speed gradient; swarms, time, the immersed mesh and the fluid
-        properties are kept.
+        - **VTK XML (.vtu)**, holding the velocity at every time point on the
+          FEM mesh, which is regridded onto a regular grid with res points in
+          each dimension (see :class:`~planktos.fluid.ComsolVTUData`). Times are
+          shifted so that the first is at a Planktos environment time of 0.0.
+        - **COMSOL's text grid export**, which COMSOL may also name .vtu,
+          holding the velocity at one time on a regular grid, which is read as
+          it is (see :class:`~planktos.fluid.ComsolGridData`). If its points
+          are cell centers, call :meth:`center_cell_regrid` next.
+
+        The whole export is held in memory. Sets L to the fluid's domain and
+        clears h_p, plot_structs and the cached speed gradient; swarms, time,
+        the immersed mesh and the fluid properties are kept.
 
         Parameters
         ----------
@@ -1454,18 +1461,43 @@ class Environment:
         periodic_dim : bool or tuple of 3 bool, default=(False, False, False)
             True if that spatial dimension is periodic, otherwise False
         res : int, default=101
-            number of points at which to resolve the flow in each dimension
+            number of points at which to resolve the flow in each dimension;
+            VTK XML only
         linear_interp : bool, default=False
             whether to interpolate in time linearly (True) or with a cubic
-            spline (False)
+            spline (False); VTK XML only
         vel_conv : float, optional
             scalar to multiply the velocity by in order to convert units
+        grid_conv : float, optional
+            scalar to multiply the grid by in order to convert units; text grid
+            only
+
+        Raises
+        ------
+        FileNotFoundError
+            if filename is not a file
+        ValueError
+            if grid_conv is given for a VTK XML file
         '''
         self._refuse_once_tiled('load a fluid')
         self._refuse_while_recording()
 
-        self.flow = fluid.ComsolVTUData(filename, periodic_dim, res, linear_interp, 
-                                        vel_conv)
+        if not Path(filename).is_file():
+            raise FileNotFoundError("File {} not found!".format(str(filename)))
+        # COMSOL's text exports open with '%' header lines; a VTK XML file
+        #   opens with '<'.
+        with open(filename, 'rb') as f:
+            text_grid = f.read(256).lstrip().startswith(b'%')
+
+        if text_grid:
+            self.flow = fluid.ComsolGridData(filename, periodic_dim, vel_conv,
+                                             grid_conv)
+        else:
+            if grid_conv is not None:
+                raise ValueError('grid_conv applies to COMSOL text grid exports '
+                                 'only, and {} is not one.'.format(filename))
+            self.flow = fluid.ComsolVTUData(filename, periodic_dim, res,
+                                            linear_interp, vel_conv)
         self.L = self.flow.L
         self._reset_flow_variables()
 
@@ -1725,7 +1757,80 @@ class Environment:
             self.units = s_units
         self.L = [flow_points[dim][-1] for dim in range(s_dim)]
         self._reset_flow_variables()
-        
+
+
+
+    @_provenance.note_modifier('_fluid_provenance')
+    def center_cell_regrid(self, periodic_dim=(False, False, False)):
+        '''Extend fluid data given at cell centers out to the domain boundary.
+
+        Data exported at cell centers stops half a cell short of each face, so
+        the loaded domain is one cell narrower in each direction than the
+        simulation's. This adds a grid plane half a cell out at both ends of
+        every axis and extends the field to it -- linearly, or across the wrap
+        on a periodic axis. The grid's lower-left corner stays at the origin,
+        ``flow.fluid_domain_LLC`` moves out by the half cell, and L becomes the
+        extended domain.
+
+        Call it before loading an immersed mesh, which is placed using the
+        fluid's lower-left corner.
+
+        Parameters
+        ----------
+        periodic_dim : bool or sequence of bool, default=(False, False, False)
+            whether each spatial axis is periodic, or every axis; entries past
+            the fluid's dimension are ignored. This also becomes the fluid's
+            periodic_dim.
+
+        Raises
+        ------
+        ValueError
+            if no fluid is loaded, an immersed mesh is loaded, or the fluid is
+            dynamically loaded, so that only a window of it is in memory
+        '''
+        self._refuse_once_tiled('change the fluid')
+        self._refuse_while_recording()
+        flow = self.flow
+        if flow is None:
+            raise ValueError('no fluid is loaded.')
+        if self.ibmesh is not None:
+            raise ValueError(
+                'an immersed mesh is loaded, and it was placed using the '
+                "fluid's lower-left corner, which this would move. Call "
+                'center_cell_regrid before loading the mesh.')
+        if flow.is_windowed:
+            raise ValueError(
+                'this fluid is dynamically loaded, so only a window of it is '
+                'in memory to regrid.')
+
+        ndim = len(flow.flow_points)
+        if isinstance(periodic_dim, (bool, np.bool_)):
+            periodic_dim = (bool(periodic_dim),)*ndim
+        else:
+            periodic_dim = tuple(bool(p) for p in periodic_dim)[:ndim]
+        data, points = fluid._center_cell_regrid(
+            flow.get_raw_loaded_data(), flow.flow_points,
+            periodic_dim=list(periodic_dim))
+        # The regridded points start half a cell below the old origin; moving
+        #   them back to the origin moves the recorded corner out instead.
+        old_LLC = (flow.fluid_domain_LLC if flow.fluid_domain_LLC is not None
+                   else (0.0,)*ndim)
+        LLC = tuple(o + p[0] for o, p in zip(old_LLC, points))
+        # A resident time-varying fluid keeps its interpolation in time: cubic
+        #   under INUM=None, linear under any other INUM.
+        if flow.flow_times is None or flow.INUM is None:
+            INUM = None
+        else:
+            INUM = True
+        regridded = fluid.FluidData(data, tuple(p - p[0] for p in points),
+                                    flow.flow_times, INUM=INUM,
+                                    periodic_dim=periodic_dim,
+                                    fluid_domain_LLC=LLC)
+        regridded._flat = flow._flat
+        self.flow = regridded
+        self.L = [p[-1] for p in regridded.flow_points]
+        self._reset_flow_variables()
+
 
     #######################################################################
     #####                        MESH READERS                         #####

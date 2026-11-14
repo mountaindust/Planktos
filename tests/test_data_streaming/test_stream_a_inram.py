@@ -500,7 +500,8 @@ def test_a_self_contained_example_runs_to_completion(script, tmp_path):
     # no-op, which is what a headless run of the tutorial does anyway.
     work = tmp_path / 'examples'
     shutil.copytree(REPO / 'examples', work,
-                    ignore=shutil.ignore_patterns('*.mp4', 'results'))
+                    ignore=shutil.ignore_patterns('*.mp4', '*.vtu',
+                                                 'results'))
     # Read as ../tests/IBAMR_test_data, relative to the examples directory.
     shutil.copytree(REPO / 'tests' / 'IBAMR_test_data',
                     tmp_path / 'tests' / 'IBAMR_test_data')
@@ -517,8 +518,36 @@ def test_an_example_needing_downloaded_data_runs_to_completion(script, tmp_path)
               'download the IB2d channel-flow dataset to run this example')
     work = tmp_path / 'examples'
     shutil.copytree(REPO / 'examples', work,
-                    ignore=shutil.ignore_patterns('*.mp4', 'results'))
+                    ignore=shutil.ignore_patterns('*.mp4', '*.vtu',
+                                                 'results'))
     proc = run_script(work / script, cwd=work)
     assert proc.returncode == 0, \
         'examples/{} failed:\n{}\n{}'.format(script, proc.stdout[-3000:],
                                              proc.stderr[-4000:])
+
+
+# Example 10 reads examples/comsol_data/Velocity2to1_8mmps.vtu (1.8 GB,
+# gitignored), which the copy leaves out with every .vtu; it is linked into
+# place instead.
+SEAFAN_VTU = 'Velocity2to1_8mmps.vtu'
+
+
+@pytest.mark.examples
+def test_the_sea_fan_example_runs_to_completion(tmp_path):
+    pytest.importorskip('stl.mesh')
+    data = needs_dir(REPO / 'examples' / 'comsol_data', SEAFAN_VTU,
+                     'download the COMSOL sea-fan dataset to run this example')
+    work = tmp_path / 'examples'
+    shutil.copytree(REPO / 'examples', work,
+                    ignore=shutil.ignore_patterns('*.mp4', '*.vtu', 'results'))
+    (work / 'results').mkdir()
+    try:
+        os.link(data / SEAFAN_VTU, work / 'comsol_data' / SEAFAN_VTU)
+    except OSError:
+        shutil.copy2(data / SEAFAN_VTU, work / 'comsol_data' / SEAFAN_VTU)
+    script = '10_sticky_seafan_3d.py'
+    proc = run_script(work / script, cwd=work)
+    assert proc.returncode == 0, \
+        'examples/{} failed:\n{}\n{}'.format(script, proc.stdout[-3000:],
+                                             proc.stderr[-4000:])
+    assert (work / 'results' / 'seafan2to1_8mmps_sticky_1000dist.mp4').is_file()

@@ -20,9 +20,12 @@ import planktos
 # Begin by loading the fluid and mesh.
 envir = planktos.Environment()
 # In this data, space is in mm but velocity is in m/s. Convert velocity to mm/s.
-envir.read_comsol_vtu_data('comsol_data/Velocity2to1_8mmps.vtu', vel_conv=1000,
-                           periodic_dim=(True, True, True))
+envir.read_comsol_vtu_data('comsol_data/Velocity2to1_8mmps.vtu', vel_conv=1000)
 envir.units = 'mm'
+# This fluid data is 2.9 x 99.9 x 39.9 mm because it is given at the center of
+#   each mesh cell. center_cell_regrid extends it out to the domain boundary,
+#   here periodic in every direction. Call it before loading an immersed mesh.
+envir.center_cell_regrid(periodic_dim=(True, True, True))
 
 envir.read_stl_mesh_data('comsol_data/seafan_cylinder.stl')
 # Tile the fluid and cylinder in the x-direction so that the length of the x- 

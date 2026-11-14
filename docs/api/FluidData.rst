@@ -172,3 +172,6 @@ than directly.
 
 .. autoclass:: planktos.fluid.ComsolVTUData
     :members:
+
+.. autoclass:: planktos.fluid.ComsolGridData
+    :members:

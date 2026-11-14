@@ -38,10 +38,6 @@ Priority key: 🔴 do first · 🟡 next · 🟢 later · ⚪ deferred / low pri
 
 ## Open 🟡
 
-- **`examples/10_sticky_seafan_3d.py` has not been run since tiling** *(2026-11-03)*:
-  it needs `Velocity2to1_8mmps.vtu`, which is not on the development machine. Its
-  cylinder must lie strictly inside the stored tile along x; the STL loader's shift
-  by the fluid's lower-left corner should put it there.
 - **The 2D sea-fan dataset** (`tests/data/openfoam2D/`). Two questions for the
   collaborator, neither blocking a read, both changing what a study on it means:
   1. The export is a cropped core window — ±20 mm of an OpenFOAM domain of

@@ -144,6 +144,10 @@ class _Fake:
     def tweak(self):
         return None
 
+    @_provenance.note_modifier('_slot')
+    def tweak_with(self, amount, scale=(1, 2)):
+        return None
+
     @_provenance.records_provenance('_slot', order_against='flow')
     def load_mesh(self, path):
         self.flow = 'set by the call itself'
@@ -237,6 +241,16 @@ def test_a_modifier_appends_its_name_and_does_not_invent_a_record():
     obj.tweak()
     obj.tweak()
     assert obj._slot['modified_by'] == ['tweak', 'tweak']
+
+
+def test_a_modifier_taking_arguments_records_them_with_defaults():
+    obj = _Fake()
+    obj.load('p')
+    obj.tweak()
+    obj.tweak_with(3)
+    assert obj._slot['modified_by'] == [
+        'tweak', {'modifier': 'tweak_with', 'kwargs': {'amount': 3,
+                                                       'scale': [1, 2]}}]
 
 
 def test_the_decorator_preserves_the_signature_and_docstring():

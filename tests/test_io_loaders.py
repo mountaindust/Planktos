@@ -1686,6 +1686,159 @@ def test_comsol_vtu_refuses_a_directory():
         planktos.Environment().read_comsol_vtu_data(str(COMSOL))
 
 
+# COMSOL's text grid export, which COMSOL may also name .vtu: '%' header lines,
+# one line of coordinates per axis, then a '% Data' block per quantity whose
+# rows run along x, y varying fastest. Written here rather than committed, on
+# cell centers of a uniform grid, with u = 1 + x/2 + z, v = y - 1, w = 2x, all
+# in m/s against a grid in mm.
+
+GRID3 = (np.linspace(-0.75, 0.75, 4), np.linspace(1.25, 3.75, 6),
+         np.linspace(0.5, 2.5, 3))
+
+
+def _grid_fields(X, Y, Z=None):
+    if Z is None:
+        return [1.0 + 0.5*X, Y - 1.0]
+    return [1.0 + 0.5*X + Z, Y - 1.0, 2.0*X]
+
+
+def _write_comsol_grid(path, grid, nan_at=None):
+    X = np.meshgrid(*grid, indexing='ij')
+    fields = _grid_fields(*X)
+    if nan_at is not None:
+        fields[0] = fields[0].copy()
+        fields[0][nan_at] = np.nan
+    names = 'xyz'[:len(grid)] + 'uvw'[:len(grid)]
+    lines = ['% Model:              grid_test.mph',
+             '% Version:            COMSOL 6.0.0.318',
+             '% Dimension:          {}'.format(len(grid)),
+             '% Nodes:              {}'.format(X[0].size),
+             '% Expressions:        {}'.format(len(names)),
+             '% Description:        made by test_io_loaders.py',
+             '% Length unit:        mm',
+             '% Grid']
+    lines += [' '.join(repr(float(c)) for c in axis) for axis in grid]
+    for name, arr in zip(names, list(X) + fields):
+        lines += ['% Data', '% {} ({})'.format(name, 'mm' if name in 'xyz'
+                                                 else 'm/s')]
+        # A row holds the x values; transposing puts x last and the slowest
+        #   axis first, which is the order the rows come in.
+        rows = arr.T.reshape(-1, len(grid[0]))
+        lines += [' '.join('NaN' if np.isnan(v) else repr(float(v)) for v in r)
+                  for r in rows]
+    Path(path).write_text('\n'.join(lines) + '\n')
+
+
+def test_comsol_text_grid_reads_as_it_is_written(tmp_path):
+    path = tmp_path / 'grid.vtu'
+    _write_comsol_grid(path, GRID3, nan_at=(1, 2, 0))
+    envir = planktos.Environment()
+    envir.read_comsol_vtu_data(str(path), vel_conv=1000)
+    fd = envir.flow
+    assert isinstance(fd, planktos.fluid.ComsolGridData)
+    assert fd.flow_times is None and fd.periodic_dim == (False, False, False)
+    np.testing.assert_allclose(envir.L, [1.5, 2.5, 2.0])
+    np.testing.assert_allclose(fd.fluid_domain_LLC, [-0.75, 1.25, 0.5])
+    X = np.meshgrid(*(g - g[0] for g in fd.flow_points), indexing='ij')
+    want = [1000*f for f in _grid_fields(*(x + c for x, c in
+                                          zip(X, fd.fluid_domain_LLC)))]
+    want[0][1, 2, 0] = 0.0
+    for d in range(3):
+        np.testing.assert_allclose(fd[d], want[d], rtol=0, atol=1e-9)
+
+
+def test_comsol_text_grid_in_2d_with_grid_conv_and_periodicity(tmp_path):
+    path = tmp_path / 'grid2d.txt'
+    _write_comsol_grid(path, GRID3[:2])
+    envir = planktos.Environment()
+    envir.read_comsol_vtu_data(str(path), periodic_dim=(True, False, True),
+                               grid_conv=0.001)
+    fd = envir.flow
+    assert fd.ndim == 2 and fd.periodic_dim == (True, False)
+    np.testing.assert_allclose(envir.L, [0.0015, 0.0025])
+    np.testing.assert_allclose(fd.fluid_domain_LLC, [-0.00075, 0.00125])
+    np.testing.assert_allclose(fd[1][0], GRID3[1] - 1.0, rtol=0, atol=1e-12)
+
+
+def test_comsol_grid_conv_is_refused_for_a_vtk_xml_file():
+    with pytest.raises(ValueError, match='grid_conv'):
+        planktos.Environment().read_comsol_vtu_data(str(COMSOL / 'flow.vtu'),
+                                                    grid_conv=2.0)
+
+
+def test_center_cell_regrid_extends_cell_centered_data_to_the_faces(tmp_path):
+    path = tmp_path / 'grid.vtu'
+    _write_comsol_grid(path, GRID3)
+    envir = planktos.Environment()
+    envir.read_comsol_vtu_data(str(path))
+    envir.center_cell_regrid(periodic_dim=(False, False, False))
+    fd = envir.flow
+    # Cells are 0.5 x 0.5 x 1 wide, so the faces sit half of that further out.
+    np.testing.assert_allclose(envir.L, [2.0, 3.0, 3.0])
+    np.testing.assert_allclose(fd.fluid_domain_LLC, [-1.0, 1.0, 0.0])
+    assert fd.fshape == (6, 8, 5) and fd.flow_points[0][0] == 0.0
+    # A linear field is extended exactly, faces included.
+    X = np.meshgrid(*(g + c for g, c in zip(fd.flow_points, fd.fluid_domain_LLC)),
+                    indexing='ij')
+    for got, want in zip((fd[0], fd[1], fd[2]), _grid_fields(*X)):
+        np.testing.assert_allclose(got, want, rtol=0, atol=1e-12)
+
+
+def test_center_cell_regrid_wraps_a_periodic_axis(tmp_path):
+    path = tmp_path / 'grid.vtu'
+    _write_comsol_grid(path, GRID3)
+    envir = planktos.Environment()
+    envir.read_comsol_vtu_data(str(path))
+    envir.center_cell_regrid(periodic_dim=True)
+    fd = envir.flow
+    assert fd.periodic_dim == (True, True, True)
+    for comp in (fd[0], fd[1], fd[2]):
+        np.testing.assert_array_equal(comp[0], comp[-1])
+        np.testing.assert_array_equal(comp[:, 0], comp[:, -1])
+
+
+def test_center_cell_regrid_keeps_a_time_varying_fluid_and_its_spline():
+    envir = planktos.Environment()
+    envir.read_comsol_vtu_data(str(COMSOL / 'flow.vtu'), res=9,
+                               linear_interp=True)
+    envir.center_cell_regrid()
+    fd = envir.flow
+    assert fd.fshape == (3, 11, 11) and fd.INUM is True
+    np.testing.assert_allclose(fd.flow_times, [0.0, 0.5, 1.0])
+    X, Y = np.meshgrid(*fd.flow_points, indexing='ij')
+    # The original grid started at the origin, so the old points are now
+    #   offset by the half cell the regrid added below them.
+    h = 3.0/8/2
+    np.testing.assert_allclose(fd(0.75)[0], 1.75 + 0.5*(X - h), rtol=0,
+                               atol=1e-12)
+
+
+@pytest.mark.parametrize('obstacle', ['no fluid', 'mesh', 'windowed', 'tiled'])
+def test_center_cell_regrid_refusals_leave_the_environment_as_it_was(
+        tmp_path, obstacle):
+    envir = planktos.Environment()
+    if obstacle == 'windowed':
+        envir.read_IB2d_fluid_data(str(FIXTURES / 'ib2d_fluid_min'), 0.5, 1,
+                                   INUM=4)
+    elif obstacle != 'no fluid':
+        path = tmp_path / 'grid.vtu'
+        _write_comsol_grid(path, GRID3[:2])
+        envir.read_comsol_vtu_data(str(path), periodic_dim=True)
+        if obstacle == 'mesh':
+            envir.read_IB2d_mesh_data(str(FIXTURES / 'mesh_min' / 'box.vertex'),
+                                      method='adjacent')
+        else:
+            with warnings.catch_warnings():
+                # This field is not periodic, so tiling warns of the seams.
+                warnings.simplefilter('ignore')
+                envir.tile_domain(2, 1)
+    before = (envir.flow, list(envir.L), envir._fluid_provenance)
+    with pytest.raises(ValueError):
+        envir.center_cell_regrid()
+    assert envir.flow is before[0] and list(envir.L) == before[1]
+    assert envir._fluid_provenance == before[2]
+
+
 @pytest.mark.vtu
 def test_vtu_load():
     # The real export this loader was written for: the 2D channel-past-a-cylinder

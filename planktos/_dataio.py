@@ -1185,15 +1185,11 @@ def read_2DEulerian_Data_From_vtk(path, simNum, strChoice, xy=False):
 
 
 def read_vtu_mesh_velocity(filename):
-    '''Deprecated (see below) - Reads ascii COMSOL velocity data in a vtu or 
-    equivalent text file. It is assumed that the data is on a regular grid. 
-    Currently, there is no support for multiple time points, so the file must 
-    contain data from only a single time.
+    '''Read COMSOL's text grid export: velocity on a regular grid, at one time.
 
-    This is a work-around for a weird vtu ascii file that COMSOL was spitting 
-    out. VTU is supposed to be a VTK XML file extension, which should be 
-    readable using a vtk.vtkXMLUnstructuredGridReader object, but it dies 
-    immediately because the vtu I've got isn't xml at all.
+    COMSOL can write this export with a .vtu extension, though it is plain
+    text, not VTK XML. A NaN velocity, at a grid point outside the COMSOL
+    geometry, is read as 0.0.
 
     Parameters
     ----------

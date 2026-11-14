@@ -1160,6 +1160,36 @@ def test_restore_puts_the_mesh_where_it_was_whichever_loaded_first(tmp_path,
     assert rebuilt._ibmesh_provenance == envir._ibmesh_provenance
 
 
+def test_restore_replays_center_cell_regrid_with_its_arguments(tmp_path):
+    # center_cell_regrid is the one modifier that takes an argument, so its
+    # provenance entry carries it and restore must pass it back.
+    from test_io_loaders import GRID3, _write_comsol_grid
+    path = tmp_path / 'grid.vtu'
+    _write_comsol_grid(path, GRID3[:2])
+    envir = planktos.Environment()
+    envir.read_comsol_vtu_data(str(path))
+    envir.center_cell_regrid(periodic_dim=(True, False))
+    assert envir._fluid_provenance['modified_by'] == [
+        {'modifier': 'center_cell_regrid',
+         'kwargs': {'periodic_dim': [True, False]}}]
+    planktos.Swarm(swarm_size=2, envir=envir, init=np.full((2, 2), 0.5))
+    with envir.record(tmp_path / 'run') as rec:
+        pass
+    run = planktos.load_run(rec.path)
+    try:
+        rebuilt, _ = run.restore()
+    finally:
+        run.close()
+    assert rebuilt.flow.periodic_dim == (True, False)
+    np.testing.assert_array_equal(rebuilt.L, envir.L)
+    np.testing.assert_array_equal(rebuilt.flow.fluid_domain_LLC,
+                                  envir.flow.fluid_domain_LLC)
+    for d in range(2):
+        np.testing.assert_array_equal(rebuilt.flow.flow_points[d],
+                                      envir.flow.flow_points[d])
+        np.testing.assert_array_equal(rebuilt.flow[d], envir.flow[d])
+
+
 def test_restore_reflattens_an_stl_loaded_before_a_2d_fluid(tmp_path):
     # The mesh is 3D until the fluid arrives and flattens it, so the restore
     # has to replay the three calls in the order they were made.

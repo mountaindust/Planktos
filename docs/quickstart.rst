@@ -182,7 +182,8 @@ Currently, Planktos has built-in capabilities to load either time-independent or
 time-dependent 2D or 3D fluid velocity data specified on a rectilinear grid. It
 reads legacy VTK as written by IB2d and IBAMR, OpenFOAM's VTK exports
 (``foamToVTK``), VTK XML image and rectilinear-grid series (``.vti``/``.vtr``,
-with or without a ParaView ``.pvd`` index), COMSOL ``.vtu`` exports, and NetCDF.
+with or without a ParaView ``.pvd`` index), COMSOL exports (VTK XML ``.vtu``, or
+COMSOL's text grid format), and NetCDF.
 A few analytical 1D flow fields are also available and can be
 generated in either 2D or 3D environments; these include Brinkman flow, two layer
 channel flow, and canopy flow. A periodic domain can also be tiled, with its

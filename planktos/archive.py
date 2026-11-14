@@ -1033,9 +1033,12 @@ class RunArchive:
         '''Re-run, in order, the modifiers recorded against one loader call.'''
 
         # Every modifier in Planktos is deterministic given the loaded data and
-        #   takes no arguments, so replaying by name reproduces the result.
-        for name in record.get('modified_by') or []:
-            getattr(envir, name)()
+        #   its arguments. One that takes none is recorded by name alone.
+        for entry in record.get('modified_by') or []:
+            if isinstance(entry, str):
+                getattr(envir, entry)()
+            else:
+                getattr(envir, entry['modifier'])(**entry['kwargs'])
 
 
     def _restore_swarm(self, envir, index, history, capture, at_capture):
