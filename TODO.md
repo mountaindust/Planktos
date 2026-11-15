@@ -48,6 +48,13 @@ Priority key: 🔴 do first · 🟡 next · 🟢 later · ⚪ deferred / low pri
 
 ## Open 🟡
 
+- **2D info block runs off the right edge.** The "% remain / Info" text in 2D
+  `Swarm.plot` and `plot_all` is left-aligned at figure x = 0.77, the left edge of
+  the vertical histogram, so its last line clips (seen in a 900×1200 `plot_all`
+  movie: "Agent |v|: 4 ± 1.9 m…"). Shift it left into the empty space beside the
+  horizontal histogram; the histogram stays put. It's a 2D-path fix, which
+  `master` can take directly.
+
 - **The 2D sea-fan dataset** (`tests/data/openfoam2D/`). Two questions for the
   collaborator, neither blocking a read, both changing what a study on it means:
   1. The export is a cropped core window — ±20 mm of an OpenFOAM domain of
