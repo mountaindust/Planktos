@@ -55,6 +55,13 @@ Priority key: 🔴 do first · 🟡 next · 🟢 later · ⚪ deferred / low pri
   horizontal histogram; the histogram stays put. It's a 2D-path fix, which
   `master` can take directly.
 
+- **Movie file size.** Suspected needlessly large for what they show: flat-colour
+  plots of points and lines. `plot_all` passes no codec or quality settings to
+  `animation.FFMpegWriter` (`_swarm.py`, `movie_filename` branch; `dpi=150`), so
+  the encoding is whatever matplotlib and ffmpeg default to. Look into whether
+  tuned settings (e.g. libx264 CRF/preset/tune) shrink the files with no visible
+  loss, and apply the answer to the vtk movie writer too.
+
 - **The 2D sea-fan dataset** (`tests/data/openfoam2D/`). Two questions for the
   collaborator, neither blocking a read, both changing what a study on it means:
   1. The export is a cropped core window — ±20 mm of an OpenFOAM domain of
