@@ -41,8 +41,8 @@ number and the changelog** — these are easy to forget. Be proactive about it:
   `changelog.txt` entry is shipped history: leave it alone, on every branch. If a
   branch's `__version__` equals the newest tag, the next user-facing change landing
   there needs a bump first — surface it.
-- *(As of 2026-11-14: the newest release is `1.1.0`; the next version number is not
-  yet chosen.)*
+- *(As of 2026-11-18: the newest release is `1.1.0`; `master` is preparing `1.1.1`,
+  and the version `vtk` will release as is not yet chosen.)*
 - **A fix made on the development branch goes under the development version in
   `changelog.txt`,** since the released ones are closed — including a fix `master`
   would also need.
@@ -132,6 +132,13 @@ Biology* 84(72). Docs: https://planktos.readthedocs.io
 
 ## Branch context (read this first)
 
+- **v1.1.1 bug-fix release, on `master`** *(as of 2026-11-18; delete this entry once
+  `v1.1.1` is tagged)*. Validation for the moving-boundary paper found bugs in the 2D
+  moving-mesh collision path (`_ibc._project_and_slide_moving`,
+  `_geom.seg_intersect_2D_multilinear_poly`). **The bug report and fix plan is
+  `../planktos2_revisions/v1.1.1_bug_report.md`** (outside this repository); read it
+  before working on these fixes. v1.1.1 is fixes only: feature work stays on `vtk`,
+  and `master` is merged into `vtk` afterwards.
 - **`vtk`** — *(as of 2026-11-14)* **the development branch. You are usually here.**
   Its work: **move 3D plotting from matplotlib to vtk**, through PyVista (already a
   required dependency), unlocking 3D visualization

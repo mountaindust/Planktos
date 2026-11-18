@@ -305,13 +305,11 @@ def apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
             # Vector for agent travel
             vec = endpt - startpt
 
-            # Get the relative position of intersection within the mesh element.
-            # x lies on the segment, so either component gives the same s_I; pick
-            # the axis with the largest extent to avoid a 0/0 when the element is
-            # vertical or horizontal (a plain max() would return the NaN).
+            # Get the relative position of intersection within the mesh element:
+            #   the signed projection of x-Q0 onto the element, defined for any
+            #   nonzero element whatever its orientation.
             dQ = Q1 - Q0
-            ax = np.argmax(np.abs(dQ))
-            s_I = (x[ax]-Q0[ax])/dQ[ax]
+            s_I = np.dot(x-Q0, dQ)/np.dot(dQ, dQ)
             # idx is always a real index here. _geom reports a None index only
             #   for the single-element form of its input, where the element
             #   arrives as bare 1D arrays and there is nothing to index; the
@@ -968,8 +966,9 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
     #   hit the element. Base this off of location of mesh and agent a small
     #   time before intersection.
     agent_prev_loc = startpt + vec*(t_I-0.00001)
-    # Barycentric position of intersection on mesh element from Q0
-    s_I = (x.sum()-Q0.sum())/Q_tI.sum()
+    # Barycentric position of intersection on mesh element from Q0: the signed
+    #   projection of x-Q0 onto the element, defined for any nonzero element.
+    s_I = np.dot(x-Q0, Q_tI)/np.dot(Q_tI, Q_tI)
     x_prev_loc = s_I*Qvec(t_I-0.00001) + Q0_t(t_I-0.00001)
     dir_vec = agent_prev_loc-x_prev_loc
     Q_tI_orth = np.array([Q_tI[1],-Q_tI[0]])

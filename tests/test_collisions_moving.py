@@ -15,6 +15,7 @@ slider's critical times, final section). Most cases here use a *moving agent*
 '''
 
 import sys
+import warnings
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -133,6 +134,35 @@ def test_sticky_moving_axis_aligned_wall_stops_on_wall(orient):
     assert idx is not None
     assert newend[axis] <= 6.0 + POS_ATOL, "penetrated past the wall's final position"
     assert np.allclose(newend, expected, atol=POS_ATOL)
+
+
+@pytest.mark.parametrize('ib', ['sticky', 'sliding'])
+@pytest.mark.parametrize('motion', ['stationary', 'translating'])
+def test_anti_diagonal_moving_element_returns_on_the_near_side(motion, ib):
+    '''An element exactly parallel to (1,-1) made the slider's contact parameter
+    0/0, and the NaN sent solve_ivp into a loop that never returned, for a
+    stationary moving mesh as much as a moving one.
+
+    The element runs (4,6)-(6,4), on the line x+y=10, and the agent comes from
+    (3,3), where x+y=6. A stationary moving mesh must give the static answer.
+    '''
+    start_mesh = h.segment((4.0, 6.0), (6.0, 4.0))
+    shift = 0.5 if motion == 'translating' else 0.0
+    end_mesh = start_mesh + shift
+    start = np.array([3.0, 3.0]); end = np.array([7.0, 7.5])
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', RuntimeWarning)
+        newend, dx, idx = h.call_moving(start, end, start_mesh, end_mesh, ib)
+
+    h.assert_finite(newend, 'agent on an anti-diagonal element')
+    assert idx == 0
+    line = 10.0 + 2*shift          # the element's final line is x+y = line
+    assert newend.sum() < line, f'agent ended on the far side: {newend}'
+    if motion == 'stationary' and ib == 'sliding':
+        static_end = h.call_static(start, end, start_mesh, ib)[0]
+        assert np.allclose(newend, static_end, rtol=0, atol=1e-10), \
+            f'moving {newend} != static {static_end}'
 
 
 @pytest.mark.parametrize('ib', ['sticky', 'sliding'])
