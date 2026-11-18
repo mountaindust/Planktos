@@ -217,6 +217,51 @@ def test_moving_slide_off_free_end_resumes_original_trajectory():
     h.assert_displacement_bounded_moving(start, end, newend, start_mesh, end_mesh)
 
 
+def test_slide_path_stays_on_the_element_line_past_its_first_vertex(monkeypatch):
+    '''The slider integrates the agent's path along a moving element with
+    solve_ivp, and evaluates that path past the element's ends (the end-of-step
+    position, the run-off time solve). The path must stay on the element's line
+    there too. The ODE used |s| for the barycentric coordinate s, which has the
+    wrong sign once the agent passes Q0 and carried the path up to 0.63 off the
+    line on a turning, stretching element.
+
+    The element turns and stretches from (5,5)-(6,5.2) at contact (t_I=0.1) to
+    (5.3,5.4)-(6.1,6.3) at t=1. The agent meets it at s=0.25 travelling
+    vec=(-1.5,0.3) and slides past Q0 at t~0.24. Every solve_ivp call the slider
+    makes is recorded and its endpoint checked against the element at that time.
+    '''
+    t_I = 0.1
+    Q0, Q1 = np.array([5.0, 5.0]), np.array([6.0, 5.2])
+    Q0_end, Q1_end = np.array([5.3, 5.4]), np.array([6.1, 6.3])
+    vec = np.array([-1.5, 0.3])
+    contact = Q0 + 0.25*(Q1 - Q0)
+    start = contact - t_I*vec; end = start + vec
+    at = lambda A, B, t: A + (B - A)*(t - t_I)/(1 - t_I)  # vertex at time t
+    start_mesh = np.array([[at(Q0, Q0_end, 0.0), at(Q1, Q1_end, 0.0)]])
+    end_mesh = np.array([[Q0_end, Q1_end]])
+
+    from scipy import integrate
+    real_solve_ivp = integrate.solve_ivp
+    ends = []
+    def recording_solve_ivp(fun, t_span, y0, **kwargs):
+        sol = real_solve_ivp(fun, t_span, y0, **kwargs)
+        ends.append((sol.t[-1], sol.y[:, -1]))
+        return sol
+    monkeypatch.setattr(_ibc.integrate, 'solve_ivp', recording_solve_ivp)
+
+    h.call_moving(start, end, start_mesh, end_mesh, 'sliding')
+
+    assert ends, 'the slider made no solve_ivp calls; this test needs rewriting'
+    s_min = np.inf
+    for t, x in ends:
+        A, B = at(Q0, Q0_end, t), at(Q1, Q1_end, t)
+        s_min = min(s_min, np.dot(x - A, B - A)/np.dot(B - A, B - A))
+        off_line = abs(h.signed_perp_dist_2D(x, A, B))
+        assert off_line < 1e-6, \
+            f'slide path is {off_line:.1e} off the element line at t={t:.4f}'
+    assert s_min < -0.1, 'the recorded path never went well past Q0'
+
+
 # --------------------------------------------------------------------------- #
 #          the boundary turning out from under the agent (release branch)     #
 # --------------------------------------------------------------------------- #

@@ -1,6 +1,7 @@
 1.1.1
 -----------------------
 - Bug fix: sliding on a moving mesh hung on an element exactly parallel to (1,-1).
+- Bug fix: sliding on a turning moving element could leave an agent off it, even on its far side.
 
 1.1.0
 -----------------------

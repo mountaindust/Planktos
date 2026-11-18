@@ -24,32 +24,30 @@ $$\frac{d\mathbf{x}_{agent\ \parallel\ \mathbf{Q}}}{dt} =
 
 Consider the change in a position $\mathbf{x}$ along a mesh element due only to 
 movement in the mesh element. $\mathbf{x}(t)$ can be parameterized as above via 
-$$\mathbf{x}(t) = \mathbf{Q}_0(t) + s(t)\mathbf{Q}(t),$$ 
+$\mathbf{x}(t) = \mathbf{Q}_0(t) + s(t)\mathbf{Q}(t),$ 
 so
 $$\frac{d\mathbf{x}_{elem}}{dt} = \frac{d\mathbf{Q}_0}{dt} 
 + s(t)\frac{d\mathbf{Q}}{dt} + \frac{ds}{dt}\mathbf{Q}(t).$$
-$s(t)$ can be found by solving the linearly dependent system of equations above.
-To avoid situations where $\mathbf{Q}(t)$ may be zero in one dimension, the 
-solution can be written as
-$$s(t) = \frac{||\mathbf{x}(t)-\mathbf{Q}_0(t)||}{||\mathbf{Q}(t)||}$$
-since $s(t)$ is a non-negative scalar function. One can also leverage the linear 
-dependence of the system to avoid that case - in particular, it is worth noting 
-that $s(t)$ is therefore linear in $\mathbf{x}$, 
-but it is more verbose in notation. Note that the $ds/dt$ term will disappear 
-when we project onto a direction perpendicular to $\mathbf{Q}(t)$.
+$s(t)$ is the signed coordinate of $\mathbf{x}$ along the element, found by 
+projecting $\mathbf{x}-\mathbf{Q}_0$ onto $\mathbf{Q}$:
+$$s(t) = \frac{(\mathbf{x}(t)-\mathbf{Q}_0(t))\cdot\mathbf{Q}(t)}{||\mathbf{Q}(t)||^2}.$$
+This is defined whatever the orientation of the element and is linear in 
+$\mathbf{x}$. It is 0 at $\mathbf{Q}_0$ and 1 at $\mathbf{Q}_1$, negative past 
+$\mathbf{Q}_0$ and greater than 1 past $\mathbf{Q}_1$. The sign matters because 
+the path is also evaluated past the ends of the element, when finding where the 
+agent leaves it. Note that the $ds/dt$ term will disappear when we project onto 
+a direction perpendicular to $\mathbf{Q}(t)$.
 
 Now let $\mathbf{Q}_\perp(t)$ be a vector orthogonal to $\mathbf{Q}(t)$. Then
 $$\frac{d\mathbf{x}_{elem\ \perp\ \mathbf{Q}}}{dt} =
 \frac{\mathbf{Q}_\perp(t)\left[\mathbf{Q}_\perp(t)\cdot\left(
-    \frac{d\mathbf{Q}_0}{dt}+\frac{d\mathbf{Q}}{dt}
-    \frac{||\mathbf{x}(t)-\mathbf{Q}_0(t)||}{||\mathbf{Q}(t)||}
+    \frac{d\mathbf{Q}_0}{dt}+s(t)\frac{d\mathbf{Q}}{dt}
     \right)\right]}{||\mathbf{Q}_\perp(t)||^2},$$
 so
 $$\frac{d\mathbf{x}}{dt} = 
 \frac{\mathbf{Q}(t)(\mathbf{Q}(t)\cdot\mathbf{v})}{||\mathbf{Q}(t)||^2} +
 \frac{\mathbf{Q}_\perp(t)\left[\mathbf{Q}_\perp(t)\cdot\left(
-    \frac{d\mathbf{Q}_0}{dt}+\frac{d\mathbf{Q}}{dt}
-    \frac{||\mathbf{x}(t)-\mathbf{Q}_0(t)||}{||\mathbf{Q}(t)||}
+    \frac{d\mathbf{Q}_0}{dt}+s(t)\frac{d\mathbf{Q}}{dt}
     \right)\right]}{||\mathbf{Q}_\perp(t)||^2}.$$
 This is reducible to a nonautonomous, linear equation in $\mathbf{x}$ with 
 continuous coefficients. A unique solution exists. Rather than formulate the 

@@ -961,6 +961,9 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
     Q_end = mesh_end[idx,1,:] - mesh_end[idx,0,:] # same but at t=1
     Qvec = lambda t: ((1-t)*Q_tI+(t-t_I)*Q_end)/(1-t_I) # same but as func of t
     Q0_t = lambda t: ((1-t)*Q0+(t-t_I)*mesh_end[idx,0,:])/(1-t_I) # interp of Q0
+    # Signed barycentric coordinate of point x along the element at time t:
+    #   0 at Q0, 1 at Q1, negative past Q0 and greater than 1 past Q1.
+    s_of = lambda t, x: np.dot(x-Q0_t(t), Qvec(t))/np.dot(Qvec(t), Qvec(t))
 
     # Find direction indicator for which side of the mesh element the agent 
     #   hit the element. Base this off of location of mesh and agent a small
@@ -992,14 +995,15 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
     #   dx/dt due to mesh element movement projected onto direction Qperp.
     # dx/dt due to mesh element is given by 
     #   dx/dt = dQ0/dt + dQvec/dt*s(t) + Qvec*ds/dt where s(T) is the 
-    #   Berycentric coordinate of x(t) on the mesh element,
-    #   s(t) = ||x(t)-Q0(t)||/||Qvec(t)||. The third term in dx/dt can be 
-    #   neglected because the dot product of Qvec and Qperp is zero.
+    #   barycentric coordinate of x(t) on the mesh element,
+    #   s(t) = (x(t)-Q0(t)).Qvec(t)/||Qvec(t)||**2 (s_of above). The third term
+    #   in dx/dt can be neglected because the dot product of Qvec and Qperp is
+    #   zero.
 
     # Derivative of agent movement
     def x_DE(t,x):
         return Qvec(t)*np.dot(vec,Qvec(t))/np.dot(Qvec(t),Qvec(t)) +\
-        Qperp(t)*np.dot(Q0_d + Qvec_d*np.linalg.norm(x-Q0_t(t))/np.linalg.norm(Qvec(t)),
+        Qperp(t)*np.dot(Q0_d + Qvec_d*s_of(t,x),
                         Qperp(t))/np.dot(Qperp(t),Qperp(t))
     
     # Solve for position at time t
@@ -1131,16 +1135,14 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
         t_end = 1
 
     vec_Q_perp = np.dot(vec,Qperp(t_end))/np.dot(Qperp(t_end),Qperp(t_end))
-    x_Q_perp = np.dot(Q0_d + Qvec_d*np.linalg.norm(proj_to_pt(t_end)-Q0_t(t_end))
-                    /np.linalg.norm(Qvec(t_end)),
+    x_Q_perp = np.dot(Q0_d + Qvec_d*s_of(t_end, proj_to_pt(t_end)),
                     Qperp(t_end))/np.dot(Qperp(t_end),Qperp(t_end))
     rotated_past_bool = x_Q_perp > vec_Q_perp
     
     if rotated_past_bool:
         # Determine when the velocity magnitudes in the ortho direction 
         #   matched. This is a root finding problem.
-        spd_diff = lambda t: np.dot(Q0_d + 
-            Qvec_d*np.linalg.norm(proj_to_pt(t)-Q0_t(t))/np.linalg.norm(Qvec(t)),
+        spd_diff = lambda t: np.dot(Q0_d + Qvec_d*s_of(t, proj_to_pt(t)),
             Qperp(t))/np.dot(Qperp(t),Qperp(t)) -\
             np.dot(vec,Qperp(t))/np.dot(Qperp(t),Qperp(t))
         
