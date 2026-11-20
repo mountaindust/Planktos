@@ -61,46 +61,63 @@ two speeds in the direction orthogonal to the mesh element. If there is a sign
 change during the time step, the time of separation can be solved for using a 
 bracketed root-finding algorithm. We use Brent's method as implemented by scipy.
 
-For the second case detection, the situation is complicated. $\mathbf{x}(t)$ can 
-intersect $\mathbf{Q}_0$ or $\mathbf{Q}_1$ at most twice because it can change 
-direction once on the mesh element, and also because 
-$||\mathbf{Q}_1(t)-\mathbf{Q}_0(t)||^2$ is quadratic and concave up, so it could 
-shrink and then grow again. In a really pathological case, $x(t)$ could move off 
-of one edge, come back on the mesh element, and then move off the other edge. 
-It's probably impossible to move off the same edge twice and then come back on... 
-but anyway, we only need to find the first time any of this happens.
+For the second case, measure the agent's place along the element by its signed 
+distance from $\mathbf{Q}_0$. Multiplying the definition of $s(t)$ by 
+$||\mathbf{Q}(t)||$ gives
+$$\sigma(t) = s(t)||\mathbf{Q}(t)|| = 
+\frac{(\mathbf{x}(t)-\mathbf{Q}_0(t))\cdot\mathbf{Q}(t)}{||\mathbf{Q}(t)||} = 
+(\mathbf{x}(t)-\mathbf{Q}_0(t))\cdot\frac{\mathbf{Q}(t)}{||\mathbf{Q}(t)||},$$
+the scalar projection of $\mathbf{x}-\mathbf{Q}_0$ onto the unit vector along the 
+element. Where $s$ measures position as a fraction of the element's length, 
+$\sigma$ measures it in units of length. Measure the agent's place relative to 
+the other end by its signed distance past $\mathbf{Q}_1$, 
+$h(t) = \sigma(t)-||\mathbf{Q}(t)||$. 
+The agent is off the element when $\sigma<0$ or $h>0$. Projecting the equation 
+for $d\mathbf{x}/dt$ onto $\mathbf{Q}$, and using that $\mathbf{x}-\mathbf{Q}_0$ 
+is parallel to $\mathbf{Q}$ (so the derivative of $\mathbf{Q}/||\mathbf{Q}||$ 
+does not contribute), gives
+$$\frac{d\sigma}{dt} = \frac{\mathbf{Q}(t)\cdot\left(\mathbf{v}-
+    \frac{d\mathbf{Q}_0}{dt}\right)}{||\mathbf{Q}(t)||}, \qquad
+\frac{dh}{dt} = \frac{\mathbf{Q}(t)\cdot\left(\mathbf{v}-
+    \frac{d\mathbf{Q}_1}{dt}\right)}{||\mathbf{Q}(t)||}.$$
+Along the element, then, the agent moves relative to the endpoint in question, 
+not with its own velocity $\mathbf{v}$.
 
 The agent meets the element at the time of intersection $t_I$, so detection 
 concerns $t\in[t_I,1]$. Let $u = (t-t_I)/(1-t_I)$, which runs from 0 to 1 over 
 that interval. The endpoints of the element move linearly in time, so 
-$\mathbf{Q}$ is the linear interpolation
+$d\mathbf{Q}_0/dt$ and $d\mathbf{Q}_1/dt$ are constant and $\mathbf{Q}$ is the 
+linear interpolation
 $$\mathbf{Q}(u) = (1-u)\mathbf{Q}_{t_I} + u\mathbf{Q}_{end},$$
 where $\mathbf{Q}_{t_I}$ and $\mathbf{Q}_{end}$ are the element vectors at 
-$t=t_I$ and $t=1$. Then $||\mathbf{Q}(u)||^2$ is a quadratic in $u$ opening 
-upward, with its minimum where its derivative vanishes:
-$$u^* = \frac{\mathbf{Q}_{t_I}\cdot(\mathbf{Q}_{t_I}-\mathbf{Q}_{end})}
-    {||\mathbf{Q}_{t_I}-\mathbf{Q}_{end}||^2}.$$
-If $x(t)$ changes direction, it does so when 
-$$\frac{d\mathbf{x}_{agent\ \parallel\ \mathbf{Q}}}{dt}=0 \implies
-\mathbf{Q}(u)\cdot\mathbf{v}=0,$$
-which is linear in $u$ and so occurs at
-$$u^{**} = \frac{\mathbf{Q}_{t_I}\cdot\mathbf{v}}
-    {(\mathbf{Q}_{t_I}-\mathbf{Q}_{end})\cdot\mathbf{v}}.$$
-Each maps back to time by $t = t_I + u(1-t_I)$.
+$t=t_I$ and $t=1$. Each numerator above therefore has the form 
+$\mathbf{Q}(u)\cdot\mathbf{w}$, where $\mathbf{w}$ is 
+$\mathbf{v}-d\mathbf{Q}_0/dt$ for $\sigma$ and $\mathbf{v}-d\mathbf{Q}_1/dt$ for 
+$h$. Both are constant over the step, since $\mathbf{v}$ is the agent's movement 
+for the step and the endpoint velocities are constant. Expanding,
+$$\mathbf{Q}(u)\cdot\mathbf{w} = (1-u)\,\mathbf{Q}_{t_I}\cdot\mathbf{w} + 
+u\,\mathbf{Q}_{end}\cdot\mathbf{w} = \mathbf{Q}_{t_I}\cdot\mathbf{w} - 
+u\,(\mathbf{Q}_{t_I}-\mathbf{Q}_{end})\cdot\mathbf{w},$$
+which is linear in $u$. If $(\mathbf{Q}_{t_I}-\mathbf{Q}_{end})\cdot\mathbf{w} = 0$ 
+it is constant and does not change sign. Otherwise it vanishes exactly once, at
+$$u^* = \frac{\mathbf{Q}_{t_I}\cdot\mathbf{w}}
+    {(\mathbf{Q}_{t_I}-\mathbf{Q}_{end})\cdot\mathbf{w}},$$
+and changes sign there. Only a root with $0<u^*<1$ lies within the step; it is 
+mapped back to time by $t = t_I + u^*(1-t_I)$.
 
-The implementation checks for an excursion past an endpoint at these two 
-critical times (where they lie strictly between $t_I$ and 1) and at $t=1$. This 
-is a sampling heuristic rather than a complete test: the excursion is the 
-interval on which the agent's position along the element leaves $[0,1]$, and an 
-excursion that begins and ends between the sampled times is missed (issue #73). 
-The cost is accuracy only. The agent is carried along the element's line through 
-the missed excursion instead of being released at the endpoint, so it never 
-crosses the element.
+Since $||\mathbf{Q}||>0$, each derivative has the sign of its numerator, so it 
+changes sign at most once on $[t_I,1]$, at its own $u^*$. $\sigma$ and $h$ are 
+therefore each unimodal on $[t_I,1]$: the minimum of $\sigma$ and the maximum of 
+$h$ lie at $t_I$, at $t=1$, or at their own $u^*$. The agent starts on the 
+element, so sampling $\sigma$ and $h$ at $t=1$ and at those critical times detects every excursion past either end, 
+including one that begins and ends within the step.
 
-Then, actually finding $t$ is a nonlinear least squares minimization problem 
-(this avoids numerical issues versus a root finding algorithm on the difference 
-between $x(t)$ and $\mathbf{Q}_0$ or $\mathbf{Q}_1$), and we solve it with 
-scipy's `least_squares` using the "dogbox" method: a dogleg algorithm with 
-rectangular trust regions, which keeps $t$ within the bounds $[t_I,1]$. It makes 
-use of the Jacobian of the residual function, here simply 
-$\frac{d\mathbf{x}}{dt}-\frac{d\mathbf{Q}}{dt}$.
+Unimodality also makes the set of times past a given end a single interval. 
+When a sample $t_s$ is past an end, the time the agent leaves that end is the 
+only root of $\sigma$ (or $h$) between $t_s$ and the last time before it at which 
+the agent is on the element: $t_I$, or the critical time when $\sigma$ (or $h$) 
+first moves away from that end to an extreme there. That bracket is solved with 
+Brent's method. If the agent goes past both ends during the step, it leaves at 
+whichever it reaches first. Each evaluation of $\sigma$ integrates 
+$d\mathbf{x}/dt$ from $t_I$, so $\sigma$ is computed from the same path as the 
+agent's position.

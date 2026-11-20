@@ -444,15 +444,14 @@ def test_contact_at_the_very_end_of_the_step_just_backs_off():
 
 
 # --------------------------------------------------------------------------- #
-#              the travel reversal as the binding critical time               #
+#        the agent's motion along a turning element reversing mid-step        #
 # --------------------------------------------------------------------------- #
-# The slider re-checks two critical times when an agent is still on its element
-# at the end of the step: the element's shortest moment, and where the agent's
-# direction of travel along it reverses. The reversal is the binding one when it
-# comes first, which needs the element to turn through the perpendicular to the
-# agent's travel -- something no translating or gently tilting wall does.
+# Along the element, a sliding agent moves relative to each of its ends, and
+# the slider samples the step where that relative motion reverses. A reversal
+# needs the element to turn through the perpendicular to the agent's motion
+# relative to that end -- something no translating or stretching wall does.
 
-def test_travel_reversal_can_be_the_binding_critical_time():
+def test_slide_reversing_along_a_turning_element_obeys_the_invariants():
     '''An element pivoting from 60 to 120 degrees while the agent travels
     straight in +x. Its projection onto the agent's travel goes from +2 to -2,
     so the direction of sliding reverses partway through the step.
@@ -482,6 +481,88 @@ def test_travel_reversal_can_be_the_binding_critical_time():
     moved, _, _ = h.call_moving(T(start), T(end), T(m0), T(m1))
     assert np.allclose(np.asarray(moved, float), T(newend), atol=1e-5), \
         f'rotated problem gave {np.asarray(moved)}, expected {T(newend)}'
+
+
+# --------------------------------------------------------------------------- #
+#             running off an element's end partway through a step             #
+# --------------------------------------------------------------------------- #
+# Each case is one moving element, where the agent runs off an end during the
+# step; the answer is h.moving_slide_model's slide-then-fly end point, from an
+# independent quadrature. Two kinds of defect are pinned:
+#   - transient run-offs, where the agent is back over the element by the end
+#     of the step. The slider kept the agent on the element: it sampled the
+#     step at the element's shortest moment and where vec.Qvec = 0, which are
+#     not where the agent's motion relative to Q0 or Q1 reverses, and only the
+#     earlier of the two (issue #73).
+#   - run-offs after the agent's motion relative to the crossed end reverses.
+#     The run-off time solve was a least-squares minimization started at the
+#     contact time, which stopped there at once; the agent was moved to the end
+#     and re-contacted it, recursing until it ran out of stack.
+#   - a step that runs off both ends, where the agent must leave by the end it
+#     reaches first. The slider chose the end farther from its end-of-step
+#     point, here the later one.
+# A contact exactly at a vertex, with the agent already moving off it, is also
+# pinned: the run-off time is then the contact time itself, with no root to
+# solve for.
+
+RUN_OFF_CASES = {
+    'transient, both old sample times wrong': (
+        [5.48185439396559, 5.001240562879473],
+        [5.598187591919126, 5.610750737676608],
+        [[[5.0398356934162765, 5.058643828567173],
+          [5.415451946499984, 5.417722055189501]]],
+        [[[5.117062128881987, 4.842300607273068],
+          [5.817834779007834, 4.6502040287223805]]]),
+    'transient, only the later old sample time catches it': (
+        [4.463249093224856, 5.0744359179837115],
+        [1.542662452452522, 5.130766085533219],
+        [[[4.539208075023466, 3.9443111210621273],
+          [4.329561298306154, 5.315113757418108]]],
+        [[[4.024687079163556, 2.9357957068718967],
+          [5.4204924717743825, 4.119646023622436]]]),
+    'reverses then runs off Q1, rigid 3.1 degree turn': (
+        [3.4252301424372082, 4.622599411711805],
+        [4.0983468559399725, 3.947551458443008],
+        [[[4.685755540150286, 5.410270389837448],
+          [3.4906651282976564, 4.5212653118299375]]],
+        [[[4.82376811322203, 5.432219103512595],
+          [3.678130526138604, 4.480333795144568]]]),
+    'reverses then runs off Q0, 65 degree turn': (
+        [4.688406805068963, 4.995292070648784],
+        [2.6055203765254804, 4.968031204470195],
+        [[[4.530374351297982, 4.968744788511176],
+          [4.074155801961116, 6.264388876165749]]],
+        [[[3.325910163742835, 4.865267316598745],
+          [3.8512627443514815, 5.387254206990081]]]),
+    'off both ends, Q1 first': (
+        [4.826423222611346, 4.385226862581428],
+        [4.794782640408741, 6.21269981988177],
+        [[[4.053266714317672, 4.414190883687158],
+          [5.097908469741366, 5.202621738878933]]],
+        [[[4.708819406616773, 5.116342195930927],
+          [4.394707548386113, 4.127231539847764]]]),
+    'contact exactly at Q1, already moving off it': (
+        [4.30445549857448, 5.166167770634335],
+        [4.9970020645442705, 3.920441454835467],
+        [[[4.344301001588161, 5.712872226220766],
+          [4.491848629868264, 4.493927668390766]]],
+        [[[5.0165878433753495, 5.2883380843279575],
+          [4.736261846071658, 4.8558014112804315]]]),
+}
+
+
+@pytest.mark.parametrize('case', RUN_OFF_CASES)
+def test_run_off_during_the_step_matches_the_slide_model(case):
+    start, end, start_mesh, end_mesh = map(np.array, RUN_OFF_CASES[case])
+    model = h.moving_slide_model(start, end, start_mesh, end_mesh)
+    assert model['released'] and model['why'] == 'end', \
+        'the case no longer runs off an end; it has stopped testing anything'
+
+    newend, dx, idx = h.call_moving(start, end, start_mesh, end_mesh)
+
+    assert idx == 0
+    assert np.allclose(newend, model['final'], rtol=0, atol=1e-5), \
+        f"slider ended at {newend}, model at {model['final']}"
 
 
 # --------------------------------------------------------------------------- #
@@ -589,10 +670,10 @@ def test_moving_golden_trajectory_is_deterministic():
 # --------------------------------------------------------------------------- #
 #        frame independence of the slide (regression: BUG-TCRIT)              #
 # --------------------------------------------------------------------------- #
-# When the end-of-step check does not find that a sliding agent ran off the end
-# of its element, _project_and_slide_moving refines the verdict at two critical
-# times during the step: where the element's interpolated length is stationary,
-# and where the agent's direction of travel along it reverses.
+# _project_and_slide_moving checks for a run-off during the step at critical
+# times computed from the element's vectors at contact and at the end of the
+# step. At the time of this defect the times were where the element's
+# interpolated length is stationary and where vec.Qvec = 0.
 #
 # Both were computed wrongly (BUG-TCRIT, now fixed). The length-minimum time was
 # written with a bare vector of ones standing in for Q_tI, which cannot appear in

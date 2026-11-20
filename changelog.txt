@@ -1,7 +1,8 @@
 1.1.1
 -----------------------
 - Bug fix: sliding on a moving mesh hung on an element exactly parallel to (1,-1).
-- Bug fix: sliding on a turning moving element could leave an agent off it, even on its far side.
+- Bug fix: sliding on a turning moving element missed some brief run-offs past its ends, and could end off it, even on its far side.
+- Bug fix: an agent reversing along a turning moving element could stop the run with 'Ran out of stack'.
 
 1.1.0
 -----------------------

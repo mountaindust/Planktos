@@ -22,8 +22,9 @@ used by the unit tests, chosen comfortably larger than that back-off.
 '''
 
 import numpy as np
+from scipy.integrate import cumulative_trapezoid
 import planktos
-from planktos import _ibc
+from planktos import _geom, _ibc
 
 
 # Position tolerance for asserting exact post-collision locations. Larger than the
@@ -167,8 +168,8 @@ def pivoting_segment(center, length, theta_start, theta_end):
     Note that the collision code interpolates the mesh *linearly* between the two
     snapshots, so the element does not trace a true rotation in between: it also
     contracts to a chord and re-extends. That is inherent to the moving-mesh
-    model, and it is the reason the slider carries critical-time machinery for
-    the element's length and travel direction at all.
+    model. The turning is what can reverse an agent's motion along the element,
+    relative to either end, partway through a step.
     '''
     center = np.asarray(center, dtype=float)
     half = length/2
@@ -304,6 +305,59 @@ def call_moving(start, end, start_mesh, end_mesh, ib_collisions='sliding'):
     return _ibc.apply_internal_moving_BC(
         np.asarray(start, float), np.asarray(end, float),
         start_mesh, end_mesh, mmd, max_mov, ib_collisions=ib_collisions)
+
+
+def moving_slide_model(start, end, start_mesh, end_mesh, n=400001, tol=1e-12):
+    '''Model answer for a frictionless slide on a single moving element, computed
+    independently of _ibc: a dense quadrature of the agent's signed distance
+    along the element, sigma, which obeys
+        dsigma/dt = Qvec(t).(vec - dQ0/dt)/|Qvec(t)|.
+    The agent is released at the first time it is off either end (sigma < 0 or
+    sigma > |Qvec|) or the element moves away faster than the agent presses into
+    it, by more than tol, and then flies the rest of vec freely. tol absorbs the
+    roundoff of a contact exactly at a vertex. Re-contact after the release is
+    not modelled; choose cases where none happens.
+
+    The contact itself comes from _geom.seg_intersect_2D_multilinear_poly.
+    Returns a dict: 'released' (bool); when released, also 't_exit', 'why'
+    ('end' or 'rotate'), 'final', the model end point, and 'transient', whether
+    the agent would be back over the element by the end of the step had it
+    stayed in contact. The crossing time is
+    refined linearly between grid points, so 'final' is accurate to well under
+    1e-6 for unit-scale geometry.
+    '''
+    start = np.asarray(start, float); end = np.asarray(end, float)
+    sm = np.asarray(start_mesh, float); em = np.asarray(end_mesh, float)
+    x, t_I, Q0, Q1 = _geom.seg_intersect_2D_multilinear_poly(
+        start, end, sm[:, 0], sm[:, 1], em[:, 0], em[:, 1])[:4]
+    vec = end - start
+    Q_tI = Q1 - Q0; Q_end = em[0, 1] - em[0, 0]
+    Q0_d = (em[0, 0] - Q0)/(1 - t_I); Qvec_d = (Q_end - Q_tI)/(1 - t_I)
+    ts = np.linspace(t_I, 1, n)
+    Qs = ((1 - ts)[:, None]*Q_tI + (ts - t_I)[:, None]*Q_end)/(1 - t_I)
+    L = np.linalg.norm(Qs, axis=1)
+    sigma = np.dot(x - Q0, Q_tI)/np.linalg.norm(Q_tI) + cumulative_trapezoid(
+        Qs @ (vec - Q0_d)/L, ts, initial=0)
+    s = sigma/L
+    # Unit normal into the element from the agent's side, from where the agent
+    # was relative to the element at the start of the step.
+    nrm = np.c_[Qs[:, 1], -Qs[:, 0]]/L[:, None]
+    q0_start = sm[0, 0] + s[0]*(sm[0, 1] - sm[0, 0])
+    n_in = -np.sign(np.dot(start - q0_start, nrm[0]))*nrm
+    press = np.einsum('ij,ij->i', vec - (Q0_d + s[:, None]*Qvec_d), n_in)
+    g = np.maximum.reduce([-sigma, sigma - L, -press])  # > 0 once released
+    if not (g > tol).any():
+        return dict(released=False)
+    k = int(np.argmax(g > tol))
+    t_exit = ts[0] if k == 0 else ts[k-1] + (ts[k] - ts[k-1])*g[k-1]/(g[k-1] - g[k])
+    why = 'rotate' if press[k] < 0 and 0 <= sigma[k] <= L[k] else 'end'
+    p = (t_exit - t_I)/(1 - t_I)
+    Q0_e = Q0 + Q0_d*(t_exit - t_I); Q_e = (1 - p)*Q_tI + p*Q_end
+    s_e = np.clip(s[k-1] + (s[k] - s[k-1])*(t_exit - ts[k-1])/(ts[k] - ts[k-1])
+                  if k > 0 else s[0], 0, 1)
+    return dict(released=True, t_exit=t_exit, why=why,
+                final=Q0_e + s_e*Q_e + (1 - t_exit)*vec,
+                transient=bool(0 <= sigma[-1] <= L[-1]))
 
 
 # ----- scenario parameters (changing these invalidates a saved baseline) -----

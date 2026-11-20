@@ -1006,13 +1006,15 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
         Qperp(t)*np.dot(Q0_d + Qvec_d*s_of(t,x),
                         Qperp(t))/np.dot(Qperp(t),Qperp(t))
     
-    # Solve for position at time t
-    proj_to_pt = lambda t: integrate.solve_ivp(x_DE, t_span=(t_I,t), y0=x, 
-                                                rtol=1e-7, atol=1e-12).y[:,-1]
+    # Solve for position at time t. The run-off tests and root solves below
+    #   revisit the same times, so each position is kept once computed.
+    path = {t_I: x}
+    def proj_to_pt(t):
+        if t not in path:
+            path[t] = integrate.solve_ivp(x_DE, t_span=(t_I,t), y0=x,
+                                          rtol=1e-7, atol=1e-12).y[:,-1]
+        return path[t].copy()
 
-    # Derivative as a function of t alone for least squares optimization
-    proj_prime = lambda t: x_DE(t, proj_to_pt(t))
-    
     # integrate to 1 to determine the final sliding location on the mesh element
     slide_pt = proj_to_pt(1)
 
@@ -1029,96 +1031,72 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
     #####             Test for sliding off the end              #####
     ##########                                             ##########
 
-    mesh_el_end_len = np.linalg.norm(Q_end)
-    Q0_crit_dist = np.linalg.norm(slide_pt - mesh_end[idx,0,:])
-    Q1_crit_dist = np.linalg.norm(slide_pt - mesh_end[idx,1,:])
-    # Since we are sliding on the mesh element, if the distance from
-    #   our new location to either of the mesh endpoints is greater
-    #   than the length of the mesh element, we must have gone beyond
-    #   the segment somewhere in the past.
-    went_past_el_bool = (Q0_crit_dist > mesh_el_end_len+EPS) or ( 
-                            Q1_crit_dist > mesh_el_end_len+EPS)
-    
-    # Because mesh elements are linearly interpolated between start and end 
-    #   states, they stretch or contract quadratically. Also, the direction 
-    #   of travel on the mesh element can change at most once. If we haven't
-    #   detected a trip past one of the endpoints already, establish the 
-    #   existence and feasibility of these critical points and check them in 
-    #   addition to the state at the end of the timestep.
+    # The agent's place along the element is measured by sigma, its signed
+    #   distance from Q0 (negative past Q0), and by h = sigma - |Qvec|, its
+    #   signed distance past Q1. Projecting x_DE onto Qvec gives
+    #       dsigma/dt = Qvec(t).(vec - dQ0/dt)/|Qvec(t)|,
+    #       dh/dt     = Qvec(t).(vec - dQ1/dt)/|Qvec(t)|,
+    #   so along the element the agent moves relative to the endpoint in
+    #   question. Both numerators are affine in t and change sign at most
+    #   once, so sigma and h are each unimodal on [t_I,1]: the extremes are at
+    #   t_I, at 1, or at the numerator's root. Sampling sigma and h at those
+    #   times detects every run-off past either end, and the set of times off
+    #   an end is a single interval, so the run-off time is the one root of
+    #   sigma (or h) between its last on-element extreme and a sample off the
+    #   end.
+    Q1_d = Q0_d + Qvec_d
+    sigma_at = lambda t: s_of(t, proj_to_pt(t))*np.linalg.norm(Qvec(t))
+    h_at = lambda t: (s_of(t, proj_to_pt(t)) - 1)*np.linalg.norm(Qvec(t))
 
-    if not went_past_el_bool:
-        # Both critical points are solved for in the normalized parameter
-        #   u = (t-t_I)/(1-t_I), which runs 0 to 1 as t runs t_I to 1 and in
-        #   which Qvec is the plain interpolation (1-u)*Q_tI + u*Q_end. Each is
-        #   then mapped back with t = t_I + u*(1-t_I), because everything that
-        #   consumes them -- the range tests here, and proj_to_pt, Qvec and
-        #   Q0_t below -- is parameterized by t rather than by u.
-        Q_diff = Q_tI - Q_end
+    def t_star(u):
+        # The root in (t_I,1) of Qvec(t).u, which is affine in t, or None.
+        #   Qvec is the interpolation (1-p)*Q_tI + p*Q_end in
+        #   p = (t-t_I)/(1-t_I), so the root is at p = Q_tI.u/(Q_tI-Q_end).u.
+        den = np.dot(Q_tI-Q_end, u)
+        if den == 0:
+            return None
+        t = t_I + (1-t_I)*np.dot(Q_tI, u)/den
+        return t if t_I < t < 1 else None
 
-        # |Qvec(u)|**2 is a quadratic in u opening upward, so the element is at
-        #   its shortest at the sole root of its derivative,
-        #   u = Q_tI.Q_diff/|Q_diff|**2. A zero denominator means the element
-        #   holds the same direction and length throughout, so there is no
-        #   such time to find.
-        t_crit_elem_denom = np.dot(Q_diff,Q_diff)
-        if t_crit_elem_denom != 0:
-            t_crit_elem = t_I + (1-t_I)*np.dot(Q_tI,Q_diff)/t_crit_elem_denom
-        else:
-            t_crit_elem = -1
-        if t_I < t_crit_elem < 1:
-            t_crit = t_crit_elem
-        else:
-            t_crit = None
+    def first_run_off(f, sign, t_c):
+        # First time in [t_I,1] at which the agent is off the end measured by
+        #   f (sigma_at with sign=-1, h_at with sign=+1), or None. g = sign*f
+        #   is positive off the end; t_c is the root of g's derivative.
+        for t_s in (t_c, 1):
+            if t_s is None or not sign*f(t_s) > EPS:
+                continue
+            # g rises from a to t_s through its one root there. a is t_I, or
+            #   t_c when g first falls to a negative minimum there (the agent
+            #   first moves onto the element, away from this end), which also
+            #   covers contact at the endpoint itself, where g(t_I) is zero to
+            #   roundoff.
+            a = t_I
+            if t_c is not None and t_c < t_s and \
+                    sign*f(t_c) < min(sign*f(t_I), 0):
+                a = t_c
+            if sign*f(a) >= 0:
+                return a
+            return optimize.brentq(f, a, t_s)
+        return None
 
-        # The direction of travel along the element reverses where the
-        #   projection of vec onto it vanishes. vec.Qvec(u) is linear in u, so
-        #   that happens at the single point u = Q_tI.vec/Q_diff.vec; a zero
-        #   denominator means the projection never changes sign.
-        t_crit_x_denom = np.dot(Q_diff,vec)
-        if t_crit_x_denom != 0:
-            t_crit_x = t_I + (1-t_I)*np.dot(Q_tI,vec)/t_crit_x_denom
-        else:
-            t_crit_x = -1
-        if t_I < t_crit_x < 1:
-            if t_crit is None or t_crit > t_crit_x:
-                t_crit = t_crit_x
-
-        if t_crit is not None:
-            slide_pt_crit = proj_to_pt(t_crit)
-            mesh_el_crit_len = np.linalg.norm(Qvec(t_crit))
-            Q0_crit_dist = np.linalg.norm(slide_pt_crit - Q0_t(t_crit))
-            Q1_crit_dist = np.linalg.norm(slide_pt_crit - (Q0_t(t_crit)+Qvec(t_crit)))
-            went_past_el_bool = (Q0_crit_dist > mesh_el_crit_len+EPS) or ( 
-                                    Q1_crit_dist > mesh_el_crit_len+EPS)
+    t_off_Q0 = first_run_off(sigma_at, -1, t_star(vec-Q0_d))
+    t_off_Q1 = first_run_off(h_at, 1, t_star(vec-Q1_d))
+    went_past_el_bool = t_off_Q0 is not None or t_off_Q1 is not None
 
     if went_past_el_bool:
-        # check to see when we went past the end of the mesh element.
-        # This is a non-linear least squares minimization problem
-        if Q1_crit_dist > Q0_crit_dist:
-            # went past Q0
+        # The agent leaves at whichever end it reaches first.
+        past_Q0 = t_off_Q1 is None or (t_off_Q0 is not None and
+                                       t_off_Q0 <= t_off_Q1)
+        if past_Q0:
+            t_edge = t_off_Q0
             # location of Q0 as a function of time, plus its derivative
             Q_edge = lambda t: ((1-t)*Q0 + (t-t_I)*mesh_end[idx,0,:])/(1-t_I)
             Q_edge_prime = (mesh_end[idx,0,:]-Q0)/(1-t_I)
         else:
-            # went past Q1
+            t_edge = t_off_Q1
             # location of Q1 as a function of time, plus its derivative
             Q_edge = lambda t: ((1-t)*Q1 + (t-t_I)*mesh_end[idx,1,:])/(1-t_I)
             Q_edge_prime = (mesh_end[idx,1,:]-Q1)/(1-t_I)
-        # function that gives distance between projected location of 
-        #   agent at time t and the relevant edge of the mesh element.
-        #   Find roots of the square distance.
-        resid = lambda t: proj_to_pt(t[0])-Q_edge(t[0])
-        # derivative
-        jac = lambda t: np.array([proj_prime(t[0])-Q_edge_prime]).T
-        # Solve the non-linear least squares problem for a root local to t_I.
-        sol = optimize.least_squares(resid, x0=t_I, jac=jac, bounds=(t_I,1),
-                                        method='dogbox', ftol=None, gtol=None)
-        # check solution
-        if not sol.success:
-            raise RuntimeError("LSQ did not converge.")
-        t_edge = sol.x[0]
-        # for debugging
-        # print(f't_edge = {t_edge}')
     
     ##########                                             ##########
     #####                Test for rotating away                 #####
@@ -1175,7 +1153,7 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
         # Now, find adjacent mesh segments on the end we went past. 
         #   This is any mesh element that contains the endpoint we went past
         #   except the current mesh element
-        if Q1_crit_dist > Q0_crit_dist:
+        if past_Q0:
             # went past Q0
             pt_bool = np.isclose(np.linalg.norm(mesh_end.reshape(
                 (mesh_end.shape[0]*mesh_end.shape[1],mesh_end.shape[2]))
@@ -1275,7 +1253,7 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
                     adj_vec_end = mesh_end[adj_idx,0,:] - mesh_end[adj_idx,1,:]
                 adj_vec_end_u = adj_vec_end/np.linalg.norm(adj_vec_end)
                 Q_end_u = Q_end/np.linalg.norm(Q_end)
-                if Q1_crit_dist < Q0_crit_dist:
+                if not past_Q0:
                     # went past Q1, not Q0
                     Q_end_u *= -1
                 mid_vec = (adj_vec_end_u + Q_end_u)*0.5
