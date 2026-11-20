@@ -1008,11 +1008,16 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
     
     # Solve for position at time t. The run-off tests and root solves below
     #   revisit the same times, so each position is kept once computed.
+    # The agent stays on the element's line throughout the slide, so each
+    #   integrated position is projected back onto that line: the integration
+    #   error is then all along the element, and the EPS back-off from it is
+    #   exact. The projection leaves s unchanged.
     path = {t_I: x}
     def proj_to_pt(t):
         if t not in path:
-            path[t] = integrate.solve_ivp(x_DE, t_span=(t_I,t), y0=x,
-                                          rtol=1e-7, atol=1e-12).y[:,-1]
+            y = integrate.solve_ivp(x_DE, t_span=(t_I,t), y0=x,
+                                    rtol=1e-7, atol=1e-12).y[:,-1]
+            path[t] = Q0_t(t) + s_of(t, y)*Qvec(t)
         return path[t].copy()
 
     # integrate to 1 to determine the final sliding location on the mesh element

@@ -565,6 +565,29 @@ def test_run_off_during_the_step_matches_the_slide_model(case):
         f"slider ended at {newend}, model at {model['final']}"
 
 
+def test_agent_left_on_a_stretching_element_is_backed_off_exactly_EPS():
+    '''An agent that slides on a moving element all step ends EPS from it, on
+    its own side. The integrated slide path drifted off the element's line by
+    up to a quarter of EPS here (an element stretching twelvefold), eating into
+    the back-off that keeps the agent off the solid side.'''
+    start = np.array([4.42632755038969, 6.010368857103861])
+    end = np.array([6.1153154103556595, 5.895001458201781])
+    m0 = np.array([[[4.36605649895233, 5.944859928643714],
+                    [4.997315499352104, 6.000727463412911]]])
+    m1 = np.array([[[-1.2395922384918858, 5.202583210251121],
+                    [6.467036333109455, 6.5411157582818245]]])
+    assert not h.moving_slide_model(start, end, m0, m1)['released'], \
+        'the agent no longer stays on the element; the case tests nothing'
+    eps = _ibc._boundary_eps(start, end, m0, m1)
+
+    newend, dx, idx = h.call_moving(start, end, m0, m1)
+
+    # start is above the element (positive side) at contact
+    backoff = h.signed_perp_dist_2D(newend, m1[0, 0], m1[0, 1])
+    assert np.isclose(backoff, eps, rtol=1e-6, atol=0), \
+        f'agent ended {backoff/eps:.6f} EPS from the element, not 1'
+
+
 # --------------------------------------------------------------------------- #
 #           a wedged agent on a moving joint, either vertex order             #
 # --------------------------------------------------------------------------- #
