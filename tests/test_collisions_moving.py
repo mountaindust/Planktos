@@ -503,7 +503,11 @@ def test_slide_reversing_along_a_turning_element_obeys_the_invariants():
 #     point, here the later one.
 # A contact exactly at a vertex, with the agent already moving off it, is also
 # pinned: the run-off time is then the contact time itself, with no root to
-# solve for.
+# solve for. Its coordinates are dyadic and the element is horizontal at the
+# contact (t = 1/2, at Q1 = (5,5)), so every quantity is exact. A contact found
+# at random lands within roundoff of the vertex, and which side it falls on
+# depends on the BLAS: one such case hit the element on Windows (MKL) and
+# missed it on Linux (OpenBLAS), failing CI.
 
 RUN_OFF_CASES = {
     'transient, both old sample times wrong': (
@@ -542,12 +546,12 @@ RUN_OFF_CASES = {
         [[[4.708819406616773, 5.116342195930927],
           [4.394707548386113, 4.127231539847764]]]),
     'contact exactly at Q1, already moving off it': (
-        [4.30445549857448, 5.166167770634335],
-        [4.9970020645442705, 3.920441454835467],
-        [[[4.344301001588161, 5.712872226220766],
-          [4.491848629868264, 4.493927668390766]]],
-        [[[5.0165878433753495, 5.2883380843279575],
-          [4.736261846071658, 4.8558014112804315]]]),
+        [4.75, 5.5],
+        [5.25, 4.5],
+        [[[4.0, 5.25],
+          [5.0, 4.75]]],
+        [[[4.0, 4.75],
+          [5.0, 5.25]]]),
 }
 
 
