@@ -24,6 +24,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 import _ib_harness as h
 from _ib_harness import POS_ATOL
+from planktos import _ibc
 
 pytestmark = pytest.mark.filterwarnings('ignore:invalid value encountered in')
 
@@ -287,6 +288,42 @@ def test_wedged_agent_stops_off_the_joint_not_on_it():
     h.assert_not_penetrated_2D(start, newend, Q[0, 0], Q[0, 1])
     h.assert_not_penetrated_2D(start, newend, A[0, 0], A[0, 1])
     h.assert_displacement_bounded(start, end, newend)
+
+
+def test_stay_put_at_a_nearly_collinear_joint_backs_off_from_both_lines():
+    '''An agent stopped at a joint turning 0.5 degrees toward it ends EPS from
+    both elements' lines. Backing off along the bisector by EPS left it about
+    0.004 EPS from each.'''
+    V = np.array([5.0, 5.0])
+    ang = np.deg2rad(0.5)
+    mesh = np.concatenate([h.segment((4.0, 5.0), tuple(V)),
+                           h.segment(tuple(V), tuple(V + [np.cos(ang),
+                                                          np.sin(ang)]))])
+    start, end = np.array([4.994, 5.5]), np.array([5.002, 4.5])
+    eps = _ibc._boundary_eps(start, end, mesh)
+
+    newend, dx, idx = h.call_static(start, end, mesh)
+
+    assert np.linalg.norm(newend - V) < POS_ATOL, 'not left at the joint'
+    for k in (0, 1):
+        d = h.signed_perp_dist_2D(newend, mesh[k, 0], mesh[k, 1])
+        assert d >= eps*(1 - 1e-6), f'{d/eps:.4f} EPS from element {k}'
+
+
+@pytest.mark.parametrize('over', [5e-7, -5e-7])
+def test_slide_ending_within_EPS_of_a_concave_joint_clears_both_lines(over):
+    '''A slide ending within EPS of a vertex where a wall rises (past it, or
+    short of it) ends EPS from both. It was backed off from the element alone,
+    up to EPS on the wrong side of the wall.'''
+    mesh = np.array([[[4., 5.], [5., 5.]], [[5., 5.], [5., 6.]]])
+    start, end = np.array([4.5, 5.5]), np.array([5 + over, 4.5])
+    eps = _ibc._boundary_eps(start, end, mesh)
+
+    newend, dx, idx = h.call_static(start, end, mesh)
+
+    for k in (0, 1):
+        d = h.signed_perp_dist_2D(newend, mesh[k, 0], mesh[k, 1])
+        assert d >= eps*(1 - 1e-6), f'{d/eps:.4f} EPS from element {k}'
 
 
 # --------------------------------------------------------------------------- #

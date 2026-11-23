@@ -61,6 +61,132 @@ def _boundary_eps(*coord_arrays):
     return 10.0**(np.ceil(np.log10(scale)) - 7)
 
 
+def _clear_of_joint(pt, n_cur, V, c_u, adj_u, EPS):
+    '''Back a point on a 2D mesh element off by EPS, clear of a joint.
+
+    pt lies on the element (or on its extension) near its vertex V. n_cur is
+    the element's unit normal toward the agent, c_u the unit vector from V along
+    the element, and adj_u the unit vector from V along an adjacent element.
+    Returns pt + EPS*n_cur when that point is at least EPS from the adjacent
+    element's line on the agent's side; otherwise the point on the joint's
+    bisector that is EPS from both lines.
+    '''
+
+    # Two elements leave the vertex V: the current one along c_u and the
+    #   adjacent one along adj_u. The agent is near V, on the n_cur side of the
+    #   current element. theta is the angle at V between the two elements,
+    #   measured through the agent's side. Every distance check below uses the
+    #   same tool: if n is the unit normal of a line through V, pointing toward
+    #   the agent, then n.(y - V) is the distance of a point y from that line,
+    #   positive on the agent's side and negative on the solid side.
+
+    # Start with the usual back-off, EPS straight off the current element.
+    p = pt + EPS*n_cur
+    # The worry is that the adjacent element comes within EPS of p. It cannot
+    #   if it heads away from the agent, onto the solid side of the current
+    #   element's line. The sign of adj_u.n_cur says which side it heads to.
+    if np.dot(adj_u, n_cur) < 0:
+        # Convex joint (theta > pi). The adjacent element lies entirely on the
+        #   solid side of the current element's line. p is EPS from that line
+        #   on the agent's side, so it is at least EPS from the adjacent
+        #   element too.
+        return p
+    # Concave joint (theta <= pi). The adjacent element heads toward the
+    #   agent, so the agent is in a wedge between the two elements, and p may
+    #   be too close to the adjacent element. Checking that needs the adjacent
+    #   element's unit normal pointing toward the agent, n_adj.
+    # To get n_adj, take c_u and remove its component along adj_u (one
+    #   Gram-Schmidt step). What is left is perpendicular to the adjacent
+    #   element, with length sin(theta). It points toward the agent because
+    #   c_u runs along the current element, which is the other side of the
+    #   agent's wedge.
+    # When the two elements are collinear (theta = pi), what is left is zero.
+    #   The two elements then lie on one line, and p is EPS from it.
+    n_adj = c_u - np.dot(c_u, adj_u)*adj_u
+    n_adj_len = np.linalg.norm(n_adj)
+    if n_adj_len < 1e-9:
+        return p
+    n_adj /= n_adj_len
+    # Now measure p's distance from the adjacent element's line. It is usually
+    #   at least EPS, because pt is usually far enough from V, and then p is
+    #   the answer.
+    if np.dot(n_adj, p - V) >= EPS:
+        return p
+    # Otherwise p is within EPS of the adjacent element, or on its solid side
+    #   (when pt overshot V). Use instead the point q on the bisector of the
+    #   wedge that is EPS from both elements.
+    # To find q: the two unit normals both point into the wedge and have the
+    #   same length, so their sum d points along the bisector. A point at
+    #   distance r from V along the bisector is r*sin(theta/2) from each
+    #   element, so q is at r = EPS/sin(theta/2). The angle between the two
+    #   normals is pi - theta, so |d| = 2*cos((pi - theta)/2) = 2*sin(theta/2).
+    #   Putting these together,
+    #       q = V + r*d/|d| = V + 2*EPS*d/|d|**2.
+    # For a near-fold (theta near 0), r grows without bound. The floor on
+    #   |d|**2 (sin(theta/2) >= 1e-3) keeps q near V. q is then still inside
+    #   the wedge, but less than EPS from both elements.
+    d = n_cur + n_adj
+    q = V + 2*EPS*d/max(np.dot(d, d), 4e-6)
+    # Return whichever of q and p is farther from the nearer of the two lines.
+    #   That is q, except under the floor, where p can be farther.
+    clearance = lambda y: min(np.dot(n_cur, y - V), np.dot(n_adj, y - V))
+    return q if clearance(q) > clearance(p) else p
+
+
+def _clear_of_mesh(pt, n_cur, mesh, idx, EPS):
+    '''Back a point on 2D mesh element idx off by EPS, clear of the joint at
+    its nearer vertex.
+
+    pt lies on mesh[idx], and n_cur is the element's unit normal toward the
+    agent. Finds the adjacent element at pt's nearer vertex that closes off the
+    agent's side of the joint, and returns _clear_of_joint's point for that
+    joint. When no adjacent element there heads toward the agent, returns
+    pt + EPS*n_cur.
+    '''
+
+    # _clear_of_joint needs to know which joint the agent is near: its vertex
+    #   V, the direction c_u of this element away from V, and the direction
+    #   adj_u of the adjacent element that closes off the agent's side at V.
+    #   This function finds those three things.
+
+    # The joint is at whichever vertex pt is nearer. s is pt's fractional
+    #   position along the element, 0 at Q0 and 1 at Q1.
+    Q0, Q1 = mesh[idx]
+    Qvec = Q1 - Q0
+    s = np.dot(pt - Q0, Qvec)/np.dot(Qvec, Qvec)
+    V, c_u = (Q0, Qvec) if s < 0.5 else (Q1, -Qvec)
+    c_u = c_u/np.linalg.norm(c_u)
+    # Find the other elements joined to this one at V. pt_bool[i, j] is True
+    #   when vertex j of element i is at V. This element is excluded.
+    pt_bool = np.isclose(np.linalg.norm(mesh - V, axis=-1), 0)
+    pt_bool[idx] = False
+    has_V = np.any(pt_bool, axis=1)
+    # For each joined element, get the vector along it pointing away from V.
+    #   That is its second vertex minus its first when the first is at V, and
+    #   the reverse otherwise. (The :1 slice keeps that choice as a column, so
+    #   np.where applies it to both coordinates of each row.)
+    adj = mesh[has_V]
+    adj_vec = np.where(pt_bool[has_V, :1], adj[:, 1] - adj[:, 0],
+                       adj[:, 0] - adj[:, 1])
+    adj_len = np.linalg.norm(adj_vec, axis=-1)
+    # Only an element heading toward the agent (adj_vec.n_cur >= 0) can come
+    #   within EPS of pt + EPS*n_cur, as the convex case in _clear_of_joint
+    #   explains, so keep only those. Also drop any shorter than EPS, which
+    #   have no usable direction.
+    keep = np.logical_and(adj_len > EPS, adj_vec @ n_cur >= 0)
+    if not np.any(keep):
+        return pt + EPS*n_cur
+    adj_u = adj_vec[keep]/adj_len[keep, None]
+    # If more than one remains, the one that closes off the agent's side is
+    #   the one at the smallest angle to this element. Turning from c_u toward
+    #   the agent, it is the first one met, and the others lie behind it, in
+    #   the solid. All the kept elements head into the agent's half-plane,
+    #   where the angle from c_u runs from 0 to pi, so the smallest angle is
+    #   the largest cosine, adj_u.c_u.
+    return _clear_of_joint(pt, n_cur, V, c_u, adj_u[np.argmax(adj_u @ c_u)],
+                           EPS)
+
+
 def apply_internal_static_BC(startpt, endpt, mesh, max_meshpt_dist,
                              ib_collisions='sliding'):
     '''Apply internal boundaries to a trajectory starting and ending at
@@ -340,7 +466,8 @@ def apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
             # Now, perturb perpendicular from the end position of the element
             perp_vec = np.array([dt_elem[1,1]-dt_elem[0,1],dt_elem[0,0]-dt_elem[1,0]])
             perp_vec *= side_signum/np.linalg.norm(perp_vec)
-            return new_pos + perp_vec*EPS, new_pos - x, mesh_idx[idx]
+            return (_clear_of_mesh(new_pos, perp_vec, close_mesh_end, idx, EPS),
+                    new_pos - x, mesh_idx[idx])
         else:
             raise NotImplementedError("3D moving meshes not currently supported.")
     else:
@@ -576,6 +703,8 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
     if 1-t_I < 10e-7:
         # Special case where we are practically finished with this time step.
         # Perturb away from the mesh element and return.
+        if DIM == 2:
+            return _clear_of_mesh(x, Q_norm_u, mesh, idx, EPS)
         return x + EPS*Q_norm_u
         
     ##########                                             ##########
@@ -789,25 +918,22 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
                 adj_vec_u = adj_vec_u[0,:]
                 adj_idx = adj_mesh_idx[intersect_bool][0]
                 
-            # Treat case of sliding back to a previous mesh element and the
-            #   case where the agent has nowhere to go on the adjacent one.
-            # Continue onto the adjacent element only if the remaining movement
-            #   still advances along it. The ranking above asks which element
-            #   blocks the agent, a question about directions; this asks whether
-            #   the agent gets anywhere once on it, which is what the recursion
-            #   below settles by re-projecting this same movement. Judging that
-            #   from the movement already flattened onto the element being left
-            #   can only err one way: continuing when the agent in fact has
-            #   nowhere to go.
+            # Decide whether the agent stays at the joint or moves on to the
+            #   adjacent element. It stays if the adjacent element is the one it
+            #   just came from (prev_idx), or if its movement would not carry it
+            #   along the adjacent element, away from the joint. That second
+            #   test uses the full movement vec, the same vector the recursion
+            #   below projects onto the adjacent element: a positive component
+            #   along adj_vec_u means the agent travels along it.
             advances = np.dot(vec, adj_vec_u) > 0
             if (prev_idx is not None and prev_idx == adj_idx) or not advances:
-                # Back away from the intersection point slightly in the 
-                #   direction that bisects the angle between the mesh 
-                #   elements for stay put.
-                mid_vec = (adj_vec_u - rank_vec_u)*0.5
+                # Stay put: back away from the joint into the wedge between the
+                #   two elements. In 2D the agent ends EPS from both lines.
                 if DIM == 2:
-                    return Q_edge + EPS*mid_vec
+                    return _clear_of_joint(Q_edge, Q_norm_u, Q_edge,
+                                           -rank_vec_u, adj_vec_u, EPS)
                 elif DIM == 3:
+                    mid_vec = (adj_vec_u - rank_vec_u)*0.5
                     return x_edge + EPS*mid_vec
             # Otherwise, slide on adjacent mesh element.
             else:
@@ -890,7 +1016,11 @@ def _project_and_slide_static(startpt, endpt, intersection, mesh,
         return new_loc
     else:
         # Ended on mesh element
-        # Perturb back toward where the agent came from.
+        # Perturb back toward where the agent came from, clear of the joint at
+        #   the nearer vertex when the slide ended close to it (or within EPS
+        #   past it, which does not count as going past).
+        if DIM == 2:
+            return _clear_of_mesh(slide_pt, Q_norm_u, mesh, idx, EPS)
         return slide_pt + EPS*Q_norm_u
 
 
@@ -1145,10 +1275,11 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
     # If we went past the end of the mesh element, detect intersection with 
     #   adjoining elements.
     if went_past_el_bool:
-        # get a unit vector in the direction of travel at edge time
+        # unit vector along the element at edge time, toward the end crossed
         Qvec_tedge = Qvec(t_edge)
-        Qslide_vec_u = Qvec_tedge*np.dot(vec,Qvec_tedge)
-        Qslide_vec_u /= np.linalg.norm(Qslide_vec_u)
+        Qslide_vec_u = Qvec_tedge/np.linalg.norm(Qvec_tedge)
+        if past_Q0:
+            Qslide_vec_u = -Qslide_vec_u
         # projection of vec onto mesh element in dir of travel at edge time
         # proj_Q = np.dot(vec,Qslide_vec_u)*Qslide_vec_u
         # unit normal to current mesh element toward where the agent came from
@@ -1237,32 +1368,35 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
             # NOTE: This intersection happens at the same time as sliding 
             #   off of the last element because they are joined together.
 
-            # Treat case of sliding back to a previous mesh element and the
-            #   case where the agent has nowhere to go on the adjacent one.
-            # Continue onto the adjacent element only if the remaining movement
-            #   still advances along it. The ranking above asks which element
-            #   blocks the agent, a question about directions; this asks whether
-            #   the agent gets anywhere once on it, which is what the recursion
-            #   below settles by re-projecting this same movement. Judging that
-            #   from the movement already flattened onto the element being left
-            #   can only err one way: continuing when the agent in fact has
-            #   nowhere to go.
-            advances = np.dot(vec, adj_vec_u) > 0
+            # Decide whether the agent stays at the joint J or moves on to the
+            #   adjacent element. It stays if the adjacent element is the one it
+            #   just came from (prev_idx), or if it would not travel along the
+            #   adjacent element, away from J.
+            # On a moving mesh, travel along an element means travel relative
+            #   to that element, as in the run-off test above. The agent is at
+            #   J, so its rate along the adjacent element is the component of
+            #   its velocity relative to J along that element,
+            #   (vec - dJ/dt).adj_vec_u, where Q_edge_prime is dJ/dt. When the
+            #   whole mesh translates at velocity v, dJ/dt = v, and this is the
+            #   static slider's test in the mesh's frame.
+            advances = np.dot(vec - Q_edge_prime, adj_vec_u) > 0
             if (prev_idx is not None and prev_idx == adj_idx) or not advances:
-                # Back away from the intersection point slightly in the 
-                #   direction that bisects the angle between the mesh 
-                #   elements for stay put.
+                # Stay put at the joint: at the end of the step, back away into
+                #   the wedge between the two elements, EPS from both lines.
                 if pt_bool[adj_idx,0]: # first entry is focal edgepoint
                     adj_vec_end = mesh_end[adj_idx,1,:] - mesh_end[adj_idx,0,:]
                 else:
                     adj_vec_end = mesh_end[adj_idx,0,:] - mesh_end[adj_idx,1,:]
                 adj_vec_end_u = adj_vec_end/np.linalg.norm(adj_vec_end)
+                # unit vector from the joint along the current element
                 Q_end_u = Q_end/np.linalg.norm(Q_end)
                 if not past_Q0:
                     # went past Q1, not Q0
                     Q_end_u *= -1
-                mid_vec = (adj_vec_end_u + Q_end_u)*0.5
-                return Q_edge(1) + EPS*mid_vec
+                norm_end_u = side_signum*np.array([Q_end[1],-Q_end[0]])
+                norm_end_u /= np.linalg.norm(norm_end_u)
+                return _clear_of_joint(Q_edge(1), norm_end_u, Q_edge(1),
+                                       Q_end_u, adj_vec_end_u, EPS)
             else:
                 # Terminates for the same reason as the static slider: each
                 #   transfer crosses a whole element. Verified to hold here too
@@ -1297,11 +1431,12 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
         # add EPS for separation from element
         norm_out_u = side_signum*np.array([Qvec(t_rot)[1],-Qvec(t_rot)[0]])
         norm_out_u /= np.linalg.norm(norm_out_u)
-        newstartpt = proj_to_pt(t_rot) + EPS*norm_out_u
+        mesh_now = mesh_start*(1-t_rot) + mesh_end*t_rot
+        newstartpt = _clear_of_mesh(proj_to_pt(t_rot), norm_out_u, mesh_now,
+                                    idx, EPS)
         # Same termination guard as the static slider: see the comment there.
         if not t_rot > 0: return newstartpt
         newendpt = newstartpt + (1-t_rot)*vec
-        mesh_now = mesh_start*(1-t_rot) + mesh_end*t_rot
         # for debugging
         # print(f'newstartpt = {list(newstartpt)}')
         # print(f'newendpt = {list(newendpt)}')
@@ -1321,7 +1456,8 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
         #   back toward where the agent came from. perturb in that direction
         norm_out_u = side_signum*np.array([Q_end[1],-Q_end[0]])
         norm_out_u /= np.linalg.norm(norm_out_u)
-        return slide_pt + EPS*norm_out_u
+        # clear of the joint at the nearer vertex, as in the static slider
+        return _clear_of_mesh(slide_pt, norm_out_u, mesh_end, idx, EPS)
 
     # recursion on prev. eligible mesh elements and treating t_rot or t_edge 
     #   as the start time. Only look for intersections with subset of full 

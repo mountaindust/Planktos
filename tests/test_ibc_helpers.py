@@ -8,6 +8,8 @@ cleanly:
                        the boundary it struck
   _point_in_triangle   containment test used by the 3D slider to decide whether
                        a projected slide is still on its triangle
+  _clear_of_joint      where a 2D slider leaves an agent near a joint: EPS from
+                       both elements' lines
   make_ib_worker       the parallel dispatch layer's shared-data unpacking
   the 3D-moving guard  moving meshes are 2D only; 3D must say so rather than
                        compute something wrong
@@ -173,3 +175,54 @@ def test_3d_moving_mesh_raises_not_implemented(ib):
     with pytest.raises(NotImplementedError, match='3D moving meshes'):
         _ibc.apply_internal_moving_BC(start, end, start_mesh, end_mesh,
                                       1.0, 1.0, ib_collisions=ib)
+
+
+# --------------------------------------------------------------------------- #
+#                 backing a point off near a 2D joint                         #
+# --------------------------------------------------------------------------- #
+# The element runs from the vertex V along +x, with the agent above it; the
+# adjacent element leaves V at angle phi.
+
+EPS_J = 1e-6
+V_J = np.array([5.0, 5.0])
+N_UP = np.array([0.0, 1.0])
+C_U = np.array([1.0, 0.0])
+
+
+def _joint(pt, phi):
+    adj_u = np.array([np.cos(phi), np.sin(phi)])
+    out = _ibc._clear_of_joint(np.asarray(pt, float), N_UP, V_J, C_U, adj_u,
+                               EPS_J)
+    n_adj = C_U - np.dot(C_U, adj_u)*adj_u
+    n_adj = n_adj/np.linalg.norm(n_adj) if np.linalg.norm(n_adj) > 0 else N_UP
+    return out, np.dot(out - V_J, N_UP), np.dot(out - V_J, n_adj)
+
+
+@pytest.mark.parametrize('phi_deg', [90.0, 45.0, 135.0, 179.5])
+def test_point_at_a_concave_joint_ends_EPS_from_both_lines(phi_deg):
+    out, d_cur, d_adj = _joint(V_J, np.deg2rad(phi_deg))
+    assert np.isclose(d_cur, EPS_J, rtol=1e-9) and         np.isclose(d_adj, EPS_J, rtol=1e-9), (d_cur, d_adj)
+
+
+def test_right_angle_joint_puts_the_point_at_the_corner_of_the_clearance():
+    out, _, _ = _joint(V_J, np.pi/2)
+    assert np.allclose(out, V_J + EPS_J, rtol=0, atol=1e-15)
+
+
+@pytest.mark.parametrize('phi', [np.pi, -0.5])
+def test_collinear_or_convex_joint_backs_off_along_the_normal(phi):
+    pt = V_J + [3e-7, 0.0]
+    out, _, _ = _joint(pt, phi)
+    assert np.array_equal(out, pt + EPS_J*N_UP)
+
+
+def test_point_already_clear_of_the_adjacent_line_is_left_alone():
+    pt = V_J + [5*EPS_J, 0.0]      # 45 degree joint: 3.5 EPS from the adjacent
+    out, _, _ = _joint(pt, np.pi/4)
+    assert np.array_equal(out, pt + EPS_J*N_UP)
+
+
+def test_near_fold_stays_on_the_agent_side_of_both_lines():
+    out, d_cur, d_adj = _joint(V_J, 1e-5)
+    assert d_cur > 0 and d_adj > 0, (d_cur, d_adj)
+    assert np.linalg.norm(out - V_J) <= 1e3*EPS_J

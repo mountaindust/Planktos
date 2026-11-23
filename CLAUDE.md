@@ -139,6 +139,11 @@ Biology* 84(72). Docs: https://planktos.readthedocs.io
   `../planktos2_revisions/v1.1.1_bug_report.md`** (outside this repository); read it
   before working on these fixes. v1.1.1 is fixes only: feature work stays on `vtk`,
   and `master` is merged into `vtk` afterwards.
+  **Undecided: whether to close issue #76 in v1.1.1** *(as of 2026-11-20)*. In 3D, the
+  static slider has the same concave-fold back-off gap that bug 4 fixed in 2D. A slide
+  ending just short of a shared edge can leave the agent on the solid side of the
+  adjacent triangle, which breaks the no-penetration invariant. Not in the bug report
+  (which is 2D only), but it may be a loophole worth closing before tagging.
 - **`vtk`** — *(as of 2026-11-14)* **the development branch. You are usually here.**
   Its work: **move 3D plotting from matplotlib to vtk**, through PyVista (already a
   required dependency), unlocking 3D visualization

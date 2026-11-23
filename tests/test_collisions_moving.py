@@ -639,6 +639,226 @@ def test_moving_wedge_rides_the_joint_whatever_the_vertex_order():
 
 
 # --------------------------------------------------------------------------- #
+#        joints on a moving mesh: continuation and back-off                   #
+# --------------------------------------------------------------------------- #
+# A frictionless agent moves along a boundary relative to it, so for a mesh
+# translating rigidly by v over a step
+#     moving(P0 -> P1; mesh, mesh + v) == static(P0 -> P1 - v; mesh) + v.
+# The slider decided whether the agent continues past a joint from its lab-frame
+# movement. Where lab and relative motion along the next element disagreed, it
+# stopped the agent at the joint, and for collinear elements left it exactly on
+# the element line, from where a later step passed straight through.
+
+def _galilean_pair(P0, P1, mesh, v, ib='sliding'):
+    '''(moving result, static result + v, EPS) for one step.'''
+    mmd = h.max_meshpt_dist(mesh)
+    mov = _ibc.apply_internal_moving_BC(P0, P1, mesh, mesh + v, mmd,
+                                        np.linalg.norm(v), ib_collisions=ib)
+    sta = _ibc.apply_internal_static_BC(P0, P1 - v, mesh, mmd,
+                                        ib_collisions=ib)
+    eps = _ibc._boundary_eps(P0, P1, mesh, mesh + v)
+    return mov, sta, eps
+
+
+def test_continuing_past_a_moving_joint_is_judged_relative_to_the_joint():
+    '''A wall of collinear elements sliding along itself faster than the agent:
+    in the lab the agent moves forward along the wall, relative to it backward.
+    It must continue past the joints as the static slider does in the wall's
+    frame, and end EPS below the wall.'''
+    wall = h.horizontal_wall(10, 5.0, 1.0, 9.0)
+    v = np.array([0.9812818424145259, 0.11706805944363517])
+    P0 = np.array([6.257728457107769, 4.327690434163696])
+    P1 = np.array([6.587874175080389, 5.513467032286361])
+    assert (P1 - P0)[0] > 0 > (P1 - P0 - v)[0], \
+        'lab and relative motion along the wall no longer disagree'
+
+    mov, sta, eps = _galilean_pair(P0, P1, wall, v)
+
+    assert mov[2] is not None
+    assert np.linalg.norm(mov[0] - (sta[0] + v)) <= 2*eps, \
+        f'moving {mov[0]} vs static + v {sta[0] + v}'
+    assert np.isclose(mov[0][1] - (5.0 + v[1]), -eps, rtol=1e-6, atol=0)
+
+
+_c = np.array([5.0, 5.0])
+GALILEAN_GEOMS = {
+    'tilted segment': h.segment((3.6, 4.1), (6.3, 5.8)),
+    'axis-aligned walls': np.concatenate([h.horizontal_wall(6, 5.0, 2.0, 8.0),
+                                          h.wall_segments(6, 3.0, 5.0, 8.0)]),
+    'convex L': h.polyline([(3, 7), (3, 4), (7, 4)]),
+    'concave V': h.polyline([(3, 7), (5, 4), (7, 7)]),
+    'acute wedge': h.polyline([(2.5, 5.5), (6.5, 5.0), (2.5, 4.3)]),
+    'octagon': h.closed_polygon(
+        [_c + 1.5*np.array([np.cos(a), np.sin(a)])
+         for a in np.arange(8)*np.pi/4 + 0.2]),
+    'polyline arc': h.polyline(
+        [_c + 2*np.array([np.cos(a), np.sin(a)])
+         for a in np.linspace(-0.3, np.pi + 0.3, 13)]),
+    '5-spoke star': h.star_2D(
+        _c, [_c + 2*np.array([np.cos(a), np.sin(a)])
+             for a in np.arange(5)*2*np.pi/5 + 0.1]),
+}
+
+
+@pytest.mark.parametrize('ib', ['sliding', 'sticky'])
+@pytest.mark.parametrize('geom', GALILEAN_GEOMS)
+def test_rigidly_translating_mesh_matches_the_static_answer(geom, ib):
+    '''Random steps against a mesh translating by up to the step length give the
+    static answer in the mesh's frame, to the back-off: 2 EPS, since the sticky
+    back-offs point in different directions (along the normal when moving,
+    back along the path when static).'''
+    mesh = GALILEAN_GEOMS[geom]
+    rng = np.random.default_rng(list(GALILEAN_GEOMS).index(geom))
+    contacts = 0
+    for trial in range(400):
+        P0 = _c + rng.uniform(-2.5, 2.5, 2)
+        w = rng.uniform(-1.2, 1.2, 2)
+        v = rng.uniform(-1, 1, 2)*np.linalg.norm(w)
+        mov, sta, eps = _galilean_pair(P0, P0 + w, mesh, v, ib)
+        if sta[2] is None:
+            continue
+        contacts += 1
+        assert np.linalg.norm(mov[0] - (sta[0] + v)) <= 2*eps, \
+            (f'trial {trial}: moving {mov[0]} vs static + v {sta[0] + v} '
+             f'({np.linalg.norm(mov[0] - (sta[0] + v))/eps:.3g} EPS)')
+    assert contacts > 25
+
+
+def test_agents_pushed_into_a_wall_sliding_along_itself_never_cross():
+    '''Agents drift up into a wall of collinear elements sliding along itself
+    faster than they do. None may ever end above the wall.'''
+    import planktos
+
+    class Drift(planktos.Swarm):
+        def apply_agent_model(self, dt):
+            return self.positions + self.drift*dt
+
+    wall = h.horizontal_wall(10, 5.0, 1.0, 9.0)
+    V, U, dt, T, N = np.array([1.0, 0.0]), np.array([0.2, 0.5]), 0.1, 6.0, 40
+    envir = planktos.Environment(Lx=30, Ly=30, x_bndry='noflux',
+                                 y_bndry='noflux',
+                                 flow=[np.zeros((5, 5)), np.zeros((5, 5))])
+    envir.ibmesh = np.stack([wall, wall + V*T])
+    envir.ibmesh_times = np.array([0.0, T])
+    envir.max_meshpt_dist = 0.8
+    rng = np.random.default_rng(1)
+    init = np.c_[rng.uniform(2.0, 8.0, N), rng.uniform(4.55, 4.8, N)]
+    s = Drift(swarm_size=N, envir=envir, init=init, seed=1)
+    s.drift = np.tile(U, (N, 1))
+    for _ in range(int(round(T/dt))):
+        s.move(dt, silent=True)
+
+    traj = np.stack([np.ma.filled(p, np.nan) for p in s.full_pos_history])
+    t = dt*np.arange(traj.shape[0])[:, None]
+    over = (traj[:, :, 0] > 1.0 + V[0]*t) & (traj[:, :, 0] < 9.0 + V[0]*t)
+    crossed = (over & (traj[:, :, 1] >= 5.0)).any(axis=0)
+    assert not crossed.any(), \
+        f'{crossed.sum()} of {N} agents were on or above the wall at some step'
+
+
+def test_rotating_segment_split_into_collinear_elements_matches_one_element():
+    '''A straight segment pivoting about a point off its line, as one element and
+    as four collinear ones, carries a sliding agent across a joint to the same
+    place.'''
+    import planktos
+
+    class Drift(planktos.Swarm):
+        def apply_agent_model(self, dt):
+            return self.positions + self.drift*dt
+
+    e = lambda th: np.array([np.cos(th), np.sin(th)])
+    n = lambda th: np.array([-np.sin(th), np.cos(th)])
+    C, h_off, half, omega, th0, T, dt = _c, 1.0, 3.0, 0.5, 0.3, 2.0, 0.05
+    times = np.arange(0, T + dt/2, dt)
+
+    def run(M):
+        a = np.linspace(-half, half, M + 1)
+        frames = []
+        for t in times:
+            th = th0 + omega*t
+            pts = C + h_off*n(th) + a[:, None]*e(th)
+            frames.append(np.stack([pts[:-1], pts[1:]], axis=1))
+        envir = planktos.Environment(Lx=10, Ly=10, x_bndry='noflux',
+                                     y_bndry='noflux',
+                                     flow=[np.zeros((5, 5)), np.zeros((5, 5))])
+        envir.ibmesh = np.array(frames)
+        envir.ibmesh_times = times
+        envir.max_meshpt_dist = 2*half/M + 1e-9
+        init = C + h_off*n(th0) + 1.0*e(th0) + 0.05*n(th0)
+        s = Drift(swarm_size=1, envir=envir, init=init[None, :], seed=1)
+        s.drift = (-0.3*n(th0 + 0.1))[None, :]
+        for _ in range(int(round(T/dt))):
+            s.move(dt, silent=True)
+        return np.asarray(s.positions[0])
+
+    one, four = run(1), run(4)
+    th = th0 + omega*T
+    along = np.dot(one - (C + h_off*n(th)), e(th))
+    assert along > 1.5, 'the agent no longer crosses the joint at 1.5'
+    assert np.linalg.norm(one - four) <= 2e-6, f'one element {one}, four {four}'
+
+
+@pytest.mark.parametrize('motion', ['stationary', 'translating'])
+def test_stay_put_at_a_nearly_collinear_moving_joint_backs_off_from_both(motion):
+    '''An agent stopped at a joint turning 0.5 degrees toward it ends EPS from
+    both elements' lines. Backing off along the bisector by EPS left it about
+    0.004 EPS from each.'''
+    V = np.array([5.0, 5.0])
+    ang = np.deg2rad(0.5)
+    mesh = np.concatenate([h.segment((4.0, 5.0), tuple(V)),
+                           h.segment(tuple(V), tuple(V + [np.cos(ang),
+                                                          np.sin(ang)]))])
+    shift = np.array([0.0, 0.01]) if motion == 'translating' else np.zeros(2)
+    start, end = np.array([4.994, 5.5]), np.array([5.002, 4.5])
+    eps = _ibc._boundary_eps(start, end, mesh, mesh + shift)
+
+    newend, dx, idx = h.call_moving(start, end, mesh, mesh + shift)
+
+    m1 = mesh + shift
+    assert np.linalg.norm(newend - (V + shift)) < POS_ATOL, 'not left at the joint'
+    for k in (0, 1):
+        d = h.signed_perp_dist_2D(newend, m1[k, 0], m1[k, 1])
+        assert d >= eps*(1 - 1e-6), f'{d/eps:.4f} EPS from element {k}'
+
+
+@pytest.mark.parametrize('over', [5e-7, -5e-7])
+@pytest.mark.parametrize('motion', ['stationary', 'translating'])
+def test_slide_ending_within_EPS_of_a_moving_concave_joint_clears_both(motion,
+                                                                     over):
+    '''A slide ending within EPS of a vertex where a wall rises (past it, or
+    short of it) ends EPS from both. It was backed off from the element alone,
+    up to EPS on the wrong side of the wall.'''
+    mesh = np.array([[[4., 5.], [5., 5.]], [[5., 5.], [5., 6.]]])
+    shift = np.array([0.0, 1e-3]) if motion == 'translating' else np.zeros(2)
+    start, end = np.array([4.5, 5.5]), np.array([5 + over, 4.5])
+    eps = _ibc._boundary_eps(start, end, mesh, mesh + shift)
+
+    newend, dx, idx = h.call_moving(start, end, mesh, mesh + shift)
+
+    m1 = mesh + shift
+    for k in (0, 1):
+        d = h.signed_perp_dist_2D(newend, m1[k, 0], m1[k, 1])
+        assert d >= eps*(1 - 1e-6), f'{d/eps:.4f} EPS from element {k}'
+
+
+def test_sticky_hit_just_short_of_an_acute_concave_joint_clears_both():
+    '''A sticky hit 0.5 EPS short of a 45 degree concave joint ends EPS from both
+    elements. Backed off normal to the struck element alone, it ended 0.35 EPS
+    on the wrong side of the other.'''
+    mesh = np.array([[[4., 5.], [5., 5.]], [[5., 5.], [4., 6.]]])
+    start = np.array([4.0, 5.5])
+    end = np.array([4.9999995, 5.0]) + 0.2*np.array([0.9999995, -0.5])
+    eps = _ibc._boundary_eps(start, end, mesh, mesh)
+
+    newend, dx, idx = h.call_moving(start, end, mesh, mesh, 'sticky')
+
+    assert idx == 0
+    for k in (0, 1):
+        d = h.signed_perp_dist_2D(newend, mesh[k, 0], mesh[k, 1])
+        assert d >= eps*(1 - 1e-6), f'{d/eps:.4f} EPS from element {k}'
+
+
+# --------------------------------------------------------------------------- #
 #       golden multi-step trajectory (drift detector for moving collisions)    #
 # --------------------------------------------------------------------------- #
 # The cases above are single-step known answers. This pins a full deterministic
