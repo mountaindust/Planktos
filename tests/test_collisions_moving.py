@@ -859,6 +859,60 @@ def test_sticky_hit_just_short_of_an_acute_concave_joint_clears_both():
 
 
 # --------------------------------------------------------------------------- #
+#        contact with a moving wall from within roundoff of its line          #
+# --------------------------------------------------------------------------- #
+# The intersection test formed its quadratic in absolute coordinates, so an
+# agent starting within roundoff of a moving line, or a step ending within
+# roundoff past it, was missed about half the time and the agent went straight
+# through. The intersection routine itself is pinned in test_geom.py.
+
+def _sliding_wall(turn=0.0):
+    '''The ten-element wall y = 5 on [1, 9], shifted (0.4, 0) at the start of the
+    step and (0.5, 0) at the end, turned there to slope `turn` about x = 3.'''
+    wall = h.horizontal_wall(10, 5.0, 1.0, 9.0)
+    sm, em = wall + [0.4, 0.0], wall + [0.5, 0.0]
+    em[..., 1] += turn*(em[..., 0] - 3.0)
+    return sm, em
+
+
+def test_agent_starting_a_hair_below_a_moving_wall_is_stopped_by_it():
+    '''An agent 8.9e-16 below a wall sliding along itself, moving up, strikes the
+    wall and ends below it. It went straight through.'''
+    sm, em = _sliding_wall()
+    start = np.array([2.179165813171, 4.999999999999999])
+    end = start + [0.02, 0.05]
+
+    newend, dx, idx = h.call_moving(start, end, sm, em)
+
+    assert idx is not None, 'no contact registered'
+    assert newend[1] < 5.0
+
+
+@pytest.mark.parametrize('ib', ['sliding', 'sticky'])
+@pytest.mark.parametrize('turn', [0.0, 1e-2])
+@pytest.mark.parametrize('case', ['start 1 ulp below', 'end 1e-15 past'])
+def test_no_agent_passes_through_a_moving_wall_from_within_roundoff(case, turn,
+                                                                    ib):
+    '''Agents over the wall that start one ulp below it, or whose step ends 1e-15
+    past it, all end below it. A contact at the very end of the step on a
+    turning wall backed off the wrong way, judging the agent's side from the
+    element extrapolated back from t_I to 1 by a factor of about 1e9.'''
+    sm, em = _sliding_wall(turn)
+    through = []
+    for x in np.linspace(1.5, 2.95, 291) + 0.0013:
+        if case == 'start 1 ulp below':
+            start = np.array([x, np.nextafter(5.0, 0)])
+            end = np.array([x + 0.02, 5.05])
+        else:
+            start = np.array([x, 4.95])
+            end = np.array([x + 0.02, 5.0 + turn*(x + 0.02 - 3.0) + 1e-15])
+        newend = h.call_moving(start, end, sm, em, ib)[0]
+        if h.signed_perp_dist_2D(newend, em[0, 0], em[-1, 1]) > 0:
+            through.append(x)
+    assert not through, f'{len(through)}/291 went through, e.g. x = {through[0]}'
+
+
+# --------------------------------------------------------------------------- #
 #       golden multi-step trajectory (drift detector for moving collisions)    #
 # --------------------------------------------------------------------------- #
 # The cases above are single-step known answers. This pins a full deterministic

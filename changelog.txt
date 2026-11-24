@@ -5,6 +5,7 @@
 - Bug fix: an agent reversing along a turning moving element could stop the run with 'Ran out of stack'.
 - Bug fix: sliding on a moving mesh could stop at a joint it should pass, then later cross the boundary.
 - Bug fix: an agent stopped at or near a concave joint could end too close to, or past, the adjacent wall.
+- Bug fix: an agent starting or ending a step on a moving boundary could pass straight through it.
 - other minor bug fixes
 
 1.1.0

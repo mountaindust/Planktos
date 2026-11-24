@@ -189,6 +189,113 @@ def test_multilinear_degenerates_to_static():
     assert np.allclose(x, [5.0, 5.0])
 
 
+# ---- contacts within roundoff of the moving line ----------------------------
+# The quadratic's coefficients were formed in absolute coordinates, where its
+# constant term C, near zero for an agent within roundoff of the line, is a sum
+# of products of size |P0|**2. Roundoff then put the root on either side of
+# t = 0 (or of t = 1), and about half of these contacts were missed. Its roots
+# came from the textbook formula, which rounds a small negative root to exactly
+# 0 when |4AC| << B**2, giving a false contact at t = 0 for an agent just past a
+# slowly turning line and moving away from it.
+
+# Agent x positions over the wall. The offset keeps every contact off the
+# wall's shared vertices, where which element is struck is itself roundoff.
+_SWEEP_X = np.linspace(1.5, 2.95, 291) + 0.0013
+
+
+def _turning_wall(turn):
+    '''The ten-element wall y = 5 on [1, 9], shifted (0.4, 0) at the start of the
+    step and (0.5, 0) at the end, where it has also turned to slope `turn`
+    about x = 3. Returns (start_mesh, end_mesh) and the wall's height at x at
+    the end of the step. turn = 0 slides the wall along itself, which makes the
+    quadratic linear (A = 0).'''
+    wall = H.horizontal_wall(10, 5.0, 1.0, 9.0)
+    sm = wall + [0.4, 0.0]
+    em = wall + [0.5, 0.0]
+    em[..., 1] += turn*(em[..., 0] - 3.0)
+    return sm, em, (lambda x: 5.0 + turn*(x - 3.0))
+
+
+def _multilinear_hits(P0, P1, sm, em, branch):
+    '''Whether the agent's path hits the moving wall, through the vectorized
+    branch (all elements at once) or the single-element branch (one at a time).'''
+    if branch == 'vectorized':
+        return _geom.seg_intersect_2D_multilinear_poly(
+            P0, P1, sm[:, 0], sm[:, 1], em[:, 0], em[:, 1]) is not None
+    return any(_geom.seg_intersect_2D_multilinear_poly(
+                   P0, P1, sm[k, 0], sm[k, 1], em[k, 0], em[k, 1]) is not None
+               for k in range(len(sm)))
+
+
+@pytest.mark.parametrize('branch', ['single', 'vectorized'])
+@pytest.mark.parametrize('turn', [0.0, 1e-2])
+def test_multilinear_finds_a_contact_at_the_start_of_the_step(turn, branch):
+    '''An agent starting one ulp below the moving line, and moving up through
+    it, hits it at t ~ 0.'''
+    sm, em, _ = _turning_wall(turn)
+    missed = [x for x in _SWEEP_X
+              if not _multilinear_hits(np.array([x, np.nextafter(5.0, 0)]),
+                                       np.array([x + 0.02, 5.05]), sm, em,
+                                       branch)]
+    assert not missed, f'{len(missed)}/{len(_SWEEP_X)} missed, e.g. x = {missed[0]}'
+
+
+@pytest.mark.parametrize('branch', ['single', 'vectorized'])
+@pytest.mark.parametrize('turn', [0.0, 1e-2])
+def test_multilinear_finds_a_contact_at_the_end_of_the_step(turn, branch):
+    '''A step ending 1e-15 past the moving line hits it at t ~ 1.'''
+    sm, em, height = _turning_wall(turn)
+    missed = [x for x in _SWEEP_X
+              if not _multilinear_hits(np.array([x, 4.95]),
+                                       np.array([x + 0.02,
+                                                 height(x + 0.02) + 1e-15]),
+                                       sm, em, branch)]
+    assert not missed, f'{len(missed)}/{len(_SWEEP_X)} missed, e.g. x = {missed[0]}'
+
+
+@pytest.mark.parametrize('branch', ['single', 'vectorized'])
+@pytest.mark.parametrize('turn', [0.0, 1e-2])
+def test_multilinear_step_ending_just_short_of_the_line_misses(turn, branch):
+    '''A step ending 1e-9 short of the moving line does not hit it.'''
+    sm, em, height = _turning_wall(turn)
+    hit = [x for x in _SWEEP_X
+           if _multilinear_hits(np.array([x, 4.95]),
+                                np.array([x + 0.02, height(x + 0.02) - 1e-9]),
+                                sm, em, branch)]
+    assert not hit, f'{len(hit)}/{len(_SWEEP_X)} false contacts, e.g. x = {hit[0]}'
+
+
+@pytest.mark.parametrize('branch', ['single', 'vectorized'])
+@pytest.mark.parametrize('gap', [1e-9, 1e-12])
+def test_multilinear_agent_moving_away_from_a_slowly_turning_line_misses(gap,
+                                                                         branch):
+    '''An agent starting just past a slowly turning line, on either side, and
+    moving away from it, does not hit it.'''
+    sm, em, _ = _turning_wall(1e-9)
+    hit = [(x, side) for x in _SWEEP_X for side in (1, -1)
+           if _multilinear_hits(np.array([x, 5.0 + side*gap]),
+                                np.array([x + 0.02, 5.0 + side*(gap + 0.05)]),
+                                sm, em, branch)]
+    assert not hit, f'{len(hit)}/{2*len(_SWEEP_X)} false contacts, e.g. {hit[0]}'
+
+
+def test_stable_quadratic_roots():
+    '''Both roots, accurate when |4AC| << B**2, as plain floats for scalar input
+    and arrays for array input.'''
+    # roots of 1e-12 t^2 + t - 1e-15: about -1e12 and 1e-15
+    big, small = _geom._stable_quadratic_roots(1e-12, 1.0, -1e-15,
+                                              1.0 + 4e-27)
+    assert np.isclose(small, 1e-15, rtol=1e-12)
+    assert np.isclose(big, -1e12, rtol=1e-12)
+    assert not isinstance(small, np.ndarray) and not isinstance(big, np.ndarray)
+    # double root at 0 (B = 0, desc = 0)
+    assert _geom._stable_quadratic_roots(2.0, 0.0, 0.0, 0.0) == (0.0, 0.0)
+    # arrays: (t - 1)(t - 2) and (t + 3)^2
+    A = np.array([1.0, 1.0]); B = np.array([-3.0, 6.0]); C = np.array([2.0, 9.0])
+    t1, t2 = _geom._stable_quadratic_roots(A, B, C, B**2 - 4*A*C)
+    assert np.allclose(np.sort([t1, t2], axis=0), [[1.0, -3.0], [2.0, -3.0]])
+
+
 # --------------------------------------------------------------------------- #
 #                     closest-distance routines                               #
 # --------------------------------------------------------------------------- #

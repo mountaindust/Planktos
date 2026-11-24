@@ -25,24 +25,41 @@ its new position $Q_3$. Then
 $$(x_1,y_1) = Q_1 + \overrightarrow{v}_1 t$$
 with $\overrightarrow{v}_1 = Q_3 - Q_1$.
 
-The equation for a line through $(x_0(t),y_0(t))$ and $(x_1(t),y_1(t))$ is
-$$(y_0-y_1)x + (x_1-x_0)y + (x_0y_1-x_1y_0) = 0.$$
+The agent is on this line at time $t$ when the vector from $(x_0,y_0)$ to the
+agent is parallel to the vector from $(x_0,y_0)$ to $(x_1,y_1)$, i.e. when their
+2D cross product $u\times v = u_0v_1-u_1v_0$ is zero:
+$$\big((x_1,y_1)-(x_0,y_0)\big)\times\big(\overrightarrow{x}-(x_0,y_0)\big) = 0.$$
 
-We now replace $x$ and $y$ with the respective components of the vector 
-$\overrightarrow{x} = P_0 + \overrightarrow{w}t$ from the equation of the 
-agent's position in order to find intersections. Since $x_0,x_1,y_0,y_1$ are 
-linear functions of $t$, and $x$ and $y$ are linear functions of $t$, the result 
-is an equation for the roots of a quadratic equation in $t$:
+All positions are taken relative to the agent's starting point $P_0$. Let
+$$\overrightarrow{a} = Q_0-P_0,\quad \overrightarrow{b} = Q_1-P_0,\quad
+\overrightarrow{D} = \overrightarrow{b}-\overrightarrow{a},\quad
+\overrightarrow{E} = \overrightarrow{v}_1-\overrightarrow{v}_0,\quad
+\overrightarrow{F} = \overrightarrow{w}-\overrightarrow{v}_0.$$
+Then $(x_1,y_1)-(x_0,y_0) = \overrightarrow{D}+\overrightarrow{E}t$ is the
+element vector, and
+$\overrightarrow{x}-(x_0,y_0) = \overrightarrow{F}t-\overrightarrow{a}$. Since
+both are linear in $t$, their cross product is a quadratic in $t$:
 $$\begin{gather*}
 At^2 + Bt + C = 0\\
-A = (v_{0,0}v_{1,1}-v_{1,0}v_{0,1}) + (v_{0,1}-v_{1,1})w_0 + (v_{1,0}-v_{0,0})w_1\\
-B = (Q_{0,0}v_{1,1}+Q_{1,1}v_{0,0}-Q_{1,0}v_{0,1}-Q_{0,1}v_{1,0}) + 
-(Q_{0,1}-Q_{1,1})w_0 + (v_{0,1}-v_{1,1})P_{0,0} +
-(Q_{1,0}-Q_{0,0})w_1 + (v_{1,0}-v_{0,0})P_{0,1}\\
-C = (Q_{0,0}Q_{1,1}-Q_{1,0}Q_{0,1}) + (Q_{0,1}-Q_{1,1})P_{0,0} + (Q_{1,0}-Q_{0,0})P_{0,1}
+A = \overrightarrow{E}\times\overrightarrow{F}\\
+B = \overrightarrow{D}\times\overrightarrow{F} - \overrightarrow{E}\times\overrightarrow{a}\\
+C = \overrightarrow{a}\times\overrightarrow{b}
 \end{gather*}$$
-where $Q_0 = (Q_{0,0},Q_{0,1})$, $P_0=(P_{0,0},P_{0,1})$, 
-$\overrightarrow{v}_0=(v_{0,0},v_{0,1})$, etc.
+using $\overrightarrow{D}\times\overrightarrow{a} = \overrightarrow{b}\times\overrightarrow{a}$
+for $C$.
+
+Working relative to $P_0$ matters numerically. When the agent starts within
+roundoff of the element's line, the true $C$ is near zero. Here it is the cross
+product of the two short vectors from the agent to the element's vertices, and so
+is accurate. Formed in absolute coordinates, the same $C$ is a sum of products of
+size $|P_0|^2$, and roundoff then decides which side of $t=0$ the root falls on.
+
+The roots are computed as
+$$q = -\tfrac{1}{2}\left(B + \operatorname{sign}(B)\sqrt{B^2-4AC}\right),\qquad
+t = \frac{q}{A},\quad t = \frac{C}{q},$$
+which never subtracts nearly equal numbers. The textbook
+$(-B\pm\sqrt{B^2-4AC})/2A$ loses the smaller root when $|4AC|\ll B^2$, which is
+the case for a contact near $t=0$.
 
 If solutions to this quadratic lie within $[0,1]$, then the agent intersects the 
 interpolated (infinite) line through the mesh vertices. We then have to check 

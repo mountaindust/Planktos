@@ -635,6 +635,24 @@ def seg_intersect_3D_plane(u, n_list, w):
         
 
 
+def _stable_quadratic_roots(A, B, C, desc):
+    '''Both roots of At^2 + Bt + C = 0, given its discriminant desc >= 0 and
+    A != 0. Takes scalars, or arrays of equal shape.
+    '''
+    # q adds sqrt(desc) to B with B's own sign, so it never subtracts nearly
+    #   equal numbers. q/A is the root of larger magnitude, and C/q the other,
+    #   since the product of the roots is C/A. That keeps the small root
+    #   accurate when |4AC| is tiny next to B**2, as it is for a contact near
+    #   t = 0. q is zero only for B = 0 and desc = 0, which forces C = 0: a
+    #   double root at 0.
+    q = -0.5*(B + np.copysign(np.sqrt(desc), B))
+    if np.ndim(q) == 0:
+        return q/A, (C/q if q != 0 else 0.0)
+    t_small = np.zeros_like(q)
+    np.divide(C, q, out=t_small, where=q != 0)
+    return q/A, t_small
+
+
 def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
     '''Find the first intersection between a 2D line segment from P0 (t=0) to 
     P1 (t=1) and the manifolds (multilinear polynomials) created by linear 
@@ -684,16 +702,27 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
     v0 = Q2 - Q0 # linear interpolation vector of first element points
     v1 = Q3 - Q1 # linear interpolation vector of second element points
 
-    # Solving for the intersection results in a quadratic in t.
-    # Put together quadratic equation At^2 + Bt + C = 0
+    # Solving for the intersection results in a quadratic in t,
+    #   At^2 + Bt + C = 0. Its coefficients are formed in coordinates relative
+    #   to P0, where the agent is at w*t and the element's vertices at a + v0*t
+    #   and b + v1*t. C is then cross(a, b), a product of the short vectors
+    #   from the agent to the element, so it stays accurate when the agent
+    #   starts within roundoff of the element's line and C is near zero. In
+    #   absolute coordinates C is a sum of products the size of the coordinates
+    #   squared, and roundoff there decides which side of t = 0 the root falls.
+    cross = lambda u, v: u[...,0]*v[...,1] - u[...,1]*v[...,0]
+    a = Q0 - P0
+    b = Q1 - P0
+    D = b - a       # element vector at t = 0
+    E = v1 - v0     # rate of change of the element vector
+    F = w - v0      # agent's velocity relative to the element's first vertex
+    A = cross(E, F)
+    B = cross(D, F) - cross(E, a)
+    C = cross(a, b)
+
     if len(Q0.shape) == 1:
         # Single mesh element case
-        A = v0[0]*v1[1]-v1[0]*v0[1] + (v0[1]-v1[1])*w[0] + (v1[0]-v0[0])*w[1]
-        B = Q0[0]*v1[1]+Q1[1]*v0[0]-Q1[0]*v0[1]-Q0[1]*v1[0] +\
-            (Q0[1]-Q1[1])*w[0] + (v0[1]-v1[1])*P0[0] +\
-            (Q1[0]-Q0[0])*w[1] + (v1[0]-v0[0])*P0[1]
-        C = Q0[0]*Q1[1]-Q1[0]*Q0[1] + (Q0[1]-Q1[1])*P0[0] + (Q1[0]-Q0[0])*P0[1]
-        
+
         # Check for linear case
         if abs(A) < np.finfo(float).eps * 100:
             # 0 = Bt + C
@@ -708,8 +737,7 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
             desc = B**2 - 4*A*C
             if desc < 0:
                 return None
-            t_1 = (-B + np.sqrt(desc))/(2*A)
-            t_2 = (-B - np.sqrt(desc))/(2*A)
+            t_1, t_2 = _stable_quadratic_roots(A, B, C, desc)
             if (0<=t_1<=1) and not (0<=t_2<=1):
                 t_I = t_1
             elif (0<=t_2<=1) and not (0<=t_1<=1):
@@ -738,11 +766,6 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
     else:
         # Multiple mesh elements Q
         t_sol = -np.ones(Q0.shape[0])
-        A = v0[:,0]*v1[:,1]-v1[:,0]*v0[:,1] + (v0[:,1]-v1[:,1])*w[0] + (v1[:,0]-v0[:,0])*w[1]
-        B = Q0[:,0]*v1[:,1]+Q1[:,1]*v0[:,0]-Q1[:,0]*v0[:,1]-Q0[:,1]*v1[:,0] +\
-            (Q0[:,1]-Q1[:,1])*w[0] + (v0[:,1]-v1[:,1])*P0[0] +\
-            (Q1[:,0]-Q0[:,0])*w[1] + (v1[:,0]-v0[:,0])*P0[1]
-        C = Q0[:,0]*Q1[:,1]-Q1[:,0]*Q0[:,1] + (Q0[:,1]-Q1[:,1])*P0[0] + (Q1[:,0]-Q0[:,0])*P0[1]
 
         # Check for linear special case
         is_linear = np.abs(A) < np.finfo(float).eps * 100
@@ -782,8 +805,7 @@ def seg_intersect_2D_multilinear_poly(P0, P1, Q0, Q1, Q2, Q3, get_all=False):
         A = A[~no_sol]; B = B[~no_sol]; C = C[~no_sol]
 
         # Get solutions
-        t_sol_1 = (-B + np.sqrt(desc[~no_sol]))/(2*A)
-        t_sol_2 = (-B - np.sqrt(desc[~no_sol]))/(2*A)
+        t_sol_1, t_sol_2 = _stable_quadratic_roots(A, B, C, desc[~no_sol])
         t_sol_1_bool = np.logical_and(0<=t_sol_1,t_sol_1<=1)
         t_sol_2_bool = np.logical_and(0<=t_sol_2,t_sol_2<=1)
         t_sol_both_bool =np.logical_and(t_sol_1_bool,t_sol_2_bool)

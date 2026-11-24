@@ -61,6 +61,27 @@ def _boundary_eps(*coord_arrays):
     return 10.0**(np.ceil(np.log10(scale)) - 7)
 
 
+def _side_came_from(startpt, vec, t_I, s_I, Q_tI, elem_start, elem_end):
+    '''Which side of a moving 2D element an agent struck it from: +1 or -1,
+    relative to the normal (Q_tI[1], -Q_tI[0]).
+
+    The agent travels startpt + vec*t over the step, t in [0,1]. Q_tI is the
+    element vector at the contact time t_I, s_I the contact's barycentric
+    coordinate on it, and elem_start and elem_end the element's two vertices
+    at t = 0 and t = 1.
+    '''
+    # Compare the agent with the same point of the element a short time before
+    #   contact. The element there is interpolated across the whole step, from
+    #   elem_start to elem_end, which stays accurate for any t_I. (An
+    #   interpolation from t_I to 1 divides by 1 - t_I, and for a contact at
+    #   the very end of the step it extrapolates back by a huge factor.)
+    tm = t_I - 0.00001
+    elem = elem_start*(1-tm) + elem_end*tm
+    dir_vec = startpt + vec*tm - (elem[0] + s_I*(elem[1] - elem[0]))
+    side = np.dot(dir_vec, np.array([Q_tI[1], -Q_tI[0]]))
+    return side/abs(side)
+
+
 def _clear_of_joint(pt, n_cur, V, c_u, adj_u, EPS):
     '''Back a point on a 2D mesh element off by EPS, clear of a joint.
 
@@ -444,24 +465,10 @@ def apply_internal_moving_BC(startpt, endpt, start_mesh, end_mesh,
             # Translate to final position of mesh element in this time step
             new_pos = dt_elem[0,:]*(1-s_I)+ dt_elem[1,:]*s_I
             
-            # Perturb a small bit off of the boundary.
-            #   This needs to be on the side of the element the motion 
-            #   came from.
-            # Find direction indicator for which side of the mesh element 
-            #   the agent hit the element. Base this off of location of mesh 
-            #   and agent a small time before intersection.
-            tm = t_I - 0.00001
-            agent_prev_loc = startpt + vec*tm
-            Q_tI = Q1-Q0 # vector in direction of mesh elem at t_I
-            # vec in dir of mesh element at tm
-            Qvec_m = ((1-tm)*Q_tI+(tm-t_I)*(dt_elem[1]-dt_elem[0]))/(1-t_I)
-            # interp of Q0 at tm
-            Q0_tm = ((1-tm)*Q0+(tm-t_I)*dt_elem[0])/(1-t_I)
-            x_prev_loc = s_I*Qvec_m + Q0_tm
-            dir_vec = agent_prev_loc-x_prev_loc
-            Q_tI_orth = np.array([Q_tI[1],-Q_tI[0]])
-            side_signum = np.dot(dir_vec,Q_tI_orth)\
-                /np.linalg.norm(np.dot(dir_vec,Q_tI_orth))
+            # Perturb a small bit off of the boundary, on the side of the
+            #   element the agent came from.
+            side_signum = _side_came_from(startpt, vec, t_I, s_I, dQ,
+                                          close_mesh_start[idx], dt_elem)
 
             # Now, perturb perpendicular from the end position of the element
             perp_vec = np.array([dt_elem[1,1]-dt_elem[0,1],dt_elem[0,0]-dt_elem[1,0]])
@@ -1095,19 +1102,12 @@ def _project_and_slide_moving(startpt, endpt, intersection, mesh_start,
     #   0 at Q0, 1 at Q1, negative past Q0 and greater than 1 past Q1.
     s_of = lambda t, x: np.dot(x-Q0_t(t), Qvec(t))/np.dot(Qvec(t), Qvec(t))
 
-    # Find direction indicator for which side of the mesh element the agent 
-    #   hit the element. Base this off of location of mesh and agent a small
-    #   time before intersection.
-    agent_prev_loc = startpt + vec*(t_I-0.00001)
     # Barycentric position of intersection on mesh element from Q0: the signed
     #   projection of x-Q0 onto the element, defined for any nonzero element.
     s_I = np.dot(x-Q0, Q_tI)/np.dot(Q_tI, Q_tI)
-    x_prev_loc = s_I*Qvec(t_I-0.00001) + Q0_t(t_I-0.00001)
-    dir_vec = agent_prev_loc-x_prev_loc
-    Q_tI_orth = np.array([Q_tI[1],-Q_tI[0]])
     # side_signum will orient back in the direction the agent came from
-    side_signum = np.dot(dir_vec,Q_tI_orth)\
-        /np.linalg.norm(np.dot(dir_vec,Q_tI_orth))
+    side_signum = _side_came_from(startpt, vec, t_I, s_I, Q_tI,
+                                  mesh_start[idx], mesh_end[idx])
 
     # get a perpendicular into the element
     Qperp = lambda t: -side_signum*np.array([Qvec(t)[1],-Qvec(t)[0]])
