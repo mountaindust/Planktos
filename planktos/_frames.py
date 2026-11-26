@@ -164,19 +164,18 @@ class FrameSource:
             return
         if self.times is None or len(self.times) == 0:
             return
-        first, last = _dump_span(self.flow.flow_times,
-                                 float(np.min(self.times)),
-                                 float(np.max(self.times)))
+        dumps = self.flow._dumps_between(float(np.min(self.times)),
+                                         float(np.max(self.times)))
         if self._vorticity_from == 'dumps':
             directory = Path(self.flow.vorticity_path)
-            _require_dumps('vort', range(first, last + 1),
+            _require_dumps('vort', dumps,
                            lambda i: directory / self.flow.vorticity_filename(i))
             _require_unchanged_vorticity(
-                range(first, last + 1), self._fluid_run.dump_stats(),
+                dumps, self._fluid_run.dump_stats(),
                 lambda i: directory / self.flow.vorticity_filename(i))
         if self._quiver_from == 'dumps':
             directory = self._fluid_run.path / 'fluid'
-            _require_dumps('quiver', range(first, last + 1),
+            _require_dumps('quiver', dumps,
                            lambda i: directory / _quiver_name(i))
 
 
@@ -407,8 +406,7 @@ class FrameSource:
             return
         lo, hi = float(np.min(frame_times)), float(np.max(frame_times))
         times = self.flow.flow_times
-        first, last = _dump_span(times, lo, hi)
-        spanned = last - first + 1
+        spanned = len(self.flow._dumps_between(lo, hi))
         window = int(self.flow.INUM) + 1
         if spanned <= window:
             return
@@ -454,8 +452,7 @@ class FrameSource:
         if self._quiver_from == 'dumps':
             # Subsampling is linear, so blending strided slices gives the
             #   strided slice of the blend.
-            arrows = _fluid._linear_blend(self.flow.flow_times, time,
-                                          self._quiver_dump)
+            arrows = self.flow._blend_dumps(time, self._quiver_dump)
             return arrows[0], arrows[1]
         if self.flow.flow_times is None:
             field = self.flow
@@ -540,19 +537,6 @@ def _live_times(swarm):
         #   up to that point.
         return history
     return np.concatenate((history, (float(envir.time),)))
-
-
-def _dump_span(times, lo, hi):
-    '''First and last dump index an interpolation over ``[lo, hi]`` reads.
-
-    Clamped to the series, matching the constant extrapolation the field itself
-    applies outside its time bounds.
-    '''
-
-    end = len(times) - 1
-    first = np.clip(np.searchsorted(times, lo, side='right') - 1, 0, end)
-    last = np.clip(np.searchsorted(times, hi, side='left'), 0, end)
-    return int(first), int(last)
 
 
 def _require_dumps(quantity, indices, path_of):

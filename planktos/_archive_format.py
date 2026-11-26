@@ -324,7 +324,7 @@ def _import_swarm_class(dotted):
 #   eliminate it.
 
 def build_fingerprint(dimension, L, flow_points=None, flow_times=None,
-                      periodic_dim=None, tiling=None):
+                      periodic_dim=None, tiling=None, period=None):
     '''Assemble the arrays that identify a fluid dataset and domain.
 
     These are what goes into ``grid.npz``. ``periodic_dim`` is part of it
@@ -350,6 +350,9 @@ def build_fingerprint(dimension, L, flow_points=None, flow_times=None,
         tiles per axis, for a tiled domain; ``L`` is then the tiled length and
         ``flow_points`` the stored tile's grid. None adds no key, which is what
         an untiled environment gives.
+    period : float, optional
+        the period of fluid that repeats in time. None adds no key, which is
+        what fluid that does not repeat gives.
 
     Returns
     -------
@@ -393,6 +396,9 @@ def build_fingerprint(dimension, L, flow_points=None, flow_times=None,
     #   a mismatch, so an untiled grid.npz stays as it was and still matches.
     if tiling is not None:
         arrays['tiling'] = np.asarray(tiling, dtype=np.int64)
+    # Likewise only when the fluid repeats in time.
+    if period is not None:
+        arrays['period'] = np.asarray(period, dtype=np.float64)
 
     return arrays
 
@@ -429,6 +435,8 @@ def fingerprint_summary(arrays):
 
     if 'tiling' in arrays:
         summary['tiling'] = [int(v) for v in arrays['tiling']]
+    if 'period' in arrays:
+        summary['period'] = float(arrays['period'])
 
     return summary
 
@@ -498,7 +506,7 @@ def fingerprint_of(envir):
                              flow_points=envir.flow.flow_points,
                              flow_times=envir.flow.flow_times,
                              periodic_dim=envir.flow.periodic_dim,
-                             tiling=tiling)
+                             tiling=tiling, period=envir.flow.period)
 
 
 def _describe_source(provenance):

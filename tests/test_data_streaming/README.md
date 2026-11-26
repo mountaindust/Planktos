@@ -120,7 +120,7 @@ original test would have exercised figure setup and stopped.
 whole series, "will re-read about **9** of this dataset's **8** dumps".
 Cosmetic, but the number is the entire content of the warning.
 
-**Fixed** by `_frames._dump_span`, which the coverage check below shares — so
+**Fixed** by `FluidData._dumps_between`, which the coverage check below shares — so
 there is now one definition of which dumps a time range reads.
 
 Pinned: `test_stream_b_windowed_replay.py::test_the_warning_counts_dumps_that_exist`

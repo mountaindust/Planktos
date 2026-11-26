@@ -138,12 +138,14 @@ Biology* 84(72). Docs: https://planktos.readthedocs.io
   `_geom.seg_intersect_2D_multilinear_poly`). **The bug report and fix plan is
   `../planktos2_revisions/v1.1.1_bug_report.md`** (outside this repository); read it
   before working on these fixes. v1.1.1 is fixes only: feature work stays on `vtk`,
-  and `master` is merged into `vtk` afterwards.
-  **Undecided: whether to close issue #76 in v1.1.1** *(as of 2026-11-20)*. In 3D, the
-  static slider has the same concave-fold back-off gap that bug 4 fixed in 2D. A slide
-  ending just short of a shared edge can leave the agent on the solid side of the
-  adjacent triangle, which breaks the no-penetration invariant. Not in the bug report
-  (which is 2D only), but it may be a loophole worth closing before tagging.
+  and `master` is merged into `vtk` afterwards. **One exception, by the user's
+  decision** *(2026-11-25)*: `periodic_time` (fluid and moving-mesh data covering one
+  cycle repeat indefinitely), because research needs it within the month.
+  **Next: issue #76** *(as of 2026-11-25; the remaining v1.1.1 work, before tagging)*.
+  In 3D, the static slider has the same concave-fold back-off gap that bug 4 fixed in
+  2D. A slide ending just short of a shared edge can leave the agent on the solid side
+  of the adjacent triangle, which breaks the no-penetration invariant. It is not in the
+  bug report, which covers 2D only.
 - **`vtk`** — *(as of 2026-11-14)* **the development branch. You are usually here.**
   Its work: **move 3D plotting from matplotlib to vtk**, through PyVista (already a
   required dependency), unlocking 3D visualization
@@ -286,6 +288,14 @@ docs or tests written against 1.0.x.
   `k*(INUM-1)+3` — with `INUM=4`, any of 6, 9, 12, 15, … time points.
 - `periodic_dim` is a property of the fluid data and is **independent of the
   agent boundary conditions** in `Environment.bndry`. It defaults to `False`.
+- **`periodic_time` is the same idea in time**: `FluidData.period` makes one cycle
+  repeat. `flow_times` stays one cycle long; interpolation runs over `_knot_times`,
+  which has one more point, a period after the first, where the field is dump 0
+  (re-read by `_load_dumps` under a window). A closed series' repeated last dump is
+  dropped at load. Anything taking a time maps it through `_cycle_time`; anything
+  blending per-dump data goes through `_blend_dumps`/`_dumps_between`, never
+  `_linear_blend(flow_times, ...)` directly. A moving mesh repeats through
+  `Environment.ibmesh_period`.
 
 **`INUM` controls dynamic loading, and with it the interpolation in time:**
 
@@ -573,7 +583,7 @@ runs them.
   | Area | Modules |
   |---|---|
   | Intersections and collisions | `test_geom`, `test_collisions_*`, `test_ibc_helpers`, `test_periodic_ib`, `test_parallel_ib` |
-  | Fluid data and analysis | `test_flow_generation`, `test_flow_interface`, `test_temporal_interp`, `test_dynamic_loading`, `test_material_derivative`, `test_analysis` |
+  | Fluid data and analysis | `test_flow_generation`, `test_flow_interface`, `test_temporal_interp`, `test_dynamic_loading`, `test_periodic_time`, `test_material_derivative`, `test_analysis` |
   | File loaders and low-level I/O | `test_io_loaders` |
   | Run archive | `test_run_archive` (the bytes), `test_recording` (real runs, restore, append), `test_run_reader`, `test_fluid_recording`, `test_archive_rendering`, `test_provenance` |
   | Swarm behavior | `test_agent_models`, `test_swarm_lifecycle`, `test_swarm_save` |

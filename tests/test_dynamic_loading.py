@@ -517,6 +517,17 @@ def test_dudt_at_every_time_point_matches_full_linear():
         assert _diff(dyn.get_dudt(time=q), ref) <= _tol(ref)
 
 
+def test_dudt_at_every_time_point_matches_full_linear_sweeping_backward():
+    # Regression: sweeping backward lands on each window's first time point,
+    # which takes the slope to its left -- held only by the window before it.
+    # get_dudt took the slope to its right there, since a time on the window's
+    # first point needs no slide to evaluate the velocity.
+    dyn, full, t = _pair(_field_2d(), 5)
+    for q in t[::-1]:
+        ref = full.get_dudt(time=q)
+        assert _diff(dyn.get_dudt(time=q), ref) <= _tol(ref)
+
+
 def test_dudt_at_the_final_time_point_is_the_slope_to_its_left():
     # Regression: the same >= returned zero AT t[-1], as though that time were
     # already beyond the data. The final time point follows the right-closed

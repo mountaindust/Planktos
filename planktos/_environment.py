@@ -97,6 +97,10 @@ class Environment:
         dimension. Governs how the flow is interpolated at the domain edges and
         is independent of the agent boundary conditions (x_bndry/y_bndry/z_bndry).
         Only applies to the flow= path; the data loaders set this themselves.
+    periodic_time : True or float, optional
+        for time-varying flow= data covering one cycle of time-periodic flow,
+        which then repeats indefinitely: the period, or True to infer it (see
+        FluidData). The data loaders take this argument themselves.
     rho : float, optional
         fluid density of environment, kg/m**3 (optional, m here meaning length units).
         Auto-calculated if mu and nu are provided.
@@ -187,6 +191,9 @@ class Environment:
     ibmesh_times : ndarray of floats or None
         if specified, the time stamp for each index t in the ibmesh (time 
         varying meshes only)
+    ibmesh_period : float or None
+        the period of a moving mesh that repeats in time, set by
+        read_IB2d_mesh_data's periodic_time; None otherwise
     ibmesh_color : matplotlib color format
         color of the ibmesh. Defaults to black in 2D, 'dimgrey' in 3D.
     plot_structs : list of function handles
@@ -237,7 +244,8 @@ class Environment:
     def __init__(self, Lx=10, Ly=10, Lz=None,
                  x_bndry='zero', y_bndry='zero', z_bndry='noflux', flow=None,
                  flow_times=None, periodic_dim=False, rho=None, mu=None, nu=None,
-                 char_L=None, U=None, init_swarms=None, units='m', ibmesh_color=None):
+                 char_L=None, U=None, init_swarms=None, units='m', ibmesh_color=None,
+                 periodic_time=None):
 
         # Tile counts once tile_domain has run. Set first: the flow and ibmesh
         #   setters below consult it.
@@ -289,7 +297,8 @@ class Environment:
             flow_points, flow_times = self._get_flow_variables(flow[0].shape,
                                                                flow_times)
             self.flow = fluid.FluidData(flow, flow_points, flow_times,
-                                        periodic_dim=periodic_dim)
+                                        periodic_dim=periodic_dim,
+                                        periodic_time=periodic_time)
         else:
             self.flow = None
 
@@ -334,7 +343,8 @@ class Environment:
                 'note': 'arrays supplied directly to Environment()',
                 'kwargs': {'flow': _provenance.jsonable(flow),
                            'flow_times': _provenance.jsonable(flow_times),
-                           'periodic_dim': _provenance.jsonable(periodic_dim)}}
+                           'periodic_dim': _provenance.jsonable(periodic_dim),
+                           'periodic_time': _provenance.jsonable(periodic_time)}}
 
         ##### swarm list #####
 
@@ -393,6 +403,7 @@ class Environment:
         self.max_meshpt_dist = None # max length of a (static) mesh segment.
                                     #  Stays None if mesh is moving.
         self.ibmesh_times = None
+        self.ibmesh_period = None
         if ibmesh_color is None:
             if Lz is None:
                 self.ibmesh_color = 'k'
@@ -496,12 +507,34 @@ class Environment:
         if getattr(self, '_recorder', None) is not None:
             self._refuse_while_recording()
         mesh = getattr(self, 'ibmesh', None)
+        if (new_flow is not None and new_flow.flow_times is not None
+                and getattr(self, 'ibmesh_times', None) is not None):
+            self._check_time_periods(new_flow.period, self.ibmesh_period)
         if new_flow is not None and mesh is not None:
             fitted = self._fit_ibmesh(mesh, new_flow)
             if fitted is not mesh:
                 self.ibmesh = fitted
                 self.max_meshpt_dist = _geom.max_edge_length(fitted)
         self._flow = new_flow
+
+
+    def _check_time_periods(self, flow_period, mesh_period):
+        '''Refuse a fluid and a moving mesh that repeat with different
+        periods; warn when only one of them repeats.'''
+
+        if flow_period is not None and mesh_period is not None:
+            if not np.isclose(flow_period, mesh_period, rtol=1e-6, atol=0):
+                raise ValueError(
+                    'the fluid repeats every {:g} but the moving immersed mesh '
+                    'every {:g}.'.format(flow_period, mesh_period))
+        elif flow_period is not None or mesh_period is not None:
+            repeats, holds = (('fluid', 'moving immersed mesh')
+                              if flow_period is not None
+                              else ('moving immersed mesh', 'fluid'))
+            warnings.warn(
+                'the {} repeats in time but the {} does not, so the {} holds '
+                'its last state once its data ends.'.format(repeats, holds,
+                                                           holds), UserWarning)
 
 
     @property
@@ -1206,7 +1239,7 @@ class Environment:
 
     @_provenance.records_provenance('_fluid_provenance', describes='flow')
     def read_IB2d_fluid_data(self, path, dt, print_dump, d_start=None,
-                             d_finish=None, INUM=None):
+                             d_finish=None, INUM=None, periodic_time=None):
         '''Reads in vtk flow velocity data generated by IB2d and sets environment
         variables accordingly. Time will be shifted to start at t=0 regardless of
         d_start; give read_IB2d_mesh_data the same d_start so that a moving
@@ -1240,12 +1273,19 @@ class Environment:
             entire dataset too but splines it linearly; an int streams a sliding
             window from storage and splines that linearly. Use an int only
             when the dataset will not fit in memory: streaming it is slower.
+        periodic_time : True or float, optional
+            for data covering one cycle of time-periodic flow, which then
+            repeats indefinitely. A number is the period; True infers it from
+            the data. A last dump repeating the first is dropped, and the field
+            is interpolated from the last dump back to the first. Prints what
+            it found.
         '''
         self._refuse_once_tiled('load a fluid')
         self._refuse_while_recording()
 
 
-        self.flow = fluid.IB2dData(path, dt, print_dump, d_start, d_finish, INUM)
+        self.flow = fluid.IB2dData(path, dt, print_dump, d_start, d_finish, INUM,
+                                   periodic_time=periodic_time)
         self.L = self.flow.L
         self._reset_flow_variables()
 
@@ -1254,7 +1294,8 @@ class Environment:
     @_provenance.records_provenance('_fluid_provenance', describes='flow')
     def read_IBAMR3d_vtk_data(self, path, title='IBAMR_db_', d_start=0, 
                               d_finish=None, INUM=None, 
-                              periodic_dim=(True, True, False), vel_conv=None):
+                              periodic_dim=(True, True, False), vel_conv=None,
+                              periodic_time=None):
         '''Reads in one or more vtk Rectilinear Grid Vector files. If path
         refers to a single file, the resulting flow will be time invariant.
         Otherwise, this method will assume that files are named <title>###.vtk 
@@ -1289,13 +1330,20 @@ class Environment:
         vel_conv : float, optional
             scalar to multiply the velocity by in order to convert units to 
             match the spatial grid units
+        periodic_time : True or float, optional
+            for data covering one cycle of time-periodic flow, which then
+            repeats indefinitely. A number is the period; True infers it from
+            the data. A last dump repeating the first is dropped, and the field
+            is interpolated from the last dump back to the first. Prints what
+            it found.
         '''
         self._refuse_once_tiled('load a fluid')
         self._refuse_while_recording()
 
 
         self.flow = fluid.VTK3dData(path, title, d_start, d_finish, INUM,
-                                    periodic_dim, vel_conv)
+                                    periodic_dim, vel_conv,
+                                    periodic_time=periodic_time)
         self.L = self.flow.L
         self._reset_flow_variables()
 
@@ -1304,7 +1352,8 @@ class Environment:
     @_provenance.records_provenance('_fluid_provenance', describes='flow')
     def read_openfoam_vtk_data(self, path, INUM=None,
                                periodic_dim=(False, False, False),
-                               vel_conv=None, require_boundary=True):
+                               vel_conv=None, require_boundary=True,
+                               periodic_time=None):
         '''Reads in fluid velocity data from an OpenFOAM VTK export, as written
         by ``foamToVTK``: a ``.vtm.series`` index naming one ``.vtm`` manifest
         per timestep, each naming an ``internal.vtu`` of volume data plus a
@@ -1356,13 +1405,20 @@ class Environment:
             True raises when one is missing; False extrapolates the interior out
             to each uncovered face instead, with a warning, and still uses the
             patches that exist.
+        periodic_time : True or float, optional
+            for data covering one cycle of time-periodic flow, which then
+            repeats indefinitely. A number is the period; True infers it from
+            the data. A last dump repeating the first is dropped, and the field
+            is interpolated from the last dump back to the first. Prints what
+            it found.
         '''
         self._refuse_once_tiled('load a fluid')
         self._refuse_while_recording()
 
 
         self.flow = fluid.OpenFOAMData(path, INUM, periodic_dim, vel_conv,
-                                       require_boundary)
+                                       require_boundary,
+                                       periodic_time=periodic_time)
         self.L = self.flow.L
         self._reset_flow_variables()
 
@@ -1372,7 +1428,7 @@ class Environment:
     def read_vtkxml_fluid_data(self, path, INUM=None,
                                periodic_dim=(False, False, False),
                                vel_conv=None, vec_name=None,
-                               time_from_name=None, dt=None):
+                               time_from_name=None, dt=None, periodic_time=None):
         '''Reads in fluid velocity point data from VTK XML ImageData (``.vti``)
         or RectilinearGrid (``.vtr``) files, such as solver output resampled
         onto a Cartesian grid.
@@ -1422,13 +1478,20 @@ class Environment:
             interval between consecutive dumps. Each dump's time is ``dt`` times
             its position in the series, counting any dump a collection declares
             but which is absent. Times the files carry must agree with it.
+        periodic_time : True or float, optional
+            for data covering one cycle of time-periodic flow, which then
+            repeats indefinitely. A number is the period; True infers it from
+            the data. A last dump repeating the first is dropped, and the field
+            is interpolated from the last dump back to the first. Prints what
+            it found.
         '''
         self._refuse_once_tiled('load a fluid')
         self._refuse_while_recording()
 
 
         self.flow = fluid.VTKXMLData(path, INUM, periodic_dim, vel_conv,
-                                     vec_name, time_from_name, dt)
+                                     vec_name, time_from_name, dt,
+                                     periodic_time=periodic_time)
         self.L = self.flow.L
         self._reset_flow_variables()
 
@@ -1437,7 +1500,7 @@ class Environment:
     @_provenance.records_provenance('_fluid_provenance', describes='flow')
     def read_comsol_vtu_data(self, filename, periodic_dim=(False, False, False),
                              res=101, linear_interp=False, vel_conv=None,
-                             grid_conv=None):
+                             grid_conv=None, periodic_time=None):
         '''Reads fluid velocity data exported from COMSOL Multiphysics, in
         either of two formats, told apart by the file's contents:
 
@@ -1471,13 +1534,20 @@ class Environment:
         grid_conv : float, optional
             scalar to multiply the grid by in order to convert units; text grid
             only
+        periodic_time : True or float, optional
+            for data covering one cycle of time-periodic flow, which then
+            repeats indefinitely. A number is the period; True infers it from
+            the data. A last dump repeating the first is dropped, and the field
+            is interpolated from the last dump back to the first. VTK XML only;
+            prints what it found.
 
         Raises
         ------
         FileNotFoundError
             if filename is not a file
         ValueError
-            if grid_conv is given for a VTK XML file
+            if grid_conv is given for a VTK XML file, or periodic_time for a
+            text grid
         '''
         self._refuse_once_tiled('load a fluid')
         self._refuse_while_recording()
@@ -1490,6 +1560,9 @@ class Environment:
             text_grid = f.read(256).lstrip().startswith(b'%')
 
         if text_grid:
+            if periodic_time is not None and periodic_time is not False:
+                raise ValueError('a COMSOL text grid export holds one time, so '
+                                 'it cannot be periodic in time.')
             self.flow = fluid.ComsolGridData(filename, periodic_dim, vel_conv,
                                              grid_conv)
         else:
@@ -1497,7 +1570,8 @@ class Environment:
                 raise ValueError('grid_conv applies to COMSOL text grid exports '
                                  'only, and {} is not one.'.format(filename))
             self.flow = fluid.ComsolVTUData(filename, periodic_dim, res,
-                                            linear_interp, vel_conv)
+                                            linear_interp, vel_conv,
+                                            periodic_time=periodic_time)
         self.L = self.flow.L
         self._reset_flow_variables()
 
@@ -1541,7 +1615,7 @@ class Environment:
                                 describes='flow')
     def read_NetCDF_flow(self, flow_x, flow_y=None, flow_z=None, vec_idx=None, 
                          dim_reorder=None, x_name=None, y_name=None, z_name=None, 
-                         time_name=None, conv_time=False):
+                         time_name=None, conv_time=False, periodic_time=None):
         '''Read NetCDF fluid data into the environment. Must first have loaded a 
         NetCDF dataset with load_NetCDF.
 
@@ -1615,6 +1689,12 @@ class Environment:
             datetime object may be required first.
             Uses the date2num function provided by cftime. See Notes below for 
             expected formatting in this case.
+        periodic_time : True or float, optional
+            for data covering one cycle of time-periodic flow, which then
+            repeats indefinitely. A number is the period; True infers it from
+            the data. A last dump repeating the first is dropped, and the field
+            is interpolated from the last dump back to the first. Prints what
+            it found.
 
         See Also
         --------
@@ -1752,7 +1832,8 @@ class Environment:
         #   assigning the flow can refuse it (see the flow setter).
         self.flow = fluid.FluidData(flow, flow_points, flow_times, INUM=None,
                                     periodic_dim=False,
-                                    fluid_domain_LLC=fluid_domain_LLC)
+                                    fluid_domain_LLC=fluid_domain_LLC,
+                                    periodic_time=periodic_time)
         if s_units is not None:
             self.units = s_units
         self.L = [flow_points[dim][-1] for dim in range(s_dim)]
@@ -1825,7 +1906,8 @@ class Environment:
         regridded = fluid.FluidData(data, tuple(p - p[0] for p in points),
                                     flow.flow_times, INUM=INUM,
                                     periodic_dim=periodic_dim,
-                                    fluid_domain_LLC=LLC)
+                                    fluid_domain_LLC=LLC,
+                                    periodic_time=flow.period)
         regridded._flat = flow._flat
         self.flow = regridded
         self.L = [p[-1] for p in regridded.flow_points]
@@ -1888,6 +1970,7 @@ class Environment:
         self.ibmesh = ibmesh
         self.max_meshpt_dist = max_meshpt_dist
         self.ibmesh_times = None
+        self.ibmesh_period = None
 
 
 
@@ -1895,7 +1978,8 @@ class Environment:
                                     describes='ibmesh')
     def read_IB2d_mesh_data(self, path, dt=None, print_dump=None, d_start=0, d_finish=None, 
                                 brk_idx_list=(), add_idx_list=None, periodic=False, 
-                                method='adjacent', res_factor=0.501, res=None):
+                                method='adjacent', res_factor=0.501, res=None,
+                                periodic_time=None):
         '''Reads in IB2d folder with vtk mesh data for moving immersed 
         boundaries or either a .vertex file or a single .vtk for a static mesh.
 
@@ -1947,6 +2031,12 @@ class Environment:
         periodic : bool (default: False)
             Whether or not the last vertex point should be considered adjacent 
             to the first.
+        periodic_time : True or float, optional
+            for a moving mesh covering one cycle of periodic motion, which then
+            repeats indefinitely. A number is the period; True infers it from
+            the data. A last dump repeating the first is dropped, and the mesh
+            is interpolated from the last dump back to the first. Prints what
+            it found. A fluid that also repeats must have the same period.
 
         Parameters for static immersed boundaries
         -----------------------------------------
@@ -1977,6 +2067,7 @@ class Environment:
         '''
 
         self._refuse_once_tiled('change the immersed mesh')
+        cyclic = periodic_time is not None and periodic_time is not False
 
         # Every mesh this reads is 2D.
         if self.flow is not None and self.flow.ndim != 2:
@@ -2072,20 +2163,41 @@ class Environment:
 
             ### Save data
             if d_start != d_finish:
-                self.ibmesh = np.array(ibmesh, dtype=np.float64)
-                self.ibmesh_times = np.arange(d_start,d_finish+1,dtype=np.float64)*print_dump*dt
+                ibmesh = np.array(ibmesh, dtype=np.float64)
+                ibmesh_times = np.arange(d_start,d_finish+1,dtype=np.float64)*print_dump*dt
                 # shift time so that ibmesh starts at t=0
-                self.ibmesh_times -= self.ibmesh_times[0]
+                ibmesh_times -= ibmesh_times[0]
+                # Settled before anything is stored, so that a refusal leaves
+                #   the Environment as it was.
+                period = None
+                if cyclic:
+                    period, closed = fluid._resolve_cycle(
+                        ibmesh_times, lambda i: [ibmesh[i]], periodic_time,
+                        'immersed mesh', len(ibmesh_times))
+                    if closed:
+                        ibmesh = ibmesh[:-1]
+                        ibmesh_times = ibmesh_times[:-1]
+                if self.flow is not None and self.flow.flow_times is not None:
+                    self._check_time_periods(self.flow.period, period)
+                self.ibmesh = ibmesh
+                self.ibmesh_times = ibmesh_times
+                self.ibmesh_period = period
                 # A moving mesh's element lengths change, so it has no maximum.
                 self.max_meshpt_dist = None
             else:
+                if cyclic:
+                    raise ValueError('a single mesh dump is static, so it '
+                                     'cannot be periodic in time.')
                 self.ibmesh = np.array(ibmesh[0], dtype=np.float64) # squash t dimension
                 self.ibmesh_times = None
+                self.ibmesh_period = None
                 self.max_meshpt_dist = _geom.max_edge_length(self.ibmesh)
 
         
         ####### Static immersed boundary data #######
         elif path.is_file():
+            if cyclic:
+                raise ValueError('a static mesh cannot be periodic in time.')
             ### adjacent method
             if method == 'adjacent':
                 print('Reading vertex data and meshing...')
@@ -2135,6 +2247,7 @@ class Environment:
             self.max_meshpt_dist = np.linalg.norm(self.ibmesh[:,0,:]
                                                   -self.ibmesh[:,1,:],axis=1).max()
             self.ibmesh_times = None
+            self.ibmesh_period = None
         
         
         ####### Neither a directory nor a filename #######
@@ -2274,6 +2387,7 @@ class Environment:
         self.ibmesh = ibmesh
         self.max_meshpt_dist = _geom.max_edge_length(ibmesh)
         self.ibmesh_times = None
+        self.ibmesh_period = None
 
 
 
@@ -3344,7 +3458,9 @@ class Environment:
         Returns
         -------
         ndarray
-            the mesh at that time, Nx2x2; constant outside ibmesh_times
+            the mesh at that time, Nx2x2; constant outside ibmesh_times, or
+            for a mesh that repeats (ibmesh_period), the mesh at the same phase
+            of its cycle
         '''
 
         if self.ibmesh is None or self.ibmesh.ndim < 4:
@@ -3354,6 +3470,16 @@ class Environment:
             time = self.time
         elif t_index is not None:
             time = self.time_history[t_index]
+
+        if self.ibmesh_period is not None:
+            # The same phase of the cycle. Past the last mesh, it moves back
+            #   to the first, which it reaches a period after the first.
+            t0 = self.ibmesh_times[0]
+            time = t0 + float(np.mod(time - t0, self.ibmesh_period))
+            if time > self.ibmesh_times[-1]:
+                t = ((time - self.ibmesh_times[-1])
+                     / (t0 + self.ibmesh_period - self.ibmesh_times[-1]))
+                return (1-t)*self.ibmesh[-1,...] + t*self.ibmesh[0,...]
 
         # Enforce constant extrapolation
         if time <= self.ibmesh_times[0]:

@@ -85,6 +85,11 @@ class FluidData:
     flow_times : ndarray of floats, or None
         Time stamp for each index t in the flow arrays. None for a
         time-invariant field.
+    period : float or None
+        The period of time-periodic data, set by ``periodic_time``. The field
+        at time t is the field at ``flow_times[0] + (t - flow_times[0]) %
+        period``, and between the last dump and the period it is interpolated
+        back to dump 0. None for data that is not periodic in time.
     fshape : tuple
         Shape of each component of the fluid velocity field as an ndarray of
         raw data, ``([t],i,j,[k])``.
@@ -127,7 +132,7 @@ class FluidData:
     _tiling = None
 
     def __init__(self, flow, flow_points, flow_times=None, INUM=None,
-                 periodic_dim=False, fluid_domain_LLC=None):
+                 periodic_dim=False, fluid_domain_LLC=None, periodic_time=None):
         '''Build from velocity arrays in memory; the per-source subclasses read
         files and call this.
 
@@ -158,11 +163,18 @@ class FluidData:
         fluid_domain_LLC : tuple, optional
             the data's original lower left corner, when it was translated so that
             corner sits at the origin
+        periodic_time : True or float, optional
+            for data covering one cycle of time-periodic flow, which then repeats
+            indefinitely. A number is the period; True infers it from the data.
+            The last dump may repeat the first (closed), and is then dropped, or
+            be one dump interval short of it (open). Prints which it found.
 
         Raises
         ------
         ValueError
-            if INUM is not None, True or an int of at least 2
+            if INUM is not None, True or an int of at least 2; or periodic_time
+            is given for time-invariant flow or does not fit the data (see
+            ``period``)
         RuntimeError
             if an int INUM is at least the number of time points, or a subclass
             loading dynamically supplies flow_times for only part of its dumps
@@ -186,13 +198,6 @@ class FluidData:
         #   it knows nothing about.
         self._vort_cache = {}
 
-        if flow_times is not None and not isinstance(INUM, (bool, type(None))) \
-                and len(flow_times) <= INUM:
-            raise RuntimeError(
-                "INUM={} asks for a window of {} time points, but the series "
-                "has only {}. Use INUM=None or True to hold all of it.".format(
-                    INUM, INUM+1, len(flow_times)))
-
         # A subclass that streams from storage must hand over the timestamps for
         # the WHOLE dataset, not just the resident window: windows are sliced out
         # of flow_times and the simulation is bounded by its endpoints. Getting
@@ -214,7 +219,30 @@ class FluidData:
                         self.d_start, self.d_finish, expected, len(flow_times)))
 
         self.flow_points = flow_points
+
+        # A period makes the data one cycle of a series that repeats. Closing
+        #   the cycle drops a last dump that repeats the first, so it comes
+        #   before anything sized by flow_times. Interpolation in time runs over
+        #   _knot_times, which for periodic data has one more point than
+        #   flow_times: a period after the first, where the field is dump 0.
+        self.period = None
+        if periodic_time is not None and periodic_time is not False:
+            if flow_times is None:
+                raise ValueError('time-invariant flow cannot be periodic in '
+                                 'time.')
+            flow, flow_times = self._close_cycle(flow, flow_times,
+                                                 periodic_time)
         self.flow_times = flow_times
+        self._knot_times = (flow_times if self.period is None else
+                            np.append(flow_times, flow_times[0] + self.period))
+
+        if flow_times is not None and not isinstance(INUM, (bool, type(None))) \
+                and len(self._knot_times) <= INUM:
+            raise RuntimeError(
+                "INUM={} asks for a window of {} time points, but the series "
+                "has only {}. Use INUM=None or True to hold all of it.".format(
+                    INUM, INUM+1, len(self._knot_times)))
+
         # A single bool applies to every axis. A sequence gives one entry per
         #   axis and is stored as a tuple of bools whatever it arrived as: a
         #   call replayed from a run archive's provenance passes a list.
@@ -238,8 +266,10 @@ class FluidData:
             # Set below for cubic splining, where the whole dataset is resident.
             self._mean_interp = None
 
+            knots = self._knot_times
+            cyclic = self.period is not None
             if self.INUM is not None and self.INUM is not False:
-                if self.INUM is True or self.INUM >= len(self.flow_times)-1:
+                if self.INUM is True or self.INUM >= len(knots)-1:
                     if self.INUM is not True:
                         # An int INUM is a request for a sliding window, but one
                         # at least as wide as the dataset leaves nothing to
@@ -251,26 +281,31 @@ class FluidData:
                             "so all fluid data is being held in memory and no "
                             "dynamic loading will occur. Use a smaller INUM to "
                             "load windows from storage.".format(
-                                self.INUM, len(self.flow_times)), UserWarning)
+                                self.INUM, len(knots)), UserWarning)
                     for n, f in enumerate(flow):
-                        flow[n] = LinearSpline(self.flow_times, f, extrapolate=(True, True))
-                elif self.INUM < len(self.flow_times)-1:
+                        flow[n] = LinearSpline(knots, f, extrapolate=(True, True),
+                                               cyclic=cyclic)
+                else:
                     ### Create initial spline ###
-                    load_times = self.flow_times[0:self.INUM+1]
+                    # A window never starts past the last dump, so it holds
+                    #   no knot that wraps.
+                    load_times = knots[0:self.INUM+1]
                     for n, f in enumerate(flow):
                         flow[n] = LinearSpline(load_times, f, extrapolate=(True, False))
             else:
-                ### Spline all data with not-a-knot ###
+                ### Spline all data: not-a-knot, or periodic for a cycle ###
                 self.INUM = None
                 for n, f in enumerate(flow):
-                    flow[n] = fCubicSpline(self.flow_times, f, extrapolate=(True, True))
+                    flow[n] = fCubicSpline(knots, f, extrapolate=(True, True),
+                                           cyclic=cyclic)
                 # Spline the per-dump means with the same class and knots as the
                 # field. Cubic spline construction is linear in the data, and so
                 # is the spatial mean, so this evaluates to exactly the mean of
                 # the splined field at any time -- provided the two are built
                 # the same way, which reusing fCubicSpline guarantees.
-                self._mean_interp = fCubicSpline(self.flow_times, self._dump_means,
-                                                 extrapolate=(True, True))
+                self._mean_interp = fCubicSpline(knots, self._dump_means,
+                                                 extrapolate=(True, True),
+                                                 cyclic=cyclic)
             self._flow = flow
         else:
             # Time-invariant flow. Just save it as-is.
@@ -287,7 +322,8 @@ class FluidData:
         '''Velocity field at simulation time ``time``, interpolated in time.
 
         Loads data when ``time`` falls outside the window held in memory. A time
-        outside the data's time range takes the value at its nearer end.
+        outside the data's time range takes the value at its nearer end, or for
+        periodic data (``period``), the value at the same phase of the cycle.
 
         Returns
         -------
@@ -303,8 +339,11 @@ class FluidData:
             raise TypeError('This fluid is time-invariant, so it cannot be '
                             'evaluated at a time. Index it instead: flow[0] '
                             'is the x-velocity.')
-        # Constant extrapolation beyond the data's time bounds
-        if time <= self.flow_times[0]:
+        # Constant extrapolation beyond the data's time bounds, or the same
+        #   phase of a periodic cycle.
+        if self.period is not None:
+            time = self._cycle_time(time)
+        elif time <= self.flow_times[0]:
             time = self.flow_times[0]
         elif time >= self.flow_times[-1]:
             time = self.flow_times[-1]
@@ -314,6 +353,104 @@ class FluidData:
             self.update_spline(time)
             return [fspline(time) for fspline in self._flow]
     
+    def _close_cycle(self, flow, flow_times, periodic_time):
+        '''Set ``period`` from ``periodic_time``, and drop a last dump that
+        repeats the first.
+
+        Returns the flow and flow_times for one cycle. A subclass that loads
+        dynamically has its dump range and any window bounds trimmed to match.
+        '''
+
+        # The dumps the caller passed: the whole series, or the opening window.
+        #   The two at the end of a window come from storage.
+        in_hand = len(flow[0])
+        def get(i):
+            if i < in_hand:
+                return [f[i] for f in flow]
+            return [f[0] for f in self._load_dumps(self.d_start + i,
+                                                   self.d_start + i)]
+
+        period, closed = _resolve_cycle(flow_times, get, periodic_time,
+                                        'fluid', in_hand)
+        self.period = period
+        if closed:
+            last = len(flow_times) - 1
+            flow_times = flow_times[:last]
+            if in_hand > last:
+                flow = [f[:last] for f in flow]
+                if hasattr(self, 'loaded_dump_bnds'):
+                    self.loaded_dump_bnds = (self.loaded_dump_bnds[0],
+                                             self.loaded_dump_bnds[1] - 1)
+                    self.loaded_idx_bnds = (self.loaded_idx_bnds[0],
+                                            self.loaded_idx_bnds[1] - 1)
+            if hasattr(self, 'd_finish'):
+                self.d_finish -= 1
+        return flow, flow_times
+
+
+    def _cycle_time(self, time):
+        '''``time`` mapped into the cycle ``[flow_times[0], flow_times[0] +
+        period]``. Unchanged for data that is not periodic in time.'''
+
+        if self.period is None:
+            return time
+        t0 = self.flow_times[0]
+        return t0 + float(np.mod(time - t0, self.period))
+
+
+    def _blend_dumps(self, time, get):
+        '''Per-dump entries blended at ``time`` with the weights the velocity
+        uses under linear splining.
+
+        Parameters
+        ----------
+        time : float
+        get : callable
+            ``get(t_idx)`` returns the entry for dump ``t_idx``
+
+        Returns
+        -------
+        ndarray
+        '''
+
+        if self.period is None:
+            return _linear_blend(self.flow_times, time, get)
+        # The knot a period after the first is dump 0 again.
+        n = len(self.flow_times)
+        return _linear_blend(self._knot_times, self._cycle_time(time),
+                             lambda i: get(i % n))
+
+
+    def _dumps_between(self, lo, hi):
+        '''The dumps an interpolation at times from ``lo`` to ``hi`` reads, as
+        a sorted list of indices into flow_times.
+
+        Clamped to the series outside its time bounds, as the field is; for
+        periodic data, every dump at the phases the interval covers.
+        '''
+
+        def span(times, a, b):
+            end = len(times) - 1
+            first = np.clip(np.searchsorted(times, a, side='right') - 1, 0, end)
+            last = np.clip(np.searchsorted(times, b, side='left'), 0, end)
+            return range(int(first), int(last) + 1)
+
+        if self.period is None:
+            return list(span(self.flow_times, lo, hi))
+        n = len(self.flow_times)
+        if hi - lo >= self.period:
+            return list(range(n))
+        # Split where the interval wraps, if it does.
+        a = self._cycle_time(lo)
+        b = a + (hi - lo)
+        end = self._knot_times[-1]
+        dumps = {i % n for i in span(self._knot_times, a, min(b, end))}
+        if b > end:
+            dumps |= {i % n for i in span(self._knot_times,
+                                          self._knot_times[0], b - self.period)}
+        return sorted(dumps)
+
+
     def __len__(self):
         '''Number of velocity components, equal to the spatial dimension.'''
         return len(self._flow)
@@ -384,7 +521,7 @@ class FluidData:
         #   an int is all that is left to test.
         if self.INUM is None or self.INUM is True:
             return False
-        return self.INUM < len(self.flow_times) - 1
+        return self.INUM < len(self._knot_times) - 1
 
 
     def add_dump_observer(self, observer):
@@ -478,7 +615,9 @@ class FluidData:
         #   so slicing a dump out of it copies nothing.
         idx0 = getattr(self, 'loaded_idx_bnds', (0, None))[0]
         window = [f.regenerate_data() for f in self._flow]
-        for i in range(len(window[0])):
+        # A window at the end of a periodic cycle holds dump 0 again last.
+        count = min(len(window[0]), len(self.flow_times) - idx0)
+        for i in range(count):
             yield idx0 + i, [w[i] for w in window]
 
 
@@ -486,7 +625,8 @@ class FluidData:
         '''Fluid data just landed in memory: record its means, call the observers.
 
         Called from every load site. A forward slide passes only the dumps it
-        loaded, not the two it carries over from the outgoing window.
+        loaded, not the two it carries over from the outgoing window. Dump 0
+        reloaded for the end of a periodic cycle is not passed on.
 
         Parameters
         ----------
@@ -496,6 +636,11 @@ class FluidData:
             per-component data with a leading time axis
         '''
 
+        count = len(self.flow_times) - idx_start
+        if len(flow[0]) > count:
+            if count <= 0:
+                return
+            flow = [f[:count] for f in flow]
         self._record_dump_means(idx_start, flow)
         for observer in self._dump_observers:
             observer(idx_start, flow)
@@ -505,8 +650,8 @@ class FluidData:
         '''The per-dump means at ``time``, weighted as the field is, or None if
         a bracketing dump has never been loaded.
 
-        A time outside the data's time range takes its nearer end, as in
-        ``__call__``.
+        A time outside the data's time range takes its nearer end, or its phase
+        of a periodic cycle, as in ``__call__``.
         '''
 
         # Exact: both spline classes evaluate as a weighted sum of the nodal
@@ -516,7 +661,9 @@ class FluidData:
         if self._mean_interp is not None:
             # Cubic. The entire dataset was resident when the interpolant was
             # built, so no mean can be missing.
-            if time <= self.flow_times[0]:
+            if self.period is not None:
+                time = self._cycle_time(time)
+            elif time <= self.flow_times[0]:
                 time = self.flow_times[0]
             elif time >= self.flow_times[-1]:
                 time = self.flow_times[-1]
@@ -525,7 +672,7 @@ class FluidData:
         # Linear. Done off flow_times and the sidecar rather than off the
         # resident spline, so it stays correct for any dump whose mean has been
         # recorded -- including one the sliding window has since moved past.
-        means = _linear_blend(self.flow_times, time, self._dump_means.__getitem__)
+        means = self._blend_dumps(time, self._dump_means.__getitem__)
 
         if np.isnan(means).any():
             return None
@@ -615,8 +762,18 @@ class FluidData:
         #   single dump, as the constructor's read of a time-invariant field needs.
 
         ndim = len(self.flow_points)
-        return [f if f.ndim > ndim else f[np.newaxis, ...]
-                for f in self.load_dumpfiles(d_start, d_finish)]
+        def load(a, b):
+            return [f if f.ndim > ndim else f[np.newaxis, ...]
+                    for f in self.load_dumpfiles(a, b)]
+
+        # The dump past the last of a periodic cycle is dump 0 again.
+        if self.period is None or d_finish <= self.d_finish:
+            return load(d_start, d_finish)
+        wrapped = load(self.d_start, self.d_start)
+        if d_start > self.d_finish:
+            return wrapped
+        return [np.concatenate((f, w))
+                for f, w in zip(load(d_start, self.d_finish), wrapped)]
 
 
 
@@ -627,27 +784,32 @@ class FluidData:
         window; does nothing when the whole dataset is held.
         '''
 
+        # Runs over the knots, which for periodic data end with one past the
+        #   last dump; _load_dumps reads dump 0 for it.
+        knots = self._knot_times
+        d_last = self.d_finish + (self.period is not None)
+
         while time > self._flow[0].x[-1] and not self._flow[0].extrapolate[1]:
             # spline forward
 
             ####### get info about what we will be loading #######
             d_start = self.loaded_dump_bnds[1]+1 # first dump to load
             idx_start = self.loaded_idx_bnds[1]-1 # first index in new spline
-            if self.loaded_dump_bnds[1]-1 + self.INUM >= self.d_finish:
+            if self.loaded_dump_bnds[1]-1 + self.INUM >= d_last:
                 # The end of the dataset. >=, not >: a window reaching exactly
                 #   the last dump is the final one, open on the right. Each
                 #   forward slide moves the window end by INUM-1, so it lands
                 #   there when the dump count is a multiple of INUM-1, plus 2.
-                d_finish = self.d_finish
+                d_finish = d_last
                 # Last valid index, inclusive like loaded_dump_bnds.
-                idx_finish = len(self.flow_times) - 1
+                idx_finish = len(knots) - 1
                 extrapolate = (False, True)
             else:
                 # We are contained in the middle of the dataset.
                 d_finish = self.loaded_dump_bnds[1]-1 + self.INUM
                 idx_finish = self.loaded_idx_bnds[1]-1 + self.INUM
                 extrapolate = (False, False)
-            load_times = self.flow_times[idx_start:idx_finish+1]
+            load_times = knots[idx_start:idx_finish+1]
 
             ####### retain only the necessary current data #######
             last_flow_0 = []; last_flow_1 = []
@@ -706,7 +868,7 @@ class FluidData:
                 d_start = self.loaded_dump_bnds[0]+1 - self.INUM
                 idx_start = self.loaded_idx_bnds[0]+1 - self.INUM
                 extrapolate = (False, False)
-                load_times = self.flow_times[idx_start:idx_finish+1]
+                load_times = knots[idx_start:idx_finish+1]
 
                 ####### retain only the necessary current data #######
                 last_flow_0 = []; last_flow_1 = []
@@ -1090,7 +1252,7 @@ class FluidData:
         #   curl is linear, so the blend of the curls is the curl of the blend.
         #   Cubic weights come from a global solve, which would need the whole
         #   series. The two-slot cache in _dump_vorticity serves the reads.
-        return _linear_blend(self.flow_times, time, self._dump_vorticity)
+        return self._blend_dumps(time, self._dump_vorticity)
 
 
     def _dump_vorticity(self, t_idx):
@@ -1113,7 +1275,8 @@ class FluidData:
         '''Time derivative of the velocity field, at a time or time index.
 
         Zero strictly outside the data's time range, where the velocity is held
-        constant. Under linear splining it is piecewise constant on
+        constant; for periodic data (``period``), the derivative at the same
+        phase of the cycle. Under linear splining it is piecewise constant on
         (t[i-1], t[i]], so a time on a time point takes the slope to its left;
         the first time point takes the slope to its right. Can trigger a load.
         Time-invariant flow returns zeros, with a warning.
@@ -1152,23 +1315,30 @@ class FluidData:
         # themselves the spline derivative is well-defined, so use strict
         # inequalities. fshape[1:] drops the leading time axis, giving a single-
         # time field per component (fshape includes the time axis for time-
-        # varying flow).
-        if time < self.flow_times[0] or time > self.flow_times[-1]:
+        # varying flow). Periodic data takes the same phase of its cycle.
+        if self.period is not None:
+            time = self._cycle_time(time)
+        elif time < self.flow_times[0] or time > self.flow_times[-1]:
             return [np.zeros(self.fshape[1:]) for ii in range(len(self))]
-        else:
-            dudt_list = []
-            # ensure the relevant data is loaded
-            try:
-                self._flow[0](time)
-            except SplineRangeError:
-                self.update_spline(time)
-            for fspline in self._flow:
-                if isinstance(fspline, fCubicSpline):
-                    dudt = fspline.derivative()(time)
-                else:
-                    # LinearSpline
-                    dudt = fspline.derivative(time)
-                dudt_list.append(dudt)
+
+        dudt_list = []
+        # ensure the relevant data is loaded
+        try:
+            self._flow[0](time)
+        except SplineRangeError:
+            self.update_spline(time)
+        # The first time point of a window that does not start the data takes
+        #   the slope to its left, which only the window before it holds.
+        window = self._flow[0]
+        if not window.extrapolate[0] and time == window.x[0]:
+            self.update_spline(np.nextafter(time, -np.inf))
+        for fspline in self._flow:
+            if isinstance(fspline, fCubicSpline):
+                dudt = fspline.derivative()(time)
+            else:
+                # LinearSpline
+                dudt = fspline.derivative(time)
+            dudt_list.append(dudt)
 
         return dudt_list
     
@@ -1246,7 +1416,7 @@ class FluidData:
 class IB2dData(FluidData):
 
     def __init__(self, path, dt, print_dump, d_start=None, d_finish=None,
-                 INUM=None):
+                 INUM=None, periodic_time=None):
         '''Reads IB2d's vtk velocity dumps, in vector form (``u.####.vtk``) or
         scalar form (``uX.####.vtk`` and ``uY.####.vtk``). Times are shifted so
         that dump d_start is at t=0.
@@ -1277,6 +1447,10 @@ class IB2dData(FluidData):
             entire dataset too but splines it linearly; an int streams a sliding
             window from storage and splines that linearly. Use an int only
             when the dataset will not fit in memory: streaming it is slower.
+        periodic_time : True or float, optional
+            for data covering one cycle of time-periodic flow, which then
+            repeats indefinitely: the period, or True to infer it from the
+            data. A last dump repeating the first is dropped. See FluidData.
 
         Raises
         ------
@@ -1362,7 +1536,8 @@ class IB2dData(FluidData):
 
         # pass to parent to spline the data.
         super().__init__(flow, flow_points, flow_times, INUM, periodic_dim=True,
-                         fluid_domain_LLC=fluid_domain_LLC)
+                         fluid_domain_LLC=fluid_domain_LLC,
+                         periodic_time=periodic_time)
 
 
 
@@ -1557,7 +1732,8 @@ class IB2dData(FluidData):
 class VTK3dData(FluidData):
 
     def __init__(self, path, title='IBAMR_db_', d_start=0, d_finish=None, 
-                 INUM=None, periodic_dim=(True, True, False), vel_conv=None):
+                 INUM=None, periodic_dim=(True, True, False), vel_conv=None,
+                 periodic_time=None):
         '''Reads one or more vtk rectilinear-grid vector files, as IBAMR's data
         is converted to through VisIt or ParaView.
 
@@ -1592,6 +1768,10 @@ class VTK3dData(FluidData):
         vel_conv : float, optional
             scalar to multiply the velocity by in order to convert units to
             match the spatial grid units
+        periodic_time : True or float, optional
+            for data covering one cycle of time-periodic flow, which then
+            repeats indefinitely: the period, or True to infer it from the
+            data. A last dump repeating the first is dropped. See FluidData.
 
         Raises
         ------
@@ -1691,7 +1871,8 @@ class VTK3dData(FluidData):
                 f *= self.vel_conv
 
         super().__init__(flow, flow_points, flow_times, INUM, periodic_dim,
-                         fluid_domain_LLC=fluid_domain_LLC)
+                         fluid_domain_LLC=fluid_domain_LLC,
+                         periodic_time=periodic_time)
         
 
 
@@ -1802,7 +1983,7 @@ class VTK3dData(FluidData):
 class ComsolVTUData(FluidData):
 
     def __init__(self, path, periodic_dim=(False, False, False), res=101,
-                 linear_interp=False, vel_conv=None):
+                 linear_interp=False, vel_conv=None, periodic_time=None):
         '''Reads one vtu file exported from COMSOL Multiphysics, holding the
         velocity at every time point on its FEM mesh, and regrids it onto a
         regular grid spanning the mesh's bounding box. Times are shifted so that
@@ -1824,6 +2005,10 @@ class ComsolVTUData(FluidData):
         vel_conv : float, optional
             scalar to multiply the velocity by in order to convert units to
             match the spatial grid units
+        periodic_time : True or float, optional
+            for data covering one cycle of time-periodic flow, which then
+            repeats indefinitely: the period, or True to infer it from the
+            data. A last dump repeating the first is dropped. See FluidData.
 
         Raises
         ------
@@ -1875,7 +2060,8 @@ class ComsolVTUData(FluidData):
         if not linear_interp:
             linear_interp = None
         super().__init__(flow, flow_points, flow_times, linear_interp, periodic_dim,
-                         fluid_domain_LLC=fluid_domain_LLC)
+                         fluid_domain_LLC=fluid_domain_LLC,
+                         periodic_time=periodic_time)
         
 
 
@@ -2052,7 +2238,7 @@ class ComsolGridData(FluidData):
 class OpenFOAMData(FluidData):
 
     def __init__(self, path, INUM=None, periodic_dim=(False, False, False),
-                 vel_conv=None, require_boundary=True):
+                 vel_conv=None, require_boundary=True, periodic_time=None):
         '''Reads finite-volume velocity data from an OpenFOAM VTK export, the
         output of ``foamToVTK``.
 
@@ -2109,6 +2295,10 @@ class OpenFOAMData(FluidData):
             domain would otherwise be reported half a cell short there. False
             instead extrapolates the interior out to each uncovered face, with a
             warning; faces with a patch still use it.
+        periodic_time : True or float, optional
+            for data covering one cycle of time-periodic flow, which then
+            repeats indefinitely: the period, or True to infer it from the
+            data. A last dump repeating the first is dropped. See FluidData.
 
         Attributes
         ----------
@@ -2195,7 +2385,8 @@ class OpenFOAMData(FluidData):
         self.L = [fp[-1] for fp in flow_points]
 
         super().__init__(flow, flow_points, flow_times, INUM, periodic_dim,
-                         fluid_domain_LLC=fluid_domain_LLC)
+                         fluid_domain_LLC=fluid_domain_LLC,
+                         periodic_time=periodic_time)
 
 
 
@@ -2906,7 +3097,8 @@ class OpenFOAMData(FluidData):
 class VTKXMLData(FluidData):
 
     def __init__(self, path, INUM=None, periodic_dim=(False, False, False),
-                 vel_conv=None, vec_name=None, time_from_name=None, dt=None):
+                 vel_conv=None, vec_name=None, time_from_name=None, dt=None,
+                 periodic_time=None):
         '''Reads fluid velocity point data from VTK XML ImageData (``.vti``) or
         RectilinearGrid (``.vtr``) files and creates a FluidData instance from
         it.
@@ -2965,6 +3157,10 @@ class VTKXMLData(FluidData):
             that have no collection and carry no ``TimeValue``.
         dt : float, optional
             interval between consecutive dumps
+        periodic_time : True or float, optional
+            for data covering one cycle of time-periodic flow, which then
+            repeats indefinitely: the period, or True to infer it from the
+            data. A last dump repeating the first is dropped. See FluidData.
 
         Attributes
         ----------
@@ -3052,7 +3248,8 @@ class VTKXMLData(FluidData):
         self.L = [fp[-1] for fp in flow_points]
 
         super().__init__(flow, flow_points, flow_times, INUM, periodic_dim,
-                         fluid_domain_LLC=fluid_domain_LLC)
+                         fluid_domain_LLC=fluid_domain_LLC,
+                         periodic_time=periodic_time)
 
 
 
@@ -3288,7 +3485,8 @@ class LinearSpline:
     or the window ``FluidData.update_spline`` slides.
     '''
 
-    def __init__(self, flow_times, flow, extrapolate=(True, True)):
+    def __init__(self, flow_times, flow, extrapolate=(True, True),
+                 cyclic=False):
         '''
         Parameters
         ----------
@@ -3299,11 +3497,23 @@ class LinearSpline:
         extrapolate : (bool, bool), default=(True, True)
             whether a time before the first / after the last time point takes
             the end value (True) or raises SplineRangeError (False)
+        cyclic : bool, default=False
+            whether flow_times has one more point than flow, at which flow
+            takes its first value again: one period of time-periodic data
         '''
         self.flow_times = flow_times
         self.flow = flow
         self.extrapolate = extrapolate
         self._shape = flow.shape
+        self.cyclic = cyclic
+        # The knot past the last dump reads dump 0, without copying it.
+        self._get = ((lambda i: flow[i % len(flow)]) if cyclic
+                     else flow.__getitem__)
+
+    @property
+    def n_dumps(self):
+        '''Number of distinct time points held.'''
+        return len(self.flow)
 
     @property
     def shape(self):
@@ -3323,7 +3533,7 @@ class LinearSpline:
         if (val < self.flow_times[0] and not self.extrapolate[0]) \
               or (val > self.flow_times[-1] and not self.extrapolate[1]):
             raise SplineRangeError('Out of range without extrapolation.')
-        return _linear_blend(self.flow_times, val, self.flow.__getitem__)
+        return _linear_blend(self.flow_times, val, self._get)
 
 
     def __getitem__(self, pos):
@@ -3367,7 +3577,8 @@ class LinearSpline:
             return np.zeros_like(self.flow[0]) # constant extrapolation
         else:
             idx = np.searchsorted(self.flow_times, val) - 1
-        return (self.flow[idx+1] - self.flow[idx]) / (self.flow_times[idx+1] - self.flow_times[idx])
+        return ((self._get(idx+1) - self._get(idx))
+                / (self.flow_times[idx+1] - self.flow_times[idx]))
 
 
 
@@ -3377,7 +3588,7 @@ class fCubicSpline(interpolate.CubicSpline):
     '''
 
     def __init__(self, flow_times, flow, extrapolate=(True, True),
-                 bc_type='not-a-knot'):
+                 bc_type='not-a-knot', cyclic=False):
         '''Cubic spline in time of one velocity component, over the whole dataset.
 
         Parameters
@@ -3390,12 +3601,20 @@ class fCubicSpline(interpolate.CubicSpline):
             whether a time before the first / after the last time point is
             evaluated (True) or raises SplineRangeError (False)
         bc_type : default='not-a-knot'
-            passed to scipy.interpolate.CubicSpline
+            passed to scipy.interpolate.CubicSpline; ignored when cyclic
+        cyclic : bool, default=False
+            whether flow_times has one more point than flow, at which flow
+            takes its first value again: one period of time-periodic data,
+            splined with periodic end conditions
         '''
+        self._n_dumps = len(flow)
+        if cyclic:
+            flow = np.concatenate((flow, flow[:1]))
+            bc_type = 'periodic'
         super().__init__(flow_times, flow, axis=0, extrapolate=True,
                          bc_type=bc_type)
 
-        self._shape = flow.shape
+        self._shape = (self._n_dumps, *flow.shape[1:])
         self.extrapolate = extrapolate
         # These are inaccurate and should only be used for plotting!
         self.data_max = flow.max()
@@ -3440,11 +3659,16 @@ class fCubicSpline(interpolate.CubicSpline):
     def absmax(self):
         return np.abs(np.array([self.data_max, self.data_min])).max()
 
+    @property
+    def n_dumps(self):
+        '''Number of distinct time points splined.'''
+        return self._n_dumps
+
     def regenerate_data(self):
         '''
         Rebuild the original data.
         '''
-        return np.stack([self.__call__(val) for val in self.x])
+        return np.stack([self.__call__(val) for val in self.x[:self._n_dumps]])
     
 
 
@@ -3479,7 +3703,8 @@ def _spline_index(spline, pos):
         if the time index is neither an integer nor a slice
     """
 
-    knots = spline.x
+    # A cyclic spline's last knot repeats its first dump, and is not indexed.
+    knots = spline.x[:spline.n_dumps]
     lead, rest = (pos[0], pos[1:]) if isinstance(pos, tuple) else (pos, ())
 
     def at(i):
@@ -3537,6 +3762,140 @@ def _linear_blend(times, t, get):
     # The difference is taken in at least float64. In float32 it rounds, and the
     #   blend then misses the second entry even at weight 1.
     return lo + np.subtract(hi, lo, dtype=np.result_type(hi, lo, np.float64))*w
+
+
+def _resolve_cycle(times, get, periodic_time, what, resident):
+    """Settle the period of a series covering one cycle, and whether its last
+    dump repeats its first. Prints what it found.
+
+    Parameters
+    ----------
+    times : 1D ndarray
+        the series' times, increasing
+    get : callable
+        ``get(i)`` returns dump ``i`` as a list of arrays
+    periodic_time : True or float
+        True infers the period from the series; a number states it
+    what : str
+        what the series is, for messages, e.g. 'fluid'
+    resident : int
+        how many leading dumps ``get`` serves from memory
+
+    Returns
+    -------
+    period : float
+    closed : bool
+        True when the last dump is the same phase as the first
+
+    Raises
+    ------
+    ValueError
+        if the series has fewer than two dumps, a stated period is not
+        positive or is shorter than the series, or True cannot tell from the
+        series whether its last dump repeats the first
+    """
+
+    # Closed: the last dump is the first one again, a period later, so the
+    #   cycle is dumps 0..n-1 and the last is dropped. Open: the last dump is
+    #   one interval short of the period, and the cycle wraps from it to dump 0.
+    #   A stated period tells the two apart by time alone. Inferring compares
+    #   the jump from the last dump to the first with the change over one dump
+    #   interval at each end of the series: closed data jumps much less than
+    #   one interval's change, open data about as much.
+
+    n = len(times) - 1
+    if n < 1:
+        raise ValueError('a {} periodic in time needs at least two '
+                         'dumps.'.format(what))
+    cache = {}
+    def dump(i):
+        if i not in cache:
+            cache[i] = get(i)
+        return cache[i]
+    def change(i, j):
+        # Largest pointwise difference over all components.
+        return max(float(np.max(np.abs(np.subtract(a, b, dtype=np.float64))))
+                   for a, b in zip(dump(i), dump(j)))
+
+    spacing = np.diff(times)
+    span = float(times[-1] - times[0])
+    first_step, last_step = change(1, 0), change(n, n-1)
+    step = max(first_step, last_step)
+    end_gap = change(n, 0)
+
+    if periodic_time is True:
+        # The typical change over one dump interval, from the dumps in memory.
+        #   Ends that change far less than that cannot show which case this is.
+        steps = [change(i+1, i) for i in range(min(resident, n+1) - 1)]
+        typical = float(np.median(steps + [last_step]))
+        ratio = end_gap/step if step > 0 else np.nan
+        if step == 0 or step < 0.1*typical or 0.25 < ratio < 0.5:
+            raise ValueError(
+                'the {} barely changes across the ends of its series, so they '
+                'do not show whether its last dump repeats its first. Pass the '
+                'period as periodic_time instead of True.'.format(what))
+        closed = ratio <= 0.25
+        if closed:
+            period = span
+        else:
+            if not np.allclose(spacing, spacing[-1], rtol=1e-6, atol=0):
+                raise ValueError(
+                    'the dumps of this {} are unevenly spaced in time, so the '
+                    'interval from its last dump back to its first is not '
+                    'known. Pass the period as periodic_time instead of '
+                    'True.'.format(what))
+            period = span + float(spacing[-1])
+    else:
+        period = float(periodic_time)
+        if not period > 0:
+            raise ValueError('periodic_time must be True or a positive period, '
+                             'not {!r}.'.format(periodic_time))
+        tol = 1e-6*float(spacing.min())
+        if span > period + tol:
+            raise ValueError(
+                'the {} series spans {:g}, longer than the period {:g}.'.format(
+                    what, span, period))
+        closed = abs(span - period) <= tol
+
+    if closed:
+        if n < 2:
+            raise ValueError('a {} periodic in time needs at least two dumps '
+                             'per cycle.'.format(what))
+        jump = end_gap/step if step > 0 else (0.0 if end_gap == 0 else np.inf)
+        print('{} periodic in time, period {:g}: the last dump repeats the '
+              'first, differing by {:.2g} of the change over one dump '
+              'interval, and is dropped.'.format(what.capitalize(), period,
+                                                 jump))
+        if jump > 0.25:
+            warnings.warn(
+                'the last dump of this {} differs from the first by {:.2g} of '
+                'the change over one dump interval, so the cycle jumps '
+                'there.'.format(what, jump), UserWarning)
+    else:
+        gap = period - span
+        # Rates, so that a wrap interval unlike the dump spacing compares fairly.
+        rate = max(first_step/spacing[0], last_step/spacing[-1])
+        if end_gap == 0:
+            speedup = 0.0
+        else:
+            speedup = (end_gap/gap)/rate if rate > 0 else np.inf
+        print('{} periodic in time, period {:g}: the first dump follows the '
+              'last after {:g}, changing {:.2g} times as fast as across the '
+              'neighboring dump intervals.'.format(what.capitalize(), period,
+                                                   gap, speedup))
+        if speedup > 2:
+            warnings.warn(
+                'this {} changes {:.2g} times as fast from its last dump back '
+                'to its first as across the neighboring dump intervals, so it '
+                'may not have settled into its cycle.'.format(what, speedup),
+                UserWarning)
+        if not 0.5*spacing[[0, -1]].min() <= gap <= 2*spacing[[0, -1]].max():
+            warnings.warn(
+                'the interval from the last dump of this {} back to its first '
+                'is {:g}, against dump intervals of {:g} and {:g} at the ends '
+                'of the series.'.format(what, gap, spacing[-1], spacing[0]),
+                UserWarning)
+    return period, closed
 
 
 

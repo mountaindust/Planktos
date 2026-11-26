@@ -52,6 +52,36 @@ that tile. ``Environment.interpolate_flow`` wraps agent positions onto it.
 domain, and ``materialize_tiled`` replicates a field onto that grid, at the
 memory cost of the whole tiled field.
 
+Fluid that repeats in time
+--------------------------
+
+A simulation run to a periodic steady state is often exported as a single
+cycle. Every fluid reader takes a ``periodic_time`` argument that makes such
+data repeat indefinitely::
+
+    envir.read_IB2d_fluid_data('data/', dt, print_dump, periodic_time=1.0)
+
+A number is the period. ``True`` infers it from the data instead, and refuses
+when the data cannot show it -- for example, when the flow barely changes near
+the start and end of the cycle.
+
+The export may be closed, with its last dump repeating the first a period
+later, or open, ending one dump interval short of the period. The reader prints
+which it found. A closed export's last dump is dropped, and the field is
+interpolated from the last dump back to the first. A warning is raised when the
+data does not join up smoothly at the wrap, which happens when the simulation
+had not yet settled into its cycle.
+
+``period`` holds the period, and ``flow_times`` the times of one cycle.
+Simulation time keeps running: ``flow(t)`` returns the field at the same phase
+of the cycle as ``t``, in every ``INUM`` regime. Under cubic interpolation
+(``INUM=None``) the spline uses periodic end conditions, so the velocity and its
+time derivative stay continuous across the wrap.
+
+A moving immersed mesh read by ``Environment.read_IB2d_mesh_data`` takes the
+same argument. A fluid and a moving mesh that both repeat must have the same
+period.
+
 .. _inum-tradeoff:
 
 Dynamic loading and the ``INUM`` argument
